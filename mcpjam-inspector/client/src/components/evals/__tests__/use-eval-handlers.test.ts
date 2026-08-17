@@ -930,6 +930,161 @@ describe("useEvalHandlers", () => {
       expect(toast.error).not.toHaveBeenCalled();
     });
 
+    it("opens the wall for a cap the replay endpoint nests under details", async () => {
+      // Replay is a hand-rolled fetch, not `postEvalRequest`: it threw the
+      // response body whole, so the parser read the outer envelope and the
+      // cap looked like an ordinary failure.
+      mockIsHostedMode.mockReturnValue(true);
+      mockAuthFetch.mockResolvedValue(createEvalIterationCapResponse());
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          organizationId: "org-1",
+          connectedServerNames: new Set(),
+          ensureServersReady: vi.fn().mockResolvedValue({
+            readyServerNames: [],
+            missingServerNames: [],
+            failedServerNames: ["server-1"],
+            reauthServerNames: [],
+          }),
+          latestRunBySuiteId: new Map<string, any>([
+            ["suite-123", { _id: "run-source", hasServerReplayConfig: true }],
+          ]),
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-123",
+          name: "CI Suite",
+          source: "ui",
+          environment: { servers: ["server-1"] },
+        } as any);
+      });
+
+      expect(mockAuthFetch).toHaveBeenCalledWith(
+        "/api/web/evals/replay-run",
+        expect.anything(),
+      );
+      expect(usePlanLimitDialogStore.getState().limit).toMatchObject({
+        kind: "evalIterations",
+        organizationId: "org-1",
+        allowed: 100,
+      });
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("opens the wall when a cap rejects one target and the rest launch", async () => {
+      // Partial fan-out failures only toast — they never throw — so this
+      // branch has to reach the wall itself.
+      mockAuthFetch.mockImplementation(
+        async (path: string, init: { body: string }) => {
+          if (path !== "/api/mcp/evals/run") {
+            return createFetchResponse({ success: true });
+          }
+          const body = JSON.parse(init.body);
+          return body.namedHostId === "host-claude"
+            ? createEvalIterationCapResponse()
+            : createFetchResponse({ success: true });
+        },
+      );
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          organizationId: "org-1",
+          connectedServerNames: new Set(["server-a", "server-b"]),
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-partial",
+          name: "Multi-host suite",
+          environment: { servers: ["server-a", "server-b"] },
+          hostAttachments: [
+            {
+              namedHostId: "host-mcpjam",
+              hostName: "MCPJam",
+              enabledOptionalServerIds: [],
+              resolvedServerNames: ["server-a"],
+            },
+            {
+              namedHostId: "host-claude",
+              hostName: "Claude",
+              enabledOptionalServerIds: [],
+              resolvedServerNames: ["server-b"],
+            },
+          ],
+        } as any);
+      });
+
+      expect(usePlanLimitDialogStore.getState().limit).toMatchObject({
+        kind: "evalIterations",
+        organizationId: "org-1",
+      });
+      // The count toast survives: it says how many DID launch, which the wall
+      // does not.
+      const errorToasts = vi
+        .mocked(toast.error)
+        .mock.calls.map((call) => String(call[0]))
+        .join(" | ");
+      expect(errorToasts).toContain("1 of 2");
+    });
+
+    it("finds a cap carried by a later plan when every plan fails", async () => {
+      // Ordered so the cap is neither `failures[0]` nor the drift 409 the
+      // all-failed branch used to prefer.
+      mockAuthFetch.mockImplementation(
+        async (path: string, init: { body: string }) => {
+          if (path !== "/api/mcp/evals/run") {
+            return createFetchResponse({ success: true });
+          }
+          const body = JSON.parse(init.body);
+          return body.namedHostId === "host-claude"
+            ? createEvalIterationCapResponse()
+            : createFetchResponse({ message: "Upstream exploded" }, 500);
+        },
+      );
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          organizationId: "org-1",
+          connectedServerNames: new Set(["server-a", "server-b"]),
+        }),
+      );
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-all-capped",
+          name: "Multi-host suite",
+          environment: { servers: ["server-a", "server-b"] },
+          hostAttachments: [
+            {
+              namedHostId: "host-mcpjam",
+              hostName: "MCPJam",
+              enabledOptionalServerIds: [],
+              resolvedServerNames: ["server-a"],
+            },
+            {
+              namedHostId: "host-claude",
+              hostName: "Claude",
+              enabledOptionalServerIds: [],
+              resolvedServerNames: ["server-b"],
+            },
+          ],
+        } as any);
+      });
+
+      expect(usePlanLimitDialogStore.getState().limit).toMatchObject({
+        kind: "evalIterations",
+        organizationId: "org-1",
+      });
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
     it("keeps the fallback toast when there is no organization to upgrade", async () => {
       mockAuthFetch.mockResolvedValue(createEvalIterationCapResponse());
 

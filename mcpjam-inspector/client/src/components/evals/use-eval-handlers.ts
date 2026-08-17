@@ -42,6 +42,7 @@ import type { ModelDefinition } from "@/shared/types";
 import {
   buildEvalConvexAuthPayload,
   getEvalApiEndpoints,
+  rethrowIfBillingError,
   runEvals,
   runEvalTestCase,
   type GenerationOptions,
@@ -191,6 +192,21 @@ export type HandleGenerateEvalTestsOptions = {
    */
   generationOptions?: GenerationOptions;
 };
+
+/**
+ * Worth opening the limit wall for: an eval-iteration cap, and not a
+ * retry-able environment-drift 409 — that one has its own, better message and
+ * no upgrade to offer.
+ *
+ * A fan-out settles per target, so a cap can be one rejection among several.
+ * Callers scan the whole failure list with this rather than trusting the first.
+ */
+function isEvalIterationCap(error: unknown): boolean {
+  return (
+    getEnvironmentConflictMessage(error) === null &&
+    getEvalIterationLimitFromError(error) !== null
+  );
+}
 
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
@@ -561,6 +577,17 @@ export function useEvalHandlers({
 
         if (!response.ok) {
           const errorText = await response.text();
+          // Same unwrapping the buffered eval paths get from
+          // `postEvalRequest`: the cap payload rides under `details`, so
+          // throwing the body whole hides it from the limit-wall parser and
+          // from `getBillingErrorMessage`. No-op for every other failure.
+          let errorBody: unknown = null;
+          try {
+            errorBody = JSON.parse(errorText);
+          } catch {
+            // Not JSON; fall through to the generic error below.
+          }
+          rethrowIfBillingError(errorBody);
           throw new Error(errorText || "Failed to replay eval run");
         }
 
@@ -910,6 +937,13 @@ export function useEvalHandlers({
             );
           }
         } else if (failures.length < runPlans.length) {
+          // A cap can reject one target while others launch. This branch never
+          // throws, so the outer catch — and the wall with it — would never
+          // see it. Scan every failure, not just the first.
+          openEvalIterationWall(
+            failures.find((failure) => isEvalIterationCap(failure.reason))
+              ?.reason
+          );
           const failedHostNames = failures
             .map(
               (failure) =>
@@ -934,10 +968,18 @@ export function useEvalHandlers({
           // partial-failure branch above does: throwing `failures[0]` blind
           // would bury a retry-able ENVIRONMENT_REVISION_CONFLICT carried by a
           // later plan behind whatever generic error happened to come first.
+          // A cap outranks a drift 409: the 409 is retry-able, the cap is not,
+          // and only the cap has a next step (upgrade or wait for the reset).
+          // Without this it could sit at index 2 behind a generic error and
+          // never reach the wall.
+          const capFailure = failures.find((failure) =>
+            isEvalIterationCap(failure.reason)
+          );
           const conflictFailure = failures.find(
             (failure) => getEnvironmentConflictMessage(failure.reason) !== null
           );
-          const firstError = (conflictFailure ?? failures[0])?.reason;
+          const firstError = (capFailure ?? conflictFailure ?? failures[0])
+            ?.reason;
           throw firstError instanceof Error
             ? firstError
             : new Error(String(firstError ?? `All ${targetNoun} runs failed`));
