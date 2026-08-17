@@ -593,9 +593,18 @@ export function ScenarioChatPage({
     [sessionServersActive]
   );
 
+  const reachabilityCandidateIds = useMemo(
+    () => new Set(reachabilityCandidates.map((server) => server.serverId)),
+    [reachabilityCandidates]
+  );
+
+  // Scoped to the scenario, not to `accessVersion`: a re-redeem mid-session
+  // bumps the version without changing which servers this tester is exercising,
+  // and re-probing there would shut the composer again on every recovery.
   const reachabilityByServerId = useScenarioServerReachability(
     reachabilityCandidates,
-    !!session
+    !!session,
+    session?.scenarioId ?? null
   );
 
   const scenarioServerConfigs = useMemo(() => {
@@ -605,10 +614,16 @@ export function ScenarioChatPage({
       sessionServersActive.map((server) => {
         // Reported: a scenario whose only server never connected ran a full
         // session with a green dot next to it. This map drives the composer's
-        // server list, so a server that did not answer must not claim it did.
-        // Servers still owned by the OAuth gate have no reachability entry and
-        // keep the optimistic status the gate's own flow depends on.
-        const reachability = reachabilityByServerId[server.serverId];
+        // server list, so a server that did not answer must not claim it did —
+        // including on the renders before its probe has even registered, which
+        // is why a candidate with no entry yet reads as still connecting.
+        // Servers owned by the OAuth gate are never probed and keep the
+        // optimistic status the gate's own flow depends on.
+        const reachability =
+          reachabilityByServerId[server.serverId] ??
+          (reachabilityCandidateIds.has(server.serverId)
+            ? "checking"
+            : undefined);
         const connectionStatus =
           reachability === "unreachable"
             ? "failed"
@@ -631,7 +646,12 @@ export function ScenarioChatPage({
         ];
       })
     );
-  }, [session, sessionServersActive, reachabilityByServerId]);
+  }, [
+    session,
+    sessionServersActive,
+    reachabilityByServerId,
+    reachabilityCandidateIds,
+  ]);
 
   const reachableSessionServerIds = useMemo(
     () =>
@@ -655,13 +675,17 @@ export function ScenarioChatPage({
 
   // Sending before the probes answer is the silent failure in a new outfit: a
   // server still being checked is withheld from the turn, so the model would
-  // answer with none of the tools the tester was sent here to exercise.
+  // answer with none of the tools the tester was sent here to exercise. A
+  // candidate with no entry has not been probed yet either — the hook records
+  // "checking" from an effect, so the first render after a session resolves has
+  // an empty map and would otherwise open the composer on unprobed servers.
   const isCheckingServerReachability = useMemo(
     () =>
-      sessionServersActive.some(
-        (server) => reachabilityByServerId[server.serverId] === "checking"
+      reachabilityCandidates.some(
+        (server) =>
+          (reachabilityByServerId[server.serverId] ?? "checking") === "checking"
       ),
-    [sessionServersActive, reachabilityByServerId]
+    [reachabilityCandidates, reachabilityByServerId]
   );
 
   const hostedServerIdsByName = useMemo(() => {
