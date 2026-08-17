@@ -65,6 +65,7 @@ import {
 import { ErrorBox } from "@/components/chat-v2/error";
 import { ConfirmChatResetDialog } from "@/components/chat-v2/chat-input/dialogs/confirm-chat-reset-dialog";
 import {
+  DETACH_FORK_FAILED_MESSAGE,
   type ChatSessionResetReason,
   useChatSession,
 } from "@/hooks/use-chat-session";
@@ -251,11 +252,7 @@ const PLAYGROUND_SEED_RETRY_DELAYS_MS = [1_000, 4_000, 10_000];
 // seed refuses a partial lineup (falling back to one blank host), so a gated
 // template like "claude-code" would both leak the gated client to everyone
 // and have no working way to be filtered out.
-const PLAYGROUND_SEED_TEMPLATE_IDS = [
-  "claude",
-  "chatgpt",
-  "cursor",
-] as const;
+const PLAYGROUND_SEED_TEMPLATE_IDS = ["claude", "chatgpt", "cursor"] as const;
 
 const PLAYGROUND_SEED_MODEL_OVERRIDES: Partial<Record<string, string>> = {
   chatgpt: "openai/gpt-5.6-luna",
@@ -312,7 +309,9 @@ function PlaygroundCompareThemeScope({
 }: PlaygroundCompareThemeScopeProps) {
   return (
     <ScenarioHostStyleProvider value={hostStyle}>
-      <ScenarioHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
+      <ScenarioHostCapabilitiesOverrideProvider
+        value={hostCapabilitiesOverride}
+      >
         <ScenarioChatUiOverrideProvider value={chatUiOverride}>
           <ScenarioHostThemeProvider value={effectiveThreadTheme}>
             <div
@@ -764,7 +763,7 @@ export function PlaygroundMain({
       engine: playgroundComputerEngine.engine,
       consentToken: playgroundComputerEngine.consent.token,
     }),
-    [playgroundComputerEngine.engine, playgroundComputerEngine.consent.token],
+    [playgroundComputerEngine.engine, playgroundComputerEngine.consent.token]
   );
 
   // COMP-14: when the previewed host attaches a personal computer, composer
@@ -911,6 +910,7 @@ export function PlaygroundMain({
     mcpToolsTokenCountErrors,
     resetChat,
     startChatWithMessages,
+    detachToLocalFork,
     liveTraceEnvelope,
     requestPayloadHistory,
     hasTraceSnapshot,
@@ -1480,98 +1480,102 @@ export function PlaygroundMain({
           },
         })
       )
-    ).then(async (results) => {
-      const fulfilled = results.filter(
-        (
-          result
-        ): result is PromiseFulfilledResult<
-          Awaited<ReturnType<typeof createPlaygroundHost>>
-        > => result.status === "fulfilled"
-      );
-      if (fulfilled.length < results.length) {
-        // Partial failure: a half-seeded project (1-2 hosts, no compare) is
-        // worse than an empty one that can cleanly retry — roll back
-        // whichever calls DID succeed. Only clear the "seeded" marker (and
-        // schedule the retry that actually re-runs this effect) if every
-        // rollback delete succeeded; if one fails, the partial hosts are
-        // stuck either way, and retrying would just hammer the same
-        // struggling backend with the other two creates too.
-        const rollback = await Promise.allSettled(
-          fulfilled.map((result) =>
-            deletePlaygroundHost({ hostId: result.value.hostId })
-          )
+    )
+      .then(async (results) => {
+        const fulfilled = results.filter(
+          (
+            result
+          ): result is PromiseFulfilledResult<
+            Awaited<ReturnType<typeof createPlaygroundHost>>
+          > => result.status === "fulfilled"
         );
-        if (rollback.every((result) => result.status === "fulfilled")) {
-          playgroundSeededProjectIdsRef.current.delete(seedProjectId);
-          schedulePlaygroundSeedRetry(seedProjectId);
+        if (fulfilled.length < results.length) {
+          // Partial failure: a half-seeded project (1-2 hosts, no compare) is
+          // worse than an empty one that can cleanly retry — roll back
+          // whichever calls DID succeed. Only clear the "seeded" marker (and
+          // schedule the retry that actually re-runs this effect) if every
+          // rollback delete succeeded; if one fails, the partial hosts are
+          // stuck either way, and retrying would just hammer the same
+          // struggling backend with the other two creates too.
+          const rollback = await Promise.allSettled(
+            fulfilled.map((result) =>
+              deletePlaygroundHost({ hostId: result.value.hostId })
+            )
+          );
+          if (rollback.every((result) => result.status === "fulfilled")) {
+            playgroundSeededProjectIdsRef.current.delete(seedProjectId);
+            schedulePlaygroundSeedRetry(seedProjectId);
+          }
+          return;
         }
-        return;
-      }
-      const hostIds = fulfilled.map((result) => result.value.hostId);
-      // The user may have already picked something for this project since
-      // the seed started — e.g. manually added/selected a host via "Add
-      // client", or switched the previewed client in the global host bar,
-      // while these mutations were still in flight. The seed is a first-run
-      // default, not an authoritative overwrite: if either the lineup or the
-      // lead has changed since the snapshots above (whether those snapshots
-      // were empty or already stale-non-empty), leave both alone rather than
-      // clobbering a choice the user has already made. Both are checked
-      // because the seed writes both, and the two move independently — the
-      // global host bar moves the lead through `savePreviewedHostId` alone
-      // and never touches the lineup.
-      //
-      // One lead move is NOT a user choice, though: the "no valid previewed
-      // host" fallback effect below auto-picks a lead as soon as the host-
-      // list query catches up to the FIRST of these creates, which routinely
-      // lands while the other two are still in flight. That is our own
-      // write, so a lead now pointing at a host THIS seed just created must
-      // not veto the lineup — vetoing would strand the guest with 3 hosts
-      // and no compare lineup, the exact half-seeded state this backstop
-      // exists to prevent. Whichever seed host holds the lead is kept as
-      // lead (so a user who did pick one of them in the host bar keeps it),
-      // and the full 3-way lineup lands either way.
-      const currentPreviewedHostId = loadPreviewedHostId(seedProjectId);
-      const leadIsSeededHost =
-        currentPreviewedHostId !== null &&
-        hostIds.includes(currentPreviewedHostId);
-      const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
-      const selectionChangedMidSeed =
-        (!leadIsSeededHost &&
-          currentPreviewedHostId !== preSeedPreviewedHostId) ||
-        currentSelectedHostIds.length !== preSeedSelectedHostIds.length ||
-        currentSelectedHostIds.some(
-          (id, index) => id !== preSeedSelectedHostIds[index]
-        );
-      if (selectionChangedMidSeed) return;
-      const leadHostId = leadIsSeededHost ? currentPreviewedHostId : hostIds[0];
-      // Persist directly to `seedProjectId`'s OWN storage — bypassing the
-      // current React state setters, which are scoped to whatever project
-      // is ACTIVE right now — so a seed that resolves after the user has
-      // navigated away still lands correctly for the project it belongs to,
-      // rather than being dropped or misapplied to whatever's open when
-      // this resolves. `usePersistedHost`/`usePreviewedHostId` re-read from
-      // storage whenever their `projectId` changes, so returning to
-      // `seedProjectId` later picks this up. Lead is set explicitly
-      // alongside the array since a bare array write can't promote a lead
-      // when `previewedHostId` is still null (brand-new project).
-      savePreviewedHostId(seedProjectId, leadHostId);
-      saveSelectedHostIds(seedProjectId, hostIds);
-      if (activeMultiHostProjectIdRef.current === seedProjectId) {
-        // Still on the seeded project — also reflect it in live React state
-        // so the lead/lineup update immediately instead of waiting for a
-        // remount. Not touching `multiHostEnabled` here: nothing renders
-        // off it anymore (see `isComparingHosts` above `isMultiHostMode`,
-        // and the multi-model mutual-exclusion check below reads
-        // `selectedHostIds.length` directly for the same reason) — setting
-        // it would just get silently reverted by the "!canEnableMultiHost
-        // -> disable" effect before the host-list query catches up anyway.
-        setPreviewedHostId(leadHostId);
-        setSelectedHostIds(hostIds);
-      }
-    }).finally(() => {
-      playgroundSeedingProjectIdsRef.current.delete(seedProjectId);
-      setSeedCompletionTick((tick) => tick + 1);
-    });
+        const hostIds = fulfilled.map((result) => result.value.hostId);
+        // The user may have already picked something for this project since
+        // the seed started — e.g. manually added/selected a host via "Add
+        // client", or switched the previewed client in the global host bar,
+        // while these mutations were still in flight. The seed is a first-run
+        // default, not an authoritative overwrite: if either the lineup or the
+        // lead has changed since the snapshots above (whether those snapshots
+        // were empty or already stale-non-empty), leave both alone rather than
+        // clobbering a choice the user has already made. Both are checked
+        // because the seed writes both, and the two move independently — the
+        // global host bar moves the lead through `savePreviewedHostId` alone
+        // and never touches the lineup.
+        //
+        // One lead move is NOT a user choice, though: the "no valid previewed
+        // host" fallback effect below auto-picks a lead as soon as the host-
+        // list query catches up to the FIRST of these creates, which routinely
+        // lands while the other two are still in flight. That is our own
+        // write, so a lead now pointing at a host THIS seed just created must
+        // not veto the lineup — vetoing would strand the guest with 3 hosts
+        // and no compare lineup, the exact half-seeded state this backstop
+        // exists to prevent. Whichever seed host holds the lead is kept as
+        // lead (so a user who did pick one of them in the host bar keeps it),
+        // and the full 3-way lineup lands either way.
+        const currentPreviewedHostId = loadPreviewedHostId(seedProjectId);
+        const leadIsSeededHost =
+          currentPreviewedHostId !== null &&
+          hostIds.includes(currentPreviewedHostId);
+        const currentSelectedHostIds = loadSelectedHostIds(seedProjectId);
+        const selectionChangedMidSeed =
+          (!leadIsSeededHost &&
+            currentPreviewedHostId !== preSeedPreviewedHostId) ||
+          currentSelectedHostIds.length !== preSeedSelectedHostIds.length ||
+          currentSelectedHostIds.some(
+            (id, index) => id !== preSeedSelectedHostIds[index]
+          );
+        if (selectionChangedMidSeed) return;
+        const leadHostId = leadIsSeededHost
+          ? currentPreviewedHostId
+          : hostIds[0];
+        // Persist directly to `seedProjectId`'s OWN storage — bypassing the
+        // current React state setters, which are scoped to whatever project
+        // is ACTIVE right now — so a seed that resolves after the user has
+        // navigated away still lands correctly for the project it belongs to,
+        // rather than being dropped or misapplied to whatever's open when
+        // this resolves. `usePersistedHost`/`usePreviewedHostId` re-read from
+        // storage whenever their `projectId` changes, so returning to
+        // `seedProjectId` later picks this up. Lead is set explicitly
+        // alongside the array since a bare array write can't promote a lead
+        // when `previewedHostId` is still null (brand-new project).
+        savePreviewedHostId(seedProjectId, leadHostId);
+        saveSelectedHostIds(seedProjectId, hostIds);
+        if (activeMultiHostProjectIdRef.current === seedProjectId) {
+          // Still on the seeded project — also reflect it in live React state
+          // so the lead/lineup update immediately instead of waiting for a
+          // remount. Not touching `multiHostEnabled` here: nothing renders
+          // off it anymore (see `isComparingHosts` above `isMultiHostMode`,
+          // and the multi-model mutual-exclusion check below reads
+          // `selectedHostIds.length` directly for the same reason) — setting
+          // it would just get silently reverted by the "!canEnableMultiHost
+          // -> disable" effect before the host-list query catches up anyway.
+          setPreviewedHostId(leadHostId);
+          setSelectedHostIds(hostIds);
+        }
+      })
+      .finally(() => {
+        playgroundSeedingProjectIdsRef.current.delete(seedProjectId);
+        setSeedCompletionTick((tick) => tick + 1);
+      });
   }, [
     isConvexAuthenticated,
     hostListLoading,
@@ -2379,25 +2383,39 @@ export function PlaygroundMain({
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
-      syncResumedVersion(null);
-      if (effectiveHasMessages) {
-        startChatWithMessages(cloneUiMessages(messagesRef.current), {
-          toolRenderOverrides: restoredToolRenderOverrides,
-        });
-      }
+
       // The eval preview is an ephemeral sandbox: its own Quick Run / replay
       // mutates the session (e.g. a replayed "Add to cart" click fires a tool
       // call), so a "changed elsewhere" alarm there is self-inflicted noise. The
       // detach still happens; we just skip the user-facing toast.
-      if (!opts?.silent) {
-        toast.error(toastMessage);
+      const notify = (message: string) => {
+        if (!opts?.silent) {
+          toast.error(message);
+        }
+      };
+
+      if (!effectiveHasMessages) {
+        // Nothing to fork — with no transcript there is no snapshot that could
+        // be written back over the old row, so dropping the guard is enough.
+        syncResumedVersion(null);
+        notify(toastMessage);
+        return;
       }
+
+      // Verified rather than fire-and-forget: the reassuring toast may only be
+      // shown once the fork is confirmed live. `resumedVersion` is cleared by
+      // the fork's own hydration, so it survives a fork that never commits.
+      void detachToLocalFork(cloneUiMessages(messagesRef.current), {
+        toolRenderOverrides: restoredToolRenderOverrides,
+      }).then((fork) => {
+        notify(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
+      });
     },
     [
       cancelPendingHistorySelection,
       effectiveHasMessages,
       restoredToolRenderOverrides,
-      startChatWithMessages,
+      detachToLocalFork,
       syncResumedVersion,
     ]
   );
@@ -4933,7 +4951,9 @@ export function PlaygroundMain({
                                 ? { hostId: previewedHostId }
                                 : {}),
                             }}
-                            personalComputerEngine={personalComputerEngineOption}
+                            personalComputerEngine={
+                              personalComputerEngineOption
+                            }
                             displayMode={displayMode}
                             onDisplayModeChange={handleDisplayModeChange}
                             hostStyle={hostStyle}

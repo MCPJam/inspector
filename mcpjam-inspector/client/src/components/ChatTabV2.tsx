@@ -80,7 +80,10 @@ import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
-import type { ChatSessionResetReason } from "@/hooks/use-chat-session";
+import {
+  DETACH_FORK_FAILED_MESSAGE,
+  type ChatSessionResetReason,
+} from "@/hooks/use-chat-session";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
@@ -431,6 +434,7 @@ export function ChatTabV2({
     systemPromptTokenCountLoading,
     resetChat: baseResetChat,
     startChatWithMessages,
+    detachToLocalFork,
     loadChatSession,
     rewindToMessage,
     syncResumedVersion,
@@ -700,19 +704,29 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
-      syncResumedVersion(null);
-      if (hasConversationMessages) {
-        startChatWithMessages(cloneUiMessages(messages), {
-          toolRenderOverrides: restoredToolRenderOverrides,
-        });
+
+      if (!hasConversationMessages) {
+        // Nothing to fork — with no transcript there is no snapshot that could
+        // be written back over the old row, so dropping the guard is enough.
+        syncResumedVersion(null);
+        toast.error(toastMessage);
+        return;
       }
-      toast.error(toastMessage);
+
+      // Verified rather than fire-and-forget: the reassuring toast may only be
+      // shown once the fork is confirmed live. `resumedVersion` is cleared by
+      // the fork's own hydration, so it survives a fork that never commits.
+      void detachToLocalFork(cloneUiMessages(messages), {
+        toolRenderOverrides: restoredToolRenderOverrides,
+      }).then((fork) => {
+        toast.error(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
+      });
     },
     [
       hasConversationMessages,
       messages,
       restoredToolRenderOverrides,
-      startChatWithMessages,
+      detachToLocalFork,
       syncResumedVersion,
       cancelPendingHistorySelection,
     ]
@@ -2473,7 +2487,9 @@ export function ChatTabV2({
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
                             onRetry={errorRetryHandler}
-                            onChangeProtocolVersion={changeProtocolVersionHandler}
+                            onChangeProtocolVersion={
+                              changeProtocolVersionHandler
+                            }
                             onResetChat={handleResetAllChats}
                           />
                         </div>
@@ -2740,7 +2756,9 @@ export function ChatTabV2({
                               limitKind={errorMessage.limitKind}
                               retryAfterMs={errorMessage.retryAfterMs}
                               onRetry={errorRetryHandler}
-                            onChangeProtocolVersion={changeProtocolVersionHandler}
+                              onChangeProtocolVersion={
+                                changeProtocolVersionHandler
+                              }
                               onResetChat={baseResetChat}
                             />
                           </div>
@@ -2885,7 +2903,9 @@ export function ChatTabV2({
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
                             onRetry={errorRetryHandler}
-                            onChangeProtocolVersion={changeProtocolVersionHandler}
+                            onChangeProtocolVersion={
+                              changeProtocolVersionHandler
+                            }
                             onResetChat={baseResetChat}
                           />
                         </div>

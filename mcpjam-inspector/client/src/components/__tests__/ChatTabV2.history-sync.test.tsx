@@ -418,6 +418,9 @@ const mockUseChatSession = {
   addToolApprovalResponse: vi.fn(),
   resetChat: vi.fn(),
   startChatWithMessages: vi.fn(),
+  detachToLocalFork: vi.fn(async () => ({
+    chatSessionId: "forked-session",
+  })),
   loadChatSession: vi.fn(async () => undefined),
   rewindToMessage: vi.fn(),
   syncResumedVersion: vi.fn((version: number | null) => {
@@ -454,6 +457,16 @@ vi.mock("@/hooks/use-chat-session", () => ({
         mockUseChatSession.startChatWithMessages(...args);
         const options = args[1] as { resetReason?: string } | undefined;
         chatSessionOnResetRef.current?.(options?.resetReason ?? "fork");
+      },
+      detachToLocalFork: async (...args: unknown[]) => {
+        const result = await mockUseChatSession.detachToLocalFork(...args);
+        chatSessionOnResetRef.current?.("fork");
+        // The real fork's hydration is what drops the optimistic-concurrency
+        // guard, so a confirmed fork — and only a confirmed fork — clears it.
+        if (result) {
+          mockUseChatSession.syncResumedVersion(null);
+        }
+        return result;
       },
       loadChatSession: async (...args: unknown[]) => {
         const result = await mockUseChatSession.loadChatSession(...args);
@@ -736,7 +749,9 @@ describe("ChatTabV2 history sync", () => {
       "none"
     );
 
-    expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledWith(
+    // Through the VERIFIED fork, not a fire-and-forget mint: the reassuring
+    // toast below may only be shown once the new session is confirmed live.
+    expect(mockUseChatSession.detachToLocalFork).toHaveBeenCalledWith(
       [
         {
           id: "1",
@@ -800,6 +815,7 @@ describe("ChatTabV2 history sync", () => {
       "history-1"
     );
     expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
+    expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
     expect(mockUseChatSession.syncResumedVersion).not.toHaveBeenCalledWith(
       null
     );

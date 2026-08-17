@@ -380,6 +380,15 @@ export type ChatSessionResetReason =
   | "servers-changed"
   | "reset";
 
+/**
+ * Shown when `detachToLocalFork` could not confirm its fork went live. The
+ * thread is still attached to a session the surface has decided it must not
+ * write to, so the copy must NOT promise a new thread the way a successful
+ * detach does. Shared so both chat surfaces say the same thing.
+ */
+export const DETACH_FORK_FAILED_MESSAGE =
+  "Couldn't move this conversation to a new thread. Reload the page before sending again.";
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -561,6 +570,22 @@ export interface UseChatSessionReturn {
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
     }
   ) => Promise<string>;
+  /**
+   * Fork the given transcript onto a fresh `chatSessionId` and confirm the fork
+   * is the session that actually went live, so post-detach sends cannot land
+   * back on the thread the caller just detached from.
+   *
+   * Resolves to the minted id, or `null` when a concurrent session change
+   * superseded the fork — in which case the caller is still pointed at a thread
+   * it must not write to and must say so rather than claiming a new thread.
+   * Never clears `resumedVersion` itself; see the implementation's contract.
+   */
+  detachToLocalFork: (
+    messages: UIMessage[],
+    options?: {
+      toolRenderOverrides?: Record<string, ToolRenderOverride>;
+    }
+  ) => Promise<{ chatSessionId: string } | null>;
   loadChatSession: (
     session: {
       chatSessionId: string;
@@ -2424,8 +2449,9 @@ export function useChatSession(
               body: patchBodyAccessVersion(init.body, recovery.accessVersion),
             });
             if (!response.ok) {
-              const replayError =
-                await classifyScenarioAccessResponse(response);
+              const replayError = await classifyScenarioAccessResponse(
+                response
+              );
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
               }
@@ -3904,6 +3930,69 @@ export function useChatSession(
     [startChatWithMessages]
   );
 
+  /**
+   * Detach from a resumed history thread by forking the current transcript onto
+   * a freshly minted `chatSessionId`, and CONFIRM the fork actually went live.
+   *
+   * Surfaces detach when a thread they resumed can no longer be safely written
+   * to (it was deleted, or another writer moved it on). The whole point is that
+   * subsequent sends must land on a NEW row — but the callers used to
+   * fire-and-forget `startChatWithMessages` and never check, which is the same
+   * superseded-hydration trap `rewindToMessage` documents at length: awaiting
+   * that promise proves the hydration settled, not that OUR id is the one that
+   * committed. `clearPendingSessionHydration` resolves a superseded hydration
+   * identically, leaving the live id as either the ORIGINAL (nothing else
+   * committed) or a THIRD id (an interloping session change won the race).
+   *
+   * In production the first case is what actually happened: post-detach turns
+   * kept writing to the OLD `chatSessionId`, which is how they reached the
+   * ingest replay heuristic on the old row and got dropped. So the exact-match
+   * check here is the load-bearing part — "the id changed" is not good enough.
+   *
+   * Deliberately does NOT retry a superseded fork. Re-minting looks like cheap
+   * insurance, but `queueSessionHydration` clears whatever hydration is pending
+   * — so a second attempt cancels the very session change that superseded the
+   * first. In practice that is a `loadChatSession` still resolving its
+   * transcript blob: the user clicked a thread, and the retry would yank them
+   * back out of it. Failing closed is both safer and honest, and the caller's
+   * next send is still protected — `resumedVersion` is untouched below, so a
+   * send on the old row carries its `expectedVersion` and conflicts rather than
+   * clobbering.
+   *
+   * `resumedVersion` is deliberately NOT cleared by this function. On success
+   * the fork's own hydration nulls it (that is what makes the branch's first
+   * ingest carry no `expectedVersion`); on failure the superseding session's
+   * value must stay untouched, because the live thread is now someone else's
+   * and tearing down ITS optimistic-concurrency guard would let the next send
+   * clobber whatever another tab wrote — precisely the hazard
+   * `rewindToMessage`'s `onBeforeBranch` contract exists to prevent.
+   *
+   * Returns the minted id on success, or `null` when the fork could not be
+   * confirmed. `null` means the caller is still pointed at a thread it must not
+   * write to, so callers must report failure rather than the reassuring
+   * "continuing in a new thread" copy.
+   */
+  const detachToLocalFork = useCallback(
+    async (
+      messages: UIMessage[],
+      options?: {
+        toolRenderOverrides?: Record<string, ToolRenderOverride>;
+      }
+    ): Promise<{ chatSessionId: string } | null> => {
+      const forkSessionId = await startChatWithMessages(messages, {
+        resetReason: "fork",
+        toolRenderOverrides: options?.toolRenderOverrides,
+      });
+      // Exact match, not "it changed": the live id after a superseded hydration
+      // can be the ORIGINAL (nothing else committed) or a THIRD id (an
+      // interloper's session won). Only our own id proves the fork went live.
+      return chatSessionIdRef.current === forkSessionId
+        ? { chatSessionId: forkSessionId }
+        : null;
+    },
+    [startChatWithMessages]
+  );
+
   const loadChatSession = useCallback(
     async (
       session: {
@@ -4517,6 +4606,7 @@ export function useChatSession(
     // Actions
     resetChat,
     startChatWithMessages,
+    detachToLocalFork,
     loadChatSession,
     syncResumedVersion,
 
