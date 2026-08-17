@@ -371,6 +371,7 @@ describe("validation outcomes", () => {
       serverUrl: "https://example.com/mcp",
       accessToken: null,
       authMethod: "oauth",
+      credentialRetryable: false,
     });
 
     await runConnectionJob("scr_x");
@@ -379,6 +380,29 @@ describe("validation outcomes", () => {
       expect.objectContaining({ outcome: "authentication-failed" })
     );
     // Nothing was probed — there was nothing to probe with.
+    expect(probe.probeMcpServer).not.toHaveBeenCalled();
+  });
+
+  it("retries, rather than re-consenting, when the authorization server was unreachable", async () => {
+    backend.fetchValidationContext.mockResolvedValue({
+      serverUrl: "https://example.com/mcp",
+      accessToken: null,
+      authMethod: "oauth",
+      credentialRetryable: true,
+    });
+
+    await runConnectionJob("scr_x");
+
+    // `authentication-failed` here moves the request to
+    // `awaiting_authorization` and burns one of three OAuth attempts. The
+    // credential is intact and consent cannot reach a server that is down, so
+    // a few minutes of tenant downtime would fail the request for good.
+    expect(backend.reportValidation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        outcome: "retryable",
+        errorCode: "VALIDATION_FAILED",
+      })
+    );
     expect(probe.probeMcpServer).not.toHaveBeenCalled();
   });
 
