@@ -4,9 +4,15 @@ import {
   EgressResolutionError,
   assertAllowedHostedTargetUrl,
   createGuardedFetch,
+  isBlockedEgressHost,
   type EgressHostResolver,
 } from "../hosted-egress-guard.js";
 
+describe("isBlockedEgressHost", () => {
+  it("blocks an empty hostname", () => {
+    expect(isBlockedEgressHost("", true)).toBe(true);
+  });
+});
 /** Never consulted — reaching it means the literal check failed to short-circuit. */
 const exploding: EgressHostResolver = async () => {
   throw new Error("resolver must not be called for an IP literal");
