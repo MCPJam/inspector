@@ -215,16 +215,42 @@ export function useResumedThreadPersistence(
     // need the rail refresh: this is the turn that created the row, so the
     // refresh is how the surface learns its id.
     //
-    // A null baseline does not guarantee a null conflict, though. The baseline
-    // is also cleared mid-stream by every deliberate session change (new chat,
-    // archive-all, reset, a rewind's `onBeforeBranch`), and a turn invalidated
-    // that way can still come back with a `conflict` receipt. Refreshing then
-    // could reattach the session the surface just left, which is exactly what
-    // clearing the baseline was protecting against.
+    // A null baseline does not guarantee a null conflict, though — and the case
+    // that matters is NOT the deliberate session changes (new chat, archive-all,
+    // reset, a rewind's `onBeforeBranch`) this guard used to cite. Every one of
+    // those also mints a new `chatSessionId`, so `consumePersistReceipt` rejects
+    // the turn's receipt outright and this branch sees `null`; it never observes
+    // a conflict on that path at all.
+    //
+    // The path it does observe is a FAILED DETACH. `detachToLocalFork` could not
+    // confirm its fork went live, so the surface stayed on the OLD
+    // `chatSessionId` with `resumedVersion` deliberately preserved, while
+    // `cancelPendingHistorySelection` nulled `activeHistorySessionId` — which is
+    // what leaves the baseline null here. Every later send then carries the stale
+    // `expectedVersion`, the server 409s, and the `conflict` receipt names the
+    // still-live old session, so it passes validation and lands right here.
+    // Swallowing it lost that turn, and every turn after it, in silence.
+    //
+    // So a conflict is routed to `onConflict()` even with no baseline. The
+    // surfaces implement it as a detach, which re-attempts the fork: on success
+    // the user moves to a fresh thread and the loop is broken, and on failure
+    // they at least get the fork-failed notice again instead of nothing.
+    //
+    // This is NOT the immediate re-mint `detachToLocalFork` deliberately refuses.
+    // That one fires inside the failed detach itself, where the second
+    // `queueSessionHydration` would clear a `loadChatSession` still resolving and
+    // yank the user out of the thread they just clicked. This fires at the next
+    // turn boundary — a whole request and stream later — by which point any
+    // hydration that superseded the fork has long since committed.
+    //
+    // The rail refresh stays suppressed on that path: it resolves asynchronously
+    // and could reattach the very session the detach is leaving.
     if (!baseline) {
-      if (receipt?.outcome !== "conflict") {
-        callbacksRef.current.refreshAfterStream();
+      if (receipt?.outcome === "conflict") {
+        callbacksRef.current.onConflict();
+        return;
       }
+      callbacksRef.current.refreshAfterStream();
       return;
     }
 
