@@ -42,11 +42,13 @@ export class WebApiError extends Error {
 export async function webPost<TRequest, TResponse>(
   path: string,
   payload: TRequest,
+  options?: { signal?: AbortSignal },
 ): Promise<TResponse> {
   const response = await authFetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
+    signal: options?.signal,
   });
 
   let body: any = null;
