@@ -45,6 +45,30 @@ export const ANALYTICS_EVENTS = {
 
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
+  /**
+   * One `GET /projects/{p}/sessions` search, emitted from the proxy route —
+   * the chokepoint every surface (in-app chat, MCP worker, REST, CLI) funnels
+   * through, so one event covers all four instead of four instrumentations
+   * that could drift.
+   *
+   * Exists to answer ONE question: does lexical search suffice, or is semantic
+   * search worth building? The signal is `scope`, `itemCount`, and whether the
+   * caller pages or re-queries. The QUERY STRING is never sent — search terms
+   * are user content and can carry names or secrets someone pasted in.
+   *
+   * RE-QUERY ANALYSIS FROM THIS EVENT IS AN APPROXIMATION, and reading it as
+   * exact will overstate what it shows. `distinct_id` plus timestamps identify
+   * NEARBY SEARCHES BY THE SAME CREDENTIAL, not true refinement chains: no
+   * conversation identity crosses the proxy, so two agents working in parallel
+   * under one API key look identical to one agent refining its query. Use it
+   * for order-of-magnitude reads ("are zero-result searches common?"), not for
+   * precise funnels. If that coarseness turns out to block the
+   * semantic-search decision, the named follow-up is a privacy-safe
+   * per-conversation search-attempt id — deliberately NOT built now, because
+   * it is a new identifier crossing a public boundary and should not be minted
+   * on the chance it might be useful.
+   */
+  api_sessions_search: { source: "server" },
 
   // --- Skills (exemplar migrated area) ---
   skill_deleted: { source: "client" },
@@ -75,6 +99,10 @@ export const ANALYTICS_EVENTS = {
   cancel_button_clicked: { source: "client" },
   chat_attachment_button_clicked: { source: "client" },
   chat_cleared: { source: "client" },
+  // "Change protocol version" on the chat error banner, shown when a
+  // connection pins an MCP protocol version the server doesn't offer; props:
+  // location, has_host_id (false ⇒ the link fell back to the clients list).
+  change_protocol_version_clicked: { source: "client" },
   chat_model_selector_clicked: { source: "client" },
   chat_model_selector_manage_org_models_clicked: { source: "client" },
   chat_options_plus_clicked: { source: "client" },
@@ -85,9 +113,9 @@ export const ANALYTICS_EVENTS = {
   chat_voice_input_recording_canceled: { source: "client" },
   chat_voice_input_recording_started: { source: "client" },
   chat_voice_input_recording_stopped: { source: "client" },
-  chatbox_bootstrap_silent_failure: { source: "client" },
-  chatbox_bootstrap_silent_success: { source: "client" },
-  chatbox_bootstrap_started: { source: "client" },
+  scenario_bootstrap_silent_failure: { source: "client" },
+  scenario_bootstrap_silent_success: { source: "client" },
+  scenario_bootstrap_started: { source: "client" },
   client_builder_viewed: { source: "client" },
   client_config_saved: { source: "client" },
   client_created: { source: "client" },

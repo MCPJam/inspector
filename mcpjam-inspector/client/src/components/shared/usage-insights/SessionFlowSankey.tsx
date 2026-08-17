@@ -16,7 +16,7 @@ import {
   type SankeyStage,
   type UsageBreakdown,
 } from "@/hooks/useUsageInsights";
-import { type InsightsSelection } from "@/hooks/chatbox-usage-filters";
+import { type InsightsSelection } from "@/hooks/scenario-usage-filters";
 import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
 import type { ClusterTuning } from "@/lib/cluster-tuning";
 import {
@@ -64,7 +64,7 @@ interface SessionFlowSankeyProps {
   /**
    * Stretch into the parent height and re-lay the diagram to match the
    * available pane (run-detail Insights). Default keeps content-sized height
-   * for scrollable surfaces like the chatbox usage panel.
+   * for scrollable surfaces like the scenario usage panel.
    */
   fillHeight?: boolean;
 }
@@ -304,7 +304,7 @@ export function SessionFlowSankey({
   const analysisInFlight =
     latestRun?.status === "queued" || latestRun?.status === "running";
   // What the first column is called on this surface, for banner copy —
-  // "journeys" on the swarm panel, "goals" on the chatbox one.
+  // "journeys" on the swarm panel, "goals" on the scenario one.
   const goalNoun = (stageTitles?.goal ?? STAGE_TITLES.goal).toLowerCase();
   const foldedTotal = STAGE_ORDER.reduce(
     (sum, stage) => sum + (sankey.foldedByStage?.[stage] ?? 0),
@@ -324,7 +324,7 @@ export function SessionFlowSankey({
           ? "h-full min-h-0 overflow-hidden px-0 py-1"
           : "border-b px-5 py-4",
       )}
-      data-testid="chatbox-insights-sankey"
+      data-testid="scenario-insights-sankey"
       data-fill-height={fillHeight ? "true" : undefined}
     >
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-2">
@@ -349,20 +349,18 @@ export function SessionFlowSankey({
             </TooltipContent>
           </Tooltip>
         </div>
-        <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="h-0.5 w-4 rounded-full bg-warning" />
-            Outcome and sentiment disagree
-          </span>
-          {foldedTotal > 0 ? (
-            <span>
-              {foldedTotal} smaller {foldedTotal === 1 ? "theme" : "themes"}{" "}
-              folded
-            </span>
-          ) : null}
-          {headerActions}
-          {tuningControl}
-        </div>
+        {foldedTotal > 0 || headerActions || tuningControl ? (
+          <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
+            {foldedTotal > 0 ? (
+              <span>
+                {foldedTotal} smaller {foldedTotal === 1 ? "theme" : "themes"}{" "}
+                folded
+              </span>
+            ) : null}
+            {headerActions}
+            {tuningControl}
+          </div>
+        ) : null}
       </div>
 
       {scan?.truncated ? (

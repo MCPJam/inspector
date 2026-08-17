@@ -134,7 +134,7 @@ vi.mock("@/lib/swarm-api", async (importOriginal) => {
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({

@@ -1,7 +1,7 @@
 /**
  * Load-bearing byte-equivalence snapshot for `handleMCPJamFreeChatModel`.
  *
- * Stage 1 of the synthetic-chatbox refactor extracts a new
+ * Stage 1 of the synthetic-scenario refactor extracts a new
  * `runAssistantTurn` public surface that the live chat handler is
  * expected to delegate to. This test pins the SSE chunk sequence
  * emitted by the engine for a fixed input fixture so the refactor can

@@ -21,6 +21,7 @@ import {
   Loader2,
   Layers,
   Cable,
+  MessagesSquare,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
@@ -95,9 +96,35 @@ interface NavSection {
 }
 
 /**
+ * Every flag key the sidebar actually RESOLVES into the `featureFlags` map
+ * inside `MCPSidebar`. A nav item's `featureFlag` / `hiddenByFlag` must appear
+ * here or the item is invisible forever: `filterByFeatureFlags` reads
+ * `flags[key]` as `undefined`, treats it as off, and nothing ever calls the
+ * flag — so PostHog shows it as never evaluated and the cause looks like a
+ * rollout problem rather than a missing map entry. The Sessions item shipped
+ * exactly that way. `mcp-sidebar-feature-flags.test.ts` fails if the two lists
+ * drift again.
+ */
+export const SIDEBAR_RESOLVED_FLAG_KEYS = [
+  "mcpjam-learning",
+  "sandboxes-enabled",
+  "registry-enabled",
+  "mcpjam-conformance",
+  "mcpjam-compatibility",
+  "hosts-enabled",
+  "home-page-enabled",
+  "xaa",
+  "project-environments-enabled",
+  "unified-sessions-enabled",
+] as const;
+
+/**
  * Filter navigation items based on active feature flags.
  * Items with `featureFlag` are shown only when that flag is enabled.
  * Items with `hiddenByFlag` are hidden when that flag is enabled.
+ *
+ * A key missing from `flags` counts as OFF — see
+ * {@link SIDEBAR_RESOLVED_FLAG_KEYS}.
  */
 export function filterByFeatureFlags(
   sections: NavSection[],
@@ -209,20 +236,28 @@ export const navigationSections: NavSection[] = [
         url: "/user-testing",
         icon: Users,
         featureFlag: "sandboxes-enabled",
-        billingFeature: "chatboxes",
+        billingFeature: "scenarios",
       },
       {
         title: "Swarms",
         url: "/swarms",
         icon: Network,
         featureFlag: "sandboxes-enabled",
-        billingFeature: "chatboxes",
+        billingFeature: "scenarios",
       },
       {
         title: "Evaluate",
         url: "/evals",
         icon: FlaskConical,
         billingFeature: "evals",
+      },
+      {
+        // Cross-surface session feed (Playground + User Testing + Evals +
+        // Swarms). Route-guarded on the same flag (`SessionsRoute`).
+        title: "Sessions",
+        url: "/sessions",
+        icon: MessagesSquare,
+        featureFlag: "unified-sessions-enabled",
       },
     ],
   },
@@ -426,6 +461,9 @@ export function MCPSidebar({
   const projectEnvironmentsEnabled = useFeatureFlagEnabled(
     "project-environments-enabled"
   );
+  const unifiedSessionsEnabled = useFeatureFlagEnabled(
+    "unified-sessions-enabled"
+  );
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
   // Until WorkOS + Convex resolve the session we don't yet know guest-vs-authed
@@ -502,6 +540,10 @@ export function MCPSidebar({
       xaa: xaaEnabled === true,
       "project-environments-enabled":
         projectEnvironmentsEnabled === true && isAuthenticated,
+      // Project-scoped like the two above: the feed needs a project, and
+      // `SessionsRoute` renders a "needs a project" empty state without one.
+      "unified-sessions-enabled":
+        unifiedSessionsEnabled === true && isAuthenticated,
     }),
     [
       learningEnabled,
@@ -511,6 +553,7 @@ export function MCPSidebar({
       compatibilityEnabled,
       xaaEnabled,
       projectEnvironmentsEnabled,
+      unifiedSessionsEnabled,
       isAuthenticated,
     ]
   );

@@ -32,6 +32,28 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   // defense-in-depth for guests if the mount order ever changes; GET-only.
   { pattern: /^\/host-catalog$/, methods: ["GET"] },
   { pattern: /^\/chat-sessions$/ },
+  // The unified sessions feed, reachable by the `search_sessions` platform
+  // tool. The allowlist's stated contract is "exactly the platform MCP tool
+  // surface", and this is on it. Safe because the backend threads the guest
+  // bearer's `guestExternalId` through to `ownsSession`: a guest sees their
+  // own rows and nothing else, which is the same guarantee `/chat-sessions`
+  // above already relies on. GET-only.
+  { pattern: /^\/projects\/[^/]+\/sessions$/, methods: ["GET"] },
+  // Server connections. Guest-allowed on purpose: the whole point of the flow
+  // is that someone with no account can connect a server, authorize it in a
+  // browser, and have the credential stored against their materialized guest
+  // user. These are WRITES, unlike most guest-allowed rules — the backend does
+  // the ownership check on every one, a guest can only ever reach their own
+  // requests, and creation is braked by both a per-user and a tighter
+  // per-guest-IP budget (a guest identity is free to mint, so the per-user cap
+  // alone would cap nothing).
+  { pattern: /^\/server-connections$/, methods: ["POST"] },
+  { pattern: /^\/server-connections\/[^/]+$/, methods: ["GET"] },
+  { pattern: /^\/server-connections\/[^/]+\/cancel$/, methods: ["POST"] },
+  {
+    pattern: /^\/server-connections\/[^/]+\/retry-validation$/,
+    methods: ["POST"],
+  },
   { pattern: /^\/projects$/, methods: ["GET"] },
   { pattern: /^\/models$/, methods: ["GET"] },
   { pattern: /^\/projects\/[^/]+\/servers$/, methods: ["GET"] },
@@ -75,8 +97,8 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
     // hand a guest any future mutation added at the same URL for free.
     methods: ["GET"],
   },
-  { pattern: /^\/projects\/[^/]+\/chatboxes$/ },
-  { pattern: /^\/projects\/[^/]+\/chatboxes\/[^/]+$/ },
+  { pattern: /^\/projects\/[^/]+\/scenarios$/ },
+  { pattern: /^\/projects\/[^/]+\/scenarios\/[^/]+$/ },
 ];
 
 export function isGuestAllowedV1Request(

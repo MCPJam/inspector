@@ -239,7 +239,7 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
 
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 
@@ -325,6 +325,10 @@ const createJourneyMock = vi.fn();
 const updateJourneyMock = vi.fn();
 
 import { SwarmsTab } from "../SwarmsTab";
+// Real class (the `swarm-api` mock spreads the original), so the `instanceof`
+// branch the 402 handling turns on is the one under test.
+import { LaunchJourneyRunError } from "@/lib/swarm-api";
+import { toast } from "@/lib/toast";
 
 function openDescribe() {
   // `/swarms/new` is what opens the flow — mount it the way the router does.
@@ -1023,6 +1027,51 @@ describe("SwarmsTab — New swarm create flow", () => {
     // The surviving journey still launches — a failed sibling doesn't unwind it.
     await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalledTimes(1));
     expect(createPersonaMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("summarizes a credit limit as the credit limit, not as whatever failed first", async () => {
+    // Launches run concurrently, so an unrelated failure can settle BEFORE the
+    // 402. The wave still stops for billing, and the summary has to say so:
+    // rendering the transient reason under "Launched N of M" reads as "retry
+    // the rest", which is exactly what a credit limit cannot fix.
+    generateSwarmPersonaBatchMock.mockResolvedValue({
+      personas: [
+        {
+          persona: { name: "Refund Chaser", role: "Support agent" },
+          journeys: [{ goal: "Refund the charge" }],
+        },
+        {
+          persona: { name: "Billing Dev", role: "Engineer wiring billing" },
+          journeys: [{ goal: "Wire up the subscription webhook" }],
+        },
+        {
+          persona: { name: "Ops Lead", role: "Runs the on-call rotation" },
+          journeys: [{ goal: "Page the on-call engineer" }],
+        },
+      ],
+    });
+    let seq = 0;
+    launchJourneyRunMock.mockImplementation(async () => {
+      seq += 1;
+      if (seq === 1) return { runId: "run-1" };
+      if (seq === 2) throw new Error("upstream unavailable");
+      throw new LaunchJourneyRunError(
+        402,
+        "Your organization's credit limit was reached."
+      );
+    });
+
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await waitFor(() => expect(toast.warning).toHaveBeenCalled());
+    const summary = vi.mocked(toast.warning).mock.calls[0][0] as string;
+    expect(summary).toContain("credit limit");
+    expect(summary).not.toContain("upstream unavailable");
   });
 
   it("stays on Confirm with an explanation when no run launches", async () => {

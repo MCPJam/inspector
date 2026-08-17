@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 import { MessageView } from "../thread/message-view";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 
 // Mock PartSwitch
@@ -171,6 +171,78 @@ describe("MessageView", () => {
       expect(
         screen.queryByTestId("save-as-test-case-stub")
       ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("renderAssistantTurnFooter", () => {
+    it("renders the footer under an assistant message", () => {
+      const message = createMessage({
+        id: "msg-assistant-rated",
+        role: "assistant",
+        parts: [{ type: "text", text: "assistant reply" }],
+      });
+      const renderFooter = vi.fn(() => (
+        <div data-testid="turn-rating-stub">stars</div>
+      ));
+
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          renderAssistantTurnFooter={renderFooter}
+        />
+      );
+
+      expect(renderFooter).toHaveBeenCalledWith(
+        expect.objectContaining({ id: "msg-assistant-rated" })
+      );
+      expect(screen.getByTestId("turn-rating-stub")).toBeInTheDocument();
+    });
+
+    it("does not render the footer for user messages", () => {
+      // The thing being rated is the RESPONSE; a rating widget under the
+      // tester's own prompt has nothing to judge.
+      const message = createMessage({
+        role: "user",
+        parts: [{ type: "text", text: "a prompt" }],
+      });
+      const renderFooter = vi.fn(() => (
+        <div data-testid="turn-rating-stub">stars</div>
+      ));
+
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          renderAssistantTurnFooter={renderFooter}
+        />
+      );
+
+      expect(renderFooter).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("turn-rating-stub")).not.toBeInTheDocument();
+    });
+
+    it("renders the footer outside the hover-only copy actions", () => {
+      // A rating prompt nobody can see until they hover is a rating nobody
+      // leaves, so the footer must not inherit the `opacity-0` block.
+      const message = createMessage({
+        id: "msg-assistant-visible",
+        role: "assistant",
+        parts: [{ type: "text", text: "assistant reply" }],
+      });
+
+      renderMessageView(
+        <MessageView
+          {...defaultProps}
+          message={message}
+          renderAssistantTurnFooter={() => (
+            <div data-testid="turn-rating-stub">stars</div>
+          )}
+        />
+      );
+
+      const footer = screen.getByTestId("turn-rating-stub");
+      expect(footer.closest(".opacity-0")).toBeNull();
     });
   });
 
@@ -530,16 +602,16 @@ describe("MessageView", () => {
       expect(screen.getByLabelText("GPT-4 assistant")).toBeInTheDocument();
     });
 
-    it("hides the leading assistant avatar in chatbox host-style contexts", () => {
+    it("hides the leading assistant avatar in scenario host-style contexts", () => {
       const message = createMessage({
         role: "assistant",
         parts: [{ type: "text", text: "Hello" }],
       });
 
       renderMessageView(
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <MessageView {...defaultProps} message={message} />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       );
 
       expect(screen.queryByRole("img")).not.toBeInTheDocument();

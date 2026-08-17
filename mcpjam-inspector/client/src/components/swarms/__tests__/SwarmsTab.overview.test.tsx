@@ -306,7 +306,7 @@ vi.mock("@/hooks/useViews", () => ({
   useDbUserReady: () => true,
   useProjectServers: () => ({ servers: [], isLoading: false }),
 }));
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/lib/toast", () => ({
@@ -674,7 +674,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
       "Swarm run-2b"
     );
     expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
-    expect(await screen.findByTestId("swarm-insights-statline")).toBeTruthy();
+    expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Personas" })).toBeNull();
     expect(screen.getByRole("button", { name: "Insights" })).toBeTruthy();
@@ -797,6 +797,71 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     );
     expect(sessions).toHaveLength(1);
     expect(sessions[0]!.getAttribute("data-session-id")).toBe("thread-fail");
+  });
+});
+
+describe("Overview — goal completion trend", () => {
+  it("renders the daily trend strip when the window has graded days", async () => {
+    overviewData = {
+      ...overviewData!,
+      goalCompletion: {
+        gradedCount: 20,
+        passedCount: 11,
+        passRate: 11 / 20,
+        runsWithGrades: 3,
+        trend: [
+          { dayStartMs: NOW - 2 * 86_400_000, gradedCount: 8, passedCount: 4, passRate: 0.5 },
+          { dayStartMs: NOW - 86_400_000, gradedCount: 12, passedCount: 7, passRate: 7 / 12 },
+        ],
+      },
+    };
+    renderTab();
+    const strip = await screen.findByTestId("swarm-overview-goal-trend");
+    // Window pass rate headline (11/20 = 55%), with its denominators.
+    expect(within(strip).getByText("55%")).toBeTruthy();
+    expect(strip.textContent).toContain("11/20 graded sessions");
+    expect(
+      within(strip).getByTestId("swarm-overview-goal-trend-sparkline"),
+    ).toBeTruthy();
+  });
+
+  it("renders NO strip for a single graded day — one day is a number, not a trend", async () => {
+    overviewData = {
+      ...overviewData!,
+      goalCompletion: {
+        gradedCount: 8,
+        passedCount: 4,
+        passRate: 0.5,
+        runsWithGrades: 1,
+        trend: [
+          { dayStartMs: NOW - 86_400_000, gradedCount: 8, passedCount: 4, passRate: 0.5 },
+        ],
+      },
+    };
+    renderTab();
+    await screen.findByTestId("swarm-overview-runs");
+    expect(screen.queryByTestId("swarm-overview-goal-trend")).toBeNull();
+  });
+
+  it("renders NO strip when the window pass rate is null — nothing honest to headline", async () => {
+    // Can't happen from today's server (trend buckets imply grades), but the
+    // strip reads wire data and must not render "—%" over a sparkline.
+    overviewData = {
+      ...overviewData!,
+      goalCompletion: {
+        gradedCount: 0,
+        passedCount: 0,
+        passRate: null,
+        runsWithGrades: 0,
+        trend: [
+          { dayStartMs: NOW - 2 * 86_400_000, gradedCount: 1, passedCount: 1, passRate: 1 },
+          { dayStartMs: NOW - 86_400_000, gradedCount: 1, passedCount: 0, passRate: 0 },
+        ],
+      },
+    };
+    renderTab();
+    await screen.findByTestId("swarm-overview-runs");
+    expect(screen.queryByTestId("swarm-overview-goal-trend")).toBeNull();
   });
 });
 

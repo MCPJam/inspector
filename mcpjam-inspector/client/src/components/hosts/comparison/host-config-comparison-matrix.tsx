@@ -12,7 +12,7 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
-import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import type { HostThemeMode } from "@/lib/client-styles";
 import {
   fieldDiverges,
@@ -845,7 +845,7 @@ function HostColumnHeader({
   themeMode: HostThemeMode;
   verifyBaseUrl?: string;
 }) {
-  const logoSrc = getChatboxHostLogo(
+  const logoSrc = getScenarioHostLogo(
     subject.hostStyle,
     subject.config.chatUiOverride,
     themeMode

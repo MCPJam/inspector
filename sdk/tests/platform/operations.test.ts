@@ -3,18 +3,20 @@ import {
   callServerToolOperation,
   closeTunnelOperation,
   createEvalSuiteOperation,
+  createHostOperation,
   cancelEvalRunOperation,
   createTunnelOperation,
   diagnoseServerOperation,
-  getChatboxOperation,
+  getScenarioOperation,
   runEvalCaseOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getPluginVersionOperation,
   getServerPromptOperation,
-  listChatboxesOperation,
+  listScenariosOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
@@ -27,6 +29,7 @@ import {
   PlatformApiClient,
   PlatformApiError,
   ALL_OPERATIONS,
+  publishScenarioOperation,
   readServerResourceOperation,
   runEvalSuiteOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -212,7 +215,13 @@ const PLUGIN_VERSION = {
   bundleHash: "hash-abc",
   manifestHash: "hash-manifest",
   status: "ready",
-  componentCounts: { skills: 1, servers: 1, apps: 0, assets: 0, unsupported: 0 },
+  componentCounts: {
+    skills: 1,
+    servers: 1,
+    apps: 0,
+    assets: 0,
+    unsupported: 0,
+  },
   servers: [
     {
       componentId: "psc-1",
@@ -236,7 +245,7 @@ const PLUGIN_VERSION = {
   readyAt: 2,
 };
 
-const CHATBOXES = [
+const SCENARIOS = [
   {
     id: "box-1",
     projectId: "project-new",
@@ -254,8 +263,8 @@ const CHATBOXES = [
   },
 ];
 
-const CHATBOX_DETAIL = {
-  ...CHATBOXES[0],
+const SCENARIO_DETAIL = {
+  ...SCENARIOS[0],
   modelId: "anthropic/claude-haiku-4.5",
   systemPrompt: "Be helpful.",
   temperature: 0.3,
@@ -282,9 +291,42 @@ const SESSIONS = [
   },
 ];
 
+/** One unified-feed row, as `GET /projects/{p}/sessions` returns it. */
+const SESSION_SUMMARIES = [
+  {
+    id: "k57abc",
+    chatSessionId: "wire-uuid-1",
+    projectId: "project-new",
+    sourceType: "direct",
+    origin: null,
+    status: "active",
+    synthetic: false,
+    lockReason: null,
+    title: "Refund flow",
+    firstMessagePreview: "how do refunds work",
+    visibility: "private",
+    ownedByViewer: true,
+    startedAt: 10,
+    lastActivityAt: 50,
+    modelId: "claude-opus-4-8",
+    messageCount: 4,
+    parentRef: null,
+    link: {
+      path: "/playground?conversation=wire-uuid-1&project=project-new",
+      url: "https://app.mcpjam.com/playground?conversation=wire-uuid-1&project=project-new",
+    },
+  },
+];
+
 type FixtureOverrides = {
   servers?: unknown[];
   suites?: unknown[];
+  /**
+   * Replaces the sessions envelope wholesale, so a test can model an OLD
+   * backend: one that ignored the unknown `scope` param, ran a title search,
+   * and answered without the echo marker.
+   */
+  sessionsEnvelope?: Record<string, unknown>;
 };
 
 function makeClient(overrides: FixtureOverrides = {}): {
@@ -318,6 +360,15 @@ function makeClient(overrides: FixtureOverrides = {}): {
           caseUpsert: { committed: [{ name: "case-1" }], failed: [] },
         },
         { status: 201 }
+      );
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/sessions$/.test(path)) {
+      return Response.json(
+        overrides.sessionsEnvelope ?? {
+          items: SESSION_SUMMARIES,
+          scope: url.searchParams.get("scope") ?? "titles",
+          nextCursor: "cursor-2",
+        }
       );
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites$/.test(path)) {
@@ -422,11 +473,41 @@ function makeClient(overrides: FixtureOverrides = {}): {
       const serverId = decodeURIComponent(path.split("/")[6] ?? "");
       return Response.json({ serverId, status: "closed" });
     }
-    if (/^\/api\/v1\/projects\/[^/]+\/chatboxes$/.test(path)) {
-      return Response.json({ items: CHATBOXES });
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/environments\/[^/]+\/scenario$/.test(path)
+    ) {
+      expect(init?.method).toBe("PUT");
+      const environmentId = decodeURIComponent(path.split("/")[6] ?? "");
+      const requestBody =
+        init?.body === undefined
+          ? {}
+          : (JSON.parse(String(init.body)) as Record<string, unknown>);
+      // `env-existing` is already published: the route ignores create-time
+      // overrides and says so, exactly as the real API does.
+      const created = environmentId !== "env-existing";
+      const overridesSent = Object.keys(requestBody).length > 0;
+      return Response.json(
+        {
+          id: "scenario-1",
+          environmentId,
+          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
+          mode: created
+            ? ((requestBody.mode as string) ?? "project_members")
+            : "anyone_with_link",
+          accessVersion: 1,
+          link: "https://app.mcpjam.com/s/checkout?t=abc",
+          created,
+          ...(!created && overridesSent ? { overridesIgnored: true } : {}),
+          requestBody,
+        },
+        { status: created ? 201 : 200 }
+      );
     }
-    if (/^\/api\/v1\/projects\/[^/]+\/chatboxes\/[^/]+$/.test(path)) {
-      return Response.json(CHATBOX_DETAIL);
+    if (/^\/api\/v1\/projects\/[^/]+\/scenarios$/.test(path)) {
+      return Response.json({ items: SCENARIOS });
+    }
+    if (/^\/api\/v1\/projects\/[^/]+\/scenarios\/[^/]+$/.test(path)) {
+      return Response.json(SCENARIO_DETAIL);
     }
     if (path === "/api/v1/chat-sessions") {
       return Response.json({ items: SESSIONS });
@@ -1124,41 +1205,118 @@ describe("eval run polling operations", () => {
   });
 });
 
-describe("chatbox operations", () => {
-  it("lists the project's chatboxes", async () => {
+describe("scenario operations", () => {
+  it("lists the project's scenarios", async () => {
     const { client } = makeClient();
 
-    const result = await listChatboxesOperation.execute({}, { client });
+    const result = await listScenariosOperation.execute({}, { client });
 
     expect(result.project.id).toBe("project-new");
-    expect(result.items).toEqual(CHATBOXES);
+    expect(result.items).toEqual(SCENARIOS);
   });
 
-  it("resolves a chatbox by name and fetches its detail", async () => {
+  it("resolves a scenario by name and fetches its detail", async () => {
     const { client, fetchMock } = makeClient();
 
-    const result = await getChatboxOperation.execute(
-      { chatbox: "support" },
+    const result = await getScenarioOperation.execute(
+      { scenario: "support" },
       { client }
     );
 
-    expect(result.chatbox).toEqual(CHATBOX_DETAIL);
-    expect(callsTo(fetchMock, "/chatboxes/box-1")[0]?.pathname).toBe(
-      "/api/v1/projects/project-new/chatboxes/box-1"
+    expect(result.scenario).toEqual(SCENARIO_DETAIL);
+    expect(callsTo(fetchMock, "/scenarios/box-1")[0]?.pathname).toBe(
+      "/api/v1/projects/project-new/scenarios/box-1"
     );
   });
 
-  it("lists the available chatboxes when the selector misses", async () => {
+  it("lists the available scenarios when the selector misses", async () => {
     const { client } = makeClient();
 
-    const error = await getChatboxOperation
-      .execute({ chatbox: "missing" }, { client })
+    const error = await getScenarioOperation
+      .execute({ scenario: "missing" }, { client })
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(PlatformApiError);
     expect((error as PlatformApiError).message).toContain(
       "Support (id: box-1)"
     );
+  });
+});
+
+describe("publishScenarioOperation", () => {
+  it("forwards the create-time overrides verbatim in the PUT body", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({
+        environment: "env-1",
+        name: "Checkout flow",
+        description: "Guided checkout walkthrough",
+        mode: "invited_only",
+      }),
+      { client }
+    );
+
+    const [request] = fetchMock.mock.calls.filter(([target]) =>
+      String(target).includes("/scenario")
+    );
+    expect(new URL(String(request?.[0])).pathname).toBe(
+      "/api/v1/projects/project-new/environments/env-1/scenario"
+    );
+    expect(JSON.parse(String((request?.[1] as RequestInit).body))).toEqual({
+      name: "Checkout flow",
+      description: "Guided checkout walkthrough",
+      mode: "invited_only",
+    });
+    expect(result.scenario.created).toBe(true);
+    expect(result.scenario.mode).toBe("invited_only");
+    expect(result.overridesIgnored).toBeUndefined();
+  });
+
+  it("sends no body at all when there are no overrides", async () => {
+    // The pre-override wire shape, preserved: a bodyless PUT is the common
+    // case and what existing callers already produce.
+    const { client, fetchMock } = makeClient();
+
+    await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({ environment: "env-1" }),
+      { client }
+    );
+
+    const [request] = fetchMock.mock.calls.filter(([target]) =>
+      String(target).includes("/scenario")
+    );
+    expect((request?.[1] as RequestInit).body).toBeUndefined();
+  });
+
+  it("hoists overridesIgnored when a republish discarded the overrides", async () => {
+    const { client } = makeClient();
+
+    const result = await publishScenarioOperation.execute(
+      publishScenarioOperation.inputSchema.parse({
+        environment: "env-existing",
+        mode: "invited_only",
+      }),
+      { client }
+    );
+
+    // The response's mode is the real one — the caller asked for
+    // `invited_only` and must learn the link is NOT restricted.
+    expect(result.scenario.created).toBe(false);
+    expect(result.scenario.mode).toBe("anyone_with_link");
+    expect(result.overridesIgnored).toBe(true);
+  });
+
+  it("rejects a mode outside the enum before any request", async () => {
+    const { fetchMock } = makeClient();
+
+    expect(
+      publishScenarioOperation.inputSchema.safeParse({
+        environment: "env-1",
+        mode: "everyone",
+      }).success
+    ).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
@@ -1184,8 +1342,8 @@ describe("plugin operations", () => {
     );
 
     expect(result).toEqual(PLUGIN_VERSION);
-    const paths = fetchMock.mock.calls.map((call) =>
-      new URL(String(call[0])).pathname
+    const paths = fetchMock.mock.calls.map(
+      (call) => new URL(String(call[0])).pathname
     );
     expect(paths).toEqual(["/api/v1/plugin-versions/pv-1"]);
   });
@@ -1311,10 +1469,176 @@ describe("closeTunnelOperation", () => {
   });
 });
 
+describe("searchSessionsOperation", () => {
+  it("puts the query, scope, and CSV sourceTypes on the wire", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await searchSessionsOperation.execute(
+      {
+        query: "refund",
+        scope: "transcripts",
+        project: "new",
+        sourceTypes: ["direct", "eval"],
+        status: "archived",
+        limit: 25,
+        cursor: "cursor-1",
+      },
+      { client }
+    );
+
+    const url = callsTo(fetchMock, "/sessions")[0];
+    expect(url?.pathname).toBe("/api/v1/projects/project-new/sessions");
+    expect(url?.searchParams.get("q")).toBe("refund");
+    expect(url?.searchParams.get("scope")).toBe("transcripts");
+    // ONE comma-joined param, not repeated keys — that is what the endpoint
+    // parses.
+    expect(url?.searchParams.get("sourceType")).toBe("direct,eval");
+    expect(url?.searchParams.get("status")).toBe("archived");
+    expect(url?.searchParams.get("limit")).toBe("25");
+    // The cursor passes through unrenamed; it is opaque.
+    expect(url?.searchParams.get("cursor")).toBe("cursor-1");
+
+    expect(result.project.id).toBe("project-new");
+    expect(result.scope).toBe("transcripts");
+    expect(result.items).toEqual(SESSION_SUMMARIES);
+    expect(result.nextCursor).toBe("cursor-2");
+  });
+
+  it("defaults to the titles scope and sends no sourceType filter", async () => {
+    const { client, fetchMock } = makeClient();
+
+    const result = await searchSessionsOperation.execute(
+      { query: "refund" },
+      { client }
+    );
+
+    const url = callsTo(fetchMock, "/sessions")[0];
+    expect(url?.searchParams.get("scope")).toBe("titles");
+    expect(url?.searchParams.has("sourceType")).toBe(false);
+    expect(result.scope).toBe("titles");
+  });
+
+  it("requires a query — this operation searches, it does not list", async () => {
+    expect(searchSessionsOperation.inputSchema.safeParse({}).success).toBe(
+      false
+    );
+    expect(
+      searchSessionsOperation.inputSchema.safeParse({ query: "   " }).success
+    ).toBe(false);
+  });
+
+  it("rejects an EMPTY sourceTypes array rather than reading it as 'all'", async () => {
+    // `[]` is the dangerous spelling: without `.min(1)` it serializes to no
+    // filter, silently widening a deliberately narrowed search back to every
+    // surface.
+    expect(
+      searchSessionsOperation.inputSchema.safeParse({
+        query: "refund",
+        sourceTypes: [],
+      }).success
+    ).toBe(false);
+  });
+
+  it("rejects a blank query inside execute(), not only in the schema", async () => {
+    // The CLI binding and other raw callers reach `execute` without parsing
+    // the schema, and the endpoint reads a blank `q` as an EMPTY SEARCH — so
+    // an unguarded blank would return the project's recency feed from an
+    // operation that promises never to list.
+    const { client, fetchMock } = makeClient();
+
+    await expect(
+      searchSessionsOperation.execute({ query: "   " }, { client })
+    ).rejects.toMatchObject({ code: "VALIDATION_ERROR" });
+    expect(callsTo(fetchMock, "/sessions")).toHaveLength(0);
+  });
+
+  it("omits nextCursor entirely on the last page", async () => {
+    // Absent, not `undefined`: callers that test with `in` or serialize the
+    // result can tell the difference.
+    const { client } = makeClient({
+      sessionsEnvelope: { items: SESSION_SUMMARIES, scope: "titles" },
+    });
+
+    const result = await searchSessionsOperation.execute(
+      { query: "refund" },
+      { client }
+    );
+    expect("nextCursor" in result).toBe(false);
+  });
+
+  it("rejects an unknown scope", async () => {
+    expect(
+      searchSessionsOperation.inputSchema.safeParse({
+        query: "refund",
+        scope: "bodies",
+      }).success
+    ).toBe(false);
+  });
+
+  it("fails CLOSED when an old backend answers a transcript search with no scope marker", async () => {
+    // The skew case: a deployment that predates `scope` ignores the unknown
+    // param, runs a TITLE search, and returns 200. Handing those rows back as
+    // transcript results would be an answer the caller cannot tell is wrong.
+    const { client } = makeClient({
+      sessionsEnvelope: { items: SESSION_SUMMARIES },
+    });
+
+    await expect(
+      searchSessionsOperation.execute(
+        { query: "refund", scope: "transcripts" },
+        { client }
+      )
+    ).rejects.toMatchObject({
+      code: "UNSUPPORTED",
+      message: expect.stringContaining("scope=titles"),
+    });
+  });
+
+  it("also fails closed when the backend echoes a DIFFERENT scope", async () => {
+    const { client } = makeClient({
+      sessionsEnvelope: { items: SESSION_SUMMARIES, scope: "titles" },
+    });
+
+    await expect(
+      searchSessionsOperation.execute(
+        { query: "refund", scope: "transcripts" },
+        { client }
+      )
+    ).rejects.toMatchObject({ code: "UNSUPPORTED" });
+  });
+
+  it("does NOT require the marker for a titles search", async () => {
+    // An old backend runs a title search anyway, so its unmarked answer is
+    // correct. Demanding the marker here would break every current caller
+    // against an older deployment for no safety gain.
+    const { client } = makeClient({
+      sessionsEnvelope: { items: SESSION_SUMMARIES },
+    });
+
+    const result = await searchSessionsOperation.execute(
+      { query: "refund" },
+      { client }
+    );
+    expect(result.scope).toBe("titles");
+    expect(result.items).toEqual(SESSION_SUMMARIES);
+  });
+
+  it("returns each item's link so a caller can open what it found", async () => {
+    const { client } = makeClient();
+    const result = await searchSessionsOperation.execute(
+      { query: "refund" },
+      { client }
+    );
+    expect(result.items[0]?.link.path).toContain("/playground?conversation=");
+    expect(result.items[0]?.link.url).toContain("https://");
+  });
+});
+
 describe("operation catalog consistency", () => {
   const MINIMAL_INPUTS: Record<string, Record<string, unknown>> = {
     get_me: {},
     list_models: {},
+    list_organizations: {},
     list_projects: {},
     create_project: { name: "p" },
     update_project: { project: "p", name: "renamed" },
@@ -1327,6 +1651,8 @@ describe("operation catalog consistency", () => {
     update_project_server: { serverId: "s", body: { name: "renamed" } },
     delete_project_server: { serverId: "s" },
     show_servers: {},
+    connect_project_server: { url: "https://example.com/mcp" },
+    get_project_server_connection_status: { connectionRequestId: "scr_abc" },
     diagnose_server: { server: "s" },
     validate_server: { server: "s" },
     export_server: { server: "s" },
@@ -1365,14 +1691,17 @@ describe("operation catalog consistency", () => {
     delete_eval_case: { suite: "s", case: "c" },
     generate_eval_cases: { suite: "s", prompt: "q" },
     get_eval_run: { project: "p", runId: "r" },
+    // baseRunId is deliberately absent from the minimal input: omitting it is
+    // the common path (compare against the nearest completed predecessor).
+    compare_eval_run: { project: "p", runId: "r" },
     list_eval_run_iterations: { project: "p", runId: "r" },
     get_eval_iteration_trace: { project: "p", runId: "r", iterationId: "i" },
     cancel_eval_run: { project: "p", runId: "r" },
     get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
     create_tunnel: { name: "t" },
     close_tunnel: { serverId: "s" },
-    list_chatboxes: {},
-    get_chatbox: { chatbox: "c" },
+    list_scenarios: {},
+    get_scenario: { scenario: "c" },
     list_chat_sessions: {},
     list_journeys: {},
     list_journey_runs: { journey: "j" },
@@ -1382,6 +1711,65 @@ describe("operation catalog consistency", () => {
     cancel_journey_run: { run: "r" },
     publish_scenario: { environment: "e" },
     unpublish_scenario: { environment: "e" },
+    get_capabilities: {},
+    list_personas: {},
+    get_persona: { persona: "pe" },
+    create_persona: { name: "Ada", role: "buyer" },
+    update_persona: { persona: "pe", name: "Ada" },
+    delete_persona: { persona: "pe" },
+    generate_personas: { environmentId: "e" },
+    get_journey: { journey: "j" },
+    create_journey: {
+      goal: "buy a thing",
+      persona: "pe",
+      sessionsPerTarget: 1,
+      maxTurns: 8,
+    },
+    update_journey: { journey: "j", goal: "buy two things" },
+    archive_journey: { journey: "j" },
+    generate_journeys: {
+      environmentId: "e",
+      persona: { name: "Ada", role: "buyer" },
+    },
+    list_swarms: {},
+    get_swarm: { swarm: "sw" },
+    create_swarm: { name: "checkout", sessionsPerTarget: 1, maxTurns: 8 },
+    update_swarm: { swarm: "sw", name: "checkout v2" },
+    archive_swarm: { swarm: "sw" },
+    get_swarms_overview: {},
+    get_journey_run_scorecard: { run: "r" },
+    list_swarm_findings: {},
+    dismiss_swarm_finding: { finding: "f" },
+    undismiss_swarm_finding: { finding: "f" },
+    get_wave_insights: { wave: "w" },
+    request_wave_insights: { wave: "w" },
+    cancel_wave_insights: { wave: "w" },
+    get_user_testing_scenario: { scenario: "cb" },
+    update_user_testing_scenario: { scenario: "cb", name: "Checkout" },
+    list_user_testing_sessions: { scenario: "cb" },
+    get_user_testing_session: { scenario: "cb", session: "s" },
+    get_user_testing_metrics: { scenario: "cb" },
+    get_user_testing_usage: { scenario: "cb" },
+    list_user_testing_findings: { scenario: "cb" },
+    get_user_testing_signals: { scenario: "cb" },
+    get_user_testing_insights: { scenario: "cb", window: "w" },
+    request_user_testing_insights: { scenario: "cb" },
+    cancel_user_testing_insights: { scenario: "cb", window: "w" },
+    dismiss_user_testing_finding: { scenario: "cb", finding: "f" },
+    undismiss_user_testing_finding: { scenario: "cb", finding: "f" },
+    set_user_testing_guest_execution: {
+      scenario: "cb",
+      enabled: true,
+      computerEnabled: false,
+      sharedSkillsEnabled: false,
+      dailyCreditCap: 100,
+      dailyComputerStartCap: 0,
+      maxConcurrentComputers: 0,
+    },
+    rotate_user_testing_link: { scenario: "cb" },
+    upsert_user_testing_member: { scenario: "cb", email: "a@example.com" },
+    remove_user_testing_member: { scenario: "cb", member: "a@example.com" },
+    rebind_user_testing_scenario: { scenario: "cb", environmentId: "env_1" },
     list_hosts: {},
     get_host: { host: "h" },
     set_host_servers: { host: "h", serverIds: [] },
@@ -1390,6 +1778,7 @@ describe("operation catalog consistency", () => {
     update_host: { host: "h", name: "renamed" },
     delete_host: { host: "h" },
     list_project_environments: {},
+    get_project_environment_capabilities: {},
     list_project_plugins: {},
     get_plugin_version: { pluginVersionId: "pv" },
     get_project_environment: { environment: "e" },
@@ -1412,6 +1801,7 @@ describe("operation catalog consistency", () => {
     promote_sandbox_image: { image: "i" },
     use_sandbox_image: { image: "i" },
     reset_computer: {},
+    search_sessions: { query: "q" },
     delete_sandbox_image: { image: "i" },
   };
 
@@ -1453,6 +1843,8 @@ describe("operation catalog consistency", () => {
       "close_tunnel",
       "create_project_server",
       "update_project_server",
+      // Creates a connection request, and possibly a disabled server row.
+      "connect_project_server",
       "delete_project_server",
       "create_project",
       "update_project",
@@ -1489,6 +1881,43 @@ describe("operation catalog consistency", () => {
       "use_sandbox_image",
       "reset_computer",
       "delete_sandbox_image",
+      // Swarms authoring. Creating a persona or a journey persists but starts
+      // nothing and spends nothing — `launch_journey_run` above is the call
+      // that costs.
+      "create_persona",
+      "update_persona",
+      "delete_persona",
+      "create_journey",
+      "update_journey",
+      "archive_journey",
+      "create_swarm",
+      "update_swarm",
+      "archive_swarm",
+      // Generation persists NOTHING — it returns drafts — but it runs a model
+      // on the organization's account, and a read that spends is a lie about
+      // what calling it costs.
+      "generate_personas",
+      "generate_journeys",
+      // Insights: dismissal is a judgement someone recorded, and requesting a
+      // pass spends against the org's shared daily budget.
+      "dismiss_swarm_finding",
+      "undismiss_swarm_finding",
+      "request_wave_insights",
+      "cancel_wave_insights",
+      // User testing writes. The exposure controls are the reason `risk`
+      // exists as a separate axis from `readOnly`: rotating a link and
+      // dismissing a finding are both writes, and only one of them can lock
+      // people out of a live scenario.
+      "update_user_testing_scenario",
+      "request_user_testing_insights",
+      "cancel_user_testing_insights",
+      "dismiss_user_testing_finding",
+      "undismiss_user_testing_finding",
+      "set_user_testing_guest_execution",
+      "rotate_user_testing_link",
+      "upsert_user_testing_member",
+      "remove_user_testing_member",
+      "rebind_user_testing_scenario",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
@@ -1589,5 +2018,61 @@ describe("server live operations", () => {
       { client }
     );
     expect(resource.result.requestBody).toEqual({ uri: "file:///a" });
+  });
+});
+
+describe("createHostOperation input", () => {
+  const CONFIG = { hostStyle: "claude", systemPrompt: "" } as const;
+
+  it("requires a pinned model on the config branch", () => {
+    // The forward-client invariant: a client minted without a model cannot back
+    // a headless environment, and the failure would surface at LAUNCH rather
+    // than here. Checked in the schema so an SDK caller is told by the contract
+    // instead of by a 400 it never predicted.
+    expect(
+      createHostOperation.inputSchema.safeParse({ name: "h", config: CONFIG })
+        .success
+    ).toBe(false);
+    expect(
+      createHostOperation.inputSchema.safeParse({
+        name: "h",
+        config: { ...CONFIG, modelId: "   " },
+      }).success
+    ).toBe(false);
+    expect(
+      createHostOperation.inputSchema.safeParse({
+        name: "h",
+        config: { ...CONFIG, modelId: "anthropic/claude-sonnet-4-5" },
+      }).success
+    ).toBe(true);
+  });
+
+  it("reports a degenerate `config: {}` the way the ROUTE does", () => {
+    // `{}` is truthy but picks neither branch. The route answers "provide
+    // exactly one of template or a non-empty config", and that 400 is the one a
+    // caller actually receives — a schema that instead complained about the
+    // missing model would predict an error the surface never returns.
+    const result = createHostOperation.inputSchema.safeParse({
+      name: "h",
+      config: {},
+    });
+    expect(result.success).toBe(false);
+    const messages = result.success
+      ? []
+      : result.error.issues.map((issue) => issue.message);
+    expect(messages).toEqual([
+      "Provide exactly one of `template` or a non-empty `config`.",
+    ]);
+  });
+
+  it("keeps the template branch model-free", () => {
+    // A template carries its own model; the guard is on the config the caller
+    // hands over verbatim.
+    expect(
+      createHostOperation.inputSchema.safeParse({
+        name: "h",
+        template: "claude",
+      }).success
+    ).toBe(true);
   });
 });

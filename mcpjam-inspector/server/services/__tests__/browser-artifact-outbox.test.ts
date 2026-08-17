@@ -111,7 +111,7 @@ afterEach(() => {
 });
 
 describe("createBrowserArtifactOutbox", () => {
-  it("writes a taken batch without a chatbox (the swarm auth branch)", async () => {
+  it("writes a taken batch without a scenario (the swarm auth branch)", async () => {
     const outbox = makeOutbox();
     outbox.take(fakeBrowser([{ observations: [observation()], steps: [step()] }]), 0);
 
@@ -121,8 +121,8 @@ describe("createBrowserArtifactOutbox", () => {
     expect(mutationMock).toHaveBeenCalledTimes(1);
     const [name, args] = mutationMock.mock.calls[0]! as [string, any];
     expect(name).toBe("chatSessions:recordBrowserArtifacts");
-    // No chatboxId/accessVersion ⇒ the mutation authorizes the session owner.
-    expect(args.chatboxId).toBeUndefined();
+    // No scenarioId/accessVersion ⇒ the mutation authorizes the session owner.
+    expect(args.scenarioId).toBeUndefined();
     expect(args.accessVersion).toBeUndefined();
     expect(args.chatSessionId).toBe("swarm_run-1_target-1_0");
     expect(args.promptIndex).toBe(0);
@@ -363,18 +363,18 @@ describe("createBrowserArtifactOutbox", () => {
     expect(uploadVideoBlobMock).not.toHaveBeenCalled();
   });
 
-  it("passes the chatbox auth pair through when the surface has one", async () => {
+  it("passes the scenario auth pair through when the surface has one", async () => {
     const outbox = createBrowserArtifactOutbox({
       chatSessionId: "synth_1",
       convexAuthToken: "token",
-      chatboxId: "cb-1",
+      scenarioId: "cb-1",
       accessVersion: 4,
       logScope: "test",
     });
     outbox.take(fakeBrowser([{ observations: [observation()], steps: [] }]), 0);
     await outbox.flush();
     expect(mutationMock.mock.calls[0]![1]).toMatchObject({
-      chatboxId: "cb-1",
+      scenarioId: "cb-1",
       accessVersion: 4,
     });
   });

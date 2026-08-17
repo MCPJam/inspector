@@ -8,21 +8,25 @@ import {
   threadMatchesUsageFilter,
   type UsageFilterState,
   type UsageSessionFilter,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 import {
   useSharedChatThreadList,
   type SharedChatThread,
 } from "@/hooks/useSharedChatThreads";
-import { SessionReadinessBadge } from "@/components/chatboxes/session-readiness";
+import { SessionReadinessBadge } from "@/components/scenarios/session-readiness";
 import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
+import {
+  feedbackHeadline,
+  formatThumbCounts,
+} from "@/components/connection/share-usage/feedback-headline";
 
 interface ShareUsageThreadListProps {
-  /** Optional: when `threads` is provided (chatbox Usage panel) these are unused. */
-  sourceType?: "chatbox";
+  /** Optional: when `threads` is provided (scenario Usage panel) these are unused. */
+  sourceType?: "scenario";
   sourceId?: string;
   selectedThreadId: string | null;
   onSelectThread: (threadId: string) => void;
-  /** Legacy preset-only filter, for non-chatbox callers (ShareUsageDialog). */
+  /** Legacy preset-only filter, for non-scenario callers (ShareUsageDialog). */
   usageFilter?: UsageSessionFilter;
   /**
    * Preferred: pre-filtered, pre-sorted threads from the panel. When provided,
@@ -30,7 +34,7 @@ interface ShareUsageThreadListProps {
    */
   threads?: SharedChatThread[] | undefined;
   /**
-   * Richer filter state used by the chatbox Usage panel for empty-state copy
+   * Richer filter state used by the scenario Usage panel for empty-state copy
    * and, on the legacy internal-fetch path, to apply chip filters as well.
    */
   filterState?: UsageFilterState;
@@ -48,7 +52,7 @@ export function ShareUsageThreadList({
   const legacyThreads = useSharedChatThreadList(
     providedThreads === undefined && sourceType && sourceId
       ? { sourceType, sourceId }
-      : { sourceType: sourceType ?? "chatbox", sourceId: null }
+      : { sourceType: sourceType ?? "scenario", sourceId: null }
   );
 
   const threads = useMemo(() => {
@@ -128,11 +132,19 @@ export function ThreadCard({
   isSelected: boolean;
   onSelect: () => void;
 }) {
-  const rating = thread.feedbackRating;
+  // The session's rating is its WORST turn (see `scenario-usage-filters.ts`),
+  // so the amber treatment fires on "one turn went badly", not "the average
+  // was low" — which is the cohort a PM opens this list to find.
+  const summary = thread.feedback ?? null;
+  const rating = summary?.min ?? thread.feedbackRating ?? null;
+  const ratingCount = summary?.count ?? thread.feedbackCount ?? 0;
+  // `null` on rows from a backend old enough to send only the flat fields —
+  // those fall back to the bare `min/5` they always showed.
+  const headline = summary ? feedbackHeadline(summary) : null;
+  const hasComment =
+    summary?.hasComment ?? (thread.feedbackComment?.trim().length ?? 0) > 0;
   const needsReview =
-    rating === 1 ||
-    rating === 2 ||
-    (rating === 3 && (thread.feedbackComment?.trim().length ?? 0) > 0);
+    (rating != null && rating <= 2) || (rating === 3 && hasComment);
 
   return (
     <button
@@ -177,7 +189,32 @@ export function ThreadCard({
                 : "text-muted-foreground"
             }`}
           >
-            {rating}/5
+            {/* Average for the headline number, `n×` for how many turns it
+                covers — the worst turn is what the amber tint already says,
+                so repeating it here would spend the row's one number on a
+                fact the color carries.
+
+                A thumbs session has no meaningful average, so it shows its
+                tallies instead; a session holding both shows the BLENDED
+                average (thumbs projected onto the 1–5 axis, down→1/up→5 —
+                `summary.avg` is not a stars-only number) WITH the thumb
+                tallies, because dropping either half would under-report how
+                many turns were judged. */}
+            {headline === null ? (
+              `${rating}/5`
+            ) : headline.kind === "thumbs" ? (
+              formatThumbCounts(headline.up, headline.down)
+            ) : headline.kind === "mixed" ? (
+              `${headline.avg.toFixed(1)}/5 · ${formatThumbCounts(
+                headline.up,
+                headline.down
+              )}`
+            ) : (
+              <>
+                {headline.avg.toFixed(1)}/5
+                {ratingCount > 1 ? ` · ${ratingCount}×` : ""}
+              </>
+            )}
           </span>
         ) : (
           <span className="text-xs text-muted-foreground">No feedback</span>

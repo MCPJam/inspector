@@ -69,7 +69,8 @@ import {
   composeAvailableModels,
 } from "@/components/chat-v2/shared/available-models";
 import { useOutOfCredits } from "@/hooks/useCreditBalance";
-import { isBedrockModelId, isMCPJamGuestAllowedModel } from "@/shared/types";
+import { isMCPJamGuestAllowedModel } from "@/shared/types";
+import { providerForModelId } from "@/shared/model-provider";
 import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
@@ -81,9 +82,9 @@ import {
   getAuthHeaders as getSessionAuthHeaders,
 } from "@/lib/session-token";
 import {
-  classifyChatboxAccessResponse,
+  classifyScenarioAccessResponse,
   patchBodyAccessVersion,
-} from "@/lib/chatbox-access-errors";
+} from "@/lib/scenario-access-errors";
 import {
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
@@ -215,7 +216,7 @@ const HARNESS_RESET_MESSAGES: Record<HarnessResetReason, string | null> = {
   "legacy-cold-resume": null,
 };
 
-// User-facing copy for a chatbox ephemeral-sandbox notice, keyed by reason.
+// User-facing copy for a scenario ephemeral-sandbox notice, keyed by reason.
 //
 // All are shown. A reset is the sharper one: the model may have written files
 // in an earlier turn and will otherwise reason confidently about a filesystem
@@ -311,7 +312,7 @@ export interface UseChatSessionOptions {
   directVisibility?: "private" | "project";
   /** Sanitized organization provider config for org-backed projects */
   hostedOrgModelConfig?: OrgVisibleConfig;
-  /** Hosted runtime context (project, server IDs, OAuth tokens, share/chatbox scope) */
+  /** Hosted runtime context (project, server IDs, OAuth tokens, share/scenario scope) */
   hostedContext?: HostedRuntimeContext;
   /** Minimal UI mode for shared chat (hides diagnostics surfaces only) */
   minimalMode?: boolean;
@@ -333,14 +334,14 @@ export interface UseChatSessionOptions {
    * Phase 3: real host style for direct chat traces. Forwarded into
    * the request body so the backend persists the v2 hostConfig with
    * the user's actual host style rather than defaulting to `'claude'`.
-   * Omitted for chatbox flows — the
-   * backend resolves chatbox host style from the chatbox row.
+   * Omitted for scenario flows — the
+   * backend resolves scenario host style from the scenario row.
    */
   hostStyle?: string;
   /**
    * Host-level opt-in for progressive MCP tool discovery
    * (`search_mcp_tools` / `load_mcp_tools` meta-tools). Sourced from the
-   * caller's resolved host config DTO (per-chatbox, per-host playground
+   * caller's resolved host config DTO (per-scenario, per-host playground
    * column, or project default — caller knows). `undefined` ⇒ backend
    * orchestrator uses its auto policy; `true`/`false` ⇒ explicit
    * host-level override that the orchestrator forwards into
@@ -626,38 +627,22 @@ export interface UseChatSessionReturn {
   inputDisabled: boolean;
 }
 
+/**
+ * Provider for a locked (guest / host-pinned) model id.
+ *
+ * Delegates to the shared classifier so this fallback agrees with the
+ * synthetic-model builder, the public eval API, and the backend mirror.
+ *
+ * TWO INTENTIONAL BEHAVIOR CHANGES from the switch this replaced: a bare
+ * unrecognized id now classifies as `ollama` rather than `openrouter` (bare
+ * ids are the Ollama BYOK shape everywhere else in the app, and no catalog id
+ * is bare), and `mistralai/...` resolves to `mistral` instead of falling
+ * through. `ollama` is also the last-resort answer for a blank id here — the
+ * locked model is display-only, and a null provider would have to be rendered
+ * as something regardless.
+ */
 function inferModelProviderFromId(modelId: string): ModelProvider {
-  // Org Bedrock models persist bare inference-profile ids (no "bedrock/"
-  // prefix), so recognize the id shape before prefix matching.
-  if (isBedrockModelId(modelId)) {
-    return "bedrock";
-  }
-
-  const providerPrefix = modelId.split("/")[0];
-
-  switch (providerPrefix) {
-    case "anthropic":
-    case "azure":
-    case "bedrock":
-    case "openai":
-    case "ollama":
-    case "deepseek":
-    case "google":
-    case "mistral":
-    case "moonshotai":
-    case "openrouter":
-    case "z-ai":
-    case "minimax":
-    case "qwen":
-    case "custom":
-      return providerPrefix;
-    case "x-ai":
-      return "xai";
-    case "meta-llama":
-      return "meta";
-    default:
-      return "openrouter";
-  }
+  return providerForModelId(modelId) ?? "ollama";
 }
 
 function createLockedInitialModel(modelId: string): ModelDefinition {
@@ -1480,10 +1465,10 @@ type HostedSessionScope = {
   projectId?: string | null;
   /**
    * ONE stable key for "what this session executes against", replacing the
-   * previous pair of independently-compared `chatboxId` / `hostId` fields:
+   * previous pair of independently-compared `scenarioId` / `hostId` fields:
    *
    *   `host:<hostId>` | `environment:<environmentId>` |
-   *   `chatbox:<chatboxId>` | `adhoc:<projectId>`
+   *   `scenario:<scenarioId>` | `adhoc:<projectId>`
    *
    * Namespacing matters — the id spaces are different Convex tables, and a bare
    * id comparison would call a host and an environment that happen to share an
@@ -1501,7 +1486,7 @@ type HostedSessionScope = {
 /** Build the {@link HostedSessionScope} target key. Exported for tests. */
 export function hostedTargetKey(input: {
   projectId?: string | null;
-  chatboxId?: string;
+  scenarioId?: string;
   hostId?: string;
   executionTarget?: HostedExecutionTarget;
 }): string {
@@ -1510,7 +1495,7 @@ export function hostedTargetKey(input: {
       ? `environment:${input.executionTarget.environmentId}`
       : `host:${input.executionTarget.hostId}`;
   }
-  if (input.chatboxId) return `chatbox:${input.chatboxId}`;
+  if (input.scenarioId) return `scenario:${input.scenarioId}`;
   if (input.hostId) return `host:${input.hostId}`;
   return `adhoc:${input.projectId ?? ""}`;
 }
@@ -1518,9 +1503,9 @@ export function hostedTargetKey(input: {
 // `accessVersion` is intentionally NOT part of the scope. The chat-reset
 // path uses this comparison to decide when to blow away `chatSessionId` /
 // `messages`, which is only appropriate when *identity* changes (different
-// project, different chatbox, different previewed host). A pure `accessVersion`
-// bump — e.g. from the silent re-redeem triggered by `chatbox_access_stale` —
-// keeps the same chatbox and the same conversation; tearing the chat down on
+// project, different scenario, different previewed host). A pure `accessVersion`
+// bump — e.g. from the silent re-redeem triggered by `scenario_access_stale` —
+// keeps the same scenario and the same conversation; tearing the chat down on
 // those bumps would defeat the purpose of the recovery path.
 //
 // The execution TARGET is part of the scope: switching the previewed host — or,
@@ -1571,7 +1556,7 @@ export function useChatSession(
   const hostedSelectedServerIds = hostedContext?.selectedServerIds ?? [];
   const hostedEnsureServerIds = hostedContext?.ensureServerIds;
   const hostedOAuthTokens = hostedContext?.oauthTokens;
-  const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedScenarioId = hostedContext?.scenarioId;
   const hostedHostId = hostedContext?.hostId;
   // CACHE KEYING ONLY — see `HostedRuntimeContext.presentationHostId`. Never
   // added to a request body or to `hostedTargetKey`: the execution target must
@@ -1598,7 +1583,7 @@ export function useChatSession(
   // effect that depended on it.
   const hostedTargetKeyValue = hostedTargetKey({
     projectId: hostedProjectId,
-    chatboxId: hostedChatboxId,
+    scenarioId: hostedScenarioId,
     hostId: hostedTargetHostId ?? hostedHostId,
     ...(hostedEnvironmentId
       ? {
@@ -1616,8 +1601,8 @@ export function useChatSession(
   const hostedTargetKeyRef = useRef(hostedTargetKeyValue);
   hostedTargetKeyRef.current = hostedTargetKeyValue;
   const hostedAccessVersion = hostedContext?.accessVersion;
-  const hostedChatboxSurface = hostedContext?.chatboxSurface;
-  // Published-chatbox runtime sessions must use the org-aware web engine
+  const hostedScenarioSurface = hostedContext?.scenarioSurface;
+  // Published-scenario runtime sessions must use the org-aware web engine
   // on every platform — their servers resolve by Convex id, which the
   // local /api/mcp engine can't connect. See HostedRuntimeContext.
   const hostedRequiresWebChatApi = hostedContext?.requiresWebChatApi === true;
@@ -1760,7 +1745,7 @@ export function useChatSession(
 
   // Host-level progressive tool discovery toggle. The value comes from the
   // caller — each useChatSession site knows which host config row applies
-  // to its chat surface (per-host playground column, per-chatbox session,
+  // to its chat surface (per-host playground column, per-scenario session,
   // project default for direct chat, etc.) — and the hook just threads it
   // into the request body. Held in a ref so a mid-session flip is
   // reflected on the very next send without remounting.
@@ -1811,7 +1796,7 @@ export function useChatSession(
     options.builtInToolIds ?? options.executionConfig?.builtInToolIds;
   const isHostedGuest = HOSTED_MODE && !workOsUser && !isWorkOsLoading;
   const sharedGuestMode =
-    isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedChatboxId;
+    isHostedGuest && !isAuthLoading && !!hostedProjectId && !!hostedScenarioId;
   const guestMode = sharedGuestMode;
   const skipNextForkDetectionRef = useRef(false);
   const hasResolvedAuthHeadersRef = useRef(false);
@@ -1991,14 +1976,14 @@ export function useChatSession(
             // same store ToolsTab uses; without it there is no stored issuer /
             // granted scopes to widen, so skip.
             //
-            // Chatbox / share-link turns are DELIBERATELY skipped here: their
-            // servers are synthesized in ChatboxChatPage with a placeholder
+            // Scenario / share-link turns are DELIBERATELY skipped here: their
+            // servers are synthesized in ScenarioChatPage with a placeholder
             // URL and never inserted into the dashboard appState, so this
             // lookup returns undefined and the `if (server && ...)` guard below
             // makes the event a safe no-op. That is correct — a share-link
             // visitor (even an authenticated one) does not own the host's MCP
             // servers and cannot re-authorize the owner's OAuth; connect-time
-            // chatbox OAuth is handled separately by `useHostedOAuthGate`.
+            // scenario OAuth is handled separately by `useHostedOAuthGate`.
             const server = resolveScopeStepUpServer(appState, {
               serverId: event.serverId,
               serverName: event.serverName,
@@ -2058,7 +2043,7 @@ export function useChatSession(
           // bounded cap. Responses carry no `method`, so correlate by JSON-RPC
           // id: record outgoing `tools/call` request ids per server, then reset
           // only when a matching successful response arrives. Same store lookup
-          // the insufficient_scope branch uses (a share-link chatbox resolves to
+          // the insufficient_scope branch uses (a share-link scenario resolves to
           // no server, a safe no-op there).
           const log = part.data;
           // Track outgoing `tools/call` ids and evict them on any settled
@@ -2107,7 +2092,7 @@ export function useChatSession(
               part.data.workdir
             );
         } else if (isSandboxNoticeDataPart(part)) {
-          // One-time fact about the chatbox's ephemeral sandbox. Exactly-once
+          // One-time fact about the scenario's ephemeral sandbox. Exactly-once
           // delivery is the BACKEND's job (it marks the notice consumed in the
           // same transaction that hands it over), so this side just renders
           // whatever arrives — no client-side dedupe that a reconnect could
@@ -2196,7 +2181,7 @@ export function useChatSession(
 
   // Build available models — the same composition every picker surface
   // uses (see `composeAvailableModels`); only the org-config source is
-  // chat-specific (chatbox embeds resolve a host-provided project context).
+  // chat-specific (scenario embeds resolve a host-provided project context).
   const outOfCredits = useOutOfCredits();
   const { hostedCatalog } = useHostedModelCatalog();
   const availableModels = useMemo(
@@ -2333,8 +2318,8 @@ export function useChatSession(
 
   const setSelectedModelIds = useCallback(
     (modelIds: string[]) => {
-      // A surface with a pinned model — a hosted chatbox or share link,
-      // where `executionConfig.modelId` names the model the chatbox owner
+      // A surface with a pinned model — a hosted scenario or share link,
+      // where `executionConfig.modelId` names the model the scenario owner
       // chose — is not expressing *this* user's choice. `setSelectedModel`
       // already no-ops for that reason; this setter has to as well, because
       // it ends in `saveSelectedModelId` (`use-persisted-model.ts:150-159`)
@@ -2402,14 +2387,14 @@ export function useChatSession(
       lastChatResponseRef.current = null;
 
       // authFetch owns auth resolution (WorkOS bearer / guest bearer via
-      // the chatbox-installed apiContext) wherever the web engine is in
-      // play — hosted builds, and chatbox runtime sessions on any platform.
+      // the scenario-installed apiContext) wherever the web engine is in
+      // play — hosted builds, and scenario runtime sessions on any platform.
       const useAuthedFetch = HOSTED_MODE || hostedRequiresWebChatApi;
       let response = useAuthedFetch
         ? await authFetch(input, init)
         : await fetch(input, init);
 
-      // Chatbox access recovery. A chatbox turn re-resolves its authoritative
+      // Scenario access recovery. A scenario turn re-resolves its authoritative
       // config server-side on every send, so an open tab can lose access
       // between one send and the next — a rebind, a mode round-trip, a
       // rotated guest identity. The refusal lands here PRE-STREAM (the route
@@ -2418,17 +2403,17 @@ export function useChatSession(
       // the one place a re-redeem + replay is invisible to the tester.
       //
       // DENIED is retried as well as STALE: /redeem re-mints the grant for an
-      // `anyone_with_link` chatbox, so most "denied" verdicts are recoverable
+      // `anyone_with_link` scenario, so most "denied" verdicts are recoverable
       // identity drift rather than a real refusal. Exactly ONE recovery per
       // send — the replay's own verdict is final.
       if (
         !response.ok &&
         useAuthedFetch &&
-        hostedChatboxId &&
+        hostedScenarioId &&
         typeof init?.body === "string" &&
         hostedRefreshAccessSession
       ) {
-        const accessError = await classifyChatboxAccessResponse(response);
+        const accessError = await classifyScenarioAccessResponse(response);
         if (accessError) {
           const recovery = await hostedRefreshAccessSession();
           if (recovery.ok) {
@@ -2440,7 +2425,7 @@ export function useChatSession(
             });
             if (!response.ok) {
               const replayError =
-                await classifyChatboxAccessResponse(response);
+                await classifyScenarioAccessResponse(response);
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
               }
@@ -2477,7 +2462,7 @@ export function useChatSession(
     },
     [
       hostedRequiresWebChatApi,
-      hostedChatboxId,
+      hostedScenarioId,
       hostedRefreshAccessSession,
       hostedOnAccessRevoked,
     ]
@@ -2558,8 +2543,8 @@ export function useChatSession(
     >;
     // Consent capability for the local computer engine — a header, never the
     // body, so it can't land in a persisted transcript. Only on a direct
-    // (non-chatbox) turn whose resolved engine is local; the server re-checks
-    // !HOSTED_MODE + non-guest + non-chatbox + verifies the token.
+    // (non-scenario) turn whose resolved engine is local; the server re-checks
+    // !HOSTED_MODE + non-guest + non-scenario + verifies the token.
     //
     // Scoped to the /api/mcp/chat-v2 path (`!shouldUseOrgAwareChatApi`): the
     // local engine only exists on the local server's mcp route (both this
@@ -2571,13 +2556,13 @@ export function useChatSession(
     const sendLocalEngine =
       !shouldUseOrgAwareChatApi &&
       resolvedLocalEngine &&
-      !hostedChatboxId &&
+      !hostedScenarioId &&
       Boolean(localConsentToken) &&
       authIsMemberRef.current;
     if (sendLocalEngine && localConsentToken) {
       mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
     }
-    // When authFetch carries the request (hosted builds, chatbox runtime
+    // When authFetch carries the request (hosted builds, scenario runtime
     // sessions), it owns the Authorization header — don't double-attach.
     const transportHeaders =
       HOSTED_MODE || hostedRequiresWebChatApi
@@ -2596,10 +2581,10 @@ export function useChatSession(
       if (!hostedProjectId) {
         throw new Error("Hosted chat context is not ready: missing projectId.");
       }
-      const isHostedDirectChat = !hostedChatboxId;
+      const isHostedDirectChat = !hostedScenarioId;
       // Prefer ids resolved by the `sendMessage` preflight (ad-hoc/App servers
       // persisted to real Convex ids); consume once. Fall back to the
-      // pre-resolved selection for surfaces without a preflight (e.g. chatbox).
+      // pre-resolved selection for surfaces without a preflight (e.g. scenario).
       const preflight = resolvedHostedServersRef.current;
       resolvedHostedServersRef.current = null;
       const hostedServerBatch = buildResolvedServerBatchRequest({
@@ -2612,8 +2597,8 @@ export function useChatSession(
         Object.keys(hostedOAuthTokens).length > 0
           ? { oauthTokens: hostedOAuthTokens }
           : {}),
-        ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
-        ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
+        ...(hostedScenarioId ? { scenarioId: hostedScenarioId } : {}),
+        ...(hostedScenarioId && Number.isFinite(hostedAccessVersion)
           ? { accessVersion: hostedAccessVersion }
           : {}),
       });
@@ -2665,14 +2650,14 @@ export function useChatSession(
             }
           : // Host-bound direct preview: forward the saved host id so the server
           // re-resolves the host's authoritative runtime config (harness /
-          // computer included). Only on the direct path — chatbox sessions own
-          // their host via chatboxId and the server ignores hostId when
-          // chatboxId is set.
+          // computer included). Only on the direct path — scenario sessions own
+          // their host via scenarioId and the server ignores hostId when
+          // scenarioId is set.
           isHostedDirectChat && hostedHostId
           ? { hostId: hostedHostId }
           : {}),
-        ...(hostedChatboxId && hostedChatboxSurface
-          ? { surface: hostedChatboxSurface }
+        ...(hostedScenarioId && hostedScenarioSurface
+          ? { surface: hostedScenarioSurface }
           : {}),
       };
     };
@@ -2713,14 +2698,14 @@ export function useChatSession(
                 selectedServers,
                 chatSessionId,
                 // `directVisibility` only applies to direct chat. The
-                // /mcp/chat-v2 route gates it off when chatboxId is present
-                // (owner-preview persists as `sourceType: "chatbox"`), but
+                // /mcp/chat-v2 route gates it off when scenarioId is present
+                // (owner-preview persists as `sourceType: "scenario"`), but
                 // omitting it client-side keeps the body honest about the
                 // session kind.
-                ...(hostedChatboxId ? {} : { directVisibility }),
+                ...(hostedScenarioId ? {} : { directVisibility }),
                 // Host-bound direct preview: forward the saved host id so the
                 // server re-resolves harness/computer authoritatively. Direct
-                // path only — omitted when a chatbox owns the host.
+                // path only — omitted when a scenario owns the host.
                 //
                 // NO `executionTarget` here, by design: the local /api/mcp
                 // engine cannot resolve an environment (it has no Convex read
@@ -2730,7 +2715,7 @@ export function useChatSession(
                 // environment mode — and if a caller ever gets it wrong, the
                 // turn runs as a plain host turn rather than silently claiming
                 // to be an environment run.
-                ...(!hostedChatboxId && !hostedExecutionTarget && hostedHostId
+                ...(!hostedScenarioId && !hostedExecutionTarget && hostedHostId
                   ? { hostId: hostedHostId }
                   : {}),
                 // "This machine": run this host's bash on the local computer
@@ -2754,17 +2739,17 @@ export function useChatSession(
                 ...(localMcpRuntimeRequired
                   ? { localMcpRuntimeRequired: true }
                   : {}),
-                // Phase F: owner-preview / local chatbox sessions persist as
-                // `sourceType: "chatbox"`. Without forwarding the resolved
-                // chatbox identity here, /mcp/chat-v2 derives sourceType
+                // Phase F: owner-preview / local scenario sessions persist as
+                // `sourceType: "scenario"`. Without forwarding the resolved
+                // scenario identity here, /mcp/chat-v2 derives sourceType
                 // from absent fields and the chat is filed as a direct chat
-                // instead of a chatbox session.
-                ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
-                ...(hostedChatboxId && Number.isFinite(hostedAccessVersion)
+                // instead of a scenario session.
+                ...(hostedScenarioId ? { scenarioId: hostedScenarioId } : {}),
+                ...(hostedScenarioId && Number.isFinite(hostedAccessVersion)
                   ? { accessVersion: hostedAccessVersion }
                   : {}),
-                ...(hostedChatboxId && hostedChatboxSurface
-                  ? { surface: hostedChatboxSurface }
+                ...(hostedScenarioId && hostedScenarioSurface
+                  ? { surface: hostedScenarioSurface }
                   : {}),
                 ...(selectedModel.provider === "ollama"
                   ? { ollamaBaseUrl: getOllamaBaseUrl() }
@@ -2809,7 +2794,7 @@ export function useChatSession(
           ...(rewind ? { rewind } : {}),
           // Host-managed built-in tools (e.g. ["web_search"]). Forwarded only
           // when non-empty so pre-feature traces stay byte-identical. The
-          // chatbox path overrides this with the persisted host config server-
+          // scenario path overrides this with the persisted host config server-
           // side; playground trusts this value (same as systemPrompt etc.).
           ...(builtInToolIdsRef.current && builtInToolIdsRef.current.length > 0
             ? { builtInToolIds: builtInToolIdsRef.current }
@@ -2847,13 +2832,13 @@ export function useChatSession(
     chatSessionId,
     hostedSelectedServerIds,
     hostedOAuthTokens,
-    hostedChatboxId,
+    hostedScenarioId,
     hostedHostId,
     hostedExecutionTarget,
     hostedEnvironmentId,
     hostedEnvironmentOverrides,
     hostedAccessVersion,
-    hostedChatboxSurface,
+    hostedScenarioSurface,
     getOllamaBaseUrl,
     getAzureBaseUrl,
     hostStyle,
@@ -3470,12 +3455,12 @@ export function useChatSession(
   }, [chatSessionId]);
 
   useSharedChatWidgetCapture({
-    // Chatbox runtime sessions persist server-side on every platform, so
+    // Scenario runtime sessions persist server-side on every platform, so
     // their widget capture follows the session kind, not the build.
     enabled: (HOSTED_MODE || hostedRequiresWebChatApi) && isAuthenticated,
     readyToPersist: status === "ready",
     chatSessionId,
-    hostedChatboxId,
+    hostedScenarioId,
     hostedAccessVersion,
     persistedSnapshotToolCallIds,
     messages,
@@ -4162,7 +4147,7 @@ export function useChatSession(
     // `hostedAccessVersion` is intentionally excluded. The effect resets
     // `isSessionBootstrapComplete` to `false` synchronously on every run;
     // including a value that bumps on every silent re-redeem (the
-    // `chatbox_access_stale` recovery path) would flip the flag false →
+    // `scenario_access_stale` recovery path) would flip the flag false →
     // true on each refresh, briefly unmounting downstream consumers gated
     // on it (ChatTabV2). Auth-header resolution doesn't depend on the
     // version, and the scope-equality check inside the effect no longer
@@ -4177,7 +4162,7 @@ export function useChatSession(
     // scope for Phase 2; the target key covers it the moment it lands.)
   }, [
     getAccessToken,
-    hostedChatboxId,
+    hostedScenarioId,
     hostedEnvironmentId,
     hostedTargetKeyValue,
     hostedProjectId,
@@ -4259,7 +4244,7 @@ export function useChatSession(
           );
         }
       } catch (error) {
-        if (!(hostedChatboxId && isAuthDeniedError(error))) {
+        if (!(hostedScenarioId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to fetch tools metadata:",
             error
@@ -4282,7 +4267,7 @@ export function useChatSession(
     selectedServersSignature,
     selectedModel,
     tokenCountSelectionKey,
-    hostedChatboxId,
+    hostedScenarioId,
     apiContextRevision,
   ]);
 
@@ -4303,7 +4288,7 @@ export function useChatSession(
         const count = await countTextTokens(systemPrompt, modelId);
         setSystemPromptTokenCount(count > 0 ? count : null);
       } catch (error) {
-        if (!(hostedChatboxId && isAuthDeniedError(error))) {
+        if (!(hostedScenarioId && isAuthDeniedError(error))) {
           console.warn(
             "[useChatSession] Failed to count system prompt tokens:",
             error
@@ -4316,7 +4301,7 @@ export function useChatSession(
     };
 
     fetchSystemPromptTokenCount();
-  }, [systemPrompt, selectedModel, hostedChatboxId]);
+  }, [systemPrompt, selectedModel, hostedScenarioId]);
 
   const previousSelectedServersRef = useRef<string[]>(selectedServers);
   useEffect(() => {
@@ -4362,7 +4347,7 @@ export function useChatSession(
   }, [messages]);
 
   // Computed state for UI
-  // Compute share/chatbox guest access from React state instead of the global
+  // Compute share/scenario guest access from React state instead of the global
   // apiContext.
   // In hosted mode: always require auth (guest JWT or WorkOS — handled by authFetch).
   // In non-hosted mode: auth is needed for org-managed BYOK and sign-in-only MCPJam models.

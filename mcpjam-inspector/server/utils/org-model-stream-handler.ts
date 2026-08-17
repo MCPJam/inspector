@@ -45,6 +45,11 @@ import type { PersistedTurnTrace } from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
 import { logger } from "./logger.js";
 import {
+  createSystemStreamFailureReporter,
+  oncePerTurn,
+  type StreamFailureReporter,
+} from "./stream-failure-reporter.js";
+import {
   runDirectChatTurn,
   withMcpToolOriginChunkMetadata,
   type DirectChatTurnPersistEvent,
@@ -113,10 +118,10 @@ export interface OrgModelHandlerOptions {
    */
   authHeader?: string;
   /**
-   * Resolved chatbox identity (post-redeem). Forwarded to /stream/org so
-   * Convex can authorize the actor against the chatbox + project.
+   * Resolved scenario identity (post-redeem). Forwarded to /stream/org so
+   * Convex can authorize the actor against the scenario + project.
    */
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   clientIp?: string | null;
   /**
@@ -142,6 +147,11 @@ export interface OrgModelHandlerOptions {
    * on collision.
    */
   extraBodyFields?: Record<string, unknown>;
+  /**
+   * Typed-telemetry seam for mid-stream failures; forwarded verbatim into
+   * the wrapped MCPJam handler. See stream-failure-reporter.ts.
+   */
+  failureReporter?: StreamFailureReporter;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,7 +277,7 @@ export interface OrgLocalModelHandlerOptions {
   requireToolApproval?: boolean;
   /** Forwarded to /stream/org/local-usage for identity resolution. */
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   onConversationComplete?: (
     fullHistory: ModelMessage[],
@@ -299,6 +309,12 @@ export interface OrgLocalModelHandlerOptions {
    */
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
+  /**
+   * Typed-telemetry seam for mid-stream failures (route.operation.failed);
+   * see stream-failure-reporter.ts. Constructed at the route layer where a
+   * Hono context exists.
+   */
+  failureReporter?: StreamFailureReporter;
 }
 
 /**
@@ -354,6 +370,15 @@ export function handleLocalOrgChatModel(
     onLiveTextDelta,
   } = options;
 
+  // One typed route.operation.failed per turn across this handler's failure
+  // sites; system fallback keeps the invariant if a future caller forgets it.
+  const failureReporter = oncePerTurn(
+    options.failureReporter ??
+      createSystemStreamFailureReporter("org-local-stream"),
+  );
+
+  // Deliberately NOT reported as an operation failure: this is a declared
+  // product limitation surfaced to the user, not something that broke.
   if (hasUnsupportedLocalApprovalGate(tools, requireToolApproval)) {
     const stream = createUIMessageStream({
       onError: (error) => formatLocalStreamError(error),
@@ -383,6 +408,20 @@ export function handleLocalOrgChatModel(
     assertOrgModelAllowed(provider, modelId);
     llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
   } catch (configErr) {
+    // The response is still a 200 stream whose first chunk is the error, so
+    // the HTTP failure events never see this — the typed event is the only
+    // machine-readable record. Silent-cancel invariant: skip the report when
+    // the request was already aborted before validation failed.
+    if (!options.abortSignal?.aborted) {
+      failureReporter({
+        message: "[org/local] model config/allowlist failure",
+        error: configErr,
+        source: "web.chat-v2.org-local-config",
+        hop: "user_server_hop",
+        transport: "http_stream",
+        context: { providerKey: provider.providerKey, modelId },
+      });
+    }
     const stream = createUIMessageStream({
       onError: (error) => formatLocalStreamError(error),
       onFinish: async () => {
@@ -420,7 +459,16 @@ export function handleLocalOrgChatModel(
       ) {
         return "";
       }
-      logger.error("[org/local] stream error", error);
+      // Reporter, not a bare logger.error: the old call captured to Sentry
+      // unconditionally and left no typed record (this is a 200 stream).
+      failureReporter({
+        message: "[org/local] stream error",
+        error,
+        source: "web.chat-v2.org-local-stream",
+        hop: "user_server_hop",
+        transport: "http_stream",
+        context: { providerKey: provider.providerKey, modelId },
+      });
       return formatLocalStreamError(error);
     },
     onFinish: async () => {
@@ -509,6 +557,17 @@ export function handleLocalOrgChatModel(
           },
           onError: (error) => {
             if (handle!.isAborted() || isAbortError(error)) return "";
+            // toUIMessageStream CONSUMES the error (no rethrow), so the
+            // top-level onError above never sees it — this is the only
+            // chance to record it. The two sites are exclusive per error.
+            failureReporter({
+              message: "[org/local] direct stream error",
+              error,
+              source: "web.chat-v2.org-local-direct-stream",
+              hop: "user_server_hop",
+              transport: "http_stream",
+              context: { providerKey: provider.providerKey, modelId },
+            });
             return formatLocalStreamError(error);
           },
         })) {
@@ -583,7 +642,7 @@ function buildLocalOrgOnPersist(params: {
       turnId: event.turnTrace.turnId,
       promptIndex: event.turnTrace.promptIndex,
       authHeader: options.authHeader,
-      chatboxId: options.chatboxId,
+      scenarioId: options.scenarioId,
       accessVersion: options.accessVersion,
       selectedServers: options.selectedServers,
       serverIds: options.serverIds,
@@ -636,7 +695,7 @@ export async function postLocalUsage(params: {
   turnId?: string;
   promptIndex?: number;
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   selectedServers?: string[];
   serverIds?: string[];
@@ -674,8 +733,8 @@ export async function postLocalUsage(params: {
         ...(typeof params.promptIndex === "number"
           ? { promptIndex: params.promptIndex }
           : {}),
-        ...(params.chatboxId ? { chatboxId: params.chatboxId } : {}),
-        ...(params.chatboxId && Number.isFinite(params.accessVersion)
+        ...(params.scenarioId ? { scenarioId: params.scenarioId } : {}),
+        ...(params.scenarioId && Number.isFinite(params.accessVersion)
           ? { accessVersion: params.accessVersion }
           : {}),
         ...((params.serverIds ?? params.selectedServers)?.length
@@ -720,7 +779,7 @@ export async function handleHostedOrgChatModel(
     tools: options.tools,
     projectId: options.projectId,
     authHeader: options.authHeader,
-    chatboxId: options.chatboxId,
+    scenarioId: options.scenarioId,
     accessVersion: options.accessVersion,
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
@@ -741,6 +800,7 @@ export async function handleHostedOrgChatModel(
     scopeStepUpResume: options.scopeStepUpResume,
     progressivePlan: options.progressivePlan,
     discoveryState: options.discoveryState,
+    failureReporter: options.failureReporter,
     endpointPath: "/stream/org",
     extraBodyFields: {
       // Caller-provided fields first; sibling fields from this handler
@@ -748,7 +808,7 @@ export async function handleHostedOrgChatModel(
       // contract can't be silently broken by a downstream caller.
       ...(options.extraBodyFields ?? {}),
       providerKey: options.providerKey,
-      // chatboxId / accessVersion are set on the body by
+      // scenarioId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.
       ...((options.serverIds ?? options.selectedServers)?.length
         ? { serverIds: options.serverIds ?? options.selectedServers }
