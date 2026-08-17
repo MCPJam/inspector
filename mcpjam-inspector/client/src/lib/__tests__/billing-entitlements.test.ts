@@ -6,6 +6,7 @@ import {
   formatPremiumnessGateKey,
   getBillingErrorMessage,
   getDisplayPriceCentsForPlan,
+  getEvalIterationLimitFromError,
   getPremiumnessGateForTab,
   getRequiredBillingFeatureForTab,
   isGateAccessDenied,
@@ -555,5 +556,68 @@ describe("formatPremiumnessGateKey", () => {
     for (const key of gateKeys) {
       expect(formatPremiumnessGateKey(key), key).not.toBe(key);
     }
+  });
+});
+
+describe("getEvalIterationLimitFromError", () => {
+  const evalLimitError = (extra: Record<string, unknown>) =>
+    new ConvexError({
+      code: "billing_limit_reached",
+      limit: "maxEvalIterationsPerMonth",
+      allowedValue: 25,
+      currentValue: 25,
+      ...extra,
+    } as never);
+
+  it("takes the window the backend sent, on either plan", () => {
+    expect(
+      getEvalIterationLimitFromError(
+        evalLimitError({ plan: "free", windowKind: "day" })
+      )?.windowKind
+    ).toBe("day");
+    expect(
+      getEvalIterationLimitFromError(
+        evalLimitError({ plan: "team", windowKind: "month" })
+      )?.windowKind
+    ).toBe("month");
+  });
+
+  it("falls back to the plan when the payload omits the window", () => {
+    // One limit NAME, two windows — daily on Free, monthly per seat on Team —
+    // and the wall prints the word ("out of eval iterations today" vs "this
+    // month"). A constant would be wrong for one of the two plans every time,
+    // and wrong toward "month" is the costlier direction: it sells a wait that
+    // ends at the next UTC roll as a month-long block.
+    expect(
+      getEvalIterationLimitFromError(evalLimitError({ plan: "free" }))
+        ?.windowKind
+    ).toBe("day");
+    expect(
+      getEvalIterationLimitFromError(evalLimitError({ plan: "team" }))
+        ?.windowKind
+    ).toBe("month");
+  });
+
+  it("keeps the narrower claim when neither window nor plan is known", () => {
+    expect(getEvalIterationLimitFromError(evalLimitError({}))?.windowKind).toBe(
+      "day"
+    );
+    expect(
+      getEvalIterationLimitFromError(evalLimitError({ windowKind: "week" }))
+        ?.windowKind
+    ).toBe("day");
+  });
+
+  it("ignores errors that are not this cap", () => {
+    expect(
+      getEvalIterationLimitFromError(
+        new ConvexError({
+          code: "billing_limit_reached",
+          limit: "insightsPerDay",
+          allowedValue: 25,
+        } as never)
+      )
+    ).toBeNull();
+    expect(getEvalIterationLimitFromError(new Error("boom"))).toBeNull();
   });
 });

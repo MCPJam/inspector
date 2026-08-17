@@ -384,18 +384,24 @@ function PlanLimitWall() {
   // would be wrong, and so would pitching the plan they're already on. While
   // billing loads we don't know which, so the neutral name stands in.
   const planName = isBillingReady && isFreePlan ? "Free" : "Your plan";
-  const planSentence =
+  const allowanceClause =
     limit.allowed != null
-      ? `${planName} includes ${formatCount(limit.allowed)} ${perWindow}, and `
+      ? `${planName} includes ${formatCount(limit.allowed)} ${perWindow}`
       : "";
   const resetDistance = limit.resetsAt
     ? formatResetDistance(limit.resetsAt)
     : null;
-  const resetSentence = limit.resetsAt
-    ? `${planSentence ? "yours reset" : "Yours reset"} at ${formatResetClock(
+  const resetClause = limit.resetsAt
+    ? `${allowanceClause ? "yours reset" : "Yours reset"} at ${formatResetClock(
         limit.resetsAt
-      )}${resetDistance ? `, ${resetDistance} from now` : ""}.`
+      )}${resetDistance ? `, ${resetDistance} from now` : ""}`
     : "";
+  // The conjunction belongs to the pair, not to the allowance. Baking ", and"
+  // into the allowance clause left the copy dangling on it whenever the limit
+  // carries no `resetsAt`.
+  const planSentence = [allowanceClause, resetClause]
+    .filter(Boolean)
+    .join(", and ");
 
   // The eval figure comes from the plan catalog, never a hardcoded string, so
   // it tracks whatever billing actually enforces. Credits deliberately have no
@@ -416,7 +422,9 @@ function PlanLimitWall() {
   return (
     <PlanLimitDialogView
       title={`You're out of eval iterations ${windowLabel}`}
-      description={`${`${planSentence}${resetSentence} ${upgradeSentence}`.trim()}${
+      description={`${`${
+        planSentence ? `${planSentence}.` : ""
+      } ${upgradeSentence}`.trim()}${
         isBillingReady && isFreePlan && !upgrade.canManageBilling
           ? " Only an owner can upgrade this organization."
           : ""

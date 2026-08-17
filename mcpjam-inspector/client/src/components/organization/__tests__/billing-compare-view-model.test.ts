@@ -82,7 +82,9 @@ describe("buildComparePlanSectionsFromCatalog", () => {
     });
     expect(evalIterations?.team).toEqual({
       kind: "text",
-      text: "15,000 / mo",
+      // PER SEAT, like the credits row above it and like the upgrade wall's
+      // "N per seat each month". `15,000 / mo` read as an org-wide total.
+      text: "15,000 / seat / mo",
       emphasize: true,
     });
   });
@@ -101,7 +103,26 @@ describe("buildComparePlanSectionsFromCatalog", () => {
     });
     expect(evalIterations?.team).toEqual({
       kind: "text",
-      text: "20,000 / mo",
+      text: "20,000 / seat / mo",
+      emphasize: true,
+    });
+  });
+
+  it("renders a null catalog limit as Unlimited on either plan", () => {
+    // `null` is the catalog's "no cap", the same value Enterprise carries. It
+    // must never reach the cadence template — "null / day" would read as a cap
+    // of zero on the plan with no cap at all.
+    const sections = buildComparePlanSectionsFromCatalog(
+      createPlanCatalog({ free: null, team: null })
+    );
+    const evalIterations = sections
+      .find((section) => section.title === "Evaluations")
+      ?.rows.find((row) => row.label === "Eval iterations");
+
+    expect(evalIterations?.free).toEqual({ kind: "text", text: "Unlimited" });
+    expect(evalIterations?.team).toEqual({
+      kind: "text",
+      text: "Unlimited",
       emphasize: true,
     });
   });

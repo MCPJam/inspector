@@ -266,15 +266,20 @@ describe("MCPJamLimitDialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows the ask-admin copy and no CTAs for org members", () => {
+  it("shows the ask-owner copy and no CTAs for org members", () => {
     authState.user = { id: "user-1" };
     sortedOrganizationsState.push({ _id: "org-1", myRole: "member" });
     useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
     render(<MCPJamLimitDialog />);
 
+    // Owners, not admins: the only action here emails the resolved owners, and
+    // an admin can't upgrade anyway.
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Ask an organization owner or admin to buy credits or upgrade/
+      /Ask an organization owner to buy credits or upgrade/
     );
+    expect(
+      screen.getByTestId("limit-dialog-description")
+    ).not.toHaveTextContent(/admin/i);
     // Members can't buy or upgrade, so those CTAs stay gone. They now get one
     // action: email an owner who can.
     expect(
@@ -283,10 +288,12 @@ describe("MCPJamLimitDialog", () => {
     expect(
       screen.queryByRole("button", { name: /use your own API key/i })
     ).not.toBeInTheDocument();
-    expect(screen.getByTestId("request-upgrade-mail")).toHaveAttribute(
-      "href",
-      expect.stringContaining("mailto:dana@acme.test")
+    // Decoded first: the address is percent-encoded in the href, so asserting
+    // the raw string would be checking the encoding rather than the recipient.
+    const memberHref = decodeURIComponent(
+      screen.getByTestId("request-upgrade-mail").getAttribute("href") ?? ""
     );
+    expect(memberHref).toContain("mailto:dana@acme.test");
   });
 
   it("waits for owner recipients before reporting a member impression", () => {
@@ -318,6 +325,41 @@ describe("MCPJamLimitDialog", () => {
     );
   });
 
+  it("waits for owner recipients before reporting an admin impression", () => {
+    // An admin can buy credits but can't upgrade, so they still get a
+    // request-an-owner button. Reporting before the owners resolve would
+    // record a recipient count of 0 for a button that then renders.
+    authState.user = { id: "user-1" };
+    sortedOrganizationsState.push({ _id: "org-1", myRole: "admin" });
+    upgradeState.canManageBilling = false;
+    recipientsState.recipients = [];
+    recipientsState.isLoading = true;
+    useMCPJamLimitDialogStore.setState({ isOpen: true, intent: "topup" });
+    const view = render(<MCPJamLimitDialog />);
+
+    expect(trackMock).not.toHaveBeenCalledWith(
+      "plan_limit_dialog_shown",
+      expect.anything()
+    );
+
+    recipientsState.recipients = [
+      { email: "dana@acme.test", name: "Dana Ruiz" },
+    ];
+    recipientsState.isLoading = false;
+    view.rerender(<MCPJamLimitDialog />);
+
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_dialog_shown",
+      expect.objectContaining({
+        wall_kind: "organization_credits",
+        can_buy_credits: true,
+        can_manage_billing: false,
+        request_recipient_count: 1,
+      })
+    );
+    expect(screen.getByTestId("request-upgrade-mail")).toBeInTheDocument();
+  });
+
   it("asks paid-org members to request credits instead of a Team upgrade", () => {
     authState.user = { id: "user-1" };
     sortedOrganizationsState.push({ _id: "org-1", myRole: "member" });
@@ -327,7 +369,7 @@ describe("MCPJamLimitDialog", () => {
     render(<MCPJamLimitDialog />);
 
     expect(screen.getByTestId("limit-dialog-description")).toHaveTextContent(
-      /Ask an organization owner or admin to buy credits\./
+      /Ask an organization owner to buy credits\./
     );
     const href = decodeURIComponent(
       screen.getByTestId("request-upgrade-mail").getAttribute("href") ?? ""

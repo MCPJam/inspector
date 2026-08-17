@@ -114,6 +114,15 @@ interface UseUpgradeCheckoutParams {
   limitKind: string;
 }
 
+/**
+ * Every `start()` path reports the same two facts: whether the browser is on
+ * its way to Stripe, and whether the caller should close its dialog.
+ */
+export interface UpgradeStartResult {
+  redirected: boolean;
+  shouldDismiss: boolean;
+}
+
 export function resolveUpgradeInterval(
   selected: BillingInterval,
   annualSupported: boolean,
@@ -146,10 +155,17 @@ export function useUpgradeCheckout({
   } = useOrganizationBilling(organizationId);
 
   const teamEntry = planCatalog?.plans.team;
-  const supportedIntervals = teamEntry?.checkout?.supportedIntervals ?? [
-    "monthly",
-    "annual",
-  ];
+  // One rule for the whole path: an interval is offered only if the catalog
+  // both supports it and has priced it, so checkout can never buy something
+  // the card didn't name. `checkout: null` means no self-serve intervals at
+  // all rather than "assume both". Before the catalog lands there is nothing
+  // to trust yet, so both cards render as placeholders and `isLoadingPrices`
+  // keeps checkout closed.
+  const supportedIntervals: BillingInterval[] = teamEntry
+    ? (teamEntry.checkout?.supportedIntervals ?? []).filter(
+        (candidate) => teamEntry.prices[candidate] != null
+      )
+    : ["monthly", "annual"];
   const annualSupported = supportedIntervals.includes("annual");
   const monthlySupported = supportedIntervals.includes("monthly");
 
@@ -217,13 +233,13 @@ export function useUpgradeCheckout({
     ]
   );
 
-  const start = useCallback(async () => {
-    if (!organizationId) return;
+  const start = useCallback(async (): Promise<UpgradeStartResult> => {
+    if (!organizationId) return { redirected: false, shouldDismiss: false };
     // The catalog is a separate query from billingStatus, so the CTA can be
     // live while prices and interval support are still unknown. Never send
     // anyone to checkout on a price we haven't shown them.
     if (isLoadingPlanCatalog || !teamEntry) {
-      return { redirected: false as const };
+      return { redirected: false, shouldDismiss: false };
     }
     const checkoutInterval = resolveUpgradeInterval(
       interval,
@@ -244,7 +260,7 @@ export function useUpgradeCheckout({
         annual_supported: annualSupported,
         monthly_supported: monthlySupported,
       });
-      return { redirected: false as const };
+      return { redirected: false, shouldDismiss: false };
     }
 
     const url = new URL(window.location.href);
@@ -289,13 +305,13 @@ export function useUpgradeCheckout({
           toast.info(
             "Finish checkout in your browser. Your new plan unlocks here automatically."
           );
-          return { redirected: true as const, shouldDismiss: true as const };
+          return { redirected: true, shouldDismiss: true };
         }
         // Same tab, so the return URL brings the user back in place. The token
         // is what makes that return trustworthy on the way back.
         stashUpgradeReturnToken(organizationId);
         window.location.assign(nextUrl);
-        return { redirected: true as const, shouldDismiss: false as const };
+        return { redirected: true, shouldDismiss: false };
       }
 
       if (result.kind === "updated") {
@@ -318,7 +334,7 @@ export function useUpgradeCheckout({
         current_plan: currentPlan,
         effective_plan: effectivePlan,
       });
-      return { redirected: false as const, shouldDismiss: true as const };
+      return { redirected: false, shouldDismiss: true };
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -337,7 +353,7 @@ export function useUpgradeCheckout({
         effective_plan: effectivePlan,
         can_manage_billing: canManageBilling,
       });
-      return { redirected: false as const };
+      return { redirected: false, shouldDismiss: false };
     }
   }, [
     annualSupported,

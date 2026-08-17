@@ -70,6 +70,21 @@ describe("buildUpgradeRequestMail", () => {
     expect(decoded).not.toContain("upgrade Acme Robotics to the Team plan");
   });
 
+  it("percent-encodes an address so a reserved character can't truncate it", () => {
+    const href = buildUpgradeRequestMail({
+      recipients: [{ email: "dana#ops@acme.test", name: "Dana Ruiz" }],
+      organizationName: "Acme Robotics",
+      teamName: "Team",
+      origin: "evals",
+    });
+
+    // Raw, the `#` would start the URL fragment: the recipient becomes
+    // "dana" and the subject and body vanish. `@` stays literal — RFC 6068
+    // encodes within the addr-spec, not the separator between its parts.
+    expect(href).toContain("mailto:dana%23ops@acme.test?subject=");
+    expect(decodeURIComponent(href!)).toContain("mailto:dana#ops@acme.test");
+  });
+
   it("returns null when there is nobody to address", () => {
     expect(
       buildUpgradeRequestMail({
@@ -94,10 +109,10 @@ describe("RequestUpgradeButton", () => {
       />
     );
 
-    expect(screen.getByTestId("request-upgrade-mail")).toHaveAttribute(
-      "href",
-      expect.stringContaining("mailto:dana@acme.test")
-    );
+    const href = screen
+      .getByTestId("request-upgrade-mail")
+      .getAttribute("href");
+    expect(decodeURIComponent(href!)).toContain("mailto:dana@acme.test");
     expect(screen.getByText(/Opens a draft to Dana Ruiz/)).toBeInTheDocument();
   });
 

@@ -7,7 +7,10 @@ import {
 
 const { billingState, startPlanChange, toastError, toastSuccess, trackMock } =
   vi.hoisted(() => ({
-    billingState: { planCatalog: undefined as unknown },
+    billingState: {
+      planCatalog: undefined as unknown,
+      isLoadingPlanCatalog: false,
+    },
     startPlanChange: vi.fn(),
     toastError: vi.fn(),
     toastSuccess: vi.fn(),
@@ -26,6 +29,7 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
     startPlanChange,
     isStartingPlanChange: false,
     isLoadingBilling: false,
+    isLoadingPlanCatalog: billingState.isLoadingPlanCatalog,
   }),
 }));
 
@@ -34,15 +38,21 @@ vi.mock("@/lib/toast", () => ({
   toast: { error: toastError, success: toastSuccess },
 }));
 
-function planCatalog(supportedIntervals: Array<"monthly" | "annual">) {
+function planCatalog(
+  supportedIntervals: Array<"monthly" | "annual"> | null,
+  prices: { annual: number | null; monthly: number | null } = {
+    annual: 36_000,
+    monthly: 3_800,
+  }
+) {
   return {
     currency: "USD",
     plans: {
       team: {
         displayName: "Team",
-        prices: { annual: 36_000, monthly: 3_800 },
+        prices,
         limits: { maxEvalIterationsPerMonth: 5_000 },
-        checkout: { supportedIntervals },
+        checkout: supportedIntervals ? { supportedIntervals } : null,
       },
     },
   };
@@ -50,6 +60,7 @@ function planCatalog(supportedIntervals: Array<"monthly" | "annual">) {
 
 beforeEach(() => {
   billingState.planCatalog = undefined;
+  billingState.isLoadingPlanCatalog = false;
   startPlanChange.mockReset();
   startPlanChange.mockResolvedValue({ kind: "updated", subscription: {} });
   toastError.mockReset();
@@ -123,6 +134,85 @@ describe("useUpgradeCheckout", () => {
       "plan_limit_upgrade_failed",
       expect.objectContaining({ error_kind: "no_supported_interval" })
     );
+  });
+
+  it("blocks checkout when the catalog says the plan has no checkout", async () => {
+    billingState.planCatalog = planCatalog(null);
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org-1",
+        origin: "credits",
+        limitKind: "credits",
+      })
+    );
+
+    // No interval is offered at all, so the picker renders nothing.
+    expect(result.current.annualSupported).toBe(false);
+    expect(result.current.monthlySupported).toBe(false);
+
+    await act(async () => {
+      await result.current.start();
+    });
+
+    expect(startPlanChange).not.toHaveBeenCalled();
+    expect(trackMock).toHaveBeenCalledWith(
+      "plan_limit_upgrade_failed",
+      expect.objectContaining({ error_kind: "no_supported_interval" })
+    );
+  });
+
+  it("drops a supported interval the catalog never priced", async () => {
+    billingState.planCatalog = planCatalog(["monthly", "annual"], {
+      annual: null,
+      monthly: 3_800,
+    });
+    const view = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org-1",
+        origin: "evals",
+        limitKind: "evalIterations",
+      })
+    );
+
+    expect(view.result.current.annualSupported).toBe(false);
+    expect(view.result.current.annualPriceLabel).toBeNull();
+    await waitFor(() => {
+      expect(view.result.current.interval).toBe("monthly");
+    });
+
+    await act(async () => {
+      await view.result.current.start();
+    });
+
+    // Checkout can only ever be started on the priced interval.
+    expect(startPlanChange).toHaveBeenCalledWith(
+      expect.stringContaining("upgrade=return"),
+      "team",
+      "monthly",
+      { confirmPaidPlanChange: false }
+    );
+  });
+
+  it("holds checkout while the catalog is still loading", async () => {
+    billingState.planCatalog = planCatalog(["annual"]);
+    billingState.isLoadingPlanCatalog = true;
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org-1",
+        origin: "evals",
+        limitKind: "evalIterations",
+      })
+    );
+
+    expect(result.current.isLoadingPrices).toBe(true);
+
+    let outcome: Awaited<ReturnType<typeof result.current.start>>;
+    await act(async () => {
+      outcome = await result.current.start();
+    });
+
+    expect(outcome!).toEqual({ redirected: false, shouldDismiss: false });
+    expect(startPlanChange).not.toHaveBeenCalled();
   });
 
   it("reports an in-place plan update and tells the dialog to close", async () => {

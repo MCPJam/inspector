@@ -440,7 +440,23 @@ export function getEvalIterationLimitFromError(
     allowed,
     used,
     resetsAt: typeof payload.resetsAt === "number" ? payload.resetsAt : null,
-    windowKind: payload.windowKind === "month" ? "month" : "day",
+    // One limit NAME, two windows: the backend enforces `maxEvalIterationsPerMonth`
+    // as a DAILY cap on Free and a MONTHLY per-seat allowance on Team, and says
+    // which through `windowKind`. The wall renders that word literally ("out of
+    // eval iterations today" vs "this month"), so a payload that omits the field
+    // must not be answered with a constant: hardcoding "month" would tell a Free
+    // user a cap that lifts at the next UTC roll is a month-long block — a wait
+    // sold as an upgrade — and hardcoding "day" mislabels the Team allowance.
+    // The plan is the field the window is derived FROM, so fall back to it; it
+    // also survives payload paths that drop `windowKind` (the v1 route's
+    // `billingDetails` allowlist keeps `plan` and not `windowKind`). Unknown plan
+    // stays "day", the narrower claim: it never overstates how long the block lasts.
+    windowKind:
+      payload.windowKind === "month" || payload.windowKind === "day"
+        ? payload.windowKind
+        : payload.plan === "team" || payload.plan === "enterprise"
+        ? "month"
+        : "day",
   };
 }
 

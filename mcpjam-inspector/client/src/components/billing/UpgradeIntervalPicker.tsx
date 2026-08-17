@@ -73,6 +73,14 @@ export function UpgradeIntervalPicker({
 
   if (options.length === 0) return null;
 
+  // A card with no price has nothing to confirm, so the CTA waits with it.
+  // In practice that only happens while the catalog is still in flight, which
+  // is what the button says.
+  const hasSelectedPrice = options.some(
+    (option) => option.interval === interval && option.priceLabel,
+  );
+  const isWaitingForPrice = isLoadingPrices || !hasSelectedPrice;
+
   return (
     <div className={cn("space-y-3", className)}>
       <div
@@ -132,10 +140,10 @@ export function UpgradeIntervalPicker({
         type="button"
         className="w-full"
         onClick={onUpgrade}
-        disabled={isStarting || isLoadingPrices}
+        disabled={isStarting || isWaitingForPrice}
         data-testid="upgrade-plan-cta"
       >
-        {isLoadingPrices
+        {isWaitingForPrice
           ? "Loading prices…"
           : isStarting
           ? "Redirecting…"

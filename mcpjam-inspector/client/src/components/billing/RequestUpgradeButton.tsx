@@ -27,7 +27,19 @@ export function buildUpgradeRequestMail(params: {
     origin,
     requestAction = "upgrade",
   } = params;
-  const to = recipients.map((r) => r.email).filter(Boolean);
+  // Encoded per address, not over the joined list: a legal local part can
+  // contain `#`, `?` or `%`, and raw those end the mailto path early — the
+  // browser reads the rest as a fragment/query, so the recipient is truncated
+  // and the subject and body are dropped. The `,` separators stay literal.
+  //
+  // `@` is restored: it separates local part from domain in the addr-spec, so
+  // RFC 6068 keeps it literal and encodes only within the parts (its own
+  // example is `mailto:gorby%25kremvax@example.com`). Browsers accept `%40`,
+  // but a literal `@` is what the spec asks for.
+  const to = recipients
+    .map((r) => r.email)
+    .filter(Boolean)
+    .map((email) => encodeURIComponent(email).replace(/%40/g, "@"));
   if (to.length === 0) return null;
 
   const firstName = recipients[0]?.name?.trim().split(/\s+/)[0];

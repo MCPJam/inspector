@@ -109,9 +109,13 @@ export function MCPJamLimitDialog() {
     !isKnownNonManager && isFreeEffectivePlan && !creditsUpgrade.canManageBilling;
   const creditsRequestAction =
     isKnownNonManager && !isFreeEffectivePlan ? "buyCredits" : "upgrade";
+  // Names owners only, because the one action this wall offers is an email to
+  // the resolved owners. Admins can buy credits but cannot upgrade, so naming
+  // them here promised a recipient the button never writes to — and, on Free,
+  // implied admins could upgrade at all.
   const memberDescription = isFreeEffectivePlan
-    ? "Ask an organization owner or admin to buy credits or upgrade the plan."
-    : "Ask an organization owner or admin to buy credits.";
+    ? "Ask an organization owner to buy credits or upgrade the plan."
+    : "Ask an organization owner to buy credits.";
   // Audience follows the billing permission, the same rule the eval wall uses.
   // `can_buy_credits` is what separates an admin from a plain member.
   const creditsAudience = creditsUpgrade.canManageBilling
@@ -145,7 +149,11 @@ export function MCPJamLimitDialog() {
     if (
       isLoadingOrganizations ||
       creditsUpgrade.isLoadingBilling ||
-      (isKnownNonManager && isLoadingRequestRecipients) ||
+      // Both request paths render a recipient button, so both have to wait for
+      // the owner list. Reporting early on the admin path recorded
+      // `request_recipient_count: 0` for a button that then appeared.
+      ((isKnownNonManager || showCreditsUpgradeRequest) &&
+        isLoadingRequestRecipients) ||
       creditsImpressionTrackedRef.current
     ) {
       return;
@@ -193,6 +201,7 @@ export function MCPJamLimitDialog() {
     isLoadingRequestRecipients,
     requestRecipients.length,
     showCreditsUpgrade,
+    showCreditsUpgradeRequest,
     showTopupDialog,
   ]);
 

@@ -4,9 +4,18 @@ import {
 } from "@/components/organization/compare-plan-marketing";
 import type { PlanCatalog } from "@/hooks/useOrganizationBilling";
 
+/**
+ * `cadence` is the whole suffix, not just the unit, because the two plans are
+ * not the same shape of allowance: Free is an org-wide DAILY cap, Team is a
+ * MONTHLY allowance enforced PER SEAT. Rendering the Team number as `N / mo`
+ * dropped that qualifier, so a multi-seat org read its own entitlement as an
+ * org-wide total — while the upgrade wall (`PlanLimitDialog`) sells the same
+ * catalog number as "N per seat each month" and the credits row directly above
+ * this one already renders `/ seat / mo`.
+ */
 function formatEvalLimit(
   value: number | null,
-  cadence: "day" | "mo",
+  cadence: "day" | "seat / mo",
   emphasize = false
 ) {
   return {
@@ -34,7 +43,7 @@ export function buildComparePlanSectionsFromCatalog(
             ),
             team: formatEvalLimit(
               planCatalog.plans.team.limits.maxEvalIterationsPerMonth,
-              "mo",
+              "seat / mo",
               true
             ),
           }

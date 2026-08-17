@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
     current: { type: "list" as const } as any,
   },
   useEvalQueries: vi.fn(),
+  useEvalHandlers: vi.fn(),
   deleteSuiteMutation: vi.fn(),
   directDeleteRun: vi.fn().mockResolvedValue(undefined),
 }));
@@ -92,18 +93,21 @@ vi.mock("../evals/use-eval-queries", () => ({
 }));
 
 vi.mock("../evals/use-eval-handlers", () => ({
-  useEvalHandlers: () => ({
-    handleRerun: vi.fn(),
-    handleReplayRun: vi.fn(),
-    handleCancelRun: vi.fn(),
-    directDeleteRun: mocks.directDeleteRun,
-    rerunningSuiteId: null,
-    replayingRunId: null,
-    cancellingRunId: null,
-    handleCreateTestCase: vi.fn(),
-    handleDuplicateTestCase: vi.fn(),
-    handleGenerateTests: vi.fn(),
-  }),
+  useEvalHandlers: (props: unknown) => {
+    mocks.useEvalHandlers(props);
+    return {
+      handleRerun: vi.fn(),
+      handleReplayRun: vi.fn(),
+      handleCancelRun: vi.fn(),
+      directDeleteRun: mocks.directDeleteRun,
+      rerunningSuiteId: null,
+      replayingRunId: null,
+      cancellingRunId: null,
+      handleCreateTestCase: vi.fn(),
+      handleDuplicateTestCase: vi.fn(),
+      handleGenerateTests: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("../evals/use-suite-data", () => ({
@@ -165,6 +169,7 @@ vi.mock("../evals/trace-viewer", () => ({
 
 vi.mock("@/hooks/use-eval-tab-context", () => ({
   useEvalTabContext: () => ({
+    organizationId: "org-1",
     connectedServerNames: new Set(),
     userMap: new Map(),
     canDeleteSuite: false,
@@ -350,6 +355,16 @@ describe("CiEvalsTab first-run NUX", () => {
 
     expect(screen.queryByText("Run your first eval")).not.toBeInTheDocument();
     expect(screen.getByTestId("project-runs-table")).toBeInTheDocument();
+  });
+
+  it("passes the project's organizationId to the eval handlers", () => {
+    // Without it, `openEvalIterationWall` bails out and a server-side cap
+    // rejection from this lens falls back to the dead-end toast.
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+
+    expect(mocks.useEvalHandlers).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: "org-1" }),
+    );
   });
 
   it("includes ui-created suites that CI has reported into", () => {

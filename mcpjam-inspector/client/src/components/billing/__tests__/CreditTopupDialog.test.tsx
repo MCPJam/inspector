@@ -99,6 +99,9 @@ describe("CreditTopupDialog", () => {
       />
     );
 
+    // Rerender with a *changed* impression dependency. Identical props would
+    // leave the effect's dependency array untouched, so the test would pass
+    // with the ref guard deleted and prove nothing.
     view.rerender(
       <CreditTopupDialog
         open
@@ -106,7 +109,7 @@ describe("CreditTopupDialog", () => {
         chatSessionId="chat-1"
         lastUserMessage="hello"
         organizationId="org-1"
-        source="chat_banner"
+        source="limit_modal"
       />
     );
 

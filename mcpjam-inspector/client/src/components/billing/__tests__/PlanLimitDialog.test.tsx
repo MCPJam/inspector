@@ -23,6 +23,7 @@ const {
     currentPlan: "free" as string,
     effectivePlan: "free" as string,
     canManageBilling: true,
+    isLoadingPrices: false,
   },
   recipientsState: {
     current: {
@@ -60,6 +61,7 @@ vi.mock("@/hooks/use-upgrade-checkout", async (importOriginal) => {
       organizationName: "Acme Robotics",
       canManageBilling: upgradeState.canManageBilling,
       isLoadingBilling: false,
+      isLoadingPrices: upgradeState.isLoadingPrices,
       isStarting: false,
       start: startMock,
     }),
@@ -105,6 +107,7 @@ beforeEach(() => {
   upgradeState.currentPlan = "free";
   upgradeState.effectivePlan = "free";
   upgradeState.canManageBilling = true;
+  upgradeState.isLoadingPrices = false;
   recipientsState.current = { recipients: [], isLoading: false };
   billingState.plan = "free";
   billingState.isLoading = false;
@@ -143,6 +146,16 @@ describe("PlanLimitDialog", () => {
     expect(description).toHaveTextContent(
       /Our Team plan includes 5,000 per seat each month/
     );
+  });
+
+  it("drops the conjunction when the limit carries no reset time", () => {
+    openEvalLimit({ resetsAt: null });
+    render(<PlanLimitDialog />);
+
+    const description = screen.getByTestId("plan-limit-dialog-description");
+    expect(description).toHaveTextContent(/Free includes 75 a day\./);
+    expect(description).not.toHaveTextContent(/, and/);
+    expect(description).not.toHaveTextContent(/reset at/i);
   });
 
   it("reports one rich impression, even when the dialog rerenders", () => {
@@ -207,6 +220,18 @@ describe("PlanLimitDialog", () => {
     expect(screen.getByTestId("upgrade-plan-cta")).toHaveTextContent(
       /Upgrade to Team/
     );
+  });
+
+  it("keeps checkout unreachable while the price catalog is still loading", () => {
+    upgradeState.isLoadingPrices = true;
+    openEvalLimit();
+    render(<PlanLimitDialog />);
+
+    // Dialog-level wiring only: the hook's loading flag has to reach the CTA.
+    // How the picker disables the interval cards is the picker's business.
+    const cta = screen.getByTestId("upgrade-plan-cta");
+    expect(cta).toBeDisabled();
+    expect(cta).toHaveTextContent(/Loading prices/);
   });
 
   it("selects an interval, then confirms with the upgrade button", async () => {

@@ -740,7 +740,7 @@ export function useEvalHandlers({
       const runGroupId = runPlans.length > 1 ? crypto.randomUUID() : undefined;
 
       // Show toast immediately when user clicks rerun
-      toast.success(
+      const runStartedToastId = toast.success(
         runPlans.length > 1
           ? `Starting ${runPlans.length} runs across ${
               isEnvironmentSuite ? "environments" : "hosts"
@@ -944,7 +944,12 @@ export function useEvalHandlers({
         }
       } catch (error) {
         console.error("Failed to rerun evals:", error);
-        if (!openEvalIterationWall(error)) {
+        if (openEvalIterationWall(error)) {
+          // The optimistic "Run started" toast above fired before the server
+          // rejected the launch; leaving it up next to the wall would claim
+          // the run is on its way.
+          toast.dismiss(runStartedToastId);
+        } else {
           toast.error(
             getEnvironmentConflictMessage(error) ??
               getBillingErrorMessage(error, "Failed to start eval run")
@@ -1198,6 +1203,14 @@ export function useEvalHandlers({
           ...failedRuns,
         ];
 
+        // Each per-model rejection is caught inside the map above, so a
+        // server-side cap rejection lands here instead of the outer catch.
+        // Give it the same wall the suite rerun gets; `some` stops at the
+        // first failure the wall takes.
+        const evalIterationWallOpened = totalFailedRuns.some((failure) =>
+          openEvalIterationWall(failure.error)
+        );
+
         if (!options?.suppressCompletionToasts) {
           if (successfulRuns.length === totalModelsRequested) {
             toast.success(
@@ -1206,12 +1219,14 @@ export function useEvalHandlers({
                 : "Test completed successfully!"
             );
           } else if (successfulRuns.length > 0) {
+            // Kept even when the wall opened: it reports how many models did
+            // land, which the wall doesn't say.
             toast.error(
               `${successfulRuns.length}/${totalModelsRequested} model${
                 totalModelsRequested === 1 ? "" : "s"
               } completed successfully.`
             );
-          } else {
+          } else if (!evalIterationWallOpened) {
             toast.error(
               getBillingErrorMessage(
                 totalFailedRuns[0]?.error,
@@ -1219,7 +1234,7 @@ export function useEvalHandlers({
               )
             );
           }
-        } else if (successfulRuns.length === 0) {
+        } else if (successfulRuns.length === 0 && !evalIterationWallOpened) {
           toast.error(
             getBillingErrorMessage(
               totalFailedRuns[0]?.error,

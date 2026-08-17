@@ -17,6 +17,28 @@ import {
 import { API_ENDPOINTS } from "../constants";
 import { createFetchResponse, createDeferred } from "@/test";
 import { setApiContext } from "@/lib/apis/web/context";
+import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
+
+/**
+ * Server-side eval-iteration cap rejection, in the shape `postEvalRequest`
+ * re-throws as a ConvexError (`details` carries the billing payload).
+ */
+function createEvalIterationCapResponse(): Response {
+  return createFetchResponse(
+    {
+      message: "Eval iteration limit reached",
+      details: {
+        code: "billing_limit_reached",
+        limitName: "maxEvalIterationsPerMonth",
+        allowedValue: 100,
+        currentValue: 100,
+        resetsAt: 1_760_000_000_000,
+        windowKind: "month",
+      },
+    },
+    402,
+  );
+}
 
 const { hostedModeRef } = vi.hoisted(() => ({
   hostedModeRef: { value: false },
@@ -80,9 +102,10 @@ vi.mock("@/lib/analytics", () => ({
 vi.mock("sonner", () => ({
   toast: {
     loading: vi.fn().mockReturnValue("toast-id"),
-    success: vi.fn(),
+    success: vi.fn().mockReturnValue("toast-id"),
     error: vi.fn(),
     info: vi.fn(),
+    dismiss: vi.fn(),
   },
 }));
 
@@ -133,6 +156,9 @@ describe("useEvalHandlers", () => {
     mockIsHostedMode.mockReturnValue(false);
     mockProviderGetToken.mockReturnValue("mock-api-key");
     mockProviderHasToken.mockReturnValue(true);
+    usePlanLimitDialogStore.setState({ isOpen: false, limit: null });
+    // Pinned so the wall tests can assert the exact toast the handler dismisses.
+    vi.mocked(toast.success).mockReturnValue("toast-id");
 
     // Default mock implementations
     mockGetAccessToken.mockResolvedValue("mock-access-token");
@@ -873,6 +899,55 @@ describe("useEvalHandlers", () => {
       expect(errorToasts).toContain("Environment changed — retry the run.");
       expect(errorToasts).not.toContain("Upstream exploded");
     });
+
+    it("opens the upgrade wall and clears the optimistic toast when the server rejects the launch on the eval-iteration cap", async () => {
+      // The "Run started successfully!" toast fires before the request
+      // resolves, so leaving it up alongside the wall would claim the run is
+      // on its way.
+      mockAuthFetch.mockResolvedValue(createEvalIterationCapResponse());
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({ ...defaultProps, organizationId: "org-1" }),
+      );
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-123",
+          name: "Test Suite",
+          description: "A test suite",
+          environment: { servers: ["server-1"] },
+        } as any);
+      });
+
+      expect(usePlanLimitDialogStore.getState().limit).toMatchObject({
+        kind: "evalIterations",
+        organizationId: "org-1",
+        used: 100,
+        allowed: 100,
+        windowKind: "month",
+      });
+      expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("keeps the fallback toast when there is no organization to upgrade", async () => {
+      mockAuthFetch.mockResolvedValue(createEvalIterationCapResponse());
+
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRerun({
+          _id: "suite-123",
+          name: "Test Suite",
+          description: "A test suite",
+          environment: { servers: ["server-1"] },
+        } as any);
+      });
+
+      expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
+      expect(toast.error).toHaveBeenCalled();
+      expect(toast.dismiss).not.toHaveBeenCalled();
+    });
   });
 
   describe("handleRunTestCase", () => {
@@ -1257,6 +1332,110 @@ describe("useEvalHandlers", () => {
 
       const requestBody = JSON.parse(mockAuthFetch.mock.calls[0][1].body);
       expect(requestBody.testCaseOverrides).toBeUndefined();
+    });
+
+    it("opens the upgrade wall when /run-test-case is rejected on the eval-iteration cap", async () => {
+      // The per-model rejection is caught inside the fan-out, so it never
+      // reaches the outer catch — the collected failures have to open the
+      // wall themselves.
+      mockAuthFetch.mockResolvedValue(createEvalIterationCapResponse());
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({ ...defaultProps, organizationId: "org-1" }),
+      );
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Test Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "case-123",
+            title: "Single-model case",
+            query: "Test query",
+            models: [{ provider: "openai", model: "gpt-4o" }],
+            expectedToolCalls: [],
+          } as any,
+        );
+      });
+
+      expect(usePlanLimitDialogStore.getState().limit).toMatchObject({
+        kind: "evalIterations",
+        organizationId: "org-1",
+        used: 100,
+        allowed: 100,
+        windowKind: "month",
+      });
+      expect(toast.error).not.toHaveBeenCalled();
+    });
+
+    it("still toasts the cap rejection when there is no organization to upgrade", async () => {
+      mockAuthFetch.mockResolvedValue(createEvalIterationCapResponse());
+
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Test Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "case-123",
+            title: "Single-model case",
+            query: "Test query",
+            models: [{ provider: "openai", model: "gpt-4o" }],
+            expectedToolCalls: [],
+          } as any,
+        );
+      });
+
+      expect(usePlanLimitDialogStore.getState().isOpen).toBe(false);
+      expect(toast.error).toHaveBeenCalled();
+    });
+
+    it("keeps the partial-failure count toast when only some models hit the cap", async () => {
+      mockAuthFetch
+        .mockResolvedValueOnce(
+          createFetchResponse({
+            success: true,
+            iteration: { _id: "iter-openai" },
+          }),
+        )
+        .mockResolvedValueOnce(createEvalIterationCapResponse());
+
+      const { result } = renderHook(() =>
+        useEvalHandlers({ ...defaultProps, organizationId: "org-1" }),
+      );
+
+      await act(async () => {
+        await result.current.handleRunTestCase(
+          {
+            _id: "suite-123",
+            name: "Test Suite",
+            environment: { servers: ["server-1"] },
+          } as any,
+          {
+            _id: "case-123",
+            title: "Multi-model case",
+            query: "Test query",
+            models: [
+              { provider: "openai", model: "gpt-4o" },
+              { provider: "anthropic", model: "claude-3-5-sonnet" },
+            ],
+            expectedToolCalls: [],
+          } as any,
+        );
+      });
+
+      expect(usePlanLimitDialogStore.getState().isOpen).toBe(true);
+      // The wall doesn't say how many models did land; that toast still does.
+      expect(toast.error).toHaveBeenCalledWith(
+        "1/2 models completed successfully.",
+      );
     });
   });
 
