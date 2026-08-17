@@ -45,8 +45,8 @@ export type ResumedThreadStreamStatus =
  * (an older inspector server) there is nothing to reconcile against but the
  * subscription, so the window is longer.
  */
-const RECEIPT_RECONCILE_WINDOW_MS = 3_000;
-const NO_RECEIPT_RECONCILE_WINDOW_MS = 10_000;
+export const RECEIPT_RECONCILE_WINDOW_MS = 3_000;
+export const NO_RECEIPT_RECONCILE_WINDOW_MS = 10_000;
 
 /**
  * Shown when the session really did move under this turn. The old copy said
@@ -208,9 +208,18 @@ export function useResumedThreadPersistence(
     if (activeHistorySessionId) {
       callbacksRef.current.markHistorySessionRead(activeHistorySessionId);
     }
-    callbacksRef.current.refreshAfterStream();
 
     const receipt = callbacksRef.current.consumePersistReceipt();
+
+    // The rail refresh is deliberately NOT fired before the outcome is known.
+    // It resolves asynchronously and writes back the session id and version it
+    // fetched — so on a conflict it would race the fork and reattach the very
+    // thread we just detached from, restoring its version onto the new one.
+    // Everything else wants it, so it runs on every path except that.
+    if (receipt?.outcome !== "conflict") {
+      callbacksRef.current.refreshAfterStream();
+    }
+
     // A turn on a fresh (non-resumed) thread has no baseline to advance and
     // nothing to conflict with — the rail refresh above is all it needs.
     if (!baseline) return;
@@ -256,7 +265,7 @@ export function useResumedThreadPersistence(
   // deadline timer.
   useEffect(() => {
     const pending = pendingReconcileRef.current;
-    if (!pending) return;
+    if (!pending || !enabled) return;
 
     if (
       typeof reactiveSessionVersion === "number" &&
@@ -286,11 +295,13 @@ export function useResumedThreadPersistence(
     }
     // Deliberately keeps watching after notifying, so a commit that lands late
     // still syncs the baseline.
-  }, [reactiveSessionVersion, reconcileTick, wakeReconcileWatcher]);
+  }, [enabled, reactiveSessionVersion, reconcileTick, wakeReconcileWatcher]);
 
   // A thread switch makes any outstanding question moot — it was about a
-  // session this surface is no longer on.
+  // session this surface is no longer on. Same for the rail being turned off:
+  // an inactive surface must not surface a warning about a thread it is no
+  // longer showing.
   useEffect(() => {
     pendingReconcileRef.current = null;
-  }, [activeHistorySessionId]);
+  }, [activeHistorySessionId, enabled]);
 }

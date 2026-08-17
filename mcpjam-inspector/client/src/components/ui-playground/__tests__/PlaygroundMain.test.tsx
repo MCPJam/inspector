@@ -885,6 +885,89 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    it("refuses the send but KEEPS the thread when the pre-send sync fails transiently", async () => {
+      // `refreshCurrentHistorySession` returns null for 403/404 — the thread is
+      // gone — and callers detach on that. A network blip or 5xx must NOT be
+      // flattened into the same signal, or a brief history-API outage tears
+      // users off perfectly valid conversations.
+      const session = {
+        _id: "history-1",
+        chatSessionId: "chat-session-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      // The detail cache is module-level and this file clears it per test
+      // rather than in beforeEach; without this, the session ids below stay
+      // cached and shift the next test's mockResolvedValueOnce queue.
+      invalidateChatHistoryPrefetch();
+      // A non-empty transcript, so a detach would take the FORK branch and be
+      // visible as a `detachToLocalFork` call rather than a silent no-op.
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ];
+      mockGetChatHistoryDetail.mockResolvedValueOnce({
+        ok: true,
+        session,
+        widgetSnapshots: [],
+      });
+
+      render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null
+        );
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(session));
+      });
+
+      // Control: with the sync healthy the send goes through, so the assertions
+      // below are about the failure and not about a submit path that never runs.
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session,
+        widgetSnapshots: [],
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "first message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+
+      mockGetChatHistoryDetail.mockRejectedValue(new Error("network down"));
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "another message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+
+      // Blocked, because a blind send could clobber another writer...
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      // ...but the conversation is still the user's; nothing was forked away.
+      expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+
+      // Leave the module-level detail cache as this test found it — the ids
+      // above are reused by later tests, which queue their own
+      // `mockResolvedValueOnce` responses and would otherwise be served stale.
+      invalidateChatHistoryPrefetch();
+    });
+
     it("keeps active playground thread visibility in sync after sharing", async () => {
       const privateSession = {
         _id: "history-1",

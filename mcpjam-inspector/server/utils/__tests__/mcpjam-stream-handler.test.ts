@@ -809,6 +809,45 @@ describe("mcpjam-stream-handler", () => {
     });
   });
 
+  it("still emits a receipt when the persist callback throws", async () => {
+    // Without this the stream closes silent and the client waits out its whole
+    // no-receipt reconciliation window before telling the user anything.
+    global.fetch = vi.fn().mockResolvedValue(
+      createSseResponse([
+        { type: "text-start", id: "text-1" },
+        { type: "text-delta", id: "text-1", delta: "hi" },
+        { type: "text-end", id: "text-1" },
+        { type: "finish", finishReason: "stop" },
+      ])
+    );
+
+    await handleMCPJamFreeChatModel({
+      messages: [{ role: "user", content: "Say hello" }] as any,
+      modelId: "openai/gpt-5-mini",
+      systemPrompt: "You are helpful",
+      tools: {},
+      chatSessionId: "session-45",
+      mcpClientManager: {
+        getAllToolsMetadata: vi.fn().mockReturnValue({}),
+      } as any,
+      onConversationComplete: async () => {
+        throw new Error("ingest blew up");
+      },
+    });
+
+    await lastExecution;
+
+    expect(
+      writtenChunks.find((chunk) => chunk?.type === "data-persist-receipt")
+    ).toMatchObject({
+      data: {
+        outcome: "failed",
+        failureKind: "exception",
+        chatSessionId: "session-45",
+      },
+    });
+  });
+
   it("emits no receipt when the callback reports nothing", async () => {
     // Headless / legacy callers return void; a receipt would tell the client a
     // save was evaluated when nothing reported one.

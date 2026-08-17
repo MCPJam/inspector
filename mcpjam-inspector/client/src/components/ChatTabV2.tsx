@@ -723,9 +723,20 @@ export function ChatTabV2({
       // the fork's own hydration, so it survives a fork that never commits.
       void detachToLocalFork(cloneUiMessages(messages), {
         toolRenderOverrides: restoredToolRenderOverrides,
-      }).then((fork) => {
-        toast.error(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
-      });
+      })
+        .then((fork) => {
+          toast.error(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
+        })
+        .catch((error) => {
+          // `void` silences the linter, not the rejection. The guard teardown
+          // above has already run, so swallowing this would leave the user on a
+          // thread they must not write to with no notice at all.
+          console.error(
+            "[ChatTabV2] Failed to fork the detached thread",
+            error
+          );
+          toast.error(DETACH_FORK_FAILED_MESSAGE);
+        });
     },
     [
       hasConversationMessages,

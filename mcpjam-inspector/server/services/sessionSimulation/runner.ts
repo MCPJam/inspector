@@ -55,7 +55,8 @@ import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/e
  */
 function warnIfSimulationPersistNotSaved(
   outcome: PersistChatOutcome | undefined,
-  stage: "empty-session" | "turn"
+  stage: "empty-session" | "turn",
+  chatSessionId: string
 ): void {
   // This is observability, not control flow — it must never be the thing that
   // takes a synthetic run down, so an absent outcome is simply nothing to say.
@@ -69,6 +70,9 @@ function warnIfSimulationPersistNotSaved(
   }
   logger.warn("[sessionSimulation] chat persist did not save", {
     stage,
+    // Concurrent synthetic sessions interleave in the log, so the warning has
+    // to name the session it is about to be actionable at all.
+    chatSessionId,
     outcome: outcome.outcome,
     ...(outcome.outcome === "failed"
       ? { failureKind: outcome.failureKind }
@@ -529,7 +533,11 @@ export async function runSyntheticHostSession(
       ...(persist.targetId ? { targetId: persist.targetId } : {}),
       resumeConfig,
     });
-    warnIfSimulationPersistNotSaved(emptySessionPersist, "empty-session");
+    warnIfSimulationPersistNotSaved(
+      emptySessionPersist,
+      "empty-session",
+      chatSessionId
+    );
     sessionRowEnsured = true;
   };
 
@@ -1005,7 +1013,7 @@ export async function runSyntheticHostSession(
         // attribution above. Undefined for the emulated engine.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
       });
-      warnIfSimulationPersistNotSaved(turnPersist, "turn");
+      warnIfSimulationPersistNotSaved(turnPersist, "turn", chatSessionId);
       anyTurnPersisted = true;
 
       // MCP App widget snapshots so the Sessions viewer renders the actual

@@ -358,6 +358,58 @@ describe("useResumedThreadPersistence", () => {
     expect(harness.onUnsaved).not.toHaveBeenCalled();
   });
 
+  it("does NOT refresh the rail on a conflict", () => {
+    // The refresh resolves asynchronously and writes back the session id and
+    // version it fetched. Firing it alongside a detach races the fork and can
+    // reattach the very thread we just left, restoring its version onto the new
+    // one.
+    const harness = setup({
+      receipt: { outcome: "conflict", chatSessionId: "c", currentVersion: 9 },
+    });
+
+    harness.runTurn();
+
+    expect(harness.onConflict).toHaveBeenCalledTimes(1);
+    expect(harness.refreshAfterStream).not.toHaveBeenCalled();
+  });
+
+  it("refreshes the rail on every non-conflict outcome", () => {
+    for (const receipt of [
+      { outcome: "saved" as const, chatSessionId: "c", version: 5 },
+      { outcome: "skipped" as const, chatSessionId: "c", version: 4 },
+      { outcome: "failed" as const, chatSessionId: "c" },
+    ]) {
+      const harness = setup({ receipt });
+      harness.runTurn();
+      expect(harness.refreshAfterStream).toHaveBeenCalled();
+    }
+  });
+
+  it("drops a pending reconciliation when the rail is disabled mid-flight", () => {
+    const harness = setup({
+      receipt: {
+        outcome: "failed",
+        chatSessionId: "c",
+        failureKind: "timeout",
+      },
+    });
+
+    harness.runTurn();
+    act(() =>
+      harness.view.rerender({
+        ...harness.props,
+        status: "ready",
+        enabled: false,
+      })
+    );
+    act(() => {
+      vi.advanceTimersByTime(5_000);
+    });
+
+    // An inactive surface must not warn about a thread it no longer shows.
+    expect(harness.onUnsaved).not.toHaveBeenCalled();
+  });
+
   it("stays inert when disabled", () => {
     const harness = setup({
       enabled: false,

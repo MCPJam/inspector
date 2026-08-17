@@ -2251,6 +2251,13 @@ export function useChatSession(
   const consumePersistReceipt = useCallback((): PersistReceiptData | null => {
     const receipt = persistReceiptRef.current;
     persistReceiptRef.current = null;
+    // Re-checked at CONSUME time, not just on arrival: the session can change
+    // in the window between the receipt landing and a post-stream effect
+    // reading it, and handing a receipt for the old thread to the new one would
+    // sync its version baseline — or detach it — on the wrong conversation.
+    if (receipt && receipt.chatSessionId !== chatSessionIdRef.current) {
+      return null;
+    }
     return receipt;
   }, []);
 

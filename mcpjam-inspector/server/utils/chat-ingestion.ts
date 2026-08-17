@@ -22,9 +22,15 @@ const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
  */
 const INGEST_RETRY_DELAYS_MS = [500, 1_500] as const;
 /**
- * Hard ceiling on the whole persist, retries and backoff included. A real
- * deadline, not a nominal one: each attempt's timeout is clamped to the budget
- * that remains, so a receipt-gated stream close can never hang past it.
+ * Ceiling on the retry sequence: attempts and backoff together never push the
+ * persist past this. A real deadline, not a nominal one — each attempt's
+ * timeout is clamped to the budget that remains, so a receipt-gated stream
+ * close cannot hang past it.
+ *
+ * A caller that asks for a per-attempt timeout LONGER than this still gets one
+ * full attempt (it asked for that wait explicitly); the budget then bounds the
+ * retries rather than truncating the request the caller configured. No live
+ * caller does this today — every rail takes the 5s default.
  */
 const INGEST_TOTAL_BUDGET_MS = 15_000;
 const MAX_RESPONSE_PREVIEW_CHARS = 200;
@@ -567,9 +573,19 @@ async function attemptChatIngest(
     });
 
     if (response.ok) {
-      const parsed = await response
-        .json()
-        .catch(() => undefined as unknown as Record<string, unknown>);
+      // The abort signal covers body streaming too, so a slow 2xx body can be
+      // cut off by this attempt's timeout. That is a timeout worth retrying —
+      // classifying it as a malformed response would burn the one signal that
+      // says "try again" on a request that may well have committed.
+      let parsed: unknown;
+      try {
+        parsed = await response.json();
+      } catch (error) {
+        if (isAbortError(error)) {
+          return { kind: "transient", failureKind: "timeout" };
+        }
+        parsed = undefined;
+      }
       return { kind: "settled", outcome: classifySuccessBody(parsed) };
     }
 
@@ -633,6 +649,9 @@ async function attemptChatIngest(
         failureKind: "http_error",
         status: response.status,
       },
+      // A 4xx is the misconfiguration case where the body text is most useful;
+      // it was already read above, so dropping it here would waste it.
+      preview,
     };
   } catch (error) {
     return {

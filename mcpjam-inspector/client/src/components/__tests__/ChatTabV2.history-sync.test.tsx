@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { track } from "@/lib/analytics";
 import { ChatTabV2 } from "../ChatTabV2";
+import {
+  NO_RECEIPT_RECONCILE_WINDOW_MS,
+  RECEIPT_RECONCILE_WINDOW_MS,
+} from "@/hooks/use-resumed-thread-persistence";
 
 const mockToastError = vi.hoisted(() => vi.fn());
 const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
@@ -813,7 +817,7 @@ describe("ChatTabV2 history sync", () => {
       expect(mockToastError).not.toHaveBeenCalled();
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(3_500);
+        await vi.advanceTimersByTimeAsync(RECEIPT_RECONCILE_WINDOW_MS + 500);
       });
       view.rerender(<ChatTabV2 {...defaultProps} />);
       await flushMicrotasks();
@@ -854,7 +858,7 @@ describe("ChatTabV2 history sync", () => {
       expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(5);
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(5_000);
+        await vi.advanceTimersByTimeAsync(RECEIPT_RECONCILE_WINDOW_MS + 2_000);
       });
       view.rerender(<ChatTabV2 {...defaultProps} />);
       await flushMicrotasks();
@@ -871,12 +875,15 @@ describe("ChatTabV2 history sync", () => {
       const view = await resumeThreadAndStream();
 
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(4_000);
+        await vi.advanceTimersByTimeAsync(
+          NO_RECEIPT_RECONCILE_WINDOW_MS - 1_000
+        );
       });
       view.rerender(<ChatTabV2 {...defaultProps} />);
       await flushMicrotasks();
 
-      // Still inside the longer no-receipt window — nothing said yet.
+      // Past the receipt window but still inside the longer no-receipt one —
+      // silence from an old server is not evidence of anything yet.
       expect(mockToastError).not.toHaveBeenCalled();
 
       mockReactiveHistoryState.session = {

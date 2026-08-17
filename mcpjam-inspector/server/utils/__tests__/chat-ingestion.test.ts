@@ -349,19 +349,17 @@ describe("chat-ingestion", () => {
   });
 
   it("does not retry a 409", async () => {
-    global.fetch = vi
-      .fn()
-      .mockImplementation(
-        async () =>
-          new Response(
-            JSON.stringify({
-              ok: false,
-              error: "VERSION_CONFLICT",
-              currentVersion: 9,
-            }),
-            { status: 409, headers: { "Content-Type": "application/json" } }
-          )
-      ) as typeof fetch;
+    global.fetch = vi.fn().mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error: "VERSION_CONFLICT",
+            currentVersion: 9,
+          }),
+          { status: 409, headers: { "Content-Type": "application/json" } }
+        )
+    ) as typeof fetch;
 
     const outcome = await persistChatSessionToConvex({
       chatSessionId: "session-409",
@@ -644,6 +642,67 @@ describe("chat-ingestion", () => {
       });
     });
 
+    it("retries a 2xx whose body read is cut off by the attempt timeout", async () => {
+      // The abort signal covers body streaming, so a slow 2xx body can be cut
+      // off mid-read. That is a timeout worth retrying, not a malformed
+      // response — the write may well have committed.
+      vi.useFakeTimers();
+      let attempt = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        attempt += 1;
+        if (attempt === 1) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => {
+              throw Object.assign(new Error("aborted"), {
+                name: "AbortError",
+              });
+            },
+          } as unknown as Response;
+        }
+        return new Response(JSON.stringify({ ok: true, version: 3 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      const persistPromise = persistChatSessionToConvex({
+        chatSessionId: "abort-body",
+        modelId: "openai/gpt-oss-120b",
+        modelSource: "mcpjam",
+        authHeader: "Bearer bearer-token",
+        origin: "playground",
+        startedAt: 1,
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(await persistPromise).toEqual({ outcome: "saved", version: 3 });
+      expect(attempt).toBe(2);
+    });
+
+    it("keeps the response preview on a 4xx so the failure is diagnosable", async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          new Response("modelId is required", { status: 400 })
+        ) as typeof fetch;
+
+      await persistChatSessionToConvex({
+        chatSessionId: "bad-request",
+        modelId: "openai/gpt-oss-120b",
+        modelSource: "mcpjam",
+        authHeader: "Bearer bearer-token",
+        origin: "playground",
+        startedAt: 1,
+      });
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("modelId is required"),
+        expect.objectContaining({ status: 400 })
+      );
+    });
+
     it("reports not-attempted without a session id, auth, or Convex URL", async () => {
       const base = {
         modelId: "openai/gpt-oss-120b",
@@ -697,6 +756,7 @@ describe("chat-ingestion", () => {
         startedAt: 1,
         endedAt: 2,
         spans: [],
+        modelId: "openai/gpt-oss-120b",
       },
     });
 
@@ -709,6 +769,15 @@ describe("chat-ingestion", () => {
   });
 
   it("omits turnId for a traceless payload so the legacy path is unchanged", async () => {
+    // Its own fetch mock: reading `mock.calls[0]` off an inherited one makes the
+    // assertion depend on suite order rather than on this request.
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, version: 2 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    ) as typeof fetch;
+
     await persistChatSessionToConvex({
       chatSessionId: "traceless-session",
       modelId: "openai/gpt-oss-120b",

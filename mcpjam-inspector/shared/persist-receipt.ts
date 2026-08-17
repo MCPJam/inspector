@@ -89,14 +89,21 @@ export function isPersistReceiptDataPart(
   if (!data || typeof data !== "object") {
     return false;
   }
-  const { outcome, chatSessionId } = data as Record<string, unknown>;
+  const { outcome, chatSessionId, version, currentVersion } = data as Record<
+    string,
+    unknown
+  >;
   // `chatSessionId` is required, not optional: without it the client cannot
   // tell whether the receipt describes the thread it is currently showing, and
-  // an unattributable receipt is worse than none.
+  // an unattributable receipt is worse than none. The versions are checked for
+  // the same reason — the client syncs its concurrency baseline from `version`,
+  // so a non-numeric one would flow straight into that baseline.
   return (
     typeof outcome === "string" &&
     PERSIST_RECEIPT_OUTCOMES.has(outcome as PersistReceiptOutcome) &&
     typeof chatSessionId === "string" &&
-    chatSessionId.length > 0
+    chatSessionId.length > 0 &&
+    (version === undefined || Number.isFinite(version)) &&
+    (currentVersion === undefined || Number.isFinite(currentVersion))
   );
 }

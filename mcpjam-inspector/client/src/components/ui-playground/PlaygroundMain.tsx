@@ -2399,7 +2399,13 @@ export function PlaygroundMain({
         }
       };
 
-      if (!effectiveHasMessages) {
+      // Gated on the ROOT transcript, which is what gets forked below —
+      // `effectiveHasMessages` is compare-aware and reads the columns in
+      // compare layout, so the two can disagree. The dangerous direction is a
+      // root that holds messages while the columns do not: the fork would be
+      // skipped and the guard dropped on a transcript that can still be written
+      // back to the old row. (The old code gated on the compare-aware value.)
+      if (isThreadEmpty) {
         // Nothing to fork — with no transcript there is no snapshot that could
         // be written back over the old row, so dropping the guard is enough.
         syncResumedVersion(null);
@@ -2412,13 +2418,23 @@ export function PlaygroundMain({
       // the fork's own hydration, so it survives a fork that never commits.
       void detachToLocalFork(cloneUiMessages(messagesRef.current), {
         toolRenderOverrides: restoredToolRenderOverrides,
-      }).then((fork) => {
-        notify(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
-      });
+      })
+        .then((fork) => {
+          notify(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
+        })
+        .catch((error) => {
+          // `void` silences the linter, not the rejection. Routed through
+          // `notify` so the eval preview's suppression still applies.
+          console.error(
+            "[PlaygroundMain] Failed to fork the detached thread",
+            error
+          );
+          notify(DETACH_FORK_FAILED_MESSAGE);
+        });
     },
     [
       cancelPendingHistorySelection,
-      effectiveHasMessages,
+      isThreadEmpty,
       restoredToolRenderOverrides,
       detachToLocalFork,
       syncResumedVersion,
@@ -2530,11 +2546,16 @@ export function PlaygroundMain({
           ) {
             return null;
           }
-          console.error(
-            "[PlaygroundMain] Failed to refresh history session",
-            error
-          );
-          return null;
+          // Anything else — a network blip, a 5xx — is RETHROWN rather than
+          // flattened to null, matching ChatTabV2's twin of this helper. `null`
+          // is the caller's signal that the thread is gone, and callers act on
+          // it by detaching; collapsing a transient failure into that signal
+          // would tear users off perfectly valid conversations during a brief
+          // history-API outage. Every caller already distinguishes the two: the
+          // pre-send sync reports the error and refuses the send, the
+          // share/unshare handler logs and leaves the thread alone, and the
+          // post-stream rail refresh catches and ignores.
+          throw error;
         }
       }
       return null;

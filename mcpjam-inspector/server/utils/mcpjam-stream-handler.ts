@@ -3824,6 +3824,21 @@ export async function runChatEngineLoop(
             "[mcpjam-stream-handler] Error while persisting conversation",
             persistenceError
           );
+          // A thrown persist is still an answer the client deserves. Without
+          // this the stream closes silent and the client waits out its whole
+          // no-receipt reconciliation window before saying anything.
+          if (chatSessionId) {
+            writePersistReceipt(
+              receiptWriter,
+              { outcome: "failed", failureKind: "exception" },
+              {
+                chatSessionId,
+                ...(capturedTurnTrace
+                  ? { turnId: capturedTurnTrace.turnId }
+                  : {}),
+              }
+            );
+          }
         }
       }
     } finally {
