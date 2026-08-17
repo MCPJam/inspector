@@ -940,10 +940,18 @@ export function useEvalHandlers({
           // A cap can reject one target while others launch. This branch never
           // throws, so the outer catch — and the wall with it — would never
           // see it. Scan every failure, not just the first.
-          openEvalIterationWall(
-            failures.find((failure) => isEvalIterationCap(failure.reason))
-              ?.reason
-          );
+          if (
+            openEvalIterationWall(
+              failures.find((failure) => isEvalIterationCap(failure.reason))
+                ?.reason
+            )
+          ) {
+            // "Starting N runs…" fired before any of them were accepted, so it
+            // overstates the moment the wall says one was refused. The
+            // failure-count toast below is the accurate version — it names how
+            // many of the N actually launched.
+            toast.dismiss(runStartedToastId);
+          }
           const failedHostNames = failures
             .map(
               (failure) =>

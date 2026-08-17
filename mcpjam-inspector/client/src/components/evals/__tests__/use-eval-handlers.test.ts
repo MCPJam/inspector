@@ -1031,6 +1031,9 @@ describe("useEvalHandlers", () => {
         .mock.calls.map((call) => String(call[0]))
         .join(" | ");
       expect(errorToasts).toContain("1 of 2");
+      // "Starting 2 runs…" fired before anything was accepted, so it can't
+      // stay up next to a wall saying one was refused.
+      expect(toast.dismiss).toHaveBeenCalledWith("toast-id");
     });
 
     it("finds a cap carried by a later plan when every plan fails", async () => {
