@@ -233,6 +233,35 @@ describe("hosted /widget-content — malformed declarations", () => {
     expect(body.metadataSources.csp).toBe("content");
   });
 
+  it("preserves a bare empty csp object as a deny-by-default declaration", async () => {
+    // `_meta.ui.csp: {}` omits every domain field to ask for the secure
+    // default. Treating it as absent would let the listing entry supply a
+    // BROADER policy than the content item asked for — a precedence
+    // inversion in the widening direction, which is the dangerous one.
+    mockResource({
+      contentMeta: { ui: { csp: {} } },
+      listingMeta: { ui: { csp: ESM_CSP } },
+    });
+    const res = await postWidgetContent(makeApp());
+    const body = await res.json();
+    expect(body.csp).toEqual({});
+    expect(body.metadataSources.csp).toBe("content");
+  });
+
+  it("keeps content precedence when its only declared fields are malformed", async () => {
+    // Same principle one step further: the object is a declaration, so a
+    // field that sanitizes away to nothing still means deny-by-default
+    // rather than handing the decision to a broader lower source.
+    mockResource({
+      contentMeta: { ui: { csp: { connectDomains: 42 } } },
+      listingMeta: { ui: { csp: ESM_CSP } },
+    });
+    const res = await postWidgetContent(makeApp());
+    const body = await res.json();
+    expect(body.csp).toEqual({});
+    expect(body.metadataSources.csp).toBe("content");
+  });
+
   it("ignores a non-boolean prefersBorder", async () => {
     mockResource({ contentMeta: { ui: { prefersBorder: "yes" } } });
     const res = await postWidgetContent(makeApp());

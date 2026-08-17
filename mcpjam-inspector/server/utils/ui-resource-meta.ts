@@ -123,11 +123,18 @@ const CSP_DOMAIN_KEYS = [
  * `cspMode: "permissive"` requests — scenario / minimal surfaces used to be
  * shielded from a malformed declaration by the withholding this PR removed.
  *
- * Non-array fields are dropped; non-string entries within a field are
- * dropped. An explicitly empty array is preserved — `{ connectDomains: [] }`
- * is a meaningful "allow nothing here" declaration, not a missing one.
- * Returns undefined when no recognized field survives, so resolution falls
- * through to the next source instead of reporting a phantom declaration.
+ * Any plain object counts as a declaration, and emptiness is meaningful:
+ * `{ connectDomains: [] }` and a bare `{}` both say "allow nothing here",
+ * which is a real deny-by-default choice rather than a missing one. Treating
+ * either as absent would let a lower-precedence source (the listing entry or
+ * legacy keys) supply a BROADER policy than the content item asked for —
+ * inverting the precedence SEP-1865 requires, in the widening direction.
+ *
+ * Only a structurally invalid value — a string, number, array, or null —
+ * is rejected outright, so resolution falls through rather than reporting a
+ * phantom declaration. Within a valid object, non-array fields and
+ * non-string entries are dropped individually; a field that survives as
+ * nothing is deny-by-default, again the safe direction.
  */
 function normalizeCsp(value: unknown): McpUiResourceCsp | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -135,16 +142,14 @@ function normalizeCsp(value: unknown): McpUiResourceCsp | undefined {
   }
   const src = value as Record<string, unknown>;
   const out: McpUiResourceCsp = {};
-  let sawRecognizedField = false;
   for (const key of CSP_DOMAIN_KEYS) {
     const list = src[key];
     if (!Array.isArray(list)) continue;
-    sawRecognizedField = true;
     out[key] = list.filter(
       (d): d is string => typeof d === "string" && d.trim().length > 0
     );
   }
-  return sawRecognizedField ? out : undefined;
+  return out;
 }
 
 /** Permissions must be a plain object — SEP-1865 declares each as `{}`. */
