@@ -799,10 +799,10 @@ export function MCPAppsRendererSurface({
   const { environment, resolvers } = host;
   const themeMode = environment.themeMode;
   const sharedHostStyle = environment.sharedHostStyle;
-  const chatboxHostStyle = environment.chatboxHostStyle;
-  const chatboxHostTheme = environment.chatboxHostTheme;
+  const scenarioHostStyle = environment.scenarioHostStyle;
+  const scenarioHostTheme = environment.scenarioHostTheme;
   const hostCapabilitiesOverride = environment.hostCapabilitiesOverride;
-  // Active hostConfig.mcpProfile from the surrounding scope (chatbox session,
+  // Active hostConfig.mcpProfile from the surrounding scope (scenario session,
   // project default, eval suite) is bound inside the adapter's resolvers (3d-iii);
   // the renderer keys its capability memos on `profileKey` and reads only the
   // minimal projections it inspects (sandbox overrides + hostInfo override).
@@ -822,9 +822,9 @@ export function MCPAppsRendererSurface({
   const liveEffectiveCompatRuntime = useMemo(
     () =>
       resolvers.resolveEffectiveCompatRuntime({
-        hostStyle: chatboxHostStyle ?? sharedHostStyle,
+        hostStyle: scenarioHostStyle ?? sharedHostStyle,
       }),
-    [activeMcpProfileKey, chatboxHostStyle, sharedHostStyle]
+    [activeMcpProfileKey, scenarioHostStyle, sharedHostStyle]
   );
   const liveInjectOpenAiCompat = liveEffectiveCompatRuntime.injected;
   // Capability surface accompanying `liveInjectOpenAiCompat`. Travels
@@ -869,9 +869,9 @@ export function MCPAppsRendererSurface({
   const isPlaygroundActive = environment.isPlaygroundActive;
   const configuredHostTheme = resolvers.extractHostTheme(baseHostContext);
   const resolvedTheme = isPlaygroundActive
-    ? configuredHostTheme ?? chatboxHostTheme ?? themeMode
-    : chatboxHostTheme ?? themeMode;
-  // Redeemed chatbox sessions resolve servers via Convex on every
+    ? configuredHostTheme ?? scenarioHostTheme ?? themeMode
+    : scenarioHostTheme ?? themeMode;
+  // Redeemed scenario sessions resolve servers via Convex on every
   // platform; widget-content fetches and bridge resource/prompt calls
   // must take the hosted API branch even on local builds. Mirrored into
   // a ref because the bridge handlers close over long-lived callbacks.
@@ -879,7 +879,7 @@ export function MCPAppsRendererSurface({
   const webManagedServersRef = useRef(webManagedServers);
   webManagedServersRef.current = webManagedServers;
   // CSP mode is derived from the surface kind + minimalMode + the playground's
-  // selected mode (see WidgetHost). Chatbox surfaces (published runtime,
+  // selected mode (see WidgetHost). Scenario surfaces (published runtime,
   // Preview, Sessions transcript) and minimal mode default to `permissive` —
   // end-user-facing demo surfaces where an incomplete `_meta.ui.csp`
   // declaration would render a blank widget; the playground uses its selected
@@ -891,9 +891,9 @@ export function MCPAppsRendererSurface({
   // `surface.kind` is sourced from the WidgetSurfaceContext (NOT
   // `isPlaygroundActive`), so it is stable from the first render — the
   // iframe-creation-time policy does not flip and tear down/rebuild the iframe
-  // (and "chatbox" wins over "playground", as before).
+  // (and "scenario" wins over "playground", as before).
   const cspMode: CspMode =
-    host.surface.kind === "chatbox" || minimalMode
+    host.surface.kind === "scenario" || minimalMode
       ? "permissive"
       : host.surface.kind === "playground"
       ? host.surface.playgroundCspMode
@@ -945,7 +945,7 @@ export function MCPAppsRendererSurface({
   // the View would see inconsistent HostContext.
   const earlyEffectiveHostStyle = isPlaygroundActive
     ? sharedHostStyle
-    : chatboxHostStyle;
+    : scenarioHostStyle;
   const earlyEffectiveMcpAppsCapabilities = useMemo(
     () =>
       resolvers.resolveEffectiveMcpAppsCapabilities({
@@ -2259,7 +2259,7 @@ export function MCPAppsRendererSurface({
   // These are sent via hostContext.styles.variables - the SDK should pass them through
   const effectiveHostStyle = isPlaygroundActive
     ? sharedHostStyle
-    : chatboxHostStyle;
+    : scenarioHostStyle;
   const hostStyleDefinition =
     resolvers.getHostStyleOrDefault(effectiveHostStyle);
   // Single source of truth for what `hostCapabilities` this view will
@@ -2274,7 +2274,7 @@ export function MCPAppsRendererSurface({
   // commit. Both inputs are stable — `effectiveHostStyle` resolves to a
   // string|null derived from Zustand+context selectors, and
   // `hostCapabilitiesOverride` comes from a context whose Providers (see
-  // ClientStyledChatTabV2 / PlaygroundTab / ChatboxChatPage) read from
+  // ClientStyledChatTabV2 / PlaygroundTab / ScenarioChatPage) read from
   // Zustand selectors that return stable refs until the underlying field
   // mutates.
   // Ref-route the active `window.openai` shim capability surface so
@@ -2614,7 +2614,7 @@ export function MCPAppsRendererSurface({
     // permissive shortcut below bypasses the proxy's `buildCSP(csp,
     // cspDirectives)` path (it builds its own fixed permissive CSP), so
     // without treating cspDirectives as hardening the configured
-    // directives get silently dropped on the chatbox/preview surfaces
+    // directives get silently dropped on the scenario/preview surfaces
     // where host profiles are most meant to apply.
     //
     // Only count entries that contribute at least one token that would
@@ -2643,18 +2643,18 @@ export function MCPAppsRendererSurface({
     // (restrictTo, cspDirectives) and skip CSP injection entirely. Strict
     // applies the host profile.
     //
-    // Chatbox / minimal-mode surfaces also hardcode `cspMode = "permissive"`
+    // Scenario / minimal-mode surfaces also hardcode `cspMode = "permissive"`
     // (line 405) as a UX-friendliness default for end-user demos, NOT as a
     // user choice. The host's `restrictTo` / `cspDirectives` MUST still apply
     // there — otherwise a developer who configures `restrictTo: { connectDomains: ["https://api.acme"] }`
-    // on their chatbox host would have it honored on Connect → Chat but
-    // silently dropped on the public chatbox runtime / Sessions transcript.
+    // on their scenario host would have it honored on Connect → Chat but
+    // silently dropped on the public scenario runtime / Sessions transcript.
     //
     // We can't gate on `isPlaygroundActive` alone: the Playground store is
     // localStorage and leaks across browsing contexts on the same origin
-    // (see line 396), so a chatbox preview iframe can read
+    // (see line 396), so a scenario preview iframe can read
     // `isPlaygroundActive = true` from the parent inspector tab even though
-    // it's a chatbox surface. Require `!isChatboxSurface && !minimalMode` so
+    // it's a scenario surface. Require `!isScenarioSurface && !minimalMode` so
     // the short-circuit is gated on the actual rendering surface, not just
     // the (leakable) playground flag.
     //
@@ -2667,7 +2667,7 @@ export function MCPAppsRendererSurface({
     const userTogglePermissive =
       cspMode === "permissive" &&
       isPlaygroundActive &&
-      host.surface.kind !== "chatbox" &&
+      host.surface.kind !== "scenario" &&
       !minimalMode;
     if (userTogglePermissive) {
       let resolvedPermissions: McpUiResourcePermissions | undefined;

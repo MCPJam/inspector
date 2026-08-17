@@ -10,7 +10,7 @@ import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHost, useHostList, useHostMutations } from "@/hooks/useClients";
 import { useProjectServers } from "@/hooks/useProjects";
 import { buildHostComparePath, routePaths } from "@/lib/app-navigation";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { getCatalogTemplate } from "@mcpjam/sdk/host-compat";
@@ -75,7 +75,7 @@ export function HostsTab({
   const browseShellStyle = useMemo(
     () =>
       previewedHostStyle
-        ? getChatboxShellStyle(
+        ? getScenarioShellStyle(
             previewedHostStyle,
             themeMode,
             previewedChatUiOverride

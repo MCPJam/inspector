@@ -75,6 +75,10 @@ import {
   selectDeliverableServerIds,
 } from "./plugin-delivery.js";
 import { logger } from "../logger.js";
+import {
+  createSystemStreamFailureReporter,
+  oncePerTurn,
+} from "../stream-failure-reporter.js";
 import type {
   ChatEngineLoopResult,
   MCPJamHandlerOptions,
@@ -417,10 +421,11 @@ export async function runHarnessTurn(
     onToolResult,
     onStepFinish,
     onEngineError,
+    failureReporter: failureReporterOption,
     onLiveTextDelta,
     requireToolApproval,
     chatSessionId,
-    chatboxId,
+    scenarioId,
     sourceType,
     journeyRunId,
     hostId,
@@ -435,6 +440,11 @@ export async function runHarnessTurn(
     effectiveCapabilities,
     createHarnessScopeStepUpContinuation,
   } = options;
+  // One typed route.operation.failed per turn; the system fallback covers
+  // callers with no request context (evals/swarms).
+  const failureReporter = oncePerTurn(
+    failureReporterOption ?? createSystemStreamFailureReporter("harness-turn"),
+  );
   // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
   // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
   // toNativeModel (Codex only maps the `openai/gpt-5*` form), credential
@@ -453,7 +463,7 @@ export async function runHarnessTurn(
     throw new Error("runHarnessTurn: harness id is required");
   }
   // An ephemeral box is launcher-owned and billed to its run's project; an
-  // execution scope is the host-funded GUEST path, which resolves a chatbox's
+  // execution scope is the host-funded GUEST path, which resolves a scenario's
   // own personal computer and bills the host org. The two authorize and bill
   // differently, so a turn asking for both is a wiring bug. The backend rejects
   // the combination outright — surface it HERE, before the box is bound and a
@@ -461,7 +471,7 @@ export async function runHarnessTurn(
   if (harnessSandboxBinding && executionScope) {
     throw new Error(
       "runHarnessTurn: an ephemeral sandbox binding cannot be combined with " +
-        "an execution scope (the guest/host-funded path runs on the chatbox's " +
+        "an execution scope (the guest/host-funded path runs on the scenario's " +
         "own computer)"
     );
   }
@@ -872,8 +882,8 @@ export async function runHarnessTurn(
           : {}),
       });
       const ownerType: HarnessOwnerRef["ownerType"] | undefined =
-        sourceType === "chatbox"
-          ? "chatbox-chat"
+        sourceType === "scenario"
+          ? "scenario-chat"
           : sourceType === "swarm"
           ? "swarm-chat"
           : sourceType === "eval" || sourceType === "sandbox"
@@ -913,7 +923,7 @@ export async function runHarnessTurn(
         projectId &&
         authHeader &&
         ownerType &&
-        (ownerType !== "chatbox-chat" || chatboxId) &&
+        (ownerType !== "scenario-chat" || scenarioId) &&
         // swarm-chat completeness is enforced (throw) above, so reaching here
         // with ownerType === "swarm-chat" implies all three key dimensions.
         (ownerType !== "swarm-chat" || (journeyRunId && hostId))
@@ -926,7 +936,7 @@ export async function runHarnessTurn(
           harnessId: harnessAdapter.id,
           ownerType,
           chatSessionId,
-          ...(chatboxId ? { chatboxId } : {}),
+          ...(scenarioId ? { scenarioId } : {}),
           // Swarm continuity lane — the run + pinned host key the owner so a
           // multi-turn swarm harness session resumes ONLY its own sidecar.
           ...(ownerType === "swarm-chat" && journeyRunId
@@ -950,7 +960,7 @@ export async function runHarnessTurn(
         });
         if (!claim.ok) {
           // FAIL CLOSED for chat-backed owners (this block only runs for
-          // direct-chat/chatbox-chat). Never silently start a fresh,
+          // direct-chat/scenario-chat). Never silently start a fresh,
           // non-persisted harness session when continuity can't be guaranteed —
           // that would mislead the user into thinking they're in a continuous
           // conversation.
@@ -2244,11 +2254,11 @@ export async function runHarnessTurn(
             capturedHarnessCommit = {
               ownerType: continuity.owner.ownerType as
                 | "direct-chat"
-                | "chatbox-chat"
+                | "scenario-chat"
                 | "swarm-chat",
               chatSessionId: continuity.owner.chatSessionId as string,
-              ...(continuity.owner.chatboxId
-                ? { chatboxId: continuity.owner.chatboxId }
+              ...(continuity.owner.scenarioId
+                ? { scenarioId: continuity.owner.scenarioId }
                 : {}),
               leaseId: continuity.leaseId,
               expectedStateVersion: continuity.stateVersion,
@@ -2284,7 +2294,18 @@ export async function runHarnessTurn(
         return;
       }
       const errorText = err instanceof Error ? err.message : String(err);
-      logger.error("[harness] turn failed", err);
+      // Reporter, not a bare logger.error: the old call captured to Sentry
+      // unconditionally and left no typed record (the response is a 200
+      // stream the HTTP failure events never see). Classify first, page only
+      // on origin=mcpjam, emit route.operation.failed.
+      failureReporter({
+        message: "[harness] turn failed",
+        error: err,
+        source: "chat.harness-turn",
+        hop: "user_server_hop",
+        transport: "http_stream",
+        context: { promptIndex },
+      });
       // Close any open text block so the UI stream stays balanced.
       closeReasoning();
       if (textId !== undefined) emitTextEnd(writer, textId);

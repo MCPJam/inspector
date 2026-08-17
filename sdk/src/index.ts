@@ -290,6 +290,41 @@ export type {
   DiffServerSnapshotsOptions,
   CollectAndDiffServerSnapshotInput,
 } from "./server-diff.js";
+// Adapts a run comparison into the same StructuredRunReport the server-diff
+// reporter uses, so `--reporter junit-xml` needs no second renderer.
+export { buildRunCompareReport } from "./run-compare.js";
+// Already the p95 the gate engine uses internally. Exported so the CLI's
+// compare command computes latency the SAME way rather than growing a second
+// percentile implementation next to it.
+export { calculateLatencyStats, calculatePercentile } from "./percentiles.js";
+
+// Hosted corpus: materialize eval cases into local EvalTests, and lock what was
+// materialized. Pure — the file I/O half lives in @mcpjam/cli.
+export {
+  CORPUS_LOCK_VERSION,
+  HostedOnlyCaseError,
+  buildCorpus,
+  buildCorpusLock,
+  evalTestFromPlatformCase,
+  loadCorpusFromLock,
+  resolveCaseNames,
+  resolveEffectiveChecks,
+  scenarioContentHash,
+  sdkMatchOptionsFromPublic,
+  verifyCorpusLock,
+} from "./corpus.js";
+export type {
+  BuildCorpusInput,
+  CorpusCase,
+  CorpusDrift,
+  CorpusLock,
+  CorpusSkip,
+  EvalTestFromCaseOptions,
+  LoadedCorpus,
+  PublicCheckOverride,
+  PublicMatchOptions,
+} from "./corpus.js";
+export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,
   evaluateToolCallOutcome,
@@ -905,6 +940,110 @@ export type {
   ListAllServerSkillsParams,
   ListAllServerSkillsResult,
 } from "./operations.js";
+
+// The versioned evaluation contract (browser-safe; also exported in full from
+// `@mcpjam/sdk/contract`). Re-exported here so a code-first author can build a
+// custom scorer without a second import path.
+export {
+  aggregateEvaluationConfigHash,
+  buildEvaluationConfigSnapshot,
+  canonicalDigest,
+  canonicalJson,
+  definitionHash,
+  errorScoreResult,
+  evaluationConfigHash,
+  finalizeScoreResult,
+  notApplicableScoreResult,
+  resolveScoreDefinition,
+  scorePassed,
+  sha256Hex,
+  skippedScoreResult,
+  PREDICATES_VERSION,
+  evaluationConfigSnapshotSchema,
+  resolvedScoreDefinitionSchema,
+  scoreResultSchema,
+} from "./contract/index.js";
+export type {
+  EvaluationConfigSnapshot,
+  ResolvedScoreDefinition,
+  ScoreDefinition,
+  ScoreRawOutcome,
+  ScoreResult,
+  ScoreStatus,
+  ScorerContextV1,
+  ScorerErrorPolicy,
+  ScorerIdSource,
+  ScorerRole,
+} from "./contract/index.js";
+
+// The scorer runtime. Main-entry only — `judgeScorer` reaches the model
+// factory, which is not browser-safe.
+export {
+  DEFAULT_JUDGE_THRESHOLD,
+  DEFAULT_SCORER_CONCURRENCY,
+  DEFAULT_SCORER_TIMEOUT_MS,
+  JUDGE_TEMPLATE_VERSION,
+  judgeScorer,
+  predicateScorer,
+  runScorers,
+  scoresPassed,
+} from "./scorers/index.js";
+export type {
+  JudgeScorerOptions,
+  PredicateScorerOptions,
+  Scorer,
+  ScorerRunOptions,
+} from "./scorers/index.js";
+
+// The gate engine. ONE evaluator behind `assertGate` (code-first) and
+// `mcpjam eval gate` (hosted), so a CI gate cannot be green on one path and
+// red on the other.
+export {
+  GateError,
+  assertGate,
+  evaluateGates,
+  formatGateReport,
+  gateInputFromPlatformRun,
+  gateInputFromRunResult,
+  gateInputFromSuiteResult,
+  passRateFractionFromPercent,
+} from "./gates.js";
+export { COMPARATIVE_GATE_FIELDS } from "./gates.js";
+export type {
+  GateInput,
+  GatePolicy,
+  GateReport,
+  GateScore,
+  GateStatus,
+  GateVerdict,
+  ScoreIntegrity,
+} from "./gates.js";
+
+// Run-over-run comparison: the statistics, and the gates built on them.
+// Separate from the single-run engine because the question is different —
+// "did these two runs measure the same thing, and if so did it get worse?"
+export { evaluateCompareGates } from "./compare-gates.js";
+export type {
+  CompareGateInput,
+  DeterministicScoreRegression,
+} from "./compare-gates.js";
+export {
+  DEFAULT_MIN_EFFECT_SIZE,
+  DEFAULT_MIN_SAMPLE_SIZE,
+  Z_95,
+  assessPassRateRegression,
+  detectFlakyCases,
+  newcombeDifferenceInterval,
+  wilsonInterval,
+} from "./compare-stats.js";
+export type {
+  ConfidenceInterval,
+  DifferenceInterval,
+  FlakyCase,
+  ProportionSample,
+  RegressionAssessment,
+  RegressionVerdict,
+} from "./compare-stats.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
 export { evaluateToolCalls } from "./matchers.js";

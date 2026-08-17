@@ -18,6 +18,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
+import {
+  toRunScoreIntegrity,
+  toScoreProjection,
+} from "./eval-score-projection.js";
+import {
+  toRunCompareDto,
+  type RunCompareBaseline,
+} from "./eval-compare-projection.js";
 import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
@@ -72,12 +80,14 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { synthesizeServerBody } from "./adapter.js";
 import {
   getCanonicalModelId,
   hostedModelDefinitionsFromSnapshot,
   SUPPORTED_MODELS,
 } from "@/shared/types";
+import { classifyModelIdProvider } from "@/shared/model-provider";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 
 // BYOK statics + the hosted snapshot — hosted display rows were removed from
@@ -106,7 +116,7 @@ type InternalExpectedToolCall = {
 
 /** Collect the `toolCalledWith` predicate asserts that follow a prompt. */
 function expectedCallsFromAsserts(
-  steps: TestStep[]
+  steps: TestStep[],
 ): InternalExpectedToolCall[] {
   const out: InternalExpectedToolCall[] = [];
   for (const step of steps) {
@@ -192,7 +202,7 @@ function stepsToInternalCaseFields(steps: TestStep[]): InternalCaseFields {
 }
 
 function withImplicitRenderAssertForSingleToolCall(
-  steps: TestStep[]
+  steps: TestStep[],
 ): TestStep[] {
   const normalized = normalizeSteps(steps);
   if (normalized.length !== 1 || !isToolCallStep(normalized[0]!)) {
@@ -241,7 +251,7 @@ type PublicInlineTest = z.infer<typeof publicInlineTestSchema>;
 
 /** Project a public inline test (`steps`) onto the internal run-schema test. */
 function publicInlineTestToRunTest(
-  test: PublicInlineTest
+  test: PublicInlineTest,
 ): RunEvalsRequest["tests"][number] {
   const derived = stepsToInternalCaseFields(test.steps as TestStep[]);
   return {
@@ -271,11 +281,11 @@ function publicInlineTestToRunTest(
 
 // Public shape: the web RunEvalsRequestSchema minus hosted-app plumbing the
 // public surface must not accept (`convexAuthToken` comes from the bearer;
-// chatbox/access/storage fields are hosted-client concerns) and minus the
+// scenario/access/storage fields are hosted-client concerns) and minus the
 // internal-contract `tests` (replaced by the public `steps`-based shape).
 const createEvalRunSchema = RunEvalsRequestSchema.omit({
   convexAuthToken: true,
-  chatboxId: true,
+  scenarioId: true,
   accessVersion: true,
   storageServerIds: true,
   tests: true,
@@ -313,7 +323,7 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
     {
       message:
         "environmentId and serverIds are mutually exclusive — an environment supplies its own closed server set.",
-    }
+    },
   )
   // An environment supplies its own closed server set, so it satisfies this
   // requirement the same way a suite's saved selection does — an environment
@@ -324,7 +334,7 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
     {
       message:
         "serverIds are required when creating a new suite without an environment",
-    }
+    },
   );
 
 // ── Author-only suite-create schema ──────────────────────────────────
@@ -369,7 +379,7 @@ const createEvalSuiteSchema = z.object({
           .optional(),
         matchOptions: matchOptionsSchema.optional(),
         predicates: casePredicatesSchema.optional(),
-      })
+      }),
     )
     .min(1)
     .max(MAX_V1_TESTS),
@@ -386,27 +396,26 @@ type CreateEvalSuiteBody = z.infer<typeof createEvalSuiteSchema>;
  */
 function normalizeCreateTestsToRunTests(
   tests: CreateEvalSuiteBody["tests"],
-  suite: { model: string; provider?: string }
+  suite: { model: string; provider?: string },
 ): RunEvalsRequest["tests"] {
   return tests.map((test) => {
     const runs = test.runs ?? 1;
-    const model = test.model ?? suite.model;
-    let provider = test.provider ?? suite.provider;
-    if (!provider) {
-      provider = model.includes("/") ? model.split("/")[0] : undefined;
-    }
-    if (!provider) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        `Cannot derive a provider for test "${test.title}". Pass a suite-level "provider", a per-test "provider", or a "provider/model" id.`
-      );
-    }
+    // Trimmed — and rejected when blank — for the same reason as
+    // `toPersistedModelEntry`: this id is what gets stored on the case and
+    // handed to the provider, and an explicit `provider` would otherwise carry
+    // a blank model past validation.
+    const model = requireNonBlankModelId(test.model ?? suite.model);
+    // The CANONICAL resolver, not a prefix split. Splitting derived
+    // "meta-llama" and "mistralai" as providers (they are aliases for `meta`
+    // and `mistral`) and refused every `custom:<slug>:<model>` id outright,
+    // because it has no slash. It is total for a non-blank id, so there is no
+    // "couldn't derive it" case left to raise here.
+    const provider = deriveProvider(model, test.provider ?? suite.provider);
     const derived = stepsToInternalCaseFields(test.steps as TestStep[]);
     return {
       title: test.title,
       steps: withImplicitRenderAssertForSingleToolCall(
-        test.steps as TestStep[]
+        test.steps as TestStep[],
       ),
       query: derived.query,
       runs,
@@ -459,7 +468,7 @@ const OPEN_MODEL_PROVIDERS = new Set(["custom", "ollama"]);
  */
 export function assertInlineTestModelsValid(
   tests: ReadonlyArray<{ title: string; model: string; provider: string }>,
-  modelApiKeys: Record<string, string> | undefined
+  modelApiKeys: Record<string, string> | undefined,
 ): void {
   for (const test of tests) {
     const provider = test.provider.trim().toLowerCase();
@@ -472,7 +481,7 @@ export function assertInlineTestModelsValid(
     const hostedIds = MODEL_LOOKUP.filter(
       (m) =>
         String(m.provider).toLowerCase() === provider &&
-        isHostedCatalogModel(String(m.id), m.provider)
+        isHostedCatalogModel(String(m.id), m.provider),
     ).map((m) => String(m.id));
     throw new WebRouteError(
       400,
@@ -483,7 +492,7 @@ export function assertInlineTestModelsValid(
         model: test.model,
         provider: test.provider,
         ...(hostedIds.length > 0 ? { hostedModels: hostedIds } : {}),
-      }
+      },
     );
   }
 }
@@ -502,7 +511,7 @@ export function parseMaxConcurrentRuns(raw: string | undefined): number {
   return Number.isInteger(parsed) && parsed >= 1 ? parsed : 2;
 }
 const MAX_CONCURRENT_RUNS = parseMaxConcurrentRuns(
-  process.env.V1_MAX_CONCURRENT_EVAL_RUNS
+  process.env.V1_MAX_CONCURRENT_EVAL_RUNS,
 );
 const activeRunsByOrg = new Map<string, number>();
 
@@ -546,7 +555,7 @@ function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      "Server missing CONVEX_URL configuration",
     );
   }
   const client = new ConvexHttpClient(convexUrl);
@@ -583,7 +592,7 @@ function translateEnvironmentResolveError(error: unknown): unknown {
         return new WebRouteError(
           404,
           ErrorCode.NOT_FOUND,
-          "Environment not found"
+          "Environment not found",
         );
       }
       return new WebRouteError(
@@ -592,7 +601,7 @@ function translateEnvironmentResolveError(error: unknown): unknown {
         typeof message === "string"
           ? message
           : "Environment cannot be launched right now.",
-        { code }
+        { code },
       );
     }
   }
@@ -602,7 +611,7 @@ function translateEnvironmentResolveError(error: unknown): unknown {
 function requireProjectMatch(
   resource: { projectId?: unknown } | null | undefined,
   projectId: string,
-  what: string
+  what: string,
 ): void {
   if (!resource || String(resource.projectId ?? "") !== projectId) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, `${what} not found`);
@@ -618,13 +627,13 @@ function requireProjectMatch(
 async function readSuiteInProject(
   convexAuthToken: string,
   projectId: string,
-  suiteId: string
+  suiteId: string,
 ): Promise<SuiteDoc> {
   let suite: SuiteDoc | null;
   try {
     suite = await createConvexReadClient(convexAuthToken).query(
       "testSuites:getTestSuite" as any,
-      { suiteId }
+      { suiteId },
     );
   } catch (error) {
     if (isConvexNotVisibleError(error)) {
@@ -652,20 +661,23 @@ function suiteEnvironmentIds(suite: SuiteDoc | null | undefined): string[] {
 async function describeAttachedEnvironments(
   convexAuthToken: string,
   projectId: string,
-  environmentIds: string[]
+  environmentIds: string[],
 ): Promise<string> {
   let rows: Array<Record<string, unknown>> = [];
   try {
     rows =
       ((await createConvexReadClient(convexAuthToken).query(
         "projectEnvironments:listEnvironments" as any,
-        { projectId, includeArchived: true }
+        { projectId, includeArchived: true },
       )) as Array<Record<string, unknown>> | null) ?? [];
   } catch {
     rows = [];
   }
   const nameById = new Map(
-    rows.map((row) => [String(row.environmentId ?? ""), String(row.name ?? "")])
+    rows.map((row) => [
+      String(row.environmentId ?? ""),
+      String(row.name ?? ""),
+    ]),
   );
   return environmentIds
     .map((id) => {
@@ -731,7 +743,7 @@ async function selectSuiteEnvironmentId(params: {
       {
         reason: "ENVIRONMENT_SERVERS_NOT_OVERRIDABLE",
         environmentIds: attached,
-      }
+      },
     );
   }
 
@@ -747,7 +759,7 @@ async function selectSuiteEnvironmentId(params: {
           reason: "ENVIRONMENT_NOT_ATTACHED",
           environmentId: requestedEnvironmentId,
           environmentIds: attached,
-        }
+        },
       );
     }
     return requestedEnvironmentId;
@@ -759,7 +771,7 @@ async function selectSuiteEnvironmentId(params: {
     400,
     ErrorCode.VALIDATION_ERROR,
     `This suite has multiple environments; name the one to use. Attached environments: ${await describe()}.`,
-    { reason: "ENVIRONMENT_REQUIRED", environmentIds: attached }
+    { reason: "ENVIRONMENT_REQUIRED", environmentIds: attached },
   );
 }
 
@@ -780,7 +792,7 @@ async function selectSuiteEnvironmentId(params: {
  */
 function assertScheduleSurvivesEnvironmentChange(
   suite: SuiteDoc,
-  nextEnvironmentIds: string[]
+  nextEnvironmentIds: string[],
 ): void {
   const schedule = suite.schedule;
   if (!schedule) return;
@@ -794,12 +806,16 @@ function assertScheduleSurvivesEnvironmentChange(
   // launches ONE environment and the launch check rejects an unpinned
   // multi-environment suite — every scheduled run would fail until the
   // schedule paused itself on consecutive failures.
-  if (schedule.enabled === true && nextEnvironmentIds.length > 1 && !pinSurvives) {
+  if (
+    schedule.enabled === true &&
+    nextEnvironmentIds.length > 1 &&
+    !pinSurvives
+  ) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
       "This suite's schedule is enabled but would not be pinned to any of the selected environments. Pin one (PATCH the schedule with environmentId) or disable the schedule first.",
-      { reason: "SCHEDULE_ENVIRONMENT_PIN_REQUIRED" }
+      { reason: "SCHEDULE_ENVIRONMENT_PIN_REQUIRED" },
     );
   }
   if (pinned === undefined || pinSurvives) return;
@@ -808,7 +824,7 @@ function assertScheduleSurvivesEnvironmentChange(
       400,
       ErrorCode.VALIDATION_ERROR,
       `Environment ${pinned} is pinned by this suite's enabled schedule. Point the schedule at an environment you are keeping, or disable it, before removing it.`,
-      { reason: "SCHEDULE_ENVIRONMENT_PINNED", environmentId: pinned }
+      { reason: "SCHEDULE_ENVIRONMENT_PINNED", environmentId: pinned },
     );
   }
 }
@@ -823,7 +839,7 @@ function assertScheduleSurvivesEnvironmentChange(
 export async function fetchSuiteRunServerSelection(
   convexAuthToken: string,
   suiteId: string,
-  namedHostId: string | undefined
+  namedHostId: string | undefined,
 ): Promise<{ serverIds: string[]; serverNames: string[] }> {
   const convex = createConvexReadClient(convexAuthToken);
   let selection: {
@@ -833,7 +849,7 @@ export async function fetchSuiteRunServerSelection(
   try {
     selection = await convex.query(
       "testSuites:getSuiteRunServerSelection" as any,
-      { suiteId, ...(namedHostId ? { namedHostId } : {}) }
+      { suiteId, ...(namedHostId ? { namedHostId } : {}) },
     );
   } catch (error) {
     if (isConvexNotVisibleError(error)) {
@@ -846,7 +862,7 @@ export async function fetchSuiteRunServerSelection(
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "This deployment cannot derive the suite's saved servers yet. Pass serverIds explicitly."
+        "This deployment cannot derive the suite's saved servers yet. Pass serverIds explicitly.",
       );
     }
     throw error;
@@ -870,7 +886,7 @@ export async function fetchSuiteRunServerSelection(
       400,
       ErrorCode.VALIDATION_ERROR,
       "Suite has no saved server selection to rerun against. Pass serverIds explicitly.",
-      { suiteId, reason: "NO_SAVED_SERVER_SELECTION" }
+      { suiteId, reason: "NO_SAVED_SERVER_SELECTION" },
     );
   }
   return { serverIds, serverNames };
@@ -895,11 +911,11 @@ const TERMINAL_RUN_STATUSES = new Set([
  */
 async function isRunAlreadyTerminal(
   convexAuthToken: string,
-  runId: string
+  runId: string,
 ): Promise<boolean> {
   try {
     const run: RunDoc | null = await createConvexReadClient(
-      convexAuthToken
+      convexAuthToken,
     ).query("testSuites:getTestSuiteRun" as any, { runId });
     return TERMINAL_RUN_STATUSES.has(String(run?.status));
   } catch {
@@ -944,6 +960,12 @@ function toRunDto(run: RunDoc) {
     source: run.source ?? "ui",
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
+    // Whether the run's score evidence verified at ingest. ABSENT means no
+    // verdict was produced — a deployment that does not yet check integrity —
+    // and a score gate must treat that exactly like `"invalid"`: absent
+    // evidence is not valid evidence. Omitted rather than nulled so the DTO is
+    // unchanged for every run predating integrity checking.
+    ...toRunScoreIntegrity(run.scoreIntegrity),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
   };
@@ -978,6 +1000,7 @@ function toIterationDto(iteration: IterationDoc) {
     actualToolCalls: iteration.actualToolCalls ?? [],
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
     error: iteration.error ?? null,
+    ...toScoreProjection(iteration.metadata),
   };
 }
 
@@ -1038,7 +1061,7 @@ const publicMatchOptionsSchema = z
 type PublicMatchOptions = z.infer<typeof publicMatchOptionsSchema>;
 
 function toInternalMatchOptions(
-  mo: PublicMatchOptions
+  mo: PublicMatchOptions,
 ): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   if (mo.toolCallOrder !== undefined)
@@ -1059,7 +1082,7 @@ function toInternalMatchOptions(
  */
 function mergeMatchOptions(
   current: any,
-  patch: PublicMatchOptions
+  patch: PublicMatchOptions,
 ): Record<string, unknown> {
   const partial = toInternalMatchOptions(patch);
   const merged: Record<string, unknown> = {
@@ -1091,7 +1114,7 @@ function toPublicMatchOptions(internal: any): PublicMatchOptions | null {
     toolCallOrder: ORDER_TO_PUBLIC[String(internal.toolCallOrder)] ?? "any",
     extraToolCalls,
     arguments: ["ignore", "partial", "exact"].includes(
-      String(internal.argumentMatching)
+      String(internal.argumentMatching),
     )
       ? (internal.argumentMatching as "ignore" | "partial" | "exact")
       : "partial",
@@ -1125,7 +1148,7 @@ function internalCaseToSteps(testCase: CaseDoc): TestStep[] {
     return [
       probeConfigToToolCallStep(
         `${String(testCase._id)}-call`,
-        testCase.probeConfig as ProbeConfig
+        testCase.probeConfig as ProbeConfig,
       ),
     ];
   }
@@ -1292,28 +1315,106 @@ function hostConfigDtoToInput(dto: any): Record<string, unknown> {
 }
 
 /**
- * Resolve a model id's provider. Handles a `provider/model` prefix directly,
- * and looks a BARE id (e.g. "claude-sonnet-4-5") up in the model catalog —
- * suite execution configs store bare ids, so a slash check alone would fail to
- * derive a provider and leave new cases model-less.
+ * The provider for `id` when it can be ATTRIBUTED, else undefined.
+ *
+ * Three sources, most specific first:
+ *
+ *  1. the shared catalog, for BOTH bare and qualified ids. The catalog carries
+ *     more vendors than the classifier's prefix map does, so gating this lookup
+ *     on "no slash" would answer `cohere/command-a` from the map's catch-all
+ *     (Ollama) while the catalog is sitting right there knowing it is Cohere;
+ *  2. the shared classifier, so this route agrees with
+ *     `buildSyntheticModelDefinition`, the chat-session fallback, and the
+ *     backend mirror on prefixes and aliases — `meta-llama/...` is `meta`, not
+ *     `meta-llama`, and `mistralai/...` is `mistral`;
+ *  3. the id's own vendor prefix, for a qualified id neither of the first two
+ *     recognizes. The classifier's final answer for those is its bare-id
+ *     catch-all (`ollama`), which is right for `llama3` and wrong for
+ *     `newvendor/some-model` — a literal prefix is the vendor the author wrote.
+ *
+ * Undefined ONLY for a bare id nothing recognizes, where `ollama` is the
+ * classifier's guess rather than knowledge. Callers that must store a provider
+ * take that guess (`providerForModelId`); callers that can defer instead defer.
  */
-function providerForModelId(modelId: string): string | undefined {
-  if (modelId.includes("/")) return modelId.split("/")[0];
+function attributedProvider(id: string): string | undefined {
   const match = MODEL_LOOKUP.find(
-    (m) => String(m.id) === modelId || String(m.id).endsWith(`/${modelId}`)
+    (m) => String(m.id) === id || String(m.id).endsWith(`/${id}`),
   );
-  return match ? String(match.provider) : undefined;
+  if (match) return String(match.provider);
+  const classified = classifyModelIdProvider(id)?.provider;
+  if (classified && classified !== "ollama") return classified;
+  // `> 0`, not `>= 0`: a leading slash makes the prefix empty, and an empty
+  // provider is worse than the catch-all it would replace.
+  const slash = id.indexOf("/");
+  if (slash > 0) return id.slice(0, slash);
+  // A bare id nothing above recognized. `classified` is `ollama` here — the
+  // classifier's catch-all — and returning it would make this function total,
+  // which is the whole distinction it exists to draw.
+  return undefined;
+}
+
+/**
+ * Resolve a model id's provider, for a caller that must persist one.
+ *
+ * TOTAL for any non-blank id: an unattributable BARE id falls back to the
+ * classifier's `ollama` catch-all, since the open-namespace providers are the
+ * only ones where an id we cannot place is still plausibly runnable. Blank ids
+ * are rejected up front, as a 400, rather than reported as an unresolvable
+ * provider — so callers never need a "couldn't derive it" branch.
+ */
+function providerForModelId(modelId: string): string {
+  // Trim FIRST, exactly as `classifyModelIdProvider` does. Without it a padded
+  // bare catalog id misses the lookup and falls through to the classifier's
+  // bare-id catch-all, so `" claude-sonnet-4-5 "` would be attributed to
+  // Ollama rather than to its real vendor.
+  const id = requireNonBlankModelId(modelId);
+  return attributedProvider(id) ?? "ollama";
+}
+
+/**
+ * A persisted `{ model, provider }` entry from an authored one.
+ *
+ * The id is TRIMMED for the value we STORE, not merely for the provider lookup.
+ * It is persisted verbatim, sent to the provider verbatim, and compared
+ * verbatim against environment and host model ids downstream, so keeping
+ * `" gpt-4o "` would mint a model that resolves to the right provider and then
+ * matches nothing. Same normalization as `withTrimmedModelId` on the host write
+ * boundary and the backend's `normalizeModelId`; only ever a trim.
+ */
+function toPersistedModelEntry(entry: { model: string; provider?: string }): {
+  model: string;
+  provider: string;
+} {
+  return {
+    model: requireNonBlankModelId(entry.model),
+    provider: deriveProvider(entry.model, entry.provider),
+  };
+}
+
+/**
+ * The trimmed id, or a 400.
+ *
+ * `z.string().min(1)` accepts `"   "`, and an EXPLICIT provider makes
+ * {@link deriveProvider} return without ever inspecting the model — so a
+ * whitespace-only id paired with `provider: "openai"` would otherwise persist
+ * as `{ model: "", provider: "openai" }`: a case that passes validation and
+ * then has no model to run. Blank is rejected here rather than silently
+ * normalized, because there is no id to fall back to.
+ */
+function requireNonBlankModelId(model: string): string {
+  const id = model.trim();
+  if (!id) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Model id cannot be blank.",
+    );
+  }
+  return id;
 }
 
 function deriveProvider(model: string, explicit: string | undefined): string {
-  if (explicit) return explicit;
-  const provider = providerForModelId(model);
-  if (provider) return provider;
-  throw new WebRouteError(
-    400,
-    ErrorCode.VALIDATION_ERROR,
-    `Cannot derive a provider for model "${model}". Pass provider, or a "provider/model" id.`
-  );
+  return explicit || providerForModelId(model);
 }
 
 // Public case body (create + update share this; create requires title).
@@ -1334,7 +1435,7 @@ const publicCaseBodyShape = {
       z.object({
         model: z.string().min(1),
         provider: z.string().min(1).optional(),
-      })
+      }),
     )
     .optional(),
   matchOptions: publicMatchOptionsSchema.nullable().optional(),
@@ -1367,7 +1468,7 @@ const updateSuiteSchema = z.object({
         .array(z.string().min(1))
         .min(
           1,
-          "environmentIds must be non-empty — pass null to clear the suite's environments."
+          "environmentIds must be non-empty — pass null to clear the suite's environments.",
         ),
       z.null(),
     ])
@@ -1384,7 +1485,7 @@ const updateSuiteSchema = z.object({
       z.object({
         host: z.string().min(1),
         servers: z.array(z.string().min(1)).optional(),
-      })
+      }),
     )
     .optional(),
   settings: z
@@ -1425,7 +1526,7 @@ const generateCasesSchema = z
         z.object({
           model: z.string().min(1),
           provider: z.string().min(1).optional(),
-        })
+        }),
       )
       .optional(),
     // Per-bucket case counts. Omitted buckets inherit the default mix; the
@@ -1446,13 +1547,10 @@ const generateCasesSchema = z
   // Same mutual exclusion the run-create schema enforces: an environment's
   // closed server set is the point, so a `servers` override alongside it would
   // have to be silently dropped.
-  .refine(
-    (body) => !body.environmentId || (body.servers?.length ?? 0) === 0,
-    {
-      message:
-        "environmentId and servers are mutually exclusive — an environment supplies its own closed server set.",
-    }
-  );
+  .refine((body) => !body.environmentId || (body.servers?.length ?? 0) === 0, {
+    message:
+      "environmentId and servers are mutually exclusive — an environment supplies its own closed server set.",
+  });
 
 /**
  * Build createTestCase / updateTestCase mutation args from the public case
@@ -1477,7 +1575,7 @@ function buildCaseMutationArgs(
     existingMatchOptions?: unknown;
     /** The persisted case's probeConfig, to merge a partial renderCheck PATCH onto. */
     existingProbeConfig?: any;
-  }
+  },
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   let isModelFreeStepsCase = false;
@@ -1494,7 +1592,7 @@ function buildCaseMutationArgs(
   // so reject a real change on update and never forward caseType there.
   if (body.steps !== undefined) {
     const steps = withImplicitRenderAssertForSingleToolCall(
-      body.steps as TestStep[]
+      body.steps as TestStep[],
     );
     args.steps = steps;
     const derived = stepsToInternalCaseFields(steps);
@@ -1513,7 +1611,7 @@ function buildCaseMutationArgs(
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        `Case kind is immutable (this case is "${existingKind}"); create a new case to change it.`
+        `Case kind is immutable (this case is "${existingKind}"); create a new case to change it.`,
       );
     }
 
@@ -1528,10 +1626,7 @@ function buildCaseMutationArgs(
   }
 
   if (body.models !== undefined) {
-    args.models = body.models.map((m) => ({
-      model: m.model,
-      provider: deriveProvider(m.model, m.provider),
-    }));
+    args.models = body.models.map(toPersistedModelEntry);
   } else if (opts.forCreate) {
     args.models = isModelFreeStepsCase ? [] : opts.defaultModels ?? [];
   }
@@ -1588,7 +1683,7 @@ async function resolveHostAttachments(
   convexClient: ReturnType<typeof createConvexClients>["convexClient"],
   projectId: string,
   suite: SuiteDoc,
-  hosts: Array<{ host: string; servers?: string[] }>
+  hosts: Array<{ host: string; servers?: string[] }>,
 ): Promise<Array<Record<string, unknown>>> {
   if (hosts.length === 0) return [];
   let hostList: any[];
@@ -1611,7 +1706,7 @@ async function resolveHostAttachments(
     if (b?.projectServerId) {
       bindingByName.set(
         String(b.serverName).toLocaleLowerCase(),
-        String(b.projectServerId)
+        String(b.projectServerId),
       );
     }
   }
@@ -1625,7 +1720,7 @@ async function resolveHostAttachments(
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
-          `Host name "${trimmed}" is ambiguous; use the host id.`
+          `Host name "${trimmed}" is ambiguous; use the host id.`,
         );
       }
       resolved = matches[0];
@@ -1634,7 +1729,7 @@ async function resolveHostAttachments(
       throw new WebRouteError(
         404,
         ErrorCode.NOT_FOUND,
-        `Host "${trimmed}" not found in this project.`
+        `Host "${trimmed}" not found in this project.`,
       );
     }
     const attachment: Record<string, unknown> = {
@@ -1647,7 +1742,7 @@ async function resolveHostAttachments(
           throw new WebRouteError(
             400,
             ErrorCode.VALIDATION_ERROR,
-            `Server "${name}" is not in the suite's environment; add it via environment.servers first.`
+            `Server "${name}" is not in the suite's environment; add it via environment.servers first.`,
           );
         }
         return id;
@@ -1713,7 +1808,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
         suite: await readSuiteInProject(
           convexAuthToken,
           projectId,
-          body.suiteId
+          body.suiteId,
         ),
         requestedEnvironmentId: body.environmentId,
         hasServerOverride: (body.serverIds?.length ?? 0) > 0,
@@ -1750,7 +1845,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
     const selection = await fetchSuiteRunServerSelection(
       convexAuthToken,
       body.suiteId!,
-      body.namedHostId
+      body.namedHostId,
     );
     serverIds = selection.serverIds;
     serverNames = selection.serverNames;
@@ -1762,7 +1857,10 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       c,
       "RATE_LIMITED",
       `Too many concurrent eval runs (max ${MAX_CONCURRENT_RUNS}). Wait for an active run to finish.`,
-      { reason: "CONCURRENT_RUN_LIMIT", maxConcurrentRuns: MAX_CONCURRENT_RUNS }
+      {
+        reason: "CONCURRENT_RUN_LIMIT",
+        maxConcurrentRuns: MAX_CONCURRENT_RUNS,
+      },
     );
   }
 
@@ -1792,7 +1890,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
         // enforce; the issuer makes per-server XAA servers mint instead of
         // failing with 'Missing XAA issuer'.
         xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      }
+      },
     );
 
     let prepared: PreparedEvalRun;
@@ -1884,7 +1982,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
             }
           : null,
       },
-      202
+      202,
     );
   } catch (error) {
     releaseSlotOnce();
@@ -1913,7 +2011,7 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     normalizeCreateTestsToRunTests(body.tests, {
       model: body.model,
       provider: body.provider,
-    })
+    }),
   );
 
   // Reject unrunnable models up front, with a pointer to valid ids — same
@@ -1933,12 +2031,12 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
     undefined,
     undefined,
     {
-        serverNames,
-        // v1 eval API has no host-persona input — no enterprise policy to
-        // enforce; the issuer makes per-server XAA servers mint instead of
-        // failing with 'Missing XAA issuer'.
-        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      }
+      serverNames,
+      // v1 eval API has no host-persona input — no enterprise policy to
+      // enforce; the issuer makes per-server XAA servers mint instead of
+      // failing with 'Missing XAA issuer'.
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
+    },
   );
 
   // Author-only is fully synchronous: the manager is only needed to resolve
@@ -1974,7 +2072,7 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
         })),
         caseUpsert,
       },
-      201
+      201,
     );
   } finally {
     await manager.disconnectAllServers().catch(() => {});
@@ -1999,7 +2097,173 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
     throw error;
   }
   requireProjectMatch(run, projectId, "Eval run");
-  return v1Resource(c, toRunDto(run!));
+
+  // The common insights envelope, DETAIL only (lists stay compact). Failure
+  // to load it — including an authorization refusal for a caller who can see
+  // the run but not its insights — omits the field rather than failing the
+  // read: the run itself is the resource here.
+  const insights = await loadInsightsEnvelope("v1.evals", () =>
+    convex.query("serverQuality:getEvalRunInsightsEnvelope" as any, {
+      suiteRunId: runId,
+    }),
+  );
+
+  return v1Resource(c, {
+    ...toRunDto(run!),
+    ...(insights ? { insights } : {}),
+  });
+});
+
+// GET /v1/projects/:projectId/eval-runs/:runId/compare
+// This run against a baseline. `?baseRunId=` names one explicitly; omitting it
+// selects the nearest earlier COMPLETED run in the same suite.
+//
+// Baseline resolution is server-side: `listEvalSuiteRuns` has no cursor, so a
+// client walk cannot be bounded-correct, and the policy belongs beside the
+// backend's other baseline resolvers.
+//
+// This calls an ACTION rather than a query — the diff hydrates trace blobs
+// from storage, which a Convex query cannot do. Same reason
+// `getTestSuiteRunDiff` is an action.
+evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const baseRunId = c.req.query("baseRunId");
+  // Forwarded, not dropped: the SDK client sends it, and a silently ignored
+  // knob is worse than an absent one. Parsed defensively — the action clamps
+  // the range, so this only has to refuse non-numbers.
+  const rawPreviewChars = c.req.query("previewChars");
+  const previewChars =
+    rawPreviewChars === undefined ? undefined : Number(rawPreviewChars);
+  if (previewChars !== undefined && !Number.isFinite(previewChars)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "previewChars must be a number",
+    );
+  }
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  // Fetch the compare run FIRST so an unauthorized or cross-project caller
+  // gets a 404 from the cheap read, before the action does any work.
+  let run: RunDoc | null;
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  let result: unknown;
+  try {
+    result = await convex.action("testSuites:compareTestSuiteRuns" as any, {
+      compareRunId: runId,
+      ...(baseRunId ? { baseRunId } : {}),
+      ...(previewChars !== undefined ? { previewChars } : {}),
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+
+  const envelope = (result ?? {}) as Record<string, unknown>;
+  if (envelope.status === "baseline_not_found") {
+    // 404 + a `details.reason`, following the CONCURRENT_RUN_LIMIT idiom.
+    //
+    // NOT 422: the pinned error-status fixture maps 422 to
+    // FEATURE_NOT_SUPPORTED, and minting a new error code is a cross-repo
+    // contract change this route does not get to make. The CLI keys on
+    // `details.reason` and maps it to exit 3 (incomplete) — never exit 1,
+    // which would report a regression nobody observed.
+    return v1Error(
+      c,
+      "NOT_FOUND",
+      baseRunId
+        ? "The requested baseline run was not found, is not completed, or belongs to another suite."
+        : "No earlier completed run in this suite to compare against.",
+      { reason: "BASELINE_NOT_FOUND", ...(baseRunId ? { baseRunId } : {}) },
+    );
+  }
+
+  const baselineSource = (envelope.baseline ?? {}) as Record<string, unknown>;
+  const baseline: RunCompareBaseline = {
+    // Falls back to what the REQUEST asked for, not to a literal. `baseline`
+    // is an audit field — a caller reads it to learn HOW the baseline was
+    // chosen — so publishing an explicitly named run as `previous_completed`
+    // (which a deploy-order skew could cause) is worse than saying nothing.
+    policy:
+      baselineSource.policy === "run" ||
+      (baselineSource.policy === undefined && Boolean(baseRunId))
+        ? "run"
+        : "previous_completed",
+    baseRunId: String(baselineSource.baseRunId ?? ""),
+  };
+
+  return v1Resource(c, toRunCompareDto(envelope.diff, baseline));
+});
+
+// POST /v1/projects/:projectId/eval-runs/:runId/insights
+// Request (or with force, regenerate) the run's insights — serverQuality
+// behind the common envelope. SPENDS the org's model budget; 202 receipt,
+// poll the detail's `insights` envelope rather than re-requesting. Same
+// Convex mutation the in-app button uses, so role/limit/billing checks are
+// identical.
+evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let run: RunDoc | null;
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  // This endpoint SPENDS, so the body is validated rather than coerced. A
+  // bodyless POST is the common case and stays valid; malformed JSON is a 400
+  // rather than a silently-empty body that bills anyway, and `force` must be
+  // a real boolean — `{"force":"false"}` is a truthy string, and treating it
+  // as consent would charge for a regeneration nobody asked for.
+  const raw = await c.req.text();
+  // Only an ACTUALLY empty body is bodyless. Whitespace is malformed JSON,
+  // and a literal `null` is a value the schema should reject — treating
+  // either as "no body" would bill for a request nobody wrote.
+  let body: unknown = {};
+  if (raw.length > 0) {
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Request body must be valid JSON.",
+      );
+    }
+  }
+  const force = parseWithSchema(
+    z.object({ force: z.boolean().optional() }).strict(),
+    body,
+  ).force;
+
+  try {
+    await convex.mutation("serverQuality:requestServerQuality" as any, {
+      suiteRunId: runId,
+      ...(force === true ? { force: true } : {}),
+    });
+  } catch (error) {
+    throw translateConvexError(error, { resource: "Eval run insights" });
+  }
+  return v1Resource(c, { runId, projectId, status: "pending" }, 202);
 });
 
 // POST /v1/projects/:projectId/eval-runs/:runId/cancel
@@ -2036,7 +2300,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/cancel", async (c) => {
     throw new WebRouteError(
       409,
       ErrorCode.VALIDATION_ERROR,
-      `Cannot cancel a run that already ${status}`
+      `Cannot cancel a run that already ${status}`,
     );
   }
 
@@ -2066,7 +2330,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/iterations", async (c) => {
   const runId = c.req.param("runId");
   const limit = Math.min(
     Math.max(Number(c.req.query("limit") ?? 50) || 50, 1),
-    200
+    200,
   );
   const cursor = c.req.query("cursor") ?? null;
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
@@ -2089,7 +2353,7 @@ evals.get("/projects/:projectId/eval-runs/:runId/iterations", async (c) => {
   return v1PageJson(
     c,
     (page.page ?? []).map(toIterationDto),
-    page.isDone ? undefined : page.continueCursor
+    page.isDone ? undefined : page.continueCursor,
   );
 });
 
@@ -2117,7 +2381,7 @@ evals.get(
         throw new WebRouteError(
           404,
           ErrorCode.NOT_FOUND,
-          "Eval iteration not found"
+          "Eval iteration not found",
         );
       }
       trace = await convex.action("testSuites:getTestIterationBlob" as any, {
@@ -2128,7 +2392,7 @@ evals.get(
         throw new WebRouteError(
           404,
           ErrorCode.NOT_FOUND,
-          "Eval iteration not found"
+          "Eval iteration not found",
         );
       }
       throw error;
@@ -2138,11 +2402,11 @@ evals.get(
         404,
         ErrorCode.NOT_FOUND,
         "Trace is not available for this iteration",
-        { reason: "TRACE_NOT_AVAILABLE" }
+        { reason: "TRACE_NOT_AVAILABLE" },
       );
     }
     return v1Resource(c, trace);
-  }
+  },
 );
 
 // GET /v1/projects/:projectId/eval-runs/:runId/iterations/:iterationId/steps
@@ -2171,7 +2435,7 @@ evals.get(
         throw new WebRouteError(
           404,
           ErrorCode.NOT_FOUND,
-          "Eval iteration not found"
+          "Eval iteration not found",
         );
       }
     } catch (error) {
@@ -2179,7 +2443,7 @@ evals.get(
         throw new WebRouteError(
           404,
           ErrorCode.NOT_FOUND,
-          "Eval iteration not found"
+          "Eval iteration not found",
         );
       }
       throw error;
@@ -2197,7 +2461,7 @@ evals.get(
     try {
       const trace = await convex.action(
         "testSuites:getTestIterationBlob" as any,
-        { iterationId }
+        { iterationId },
       );
       if (trace && typeof trace === "object") {
         envelope = trace as Record<string, unknown>;
@@ -2211,10 +2475,10 @@ evals.get(
       iteration.metadata as
         | { stepResults?: any[]; skippedSteps?: any[] }
         | undefined,
-      envelope as Parameters<typeof assembleStepResults>[2]
+      envelope as Parameters<typeof assembleStepResults>[2],
     );
     return v1PageJson(c, assembled.map(toStepResultDto));
-  }
+  },
 );
 
 // GET /v1/projects/:projectId/eval-suites/:suiteId/runs?limit=
@@ -2224,7 +2488,7 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
   const suiteId = c.req.param("suiteId");
   const limit = Math.min(
     Math.max(Number(c.req.query("limit") ?? 25) || 25, 1),
-    100
+    100,
   );
   const convex = createConvexReadClient(await getConvexBearerForRequest(c));
 
@@ -2252,7 +2516,7 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
 async function readSuiteDetail(
   convexAuthToken: string,
   projectId: string,
-  suiteId: string
+  suiteId: string,
 ) {
   const convex = createConvexReadClient(convexAuthToken);
   let suite: SuiteDoc | null;
@@ -2279,18 +2543,33 @@ async function readSuiteDetail(
 /** Default execution models for a new case: the suite's configured model. */
 async function defaultCaseModels(
   convex: ReturnType<typeof createConvexReadClient>,
-  suiteId: string
+  suiteId: string,
 ): Promise<Array<{ model: string; provider: string }>> {
   try {
     const cfg: any = await convex.query("hostConfigsV2:getSuiteConfig" as any, {
       suiteId,
     });
-    const modelId = cfg?.modelId;
-    if (typeof modelId === "string" && modelId.length > 0) {
+    // Trim BEFORE the emptiness test, not after: a whitespace-only config id is
+    // no id. It cannot currently reach the return (`providerForModelId` also
+    // rejects blanks, so the provider lookup fails first and this falls through
+    // to "no default"), but that makes the guard here correct only by way of
+    // another function's behaviour. Testing the value actually returned keeps it
+    // true locally.
+    const modelId =
+      typeof cfg?.modelId === "string" ? (cfg.modelId as string).trim() : "";
+    if (modelId) {
       // Suite configs store bare ids (e.g. "claude-sonnet-4-5"); resolve the
       // provider via the catalog so the new case isn't persisted model-less.
-      const provider = providerForModelId(modelId);
-      if (provider) return [{ model: modelId, provider }];
+      //
+      // ATTRIBUTED, not total: pinning a case to a provider is a durable write,
+      // and the classifier's `ollama` catch-all is a guess. A suite default we
+      // cannot place (an org BYOK id, a catalog-only id) falls through to "no
+      // default", which is not a failure — it is the case inheriting the suite
+      // model at run time, where the runner can see keys this route cannot.
+      const provider = attributedProvider(modelId);
+      if (provider) {
+        return [{ model: modelId, provider }];
+      }
     }
   } catch {
     // No resolvable suite model — the case inherits the suite default at run.
@@ -2307,7 +2586,7 @@ async function defaultCaseModels(
 async function resolveProjectServerSelectors(
   convex: ReturnType<typeof createConvexReadClient>,
   projectId: string,
-  selectors: string[]
+  selectors: string[],
 ): Promise<{ serverIds: string[]; serverNames: string[] }> {
   let servers: any[];
   try {
@@ -2335,7 +2614,7 @@ async function resolveProjectServerSelectors(
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
-          `Server name "${trimmed}" is ambiguous; use the server id.`
+          `Server name "${trimmed}" is ambiguous; use the server id.`,
         );
       }
       match = named[0];
@@ -2344,7 +2623,7 @@ async function resolveProjectServerSelectors(
       throw new WebRouteError(
         404,
         ErrorCode.NOT_FOUND,
-        `Server "${trimmed}" not found in this project.`
+        `Server "${trimmed}" not found in this project.`,
       );
     }
     serverIds.push(String(match._id));
@@ -2367,7 +2646,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const suiteId = c.req.param("suiteId");
   const body = parseWithSchema(
     updateSuiteSchema,
-    await synthesizeServerBody(c)
+    await synthesizeServerBody(c),
   );
   const token = await getConvexBearerForRequest(c);
   const { convexClient } = createConvexClients(token);
@@ -2433,7 +2712,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     try {
       await convexClient.mutation(
         "testSuites:updateTestSuite" as any,
-        updateArgs
+        updateArgs,
       );
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -2455,7 +2734,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           convexClient,
           projectId,
           refreshed ?? suite!,
-          body.hosts
+          body.hosts,
         ),
       });
     } catch (error) {
@@ -2477,7 +2756,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "Suite has no execution config to edit yet."
+        "Suite has no execution config to edit yet.",
       );
     }
     const input = hostConfigDtoToInput(current);
@@ -2577,7 +2856,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "intervalMinutes is required to enable scheduled runs (this suite has no saved interval)."
+      "intervalMinutes is required to enable scheduled runs (this suite has no saved interval).",
     );
   }
   // A scheduled run launches exactly ONE run, so an environment-based suite
@@ -2599,7 +2878,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "environmentId only applies when enabling a schedule. Disabling preserves the existing pin; send enabled: true with environmentId to repoint it."
+      "environmentId only applies when enabling a schedule. Disabling preserves the existing pin; send enabled: true with environmentId to repoint it.",
     );
   }
 
@@ -2646,7 +2925,7 @@ async function loadCaseInScope(
   convex: ReturnType<typeof createConvexReadClient>,
   projectId: string,
   suiteId: string,
-  caseId: string
+  caseId: string,
 ): Promise<CaseDoc> {
   let testCase: CaseDoc | null;
   try {
@@ -2676,7 +2955,7 @@ evals.get(
     const convex = createConvexReadClient(await getConvexBearerForRequest(c));
     const testCase = await loadCaseInScope(convex, projectId, suiteId, caseId);
     return v1Resource(c, toCaseDto(testCase));
-  }
+  },
 );
 
 // POST /v1/projects/:projectId/eval-suites/:suiteId/cases
@@ -2688,7 +2967,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "title is required."
+      "title is required.",
     );
   }
   // `steps` is optional on the shared case shape so PATCH can be a partial
@@ -2698,7 +2977,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "steps is required and must be a non-empty array when creating a case."
+      "steps is required and must be a non-empty array when creating a case.",
     );
   }
   const token = await getConvexBearerForRequest(c);
@@ -2736,7 +3015,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     createConvexReadClient(token),
     projectId,
     suiteId,
-    String(caseId)
+    String(caseId),
   );
   return v1Resource(c, toCaseDto(created), 201);
 });
@@ -2750,14 +3029,14 @@ evals.patch(
     const caseId = c.req.param("caseId");
     const body = parseWithSchema(
       updateCaseSchema,
-      await synthesizeServerBody(c)
+      await synthesizeServerBody(c),
     );
     const token = await getConvexBearerForRequest(c);
     const existing = await loadCaseInScope(
       createConvexReadClient(token),
       projectId,
       suiteId,
-      caseId
+      caseId,
     );
     const args = buildCaseMutationArgs(body, {
       forCreate: false,
@@ -2776,7 +3055,7 @@ evals.patch(
           testCaseId: caseId,
           changeSource: "manual",
           ...args,
-        }
+        },
       );
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -2788,11 +3067,11 @@ evals.patch(
         createConvexReadClient(token),
         projectId,
         suiteId,
-        caseId
+        caseId,
       );
     }
     return v1Resource(c, toCaseDto(updated));
-  }
+  },
 );
 
 // DELETE /v1/projects/:projectId/eval-suites/:suiteId/cases/:caseId
@@ -2807,7 +3086,7 @@ evals.delete(
       createConvexReadClient(token),
       projectId,
       suiteId,
-      caseId
+      caseId,
     );
     const { convexClient } = createConvexClients(token);
     try {
@@ -2818,7 +3097,7 @@ evals.delete(
       throw translateConvexWriteError(error);
     }
     return v1Resource(c, { id: caseId, deleted: true });
-  }
+  },
 );
 
 // POST /v1/projects/:projectId/eval-suites/:suiteId/cases/generate
@@ -2832,7 +3111,7 @@ evals.post(
     const suiteId = c.req.param("suiteId");
     const body = parseWithSchema(
       generateCasesSchema,
-      await synthesizeServerBody(c)
+      await synthesizeServerBody(c),
     );
     const mode = body.mode ?? "normal";
     const token = await getConvexBearerForRequest(c);
@@ -2856,7 +3135,7 @@ evals.post(
         throw new WebRouteError(
           404,
           ErrorCode.NOT_FOUND,
-          "Eval suite not found"
+          "Eval suite not found",
         );
       }
       throw error;
@@ -2900,7 +3179,7 @@ evals.post(
       const selection = await fetchSuiteRunServerSelection(
         token,
         suiteId,
-        undefined
+        undefined,
       );
       serverIds = selection.serverIds;
       serverNames = selection.serverNames;
@@ -2908,17 +3187,15 @@ evals.post(
       const resolved = await resolveProjectServerSelectors(
         readClient,
         projectId,
-        serverIds
+        serverIds,
       );
       serverIds = resolved.serverIds;
       serverNames = resolved.serverNames;
     }
 
     const caseModels =
-      body.caseModels?.map((m) => ({
-        model: m.model,
-        provider: deriveProvider(m.model, m.provider),
-      })) ?? (await defaultCaseModels(readClient, suiteId));
+      body.caseModels?.map(toPersistedModelEntry) ??
+      (await defaultCaseModels(readClient, suiteId));
 
     // A caseMix only counts when it requests at least one case (a bucket > 0).
     // An empty `{}` OR a zero-sum mix (`{ negative: 0 }`, all zeros) is treated
@@ -2959,7 +3236,7 @@ evals.post(
       try {
         ledger = await createConvexReadClient(token).query(
           "testSuites:getCaseGeneration" as any,
-          { suiteId, idempotencyKey }
+          { suiteId, idempotencyKey },
         );
       } catch (error) {
         // FAIL CLOSED, not degrade-to-generate. A caller that sent a key is
@@ -2973,7 +3250,7 @@ evals.post(
         throw new WebRouteError(
           502,
           ErrorCode.SERVER_UNREACHABLE,
-          "Could not verify this generation's idempotency ledger. Retry with the same key."
+          "Could not verify this generation's idempotency ledger. Retry with the same key.",
         );
       }
       if (ledger && Array.isArray(ledger.drafts)) {
@@ -2996,7 +3273,7 @@ evals.post(
           // enforce; the issuer makes per-server XAA servers mint instead of
           // failing with 'Missing XAA issuer'.
           xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-        }
+        },
       );
       try {
         const request = {
@@ -3030,12 +3307,12 @@ evals.post(
         try {
           const outcome = (await convexClient.mutation(
             "testSuites:recordCaseGeneration" as any,
-            { suiteId, idempotencyKey, drafts }
+            { suiteId, idempotencyKey, drafts },
           )) as { recorded?: boolean } | null;
           if (outcome?.recorded === false) {
             const winner = await createConvexReadClient(token).query(
               "testSuites:getCaseGeneration" as any,
-              { suiteId, idempotencyKey }
+              { suiteId, idempotencyKey },
             );
             if (winner && Array.isArray(winner.drafts)) {
               drafts = winner.drafts;
@@ -3044,7 +3321,7 @@ evals.post(
         } catch (error) {
           logger.warn(
             "v1.eval.generate: could not record the generation ledger",
-            { error: error instanceof Error ? error.message : String(error) }
+            { error: error instanceof Error ? error.message : String(error) },
           );
         }
       }
@@ -3063,7 +3340,7 @@ evals.post(
       // both the top level and prompt turns.
       const isNeg = legacyNegativeOnly || draft.isNegativeTest === true;
       const mapCalls = (
-        calls: any
+        calls: any,
       ): Array<{ toolName: string; arguments: any }> =>
         isNeg || !Array.isArray(calls)
           ? []
@@ -3073,7 +3350,7 @@ evals.post(
                 : {
                     toolName: tc.toolName ?? tc.tool,
                     arguments: tc.arguments ?? {},
-                  }
+                  },
             );
       const promptTurns = Array.isArray(draft.promptTurns)
         ? draft.promptTurns.map((turn: any) => ({
@@ -3106,7 +3383,7 @@ evals.post(
               !(
                 s.kind === "assert" &&
                 (s.assertion as { type?: string }).type === "toolCalledWith"
-              )
+              ),
           )
         : normalizedSteps;
       const steps =
@@ -3132,7 +3409,7 @@ evals.post(
           ? {
               idempotencyKey: deriveItemIdempotencyKey(
                 idempotencyKey,
-                String(draftIndex)
+                String(draftIndex),
               ),
             }
           : {}),
@@ -3140,11 +3417,11 @@ evals.post(
       try {
         const caseId = await convexClient.mutation(
           "testSuites:createTestCase" as any,
-          args
+          args,
         );
         const doc = await createConvexReadClient(token).query(
           "testSuites:getTestCase" as any,
-          { testCaseId: caseId }
+          { testCaseId: caseId },
         );
         created.push(toCaseDto(doc));
         createdCaseIds.push(String(caseId));
@@ -3177,7 +3454,7 @@ evals.post(
       // Surface, never silently drop, drafts that failed to persist.
       ...(skipped.length > 0 ? { skipped } : {}),
     });
-  }
+  },
 );
 
 export default evals;

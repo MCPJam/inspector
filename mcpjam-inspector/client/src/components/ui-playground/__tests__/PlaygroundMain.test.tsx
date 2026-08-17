@@ -936,7 +936,7 @@ describe("PlaygroundMain", () => {
 
     // Removed: "passes the requested loading indicator variant to Thread".
     // PlaygroundMain no longer accepts a `loadingIndicatorVariant` prop —
-    // the inner Thread reads the host id from `ChatboxHostStyleProvider`
+    // the inner Thread reads the host id from `ScenarioHostStyleProvider`
     // context. Brand-indicator behavior is covered in
     // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
   });
@@ -2475,12 +2475,9 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Find trash icon button
-      const buttons = screen.getAllByRole("button");
-      const clearButton = buttons.find(
-        (btn) => btn.querySelector(".lucide-trash2") !== null
-      );
-      expect(clearButton).toBeDefined();
+      // Find the "Clear chat" restart-session button
+      const clearButton = screen.queryByRole("button", { name: "Clear chat" });
+      expect(clearButton).not.toBeNull();
     });
 
     it("does not show clear button when thread is empty", () => {
@@ -2488,12 +2485,9 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Should not have trash button
-      const buttons = screen.getAllByRole("button");
-      const clearButton = buttons.find(
-        (btn) => btn.querySelector(".lucide-trash2") !== null
-      );
-      expect(clearButton).toBeUndefined();
+      // Should not have the "Clear chat" button
+      const clearButton = screen.queryByRole("button", { name: "Clear chat" });
+      expect(clearButton).toBeNull();
     });
 
     /**
@@ -2549,10 +2543,8 @@ describe("PlaygroundMain", () => {
         ).toBe(savedSession._id);
       });
 
-      const clearButton = screen
-        .getAllByRole("button")
-        .find((btn) => btn.querySelector(".lucide-trash2") !== null);
-      fireEvent.click(clearButton!);
+      const clearButton = screen.getByRole("button", { name: "Clear chat" });
+      fireEvent.click(clearButton);
       fireEvent.click(
         within(screen.getByTestId("confirm-dialog")).getByRole("button", {
           name: "Confirm",
@@ -2668,10 +2660,8 @@ describe("PlaygroundMain", () => {
       // Guard against a vacuous pass: the param has to be there to be dropped.
       expect(window.location.search).toContain(savedSession.chatSessionId);
 
-      const clearButton = screen
-        .getAllByRole("button")
-        .find((btn) => btn.querySelector(".lucide-trash2") !== null);
-      fireEvent.click(clearButton!);
+      const clearButton = screen.getByRole("button", { name: "Clear chat" });
+      fireEvent.click(clearButton);
       fireEvent.click(
         within(screen.getByTestId("confirm-dialog")).getByRole("button", {
           name: "Confirm",
@@ -2748,7 +2738,7 @@ describe("PlaygroundMain", () => {
   // (`use-persisted-model.ts:150-159`) under a key shared by every chat
   // surface. Playground is the surface that actually turns compare mode on,
   // and it renders both the real Playground and the eval live-chat panel, so a
-  // clobber here destroys the selection the hosted chatbox reads back.
+  // clobber here destroys the selection the hosted scenario reads back.
   describe("selected-model persistence", () => {
     const LEAD_KEY = "mcp-inspector-selected-model";
     const OWN_PROVIDER_MODEL_ID = "claude-haiku-4-5";

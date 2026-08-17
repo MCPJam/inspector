@@ -13,7 +13,6 @@ import {
   EXCALIDRAW_SERVER_CONFIG,
   EXCALIDRAW_SERVER_NAME,
 } from "@/lib/excalidraw-quick-connect";
-import { HOSTED_MODE } from "@/lib/config";
 import type { ServerFormData } from "@/shared/types.js";
 import type { ServerWithName } from "@/hooks/use-app-state";
 
@@ -26,6 +25,7 @@ interface UseOnboardingOptions {
   hasSeenOnboarding?: boolean;
   canPersistRemoteOnboarding?: boolean;
   isProjectProvisioned?: boolean;
+  isClientConfigSyncPending?: boolean;
 }
 
 interface UseOnboardingReturn {
@@ -102,6 +102,7 @@ export function useOnboarding({
   hasSeenOnboarding = false,
   canPersistRemoteOnboarding = false,
   isProjectProvisioned = true,
+  isClientConfigSyncPending = false,
 }: UseOnboardingOptions): UseOnboardingReturn {
   const markOnboardingAsShownMutation = useMutation(
     "users:markOnboardingShown" as any,
@@ -193,14 +194,14 @@ export function useOnboarding({
   useEffect(() => {
     if (isWorkOsAuthLoading || isSignedInWithWorkOs) return;
     if (didAutoConnectRef.current) return;
-    // Hosted mode stores each server on the Convex project, so the first-run
-    // connect must wait for that project to provision. In local/non-hosted
-    // mode the active project is a local record and Excalidraw connects as a
-    // runtime server, so requiring a Convex-synced project here would strand
-    // first-run guests on an infinite spinner on any deployment that can't
-    // authenticate the guest (e.g. the open-source shared Convex deployment,
-    // where guest auth is never trusted). See issue #3352.
-    if (HOSTED_MODE && !isProjectProvisioned) return;
+    // A fresh Playground creates its starter clients before onboarding runs.
+    // Their config sync uses the same connection preflight as MCP servers, so
+    // wait for that sync to settle before spending the one auto-connect attempt.
+    if (isClientConfigSyncPending) return;
+    // Both hosted and local connections now resolve through a Convex project
+    // and server id. A first-run guest reaches this render before that project
+    // exists, so wait here instead of spending the one auto-connect attempt.
+    if (!isProjectProvisioned) return;
 
     if (hasRemoteOnboardingState) {
       if (hasSeenOnboarding) return;
@@ -245,6 +246,7 @@ export function useOnboarding({
     isWorkOsAuthLoading,
     isSignedInWithWorkOs,
     isProjectProvisioned,
+    isClientConfigSyncPending,
     hasRemoteOnboardingState,
     hasSeenOnboarding,
     onConnect,

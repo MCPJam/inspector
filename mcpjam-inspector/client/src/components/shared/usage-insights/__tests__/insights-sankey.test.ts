@@ -157,7 +157,7 @@ describe("layoutSankey", () => {
 
   it("keeps each stage in the order the server sent", () => {
     // Volume order is the one ordering that means the same thing across
-    // chatboxes, so the layout must not re-sort.
+    // scenarios, so the layout must not re-sort.
     const laid = layoutSankey(sankey, 400, 200, columnX);
     expect(
       laid.nodes.filter((n) => n.stage === "goal").map((n) => n.key),

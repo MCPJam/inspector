@@ -260,7 +260,7 @@ export const RunEvalsRequestSchema = z.object({
   // hosted variant's `.omit`).
   serverIds: z.array(z.string()),
   serverNames: z.array(z.string()).optional(),
-  chatboxId: z.string().optional(),
+  scenarioId: z.string().optional(),
   accessVersion: z.number().int().nonnegative().optional(),
   storageServerIds: z.array(z.string()).optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
@@ -406,7 +406,7 @@ export const RunTestCaseRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
-  chatboxId: z.string().optional(),
+  scenarioId: z.string().optional(),
   accessVersion: z.number().int().nonnegative().optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
@@ -548,7 +548,8 @@ export function buildCapEntriesFromPersistedCases(
     advancedConfig?: unknown;
     caseType?: TestCaseType;
     probeConfig?: ProbeConfig;
-  }>
+  }>,
+  options?: { environmentBacked?: boolean }
 ): RunEvalsRequest["tests"] {
   const entries: RunEvalsRequest["tests"] = [];
   for (const testCase of cases ?? []) {
@@ -571,7 +572,10 @@ export function buildCapEntriesFromPersistedCases(
     // case contributes 0 LLM calls regardless of fanout — the entry carries
     // `steps` so the reducer sees the real count.
     const modelFree = isModelFree(steps ?? []);
-    const fanout = modelFree ? 1 : Math.max(testCase.models?.length ?? 0, 1);
+    const fanout =
+      modelFree || options?.environmentBacked
+        ? 1
+        : Math.max(testCase.models?.length ?? 0, 1);
     for (let i = 0; i < fanout; i++) {
       entries.push({
         title: testCase.title ?? "",
@@ -1536,7 +1540,7 @@ export async function prepareEvalRun(
     tests,
     serverIds,
     serverNames,
-    chatboxId,
+    scenarioId,
     accessVersion,
     storageServerIds,
     modelApiKeys,
@@ -1602,12 +1606,27 @@ export async function prepareEvalRun(
     // No client substituted the suite default model onto these cases, so a
     // model-less prompt case would be silently dropped from execution. Reject
     // before cap-math so the error names the real cause, not the cap.
-    assertBareRerunCasesRunnable(
-      persistedCases as Parameters<typeof assertBareRerunCasesRunnable>[0]
-    );
+    //
+    // NOT for an environment-backed run. The premise of this check — "nothing
+    // supplies a model, so the recorder drops the case" — stops holding the
+    // moment an environment is in play: `startTestSuiteRun` projects every
+    // prompt case onto the environment's effective model, writes that into
+    // `configSnapshot.tests`, and `precreateIterationsForRun` creates rows
+    // from the projection, so the case has both a model AND somewhere to
+    // record. (An environment that resolves to NO model never gets this far —
+    // the backend refuses the launch with `ENV_MODEL_REQUIRED`.) Keeping the
+    // check here would make an unattended env-backed rerun the one launch
+    // shape that cannot run a suite the interactive UI runs fine.
+    if (!environmentId) {
+      assertBareRerunCasesRunnable(
+        persistedCases as Parameters<typeof assertBareRerunCasesRunnable>[0]
+      );
+    }
     assertSuiteRunWithinCap({
       ...request,
-      tests: buildCapEntriesFromPersistedCases(persistedCases ?? []),
+      tests: buildCapEntriesFromPersistedCases(persistedCases ?? [], {
+        environmentBacked: Boolean(environmentId),
+      }),
     });
   } else {
     assertSuiteRunWithinCap(request);
@@ -1793,7 +1812,7 @@ export async function prepareEvalRun(
       try {
         const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
           bearerToken: convexAuthToken,
-          chatboxId,
+          scenarioId,
           accessVersion,
           serverIds: resolvedServerIds,
         });
@@ -1908,16 +1927,13 @@ export async function prepareEvalRun(
       await recorder
         .finalize({ status: "failed", notes: cause })
         .catch((finalizeError: unknown) =>
-          logger.warn(
-            "[evals] Failed to finalize run after setup abort",
-            {
-              runId,
-              error:
-                finalizeError instanceof Error
-                  ? finalizeError.message
-                  : String(finalizeError),
-            }
-          )
+          logger.warn("[evals] Failed to finalize run after setup abort", {
+            runId,
+            error:
+              finalizeError instanceof Error
+                ? finalizeError.message
+                : String(finalizeError),
+          })
         );
       throw error;
     }
@@ -1991,7 +2007,7 @@ export async function runEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
-    chatboxId,
+    scenarioId,
     accessVersion,
     skipLastMessageRunUpdate,
     modelApiKeys,
@@ -2124,7 +2140,7 @@ export async function runEvalTestCaseWithManager(
         testCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
-          chatboxId,
+          scenarioId,
           accessVersion,
           serverIds: resolvedServerIds,
         }
@@ -2373,7 +2389,7 @@ export async function streamEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
-    chatboxId,
+    scenarioId,
     accessVersion,
     skipLastMessageRunUpdate,
     modelApiKeys,
@@ -2505,7 +2521,7 @@ export async function streamEvalTestCaseWithManager(
         streamTestCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
-          chatboxId,
+          scenarioId,
           accessVersion,
           serverIds: resolvedServerIds,
         }

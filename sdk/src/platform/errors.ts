@@ -30,8 +30,18 @@ export type PlatformV1ErrorCode = (typeof PLATFORM_V1_ERROR_CODES)[number];
  * Error responses with no envelope (empty bodies, proxy HTML) derive the
  * code from the HTTP status when unambiguous (401/403/404/429), else
  * `INTERNAL_ERROR`.
+ *
+ * `UNSUPPORTED` is also client-side (`status: 0`), and is a different claim
+ * from the two above: the request SUCCEEDED, but its response showed the
+ * backend does not implement a capability the caller asked for — an older
+ * deployment that ignored a parameter it did not recognize. Reported as an
+ * error rather than returned as data because the alternative is handing the
+ * caller a well-formed answer to a question it did not ask.
  */
-export type PlatformApiErrorCode = PlatformV1ErrorCode | "NETWORK_ERROR";
+export type PlatformApiErrorCode =
+  | PlatformV1ErrorCode
+  | "NETWORK_ERROR"
+  | "UNSUPPORTED";
 
 export type PlatformApiErrorOptions = SdkErrorOptions & {
   /** HTTP status of the response; 0 for client-side (network/timeout) errors. */

@@ -13,9 +13,9 @@ import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
 import {
   groupAssistantPartsIntoSteps,
   isHiddenInternalMessage,
@@ -79,6 +79,13 @@ interface MessageViewProps {
    * sessionId + per-message id.
    */
   renderUserMessageActions?: (message: UIMessage) => React.ReactNode;
+  /**
+   * Optional slot rendered below each ASSISTANT message — the per-turn rating
+   * widget. Sibling of the hover-only copy actions below, deliberately OUTSIDE
+   * that block: a rating prompt nobody can see until they hover is a rating
+   * nobody leaves.
+   */
+  renderAssistantTurnFooter?: (message: UIMessage) => React.ReactNode;
   /**
    * When provided, user messages gain a pencil action that swaps the bubble
    * for an inline editor. Saving rewinds the thread to this message and
@@ -213,6 +220,9 @@ function areMessageViewPropsEqual(
     prev.claudeFooterMode === next.claudeFooterMode &&
     prev.mcpjamFooterActive === next.mcpjamFooterActive &&
     prev.renderUserMessageActions === next.renderUserMessageActions &&
+    // Without this the memo freezes the footer: the rating widget's status
+    // lives in the host's callback identity, so a submit would never repaint.
+    prev.renderAssistantTurnFooter === next.renderAssistantTurnFooter &&
     prev.onEditUserMessage === next.onEditUserMessage &&
     prev.editDisabled === next.editDisabled &&
     isSameSenderAvatar(prev.senderAvatar, next.senderAvatar) &&
@@ -448,6 +458,7 @@ function MessageViewImpl({
   claudeFooterMode = "none",
   mcpjamFooterActive = false,
   renderUserMessageActions,
+  renderAssistantTurnFooter,
   onEditUserMessage,
   editDisabled = false,
   senderAvatar,
@@ -455,20 +466,20 @@ function MessageViewImpl({
   recorder,
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
   const assistantAvatar = getAssistantAvatarDescriptor({
     model,
-    themeMode: chatboxHostTheme ?? themeMode,
-    chatboxHostStyle,
+    themeMode: scenarioHostTheme ?? themeMode,
+    scenarioHostStyle,
   });
-  const shouldRenderMistralAssistantAvatar = chatboxHostStyle === "mistral";
+  const shouldRenderMistralAssistantAvatar = scenarioHostStyle === "mistral";
   const shouldRenderAssistantAvatar =
-    chatboxHostStyle === null || shouldRenderMistralAssistantAvatar;
+    scenarioHostStyle === null || shouldRenderMistralAssistantAvatar;
   // Copilot mimics show their own "Copilot + mascot" row above the
   // message content (faithful to real M365 Copilot's avatar/name header).
   // Other host styles keep the inspector's existing layout.
-  const shouldRenderCopilotHeader = chatboxHostStyle === "copilot";
+  const shouldRenderCopilotHeader = scenarioHostStyle === "copilot";
   if (isHiddenInternalMessage(message)) return null;
   const role = message.role;
   if (role !== "user" && role !== "assistant") return null;
@@ -676,6 +687,7 @@ function MessageViewImpl({
             />
           </div>
         ) : null}
+        {renderAssistantTurnFooter?.(message)}
       </div>
     </article>
   );

@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
+import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 
 /**
  * Mistral Le Chat thinking indicator — the brand's iconic morphing
@@ -30,8 +30,8 @@ import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
  */
 export function MistralSpinnerIndicator({ className }: { className?: string }) {
   // Chat-shell host theme. Falls back to "dark" to match the rest of the
-  // inspector's "no chatbox context" behavior (see CopilotMessageHeader).
-  const chatboxHostTheme = useChatboxHostTheme() ?? "dark";
+  // inspector's "no scenario context" behavior (see CopilotMessageHeader).
+  const scenarioHostTheme = useScenarioHostTheme() ?? "dark";
 
   return (
     <span
@@ -115,7 +115,7 @@ export function MistralSpinnerIndicator({ className }: { className?: string }) {
 
       <span
         aria-hidden="true"
-        data-theme={chatboxHostTheme}
+        data-theme={scenarioHostTheme}
         data-testid="loading-indicator-mistral-label"
         className="mistral-shimmer-text text-sm leading-5 font-medium"
       >

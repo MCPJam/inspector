@@ -6,7 +6,7 @@
  *
  * Proves the two swarm invariants end-to-end: (1) transcripts persist with
  * swarm attribution (`sourceType/origin: "swarm"`, `journeyRunId`, `hostId`,
- * persona tags, no chatboxId/synthesisRunId), and (2) the terminal attempt is
+ * persona tags, no scenarioId/synthesisRunId), and (2) the terminal attempt is
  * reported AFTER the transcript is persisted (persist-before-terminal), with
  * the same deterministic chatSessionId used to claim it.
  */
@@ -248,8 +248,8 @@ describe("swarm runner — real core integration", () => {
       personaLabel: "Persona One",
       synthetic: true,
     });
-    // Swarm carries no chatbox surface identifiers.
-    expect(persistArgs.chatboxId).toBeUndefined();
+    // Swarm carries no scenario surface identifiers.
+    expect(persistArgs.scenarioId).toBeUndefined();
     expect(persistArgs.synthesisRunId).toBeUndefined();
 
     // The hosted turn body forwarded journeyRunId (backend spend attribution).

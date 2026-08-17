@@ -26,8 +26,8 @@ import {
   type ShowServersPayload,
 } from "./show-servers.js";
 import type {
-  PlatformChatbox,
-  PlatformChatboxDetail,
+  PlatformScenarioSummary,
+  PlatformScenarioDetail,
   PlatformChatSession,
   PlatformDoctorReport,
   PlatformEvalCase,
@@ -36,6 +36,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
+  PlatformRunCompare,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
@@ -47,10 +48,31 @@ import type {
   PlatformJourney,
   PlatformJourneyRun,
   PlatformJourneyRunSession,
+  PlatformCapabilities,
+  PlatformFindingDismissed,
+  PlatformGenerationDrafts,
+  PlatformJourneyArchived,
   PlatformJourneyRunCanceled,
+  PlatformPersona,
+  PlatformPersonaDeleted,
+  PlatformRunScorecard,
+  PlatformSessionSummary,
+  PlatformSwarm,
+  PlatformSwarmArchived,
+  PlatformSwarmFinding,
+  PlatformSwarmOverview,
+  PlatformWaveInsights,
+  PlatformWaveInsightsCanceled,
+  PlatformUserTestingInsightsRequested,
+  PlatformUserTestingScenario,
+  PlatformUserTestingScenarioDetail,
+  PlatformUserTestingSession,
+  PlatformUserTestingSessionDetail,
+  PlatformWaveInsightsRequested,
   PlatformJourneyRunLaunched,
   PlatformScenario,
   PlatformScenarioDeleted,
+  PlatformEnvironmentCapabilities,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
   PlatformImage,
@@ -61,6 +83,7 @@ import type {
   PlatformHost,
   PlatformHostDeleted,
   PlatformHostDetail,
+  PlatformOrganization,
   PlatformPage,
   PlatformMe,
   PlatformModel,
@@ -68,6 +91,7 @@ import type {
   PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
+  PlatformServerConnection,
   PlatformTunnelGrant,
 } from "./types.js";
 
@@ -105,6 +129,21 @@ export const listModelsOperation: PlatformOperation<
   },
 };
 
+export const listOrganizationsOperation: PlatformOperation<
+  Record<string, never>,
+  PlatformPage<PlatformOrganization>
+> = {
+  name: "list_organizations",
+  title: "List MCPJam organizations",
+  description:
+    "List the organizations the caller belongs to. Use this to discover the organization id that list_projects filters by and create_project takes. An organization-scoped API key only ever sees its own organization.",
+  readOnly: true,
+  inputSchema: z.object({}),
+  async execute(_input, { client, signal }) {
+    return client.listOrganizations({ signal });
+  },
+};
+
 export interface PlatformOperation<TInput, TOutput> {
   /** Stable wire id; doubles as the MCP/AI-SDK tool name. */
   name: string;
@@ -123,6 +162,28 @@ export interface PlatformOperation<TInput, TOutput> {
    * claim here.
    */
   mayBeDestructive?: boolean;
+  /**
+   * What kind of harm a mistaken call does, so every surface can make ONE
+   * decision from one place instead of five surfaces each re-deriving it.
+   *
+   * `readOnly` already separates reads from writes, and that is not the
+   * question the surfaces actually have. Creating an eval case and rotating a
+   * share link are both writes; one is undo-able with a delete, the other
+   * breaks every live link someone has already handed out. Before this field
+   * the agent registry, the MCP catalog and the workspace toolset each encoded
+   * that difference in their own prose, which is how `cancel_journey_run` came
+   * to be excluded from one surface for a reason that only applied to another.
+   *
+   *   `none`        — persists, but reversible and costs nothing.
+   *   `spend`       — consumes credits or quota, possibly a lot.
+   *   `exposure`    — changes who can reach something.
+   *   `destructive` — removes or invalidates something that existed.
+   *
+   * Absent means `none` on a write and is meaningless on a read. This is
+   * DESCRIPTIVE metadata for surfaces to act on — it enforces nothing by
+   * itself, and a surface that ignores it is no less safe than before.
+   */
+  risk?: "none" | "spend" | "exposure" | "destructive";
   inputSchema: z.ZodType<TInput>;
   execute(input: TInput, context: PlatformOperationContext): Promise<TOutput>;
 }
@@ -154,7 +215,7 @@ export const listProjectsOperation: PlatformOperation<
   async execute(input, { client, signal }) {
     const page = await client.listProjects(
       { organizationId: input.organizationId },
-      { signal }
+      { signal },
     );
     const resolution = resolveProject(page.items);
     return {
@@ -167,7 +228,14 @@ export const listProjectsOperation: PlatformOperation<
 const createProjectInput = z.object({
   name: z.string().trim().min(1),
   description: z.string().optional(),
-  organizationId: z.string().trim().min(1).optional(),
+  organizationId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Organization to create the project in, from list_organizations. Defaults to the caller's own organization.",
+    ),
   icon: z.string().optional(),
   visibility: z.enum(["public", "private"]).optional(),
 });
@@ -179,7 +247,8 @@ export const createProjectOperation: PlatformOperation<
 > = {
   name: "create_project",
   title: "Create an MCPJam project",
-  description: "Create a new project in an accessible organization.",
+  description:
+    "Create an empty project in an organization the caller belongs to. The new project starts with no MCP servers; add them with create_project_server or connect_project_server. Counts against the organization plan's project limit.",
   readOnly: false,
   inputSchema: createProjectInput,
   async execute(input, { client, signal }) {
@@ -201,7 +270,7 @@ const updateProjectInput = z
       value.description !== undefined ||
       value.icon !== undefined ||
       value.visibility !== undefined,
-    { message: "Provide at least one project field to update." }
+    { message: "Provide at least one project field to update." },
   );
 export type UpdateProjectInput = z.infer<typeof updateProjectInput>;
 
@@ -211,14 +280,15 @@ export const updateProjectOperation: PlatformOperation<
 > = {
   name: "update_project",
   title: "Update an MCPJam project",
-  description: "Update project metadata without replacing its server set.",
+  description:
+    "Rename a project or change its description, icon or visibility. Metadata only — this never adds, removes or edits the project's MCP server configurations, which have their own operations.",
   readOnly: false,
   inputSchema: updateProjectInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const { project: _selector, ...body } = input;
     return client.updateProject({ projectId: project.id, body }, { signal });
@@ -244,7 +314,7 @@ export const deleteProjectOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     return client.deleteProject({ projectId: project.id }, { signal });
   },
@@ -281,11 +351,11 @@ export const listProjectServersOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.listProjectServers(
       { projectId: project.id },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -309,17 +379,17 @@ export const showServersOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.listProjectServers(
       { projectId: project.id },
-      { signal }
+      { signal },
     );
     return buildShowServersPayload({
       doctor: (args) =>
         client.doctorServer(
           { projectId: args.projectId, serverId: args.serverId },
-          { signal: args.signal }
+          { signal: args.signal },
         ),
       project,
       projects: sortedProjects,
@@ -333,7 +403,7 @@ export const showServersOperation: PlatformOperation<
 async function resolveProjectOrThrow(
   client: PlatformApiClient,
   selector: string | undefined,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
 ): Promise<{ project: PlatformProject; sortedProjects: PlatformProject[] }> {
   const page = await client.listProjects({}, { signal });
   const resolution = resolveProject(page.items, selector);
@@ -349,7 +419,7 @@ async function resolveProjectOrThrow(
 // ── Named-resource resolution ────────────────────────────────────────
 
 /**
- * Resolve a suite/chatbox/server selector against a project listing the same
+ * Resolve a suite/scenario/server selector against a project listing the same
  * way `resolveProject` works: exact id first, then unique case-insensitive
  * name. Failures become NOT_FOUND platform errors whose message enumerates
  * the valid choices, so every surface renders the same actionable text.
@@ -358,7 +428,7 @@ function resolveByIdOrName<T extends { id: string; name?: string | null }>(
   items: T[],
   selector: string,
   kind: string,
-  scope: string
+  scope: string,
 ): T {
   const trimmedSelector = selector.trim();
   const idMatch = items.find((item) => item.id === trimmedSelector);
@@ -368,7 +438,7 @@ function resolveByIdOrName<T extends { id: string; name?: string | null }>(
 
   const normalizedSelector = trimmedSelector.toLocaleLowerCase();
   const nameMatches = items.filter(
-    (item) => item.name?.toLocaleLowerCase() === normalizedSelector
+    (item) => item.name?.toLocaleLowerCase() === normalizedSelector,
   );
 
   if (nameMatches.length === 1) {
@@ -378,22 +448,22 @@ function resolveByIdOrName<T extends { id: string; name?: string | null }>(
   if (nameMatches.length > 1) {
     throw resolutionError(
       `${kind} name "${trimmedSelector}" is ambiguous in ${scope}. Use one of these IDs: ${formatResourceList(
-        nameMatches
-      )}.`
+        nameMatches,
+      )}.`,
     );
   }
 
   throw resolutionError(
     items.length > 0
       ? `${kind} "${trimmedSelector}" was not found in ${scope}. Available: ${formatResourceList(
-          items
+          items,
         )}.`
-      : `${kind} "${trimmedSelector}" was not found: ${scope} has none.`
+      : `${kind} "${trimmedSelector}" was not found: ${scope} has none.`,
   );
 }
 
 function formatResourceList(
-  items: Array<{ id: string; name?: string | null }>
+  items: Array<{ id: string; name?: string | null }>,
 ): string {
   return items
     .map((item) => `${item.name ?? "(unnamed)"} (id: ${item.id})`)
@@ -414,7 +484,7 @@ function toSelectedProjectInfo(project: PlatformProject): SelectedProjectInfo {
 
 function toOtherProjects(
   sortedProjects: PlatformProject[],
-  selectedId: string
+  selectedId: string,
 ): ProjectInfo[] {
   return sortedProjects
     .filter((candidate) => candidate.id !== selectedId)
@@ -424,7 +494,7 @@ function toOtherProjects(
 // ── Server live operations ───────────────────────────────────────────
 // Live MCP ops against one saved server: the platform authorizes the caller,
 // opens an ephemeral connection, runs the op, and disconnects. The server is
-// matched by name or ID within the project, like suites and chatboxes.
+// matched by name or ID within the project, like suites and scenarios.
 
 const SERVER_SELECTOR_DESCRIPTION =
   "Server name or ID, as saved in the project.";
@@ -453,17 +523,17 @@ async function resolveLiveServer(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
 ): Promise<PlatformProjectServer> {
   const page = await client.listProjectServers(
     { projectId: project.id },
-    { signal }
+    { signal },
   );
   const server = resolveByIdOrName(
     page.items,
     selector,
     "Server",
-    `project "${project.name}"`
+    `project "${project.name}"`,
   );
   if (server.transportType === "stdio" || !server.url) {
     throw resolutionError(
@@ -471,7 +541,7 @@ async function resolveLiveServer(
         server.transportType === "stdio"
           ? "stdio servers are not supported on the hosted platform"
           : "it has no URL"
-      }.`
+      }.`,
     );
   }
   return server;
@@ -501,17 +571,17 @@ export const diagnoseServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal
+      signal,
     );
     const report = await client.doctorServer(
       { projectId: project.id, serverId: server.id },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -535,17 +605,17 @@ export const validateServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal
+      signal,
     );
     return client.validateServer(
       { projectId: project.id, serverId: server.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -564,17 +634,17 @@ export const exportServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal
+      signal,
     );
     return client.exportServer(
       { projectId: project.id, serverId: server.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -601,19 +671,19 @@ async function runServerListing(
   context: PlatformOperationContext,
   list: (
     scope: { projectId: string; serverId: string },
-    body: Record<string, unknown>
-  ) => Promise<PlatformPage<Record<string, unknown>>>
+    body: Record<string, unknown>,
+  ) => Promise<PlatformPage<Record<string, unknown>>>,
 ): Promise<ServerPagedResult> {
   const { client, signal } = context;
   const { project } = await resolveProjectOrThrow(
     client,
     input.project,
-    signal
+    signal,
   );
   const server = await resolveLiveServer(client, project, input.server, signal);
   const page = await list(
     { projectId: project.id, serverId: server.id },
-    input.cursor ? { cursor: input.cursor } : {}
+    input.cursor ? { cursor: input.cursor } : {},
   );
   return {
     project: toSelectedProjectInfo(project),
@@ -637,8 +707,8 @@ export const listServerToolsOperation: PlatformOperation<
     return runServerListing(input, context, (scope, body) =>
       context.client.listServerTools(
         { ...scope, body },
-        { signal: context.signal }
-      )
+        { signal: context.signal },
+      ),
     );
   },
 };
@@ -657,8 +727,8 @@ export const listServerPromptsOperation: PlatformOperation<
     return runServerListing(input, context, (scope, body) =>
       context.client.listServerPrompts(
         { ...scope, body },
-        { signal: context.signal }
-      )
+        { signal: context.signal },
+      ),
     );
   },
 };
@@ -677,8 +747,8 @@ export const listServerResourcesOperation: PlatformOperation<
     return runServerListing(input, context, (scope, body) =>
       context.client.listServerResources(
         { ...scope, body },
-        { signal: context.signal }
-      )
+        { signal: context.signal },
+      ),
     );
   },
 };
@@ -718,13 +788,13 @@ export const callServerToolOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal
+      signal,
     );
     const result = await client.callServerTool(
       {
@@ -735,7 +805,7 @@ export const callServerToolOperation: PlatformOperation<
           parameters: input.parameters ?? {},
         },
       },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -779,13 +849,13 @@ export const getServerPromptOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal
+      signal,
     );
     const result = await client.getServerPrompt(
       {
@@ -796,7 +866,7 @@ export const getServerPromptOperation: PlatformOperation<
           ...(input.arguments ? { arguments: input.arguments } : {}),
         },
       },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -836,13 +906,13 @@ export const readServerResourceOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal
+      signal,
     );
     const result = await client.readServerResource(
       {
@@ -850,7 +920,7 @@ export const readServerResourceOperation: PlatformOperation<
         serverId: server.id,
         body: { uri: input.uri },
       },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -900,13 +970,13 @@ export const checkHostCompatibilityOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const server = await resolveLiveServer(
       client,
       project,
       input.server,
-      signal
+      signal,
     );
     const scope = { projectId: project.id, serverId: server.id };
 
@@ -917,7 +987,7 @@ export const checkHostCompatibilityOperation: PlatformOperation<
     for (let page = 0; page < HOST_COMPAT_TOOLS_PAGE_CAP; page++) {
       const result = await client.listServerTools(
         { ...scope, body: cursor ? { cursor } : {} },
-        { signal }
+        { signal },
       );
       rawTools.push(...result.items);
       cursor = result.nextCursor;
@@ -940,8 +1010,8 @@ export const checkHostCompatibilityOperation: PlatformOperation<
       async (uri) =>
         (await client.readServerResource(
           { ...scope, body: { uri } },
-          { signal }
-        )) as ReadResourceResult
+          { signal },
+        )) as ReadResourceResult,
     );
 
     // `toolsTruncated` makes the engine demote any `works` to `unknown` and add
@@ -1016,7 +1086,7 @@ function assertNoServerOverrideWithEnvironment(input: {
 }): void {
   if (input.environment && (input.servers?.length ?? 0) > 0) {
     throw operationInputError(
-      "Pass either environment or servers, not both — a project environment supplies its own closed server set, which servers cannot override."
+      "Pass either environment or servers, not both — a project environment supplies its own closed server set, which servers cannot override.",
     );
   }
 }
@@ -1041,11 +1111,11 @@ export const listEvalSuitesOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.listEvalSuites(
       { projectId: project.id },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -1094,12 +1164,12 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const page = await client.listEvalSuiteRuns(
       { projectId: project.id, suiteId: suite.id, limit: input.limit },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -1122,7 +1192,7 @@ const runEvalSuiteInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Project server names or IDs to override the suite's saved server selection. When omitted, the platform connects exactly the servers the suite was configured with. Naming a server explicitly overrides its disabled toggle — the run connects to it and consumes credits all the same; stdio servers can never run hosted."
+      "Project server names or IDs to override the suite's saved server selection. When omitted, the platform connects exactly the servers the suite was configured with. Naming a server explicitly overrides its disabled toggle — the run connects to it and consumes credits all the same; stdio servers can never run hosted.",
     ),
   environment: z
     .string()
@@ -1164,7 +1234,7 @@ export const runEvalSuiteOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     // No client-side server default: the platform derives the suite's saved
@@ -1181,7 +1251,7 @@ export const runEvalSuiteOperation: PlatformOperation<
           client,
           project,
           input.environment,
-          signal
+          signal,
         )
       : undefined;
     const created = await client.createEvalRun(
@@ -1195,7 +1265,7 @@ export const runEvalSuiteOperation: PlatformOperation<
           ...(environment ? { environmentId: environment.id } : {}),
         },
       },
-      { signal }
+      { signal },
     );
     const servers =
       overrideServers?.map((server) => ({
@@ -1236,7 +1306,7 @@ const runEvalCaseInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Project server names or IDs to override the suite's saved server selection for this run. When omitted, the platform connects exactly the servers the suite was configured with."
+      "Project server names or IDs to override the suite's saved server selection for this run. When omitted, the platform connects exactly the servers the suite was configured with.",
     ),
   environment: z
     .string()
@@ -1274,7 +1344,7 @@ export const runEvalCaseOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -1282,7 +1352,7 @@ export const runEvalCaseOperation: PlatformOperation<
       project,
       suite,
       input.case,
-      signal
+      signal,
     );
     const overrideServers = input.servers
       ? await resolveRunServers(client, project, input.servers, signal)
@@ -1292,7 +1362,7 @@ export const runEvalCaseOperation: PlatformOperation<
           client,
           project,
           input.environment,
-          signal
+          signal,
         )
       : undefined;
     const created = await client.createEvalRun(
@@ -1307,7 +1377,7 @@ export const runEvalCaseOperation: PlatformOperation<
           ...(environment ? { environmentId: environment.id } : {}),
         },
       },
-      { signal }
+      { signal },
     );
     const servers =
       overrideServers?.map((server) => ({
@@ -1401,7 +1471,7 @@ const evalCaseInput = z.object({
     .array(stepInputSchema)
     .min(1)
     .describe(
-      "Ordered test steps (prompt / toolCall / interact / assert). The first `prompt` step's text is the case query; `toolCalledWith` asserts are the expected tool calls."
+      "Ordered test steps (prompt / toolCall / interact / assert). The first `prompt` step's text is the case query; `toolCalledWith` asserts are the expected tool calls.",
     ),
   expectedOutput: z
     .string()
@@ -1448,7 +1518,7 @@ const evalCaseInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Per-case provider override; defaults to the suite-level provider."
+      "Per-case provider override; defaults to the suite-level provider.",
     ),
 });
 
@@ -1470,14 +1540,14 @@ const createEvalSuiteInput = z.object({
     .array(z.string().trim().min(1))
     .min(1)
     .describe(
-      "Project server names or IDs the suite runs against. Must be HTTP servers; stdio servers can never run hosted."
+      "Project server names or IDs the suite runs against. Must be HTTP servers; stdio servers can never run hosted.",
     ),
   model: z
     .string()
     .trim()
     .min(1)
     .describe(
-      'Suite-level default model applied to every case, e.g. "anthropic/claude-haiku-4.5". Use a hosted model id, or a provider-prefixed id with the matching provider.'
+      'Suite-level default model applied to every case, e.g. "anthropic/claude-haiku-4.5". Use a hosted model id, or a provider-prefixed id with the matching provider.',
     ),
   provider: z
     .string()
@@ -1485,7 +1555,7 @@ const createEvalSuiteInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Suite-level default provider. Optional when the model id is provider-prefixed (the provider is derived from the first path segment)."
+      "Suite-level default provider. Optional when the model id is provider-prefixed (the provider is derived from the first path segment).",
     ),
   cases: z
     .array(evalCaseInput)
@@ -1520,13 +1590,13 @@ export const createEvalSuiteOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const servers = await resolveRunServers(
       client,
       project,
       input.servers,
-      signal
+      signal,
     );
     const created = await client.createEvalSuite(
       {
@@ -1543,7 +1613,7 @@ export const createEvalSuiteOperation: PlatformOperation<
           tests: input.cases,
         },
       },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -1571,7 +1641,7 @@ const publicMatchOptionsSchema = z
       .enum(["any", "in-order", "exact"])
       .optional()
       .describe(
-        "any = order ignored; in-order = expected calls appear in order (extras allowed); exact = exact sequence."
+        "any = order ignored; in-order = expected calls appear in order (extras allowed); exact = exact sequence.",
       ),
     extraToolCalls: z
       .union([z.literal("unlimited"), z.number().int().min(0)])
@@ -1588,7 +1658,7 @@ const publicCheckSchema = z
   .object({ type: z.string().trim().min(1) })
   .passthrough()
   .describe(
-    "A deterministic check; `type` is the check kind (e.g. responseContains, toolCalledWith) and remaining fields depend on it."
+    "A deterministic check; `type` is the check kind (e.g. responseContains, toolCalledWith) and remaining fields depend on it.",
   );
 
 const publicCheckOverrideSchema = z
@@ -1616,7 +1686,7 @@ const caseFieldsShape = {
     .min(1)
     .optional()
     .describe(
-      "Ordered test steps (prompt / toolCall / interact / assert). Replaces the case body wholesale when provided."
+      "Ordered test steps (prompt / toolCall / interact / assert). Replaces the case body wholesale when provided.",
     ),
   expectedOutput: z
     .string()
@@ -1648,7 +1718,7 @@ const caseFieldsShape = {
 
 /** Build the public case body forwarded to the route (drops undefined keys). */
 function buildCaseBody(
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
 ): Record<string, unknown> {
   const keys = Object.keys(caseFieldsShape);
   const body: Record<string, unknown> = {};
@@ -1683,12 +1753,12 @@ export const getEvalSuiteOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.getEvalSuite(
       { projectId: project.id, suiteId: suite.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -1720,7 +1790,7 @@ const updateEvalSuiteInput = z.object({
       z.object({
         host: z.string().trim().min(1).describe("Host name or ID."),
         servers: z.array(z.string().trim().min(1)).optional(),
-      })
+      }),
     )
     .optional()
     .describe("Host attachments (replace-all)."),
@@ -1755,7 +1825,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const body: Record<string, unknown> = {};
@@ -1771,7 +1841,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
     }
     return client.updateEvalSuite(
       { projectId: project.id, suiteId: suite.id, body },
-      { signal }
+      { signal },
     );
   },
 };
@@ -1801,12 +1871,12 @@ export const deleteEvalSuiteOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.deleteEvalSuite(
       { projectId: project.id, suiteId: suite.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -1827,7 +1897,7 @@ const setEvalSuiteScheduleInput = z.object({
     .max(10080)
     .optional()
     .describe(
-      "Run interval in minutes (5–10080). Required only when enabling a suite with no saved interval; on re-enable it is reused when omitted."
+      "Run interval in minutes (5–10080). Required only when enabling a suite with no saved interval; on re-enable it is reused when omitted.",
     ),
   environment: z
     .string()
@@ -1835,7 +1905,7 @@ const setEvalSuiteScheduleInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Project environment name or ID the scheduled runs launch. A schedule fires exactly one run, so an environment-based suite pins exactly one of its attached environments — required when several are attached, defaulted when one is. Only valid with enabled: true."
+      "Project environment name or ID the scheduled runs launch. A schedule fires exactly one run, so an environment-based suite pins exactly one of its attached environments — required when several are attached, defaulted when one is. Only valid with enabled: true.",
     ),
 });
 export type SetEvalSuiteScheduleInput = z.infer<
@@ -1858,13 +1928,13 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
     // of letting the caller believe they repointed the schedule.
     if (input.environment && !input.enabled) {
       throw operationInputError(
-        "environment only applies when enabling a schedule — disabling preserves the existing pin. Re-send with enabled: true to repoint it."
+        "environment only applies when enabling a schedule — disabling preserves the existing pin. Re-send with enabled: true to repoint it.",
       );
     }
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const environment = input.environment
@@ -1872,7 +1942,7 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
           client,
           project,
           input.environment,
-          signal
+          signal,
         )
       : undefined;
     return client.setEvalSuiteSchedule(
@@ -1887,7 +1957,7 @@ export const setEvalSuiteScheduleOperation: PlatformOperation<
           ...(environment ? { environmentId: environment.id } : {}),
         },
       },
-      { signal }
+      { signal },
     );
   },
 };
@@ -1903,7 +1973,7 @@ const setEvalSuiteEnvironmentsInput = z.object({
   environments: z
     .union([z.array(z.string().trim().min(1)).min(1), z.null()])
     .describe(
-      "Project environment names or IDs to attach, in the order they should appear. Replaces the current attachments outright (this is a set, not an append). Pass null to detach every environment and revert the suite to its saved server selection. An empty array is rejected — use null."
+      "Project environment names or IDs to attach, in the order they should appear. Replaces the current attachments outright (this is a set, not an append). Pass null to detach every environment and revert the suite to its saved server selection. An empty array is rejected — use null.",
     ),
 });
 export type SetEvalSuiteEnvironmentsInput = z.infer<
@@ -1924,7 +1994,7 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     let environmentIds: string[] | null = null;
@@ -1938,15 +2008,15 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
       // rejection.
       const page = await client.listEnvironments(
         { projectId: project.id },
-        { signal }
+        { signal },
       );
       const resolved = input.environments.map((selector) =>
         resolveByIdOrName(
           page.items,
           selector,
           "Project environment",
-          `project "${project.name}"`
-        )
+          `project "${project.name}"`,
+        ),
       );
       // Duplicates are detected AFTER resolution, because two DIFFERENT
       // selectors (an id and its name) can name the same environment — a
@@ -1958,7 +2028,7 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
         const selector = input.environments![index]!;
         if (previous !== undefined) {
           throw operationInputError(
-            `"${previous}" and "${selector}" both refer to the environment "${environment.name}" (id: ${environment.id}). List each environment once.`
+            `"${previous}" and "${selector}" both refer to the environment "${environment.name}" (id: ${environment.id}). List each environment once.`,
           );
         }
         seen.set(environment.id, selector);
@@ -1971,7 +2041,7 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
         suiteId: suite.id,
         body: { environmentIds },
       },
-      { signal }
+      { signal },
     );
   },
 };
@@ -2001,12 +2071,12 @@ export const listEvalCasesOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.listEvalCases(
       { projectId: project.id, suiteId: suite.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -2036,7 +2106,7 @@ export const getEvalCaseOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -2044,11 +2114,11 @@ export const getEvalCaseOperation: PlatformOperation<
       project,
       suite,
       input.case,
-      signal
+      signal,
     );
     return client.getEvalCase(
       { projectId: project.id, suiteId: suite.id, caseId: testCase.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -2080,12 +2150,12 @@ export const createEvalCaseOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.createEvalCase(
       { projectId: project.id, suiteId: suite.id, body: buildCaseBody(input) },
-      { signal }
+      { signal },
     );
   },
 };
@@ -2117,7 +2187,7 @@ export const updateEvalCaseOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -2125,7 +2195,7 @@ export const updateEvalCaseOperation: PlatformOperation<
       project,
       suite,
       input.case,
-      signal
+      signal,
     );
     return client.updateEvalCase(
       {
@@ -2134,7 +2204,7 @@ export const updateEvalCaseOperation: PlatformOperation<
         caseId: testCase.id,
         body: buildCaseBody(input),
       },
-      { signal }
+      { signal },
     );
   },
 };
@@ -2165,7 +2235,7 @@ export const deleteEvalCaseOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     const testCase = await resolveCase(
@@ -2173,11 +2243,11 @@ export const deleteEvalCaseOperation: PlatformOperation<
       project,
       suite,
       input.case,
-      signal
+      signal,
     );
     return client.deleteEvalCase(
       { projectId: project.id, suiteId: suite.id, caseId: testCase.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -2194,13 +2264,13 @@ const generateEvalCasesInput = z.object({
     .enum(["normal", "negative"])
     .optional()
     .describe(
-      "normal = mixed positive/negative cases; negative = only negative. Defaults to normal."
+      "normal = mixed positive/negative cases; negative = only negative. Defaults to normal.",
     ),
   servers: z
     .array(z.string().trim().min(1))
     .optional()
     .describe(
-      "Server names/IDs to discover tools from; defaults to the suite's selection."
+      "Server names/IDs to discover tools from; defaults to the suite's selection.",
     ),
   environment: z
     .string()
@@ -2252,13 +2322,13 @@ const generateEvalCasesInput = z.object({
     })
     .optional()
     .describe(
-      "Per-bucket case counts. Omitted buckets inherit the default mix; supersedes `mode`. Each bucket and the total are bounded server-side."
+      "Per-bucket case counts. Omitted buckets inherit the default mix; supersedes `mode`. Each bucket and the total are bounded server-side.",
     ),
   varyUserStyles: z
     .boolean()
     .optional()
     .describe(
-      "Condition generated cases on a realistic range of user styles so the queries read like different users wrote them."
+      "Condition generated cases on a realistic range of user styles so the queries read like different users wrote them.",
     ),
 });
 export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
@@ -2278,7 +2348,7 @@ export const generateEvalCasesOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     // Resolve server name/id selectors to project server IDs before sending —
@@ -2292,7 +2362,7 @@ export const generateEvalCasesOperation: PlatformOperation<
           client,
           project,
           input.environment,
-          signal
+          signal,
         )
       : undefined;
     return client.generateEvalCases(
@@ -2310,7 +2380,7 @@ export const generateEvalCasesOperation: PlatformOperation<
           ...(input.varyUserStyles ? { varyUserStyles: true } : {}),
         },
       },
-      { signal }
+      { signal },
     );
   },
 };
@@ -2322,7 +2392,7 @@ const evalRunScopedInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Eval run ID, as returned by run_eval_suite or list_eval_suite_runs."
+      "Eval run ID, as returned by run_eval_suite or list_eval_suite_runs.",
     ),
 });
 
@@ -2340,20 +2410,66 @@ export const getEvalRunOperation: PlatformOperation<
   name: "get_eval_run",
   title: "Get MCPJam eval run",
   description:
-    "Get the status, pass/fail result, and summary counts of an eval run. Poll this until status is completed, failed, or cancelled.",
+    "Get the status, pass/fail result, and summary counts of an eval run. Poll this until status is completed, failed, or cancelled. The detail carries an `insights` envelope with findings AGGREGATED across iterations (exemplar evidence attached); only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change — other action targets name agent/test/environment work and must not be 'fixed' in server code.",
   readOnly: true,
   inputSchema: evalRunScopedInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const run = await client.getEvalRun(
       { projectId: project.id, runId: input.runId },
-      { signal }
+      { signal },
     );
     return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const compareEvalRunInput = evalRunScopedInput.extend({
+  baseRunId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Run ID to compare against. Omit to use the nearest earlier COMPLETED run in the same suite.",
+    ),
+});
+
+export type CompareEvalRunInput = z.infer<typeof compareEvalRunInput>;
+
+export type CompareEvalRunResult = {
+  project: SelectedProjectInfo;
+  compare: PlatformRunCompare;
+};
+
+export const compareEvalRunOperation: PlatformOperation<
+  CompareEvalRunInput,
+  CompareEvalRunResult
+> = {
+  name: "compare_eval_run",
+  title: "Compare MCPJam eval runs",
+  description:
+    "Compare an eval run against a baseline run: per-case status (one of regressed, fixed, new_case, removed_case, changed, unchanged_passed, unchanged_failed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed between them. Omit baseRunId to compare against the nearest earlier completed run in the same suite. A case whose scoreDeltas show definitionChanged was graded by a DIFFERENT scorer definition on each side — its delta is not a regression. Returns HTTP 404 NOT_FOUND with details.reason = BASELINE_NOT_FOUND when the run has no comparable predecessor; that means the comparison is incomplete, not that anything regressed.",
+  readOnly: true,
+  inputSchema: compareEvalRunInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const compare = await client.compareEvalRun(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        baseRunId: input.baseRunId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), compare };
   },
 };
 
@@ -2395,7 +2511,7 @@ export const listEvalRunIterationsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.listEvalRunIterations(
       {
@@ -2404,7 +2520,7 @@ export const listEvalRunIterationsOperation: PlatformOperation<
         cursor: input.cursor,
         limit: input.limit,
       },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -2448,7 +2564,7 @@ export const getEvalIterationTraceOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const trace = await client.getEvalIterationTrace(
       {
@@ -2456,7 +2572,7 @@ export const getEvalIterationTraceOperation: PlatformOperation<
         runId: input.runId,
         iterationId: input.iterationId,
       },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -2486,11 +2602,11 @@ export const cancelEvalRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const run = await client.cancelEvalRun(
       { projectId: project.id, runId: input.runId },
-      { signal }
+      { signal },
     );
     return { project: toSelectedProjectInfo(project), run };
   },
@@ -2527,7 +2643,7 @@ export const getEvalRunStepsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.getEvalRunSteps(
       {
@@ -2535,7 +2651,7 @@ export const getEvalRunStepsOperation: PlatformOperation<
         runId: input.runId,
         iterationId: input.iterationId,
       },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -2550,17 +2666,17 @@ async function resolveSuite(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
 ): Promise<PlatformEvalSuite> {
   const page = await client.listEvalSuites(
     { projectId: project.id },
-    { signal }
+    { signal },
   );
   return resolveByIdOrName(
     page.items,
     selector,
     "Eval suite",
-    `project "${project.name}"`
+    `project "${project.name}"`,
   );
 }
 
@@ -2573,17 +2689,17 @@ async function resolveCase(
   project: PlatformProject,
   suite: PlatformEvalSuite,
   selector: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
 ): Promise<PlatformEvalCase> {
   const page = await client.listEvalCases(
     { projectId: project.id, suiteId: suite.id },
-    { signal }
+    { signal },
   );
   return resolveByIdOrName(
     page.items.map((testCase) => ({ ...testCase, name: testCase.title })),
     selector,
     "Eval case",
-    `suite "${suite.name ?? suite.id}"`
+    `suite "${suite.name ?? suite.id}"`,
   );
 }
 
@@ -2600,11 +2716,11 @@ async function resolveRunServers(
   client: PlatformApiClient,
   project: PlatformProject,
   selectors: string[],
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
 ): Promise<PlatformProjectServer[]> {
   const page = await client.listProjectServers(
     { projectId: project.id },
-    { signal }
+    { signal },
   );
 
   const resolved = new Map<string, PlatformProjectServer>();
@@ -2613,7 +2729,7 @@ async function resolveRunServers(
       page.items,
       selector,
       "Server",
-      `project "${project.name}"`
+      `project "${project.name}"`,
     );
     // Fail deterministically here rather than downstream at run creation:
     // the hosted runner can never connect to these.
@@ -2623,7 +2739,7 @@ async function resolveRunServers(
           server.transportType === "stdio"
             ? "stdio servers are not supported on the hosted platform"
             : "it has no URL"
-        }. Select an HTTP server instead.`
+        }. Select an HTTP server instead.`,
       );
     }
     resolved.set(server.id, server);
@@ -2648,7 +2764,7 @@ const createTunnelInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Server name to register the tunnel under. Reusing an existing server's name points that record at the tunnel (its URL is overwritten and stdio records are converted to HTTP)."
+      "Server name to register the tunnel under. Reusing an existing server's name points that record at the tunnel (its URL is overwritten and stdio records are converted to HTTP).",
     ),
 });
 
@@ -2673,11 +2789,11 @@ export const createTunnelOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const grant = await client.createTunnel(
       { projectId: project.id, name: input.name },
-      { signal }
+      { signal },
     );
     return { project: toSelectedProjectInfo(project), grant };
   },
@@ -2695,7 +2811,7 @@ const closeTunnelInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Server ID whose tunnel to revoke, as returned by create_tunnel."
+      "Server ID whose tunnel to revoke, as returned by create_tunnel.",
     ),
 });
 
@@ -2721,11 +2837,11 @@ export const closeTunnelOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const result = await client.closeTunnel(
       { projectId: project.id, serverId: input.serverId },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -2737,31 +2853,31 @@ export const closeTunnelOperation: PlatformOperation<
 
 // ── Chat operations ──────────────────────────────────────────────────
 
-export type ListChatboxesResult = {
+export type ListScenariosResult = {
   project: SelectedProjectInfo;
-  items: PlatformChatbox[];
+  items: PlatformScenarioSummary[];
   otherProjects: ProjectInfo[];
 };
 
-export const listChatboxesOperation: PlatformOperation<
+export const listScenariosOperation: PlatformOperation<
   ProjectScopedInput,
-  ListChatboxesResult
+  ListScenariosResult
 > = {
-  name: "list_chatboxes",
-  title: "List MCPJam chatboxes",
+  name: "list_scenarios",
+  title: "List MCPJam scenarios",
   description:
-    "List the chatboxes published from an MCPJam project: name, access mode, attached servers, and share link. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
+    "List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. If no project is specified, uses the most recently updated accessible project and returns other project names for switching.",
   readOnly: true,
   inputSchema: projectScopedInput,
   async execute(input, { client, signal }) {
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
-    const page = await client.listChatboxes(
+    const page = await client.listScenarios(
       { projectId: project.id },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -2771,54 +2887,54 @@ export const listChatboxesOperation: PlatformOperation<
   },
 };
 
-const chatboxScopedInput = z.object({
+const scenarioScopedInput = z.object({
   project: z
     .string()
     .trim()
     .min(1)
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
-  chatbox: z.string().trim().min(1).describe("Chatbox name or ID."),
+  scenario: z.string().trim().min(1).describe("Scenario name or ID."),
 });
 
-export type GetChatboxInput = z.infer<typeof chatboxScopedInput>;
+export type GetScenarioInput = z.infer<typeof scenarioScopedInput>;
 
-export type GetChatboxResult = {
+export type GetScenarioResult = {
   project: SelectedProjectInfo;
-  chatbox: PlatformChatboxDetail;
+  scenario: PlatformScenarioDetail;
 };
 
-export const getChatboxOperation: PlatformOperation<
-  GetChatboxInput,
-  GetChatboxResult
+export const getScenarioOperation: PlatformOperation<
+  GetScenarioInput,
+  GetScenarioResult
 > = {
-  name: "get_chatbox",
-  title: "Get MCPJam chatbox",
+  name: "get_scenario",
+  title: "Get MCPJam scenario",
   description:
-    "Get one chatbox's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. The chatbox is matched by name or ID within the project.",
+    "Get one scenario's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. The scenario is matched by name or ID within the project.",
   readOnly: true,
-  inputSchema: chatboxScopedInput,
+  inputSchema: scenarioScopedInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
-    const page = await client.listChatboxes(
+    const page = await client.listScenarios(
       { projectId: project.id },
-      { signal }
+      { signal },
     );
     const match = resolveByIdOrName(
       page.items,
-      input.chatbox,
-      "Chatbox",
-      `project "${project.name}"`
+      input.scenario,
+      "Scenario",
+      `project "${project.name}"`,
     );
-    const chatbox = await client.getChatbox(
-      { projectId: project.id, chatboxId: match.id },
-      { signal }
+    const scenario = await client.getScenario(
+      { projectId: project.id, scenarioId: match.id },
+      { signal },
     );
-    return { project: toSelectedProjectInfo(project), chatbox };
+    return { project: toSelectedProjectInfo(project), scenario };
   },
 };
 
@@ -2829,7 +2945,7 @@ const listChatSessionsInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Optional project filter (name or ID). When omitted, lists sessions across all accessible projects."
+      "Optional project filter (name or ID). When omitted, lists sessions across all accessible projects.",
     ),
   status: z
     .string()
@@ -2886,10 +3002,142 @@ export const listChatSessionsOperation: PlatformOperation<
         limit: input.limit,
         before: input.cursor,
       },
-      { signal }
+      { signal },
     );
     return {
       ...(project ? { project: toSelectedProjectInfo(project) } : {}),
+      items: page.items,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const SESSION_SOURCE_TYPES = [
+  "direct",
+  "scenario",
+  "eval",
+  "swarm",
+] as const;
+
+const searchSessionsInput = z.object({
+  query: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Search terms. Required — this operation does not list."),
+  scope: z
+    .enum(["titles", "transcripts"])
+    .optional()
+    .describe(
+      "What to search. 'titles' (default) matches session titles and first messages across the whole corpus; 'transcripts' matches what was actually said inside conversations.",
+    ),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  sourceTypes: z
+    .array(z.enum(SESSION_SOURCE_TYPES))
+    .min(1)
+    .optional()
+    .describe(
+      "Restrict to these session surfaces. Omit to search all available surfaces.",
+    ),
+  status: z
+    .enum(["active", "archived"])
+    .optional()
+    .describe("Filter by session status. Defaults to active."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe("Maximum number of sessions to return per page."),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Opaque pagination cursor from a previous response. Page with the same query and scope you opened with.",
+    ),
+});
+
+export type SearchSessionsInput = z.infer<typeof searchSessionsInput>;
+
+export type SearchSessionsResult = {
+  project: SelectedProjectInfo;
+  scope: "titles" | "transcripts";
+  items: PlatformSessionSummary[];
+  nextCursor?: string;
+};
+
+export const searchSessionsOperation: PlatformOperation<
+  SearchSessionsInput,
+  SearchSessionsResult
+> = {
+  name: "search_sessions",
+  title: "Search MCPJam sessions",
+  description:
+    "Search conversation sessions in a project across every surface (Playground, user testing, evals, swarms), ranked by relevance. " +
+    "scope=titles (default) searches session titles and opening messages; scope=transcripts searches what was said inside the conversations. " +
+    "Older sessions (created before 2026-08-14) are EXCLUDED from transcript search — they cannot match at all; use scope=titles to find them. " +
+    "Every result carries a link to open the session.",
+  readOnly: true,
+  inputSchema: searchSessionsInput,
+  async execute(input, { client, signal }) {
+    // Re-checked here, not just in the schema: `execute()` is called directly
+    // by surfaces that never parse the schema (the CLI binding, raw callers).
+    // The endpoint treats a blank `q` as an EMPTY SEARCH — so a blank query
+    // reaching it would return the project's recency feed, which this
+    // operation promises never to do.
+    const query = input.query?.trim() ?? "";
+    if (query.length === 0) {
+      throw operationInputError(
+        "query is required — search_sessions searches, it does not list.",
+      );
+    }
+
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const requestedScope = input.scope ?? "titles";
+    const page = await client.listSessions(
+      {
+        projectId: project.id,
+        q: query,
+        scope: requestedScope,
+        sourceTypes: input.sourceTypes,
+        status: input.status,
+        limit: input.limit,
+        cursor: input.cursor,
+      },
+      { signal },
+    );
+
+    // FAIL CLOSED on version skew. A backend that predates `scope` ignores the
+    // unknown query param, runs a title search, and answers without the echo.
+    // Returning those rows would label title matches as transcript matches —
+    // an answer the caller cannot detect is wrong. Only checked for a
+    // non-default scope: `titles` is what an old backend does anyway, so its
+    // results are correct with or without the marker.
+    if (requestedScope !== "titles" && page.scope !== requestedScope) {
+      throw new PlatformApiError(
+        "this backend does not support transcript search; retry with scope=titles",
+        "UNSUPPORTED",
+        // `status: 0` like every other client-synthesized error: the request
+        // itself returned 200, so quoting a server status would misreport
+        // what happened.
+        { status: 0 },
+      );
+    }
+
+    return {
+      project: toSelectedProjectInfo(project),
+      scope: requestedScope,
       items: page.items,
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
@@ -2904,14 +3152,14 @@ async function resolveHost(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
 ): Promise<PlatformHost> {
   const page = await client.listHosts({ projectId: project.id }, { signal });
   return resolveByIdOrName(
     page.items,
     selector,
     "Host",
-    `project "${project.name}"`
+    `project "${project.name}"`,
   );
 }
 
@@ -2935,7 +3183,7 @@ export const listHostsOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.listHosts({ projectId: project.id }, { signal });
     return {
@@ -2971,12 +3219,12 @@ export const getHostOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.getHost(
       { projectId: project.id, hostId: host.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -2996,7 +3244,7 @@ const createHostInput = z
       .min(1)
       .optional()
       .describe(
-        "Built-in template to seed the host config from (e.g. claude, chatgpt, cursor)."
+        "Built-in template to seed the host config from (e.g. claude, chatgpt, cursor).",
       ),
     theme: z
       .enum(["light", "dark"])
@@ -3004,16 +3252,41 @@ const createHostInput = z
       .describe("Theme stamped into the seeded host config (template only)."),
     config: z
       .record(z.string(), z.unknown())
-      .refine((value) => Object.keys(value).length > 0, {
-        message: "`config` must be a non-empty host config object.",
-      })
       .optional()
       .describe(
-        "Full host config v2 to use verbatim (alternative to template)."
+        "Full host config v2 to use verbatim (alternative to template). Must pin a non-empty `modelId`.",
       ),
   })
-  .refine((value) => (value.template ? 1 : 0) + (value.config ? 1 : 0) === 1, {
-    message: "Provide exactly one of `template` or a non-empty `config`.",
+  // ONE `superRefine`, shaped exactly like the route's, because the route's 400
+  // is the error the caller actually receives and the schema must not predict a
+  // different one. A field-level `.refine` on `config` cannot do that: it fails
+  // before object-level checks run, so a degenerate `config: {}` would be
+  // reported here as "config must be non-empty" while the route reports the XOR.
+  // Counting the branch from a NON-EMPTY config makes `{}` read as "you picked
+  // neither branch", and the early return keeps the model check off a request
+  // that has no config branch to pin a model on.
+  .superRefine((value, ctx) => {
+    const hasConfig =
+      value.config !== undefined && Object.keys(value.config).length > 0;
+    if ((value.template ? 1 : 0) + (hasConfig ? 1 : 0) !== 1) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Provide exactly one of `template` or a non-empty `config`.",
+      });
+      return;
+    }
+    // Mirrors the v1 route's forward-client invariant. Enforced here too so an
+    // SDK/agent caller is told by the schema rather than by a 400 the published
+    // contract never predicted.
+    const modelId = hasConfig ? value.config!.modelId : undefined;
+    if (hasConfig && !(typeof modelId === "string" && modelId.trim())) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["config", "modelId"],
+        message:
+          '`config.modelId` is required and must be a non-empty model id (e.g. "anthropic/claude-sonnet-4-5").',
+      });
+    }
   });
 export type CreateHostInput = z.infer<typeof createHostInput>;
 
@@ -3024,14 +3297,14 @@ export const createHostOperation: PlatformOperation<
   name: "create_host",
   title: "Create an MCPJam host",
   description:
-    "Create a host in a project, either from a built-in template (`template`, optional `theme`) or from a full host config (`config`). Returns the created host.",
+    "Create a host in a project, either from a built-in template (`template`, optional `theme`) or from a full host config (`config`, which must pin a non-empty `modelId`). Returns the created host.",
   readOnly: false,
   inputSchema: createHostInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const body: Record<string, unknown> = { name: input.name };
     if (input.template) {
@@ -3082,7 +3355,7 @@ export const updateHostOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const host = await resolveHost(client, project, input.host, signal);
     const body: Record<string, unknown> = {};
@@ -3090,7 +3363,7 @@ export const updateHostOperation: PlatformOperation<
     if (input.config !== undefined) body.config = input.config;
     return client.updateHost(
       { projectId: project.id, hostId: host.id, body },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3120,7 +3393,7 @@ export const deleteHostOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.deleteHost(
@@ -3130,7 +3403,7 @@ export const deleteHostOperation: PlatformOperation<
         // The v1 delete contract is bodyless — the route rejects any field.
         body: {},
       },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3165,7 +3438,7 @@ export const setHostServersOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const host = await resolveHost(client, project, input.host, signal);
     await client.setHostServers(
@@ -3175,11 +3448,11 @@ export const setHostServersOperation: PlatformOperation<
         serverIds: input.serverIds,
         optionalServerIds: input.optionalServerIds,
       },
-      { signal }
+      { signal },
     );
     return client.getHost(
       { projectId: project.id, hostId: host.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3209,12 +3482,12 @@ export const duplicateHostOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const host = await resolveHost(client, project, input.host, signal);
     return client.duplicateHost(
       { projectId: project.id, hostId: host.id, name: input.name },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3256,11 +3529,11 @@ async function resolveEnvironmentSelector(
   project: PlatformProject,
   selector: string,
   signal: AbortSignal | undefined,
-  prefer: "live" | "archived" = "live"
+  prefer: "live" | "archived" = "live",
 ): Promise<PlatformEnvironment> {
   const page = await client.listEnvironments(
     { projectId: project.id, includeArchived: true },
-    { signal }
+    { signal },
   );
   const trimmedSelector = selector.trim();
   const idMatch = page.items.find((item) => item.id === trimmedSelector);
@@ -3268,17 +3541,17 @@ async function resolveEnvironmentSelector(
     return idMatch;
   }
   const preferred = page.items.filter(
-    (item) => item.archived === (prefer === "archived")
+    (item) => item.archived === (prefer === "archived"),
   );
   const normalizedSelector = trimmedSelector.toLocaleLowerCase();
   const preferredHasName = preferred.some(
-    (item) => item.name?.toLocaleLowerCase() === normalizedSelector
+    (item) => item.name?.toLocaleLowerCase() === normalizedSelector,
   );
   return resolveByIdOrName(
     preferredHasName ? preferred : page.items,
     selector,
     "Project environment",
-    `project "${project.name}"`
+    `project "${project.name}"`,
   );
 }
 
@@ -3293,7 +3566,7 @@ const listEnvironmentsInput = z.object({
     .boolean()
     .optional()
     .describe(
-      "Include archived environments. Off by default; turn it on to find an environment to restore."
+      "Include archived environments. Off by default; turn it on to find an environment to restore.",
     ),
 });
 export type ListEnvironmentsInput = z.infer<typeof listEnvironmentsInput>;
@@ -3318,7 +3591,7 @@ export const listEnvironmentsOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.listEnvironments(
       {
@@ -3327,12 +3600,55 @@ export const listEnvironmentsOperation: PlatformOperation<
           ? { includeArchived: input.includeArchived }
           : {}),
       },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
       items: page.items,
       otherProjects: toOtherProjects(sortedProjects, project.id),
+    };
+  },
+};
+
+const environmentCapabilitiesInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+export type EnvironmentCapabilitiesInput = z.infer<
+  typeof environmentCapabilitiesInput
+>;
+
+export type EnvironmentCapabilitiesResult = {
+  project: SelectedProjectInfo;
+  capabilities: PlatformEnvironmentCapabilities;
+};
+
+export const getEnvironmentCapabilitiesOperation: PlatformOperation<
+  EnvironmentCapabilitiesInput,
+  EnvironmentCapabilitiesResult
+> = {
+  name: "get_project_environment_capabilities",
+  title: "Check what an MCPJam deployment's environment surface supports",
+  description:
+    "Report which environment features this MCPJam deployment accepts. Call it before sending a model override: this SDK ships independently of the platform, and a field an older deployment does not know is a hard validation error there rather than a silently ignored one. A deployment too old to answer reports false for everything, which is the correct assumption.",
+  readOnly: true,
+  inputSchema: environmentCapabilitiesInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      capabilities: await client.getEnvironmentCapabilities(
+        { projectId: project.id },
+        { signal },
+      ),
     };
   },
 };
@@ -3366,17 +3682,17 @@ export const getEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
-      signal
+      signal,
     );
     return client.getEnvironment(
       { projectId: project.id, environmentId: environment.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3395,17 +3711,17 @@ export const resolveEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
-      signal
+      signal,
     );
     return client.resolveEnvironment(
       { projectId: project.id, environmentId: environment.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3417,18 +3733,18 @@ const skillSelectionInput = z
       .array(z.string().trim().min(1))
       .min(1)
       .describe(
-        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned."
+        "Project-shared skill IDs to pin. Skills with supporting files or extra frontmatter, and plugin-component skills, cannot be pinned.",
       ),
   })
   .describe(
-    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'."
+    "Explicit pinned skill selection. Cannot be empty — omit the field entirely, or pass null when updating, to mean 'no pinned skills'.",
   );
 
 const pluginVersionIdsInput = z
   .array(z.string().trim().min(1))
   .min(1)
   .describe(
-    "Plugin VERSION IDs to pin. Narrow by design: the plugin must be installed and enabled, the version must be ready, at most one version per plugin, and none of its skills may carry supporting files."
+    "Plugin VERSION IDs to pin. Narrow by design: the plugin must be installed and enabled, the version must be ready, at most one version per plugin, and none of its skills may carry supporting files.",
   );
 
 const createEnvironmentInput = z.object({
@@ -3443,7 +3759,7 @@ const createEnvironmentInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Display name for the new environment. Must be unique among the project's live (non-archived) environments."
+      "Display name for the new environment. Must be unique among the project's live (non-archived) environments.",
     ),
   description: z
     .string()
@@ -3460,7 +3776,15 @@ const createEnvironmentInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Optional standalone server group to pin. Omit to fall back to the host config's own servers."
+      "Optional standalone server group to pin. Omit to fall back to the host config's own servers.",
+    ),
+  modelId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Model this environment runs, overriding the model pinned on its host. Omit to inherit the host\'s. The id is stored verbatim — no alias canonicalization — so pass exactly the id you want the provider request to carry (e.g. "anthropic/claude-sonnet-4-5").',
     ),
   skillSelection: skillSelectionInput.optional(),
   pluginVersionIds: pluginVersionIdsInput.optional(),
@@ -3470,7 +3794,7 @@ const createEnvironmentInput = z.object({
     .min(1)
     .optional()
     .describe(
-      "Optional sandbox image (see the images operations) to pin: eval runs in this environment boot a fresh sandbox from it. Must be project-shared; personal drafts are rejected — promote first."
+      "Optional sandbox image (see the images operations) to pin: eval runs in this environment boot a fresh sandbox from it. Must be project-shared; personal drafts are rejected — promote first.",
     ),
 });
 export type CreateEnvironmentInput = z.infer<typeof createEnvironmentInput>;
@@ -3489,7 +3813,7 @@ export const createEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     return client.createEnvironment(
       {
@@ -3503,6 +3827,7 @@ export const createEnvironmentOperation: PlatformOperation<
           ...(input.serverAttachmentId !== undefined
             ? { serverAttachmentId: input.serverAttachmentId }
             : {}),
+          ...(input.modelId !== undefined ? { modelId: input.modelId } : {}),
           ...(input.skillSelection !== undefined
             ? { skillSelection: input.skillSelection }
             : {}),
@@ -3514,7 +3839,7 @@ export const createEnvironmentOperation: PlatformOperation<
             : {}),
         },
       },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3555,19 +3880,28 @@ const updateEnvironmentInput = z
       .nullable()
       .optional()
       .describe(
-        "New standalone server group, or null to clear the pin and fall back to the host config's servers. Omit to leave unchanged."
+        "New standalone server group, or null to clear the pin and fall back to the host config's servers. Omit to leave unchanged.",
+      ),
+    modelId: z
+      .string()
+      .trim()
+      .min(1)
+      .nullable()
+      .optional()
+      .describe(
+        "New model override, or null to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear.",
       ),
     skillSelection: skillSelectionInput
       .nullable()
       .optional()
       .describe(
-        "New pinned skill selection, or null to clear it. Omit to leave unchanged."
+        "New pinned skill selection, or null to clear it. Omit to leave unchanged.",
       ),
     pluginVersionIds: pluginVersionIdsInput
       .nullable()
       .optional()
       .describe(
-        "New pinned plugin versions, or null to clear them. Omit to leave unchanged."
+        "New pinned plugin versions, or null to clear them. Omit to leave unchanged.",
       ),
     sandboxImageId: z
       .string()
@@ -3576,7 +3910,7 @@ const updateEnvironmentInput = z
       .nullable()
       .optional()
       .describe(
-        "New sandbox-image pin (project-shared image id), or null to clear it and use the default image. Omit to leave unchanged."
+        "New sandbox-image pin (project-shared image id), or null to clear it and use the default image. Omit to leave unchanged.",
       ),
   })
   .refine(
@@ -3585,13 +3919,14 @@ const updateEnvironmentInput = z
       value.description !== undefined ||
       value.hostId !== undefined ||
       value.serverAttachmentId !== undefined ||
+      value.modelId !== undefined ||
       value.skillSelection !== undefined ||
       value.pluginVersionIds !== undefined ||
       value.sandboxImageId !== undefined,
     {
       message:
-        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
-    }
+        "Provide at least one of `name`, `description`, `hostId`, `serverAttachmentId`, `modelId`, `skillSelection`, `pluginVersionIds`, or `sandboxImageId` to update.",
+    },
   );
 export type UpdateEnvironmentInput = z.infer<typeof updateEnvironmentInput>;
 
@@ -3602,20 +3937,20 @@ export const updateEnvironmentOperation: PlatformOperation<
   name: "update_project_environment",
   title: "Update an MCPJam project environment",
   description:
-    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
+    "Edit a project environment. Only the fields you pass change; pass null for serverAttachmentId, modelId, skillSelection, or pluginVersionIds to clear them. Requires `expectedRevision` (read it first with get_project_environment) and project admin.",
   readOnly: false,
   inputSchema: updateEnvironmentInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
-      signal
+      signal,
     );
     // `!== undefined` (never truthiness) so an explicit null is forwarded as a
     // CLEAR while an omitted field stays absent and is left unchanged.
@@ -3627,6 +3962,7 @@ export const updateEnvironmentOperation: PlatformOperation<
     if (input.hostId !== undefined) body.hostId = input.hostId;
     if (input.serverAttachmentId !== undefined)
       body.serverAttachmentId = input.serverAttachmentId;
+    if (input.modelId !== undefined) body.modelId = input.modelId;
     if (input.skillSelection !== undefined)
       body.skillSelection = input.skillSelection;
     if (input.pluginVersionIds !== undefined)
@@ -3635,7 +3971,7 @@ export const updateEnvironmentOperation: PlatformOperation<
       body.sandboxImageId = input.sandboxImageId;
     return client.updateEnvironment(
       { projectId: project.id, environmentId: environment.id, body },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3675,13 +4011,13 @@ export const archiveEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const environment = await resolveEnvironmentSelector(
       client,
       project,
       input.environment,
-      signal
+      signal,
     );
     return client.archiveEnvironment(
       {
@@ -3689,7 +4025,7 @@ export const archiveEnvironmentOperation: PlatformOperation<
         environmentId: environment.id,
         expectedRevision: input.expectedRevision,
       },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3708,7 +4044,7 @@ export const restoreEnvironmentOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     // Restore is the one operation whose target is archived by definition, so
     // a name shared with a live environment must resolve to the archived one.
@@ -3717,7 +4053,7 @@ export const restoreEnvironmentOperation: PlatformOperation<
       project,
       input.environment,
       signal,
-      "archived"
+      "archived",
     );
     return client.restoreEnvironment(
       {
@@ -3725,7 +4061,7 @@ export const restoreEnvironmentOperation: PlatformOperation<
         environmentId: environment.id,
         expectedRevision: input.expectedRevision,
       },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3765,11 +4101,11 @@ export const listProjectPluginsOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.listProjectPlugins(
       { projectId: project.id },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -3785,7 +4121,7 @@ const getPluginVersionInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Plugin version ID — a plugin's `activeVersionId` from list_project_plugins, or a pinned id from an environment's `pluginVersionIds`."
+      "Plugin version ID — a plugin's `activeVersionId` from list_project_plugins, or a pinned id from an environment's `pluginVersionIds`.",
     ),
 });
 export type GetPluginVersionInput = z.infer<typeof getPluginVersionInput>;
@@ -3803,7 +4139,7 @@ export const getPluginVersionOperation: PlatformOperation<
   async execute(input, { client, signal }) {
     return client.getPluginVersion(
       { pluginVersionId: input.pluginVersionId },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3816,14 +4152,14 @@ async function resolveImage(
   client: PlatformApiClient,
   project: PlatformProject,
   selector: string,
-  signal: AbortSignal | undefined
+  signal: AbortSignal | undefined,
 ): Promise<PlatformImage> {
   const page = await client.listImages({ projectId: project.id }, { signal });
   return resolveByIdOrName(
     page.items,
     selector,
     "Sandbox image",
-    `project "${project.name}"`
+    `project "${project.name}"`,
   );
 }
 
@@ -3858,7 +4194,7 @@ export const listImagesOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.listImages({ projectId: project.id }, { signal });
     return {
@@ -3883,12 +4219,12 @@ export const getImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.getImage(
       { projectId: project.id, imageId: image.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3909,7 +4245,7 @@ const createImageInput = z.object({
     .string()
     .min(1)
     .describe(
-      "Blueprint YAML (base / initialize / maintenance / knowledge). `base` must be an allowlisted official image pinned by @sha256 digest."
+      "Blueprint YAML (base / initialize / maintenance / knowledge). `base` must be an allowlisted official image pinned by @sha256 digest.",
     ),
 });
 export type CreateImageInput = z.infer<typeof createImageInput>;
@@ -3928,14 +4264,14 @@ export const createImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     return client.createImage(
       {
         projectId: project.id,
         body: { name: input.name, blueprint: input.blueprint },
       },
-      { signal }
+      { signal },
     );
   },
 };
@@ -3965,7 +4301,7 @@ const updateImageInput = z
     (value) => value.name !== undefined || value.blueprint !== undefined,
     {
       message: "Provide at least one of `name` or `blueprint` to update.",
-    }
+    },
   );
 export type UpdateImageInput = z.infer<typeof updateImageInput>;
 
@@ -3983,7 +4319,7 @@ export const updateImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     const body: { name?: string; blueprint?: string } = {};
@@ -3991,7 +4327,7 @@ export const updateImageOperation: PlatformOperation<
     if (input.blueprint !== undefined) body.blueprint = input.blueprint;
     return client.updateImage(
       { projectId: project.id, imageId: image.id, body },
-      { signal }
+      { signal },
     );
   },
 };
@@ -4023,11 +4359,11 @@ export const validateImageBlueprintOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     return client.validateImageBlueprint(
       { projectId: project.id, body: { blueprint: input.blueprint } },
-      { signal }
+      { signal },
     );
   },
 };
@@ -4046,12 +4382,12 @@ export const buildImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.buildImage(
       { projectId: project.id, imageId: image.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -4076,12 +4412,12 @@ export const listImageBuildsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     const page = await client.listImageBuilds(
       { projectId: project.id, imageId: image.id },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -4105,12 +4441,12 @@ export const promoteImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.promoteImage(
       { projectId: project.id, imageId: image.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -4129,12 +4465,12 @@ export const useImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.useImage(
       { projectId: project.id, imageId: image.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -4153,7 +4489,7 @@ export const resetComputerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     return client.resetComputer({ projectId: project.id }, { signal });
   },
@@ -4173,12 +4509,12 @@ export const deleteImageOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const image = await resolveImage(client, project, input.image, signal);
     return client.deleteImage(
       { projectId: project.id, imageId: image.id },
-      { signal }
+      { signal },
     );
   },
 };
@@ -4238,11 +4574,11 @@ export const createProjectServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     return client.createProjectServer(
       { projectId: project.id, body: input.body },
-      { signal }
+      { signal },
     );
   },
 };
@@ -4265,11 +4601,11 @@ export const getProjectServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     return client.getProjectServer(
       { projectId: project.id, serverId: input.serverId },
-      { signal }
+      { signal },
     );
   },
 };
@@ -4290,11 +4626,11 @@ export const updateProjectServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     return client.updateProjectServer(
       { projectId: project.id, serverId: input.serverId, body: input.body },
-      { signal }
+      { signal },
     );
   },
 };
@@ -4312,11 +4648,11 @@ export const deleteProjectServerOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     return client.deleteProjectServer(
       { projectId: project.id, serverId: input.serverId },
-      { signal }
+      { signal },
     );
   },
 };
@@ -4370,11 +4706,11 @@ export const listJourneysOperation: PlatformOperation<
     const { project, sortedProjects } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.listJourneys(
       { projectId: project.id },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -4422,7 +4758,7 @@ export const listJourneyRunsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.listJourneyRuns(
       {
@@ -4431,7 +4767,7 @@ export const listJourneyRunsOperation: PlatformOperation<
         ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -4464,18 +4800,18 @@ export const getJourneyRunOperation: PlatformOperation<
   name: "get_journey_run",
   title: "Get one MCPJam journey run",
   description:
-    "One journey run in full: status, per-target rollups, and the per-session attempt records. This is what to poll after launching a run — status leaves 'running' once every attempt has settled.",
+    "One journey run in full: status, per-target rollups, and the per-session attempt records. This is what to poll after launching a run — status leaves 'running' once every attempt has settled. The detail carries an `insights` envelope: findings AGGREGATED over the run's wave with exemplar sessions, plus runHealth for launch outcomes (which are never findings — a rate-limited target is not a broken server). Only actionTarget mcp_server with actionability ready authorizes proposing a server change.",
   readOnly: true,
   inputSchema: journeyRunSelectorInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const run = await client.getJourneyRun(
       { projectId: project.id, runId: input.run },
-      { signal }
+      { signal },
     );
     return { project: toSelectedProjectInfo(project), run };
   },
@@ -4514,7 +4850,7 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const page = await client.listJourneyRunSessions(
       {
@@ -4523,7 +4859,7 @@ export const listJourneyRunSessionsOperation: PlatformOperation<
         ...(input.cursor !== undefined ? { cursor: input.cursor } : {}),
         ...(input.limit !== undefined ? { limit: input.limit } : {}),
       },
-      { signal }
+      { signal },
     );
     return {
       project: toSelectedProjectInfo(project),
@@ -4555,7 +4891,7 @@ const launchJourneyRunInput = z.object({
     .max(200)
     .optional()
     .describe(
-      "Retry key. A launch spends model credits, so a retry after a dropped response must not run the journey twice — replaying a key returns the ORIGINAL run with deduped: true. Omit it and every call starts a new run."
+      "Retry key. A launch spends model credits, so a retry after a dropped response must not run the journey twice — replaying a key returns the ORIGINAL run with deduped: true. Omit it and every call starts a new run.",
     ),
   waveId: z
     .string()
@@ -4568,7 +4904,7 @@ const launchJourneyRunInput = z.object({
     .array(z.string().trim().min(1))
     .optional()
     .describe(
-      "Fan out across these project environments instead of the journey's authored targets."
+      "Fan out across these project environments instead of the journey's authored targets.",
     ),
 });
 export type LaunchJourneyRunInput = z.infer<typeof launchJourneyRunInput>;
@@ -4583,6 +4919,7 @@ export const launchJourneyRunOperation: PlatformOperation<
   LaunchJourneyRunResult
 > = {
   name: "launch_journey_run",
+  risk: "spend",
   title: "Launch an MCPJam journey run",
   description:
     "Start a journey run and return immediately with its id — a fan-out can take hours, so nothing here waits for it. Poll get_journey_run, or list_journey_run_sessions for per-session detail. IDEMPOTENT on idempotencyKey: pass one, because a launch spends model credits and a retry must not run the journey twice. Behind the sandboxes-enabled beta.",
@@ -4592,7 +4929,7 @@ export const launchJourneyRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const run = await client.launchJourneyRun(
       {
@@ -4608,7 +4945,7 @@ export const launchJourneyRunOperation: PlatformOperation<
         ...(input.idempotencyKey
           ? { idempotencyKey: input.idempotencyKey }
           : {}),
-      }
+      },
     );
     return { project: toSelectedProjectInfo(project), run };
   },
@@ -4619,6 +4956,7 @@ export const cancelJourneyRunOperation: PlatformOperation<
   CancelJourneyRunResult
 > = {
   name: "cancel_journey_run",
+  risk: "destructive",
   title: "Stop a running MCPJam journey run",
   description:
     "Stop a journey run that is still running, settling its in-flight and pending sessions. Idempotent — cancelling an already-cancelled run succeeds with alreadyCanceled: true. A run that finished on its own conflicts instead, so you cannot be told you stopped something that had already completed.",
@@ -4628,11 +4966,11 @@ export const cancelJourneyRunOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const run = await client.cancelJourneyRun(
       { projectId: project.id, runId: input.run },
-      { signal }
+      { signal },
     );
     return { project: toSelectedProjectInfo(project), run };
   },
@@ -4641,8 +4979,8 @@ export const cancelJourneyRunOperation: PlatformOperation<
 // ── Scenarios (user testing) ────────────────────────────────────────────────
 //
 // A scenario is a project environment published for people outside the project
-// to talk to. Internally these are `chatboxes` rows and will stay that way;
-// "scenario" is the public noun. The older `list_chatboxes` / `get_chatbox`
+// to talk to. Internally these are `scenarios` rows and will stay that way;
+// "scenario" is the public noun. The older `list_scenarios` / `get_scenario`
 // operations still work and still point at the old routes until GA.
 //
 // Both operations need project ADMIN. Publishing is additionally behind the
@@ -4660,14 +4998,48 @@ const scenarioSelectorInput = z.object({
     .trim()
     .min(1)
     .describe(
-      "Project environment id to publish (or unpublish). One scenario per environment."
+      "Project environment id to publish (or unpublish). One scenario per environment.",
     ),
 });
-export type PublishScenarioInput = z.infer<typeof scenarioSelectorInput>;
+// Create-time overrides, forwarded to the publish IN THE SAME CALL — without
+// them, "publish this restricted to invited people only" is two operations
+// with a window between them where the scenario is live in the default mode.
+const publishScenarioInput = scenarioSelectorInput.extend({
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Scenario name. CREATE-TIME ONLY — ignored on a republish of an already-published environment (rename with update_user_testing_scenario).",
+    ),
+  description: z
+    .string()
+    .max(2000)
+    .optional()
+    .describe(
+      "Scenario description. CREATE-TIME ONLY — ignored on a republish.",
+    ),
+  mode: z
+    .enum(["project_members", "invited_only", "anyone_with_link"])
+    .optional()
+    .describe(
+      "Who may open the share link: project_members (signed-in project members only), invited_only (named members, invited individually), anyone_with_link (anyone holding the URL). CREATE-TIME ONLY — ignored on a republish; change an existing scenario's mode with update_user_testing_scenario.",
+    ),
+});
+export type PublishScenarioInput = z.infer<typeof publishScenarioInput>;
 
 export type PublishScenarioResult = {
   project: SelectedProjectInfo;
   scenario: PlatformScenario;
+  /**
+   * True when overrides were sent but the environment was ALREADY published,
+   * so they were ignored upstream. The scenario in the result carries the real
+   * name and mode — a caller who asked for `invited_only` must not conclude
+   * the link is restricted when it is not.
+   */
+  overridesIgnored?: boolean;
 };
 
 export const publishScenarioOperation: PlatformOperation<
@@ -4675,22 +5047,35 @@ export const publishScenarioOperation: PlatformOperation<
   PublishScenarioResult
 > = {
   name: "publish_scenario",
+  risk: "exposure",
   title: "Publish a project environment as a user-testing scenario",
   description:
-    "Publish a project environment so people outside the project can talk to it through a share link. IDEMPOTENT — publishing an already-published environment returns the existing scenario rather than creating a second one; `created` tells you which happened. Requires project admin.",
+    "Publish a project environment so people outside the project can talk to it through a share link. Optional name, description and mode apply atomically at CREATE TIME, so the scenario is never briefly live in a wider mode than asked for. IDEMPOTENT — publishing an already-published environment returns the existing scenario rather than creating a second one; `created` tells you which happened, and `overridesIgnored: true` means the overrides were discarded because the scenario already existed. Requires project admin.",
   readOnly: false,
-  inputSchema: scenarioSelectorInput,
+  inputSchema: publishScenarioInput,
   async execute(input, { client, signal }) {
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
-    const scenario = await client.publishScenario(
-      { projectId: project.id, environmentId: input.environment },
-      { signal }
+    const { overridesIgnored, ...scenario } = await client.publishScenario(
+      {
+        projectId: project.id,
+        environmentId: input.environment,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.mode !== undefined ? { mode: input.mode } : {}),
+      },
+      { signal },
     );
-    return { project: toSelectedProjectInfo(project), scenario };
+    return {
+      project: toSelectedProjectInfo(project),
+      scenario,
+      ...(overridesIgnored ? { overridesIgnored: true } : {}),
+    };
   },
 };
 
@@ -4706,6 +5091,7 @@ export const unpublishScenarioOperation: PlatformOperation<
   UnpublishScenarioResult
 > = {
   name: "unpublish_scenario",
+  risk: "destructive",
   title: "Take a user-testing scenario down",
   description:
     "Unpublish an environment's scenario, invalidating its share link and any live guest sessions. Idempotent — an environment with no scenario reports `deleted: false` rather than failing. Requires project admin.",
@@ -4715,11 +5101,11 @@ export const unpublishScenarioOperation: PlatformOperation<
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
-      signal
+      signal,
     );
     const result = await client.unpublishScenario(
       { projectId: project.id, environmentId: input.environment },
-      { signal }
+      { signal },
     );
     return { project: toSelectedProjectInfo(project), result };
   },
@@ -4732,15 +5118,2095 @@ export const unpublishScenarioOperation: PlatformOperation<
  * agent, and in-app chat) partition this list and their tests fail when an
  * operation is neither exposed nor explicitly excluded.
  */
+/**
+ * Cross-field rules the ROUTES enforce, checked here so a caller is told by the
+ * operation that validated their input rather than by a 400 two hops later.
+ *
+ * Deliberately NOT `.refine()` on the input schemas. Every surface that builds
+ * a tool from the catalog extends those schemas — Zod 4 refuses to overwrite
+ * keys on a refined object, so a refinement here silently breaks the agent and
+ * MCP tool builders for the whole catalog, not just the refined operation.
+ */
+function requireExactlyOneGrounding(input: {
+  environmentId?: string;
+  serverAttachmentId?: string;
+}): void {
+  if (
+    (input.environmentId === undefined) ===
+    (input.serverAttachmentId === undefined)
+  ) {
+    throw operationInputError(
+      "Provide exactly one of environmentId or serverAttachmentId to ground the drafts.",
+    );
+  }
+}
+
+function requireConfigPair(input: {
+  sessionsPerTarget?: number;
+  maxTurns?: number;
+}): void {
+  if (
+    (input.sessionsPerTarget === undefined) !==
+    (input.maxTurns === undefined)
+  ) {
+    throw operationInputError(
+      "sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream.",
+    );
+  }
+}
+
+// ── Swarms authoring ────────────────────────────────────────────────────────
+//
+// The half of the loop that did not exist. Everything below resolves the
+// project by NAME OR ID through `resolveProjectOrThrow`, like the rest of the
+// catalog, so an agent that was told "my checkout project" does not have to go
+// and find an id first.
+
+const personaSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  persona: z.string().trim().min(1).describe("Persona id."),
+});
+
+const listPersonasInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+});
+
+export type ListPersonasInput = z.infer<typeof listPersonasInput>;
+export type ListPersonasResult = {
+  project: SelectedProjectInfo;
+  items: PlatformPersona[];
+};
+
+export const listPersonasOperation: PlatformOperation<
+  ListPersonasInput,
+  ListPersonasResult
+> = {
+  name: "list_personas",
+  title: "List MCPJam personas",
+  description:
+    "The project's reusable synthetic characters — the cast Swarms journeys run as. A persona carries a name, a role and notes; the GOAL lives on each journey, so one persona can be pointed at many different things to try. Start here before creating a journey.",
+  readOnly: true,
+  inputSchema: listPersonasInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const page = await client.listPersonas(
+      { projectId: project.id },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export type GetPersonaInput = z.infer<typeof personaSelectorInput>;
+export type GetPersonaResult = {
+  project: SelectedProjectInfo;
+  persona: PlatformPersona;
+};
+
+export const getPersonaOperation: PlatformOperation<
+  GetPersonaInput,
+  GetPersonaResult
+> = {
+  name: "get_persona",
+  title: "Get one MCPJam persona",
+  description: "One persona in full, including its notes.",
+  readOnly: true,
+  inputSchema: personaSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const persona = await client.getPersona(
+      { projectId: project.id, personaId: input.persona },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), persona };
+  },
+};
+
+const createPersonaInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).max(120).describe("Display name."),
+  role: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .describe("Who they are, in a few words — 'enterprise procurement lead'."),
+  notes: z
+    .string()
+    .max(2000)
+    .optional()
+    .describe(
+      "How they behave: what they know, what they will not tolerate, how they phrase things. This is what makes a persona produce a realistic session rather than a compliant one.",
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Retry key. Pass one: the server replays it BEFORE uniquifying the slug, so a retry without it leaves a second near-identical persona named '…-2' rather than the one you already made.",
+    ),
+});
+
+export type CreatePersonaInput = z.infer<typeof createPersonaInput>;
+export type CreatePersonaResult = {
+  project: SelectedProjectInfo;
+  persona: PlatformPersona;
+};
+
+export const createPersonaOperation: PlatformOperation<
+  CreatePersonaInput,
+  CreatePersonaResult
+> = {
+  name: "create_persona",
+  title: "Create an MCPJam persona",
+  description:
+    "Create a reusable synthetic character for Swarms to run as. Behind the sandboxes-enabled beta. Check get_capabilities first if you are unsure the organization has it.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: createPersonaInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const persona = await client.createPersona(
+      {
+        projectId: project.id,
+        name: input.name,
+        role: input.role,
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
+    );
+    return { project: toSelectedProjectInfo(project), persona };
+  },
+};
+
+const updatePersonaInput = personaSelectorInput.extend({
+  name: z.string().trim().min(1).max(120).optional(),
+  role: z.string().trim().min(1).max(120).optional(),
+  notes: z.string().max(2000).optional(),
+});
+
+export type UpdatePersonaInput = z.infer<typeof updatePersonaInput>;
+export type UpdatePersonaResult = CreatePersonaResult;
+
+export const updatePersonaOperation: PlatformOperation<
+  UpdatePersonaInput,
+  UpdatePersonaResult
+> = {
+  name: "update_persona",
+  title: "Update an MCPJam persona",
+  description:
+    "Edit a persona's name, role or notes. Runs already finished keep the persona they ran as — editing does not rewrite history.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: updatePersonaInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const persona = await client.updatePersona(
+      {
+        projectId: project.id,
+        personaId: input.persona,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.role !== undefined ? { role: input.role } : {}),
+        ...(input.notes !== undefined ? { notes: input.notes } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), persona };
+  },
+};
+
+export type DeletePersonaInput = z.infer<typeof personaSelectorInput>;
+export type DeletePersonaResult = {
+  project: SelectedProjectInfo;
+  persona: PlatformPersonaDeleted;
+};
+
+export const deletePersonaOperation: PlatformOperation<
+  DeletePersonaInput,
+  DeletePersonaResult
+> = {
+  name: "delete_persona",
+  title: "Delete an MCPJam persona",
+  description:
+    "Remove a persona from the project's roster. SOFT: finished runs and sessions keep resolving it, so history stays intact, but the persona cannot be used for new journeys and a second delete answers not-found.",
+  readOnly: false,
+  risk: "destructive",
+  inputSchema: personaSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const persona = await client.deletePersona(
+      { projectId: project.id, personaId: input.persona },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), persona };
+  },
+};
+
+const journeySelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  journey: z.string().trim().min(1).describe("Journey id."),
+});
+
+export type GetJourneyInput = z.infer<typeof journeySelectorInput>;
+export type GetJourneyResult = {
+  project: SelectedProjectInfo;
+  journey: PlatformJourney;
+};
+
+export const getJourneyOperation: PlatformOperation<
+  GetJourneyInput,
+  GetJourneyResult
+> = {
+  name: "get_journey",
+  title: "Get one MCPJam journey",
+  description:
+    "One journey in full: its goal, persona, environments and execution config. Read this before launching if you need to know how many sessions a run will produce — that is targets x sessionsPerTarget, and it is what spends.",
+  readOnly: true,
+  inputSchema: journeySelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const journey = await client.getJourney(
+      { projectId: project.id, journeyId: input.journey },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), journey };
+  },
+};
+
+const createJourneyInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  goal: z
+    .string()
+    .trim()
+    .min(1)
+    .max(4000)
+    .describe(
+      "What the persona is trying to accomplish. Drives the whole run.",
+    ),
+  persona: z.string().trim().min(1).describe("Persona id to run as."),
+  name: z.string().trim().min(1).max(200).optional(),
+  swarm: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Swarm container id. Authoring provenance only."),
+  environmentIds: z
+    .array(z.string().min(1))
+    .min(1)
+    .optional()
+    .describe("Environments to fan out across, in order."),
+  sessionsPerTarget: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .describe(
+      "Sessions per target. TOTAL sessions = targets x this, and the total is what spends.",
+    ),
+  maxTurns: z.number().int().min(1).max(200),
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+});
+
+export type CreateJourneyInput = z.infer<typeof createJourneyInput>;
+export type CreateJourneyResult = {
+  project: SelectedProjectInfo;
+  journey: PlatformJourney;
+};
+
+export const createJourneyOperation: PlatformOperation<
+  CreateJourneyInput,
+  CreateJourneyResult
+> = {
+  name: "create_journey",
+  title: "Create an MCPJam journey",
+  description:
+    "Author a journey: a persona, a goal, and the environments to pursue it against. Creating does NOT run it — launch_journey_run does, and that is the call that spends. Behind the sandboxes-enabled beta.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: createJourneyInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const journey = await client.createJourney(
+      {
+        projectId: project.id,
+        goal: input.goal,
+        personaId: input.persona,
+        sessionsPerTarget: input.sessionsPerTarget,
+        maxTurns: input.maxTurns,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.swarm !== undefined ? { swarmId: input.swarm } : {}),
+        ...(input.environmentIds !== undefined
+          ? { environmentIds: input.environmentIds }
+          : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
+    );
+    return { project: toSelectedProjectInfo(project), journey };
+  },
+};
+
+const updateJourneyInput = journeySelectorInput.extend({
+  name: z.string().trim().min(1).max(200).optional(),
+  goal: z.string().trim().min(1).max(4000).optional(),
+  environmentIds: z
+    .union([z.array(z.string().min(1)).min(1), z.null()])
+    .optional()
+    .describe("null clears the fan-out and returns the journey to its hosts."),
+  sessionsPerTarget: z.number().int().min(1).max(100).optional(),
+  maxTurns: z.number().int().min(1).max(200).optional(),
+});
+
+export type UpdateJourneyInput = z.infer<typeof updateJourneyInput>;
+export type UpdateJourneyResult = CreateJourneyResult;
+
+export const updateJourneyOperation: PlatformOperation<
+  UpdateJourneyInput,
+  UpdateJourneyResult
+> = {
+  name: "update_journey",
+  title: "Update an MCPJam journey",
+  description:
+    "Edit a journey. sessionsPerTarget and maxTurns must be sent together — they are one execution config upstream. A run already in flight keeps the config it launched with.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: updateJourneyInput,
+  async execute(input, { client, signal }) {
+    requireConfigPair(input);
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const journey = await client.updateJourney(
+      {
+        projectId: project.id,
+        journeyId: input.journey,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.goal !== undefined ? { goal: input.goal } : {}),
+        ...(input.environmentIds !== undefined
+          ? { environmentIds: input.environmentIds }
+          : {}),
+        ...(input.sessionsPerTarget !== undefined
+          ? { sessionsPerTarget: input.sessionsPerTarget }
+          : {}),
+        ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), journey };
+  },
+};
+
+export type ArchiveJourneyInput = z.infer<typeof journeySelectorInput>;
+export type ArchiveJourneyResult = {
+  project: SelectedProjectInfo;
+  journey: PlatformJourneyArchived;
+};
+
+export const archiveJourneyOperation: PlatformOperation<
+  ArchiveJourneyInput,
+  ArchiveJourneyResult
+> = {
+  name: "archive_journey",
+  title: "Archive an MCPJam journey",
+  description:
+    "Take a journey off the roster. Its runs, sessions and scorecards stay readable — the evidence for past decisions is not deleted with the journey that produced it. A second call answers not-found.",
+  readOnly: false,
+  risk: "destructive",
+  inputSchema: journeySelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const journey = await client.archiveJourney(
+      { projectId: project.id, journeyId: input.journey },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), journey };
+  },
+};
+
+const swarmSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  swarm: z.string().trim().min(1).describe("Swarm container id."),
+});
+
+export type ListSwarmsInput = z.infer<typeof listPersonasInput>;
+export type ListSwarmsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformSwarm[];
+};
+
+export const listSwarmsOperation: PlatformOperation<
+  ListSwarmsInput,
+  ListSwarmsResult
+> = {
+  name: "list_swarms",
+  title: "List MCPJam swarm containers",
+  description:
+    "Swarm containers group journeys authored together and hold their shared execution config. A journey does not need one — but a project authored through the app will have them, so list here to match what a human would see.",
+  readOnly: true,
+  inputSchema: listPersonasInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const page = await client.listSwarms({ projectId: project.id }, { signal });
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export type GetSwarmInput = z.infer<typeof swarmSelectorInput>;
+export type GetSwarmResult = {
+  project: SelectedProjectInfo;
+  swarm: PlatformSwarm;
+};
+
+export const getSwarmOperation: PlatformOperation<
+  GetSwarmInput,
+  GetSwarmResult
+> = {
+  name: "get_swarm",
+  title: "Get one MCPJam swarm container",
+  description: "One swarm container: its name, defaults and fan-out.",
+  readOnly: true,
+  inputSchema: swarmSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const swarm = await client.getSwarm(
+      { projectId: project.id, swarmId: input.swarm },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), swarm };
+  },
+};
+
+const createSwarmInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  name: z.string().trim().min(1).max(200),
+  description: z.string().max(2000).optional(),
+  environmentIds: z.array(z.string().min(1)).min(1).optional(),
+  sessionsPerTarget: z.number().int().min(1).max(100),
+  maxTurns: z.number().int().min(1).max(200),
+  idempotencyKey: z.string().trim().min(1).max(200).optional(),
+});
+
+export type CreateSwarmInput = z.infer<typeof createSwarmInput>;
+export type CreateSwarmResult = {
+  project: SelectedProjectInfo;
+  swarm: PlatformSwarm;
+};
+
+export const createSwarmOperation: PlatformOperation<
+  CreateSwarmInput,
+  CreateSwarmResult
+> = {
+  name: "create_swarm",
+  title: "Create an MCPJam swarm container",
+  description:
+    "Create a container to author journeys under. Creating one runs nothing. Behind the sandboxes-enabled beta.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: createSwarmInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const swarm = await client.createSwarm(
+      {
+        projectId: project.id,
+        name: input.name,
+        sessionsPerTarget: input.sessionsPerTarget,
+        maxTurns: input.maxTurns,
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.environmentIds !== undefined
+          ? { environmentIds: input.environmentIds }
+          : {}),
+      },
+      {
+        signal,
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
+    );
+    return { project: toSelectedProjectInfo(project), swarm };
+  },
+};
+
+const updateSwarmInput = swarmSelectorInput.extend({
+  name: z.string().trim().min(1).max(200).optional(),
+  description: z.union([z.string().max(2000), z.null()]).optional(),
+  environmentIds: z
+    .union([z.array(z.string().min(1)).min(1), z.null()])
+    .optional(),
+  sessionsPerTarget: z.number().int().min(1).max(100).optional(),
+  maxTurns: z.number().int().min(1).max(200).optional(),
+});
+
+export type UpdateSwarmInput = z.infer<typeof updateSwarmInput>;
+export type UpdateSwarmResult = CreateSwarmResult;
+
+export const updateSwarmOperation: PlatformOperation<
+  UpdateSwarmInput,
+  UpdateSwarmResult
+> = {
+  name: "update_swarm",
+  title: "Update an MCPJam swarm container",
+  description:
+    "Edit a swarm container. sessionsPerTarget and maxTurns must be sent together — they are one config object upstream.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: updateSwarmInput,
+  async execute(input, { client, signal }) {
+    requireConfigPair(input);
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const swarm = await client.updateSwarm(
+      {
+        projectId: project.id,
+        swarmId: input.swarm,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.environmentIds !== undefined
+          ? { environmentIds: input.environmentIds }
+          : {}),
+        ...(input.sessionsPerTarget !== undefined
+          ? { sessionsPerTarget: input.sessionsPerTarget }
+          : {}),
+        ...(input.maxTurns !== undefined ? { maxTurns: input.maxTurns } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), swarm };
+  },
+};
+
+export type ArchiveSwarmInput = z.infer<typeof swarmSelectorInput>;
+export type ArchiveSwarmResult = {
+  project: SelectedProjectInfo;
+  swarm: PlatformSwarmArchived;
+};
+
+export const archiveSwarmOperation: PlatformOperation<
+  ArchiveSwarmInput,
+  ArchiveSwarmResult
+> = {
+  name: "archive_swarm",
+  title: "Archive an MCPJam swarm container",
+  description:
+    "Take a swarm container off the roster. Journeys authored under it keep working — the reference is authoring provenance, not ownership.",
+  readOnly: false,
+  risk: "destructive",
+  inputSchema: swarmSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const swarm = await client.archiveSwarm(
+      { projectId: project.id, swarmId: input.swarm },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), swarm };
+  },
+};
+
+const generationGroundingInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environmentId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Ground the drafts in this environment. Use this one normally."),
+  serverAttachmentId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Legacy grounding source. Use environmentId instead."),
+  description: z
+    .string()
+    .trim()
+    .min(1)
+    .max(2000)
+    .optional()
+    .describe("Who the audience is, in your own words."),
+  journeyCount: z.number().int().min(1).max(5).optional(),
+});
+
+const generatePersonasInput = generationGroundingInput.extend({
+  personaCount: z
+    .number()
+    .int()
+    .min(1)
+    .max(12)
+    .optional()
+    .describe("Ask for a slate of N personas instead of one."),
+  existingPersonas: z
+    .array(z.object({ name: z.string().min(1), role: z.string().min(1) }))
+    .max(30)
+    .optional()
+    .describe("Personas you already have, so the drafts do not repeat them."),
+});
+
+export type GeneratePersonasInput = z.infer<typeof generatePersonasInput>;
+export type GeneratePersonasResult = {
+  project: SelectedProjectInfo;
+  drafts: PlatformGenerationDrafts;
+};
+
+export const generatePersonasOperation: PlatformOperation<
+  GeneratePersonasInput,
+  GeneratePersonasResult
+> = {
+  name: "generate_personas",
+  title: "Draft MCPJam personas with a model",
+  description:
+    "Draft candidate personas grounded in what the project's servers actually do. NOTHING IS SAVED — pick what you want and pass it to create_persona. Runs a model on the organization's account, so it spends. Exactly one of environmentId or serverAttachmentId.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: generatePersonasInput,
+  async execute(input, { client, signal }) {
+    requireExactlyOneGrounding(input);
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const drafts = await client.generatePersonas(
+      {
+        projectId: project.id,
+        ...(input.environmentId ? { environmentId: input.environmentId } : {}),
+        ...(input.serverAttachmentId
+          ? { serverAttachmentId: input.serverAttachmentId }
+          : {}),
+        ...(input.description ? { description: input.description } : {}),
+        ...(input.journeyCount !== undefined
+          ? { journeyCount: input.journeyCount }
+          : {}),
+        ...(input.personaCount !== undefined
+          ? { personaCount: input.personaCount }
+          : {}),
+        ...(input.existingPersonas?.length
+          ? { existingPersonas: input.existingPersonas }
+          : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), drafts };
+  },
+};
+
+const generateJourneysInput = generationGroundingInput.extend({
+  persona: z
+    .object({
+      name: z.string().min(1),
+      role: z.string().min(1),
+      notes: z.string().optional(),
+    })
+    .describe(
+      "The persona to draft journeys for, BY VALUE — it does not have to exist yet.",
+    ),
+});
+
+export type GenerateJourneysInput = z.infer<typeof generateJourneysInput>;
+export type GenerateJourneysResult = {
+  project: SelectedProjectInfo;
+  drafts: PlatformGenerationDrafts;
+};
+
+export const generateJourneysOperation: PlatformOperation<
+  GenerateJourneysInput,
+  GenerateJourneysResult
+> = {
+  name: "generate_journeys",
+  title: "Draft MCPJam journeys with a model",
+  description:
+    "Draft candidate journeys for a persona, grounded in the project's servers. NOTHING IS SAVED — pass what you want to create_journey. Spends. Exactly one of environmentId or serverAttachmentId.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: generateJourneysInput,
+  async execute(input, { client, signal }) {
+    requireExactlyOneGrounding(input);
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const drafts = await client.generateJourneys(
+      {
+        projectId: project.id,
+        persona: input.persona,
+        ...(input.environmentId ? { environmentId: input.environmentId } : {}),
+        ...(input.serverAttachmentId
+          ? { serverAttachmentId: input.serverAttachmentId }
+          : {}),
+        ...(input.description ? { description: input.description } : {}),
+        ...(input.journeyCount !== undefined
+          ? { journeyCount: input.journeyCount }
+          : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), drafts };
+  },
+};
+
+// ── Swarm insights ──────────────────────────────────────────────────────────
+
+export type GetSwarmOverviewInput = z.infer<typeof listPersonasInput>;
+export type GetSwarmOverviewResult = {
+  project: SelectedProjectInfo;
+  overview: PlatformSwarmOverview;
+};
+
+export const getSwarmOverviewOperation: PlatformOperation<
+  GetSwarmOverviewInput,
+  GetSwarmOverviewResult
+> = {
+  name: "get_swarms_overview",
+  title: "Get the MCPJam swarms overview",
+  description:
+    "The project's recent journey runs with their rubric findings and goal-completion trend — the roll-up a human sees on the Swarms page. Start here to answer 'how are our swarms doing'. Rates are over GRADED sessions, never attempted ones, and passRate is null (not 0) when nothing has been graded.",
+  readOnly: true,
+  inputSchema: listPersonasInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const overview = await client.getSwarmOverview(
+      { projectId: project.id },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), overview };
+  },
+};
+
+export type GetJourneyRunScorecardInput = z.infer<
+  typeof journeyRunSelectorInput
+>;
+export type GetJourneyRunScorecardResult = {
+  project: SelectedProjectInfo;
+  scorecard: PlatformRunScorecard;
+};
+
+export const getJourneyRunScorecardOperation: PlatformOperation<
+  GetJourneyRunScorecardInput,
+  GetJourneyRunScorecardResult
+> = {
+  name: "get_journey_run_scorecard",
+  title: "Get a journey run's rubric scorecard",
+  description:
+    "Per-criterion pass/fail counts for one run. DETERMINISTIC — no model involved — so this is the first thing to read when explaining a failure, and usually the whole answer. failedGradingCount is grading that BROKE, not a product failure; do not add it to failCount. Answers not-found when the run has no rubric.",
+  readOnly: true,
+  inputSchema: journeyRunSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const scorecard = await client.getJourneyRunScorecard(
+      { projectId: project.id, runId: input.run },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), scorecard };
+  },
+};
+
+export type ListSwarmFindingsInput = z.infer<typeof listPersonasInput>;
+export type ListSwarmFindingsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformSwarmFinding[];
+};
+
+export const listSwarmFindingsOperation: PlatformOperation<
+  ListSwarmFindingsInput,
+  ListSwarmFindingsResult
+> = {
+  name: "list_swarm_findings",
+  title: "List MCPJam swarm findings",
+  description:
+    "Criteria that keep failing across waves, with how long each has been failing. A finding with a long streak is a standing problem; a `new` one is what just changed.",
+  readOnly: true,
+  inputSchema: listPersonasInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const page = await client.listSwarmFindings(
+      { projectId: project.id },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+const findingSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  finding: z.string().trim().min(1).describe("Finding id."),
+});
+
+export type DismissSwarmFindingInput = z.infer<typeof findingSelectorInput>;
+export type DismissSwarmFindingResult = {
+  project: SelectedProjectInfo;
+  finding: PlatformFindingDismissed;
+};
+
+export const dismissSwarmFindingOperation: PlatformOperation<
+  DismissSwarmFindingInput,
+  DismissSwarmFindingResult
+> = {
+  name: "dismiss_swarm_finding",
+  title: "Dismiss an MCPJam swarm finding",
+  description:
+    "Mark a finding as not worth acting on. It stops surfacing as active but its lifecycle keeps updating underneath, so undismissing later shows honest current state rather than a stale snapshot.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: findingSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const finding = await client.dismissSwarmFinding(
+      { projectId: project.id, findingId: input.finding },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), finding };
+  },
+};
+
+export type UndismissSwarmFindingInput = DismissSwarmFindingInput;
+export type UndismissSwarmFindingResult = DismissSwarmFindingResult;
+
+export const undismissSwarmFindingOperation: PlatformOperation<
+  UndismissSwarmFindingInput,
+  UndismissSwarmFindingResult
+> = {
+  name: "undismiss_swarm_finding",
+  title: "Undismiss an MCPJam swarm finding",
+  description: "Bring a dismissed finding back into the active list.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: findingSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const finding = await client.undismissSwarmFinding(
+      { projectId: project.id, findingId: input.finding },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), finding };
+  },
+};
+
+const waveSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  wave: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Wave id — the `waveId` on a journey run."),
+});
+
+export type GetWaveInsightsInput = z.infer<typeof waveSelectorInput>;
+export type GetWaveInsightsResult = {
+  project: SelectedProjectInfo;
+  insights: PlatformWaveInsights;
+};
+
+export const getWaveInsightsOperation: PlatformOperation<
+  GetWaveInsightsInput,
+  GetWaveInsightsResult
+> = {
+  name: "get_wave_insights",
+  title: "Get an MCPJam wave's insights",
+  description:
+    "The model's analysis of a whole wave, if one has been requested. Poll this after request_wave_insights — status goes pending → completed. Not-found means nobody has requested it, which is different from 'requested and still working'.",
+  readOnly: true,
+  inputSchema: waveSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const insights = await client.getWaveInsights(
+      { projectId: project.id, waveId: input.wave },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), insights };
+  },
+};
+
+const requestWaveInsightsInput = waveSelectorInput.extend({
+  force: z
+    .boolean()
+    .optional()
+    .describe(
+      "Regenerate over a wave that already has insights. SPENDS AGAIN — the usual reason a wave looks stuck is a caller that did not poll, so read get_wave_insights before reaching for this.",
+    ),
+});
+
+export type RequestWaveInsightsInput = z.infer<typeof requestWaveInsightsInput>;
+export type RequestWaveInsightsResult = {
+  project: SelectedProjectInfo;
+  request: PlatformWaveInsightsRequested;
+};
+
+export const requestWaveInsightsOperation: PlatformOperation<
+  RequestWaveInsightsInput,
+  RequestWaveInsightsResult
+> = {
+  name: "request_wave_insights",
+  title: "Request MCPJam wave insights",
+  description:
+    "Ask a model to analyze a whole wave. Returns immediately with status pending; poll get_wave_insights. SPENDS against the organization's daily insights budget, which is SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: requestWaveInsightsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const request = await client.requestWaveInsights(
+      {
+        projectId: project.id,
+        waveId: input.wave,
+        ...(input.force ? { force: true } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), request };
+  },
+};
+
+export type CancelWaveInsightsInput = z.infer<typeof waveSelectorInput>;
+export type CancelWaveInsightsResult = {
+  project: SelectedProjectInfo;
+  canceled: PlatformWaveInsightsCanceled;
+};
+
+export const cancelWaveInsightsOperation: PlatformOperation<
+  CancelWaveInsightsInput,
+  CancelWaveInsightsResult
+> = {
+  name: "cancel_wave_insights",
+  title: "Cancel an MCPJam wave insights request",
+  description:
+    "Stop an in-flight insights generation. This is the recovery path for a wave stuck in pending — without it the only way forward is force, which spends again.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: waveSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const canceled = await client.cancelWaveInsights(
+      { projectId: project.id, waveId: input.wave },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), canceled };
+  },
+};
+
+// ── Capabilities ────────────────────────────────────────────────────────────
+
+export type GetCapabilitiesInput = z.infer<typeof listPersonasInput>;
+export type GetCapabilitiesResult = {
+  project: SelectedProjectInfo;
+  capabilities: PlatformCapabilities;
+};
+
+export const getCapabilitiesOperation: PlatformOperation<
+  GetCapabilitiesInput,
+  GetCapabilitiesResult
+> = {
+  name: "get_capabilities",
+  title: "Get what you may do in an MCPJam project",
+  description:
+    "Your role, which betas this organization has, your plan's limits, and a `can` block of booleans to branch on. CHECK THIS BEFORE PLANNING work that authors, launches or publishes: the tool list you can see is the same for every caller, so it cannot tell you that this organization is not in the Swarms beta or that you are a member where the operation needs an admin. Finding that out from a 403 means you have already told someone you were doing it.",
+  readOnly: true,
+  inputSchema: listPersonasInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const capabilities = await client.getCapabilities(
+      { projectId: project.id },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), capabilities };
+  },
+};
+
+// ── User testing ────────────────────────────────────────────────────────────
+//
+// What a published scenario produced, and who may reach it. `publish_scenario`
+// creates one; everything here addresses the scenario itself.
+//
+// The scenario is selected by ID rather than by name, unlike projects: a
+// scenario's name is the public-facing label a visitor sees, so it is edited
+// often and duplicated freely, and resolving by name would let an agent
+// rotate the link on whichever "Checkout test" it matched first.
+
+const userTestingScenarioSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  scenario: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Scenario id (the `id` from list_scenarios / publish_scenario)."),
+});
+
+export type GetUserTestingScenarioInput = z.infer<
+  typeof userTestingScenarioSelectorInput
+>;
+
+export type GetUserTestingScenarioResult = {
+  project: SelectedProjectInfo;
+  scenario: PlatformUserTestingScenarioDetail;
+};
+
+export const getUserTestingScenarioOperation: PlatformOperation<
+  GetUserTestingScenarioInput,
+  GetUserTestingScenarioResult
+> = {
+  name: "get_user_testing_scenario",
+  title: "Get a user-testing scenario",
+  description:
+    "Scenario detail plus its actionable-insights envelope: findings AGGREGATED over the latest analyzed window of real visitor sessions, each with exemplar evidence. Only a finding with actionTarget mcp_server AND actionability ready authorizes proposing a server change; agent_configuration / eval_case / environment / investigate findings name other work and must not be 'fixed' in server code. Reads never trigger generation — request_user_testing_insights does, and spends.",
+  readOnly: true,
+  inputSchema: userTestingScenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const scenario = await client.getUserTestingScenario(
+      { projectId: project.id, scenarioId: input.scenario },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), scenario };
+  },
+};
+
+const updateUserTestingScenarioInput = userTestingScenarioSelectorInput.extend({
+  name: z.string().trim().min(1).max(200).optional(),
+  description: z.string().max(2000).optional(),
+  mode: z
+    .enum(["project_members", "invited_only", "anyone_with_link"])
+    .optional()
+    .describe(
+      "Who may open the share link. Send this ON ITS OWN — identity and exposure are separate operations, and a mixed request is rejected.",
+    ),
+});
+
+export type UpdateUserTestingScenarioInput = z.infer<
+  typeof updateUserTestingScenarioInput
+>;
+export type UpdateUserTestingScenarioResult = {
+  project: SelectedProjectInfo;
+  scenario: PlatformUserTestingScenario;
+};
+
+export const updateUserTestingScenarioOperation: PlatformOperation<
+  UpdateUserTestingScenarioInput,
+  UpdateUserTestingScenarioResult
+> = {
+  name: "update_user_testing_scenario",
+  title: "Update a user-testing scenario",
+  description:
+    "Rename a scenario, or change who may open its share link. SINGLE-CONCERN: send `mode` alone, or name/description together — never both, because they are separate operations upstream and applying them in sequence could leave the scenario live in a mode nobody asked for. Widening to anyone_with_link exposes it to anyone holding the URL. Workspace membership is enough — no admin needed.",
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: updateUserTestingScenarioInput,
+  async execute(input, { client, signal }) {
+    // Identity and exposure are separate mutations upstream, so the route
+    // refuses to chain them: a failure between the two would leave the
+    // scenario half-updated on the half that decides who can reach it.
+    if (
+      input.mode !== undefined &&
+      (input.name !== undefined || input.description !== undefined)
+    ) {
+      throw operationInputError(
+        "Send `mode` on its own: identity and exposure are separate operations upstream.",
+      );
+    }
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const scenario = await client.updateUserTestingScenario(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(input.description !== undefined
+          ? { description: input.description }
+          : {}),
+        ...(input.mode !== undefined ? { mode: input.mode } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), scenario };
+  },
+};
+
+const listUserTestingSessionsInput = userTestingScenarioSelectorInput.extend({
+  cursor: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Pass the previous response's nextCursor to get the next page."),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export type ListUserTestingSessionsInput = z.infer<
+  typeof listUserTestingSessionsInput
+>;
+export type ListUserTestingSessionsResult = {
+  project: SelectedProjectInfo;
+  items: PlatformUserTestingSession[];
+  nextCursor?: string;
+};
+
+export const listUserTestingSessionsOperation: PlatformOperation<
+  ListUserTestingSessionsInput,
+  ListUserTestingSessionsResult
+> = {
+  name: "list_user_testing_sessions",
+  title: "List the sessions a user-testing scenario produced",
+  description:
+    "Sessions real visitors had with a published scenario: message counts, feedback, device and visitor segment, and a first-message preview. SUMMARIES only — transcripts are a separate call, because these are real people's conversations and a listing should not page them into every caller that wanted counts.",
+  readOnly: true,
+  inputSchema: listUserTestingSessionsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const page = await client.listUserTestingSessions(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      items: page.items,
+      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const getUserTestingSessionInput = userTestingScenarioSelectorInput.extend({
+  session: z.string().trim().min(1).describe("Session id."),
+  cursor: z.string().trim().min(1).optional(),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export type GetUserTestingSessionInput = z.infer<
+  typeof getUserTestingSessionInput
+>;
+export type GetUserTestingSessionResult = {
+  project: SelectedProjectInfo;
+  session: PlatformUserTestingSessionDetail;
+};
+
+export const getUserTestingSessionOperation: PlatformOperation<
+  GetUserTestingSessionInput,
+  GetUserTestingSessionResult
+> = {
+  name: "get_user_testing_session",
+  title: "Read one user-testing session's transcript",
+  description:
+    "One session's conversation, paged. This is a real person talking to your product — read it when you need the words, and prefer get_user_testing_metrics or the findings when you need the pattern. transcriptUnavailable: true means the stored conversation could not be read, which is NOT the same as the visitor saying nothing.",
+  readOnly: true,
+  inputSchema: getUserTestingSessionInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const session = await client.getUserTestingSession(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        sessionId: input.session,
+        ...(input.cursor ? { cursor: input.cursor } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), session };
+  },
+};
+
+const userTestingMetricsInput = userTestingScenarioSelectorInput.extend({
+  population: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Restrict the metrics to a session population."),
+});
+
+export type GetUserTestingMetricsInput = z.infer<
+  typeof userTestingMetricsInput
+>;
+export type GetUserTestingMetricsResult = {
+  project: SelectedProjectInfo;
+  metrics: Record<string, unknown>;
+};
+
+export const getUserTestingMetricsOperation: PlatformOperation<
+  GetUserTestingMetricsInput,
+  GetUserTestingMetricsResult
+> = {
+  name: "get_user_testing_metrics",
+  title: "Get a user-testing scenario's session metrics",
+  description:
+    "Aggregate metrics across a scenario's sessions. Start here rather than reading transcripts — it answers 'how is this going' without pulling anyone's conversation into the turn.",
+  readOnly: true,
+  inputSchema: userTestingMetricsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const metrics = await client.getUserTestingMetrics(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        ...(input.population ? { population: input.population } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), metrics };
+  },
+};
+
+export type GetUserTestingUsageInput = z.infer<
+  typeof userTestingScenarioSelectorInput
+>;
+export type GetUserTestingUsageResult = {
+  project: SelectedProjectInfo;
+  usage: Record<string, unknown>;
+};
+
+export const getUserTestingUsageOperation: PlatformOperation<
+  GetUserTestingUsageInput,
+  GetUserTestingUsageResult
+> = {
+  name: "get_user_testing_usage",
+  title: "Get a user-testing scenario's usage breakdown",
+  description:
+    "Usage rates for a scenario, broken down by visitor and device. READ `scan.truncated` BEFORE QUOTING ANY RATE: true means the numbers were computed over the most recent N sessions rather than all of them, so reporting them unconditionally would overstate what was measured.",
+  readOnly: true,
+  inputSchema: userTestingScenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const usage = await client.getUserTestingUsage(
+      { projectId: project.id, scenarioId: input.scenario },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), usage };
+  },
+};
+
+export type ListUserTestingFindingsInput = z.infer<
+  typeof userTestingScenarioSelectorInput
+>;
+export type ListUserTestingFindingsResult = {
+  project: SelectedProjectInfo;
+  items: Array<Record<string, unknown>>;
+};
+
+export const listUserTestingFindingsOperation: PlatformOperation<
+  ListUserTestingFindingsInput,
+  ListUserTestingFindingsResult
+> = {
+  name: "list_user_testing_findings",
+  title: "List a user-testing scenario's findings",
+  description:
+    "Problems detected across a scenario's sessions, tracked over time so a recurring one is distinguishable from a new one.",
+  readOnly: true,
+  inputSchema: userTestingScenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const page = await client.listUserTestingFindings(
+      { projectId: project.id, scenarioId: input.scenario },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export type GetUserTestingSignalsInput = z.infer<
+  typeof userTestingScenarioSelectorInput
+>;
+export type GetUserTestingSignalsResult = {
+  project: SelectedProjectInfo;
+  signals: Record<string, unknown>;
+};
+
+export const getUserTestingSignalsOperation: PlatformOperation<
+  GetUserTestingSignalsInput,
+  GetUserTestingSignalsResult
+> = {
+  name: "get_user_testing_signals",
+  title: "Get a user-testing scenario's current window signals",
+  description:
+    "The scenario's live analysis window, and the `windowId` you need to read its insights. Call this first when you want insights for 'the current window'.",
+  readOnly: true,
+  inputSchema: userTestingScenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const signals = await client.getUserTestingSignals(
+      { projectId: project.id, scenarioId: input.scenario },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), signals };
+  },
+};
+
+const userTestingWindowInput = userTestingScenarioSelectorInput.extend({
+  window: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Window id, from get_user_testing_signals."),
+});
+
+export type GetUserTestingInsightsInput = z.infer<
+  typeof userTestingWindowInput
+>;
+export type GetUserTestingInsightsResult = {
+  project: SelectedProjectInfo;
+  insights: Record<string, unknown>;
+};
+
+export const getUserTestingInsightsOperation: PlatformOperation<
+  GetUserTestingInsightsInput,
+  GetUserTestingInsightsResult
+> = {
+  name: "get_user_testing_insights",
+  title: "Get a user-testing window's insights",
+  description:
+    "The model's analysis of one analysis window, if one has been requested. Not-found means nobody has requested it, which is different from requested-and-still-working.",
+  readOnly: true,
+  inputSchema: userTestingWindowInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const insights = await client.getUserTestingInsights(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        windowId: input.window,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), insights };
+  },
+};
+
+const requestUserTestingInsightsInput = userTestingScenarioSelectorInput.extend(
+  {
+    force: z
+      .boolean()
+      .optional()
+      .describe(
+        "Regenerate over a window that already has insights. Spends again.",
+      ),
+  },
+);
+
+export type RequestUserTestingInsightsInput = z.infer<
+  typeof requestUserTestingInsightsInput
+>;
+export type RequestUserTestingInsightsResult = {
+  project: SelectedProjectInfo;
+  request: PlatformUserTestingInsightsRequested;
+};
+
+export const requestUserTestingInsightsOperation: PlatformOperation<
+  RequestUserTestingInsightsInput,
+  RequestUserTestingInsightsResult
+> = {
+  name: "request_user_testing_insights",
+  title: "Request insights for a user-testing scenario",
+  description:
+    "Ask a model to analyze the scenario's current window. Returns immediately with the windowId and status pending; poll get_user_testing_insights. SPENDS against the organization's daily insights budget, which is SHARED with swarm wave insights. A 409 means the window has not been mined yet — wait, do not retry in a loop.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: requestUserTestingInsightsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const request = await client.requestUserTestingInsights(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        ...(input.force ? { force: true } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), request };
+  },
+};
+
+export type CancelUserTestingInsightsInput = z.infer<
+  typeof userTestingWindowInput
+>;
+export type CancelUserTestingInsightsResult = {
+  project: SelectedProjectInfo;
+  canceled: Record<string, unknown>;
+};
+
+export const cancelUserTestingInsightsOperation: PlatformOperation<
+  CancelUserTestingInsightsInput,
+  CancelUserTestingInsightsResult
+> = {
+  name: "cancel_user_testing_insights",
+  title: "Cancel a user-testing insights request",
+  description:
+    "Stop an in-flight insights generation. The recovery path for a window stuck pending — without it the only way forward is force, which spends again.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: userTestingWindowInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const canceled = await client.cancelUserTestingInsights(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        windowId: input.window,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), canceled };
+  },
+};
+
+const userTestingFindingInput = userTestingScenarioSelectorInput.extend({
+  finding: z.string().trim().min(1).describe("Finding id."),
+});
+
+export type DismissUserTestingFindingInput = z.infer<
+  typeof userTestingFindingInput
+>;
+export type DismissUserTestingFindingResult = {
+  project: SelectedProjectInfo;
+  finding: Record<string, unknown>;
+};
+
+export const dismissUserTestingFindingOperation: PlatformOperation<
+  DismissUserTestingFindingInput,
+  DismissUserTestingFindingResult
+> = {
+  name: "dismiss_user_testing_finding",
+  title: "Dismiss a user-testing finding",
+  description:
+    "Mark a finding as not worth acting on. Its lifecycle keeps updating underneath, so undismissing later shows honest current state.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: userTestingFindingInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const finding = await client.dismissUserTestingFinding(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        findingId: input.finding,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), finding };
+  },
+};
+
+export type UndismissUserTestingFindingInput = DismissUserTestingFindingInput;
+export type UndismissUserTestingFindingResult = DismissUserTestingFindingResult;
+
+export const undismissUserTestingFindingOperation: PlatformOperation<
+  UndismissUserTestingFindingInput,
+  UndismissUserTestingFindingResult
+> = {
+  name: "undismiss_user_testing_finding",
+  title: "Undismiss a user-testing finding",
+  description: "Bring a dismissed finding back into the active list.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: userTestingFindingInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const finding = await client.undismissUserTestingFinding(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        findingId: input.finding,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), finding };
+  },
+};
+
+const setGuestExecutionInput = userTestingScenarioSelectorInput.extend({
+  enabled: z.boolean(),
+  computerEnabled: z.boolean(),
+  sharedSkillsEnabled: z.boolean(),
+  dailyCreditCap: z
+    .number()
+    .min(0)
+    .describe("Hard ceiling on what visitors can spend per day, in credits."),
+  dailyComputerStartCap: z.number().int().min(0),
+  maxConcurrentComputers: z.number().int().min(0),
+  harnessEnabled: z.boolean().optional(),
+  dailyHarnessSpendCapMicros: z.number().int().min(0).optional(),
+  dailyHarnessCallCap: z.number().int().min(0).optional(),
+  maxConcurrentHarnessRuns: z.number().int().min(0).optional(),
+});
+
+export type SetUserTestingGuestExecutionInput = z.infer<
+  typeof setGuestExecutionInput
+>;
+export type SetUserTestingGuestExecutionResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const setUserTestingGuestExecutionOperation: PlatformOperation<
+  SetUserTestingGuestExecutionInput,
+  SetUserTestingGuestExecutionResult
+> = {
+  name: "set_user_testing_guest_execution",
+  title: "Set a user-testing scenario's guest execution caps",
+  description:
+    "What anonymous visitors may run on the organization's account, and how much of it. A FULL REPLACEMENT, not a patch: send every field, because these caps only mean something as a set and raising one while leaving a stale sibling produces a combination nobody chose. Read the current values first. Project admin.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: setGuestExecutionInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const { project: _project, scenario, ...guestExecution } = input;
+    const result = await client.setUserTestingGuestExecution(
+      {
+        projectId: project.id,
+        scenarioId: scenario,
+        guestExecution,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+export type RotateUserTestingLinkInput = z.infer<
+  typeof userTestingScenarioSelectorInput
+>;
+export type RotateUserTestingLinkResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const rotateUserTestingLinkOperation: PlatformOperation<
+  RotateUserTestingLinkInput,
+  RotateUserTestingLinkResult
+> = {
+  name: "rotate_user_testing_link",
+  title: "Rotate a user-testing scenario's share link",
+  description:
+    "Mint a new share link and invalidate the old one. IMMEDIATE AND IRREVERSIBLE: everyone holding the old URL loses access and every live session on it dies. This is what you do when a link has leaked, not routine hygiene. Workspace membership is enough — no admin needed.",
+  readOnly: false,
+  risk: "destructive",
+  inputSchema: userTestingScenarioSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.rotateUserTestingLink(
+      { projectId: project.id, scenarioId: input.scenario },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const upsertUserTestingMemberInput = userTestingScenarioSelectorInput.extend({
+  email: z.string().trim().min(3).max(320),
+  sendInviteEmail: z
+    .boolean()
+    .optional()
+    .describe(
+      "Off by default — adding someone is not the same as telling them.",
+    ),
+});
+
+export type UpsertUserTestingMemberInput = z.infer<
+  typeof upsertUserTestingMemberInput
+>;
+export type UpsertUserTestingMemberResult = {
+  project: SelectedProjectInfo;
+  result: Record<string, unknown>;
+};
+
+export const upsertUserTestingMemberOperation: PlatformOperation<
+  UpsertUserTestingMemberInput,
+  UpsertUserTestingMemberResult
+> = {
+  name: "upsert_user_testing_member",
+  title: "Invite someone to a user-testing scenario",
+  description:
+    "Grant one person access to a scenario by email. Upsert, so re-inviting an existing member is not an error. Widens who can reach the scenario.",
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: upsertUserTestingMemberInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.upsertUserTestingMember(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        email: input.email,
+        ...(input.sendInviteEmail !== undefined
+          ? { sendInviteEmail: input.sendInviteEmail }
+          : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const removeUserTestingMemberInput = userTestingScenarioSelectorInput.extend({
+  member: z.string().trim().min(1).describe("Member id or email."),
+});
+
+export type RemoveUserTestingMemberInput = z.infer<
+  typeof removeUserTestingMemberInput
+>;
+export type RemoveUserTestingMemberResult = UpsertUserTestingMemberResult;
+
+export const removeUserTestingMemberOperation: PlatformOperation<
+  RemoveUserTestingMemberInput,
+  RemoveUserTestingMemberResult
+> = {
+  name: "remove_user_testing_member",
+  title: "Remove someone from a user-testing scenario",
+  description:
+    "Revoke one person's access. Narrowing exposure is the safe direction, so this is never blocked by the beta gate — losing access to a feature is exactly when revoking matters most. It is still a REMOVAL: the person loses a scenario they could reach, and getting it back means inviting them again.",
+  readOnly: false,
+  // `destructive` is about HARM, not about gating. Revoking access removes
+  // something a named person had, which is what a client should be able to
+  // confirm before it fires; that it is also ungated by the beta flag is a
+  // separate property, decided by direction of exposure rather than by risk.
+  risk: "destructive",
+  inputSchema: removeUserTestingMemberInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.removeUserTestingMember(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        member: input.member,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const rebindUserTestingScenarioInput = userTestingScenarioSelectorInput.extend({
+  environmentId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The environment to point at."),
+});
+
+export type RebindUserTestingScenarioInput = z.infer<
+  typeof rebindUserTestingScenarioInput
+>;
+export type RebindUserTestingScenarioResult = UpsertUserTestingMemberResult;
+
+export const rebindUserTestingScenarioOperation: PlatformOperation<
+  RebindUserTestingScenarioInput,
+  RebindUserTestingScenarioResult
+> = {
+  name: "rebind_user_testing_scenario",
+  title: "Point a user-testing scenario at a different environment",
+  description:
+    "Swap the environment behind a scenario, KEEPING its share link, its members and its session history. The alternative — unpublish and republish — mints a new link, which means re-sharing it with everyone. Changes what visitors are talking to; project admin.",
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: rebindUserTestingScenarioInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.rebindUserTestingScenario(
+      {
+        projectId: project.id,
+        scenarioId: input.scenario,
+        environmentId: input.environmentId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), result };
+  },
+};
+
+const connectProjectServerInput = z.object({
+  // Validated HERE rather than left to the API. This is the field a model or a
+  // CLI flag fills in, and rejecting `not-a-url` or `file:///etc/passwd` at the
+  // keyboard is both a better error and one fewer caller-supplied string that
+  // reaches an egress guard to be refused. The guard still runs — this is the
+  // outer of two checks, never a replacement for it.
+  url: z
+    .string()
+    .trim()
+    .min(1)
+    .refine(
+      (value) => {
+        try {
+          const parsed = new URL(value);
+          return parsed.protocol === "http:" || parsed.protocol === "https:";
+        } catch {
+          return false;
+        }
+      },
+      { message: "Must be an http:// or https:// URL." },
+    )
+    .describe("The MCP server URL to connect (http or https)."),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Project name or id. Omit to let the person choose in the browser — this never defaults to a project on their behalf.",
+    ),
+  serverId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Disambiguates when the project already has several saved servers on this URL. Supply one of the ids from an AMBIGUOUS_SERVER error.",
+    ),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Name for the server if a new one is created. Ignored when an existing server is reused.",
+    ),
+  reauthorize: z
+    .boolean()
+    .optional()
+    .describe("Force a fresh authorization instead of reusing one in flight."),
+});
+
+export type ConnectProjectServerInput = z.infer<
+  typeof connectProjectServerInput
+>;
+
+const getProjectServerConnectionStatusInput = z.object({
+  connectionRequestId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The connection request id returned by connect_project_server."),
+});
+
+export type GetProjectServerConnectionStatusInput = z.infer<
+  typeof getProjectServerConnectionStatusInput
+>;
+
+/**
+ * Connect an MCP server URL to a project — the handoff-first flow.
+ *
+ * WHAT MAKES THIS OPERATION UNUSUAL: it usually cannot finish on its own. A
+ * server that needs OAuth needs a human at a browser, and a request with no
+ * project needs someone to choose one. So the honest result of a successful
+ * call is often `awaiting_authorization` plus a link, not a connected server.
+ * Callers are expected to present the link and then poll
+ * `get_project_server_connection_status`.
+ *
+ * `handoffUrl` IS A PRIVATE CAPABILITY. Anyone holding it can complete the
+ * authorization, so a surface must deliver it to the requester alone —
+ * ephemerally in Slack, behind an owner-checked button in Discord — and never
+ * let a model repeat it in prose. The agent adapter strips it from
+ * model-visible text for exactly this reason.
+ */
+export const connectProjectServerOperation: PlatformOperation<
+  ConnectProjectServerInput,
+  PlatformServerConnection
+> = {
+  name: "connect_project_server",
+  title: "Connect an MCP server to a project",
+  description:
+    "Connect an MCP server URL to an MCPJam project. Discovers whether the server needs OAuth, saves it to the project, and returns a connection request. When the next step belongs to a person — choosing a project, or granting consent — the result carries a private authorization link for the requester to open; present it privately and never repeat the URL in a shared channel. Poll get_project_server_connection_status until the status is ready or failed.",
+  readOnly: false,
+  inputSchema: connectProjectServerInput,
+  async execute(input, { client, signal }) {
+    // Resolve a NAMED project to an id, but only when one was supplied.
+    // `resolveProject`'s no-selector arm falls back to the most recently
+    // updated project, and silently adopting that here would connect a server
+    // to whichever project the caller happened to touch last. Absent means
+    // absent: the request becomes `awaiting_project` and a human chooses.
+    let projectId: string | undefined;
+    if (input.project) {
+      const { project } = await resolveProjectOrThrow(
+        client,
+        input.project,
+        signal,
+      );
+      projectId = project.id;
+    }
+
+    return await client.createServerConnection(
+      {
+        body: {
+          url: input.url,
+          projectId,
+          serverId: input.serverId,
+          name: input.name,
+          reauthorize: input.reauthorize,
+        },
+      },
+      { signal },
+    );
+  },
+};
+
+/**
+ * Poll one connection request.
+ *
+ * Read-only and cheap by design — the status path carries no rate-limit
+ * bucket, so a caller never has to choose between polling responsively and
+ * tripping a budget.
+ */
+export const getProjectServerConnectionStatusOperation: PlatformOperation<
+  GetProjectServerConnectionStatusInput,
+  PlatformServerConnection
+> = {
+  name: "get_project_server_connection_status",
+  title: "Check a server connection",
+  description:
+    "Check the status of a server connection request started by connect_project_server. Returns the current status, the saved server once one exists, and an error with a retryable flag if it failed.",
+  readOnly: true,
+  inputSchema: getProjectServerConnectionStatusInput,
+  async execute(input, { client, signal }) {
+    return await client.getServerConnection(
+      { connectionRequestId: input.connectionRequestId },
+      { signal },
+    );
+  },
+};
+
 export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getMeOperation,
   listModelsOperation,
+  listOrganizationsOperation,
   listProjectsOperation,
   createProjectOperation,
   updateProjectOperation,
   deleteProjectOperation,
   listProjectServersOperation,
   showServersOperation,
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   diagnoseServerOperation,
   validateServerOperation,
   exportServerOperation,
@@ -4768,15 +7234,17 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  compareEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
   getEvalRunStepsOperation,
   createTunnelOperation,
   closeTunnelOperation,
-  listChatboxesOperation,
-  getChatboxOperation,
+  listScenariosOperation,
+  getScenarioOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
   listJourneysOperation,
   listJourneyRunsOperation,
   getJourneyRunOperation,
@@ -4793,6 +7261,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   setHostServersOperation,
   duplicateHostOperation,
   listEnvironmentsOperation,
+  getEnvironmentCapabilitiesOperation,
   getEnvironmentOperation,
   resolveEnvironmentOperation,
   createEnvironmentOperation,
@@ -4816,4 +7285,50 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
+  // Swarms authoring + insights, and the capability read that lets an agent
+  // check before it plans.
+  getCapabilitiesOperation,
+  listPersonasOperation,
+  getPersonaOperation,
+  createPersonaOperation,
+  updatePersonaOperation,
+  deletePersonaOperation,
+  generatePersonasOperation,
+  getJourneyOperation,
+  createJourneyOperation,
+  updateJourneyOperation,
+  archiveJourneyOperation,
+  generateJourneysOperation,
+  listSwarmsOperation,
+  getSwarmOperation,
+  createSwarmOperation,
+  updateSwarmOperation,
+  archiveSwarmOperation,
+  getSwarmOverviewOperation,
+  getJourneyRunScorecardOperation,
+  listSwarmFindingsOperation,
+  dismissSwarmFindingOperation,
+  undismissSwarmFindingOperation,
+  getWaveInsightsOperation,
+  requestWaveInsightsOperation,
+  cancelWaveInsightsOperation,
+  // User testing — what a published scenario produced, and who may reach it.
+  getUserTestingScenarioOperation,
+  updateUserTestingScenarioOperation,
+  listUserTestingSessionsOperation,
+  getUserTestingSessionOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  requestUserTestingInsightsOperation,
+  cancelUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  setUserTestingGuestExecutionOperation,
+  rotateUserTestingLinkOperation,
+  upsertUserTestingMemberOperation,
+  removeUserTestingMemberOperation,
+  rebindUserTestingScenarioOperation,
 ];

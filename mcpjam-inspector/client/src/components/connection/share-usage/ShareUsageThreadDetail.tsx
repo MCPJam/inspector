@@ -30,12 +30,19 @@ import {
   useSessionBrowserArtifacts,
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
-import { SessionInsightBar } from "@/components/chatboxes/session-readiness";
+import { SessionInsightBar } from "@/components/scenarios/session-readiness";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
+import {
+  feedbackHeadline,
+  formatThumbCounts,
+} from "@/components/connection/share-usage/feedback-headline";
 import { ConvertPromotableSessionDialog } from "@/components/chat-v2/history/convert-promotable-session-dialog";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 import { useAction } from "convex/react";
 import { Gavel, RotateCcw } from "lucide-react";
 import { JudgeVerdictCard } from "@/components/shared/session-quality/judge-presentation";
+import { SessionChecksSection } from "./SessionChecksSection";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 
 const EMPTY_SPANS: EvalTraceSpan[] = [];
@@ -206,7 +213,7 @@ interface ShareUsageThreadDetailProps {
  * minus `direct`, which keeps its own adapter because it must also serve
  * guest/HOSTED_MODE actors over the HTTP detail route.
  */
-const PROMOTABLE_SOURCE_TYPES = new Set(["swarm", "chatbox"]);
+const PROMOTABLE_SOURCE_TYPES = new Set(["swarm", "scenario"]);
 
 /**
  * Fetch span blobs from turn trace URLs and flatten into a single span array.
@@ -373,7 +380,7 @@ export function ShareUsageThreadDetail({
     return adaptTraceToUiMessages({
       trace: { messages: messages as any, widgetSnapshots },
       toolResultDisplay:
-        thread?.sourceType === "chatbox" ? "attached-to-tool" : "sibling-text",
+        thread?.sourceType === "scenario" ? "attached-to-tool" : "sibling-text",
     });
   }, [messages, thread?.sourceType, widgetSnapshots]);
 
@@ -478,6 +485,9 @@ export function ShareUsageThreadDetail({
             <SessionInsightBar readiness={thread.readiness} />
           ) : null}
           <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
+          {/* A transcript-less attempt is exactly where a runner failure
+              shows up, so the checks block belongs on this shell too. */}
+          <SessionChecksSection chatSessionId={thread._id} />
           <div className="flex flex-1 items-center justify-center">
             <p className="text-sm text-muted-foreground">
               No messages in this session
@@ -503,10 +513,15 @@ export function ShareUsageThreadDetail({
         ? `${Math.round(duration / 1000)}s`
         : `${Math.round(duration / 60000)}m`
       : null;
-  const isChatboxThread = thread.sourceType === "chatbox";
-  const reasoningDisplayMode = isChatboxThread ? "collapsible" : "collapsed";
+  const isScenarioThread = thread.sourceType === "scenario";
+  const reasoningDisplayMode = isScenarioThread ? "collapsible" : "collapsed";
 
+  const feedbackSummary = thread.feedback ?? null;
+  const feedbackHeadlineValue = feedbackSummary
+    ? feedbackHeadline(feedbackSummary)
+    : null;
   const hasFeedback =
+    feedbackSummary != null ||
     thread.feedbackRating != null ||
     (thread.feedbackComment && thread.feedbackComment.trim().length > 0);
 
@@ -520,14 +535,49 @@ export function ShareUsageThreadDetail({
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               Feedback
             </p>
-            {thread.feedbackRating != null ? (
+            {feedbackSummary && feedbackHeadlineValue ? (
+              <p className="mt-1 text-sm font-medium">
+                {feedbackHeadlineValue.kind === "thumbs"
+                  ? formatThumbCounts(
+                      feedbackHeadlineValue.up,
+                      feedbackHeadlineValue.down
+                    )
+                  : feedbackHeadlineValue.kind === "mixed"
+                  ? `${feedbackHeadlineValue.avg.toFixed(
+                      1
+                    )}/5 · ${formatThumbCounts(
+                      feedbackHeadlineValue.up,
+                      feedbackHeadlineValue.down
+                    )}`
+                  : `${feedbackHeadlineValue.avg.toFixed(1)}/5`}
+                <span className="ml-1 font-normal text-muted-foreground">
+                  across {feedbackSummary.count}{" "}
+                  {feedbackSummary.count === 1 ? "rating" : "ratings"}
+                  {/* The worst turn is what the filters and the list row's
+                      amber tint key on, so name it here rather than leaving
+                      the average to imply a uniformly mediocre session.
+                      Suppressed for a thumbs-only session: "worst 1/5" would
+                      restate the 👎 tally on a scale nobody was shown. */}
+                  {feedbackSummary.count > 1 &&
+                  feedbackHeadlineValue.kind !== "thumbs"
+                    ? ` · worst ${feedbackSummary.min}/5`
+                    : ""}
+                </span>
+              </p>
+            ) : thread.feedbackRating != null ? (
               <p className="mt-1 text-sm font-medium">
                 {thread.feedbackRating}/5
               </p>
             ) : null}
-            {thread.feedbackComment ? (
+            {/* Per-turn comments render inline on the Chat tab, next to the
+                response they are about. This card keeps the worst one so the
+                header still says something when the transcript is scrolled
+                away. */}
+            {feedbackSummary?.worstComment ?? thread.feedbackComment ? (
               <p className="mt-1 text-sm text-muted-foreground">
-                &ldquo;{thread.feedbackComment}&rdquo;
+                &ldquo;
+                {feedbackSummary?.worstComment ?? thread.feedbackComment}
+                &rdquo;
               </p>
             ) : null}
           </div>
@@ -599,6 +649,13 @@ export function ShareUsageThreadDetail({
         <SwarmJudgeSection threadId={threadId} goalScore={thread.goalScore} />
       ) : null}
 
+      {/* Deterministic checks, in their own block below the judge rather than
+          merged into it: one is a rule that held or did not, the other an
+          LLM's opinion, and a reader must not weigh them as the same kind of
+          fact. Not swarm-gated — User Testing sessions get graded too — and
+          self-hiding when the session carries no check rows. */}
+      <SessionChecksSection chatSessionId={thread._id} />
+
       {/* Trace / Chat / [Browser] / Raw tabs. The Browser tab appears when the
           session carries browser-rendered MCP App artifacts (synthetic runs);
           its active mode lives outside the shared TraceViewMode union. */}
@@ -623,16 +680,43 @@ export function ShareUsageThreadDetail({
           </div>
         ) : effectiveViewMode === "chat" ? (
           <div className="min-h-0 flex-1 overflow-y-auto">
-            <ReadOnlyTranscript
-              messages={adaptedTrace.messages}
-              model={resolvedModel}
-              toolRenderOverrides={bridgeToolRenderOverrides(
-                adaptedTrace.toolRenderOverrides
-              )}
-              reasoningDisplayMode={reasoningDisplayMode}
-              widgetPolicy="placeholder"
-              className="mx-auto max-w-4xl px-4 py-4"
-            />
+            {/* Ships dark: `sessionScores:listBySession` reaches production
+                only on the next release promotion, and `useQuery` against an
+                undeployed function throws. The fallback is the transcript
+                itself — losing the conversation to a missing ratings query
+                would be a far worse failure than losing the ratings. */}
+            <ErrorBoundary
+              // Keyed on the session so the boundary RETRIES. Without it a
+              // single throw during the pre-deployment window latches the
+              // fallback for the life of the mounted detail — every session a
+              // PM opened afterwards would show a transcript with no ratings
+              // even once the backend went live.
+              key={threadId}
+              fallback={
+                <ReadOnlyTranscript
+                  messages={adaptedTrace.messages}
+                  model={resolvedModel}
+                  toolRenderOverrides={bridgeToolRenderOverrides(
+                    adaptedTrace.toolRenderOverrides
+                  )}
+                  reasoningDisplayMode={reasoningDisplayMode}
+                  widgetPolicy="placeholder"
+                  className="mx-auto max-w-4xl px-4 py-4"
+                />
+              }
+            >
+              <SessionScoredTranscript
+                threadId={threadId}
+                messages={adaptedTrace.messages}
+                model={resolvedModel}
+                toolRenderOverrides={bridgeToolRenderOverrides(
+                  adaptedTrace.toolRenderOverrides
+                )}
+                reasoningDisplayMode={reasoningDisplayMode}
+                widgetPolicy="placeholder"
+                className="mx-auto max-w-4xl px-4 py-4"
+              />
+            </ErrorBoundary>
           </div>
         ) : (
           <TraceViewer

@@ -140,7 +140,7 @@ describe("emptyHostConfigInputV2 mcpProfile handling", () => {
     // The inspector MUST NOT synthesize `{ profileVersion: 1 }` here —
     // the backend hashes `undefined` and `{ profileVersion: 1 }`
     // distinctly. Synthesizing would silently opt every brand-new
-    // chatbox/project into an empty envelope and defeat the
+    // scenario/project into an empty envelope and defeat the
     // "user opted in" signal that PR #269 preserves on the wire.
     const input = emptyHostConfigInputV2();
     expect(input.mcpProfile).toBeUndefined();

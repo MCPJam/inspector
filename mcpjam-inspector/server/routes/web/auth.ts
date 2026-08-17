@@ -34,7 +34,7 @@ import {
   xaaPolicyRequiresConfiguration,
 } from "../../utils/effective-auth.js";
 import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
-import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config.js";
+import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config.js";
 import { resolveLocalStdioServerConfig } from "../../utils/local-server-resolver.js";
 import {
   resolvePluginStdioHttpTarget,
@@ -52,6 +52,7 @@ import {
   webError,
   parseErrorMessage,
   mapRuntimeError,
+  mapTargetServerError,
   webErrorFromRoute,
   assertBearerToken,
   readJsonBody,
@@ -120,11 +121,11 @@ export const projectServerSchema = z.object({
   clientCapabilities: clientCapabilitiesSchema.optional(),
   oauthAccessToken: z.string().optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-  // Callers identify chatboxes by `chatboxId` (resolved via
-  // /web/chatbox/redeem) plus the backend-owned `accessVersion`. The
+  // Callers identify scenarios by `scenarioId` (resolved via
+  // /web/scenario/redeem) plus the backend-owned `accessVersion`. The
   // link token is consumed only at redemption; no read-path callsite
   // accepts it.
-  chatboxId: z.string().min(1).optional(),
+  scenarioId: z.string().min(1).optional(),
   accessVersion: z.number().int().nonnegative().optional(),
   // mcpProfile.initialize pins, resolved client-side from
   // `hostConfig.mcpProfile.initialize.*` and forwarded on every hosted
@@ -270,8 +271,8 @@ export const promptsListMultiSchema = z.object({
   mcpProtocolVersionsByServerId: mcpProtocolVersionsByServerIdSchema,
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-  // See projectServerSchema — chatbox identity is `chatboxId` + `accessVersion`.
-  chatboxId: z.string().min(1).optional(),
+  // See projectServerSchema — scenario identity is `scenarioId` + `accessVersion`.
+  scenarioId: z.string().min(1).optional(),
   accessVersion: z.number().int().nonnegative().optional(),
 });
 
@@ -309,8 +310,8 @@ export const hostedChatSchema = z
     surface: z.enum(["preview", "share_link"]).optional(),
     oauthTokens: z.record(z.string(), z.string()).optional(),
     accessScope: z.enum(["project_member", "chat_v2"]).optional(),
-    // See projectServerSchema — chatbox identity is `chatboxId` + `accessVersion`.
-    chatboxId: z.string().min(1).optional(),
+    // See projectServerSchema — scenario identity is `scenarioId` + `accessVersion`.
+    scenarioId: z.string().min(1).optional(),
     accessVersion: z.number().int().nonnegative().optional(),
   })
   .passthrough();
@@ -565,7 +566,7 @@ export async function authorizeServer(
   serverId: string,
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
     accessVersion?: number;
   }
 ): Promise<ClientSafeAuthorizeResponse> {
@@ -587,7 +588,7 @@ export async function authorizeServer(
         projectId,
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
-        ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(options?.scenarioId ? { scenarioId: options.scenarioId } : {}),
         ...(typeof options?.accessVersion === "number"
           ? { accessVersion: options.accessVersion }
           : {}),
@@ -642,7 +643,7 @@ export async function authorizeBatch(
   serverIds: string[],
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
     accessVersion?: number;
   }
 ): Promise<ConvexBatchAuthorizeResponse> {
@@ -664,7 +665,7 @@ export async function authorizeBatch(
         projectId,
         serverIds,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
-        ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
+        ...(options?.scenarioId ? { scenarioId: options.scenarioId } : {}),
         ...(typeof options?.accessVersion === "number"
           ? { accessVersion: options.accessVersion }
           : {}),
@@ -721,7 +722,7 @@ export async function authorizeBatch(
   // identical across batch results by construction — same Convex auth call,
   // same project. Take them from the first successful result.
   //
-  // Per-server fields (serverId, serverTransport, chatboxId) are only well-
+  // Per-server fields (serverId, serverTransport, scenarioId) are only well-
   // defined when the batch authorizes a single server. For multi-server
   // batches they would non-deterministically attribute to whichever server
   // iterated last, so we null them out at the request envelope; per-server
@@ -740,7 +741,7 @@ export async function authorizeBatch(
     if (successful.length > 1) {
       partial.serverId = null;
       partial.serverTransport = null;
-      partial.chatboxId = null;
+      partial.scenarioId = null;
     }
     caller.setLogContext?.(partial);
   }
@@ -1020,7 +1021,7 @@ export async function createAuthorizedManager(
   clientCapabilities?: Record<string, unknown>,
   options?: {
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
     accessVersion?: number;
     rpcLogger?: RpcLogger;
     /**
@@ -1087,7 +1088,7 @@ export async function createAuthorizedManager(
     /**
      * The host's enterprise-managed authorization policy (validated `on`
      * value). Read from the BACKEND-PROJECTED host config wherever a
-     * server-side host exists (chatbox turns, host-bound turns, swarm
+     * server-side host exists (scenario turns, host-bound turns, swarm
      * snapshots, eval host configs) — never trusted from a shareable
      * request body, because dropping the policy on an unconfigured `auto`
      * server would downgrade xaa→discover→OAuth. Under the policy every
@@ -1110,7 +1111,7 @@ export async function createAuthorizedManager(
      * `await createAuthorizedManager(...)` loses the race and the capability is
      * silently stripped. Registering synchronously below always wins.
      *
-     * Non-interactive surfaces (swarm, evals, chatbox persona/simulation,
+     * Non-interactive surfaces (swarm, evals, scenario persona/simulation,
      * tools/execute) deliberately omit this: they have no human to answer, so
      * servers should fail fast rather than block on a prompt nobody sees.
      */
@@ -1181,7 +1182,7 @@ export async function createAuthorizedManager(
     uniqueServerIds,
     {
       accessScope: options?.accessScope,
-      chatboxId: options?.chatboxId,
+      scenarioId: options?.scenarioId,
       accessVersion: options?.accessVersion,
     }
   );
@@ -1414,10 +1415,10 @@ export async function createAuthorizedManager(
             // The local reread + secret reveal must carry the same scope and
             // delegated identity as the hosted mint path below — a harness
             // caller's bearer is deliberately empty (workos_api_key supplies
-            // the service-token exchange), and a chatbox-scoped caller's
-            // reveal is gated on chatboxId/accessVersion.
+            // the service-token exchange), and a scenario-scoped caller's
+            // reveal is gated on scenarioId/accessVersion.
             accessScope: options?.accessScope,
-            chatboxId: options?.chatboxId,
+            scenarioId: options?.scenarioId,
             accessVersion: options?.accessVersion,
             workosApiKeyActingAs:
               caller.authMethod === "workos_api_key" &&
@@ -1450,7 +1451,7 @@ export async function createAuthorizedManager(
             serverId,
             serverDisplayName: displayServerName,
             accessScope: options?.accessScope,
-            chatboxId: options?.chatboxId,
+            scenarioId: options?.scenarioId,
             accessVersion: options?.accessVersion,
             // From THIS batch's own authorize response, not from the request:
             // it is what decides whether the caller has a membership the spec
@@ -1491,7 +1492,7 @@ export async function createAuthorizedManager(
               serverName: displayServerName,
               accessScope: options?.accessScope,
               shareToken: (options as { shareToken?: string })?.shareToken,
-              chatboxId: options?.chatboxId,
+              scenarioId: options?.scenarioId,
               accessVersion: options?.accessVersion,
             })
           : undefined;
@@ -1653,7 +1654,7 @@ export async function createAuthorizedManager(
                       projectId,
                       serverId,
                       accessScope: options?.accessScope,
-                      chatboxId: options?.chatboxId,
+                      scenarioId: options?.scenarioId,
                       accessVersion: options?.accessVersion,
                       // When the caller authed via WorkOS API key, secret
                       // reveal must use the same delegated-identity exchange
@@ -2047,9 +2048,9 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     raw.accessScope === "project_member" || raw.accessScope === "chat_v2"
       ? raw.accessScope
       : undefined;
-  const chatboxId =
-    typeof raw.chatboxId === "string" && raw.chatboxId.trim()
-      ? raw.chatboxId
+  const scenarioId =
+    typeof raw.scenarioId === "string" && raw.scenarioId.trim()
+      ? raw.scenarioId
       : undefined;
   const accessVersion =
     typeof raw.accessVersion === "number" && Number.isFinite(raw.accessVersion)
@@ -2058,23 +2059,23 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
   const { initializePins, mcpProtocolVersionsByServerId } =
     extractMcpInitializeOptions(raw);
 
-  // Enterprise-managed authorization policy. Chatbox-scoped connections are
+  // Enterprise-managed authorization policy. Scenario-scoped connections are
   // share-token-reachable, so the policy is read from the SERVER-side
-  // chatbox host config (fail closed on fetch failure — connecting with an
+  // scenario host config (fail closed on fetch failure — connecting with an
   // unknown policy could downgrade an unconfigured auto server onto the
   // discover/OAuth ladder). All other manual connections are the caller's
   // own session; the strictly-validated body value is self-tampering only.
   let xaaPolicy: XaaEnterprisePolicy | undefined;
-  if (chatboxId) {
-    const runtime = await fetchChatboxRuntimeConfig({
-      chatboxId,
+  if (scenarioId) {
+    const runtime = await fetchScenarioRuntimeConfig({
+      scenarioId,
       bearer: bearerToken,
     });
     if (!runtime.ok) {
       throw new WebRouteError(
         runtime.status >= 500 ? 502 : runtime.status,
         ErrorCode.INTERNAL_ERROR,
-        `Couldn't load this chatbox's settings, so the connection was stopped to avoid running with the wrong authorization policy. ${runtime.error}`
+        `Couldn't load this scenario's settings, so the connection was stopped to avoid running with the wrong authorization policy. ${runtime.error}`
       );
     }
     xaaPolicy = xaaPolicyFromMcpProfile(runtime.config.mcpProfile);
@@ -2097,7 +2098,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       undefined,
     {
       accessScope,
-      chatboxId,
+      scenarioId,
       accessVersion,
       rpcLogger: options?.rpcLogger,
       httpLogger: options?.httpLogger,
@@ -2224,6 +2225,7 @@ export {
   webError,
   parseErrorMessage,
   mapRuntimeError,
+  mapTargetServerError,
   webErrorFromRoute,
   assertBearerToken,
   readJsonBody,
