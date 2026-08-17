@@ -370,8 +370,15 @@ export async function findListingMetaForUri(
         return undefined;
       }
       if (seenCursors.has(nextCursor)) {
+        // Report the fact, not the value: pagination cursors are opaque
+        // server-generated tokens and implementations encode internal state
+        // in them. "The server repeated a cursor" is the whole diagnostic;
+        // the token itself adds nothing and puts server-side identifiers
+        // into our debug logs.
         onSkipped?.(
-          `resources/list repeated cursor "${nextCursor}" — stopping pagination`
+          `resources/list repeated a pagination cursor after ${
+            page + 1
+          } page(s) — stopping`
         );
         return undefined;
       }
