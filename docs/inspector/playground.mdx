@@ -274,6 +274,8 @@ In Strict mode, a badge shows the number of blocked requests. The panel includes
 - **Blocked requests** — Each violation with the directive and source that was blocked.
 - **Declared domains** — The connect, resource, frame, and base URI domains your widget currently declares.
 
+If an App reports a CSP violation and never finishes loading, an inline notice replaces the empty widget area after a short delay. The notice names the blocked directive and the first blocked origin so you can identify the missing declaration without opening the debug panel. Once you add the domain to your `_meta.ui.csp` and the App loads successfully, the notice disappears.
+
 #### Mounts
 
 The debug panel includes a **Mounts** section that appears only when a widget iframe has been torn down and rebuilt more than once during a session. Each entry shows the mount index, the reason it fired, and a timestamp. A healthy widget has exactly one mount; multiple entries indicate an unexpected re-mount that may have wiped widget state.
