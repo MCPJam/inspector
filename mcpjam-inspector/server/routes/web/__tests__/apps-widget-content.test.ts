@@ -293,6 +293,54 @@ describe("hosted /widget-content — malformed declarations", () => {
     expect(body.permissions).toEqual({ somethingNew: {} });
   });
 
+  it("trims declared origins so the hosted clamp sees what the browser will", async () => {
+    // Security, not tidiness. The hosted clamp's `matchesAnyDeny` lower-cases
+    // but does not trim, so a padded `" https://mcpjam.com "` slips past the
+    // MCPJam deny list — and the sandbox proxy's `sanitizeDomain` then trims
+    // it on the way out, so the browser allows the protected origin. Emitting
+    // the canonical form here keeps clamp and browser looking at one string.
+    mockResource({
+      contentMeta: {
+        ui: {
+          csp: {
+            connectDomains: ["  https://mcpjam.com  ", "\thttps://esm.sh\n"],
+          },
+        },
+      },
+    });
+    const res = await postWidgetContent(makeApp(), "permissive");
+    const body = await res.json();
+    expect(body.csp.connectDomains).toEqual([
+      "https://mcpjam.com",
+      "https://esm.sh",
+    ]);
+  });
+
+  it("strips characters the sandbox proxy would remove later", async () => {
+    // Same lockstep requirement for the quote/semicolon class that
+    // `sanitizeDomain` drops — otherwise the clamp inspects a string the
+    // browser never sees.
+    mockResource({
+      contentMeta: {
+        ui: { csp: { connectDomains: ['https://mcpjam.com";', "   ", "<>"] } },
+      },
+    });
+    const res = await postWidgetContent(makeApp(), "permissive");
+    const body = await res.json();
+    expect(body.csp.connectDomains).toEqual(["https://mcpjam.com"]);
+  });
+
+  it("canonicalizes legacy openai/widgetCSP origins the same way", async () => {
+    mockResource({
+      contentMeta: {
+        "openai/widgetCSP": { connect_domains: ["  https://mcpjam.com  "] },
+      },
+    });
+    const res = await postWidgetContent(makeApp(), "permissive");
+    const body = await res.json();
+    expect(body.csp).toEqual({ connectDomains: ["https://mcpjam.com"] });
+  });
+
   it("ignores a non-boolean prefersBorder", async () => {
     mockResource({ contentMeta: { ui: { prefersBorder: "yes" } } });
     const res = await postWidgetContent(makeApp());

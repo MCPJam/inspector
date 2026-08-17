@@ -3067,6 +3067,47 @@ describe("MCPAppsRenderer tool input streaming", () => {
     }
   });
 
+  it("does not carry a blocked-App notice onto freshly committed HTML", async () => {
+    // A violation belongs to the bytes that reported it. Once new HTML is
+    // committed the notice must not keep explaining the old ones — it would
+    // misdiagnose the new render outright if that failed for an unrelated
+    // reason. Covers both the resource swap and a refetch under the same
+    // identity, which the identity-keyed reset effect cannot see.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { rerender } = render(<HostedRenderer {...baseProps} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation({ blockedUri: "https://resource-a.example/app.js" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByTestId("mcp-app-csp-blocked-notice")).toBeTruthy();
+
+      // Same renderer, different live resource.
+      rerender(
+        <HostedRenderer
+          {...baseProps}
+          toolCallId="call-2"
+          resourceUri="mcp-app://other"
+        />
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      // Nothing has been reported against the new bytes, so there is nothing
+      // to explain about them.
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("explains a block after a TIGHTENED policy breaks a previously-working App", async () => {
     // End-to-end guard on the case the notice most needs to cover: the App
     // boots fine, the policy is then narrowed, and the reloaded App can't

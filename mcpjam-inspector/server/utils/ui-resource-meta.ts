@@ -80,9 +80,15 @@ export function extractLegacyOpenAICsp(
   const legacy = resourceMeta["openai/widgetCSP"];
   if (!legacy || typeof legacy !== "object") return undefined;
   const src = legacy as Record<string, unknown>;
+  // Canonicalized on the same terms as the SEP-1865 path — a padded or
+  // quote-bearing origin declared through the legacy keys reaches the same
+  // clamp and the same proxy, so it has the same bypass exposure.
   const readArr = (v: unknown): string[] | undefined =>
     Array.isArray(v)
-      ? v.filter((x): x is string => typeof x === "string" && x.length > 0)
+      ? v
+          .filter((x): x is string => typeof x === "string")
+          .map(canonicalizeCspSource)
+          .filter((x) => x.length > 0)
       : undefined;
   const out: McpUiResourceCsp = {};
   const connect = readArr(src.connect_domains);
@@ -108,6 +114,41 @@ const CSP_DOMAIN_KEYS = [
   "frameDomains",
   "baseUriDomains",
 ] as const;
+
+/**
+ * Canonicalize one declared CSP source into the exact string the sandbox
+ * proxy will emit.
+ *
+ * This must stay in lockstep with `sanitizeDomain` in sandbox-proxy.html
+ * (`domain.replace(/['"<>;]/g, "").trim()`), and the reason is a real
+ * security bug rather than tidiness. Every consumer between here and the
+ * browser compares these strings verbatim: the hosted clamp's
+ * `matchesAnyDeny` lower-cases but does NOT trim, so a padded
+ * `" https://mcpjam.com "` fails to match the MCPJam deny pattern and
+ * survives the clamp — and then the proxy trims it on the way out and the
+ * browser allows the protected origin. Clamp and browser end up disagreeing
+ * about what the value is, which defeats a clamp documented as
+ * non-bypassable.
+ *
+ * Canonicalizing at this choke point means the value the clamp inspects is
+ * byte-identical to the one the browser enforces.
+ */
+function canonicalizeCspSource(value: string): string {
+  return value.replace(/['"<>;]/g, "").trim();
+}
+
+/**
+ * A plain `{}` — not an array, not a `Date`/`Map`/class instance.
+ *
+ * Over MCP, `_meta` arrives as parsed JSON, so exotic objects can't reach
+ * here on the live path; this keeps the predicate honest about what it
+ * claims to check rather than closing a reachable hole.
+ */
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
 
 /**
  * Coerce a resource-declared `_meta.ui.csp` into a shape the downstream CSP
@@ -145,9 +186,10 @@ function normalizeCsp(value: unknown): McpUiResourceCsp | undefined {
   for (const key of CSP_DOMAIN_KEYS) {
     const list = src[key];
     if (!Array.isArray(list)) continue;
-    out[key] = list.filter(
-      (d): d is string => typeof d === "string" && d.trim().length > 0
-    );
+    out[key] = list
+      .filter((d): d is string => typeof d === "string")
+      .map(canonicalizeCspSource)
+      .filter((d) => d.length > 0);
   }
   return out;
 }
@@ -175,7 +217,7 @@ function normalizePermissions(
   for (const [key, marker] of Object.entries(
     value as Record<string, unknown>
   )) {
-    if (marker && typeof marker === "object" && !Array.isArray(marker)) {
+    if (isPlainObject(marker)) {
       out[key] = {};
     }
   }

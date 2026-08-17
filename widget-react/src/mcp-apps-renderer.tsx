@@ -1690,6 +1690,9 @@ export function MCPAppsRendererSurface({
       liveRenderIdentityRef.current = null;
       setWidgetHtml(html);
       setWidgetCsp(undefined);
+      // Same reasoning as the live commit below: new bytes, so a violation
+      // held from the previous resource no longer describes the screen.
+      setFirstCspBlock(null);
       setWidgetPermissions(undefined);
       setWidgetPermissive(true);
       setPrefersBorder(initialPrefersBorder ?? true);
@@ -1828,6 +1831,13 @@ export function MCPAppsRendererSurface({
       liveRenderIdentityRef.current = liveRenderIdentityKey;
       setWidgetHtml(html);
       setWidgetCsp(csp);
+      // New bytes are going on screen, so a violation still held here was
+      // reported against the previous ones. The identity-keyed reset effect
+      // above covers a resourceUri/session change; this covers the case it
+      // cannot see — a refetch that commits fresh HTML under the SAME
+      // identity. Stating the invariant at the commit site keeps it local:
+      // new bytes, no stale block.
+      setFirstCspBlock(null);
       setWidgetPermissions(permissions);
       setWidgetPermissive(permissive ?? false);
       setPrefersBorder(prefersBorder ?? true);
@@ -3414,9 +3424,7 @@ export function MCPAppsRendererSurface({
                   // (shared gate with the pre-prompt check above).
                   const safeHref = toSafeDownloadLinkUrl(link.uri);
                   if (safeHref === null) {
-                    throw new Error(
-                      `Unsupported download URI: ${link.uri}`
-                    );
+                    throw new Error(`Unsupported download URI: ${link.uri}`);
                   }
                   window.open(safeHref, "_blank", "noopener,noreferrer");
                 }
@@ -3707,16 +3715,17 @@ export function MCPAppsRendererSurface({
       // Remember the first block so the render path can explain a View
       // that never boots. Cleared on every reload alongside the debug
       // store's violation list.
-      setFirstCspBlock((prev) =>
-        prev ?? {
-          directive:
-            typeof effectiveDirective === "string" && effectiveDirective
-              ? effectiveDirective
-              : typeof directive === "string"
-              ? directive
-              : undefined,
-          blockedUri: typeof blockedUri === "string" ? blockedUri : undefined,
-        }
+      setFirstCspBlock(
+        (prev) =>
+          prev ?? {
+            directive:
+              typeof effectiveDirective === "string" && effectiveDirective
+                ? effectiveDirective
+                : typeof directive === "string"
+                ? directive
+                : undefined,
+            blockedUri: typeof blockedUri === "string" ? blockedUri : undefined,
+          }
       );
 
       if (!minimalMode) {
