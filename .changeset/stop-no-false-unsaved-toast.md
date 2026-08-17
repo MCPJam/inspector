@@ -2,7 +2,7 @@
 "@mcpjam/inspector": patch
 ---
 
-Stop pressing Stop from claiming the reply could not be saved.
+Pressing Stop no longer claims the reply could not be saved.
 
 Pressing Stop during a turn on a resumed chat-history thread produced an error toast about ten seconds later: "This reply couldn't be saved to your chat history. It's still visible here." Nothing had gone wrong — the user had cancelled the turn on purpose — and it fired on every Stop, on both the chat tab and the playground.
 
