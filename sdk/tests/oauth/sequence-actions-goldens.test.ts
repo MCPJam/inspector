@@ -124,11 +124,9 @@ describe.each(CASES)(
 
 // 2025-03-26 intentionally has no resource-metadata details in this action,
 // so it never parses the displayed URL and cannot hit this rendering crash.
-describe.each([
-  "2025-06-18",
-  "2025-11-25",
-  "2026-07-28",
-] satisfies OAuthProtocolVersion[])(
+// Derived from ALL_VERSIONS rather than listed, so a new era is covered the
+// moment it is added rather than silently skipping this regression.
+describe.each(ALL_VERSIONS.filter((version) => version !== "2025-03-26"))(
   "sequence actions (%s / invalid resource metadata URL)",
   (protocolVersion) => {
     it("displays the raw value without crashing", () => {
@@ -146,7 +144,47 @@ describe.each([
       expect(
         actions.find((action) => action.id === "request_resource_metadata")
           ?.details
-      ).toEqual([{ label: "GET", value: resourceMetadataUrl }]);
+      ).toEqual([
+        {
+          label: "GET",
+          value: `${resourceMetadataUrl} (not an absolute URL)`,
+        },
+      ]);
+    });
+  }
+);
+
+// The authorization-server metadata step renders on EVERY era, including
+// 2025-03-26 — it is outside the protected-resource preamble — so its
+// endpoints have a wider blast radius than the resource-metadata URL above.
+// RFC 8414 requires absolute endpoints, but the machines validate only that
+// the fields are present, so a relative one reaches the diagram unchecked.
+describe.each(ALL_VERSIONS)(
+  "sequence actions (%s / relative authorization server endpoints)",
+  (protocolVersion) => {
+    it("displays the raw endpoints without crashing", () => {
+      const actions = buildOAuthSequenceActions({
+        protocolVersion,
+        registrationStrategy: "dcr",
+        flowState: {
+          ...EMPTY_OAUTH_FLOW_STATE,
+          authorizationServerMetadata: {
+            issuer: "https://auth-server.example.com",
+            authorization_endpoint: "/authorize",
+            token_endpoint: "/token",
+            response_types_supported: ["code"],
+          },
+        } as OAuthFlowState,
+      });
+
+      expect(
+        actions.find(
+          (action) => action.id === "received_authorization_server_metadata"
+        )?.details
+      ).toEqual([
+        { label: "Token", value: "/token (not an absolute URL)" },
+        { label: "Auth", value: "/authorize (not an absolute URL)" },
+      ]);
     });
   }
 );
