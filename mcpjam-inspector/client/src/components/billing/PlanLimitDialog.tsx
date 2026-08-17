@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useOrganizationBilling } from "@/hooks/useOrganizationBilling";
 import {
-  consumeUpgradeReturnToken,
+  clearUpgradeReturnToken,
+  markUpgradeReturnWaited,
+  readUpgradeReturnToken,
   UPGRADE_RETURN_ORG_PARAM,
   UPGRADE_RETURN_ORIGIN_PARAM,
   UPGRADE_RETURN_PARAM,
@@ -103,7 +105,9 @@ function UpgradeReturnFlow({
 }) {
   const [settlementGraceElapsed, setSettlementGraceElapsed] = useState(false);
   const settledRef = useRef(false);
-  const waitReportedRef = useRef(false);
+  // Seeded from the ticket: a wait reported before a reload still counts, so
+  // the confirmation that lands afterwards is recorded as "late".
+  const waitReportedRef = useRef(readUpgradeReturnToken()?.waited === true);
   const { billingStatus, planCatalog, isLoadingBilling } =
     useOrganizationBilling(upgradeReturn.organizationId);
 
@@ -141,8 +145,14 @@ function UpgradeReturnFlow({
       : "pending";
     if (upgraded) {
       settledRef.current = true;
+      // Outcome known — this is the only success path that retires the ticket.
+      clearUpgradeReturnToken();
     } else {
       waitReportedRef.current = true;
+      // Kept, deliberately: a webhook slower than the grace window is still a
+      // real purchase, and the ticket is what lets a later load confirm it.
+      // The TTL retires it if nothing ever settles.
+      markUpgradeReturnWaited();
     }
 
     if (upgraded) {
@@ -180,32 +190,25 @@ function UpgradeReturnFlow({
 }
 
 function UpgradeReturnFlowBoundary() {
-  const [pendingReturn] = useState<UpgradeReturn | null>(() =>
-    readUpgradeReturnParams()
-  );
-  const [upgradeReturn, setUpgradeReturn] = useState<UpgradeReturn | null>(
-    null
-  );
-  const claimedRef = useRef(false);
+  // Armed from the ticket, which outlives a reload, rather than from the URL,
+  // which does not. Stripe's webhook can land after the user has refreshed or
+  // navigated, and the confirmation they paid for must not depend on the tab
+  // sitting still until it does.
+  const [upgradeReturn] = useState<UpgradeReturn | null>(() => {
+    const ticket = readUpgradeReturnToken();
+    return ticket
+      ? { organizationId: ticket.organizationId, origin: ticket.origin }
+      : null;
+  });
+  const strippedRef = useRef(false);
 
-  // Claiming is a side effect — it burns the one-shot token and rewrites the
-  // URL — so it runs in an effect, guarded to once. The app mounts under
-  // StrictMode, which double-invokes render-phase work and remounts effects in
-  // dev; a marker claimed twice is a confirmation lost.
+  // The params are bookkeeping for the round trip, never the authority: strip
+  // them on arrival so a reload, bookmark, or pasted link carries nothing.
   useEffect(() => {
-    if (!pendingReturn || claimedRef.current) return;
-    claimedRef.current = true;
-    // Strip regardless of the outcome: these params must not survive into a
-    // reload, a bookmark, or a link pasted to someone else.
-    stripUpgradeReturnParams();
-    // Only the tab that started checkout can settle a return. Without this the
-    // marker is just a URL: anyone loading it in an org already on a paid plan
-    // gets a purchase confirmation, and the funnel gets a conversion, for a
-    // checkout that never happened.
-    if (consumeUpgradeReturnToken(pendingReturn.organizationId)) {
-      setUpgradeReturn(pendingReturn);
-    }
-  }, [pendingReturn]);
+    if (strippedRef.current) return;
+    strippedRef.current = true;
+    if (readUpgradeReturnParams()) stripUpgradeReturnParams();
+  }, []);
 
   if (!upgradeReturn) return null;
 
@@ -410,7 +413,7 @@ function PlanLimitWall() {
   const upgradeSentence = !isBillingReady
     ? ""
     : isFreePlan
-    ? `Our ${upgrade.teamName} plan includes ${
+    ? `The ${upgrade.teamName} plan includes ${
         upgrade.teamEvalIterations
           ? `${formatCount(upgrade.teamEvalIterations)} per seat each month`
           : "a monthly allowance instead of a daily cap"

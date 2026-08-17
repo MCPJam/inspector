@@ -36,12 +36,23 @@ export const UPGRADE_RETURN_ORIGIN_PARAM = "upgrade_from";
 const UPGRADE_RETURN_TOKEN_KEY = "mcpjam.upgradeReturnToken";
 const UPGRADE_RETURN_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 
-export function stashUpgradeReturnToken(organizationId: string): void {
+export interface UpgradeReturnTicket {
+  organizationId: string;
+  origin: UpgradeOrigin;
+  /** We already reported one settlement wait for this checkout. Survives a
+   * reload so a slow webhook is still recorded as "late", not "immediate". */
+  waited: boolean;
+}
+
+export function stashUpgradeReturnToken(
+  organizationId: string,
+  origin: UpgradeOrigin
+): void {
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.setItem(
       UPGRADE_RETURN_TOKEN_KEY,
-      JSON.stringify({ organizationId, issuedAt: Date.now() })
+      JSON.stringify({ organizationId, origin, issuedAt: Date.now() })
     );
   } catch {
     // Storage can be unavailable (private mode, blocked cookies). Checkout
@@ -49,23 +60,68 @@ export function stashUpgradeReturnToken(organizationId: string): void {
   }
 }
 
-export function consumeUpgradeReturnToken(organizationId: string): boolean {
-  if (typeof window === "undefined") return false;
+/**
+ * Reads WITHOUT clearing, so the pending confirmation survives a reload or a
+ * remount while Stripe's webhook is still in flight — the toast used to depend
+ * on the tab staying mounted for the whole round trip, which is not something
+ * the user controls.
+ *
+ * The ticket, not the URL, is what arms the return: params are stripped on
+ * arrival, so a shared or bookmarked link still confirms nothing. Clearing is
+ * `clearUpgradeReturnToken`, once the outcome is known.
+ */
+export function readUpgradeReturnToken(): UpgradeReturnTicket | null {
+  if (typeof window === "undefined") return null;
   try {
     const raw = window.sessionStorage.getItem(UPGRADE_RETURN_TOKEN_KEY);
-    if (!raw) return false;
-    window.sessionStorage.removeItem(UPGRADE_RETURN_TOKEN_KEY);
+    if (!raw) return null;
     const parsed = JSON.parse(raw) as {
       organizationId?: string;
+      origin?: string;
       issuedAt?: number;
+      waited?: boolean;
     };
-    if (parsed?.organizationId !== organizationId) return false;
-    return (
-      typeof parsed.issuedAt === "number" &&
-      Date.now() - parsed.issuedAt < UPGRADE_RETURN_TOKEN_TTL_MS
+    const fresh =
+      typeof parsed?.issuedAt === "number" &&
+      Date.now() - parsed.issuedAt < UPGRADE_RETURN_TOKEN_TTL_MS;
+    // The TTL is the give-up: a checkout abandoned at Stripe leaves a ticket
+    // nothing will ever settle, and it must not wait in this tab forever.
+    if (!fresh || !parsed.organizationId) {
+      clearUpgradeReturnToken();
+      return null;
+    }
+    return {
+      organizationId: parsed.organizationId,
+      origin: parsed.origin === "credits" ? "credits" : "evals",
+      waited: parsed.waited === true,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Records that we already announced a settlement wait for this checkout. */
+export function markUpgradeReturnWaited(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.sessionStorage.getItem(UPGRADE_RETURN_TOKEN_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    window.sessionStorage.setItem(
+      UPGRADE_RETURN_TOKEN_KEY,
+      JSON.stringify({ ...parsed, waited: true })
     );
   } catch {
-    return false;
+    // Best effort: losing this only downgrades a "late" report to "immediate".
+  }
+}
+
+export function clearUpgradeReturnToken(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.removeItem(UPGRADE_RETURN_TOKEN_KEY);
+  } catch {
+    // Nothing to do; a stale ticket expires on its own via the TTL.
   }
 }
 
@@ -309,7 +365,7 @@ export function useUpgradeCheckout({
         }
         // Same tab, so the return URL brings the user back in place. The token
         // is what makes that return trustworthy on the way back.
-        stashUpgradeReturnToken(organizationId);
+        stashUpgradeReturnToken(organizationId, origin);
         window.location.assign(nextUrl);
         return { redirected: true, shouldDismiss: false };
       }

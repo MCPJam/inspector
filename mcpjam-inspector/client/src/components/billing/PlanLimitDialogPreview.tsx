@@ -69,7 +69,7 @@ const VARIANTS: PreviewVariant[] = [
       ...SHARED,
       title: "You're out of eval iterations today",
       description:
-        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Our Team plan includes 5,000 per seat each month, so evals can run smoothly on every PR instead of limiting your daily quality checks.",
+        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. The Team plan includes 5,000 per seat each month, so evals can run smoothly on every PR instead of limiting your daily quality checks.",
       showUpgrade: true,
       showEnterprise: false,
       requestRecipients: [],
@@ -83,7 +83,7 @@ const VARIANTS: PreviewVariant[] = [
       ...SHARED,
       title: "You're out of eval iterations today",
       description:
-        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. Our Team plan includes 5,000 per seat each month, so evals can run smoothly on every PR instead of limiting your daily quality checks. Only an owner can upgrade this organization.",
+        "Free includes 75 a day, and yours reset at 8:00 PM, about 9 hours from now. The Team plan includes 5,000 per seat each month, so evals can run smoothly on every PR instead of limiting your daily quality checks. Only an owner can upgrade this organization.",
       showUpgrade: false,
       showEnterprise: false,
       requestRecipients: [
@@ -140,7 +140,7 @@ const CREDITS_VARIANTS: CreditsVariant[] = [
     props: {
       ...CREDITS_SHARED,
       description:
-        "Free credits reset daily. Our Team plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.",
+        "Free credits reset daily. The Team plan replaces the daily cap with a monthly allowance per seat, so usage isn't rationed day to day.",
       isKnownNonManager: false,
       showUpgrade: true,
       requestRecipients: [],

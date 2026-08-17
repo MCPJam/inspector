@@ -120,8 +120,12 @@ beforeEach(() => {
  * A return is only honored in the tab that started checkout, so the tests have
  * to arrive the way a real user does: with the one-shot token in hand.
  */
-function arriveFromCheckout(url: string, organizationId = "org-1") {
-  stashUpgradeReturnToken(organizationId);
+function arriveFromCheckout(
+  url: string,
+  organizationId = "org-1",
+  origin: "evals" | "credits" = "evals"
+) {
+  stashUpgradeReturnToken(organizationId, origin);
   window.history.replaceState(null, "", url);
 }
 
@@ -144,7 +148,7 @@ describe("PlanLimitDialog", () => {
     // The Team figure comes from the plan catalog, so it tracks what billing
     // enforces rather than a hardcoded marketing string.
     expect(description).toHaveTextContent(
-      /Our Team plan includes 5,000 per seat each month/
+      /The Team plan includes 5,000 per seat each month/
     );
   });
 
@@ -317,7 +321,7 @@ describe("PlanLimitDialog", () => {
     const description = screen.getByTestId("plan-limit-dialog-description");
     expect(description).toHaveTextContent(/Your plan includes 5,000 a month/);
     expect(description).toHaveTextContent(/Enterprise adds negotiated usage/);
-    expect(description).not.toHaveTextContent(/Our Team plan/);
+    expect(description).not.toHaveTextContent(/The Team plan/);
     expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
     expect(screen.getByTestId("plan-limit-enterprise-cta")).toHaveTextContent(
       /Request upgrade/
@@ -362,7 +366,7 @@ describe("PlanLimitDialog", () => {
     const description = screen.getByTestId("plan-limit-dialog-description");
     expect(description).toHaveTextContent(/Your plan includes 5,000 a month/);
     expect(description).toHaveTextContent(/Enterprise adds negotiated usage/);
-    expect(description).not.toHaveTextContent(/Our Team plan/);
+    expect(description).not.toHaveTextContent(/The Team plan/);
     expect(screen.queryByTestId("upgrade-plan-cta")).not.toBeInTheDocument();
     expect(screen.getByTestId("plan-limit-enterprise-cta")).toBeInTheDocument();
   });
@@ -510,6 +514,49 @@ describe("PlanLimitDialog", () => {
       });
     });
 
+    it("still confirms after a reload while the webhook is pending", async () => {
+      vi.useFakeTimers();
+      try {
+        billingState.plan = "free";
+        arriveFromCheckout(
+          "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+        );
+        const first = render(<PlanLimitDialog />);
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(30_000);
+        });
+        expect(toastSuccess).not.toHaveBeenCalled();
+
+        // The user refreshes (or the app remounts) while Stripe's webhook is
+        // still in flight. The URL bookkeeping is long gone by now; only the
+        // ticket can carry the pending confirmation across.
+        first.unmount();
+        expect(window.location.search).toBe("");
+
+        billingState.plan = "team";
+        render(<PlanLimitDialog />);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(0);
+        });
+
+        expect(toastSuccess).toHaveBeenCalledWith(
+          expect.stringMatching(/You're on the Team plan/)
+        );
+        // Reported as late, not immediate: the wait survived the reload.
+        expect(trackMock).toHaveBeenCalledWith(
+          "plan_limit_upgrade_returned",
+          expect.objectContaining({ upgraded: true, settlement: "late" })
+        );
+        // Retired, so a third load says nothing.
+        expect(
+          window.sessionStorage.getItem("mcpjam.upgradeReturnToken")
+        ).toBe(null);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("ignores a return marker that did not come from this tab's checkout", async () => {
       // A bookmarked or shared link: no token, so no purchase is announced and
       // no conversion is recorded for a checkout that never happened.
@@ -533,7 +580,10 @@ describe("PlanLimitDialog", () => {
       expect(window.location.search).toBe("");
     });
 
-    it("ignores a return marker naming an organization it was not issued for", async () => {
+    it("resolves the org from the ticket, never from the URL", async () => {
+      // A tampered or stale `upgrade_org` must not redirect the confirmation:
+      // the ticket records the org THIS tab actually started checkout for, and
+      // that is the only one we report on.
       billingState.plan = "team";
       arriveFromCheckout(
         "/evals?upgrade=return&upgrade_org=org-2&upgrade_from=evals",
@@ -545,17 +595,18 @@ describe("PlanLimitDialog", () => {
         await Promise.resolve();
       });
 
-      expect(toastSuccess).not.toHaveBeenCalled();
-      expect(trackMock).not.toHaveBeenCalledWith(
+      expect(trackMock).toHaveBeenCalledWith(
         "plan_limit_upgrade_returned",
-        expect.anything()
+        expect.objectContaining({ organization_id: "org-1" })
       );
     });
 
     it("uses credit wording when the user came from the credits wall", async () => {
       billingState.plan = "team";
       arriveFromCheckout(
-        "/chat?upgrade=return&upgrade_org=org-1&upgrade_from=credits"
+        "/chat?upgrade=return&upgrade_org=org-1&upgrade_from=credits",
+        "org-1",
+        "credits"
       );
       render(<PlanLimitDialog />);
 
