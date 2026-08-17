@@ -116,25 +116,38 @@ const CSP_DOMAIN_KEYS = [
 ] as const;
 
 /**
- * Canonicalize one declared CSP source into the exact string the sandbox
- * proxy will emit.
+ * Canonicalize one declared CSP source into exactly the string the sandbox
+ * proxy will emit, or `""` when the entry can't be represented as a single
+ * source (callers drop empties).
  *
- * This must stay in lockstep with `sanitizeDomain` in sandbox-proxy.html
- * (`domain.replace(/['"<>;]/g, "").trim()`), and the reason is a real
- * security bug rather than tidiness. Every consumer between here and the
- * browser compares these strings verbatim: the hosted clamp's
- * `matchesAnyDeny` lower-cases but does NOT trim, so a padded
- * `" https://mcpjam.com "` fails to match the MCPJam deny pattern and
- * survives the clamp — and then the proxy trims it on the way out and the
- * browser allows the protected origin. Clamp and browser end up disagreeing
- * about what the value is, which defeats a clamp documented as
- * non-bypassable.
+ * Every consumer between here and the browser compares these strings
+ * verbatim, and two different mismatches have each produced a real bypass of
+ * the hosted clamp:
  *
- * Canonicalizing at this choke point means the value the clamp inspects is
- * byte-identical to the one the browser enforces.
+ *   - Padding. `matchesAnyDeny` lower-cases but does NOT trim, so
+ *     `" https://mcpjam.com "` matched no deny pattern and survived the
+ *     clamp — then the proxy's `sanitizeDomain` trimmed it on the way out and
+ *     the browser allowed the protected origin.
+ *   - Embedded whitespace. A CSP source list is space-separated, so an entry
+ *     like `"https://safe.example https://mcpjam.com"` is ONE value to the
+ *     clamp (matching nothing) but TWO sources to the browser once
+ *     `buildCSP` joins the list with spaces. Same for a smuggled `*`.
+ *
+ * Both reduce to the same rule: one array entry must mean one source, spelled
+ * the same way here as at the point of enforcement. Whitespace-bearing
+ * entries are dropped rather than split — a split would hand the clamp
+ * tokens the declaration never legitimately expressed, and a malformed
+ * declaration should fail closed.
+ *
+ * The character strip must stay in lockstep with `sanitizeDomain` in
+ * sandbox-proxy.html (`domain.replace(/['"<>;]/g, "").trim()`); if that gains
+ * another transform, this has to follow or the gap reopens.
  */
 function canonicalizeCspSource(value: string): string {
-  return value.replace(/['"<>;]/g, "").trim();
+  const stripped = value.replace(/['"<>;]/g, "").trim();
+  // Any interior whitespace means this entry would fan out into multiple
+  // CSP sources at emit time, past whatever the clamp inspected.
+  return /\s/.test(stripped) ? "" : stripped;
 }
 
 /**

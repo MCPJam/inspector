@@ -330,6 +330,44 @@ describe("hosted /widget-content — malformed declarations", () => {
     expect(body.csp.connectDomains).toEqual(["https://mcpjam.com"]);
   });
 
+  it("drops entries with embedded whitespace that would fan out into extra sources", async () => {
+    // A CSP source list is space-separated. The clamp inspects each array
+    // entry as ONE value, but `buildCSP` joins the list with spaces — so
+    // `"https://safe.example https://mcpjam.com"` matches no deny pattern
+    // and still reaches the browser as two sources, smuggling the protected
+    // origin past a clamp documented as non-bypassable. Same for a `*`.
+    mockResource({
+      contentMeta: {
+        ui: {
+          csp: {
+            connectDomains: [
+              "https://safe.example https://mcpjam.com",
+              "https://safe.example *",
+              "https://legit.example",
+            ],
+          },
+        },
+      },
+    });
+    const res = await postWidgetContent(makeApp(), "permissive");
+    const body = await res.json();
+    expect(body.csp.connectDomains).toEqual(["https://legit.example"]);
+  });
+
+  it("drops whitespace-bearing entries on the legacy path too", async () => {
+    mockResource({
+      contentMeta: {
+        "openai/widgetCSP": {
+          connect_domains: ["https://safe.example https://mcpjam.com"],
+        },
+      },
+    });
+    const res = await postWidgetContent(makeApp(), "permissive");
+    const body = await res.json();
+    // Nothing survived, so there is no legacy csp to report.
+    expect(body.csp).toBeUndefined();
+  });
+
   it("canonicalizes legacy openai/widgetCSP origins the same way", async () => {
     mockResource({
       contentMeta: {
