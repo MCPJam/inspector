@@ -200,13 +200,12 @@ export function reportCaught(error: unknown, options: ReportOptions): void {
   try {
     if (isErrorCaptureSurface() && !isCredentialBearingPath()) {
       posthog.captureException(normalized, {
-        // Tags are dimensions, and PostHog has no separate tag namespace — they
-        // ride as properties so the two sinks can be sliced the same way.
-        // First, so `source` stays the call site's own name (as in Sentry).
+        // No tag namespace in PostHog, so both flatten into properties. Order
+        // mirrors Sentry: tags beat extra, and source/level stay authoritative.
+        ...(options.extra ?? {}),
         ...(options.tags ?? {}),
         source: options.source,
         level: options.level ?? "error",
-        ...(options.extra ?? {}),
       });
     }
   } catch {
