@@ -304,6 +304,31 @@ describe("polling", () => {
 });
 
 describe("returning from the authorization server", () => {
+  it("completes even while AuthKit is still loading", async () => {
+    // The callback authenticates with the continuation cookie and wants
+    // nothing from AuthKit, so gating it on the session would be strictly
+    // harmful: a refresh that never settles would strand the code exchange
+    // AFTER the user had already consented, losing the authorization.
+    authkit.isLoading = true;
+    const calls = mockApi({
+      "/authorize/complete": () => ({
+        requestId: "scr_1",
+        status: "validating",
+      }),
+      "/state": () => stateBody({ status: "validating" }),
+    });
+    rememberPendingAuthorization("scr_1", AUTH_URL);
+    goTo("/oauth/callback", "?code=auth-code&state=st&iss=https://as.example");
+
+    render(<ServerConnectionHandoff />);
+
+    await waitFor(() =>
+      expect(
+        calls.find((call) => call.path === "/authorize/complete")
+      ).toBeDefined()
+    );
+  });
+
   it("posts the callback and clears the marker", async () => {
     const calls = mockApi({
       "/authorize/complete": () => ({
