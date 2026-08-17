@@ -7,18 +7,30 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 describe("formatOAuthCallbackError", () => {
-  it.each([
-    "invalid_grant",
-    "Uncaught InvalidGrantError",
-    "Uncaught InvalidGrantError\n    at async exchangeGenericAuthorizationCode",
+  const invalidGrantMessage =
+    "OAuth token exchange failed (invalid_grant): the authorization server rejected the authorization code. Check whether the code expired or was reused, and whether the redirect URI, client ID, and PKCE verifier match.";
+  const invalidClientMessage =
+    "Invalid client ID during token exchange. Please verify the client ID is correctly registered.";
+
+  it.each<[unknown, string]>([
+    ["invalid_grant", invalidGrantMessage],
+    ["invalid-grant", invalidGrantMessage],
+    ["invalid grant", invalidGrantMessage],
+    ["Uncaught InvalidGrantError", invalidGrantMessage],
+    [
+      "Uncaught InvalidGrantError\n    at async exchangeGenericAuthorizationCode",
+      invalidGrantMessage,
+    ],
+    [new Error("invalid_grant"), invalidGrantMessage],
+    [null, "Unknown callback error"],
+    ["", ""],
+    ["invalid_grant: client_id mismatch", invalidClientMessage],
   ])(
-    "keeps the OAuth error code and adds token-exchange context: %s",
-    async (error) => {
+    "formats callback error context for %s",
+    async (error, expected) => {
       const { formatOAuthCallbackError } = await import("../mcp-oauth");
 
-      expect(formatOAuthCallbackError(error)).toBe(
-        "OAuth token exchange failed (invalid_grant): the authorization server rejected the authorization code. Check whether the code expired or was reused, and whether the redirect URI, client ID, and PKCE verifier match."
-      );
+      expect(formatOAuthCallbackError(error)).toBe(expected);
     }
   );
 });

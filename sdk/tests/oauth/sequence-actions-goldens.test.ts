@@ -122,6 +122,8 @@ describe.each(CASES)(
   },
 );
 
+// 2025-03-26 intentionally has no resource-metadata details in this action,
+// so it never parses the displayed URL and cannot hit this rendering crash.
 describe.each([
   "2025-06-18",
   "2025-11-25",
