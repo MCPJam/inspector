@@ -2917,6 +2917,11 @@ export function MCPAppsRendererSurface({
     if (previous === null || previous === effectiveSandboxKey) return;
     clearCspViolations(toolCallId);
     setFirstCspBlock(null);
+    // Readiness deliberately NOT reset here. `effectiveSandboxKey` is also a
+    // dependency of the bridge-connect effect below, which already does
+    // `setIsReady(false)` when it re-runs — so a policy change resets
+    // readiness exactly once, on the path that owns it. Duplicating it here
+    // would be dead code that reads like a second source of truth.
   }, [effectiveSandboxKey, toolCallId, clearCspViolations]);
 
   // Publish the resolved sandbox payload into the widget-debug store so the

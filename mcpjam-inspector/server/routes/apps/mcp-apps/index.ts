@@ -16,6 +16,7 @@ import { MCP_APPS_SANDBOX_PROXY_HTML } from "../SandboxProxyHtml.bundled";
 import { RECORDER_SHIM_JS } from "./recorder-shim";
 import { injectOpenAICompat } from "../../../utils/widget-helpers";
 import {
+  canSkipListingLookup,
   findListingMetaForUri,
   resolveUiResourceMeta,
 } from "../../../utils/ui-resource-meta";
@@ -235,16 +236,20 @@ apps.post("/widget-content", async (c) => {
     // listing source undefined and the content source wins.
     const resourceMeta = content._meta as Record<string, unknown> | undefined;
 
-    const listingMeta = await findListingMetaForUri(
-      mcpClientManager,
-      serverId,
-      resolvedResourceUri,
-      (reason) =>
-        logger.debug("[MCP Apps] resources/list fallback skipped", {
-          resourceUri: resolvedResourceUri,
-          reason,
-        })
-    );
+    // A content item that already declares every field can't be improved by
+    // a lower-precedence source, so skip the round-trip entirely.
+    const listingMeta = canSkipListingLookup(resourceMeta)
+      ? undefined
+      : await findListingMetaForUri(
+          mcpClientManager,
+          serverId,
+          resolvedResourceUri,
+          (reason) =>
+            logger.debug("[MCP Apps] resources/list fallback skipped", {
+              resourceUri: resolvedResourceUri,
+              reason,
+            })
+        );
 
     const { csp, permissions, prefersBorder, metadataSources, metadataSource } =
       resolveUiResourceMeta({ contentMeta: resourceMeta, listingMeta });

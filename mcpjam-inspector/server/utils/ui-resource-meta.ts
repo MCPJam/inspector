@@ -152,14 +152,34 @@ function normalizeCsp(value: unknown): McpUiResourceCsp | undefined {
   return out;
 }
 
-/** Permissions must be a plain object — SEP-1865 declares each as `{}`. */
+/**
+ * Normalize `_meta.ui.permissions`. SEP-1865 declares each requested
+ * permission as an empty object (`{}`), and the renderer grants on plain
+ * truthiness (`if (v) resourcePermsMap[k] = true`) — so a malformed
+ * `{ camera: "yes" }` would be read as a genuine camera request. Marker
+ * values are checked individually and anything that isn't a plain object is
+ * dropped rather than granted.
+ *
+ * Deliberately key-agnostic: every surviving marker is rewritten to the
+ * canonical `{}`, but the key set is not enumerated. Hard-coding today's four
+ * permissions would silently discard any the spec adds later, trading a
+ * malformed-input bug for a spec-drift one.
+ */
 function normalizePermissions(
   value: unknown
 ): McpUiResourcePermissions | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return undefined;
   }
-  return value as McpUiResourcePermissions;
+  const out: Record<string, Record<string, never>> = {};
+  for (const [key, marker] of Object.entries(
+    value as Record<string, unknown>
+  )) {
+    if (marker && typeof marker === "object" && !Array.isArray(marker)) {
+      out[key] = {};
+    }
+  }
+  return out as McpUiResourcePermissions;
 }
 
 interface NormalizedUiMeta {
@@ -264,17 +284,20 @@ export function resolveUiResourceMeta(
 /**
  * Page cap for the `resources/list` lookup below.
  *
- * `resources/list` is paginated, and the listing declaration can live on any
- * page — searching only the first would silently treat a listing-only
- * declaration as absent, which is the exact failure this fallback exists to
- * prevent. But this runs on every widget render, so an unbounded walk would
- * put a large catalog's full enumeration in front of the App's HTML.
+ * `resources/list` is paginated and the listing declaration can live on any
+ * page, so the walk has to follow `nextCursor`. It cannot follow it forever:
+ * this runs on every widget render, ahead of the App's HTML, so an unbounded
+ * walk makes each render on a large catalog pay that catalog's full
+ * enumeration in sequential round-trips.
  *
- * The cap splits the difference: follow `nextCursor` until the URI is found,
- * the server stops paginating, or this many pages have been read. Nine out of
- * ten servers answer on page one and never pay for a second round-trip.
+ * The bound is set high enough to cover realistic catalogs rather than to
+ * ration requests — most servers answer on page one, and
+ * `canSkipListingLookup` removes the request entirely for the common
+ * fully-declared resource. Hitting the cap is reported through `onSkipped`
+ * rather than passing silently, so a truncated walk is diagnosable instead of
+ * looking like "no declaration".
  */
-const LISTING_LOOKUP_MAX_PAGES = 5;
+const LISTING_LOOKUP_MAX_PAGES = 20;
 
 interface ResourceListingClient {
   listResources(
@@ -284,14 +307,33 @@ interface ResourceListingClient {
 }
 
 /**
+ * True when the content item's canonical `_meta.ui` already supplies every
+ * field the resolver reads, so no lower-precedence source could change the
+ * outcome and the `resources/list` round-trip is pure cost.
+ *
+ * Only the canonical block counts. Legacy `openai/widget*` keys rank BELOW
+ * the listing's `_meta.ui`, so a content item carrying only legacy metadata
+ * must still consult the listing.
+ */
+export function canSkipListingLookup(
+  contentMeta: Record<string, unknown> | undefined
+): boolean {
+  const ui = readUiMeta(contentMeta);
+  return (
+    ui.csp !== undefined &&
+    ui.permissions !== undefined &&
+    ui.prefersBorder !== undefined
+  );
+}
+
+/**
  * Best-effort lookup of a resource's `resources/list` `_meta`, following
- * pagination up to `LISTING_LOOKUP_MAX_PAGES` and stopping as soon as the URI
- * is found.
+ * pagination and stopping as soon as the URI is found.
  *
  * Returns undefined when the server doesn't implement `resources/list`, the
- * URI isn't listed, or the walk hits the page cap — all of which leave the
- * caller with the content-item metadata it already had. Never throws: the
- * listing is a fallback, so a failure here must not fail the render.
+ * URI isn't listed, or the walk is cut short — all of which leave the caller
+ * with the content-item metadata it already had. Never throws: the listing is
+ * a fallback, so a failure here must not fail the render.
  */
 export async function findListingMetaForUri(
   manager: ResourceListingClient,
@@ -301,6 +343,10 @@ export async function findListingMetaForUri(
 ): Promise<Record<string, unknown> | undefined> {
   try {
     let cursor: string | undefined;
+    // A server that keeps handing back a cursor it already issued would
+    // otherwise spin until the page cap, turning one broken server into
+    // `LISTING_LOOKUP_MAX_PAGES` pointless round-trips on every render.
+    const seenCursors = new Set<string>();
     for (let page = 0; page < LISTING_LOOKUP_MAX_PAGES; page++) {
       const listing = (await manager.listResources(
         serverId,
@@ -323,6 +369,13 @@ export async function findListingMetaForUri(
       if (match || typeof nextCursor !== "string" || nextCursor.length === 0) {
         return undefined;
       }
+      if (seenCursors.has(nextCursor)) {
+        onSkipped?.(
+          `resources/list repeated cursor "${nextCursor}" — stopping pagination`
+        );
+        return undefined;
+      }
+      seenCursors.add(nextCursor);
       cursor = nextCursor;
     }
     onSkipped?.(

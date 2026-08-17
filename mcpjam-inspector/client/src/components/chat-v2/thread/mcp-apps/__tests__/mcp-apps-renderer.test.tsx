@@ -3067,6 +3067,56 @@ describe("MCPAppsRenderer tool input streaming", () => {
     }
   });
 
+  it("explains a block after a TIGHTENED policy breaks a previously-working App", async () => {
+    // End-to-end guard on the case the notice most needs to cover: the App
+    // boots fine, the policy is then narrowed, and the reloaded App can't
+    // initialize. This works because `effectiveSandboxKey` is a dependency
+    // of the bridge-connect effect, which resets readiness when it re-runs —
+    // pinning that here so a refactor that decouples the two (leaving
+    // `isReady` true across a policy reload) turns the notice back into a
+    // silent blank surface.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const renderTree = (connectDomains: string[]) => (
+        <ActiveMcpProfileProvider
+          value={{
+            profileVersion: 1,
+            apps: {
+              sandbox: {
+                csp: { mode: "declared", restrictTo: { connectDomains } },
+              },
+            },
+          }}
+        >
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      );
+
+      const { rerender } = render(renderTree(["https://api.example.com"]));
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+      act(() => triggerReady());
+
+      // Narrow the policy — the iframe reloads and the App is now blocked.
+      rerender(renderTree([]));
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
+      });
+
+      postCspViolation({ blockedUri: "https://api.example.com/data" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      const notice = screen.getByTestId("mcp-app-csp-blocked-notice");
+      expect(notice.textContent).toContain("https://api.example.com/data");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("clears a stale blocked-App notice when the sandbox policy changes", async () => {
     // Widening a profile to unblock an App re-posts the resource-ready
     // payload (SandboxedIframe keys it on the resolved csp), so the View

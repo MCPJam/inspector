@@ -7,6 +7,7 @@ import { RECORDER_SHIM_JS } from "../apps/mcp-apps/recorder-shim.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
 import { logger } from "../../utils/logger.js";
 import {
+  canSkipListingLookup,
   findListingMetaForUri,
   resolveUiResourceMeta,
 } from "../../utils/ui-resource-meta.js";
@@ -177,16 +178,20 @@ apps.post("/mcp-apps/widget-content", async (c) =>
       // Best-effort listing lookup: servers without `resources/list` (or
       // that don't return this URI) simply fall through to the content
       // item, exactly as before this lookup existed.
-      const listingMeta = await findListingMetaForUri(
-        manager,
-        body.serverId,
-        resolvedResourceUri,
-        (reason) =>
-          logger.debug("[MCP Apps] resources/list fallback skipped", {
-            resourceUri: resolvedResourceUri,
-            reason,
-          }),
-      );
+      // A content item that already declares every field can't be improved
+      // by a lower-precedence source, so skip the round-trip entirely.
+      const listingMeta = canSkipListingLookup(resourceMeta)
+        ? undefined
+        : await findListingMetaForUri(
+            manager,
+            body.serverId,
+            resolvedResourceUri,
+            (reason) =>
+              logger.debug("[MCP Apps] resources/list fallback skipped", {
+                resourceUri: resolvedResourceUri,
+                reason,
+              }),
+          );
 
       const {
         csp: cspFromMeta,

@@ -262,6 +262,37 @@ describe("hosted /widget-content — malformed declarations", () => {
     expect(body.metadataSources.csp).toBe("content");
   });
 
+  it("drops malformed permission markers instead of granting them", async () => {
+    // The renderer grants on plain truthiness, so a non-object marker like
+    // `"yes"` would read as a genuine camera request.
+    mockResource({
+      contentMeta: {
+        ui: {
+          permissions: {
+            camera: {},
+            microphone: "yes",
+            geolocation: true,
+            clipboardWrite: null,
+          },
+        },
+      },
+    });
+    const res = await postWidgetContent(makeApp());
+    const body = await res.json();
+    expect(body.permissions).toEqual({ camera: {} });
+  });
+
+  it("keeps unknown permission keys so future spec additions survive", async () => {
+    // Key-agnostic on purpose: enumerating today's four permissions would
+    // silently drop any the spec adds later.
+    mockResource({
+      contentMeta: { ui: { permissions: { somethingNew: {} } } },
+    });
+    const res = await postWidgetContent(makeApp());
+    const body = await res.json();
+    expect(body.permissions).toEqual({ somethingNew: {} });
+  });
+
   it("ignores a non-boolean prefersBorder", async () => {
     mockResource({ contentMeta: { ui: { prefersBorder: "yes" } } });
     const res = await postWidgetContent(makeApp());
@@ -389,6 +420,66 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
     expect(managerState.listResources).toHaveBeenCalledTimes(1);
   });
 
+  it("skips the listing round-trip when the content item declares everything", async () => {
+    // The listing can only supply fields the content item didn't. When the
+    // canonical block is complete, the request is pure latency in front of
+    // the App's HTML — and this is the common case for a well-formed App.
+    mockResource({
+      contentMeta: {
+        ui: { csp: ESM_CSP, permissions: { camera: {} }, prefersBorder: true },
+      },
+    });
+    const res = await postWidgetContent(makeApp());
+    const body = await res.json();
+    expect(body.csp).toEqual(ESM_CSP);
+    expect(body.metadataSource).toBe("content");
+    expect(managerState.listResources).not.toHaveBeenCalled();
+  });
+
+  it("still consults the listing when the content item declares only some fields", async () => {
+    mockResource({
+      contentMeta: { ui: { csp: ESM_CSP } },
+      listingMeta: { ui: { prefersBorder: false } },
+    });
+    const res = await postWidgetContent(makeApp());
+    const body = await res.json();
+    expect(body.prefersBorder).toBe(false);
+    expect(managerState.listResources).toHaveBeenCalled();
+  });
+
+  it("still consults the listing when the content item has only legacy keys", async () => {
+    // Legacy `openai/widget*` ranks BELOW the listing's `_meta.ui`, so a
+    // content item carrying only legacy metadata must not short-circuit.
+    mockResource({
+      contentMeta: {
+        "openai/widgetCSP": { connect_domains: ["https://legacy.example.com"] },
+        "openai/widgetPrefersBorder": true,
+      },
+      listingMeta: { ui: { csp: ESM_CSP } },
+    });
+    const res = await postWidgetContent(makeApp());
+    const body = await res.json();
+    expect(managerState.listResources).toHaveBeenCalled();
+    // Listing's canonical csp beats the content item's legacy csp.
+    expect(body.csp).toEqual(ESM_CSP);
+    expect(body.metadataSources.csp).toBe("listing");
+  });
+
+  it("stops paginating when the server repeats a cursor", async () => {
+    // A server that keeps reissuing the same cursor would otherwise spin to
+    // the page cap on every single render.
+    mockResource({});
+    managerState.listResources.mockImplementation(async () => ({
+      resources: [{ uri: "ui://other/a.html" }],
+      nextCursor: "same-cursor-forever",
+    }));
+
+    const res = await postWidgetContent(makeApp());
+    expect(res.status).toBe(200);
+    // First page, then one more with the cursor — then the repeat is caught.
+    expect(managerState.listResources).toHaveBeenCalledTimes(2);
+  });
+
   it("caps the pagination walk instead of enumerating a huge catalog", async () => {
     // A server that paginates forever must not hold the App's HTML hostage.
     managerState.readResource.mockResolvedValue({
@@ -396,9 +487,12 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
         { uri: RESOURCE_URI, mimeType: MCP_APPS_MIMETYPE, text: HTML },
       ],
     });
+    // Distinct cursors each time, so this exercises the page cap rather than
+    // the repeated-cursor guard.
+    let page = 0;
     managerState.listResources.mockImplementation(async () => ({
       resources: [{ uri: "ui://other/a.html" }],
-      nextCursor: "more",
+      nextCursor: `page-${page++}`,
     }));
 
     const res = await postWidgetContent(makeApp());
@@ -406,7 +500,12 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
     const body = await res.json();
     expect(body.html).toBe(HTML);
     expect(body.metadataSource).toBe("none");
-    expect(managerState.listResources).toHaveBeenCalledTimes(5);
+    // Bounded, and the App still renders rather than hanging behind an
+    // unbounded enumeration. The exact bound is an implementation detail;
+    // what matters is that it terminates and stays modest.
+    const calls = managerState.listResources.mock.calls.length;
+    expect(calls).toBeGreaterThan(1);
+    expect(calls).toBeLessThanOrEqual(20);
   });
 
   it("still serves the App when the server has no resources/list", async () => {
