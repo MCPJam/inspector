@@ -121,3 +121,30 @@ describe.each(CASES)(
     });
   },
 );
+
+describe.each([
+  "2025-06-18",
+  "2025-11-25",
+  "2026-07-28",
+] satisfies OAuthProtocolVersion[])(
+  "sequence actions (%s / invalid resource metadata URL)",
+  (protocolVersion) => {
+    it("displays the raw value without crashing", () => {
+      const resourceMetadataUrl = "/.well-known/oauth-protected-resource";
+
+      const actions = buildOAuthSequenceActions({
+        protocolVersion,
+        registrationStrategy: "dcr",
+        flowState: {
+          ...EMPTY_OAUTH_FLOW_STATE,
+          resourceMetadataUrl,
+        },
+      });
+
+      expect(
+        actions.find((action) => action.id === "request_resource_metadata")
+          ?.details
+      ).toEqual([{ label: "GET", value: resourceMetadataUrl }]);
+    });
+  }
+);

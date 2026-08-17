@@ -56,6 +56,14 @@ function truncate(value: string, length: number): string {
   return `${value.substring(0, length)}...`;
 }
 
+function pathnameOrRawValue(value: string): string {
+  try {
+    return new URL(value).pathname;
+  } catch {
+    return value;
+  }
+}
+
 function resourceDetailValue(
   flowState: OAuthFlowState,
   era: SequenceDiagramEraSpec,
@@ -105,7 +113,7 @@ function protectedResourceMetadataActions(
         ? [
             {
               label: "GET",
-              value: new URL(flowState.resourceMetadataUrl).pathname,
+              value: pathnameOrRawValue(flowState.resourceMetadataUrl),
             },
           ]
         : undefined,
