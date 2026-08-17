@@ -957,8 +957,19 @@ export function ScenarioChatPage({
   // emulates. Seeding "claude" made every tester watch a Claude-branded shell
   // load a Cursor scenario; DEFAULT_HOST_STYLE is MCPJam precisely so
   // unresolved surfaces don't impersonate a vendor.
-  const hostStyle = session?.payload.hostStyle ?? DEFAULT_HOST_STYLE.id;
-  const chatUiOverride = session?.payload.chatUiOverride;
+  //
+  // A stored session is no proof of that either. sessionStorage outlives the
+  // page, so a tester who opens a second link redeems scenario B with scenario
+  // A's session still in hand, and the shell wears A's brand for the whole
+  // redemption — the same impersonation, sourced from the last visit instead of
+  // a seed. The session earns the shell only once its own share token is the
+  // one in the address bar; with no token there (the post-redeem strip removed
+  // it) the stored session is all there is, and it is this link's.
+  const sessionForCurrentLink =
+    tokenFromPath && session?.shareToken !== tokenFromPath ? null : session;
+  const hostStyle =
+    sessionForCurrentLink?.payload.hostStyle ?? DEFAULT_HOST_STYLE.id;
+  const chatUiOverride = sessionForCurrentLink?.payload.chatUiOverride;
   const shellStyle = getScenarioShellStyle(hostStyle, themeMode, chatUiOverride);
   const clientLabel = getScenarioHostLabel(hostStyle, chatUiOverride);
   const clientLogoSrc = getScenarioHostLogo(
@@ -1161,7 +1172,7 @@ export function ScenarioChatPage({
                             the scenario's internal name is the author's
                             label for it and means nothing to them. */}
                         <div className="flex min-w-0 flex-1 items-center gap-2">
-                          {session ? (
+                          {sessionForCurrentLink ? (
                             <>
                               <img
                                 src={clientLogoSrc}
