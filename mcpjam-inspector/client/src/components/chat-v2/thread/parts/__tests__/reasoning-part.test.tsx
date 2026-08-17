@@ -68,9 +68,11 @@ describe("ReasoningPart", () => {
     expect(container.firstChild).toBeNull();
   });
 
-  it("signals that the model is thinking while reasoning streams", () => {
+  it("shimmers the label while reasoning streams", () => {
     // The collapsed default only works if a still-running turn is visibly
-    // distinguishable from a hung one — that was the actual complaint.
+    // distinguishable from a hung one — that was the actual complaint. The
+    // motion lives on the label itself, so assert the class is actually on
+    // the text node and not merely somewhere in the header.
     render(
       <ReasoningPart
         text="Working through the request"
@@ -79,9 +81,25 @@ describe("ReasoningPart", () => {
       />,
     );
 
-    expect(
-      screen.getByRole("button", { name: /thinking/i }),
-    ).toBeInTheDocument();
+    expect(screen.getByText("Thinking…")).toHaveClass(
+      "reasoning-shimmer-text",
+    );
+  });
+
+  it("stops shimmering once reasoning is done", () => {
+    // A shimmer on a finished label would advertise work that is no longer
+    // happening.
+    render(
+      <ReasoningPart
+        text="Working through the request"
+        state="done"
+        displayMode="collapsed"
+      />,
+    );
+
+    expect(screen.getByText("Reasoning")).not.toHaveClass(
+      "reasoning-shimmer-text",
+    );
   });
 
   it("stays open while more reasoning streams in after the reader expands it", () => {

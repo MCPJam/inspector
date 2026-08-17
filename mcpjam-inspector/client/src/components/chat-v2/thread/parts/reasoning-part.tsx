@@ -69,16 +69,16 @@ export function ReasoningPart({
         aria-expanded={isExpanded}
         aria-controls={contentId}
       >
-        <span>{state === "streaming" ? "Thinking…" : "Reasoning"}</span>
+        {/* The whole point of the collapsed default: a turn that would
+            otherwise look frozen shows live motion while the model reasons.
+            The shimmer sweeps the label itself, so it carries that signal
+            without adding a second element competing with the chevron. */}
+        <span
+          className={state === "streaming" ? "reasoning-shimmer-text" : undefined}
+        >
+          {state === "streaming" ? "Thinking…" : "Reasoning"}
+        </span>
         <span className="flex items-center gap-2">
-          {state === "streaming" ? (
-            // The whole point of the collapsed default: a turn that would
-            // otherwise look frozen shows a live pulse while the model reasons.
-            <span
-              aria-hidden
-              className="h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground/60"
-            />
-          ) : null}
           <ChevronDown
             className={`h-3.5 w-3.5 transition-transform duration-150 ${
               isExpanded ? "rotate-180" : ""
