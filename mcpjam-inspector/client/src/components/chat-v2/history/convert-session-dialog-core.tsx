@@ -27,6 +27,7 @@ import {
   AlertTitle,
 } from "@mcpjam/design-system/alert";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import {
   buildServerBasedSuiteName,
   normalizeServerNames,
@@ -119,7 +120,9 @@ export function ConvertSessionDialogCore({
   // wiring) only apply in the unified-attachment world. Signed-out or
   // project-less sessions preserve the legacy path that #395 already covers.
   const { isAuthenticated: convexAuthed } = useConvexAuth();
-  const attachmentPickersEnabled = convexAuthed && Boolean(effectiveProjectId);
+  const isUserReady = useDbUserReady();
+  const attachmentPickersEnabled =
+    convexAuthed && isUserReady && Boolean(effectiveProjectId);
   const {
     servers,
     serversById,
@@ -143,7 +146,7 @@ export function ConvertSessionDialogCore({
   );
   const suitesOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    open && effectiveProjectId
+    open && isUserReady && effectiveProjectId
       ? ({ projectId: effectiveProjectId } as any)
       : "skip"
   ) as EvalSuiteOverviewEntry[] | undefined;

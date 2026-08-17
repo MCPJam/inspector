@@ -3017,12 +3017,16 @@ export default function App() {
     activeProject?.clientConfig
   );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const canQueryProjectServerConfig = isUserReady && Boolean(convexProjectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
-    convexProjectId ? ({ projectId: convexProjectId } as never) : "skip"
+    canQueryProjectServerConfig
+      ? ({ projectId: convexProjectId } as never)
+      : "skip"
   ) as ProjectServerConfigDto | null | undefined;
   const isProjectServerConfigLoading =
-    Boolean(convexProjectId) && projectServerConfigDto === undefined;
+    Boolean(convexProjectId) &&
+    (!isUserReady || projectServerConfigDto === undefined);
   // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
   // changes so it can't bleed across projects. `activeHostId` is owned by
   // useAppState (project-keyed in localStorage) and self-resets.

@@ -14,6 +14,7 @@ import {
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import { sanitizeHostConfigForEvalSuite } from "@/lib/host-config-computer";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { EvalSuite } from "./types";
 import type { ModelDefinition } from "@/shared/types";
 
@@ -51,9 +52,10 @@ export function SuiteExecutionConfigEditor({
 }: SuiteExecutionConfigEditorProps) {
   void availableModels; // currently unused; ClientConfigEditor uses a free-text modelId.
 
+  const isUserReady = useDbUserReady();
   const dto = useQuery(
     "hostConfigsV2:getSuiteConfig" as any,
-    { suiteId: suite._id } as any
+    isUserReady ? ({ suiteId: suite._id } as any) : "skip"
   ) as HostConfigDtoV2 | null | undefined;
 
   // Phase 4: project default snapshot used by the "Reset to project
@@ -61,7 +63,7 @@ export function SuiteExecutionConfigEditor({
   // (e.g. unscoped guest suites).
   const projectDefaultDto = useQuery(
     "hostConfigsV2:getProjectDefault" as any,
-    projectId ? ({ projectId } as any) : "skip"
+    isUserReady && projectId ? ({ projectId } as any) : "skip"
   ) as HostConfigDtoV2 | null | undefined;
 
   const setSuiteConfig = useMutation(

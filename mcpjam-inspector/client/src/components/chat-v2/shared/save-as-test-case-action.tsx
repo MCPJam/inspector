@@ -25,6 +25,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import type { EvalSuiteOverviewEntry } from "@/components/evals/types";
 import { useProjectServerAttachments } from "@/hooks/useViews";
@@ -71,6 +72,7 @@ export function SaveAsTestCaseAction({
   projectId,
 }: SaveAsTestCaseActionProps) {
   const { isAuthenticated: convexAuthed } = useConvexAuth();
+  const isUserReady = useDbUserReady();
   const [open, setOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [caseTitle, setCaseTitle] = useState(() =>
@@ -92,7 +94,8 @@ export function SaveAsTestCaseAction({
   // `attachmentPickersEnabled` also gates the "new suite requires both a
   // server and a host attachment" requirement (see `newSuiteRequirementsMet`
   // below), so it stays scoped to authed sessions with a project.
-  const attachmentPickersEnabled = convexAuthed && Boolean(projectId);
+  const attachmentPickersEnabled =
+    convexAuthed && isUserReady && Boolean(projectId);
 
   const { serverAttachments: projectServerAttachments } =
     useProjectServerAttachments({
@@ -106,7 +109,7 @@ export function SaveAsTestCaseAction({
 
   const suitesOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    open && projectId ? ({ projectId } as any) : "skip",
+    open && isUserReady && projectId ? ({ projectId } as any) : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
 
   const saveAsTestCase = useAction(

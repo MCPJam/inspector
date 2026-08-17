@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useMutation, useQuery } from "convex/react";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/client-config-v2";
 import type { ScenarioMode } from "./useScenarios";
 import { shouldQueryProjectId } from "./useProjects";
@@ -63,6 +64,12 @@ export function useHostList({
   hosts: HostListItem[];
   isLoading: boolean;
 } {
+  const isUserReady = useDbUserReady();
+  const queryProjectId = projectId?.trim() ?? "";
+  const hasQueryableProjectId = shouldQueryProjectId(queryProjectId);
+  const shouldQuery =
+    isAuthenticated && isUserReady && hasQueryableProjectId;
+
   // Skip until `projectId` is a real Convex id. A transient LOCAL project id
   // (UUID, or a `local_`/`project_` placeholder) flows in while the shared
   // Convex id is still resolving — passing it to a `v.id("projects")` query
@@ -70,9 +77,7 @@ export function useHostList({
   // every other project-scoped Convex query uses.
   const result = useQuery(
     "hosts:listHosts" as any,
-    isAuthenticated && shouldQueryProjectId(projectId)
-      ? ({ projectId } as any)
-      : "skip",
+    shouldQuery ? ({ projectId: queryProjectId } as any) : "skip",
   ) as HostListItem[] | null | undefined;
 
   const hosts = useMemo(() => {
@@ -84,7 +89,9 @@ export function useHostList({
 
   return {
     hosts,
-    isLoading: result === undefined,
+    isLoading:
+      (isAuthenticated && hasQueryableProjectId && !isUserReady) ||
+      (shouldQuery && result === undefined),
   };
 }
 
@@ -128,7 +135,9 @@ export function useHost({
   host: HostDetail | null;
   isLoading: boolean;
 } {
-  const shouldQuery = isAuthenticated && shouldQueryHostId(hostId);
+  const isUserReady = useDbUserReady();
+  const hasQueryableHostId = shouldQueryHostId(hostId);
+  const shouldQuery = isAuthenticated && isUserReady && hasQueryableHostId;
   // Trimmed, so a padded id can't pass the guard and then fail validation.
   const queryHostId = hostId?.trim() ?? "";
 
@@ -141,7 +150,9 @@ export function useHost({
     host: result ?? null,
     // A skipped query never resolves, so reporting it as loading would leave
     // callers (the Connect canvas, the compare grid) spinning forever.
-    isLoading: shouldQuery && result === undefined,
+    isLoading:
+      (isAuthenticated && hasQueryableHostId && !isUserReady) ||
+      (shouldQuery && result === undefined),
   };
 }
 

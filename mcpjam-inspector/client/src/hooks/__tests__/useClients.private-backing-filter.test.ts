@@ -13,14 +13,19 @@ import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useHostList } from "../useClients";
 
-const { mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
+const { mockUseMutation, mockUseQuery, mockDbUserReady } = vi.hoisted(() => ({
   mockUseMutation: vi.fn(),
   mockUseQuery: vi.fn(),
+  mockDbUserReady: { value: true },
 }));
 
 vi.mock("convex/react", () => ({
   useMutation: mockUseMutation,
   useQuery: mockUseQuery,
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => mockDbUserReady.value,
 }));
 
 const PROJECT_ID = "m17b6q9xw2tv4kz8p3r5s0dc";
@@ -33,6 +38,7 @@ const HOSTS = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockDbUserReady.value = true;
 });
 
 describe("useHostList private-backing filter", () => {
@@ -86,6 +92,31 @@ describe("useHostList private-backing filter", () => {
 
     expect(result.current.isLoading).toBe(true);
     expect(result.current.hosts).toEqual([]);
+  });
+
+  it("reports loading while authenticated but waiting for the user row", () => {
+    mockDbUserReady.value = false;
+    mockUseQuery.mockReturnValue(undefined);
+
+    const { result } = renderHook(() =>
+      useHostList({ isAuthenticated: true, projectId: PROJECT_ID }),
+    );
+
+    expect(mockUseQuery).toHaveBeenCalledWith("hosts:listHosts", "skip");
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.hosts).toEqual([]);
+  });
+
+  it("queries with a trimmed project id", () => {
+    mockUseQuery.mockReturnValue(HOSTS);
+
+    renderHook(() =>
+      useHostList({ isAuthenticated: true, projectId: ` ${PROJECT_ID} ` }),
+    );
+
+    expect(mockUseQuery).toHaveBeenCalledWith("hosts:listHosts", {
+      projectId: PROJECT_ID,
+    });
   });
 
   it("handles a null result from a skipped query", () => {

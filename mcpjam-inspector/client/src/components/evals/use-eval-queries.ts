@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { useQuery } from "convex/react";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import type {
   EvalSuiteOverviewEntry,
   SuiteDetailsQueryResponse,
@@ -25,10 +26,11 @@ export function useEvalQueries({
   organizationId: string | null;
   isDirectGuest?: boolean;
 }) {
+  const isUserReady = useDbUserReady();
   // Convex's `isAuthenticated` already covers hosted guests — they hold a
   // guest token via the unified auth provider — so a separate WorkOS `user`
   // check would wrongly skip queries for guests with a project.
-  const hasActorAccess = isDirectGuest || isAuthenticated;
+  const hasActorAccess = isDirectGuest || (isAuthenticated && isUserReady);
 
   const suiteOverviewArgs = useMemo(() => {
     if (projectId) {

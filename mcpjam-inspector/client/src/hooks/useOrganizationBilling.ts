@@ -1,6 +1,7 @@
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useCallback, useRef, useState } from "react";
 import { confirmSeatPaymentWithStripe } from "@/lib/seat-payment-stripe";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 export type OrganizationPlan = "free" | "team" | "enterprise";
 export type BillingInterval = "monthly" | "annual";
@@ -221,7 +222,8 @@ export function useOrganizationBillingStatus(
   organizationId: string | null,
   options?: UseOrganizationBillingStatusOptions
 ): OrganizationBillingStatus | undefined {
-  const enabled = options?.enabled ?? true;
+  const isUserReady = useDbUserReady();
+  const enabled = (options?.enabled ?? true) && isUserReady;
 
   return useQuery(
     "billing:getOrganizationBillingStatus" as any,
@@ -234,7 +236,8 @@ export function useOrganizationBilling(
   options?: UseOrganizationBillingOptions
 ) {
   const projectId = options?.projectId ?? null;
-  const enabled = options?.enabled ?? true;
+  const isUserReady = useDbUserReady();
+  const enabled = (options?.enabled ?? true) && isUserReady;
   const shouldQueryOrganization = enabled && !!organizationId;
   const shouldQueryProject = shouldQueryOrganization && !!projectId;
   const shouldQuerySeatPaymentIntent =
