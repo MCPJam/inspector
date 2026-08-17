@@ -656,11 +656,12 @@ describe("UserTestingScenarioDetail", () => {
      */
     it("still renders the composer flag-off — that is where a stuck scenario is", () => {
       flagState.environmentsEnabled = false;
-      environmentState.row = namedRow;
-      renderEdit({
-        environmentId: "env-1",
-        environmentName: "Checkout flow",
-      });
+      // AD-HOC, which is what a flag-off scenario actually runs on: the create
+      // flow composes one. It also makes the promote assertion below mean
+      // something — against a named row that affordance is hidden either way,
+      // so the flag gate would go untested.
+      environmentState.row = { ...namedRow, origin: "adhoc", name: undefined };
+      renderEdit({ environmentId: "env-1", environmentName: "ChatGPT" });
 
       openSetup();
       expect(
