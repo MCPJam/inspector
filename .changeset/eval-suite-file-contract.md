@@ -68,9 +68,13 @@ Three properties are load-bearing:
   suite is empty. Default *semantics* are documented in JSDoc beside each field
   (`validity.minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1) and applied by
   a loader, not materialized here.
-- **Every object is `.strict()`.** An importer that invents or mis-maps a field
-  fails loudly instead of having it dropped on the floor — and it matches Convex
-  `v.object`, which rejects unknown fields.
+- **Every object the file declares is `.strict()`.** An importer that invents or
+  mis-maps a suite-level field fails loudly instead of having it dropped on the
+  floor — and it matches Convex `v.object`, which rejects unknown fields. The
+  reused step and predicate schemas are the stated exception: they are the
+  shared authoring union, they strip unknown keys today, and making them strict
+  is a semantic change to a cross-repo mirrored schema rather than something a
+  new file format should do as a side effect.
 
 `schemaVersion` is `const "1"`: additive optional fields stay within `"1"`, a
 breaking revision becomes `"2"`, and a v1 validator handed a `"2"` file says the
@@ -80,11 +84,19 @@ Shipped alongside: `eval-suite.schema.json` (draft 2020-12, `$id`
 `https://mcpjam.com/schemas/eval-suite/v1.json`) plus the same document exported
 as `evalSuiteFileJsonSchema` for consumers without a JSON import path. Both are
 generated from the zod source and a test byte-compares them against a fresh
-generation, so they can never be hand-edited into disagreement. Cross-field rules
-(unique case ids, unique step ids within a case, an `import` block requiring
-top-level `provenance`) do not project into JSON Schema — the JSON Schema is the
-structural contract, the zod validator is the authoritative superset, and the
-fixtures annotate which rejections are which.
+generation, so they can never be hand-edited into disagreement.
+
+The schema describes what is ACCEPTED (`io: "input"`), not what zod returns, so
+the two validators agree on which files they accept — including where both are
+permissive. The element locator's "at least one of role/text/css/testId" rule is
+a refinement that would not project, so the generator encodes it as an `anyOf`
+of `required`; leaving it out would let an editor green-light a `target: {}` the
+SDK then rejects, and tooling passing while the runtime fails is the worst
+direction for a divergence. What genuinely cannot be expressed in JSON Schema —
+unique case ids, unique step ids within a case, an `import` block requiring
+top-level `provenance`, and the serialized-size cap on tool-call arguments —
+stays zod-only, and the fixtures annotate every reject row with whether the JSON
+Schema must catch it too.
 
 ## New: the step union's canonical home is now the SDK
 

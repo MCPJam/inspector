@@ -15,12 +15,22 @@
  *     the loader; materializing them here would mean a file grows fields it
  *     never declared every time it round-trips, and the diff of an unchanged
  *     suite would be full of values nobody wrote.
- *  2. **Every object is `.strict()`.** A mis-mapped import field must fail
- *     loudly rather than be silently dropped — the failure mode this schema
- *     exists to prevent is an importer that "succeeds" while quietly discarding
- *     half of what it read. Strictness also matches Convex `v.object`, which
- *     rejects unknown fields, so a permissive schema here would accept payloads
- *     the backend refuses.
+ *  2. **Every object this file DECLARES is `.strict()`.** A mis-mapped import
+ *     field must fail loudly rather than be silently dropped — the failure mode
+ *     this schema exists to prevent is an importer that "succeeds" while quietly
+ *     discarding half of what it read. Strictness also matches Convex
+ *     `v.object`, which rejects unknown fields, so a permissive schema here
+ *     would accept payloads the backend refuses.
+ *
+ *     The REUSED schemas are the stated exception: `stepsSchema` and
+ *     `predicateSchema` are the shared authoring union, whose objects strip
+ *     unknown keys today and are hand-mirrored by Convex. Making them strict is
+ *     a semantic change to a cross-repo mirrored schema with ~55 consumers in
+ *     the inspector, so it is not made here as a side effect of adding a file
+ *     format. What IS guaranteed is that the generated JSON Schema describes
+ *     the same behaviour (see the generator's `io: "input"` note): the two
+ *     validators never disagree about which files they accept, even where they
+ *     are both permissive.
  *
  * ── Reserved values are ERRORS, not ignored ─────────────────────────────────
  *

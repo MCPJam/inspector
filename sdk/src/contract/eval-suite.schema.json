@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mcpjam.com/schemas/eval-suite/v1.json",
   "title": "MCPJam eval suite file (schemaVersion 1)",
-  "description": "Structural contract for an MCPJam eval suite file. Generated from the zod source in @mcpjam/sdk (src/contract/suite-file.ts); the zod validator is the authoritative superset and additionally enforces cross-field rules (unique case ids, unique step ids within a case, and a per-case import block requiring top-level provenance) that JSON Schema cannot express.",
+  "description": "Structural contract for an MCPJam eval suite file. Generated from the zod source in @mcpjam/sdk (src/contract/suite-file.ts). Describes what is ACCEPTED (zod io:input), so a file this schema accepts is one the SDK validator also accepts structurally. The zod validator remains the authoritative superset: it additionally enforces cross-field rules (unique case ids, unique step ids within a case, and a per-case import block requiring top-level provenance) and a serialized-size cap on tool-call arguments, none of which JSON Schema can express. Objects the suite file declares are closed (additionalProperties: false); reused step and predicate objects inherit strip-unknown semantics from the shared authoring union and are open in both validators.",
   "type": "object",
   "properties": {
     "schemaVersion": { "type": "string", "const": "1" },
@@ -145,8 +145,7 @@
                     "kind": { "type": "string", "const": "prompt" },
                     "prompt": { "type": "string" }
                   },
-                  "required": ["id", "kind", "prompt"],
-                  "additionalProperties": false
+                  "required": ["id", "kind", "prompt"]
                 },
                 {
                   "type": "object",
@@ -173,8 +172,7 @@
                     "serverName",
                     "toolName",
                     "arguments"
-                  ],
-                  "additionalProperties": false
+                  ]
                 },
                 {
                   "type": "object",
@@ -201,8 +199,7 @@
                                     "name": { "type": "string" },
                                     "exact": { "type": "boolean" }
                                   },
-                                  "required": ["role"],
-                                  "additionalProperties": false
+                                  "required": ["role"]
                                 },
                                 "text": { "type": "string", "minLength": 1 },
                                 "css": { "type": "string", "minLength": 1 },
@@ -213,15 +210,19 @@
                                   "maximum": 9007199254740991
                                 }
                               },
-                              "additionalProperties": false
+                              "anyOf": [
+                                { "required": ["role"] },
+                                { "required": ["text"] },
+                                { "required": ["css"] },
+                                { "required": ["testId"] }
+                              ]
                             },
                             "clickType": {
                               "type": "string",
                               "enum": ["left", "double", "right"]
                             }
                           },
-                          "required": ["kind", "target"],
-                          "additionalProperties": false
+                          "required": ["kind", "target"]
                         },
                         {
                           "type": "object",
@@ -240,8 +241,7 @@
                                     "name": { "type": "string" },
                                     "exact": { "type": "boolean" }
                                   },
-                                  "required": ["role"],
-                                  "additionalProperties": false
+                                  "required": ["role"]
                                 },
                                 "text": { "type": "string", "minLength": 1 },
                                 "css": { "type": "string", "minLength": 1 },
@@ -252,12 +252,16 @@
                                   "maximum": 9007199254740991
                                 }
                               },
-                              "additionalProperties": false
+                              "anyOf": [
+                                { "required": ["role"] },
+                                { "required": ["text"] },
+                                { "required": ["css"] },
+                                { "required": ["testId"] }
+                              ]
                             },
                             "text": { "type": "string", "maxLength": 5000 }
                           },
-                          "required": ["kind", "target", "text"],
-                          "additionalProperties": false
+                          "required": ["kind", "target", "text"]
                         },
                         {
                           "type": "object",
@@ -265,8 +269,7 @@
                             "kind": { "type": "string", "const": "key" },
                             "key": { "type": "string", "minLength": 1 }
                           },
-                          "required": ["kind", "key"],
-                          "additionalProperties": false
+                          "required": ["kind", "key"]
                         },
                         {
                           "type": "object",
@@ -282,8 +285,7 @@
                               "maximum": 9007199254740991
                             }
                           },
-                          "required": ["kind", "direction"],
-                          "additionalProperties": false
+                          "required": ["kind", "direction"]
                         },
                         {
                           "type": "object",
@@ -295,14 +297,12 @@
                               "maximum": 30000
                             }
                           },
-                          "required": ["kind", "ms"],
-                          "additionalProperties": false
+                          "required": ["kind", "ms"]
                         }
                       ]
                     }
                   },
-                  "required": ["id", "kind", "toolName", "action"],
-                  "additionalProperties": false
+                  "required": ["id", "kind", "toolName", "action"]
                 },
                 {
                   "type": "object",
@@ -330,8 +330,7 @@
                                   "maxLength": 5000
                                 }
                               },
-                              "required": ["kind", "toolName", "text"],
-                              "additionalProperties": false
+                              "required": ["kind", "toolName", "text"]
                             },
                             {
                               "type": "object",
@@ -357,8 +356,7 @@
                                         "name": { "type": "string" },
                                         "exact": { "type": "boolean" }
                                       },
-                                      "required": ["role"],
-                                      "additionalProperties": false
+                                      "required": ["role"]
                                     },
                                     "text": {
                                       "type": "string",
@@ -375,11 +373,15 @@
                                       "maximum": 9007199254740991
                                     }
                                   },
-                                  "additionalProperties": false
+                                  "anyOf": [
+                                    { "required": ["role"] },
+                                    { "required": ["text"] },
+                                    { "required": ["css"] },
+                                    { "required": ["testId"] }
+                                  ]
                                 }
                               },
-                              "required": ["kind", "toolName", "target"],
-                              "additionalProperties": false
+                              "required": ["kind", "toolName", "target"]
                             },
                             {
                               "type": "object",
@@ -405,8 +407,7 @@
                                         "name": { "type": "string" },
                                         "exact": { "type": "boolean" }
                                       },
-                                      "required": ["role"],
-                                      "additionalProperties": false
+                                      "required": ["role"]
                                     },
                                     "text": {
                                       "type": "string",
@@ -423,11 +424,15 @@
                                       "maximum": 9007199254740991
                                     }
                                   },
-                                  "additionalProperties": false
+                                  "anyOf": [
+                                    { "required": ["role"] },
+                                    { "required": ["text"] },
+                                    { "required": ["css"] },
+                                    { "required": ["testId"] }
+                                  ]
                                 }
                               },
-                              "required": ["kind", "toolName", "target"],
-                              "additionalProperties": false
+                              "required": ["kind", "toolName", "target"]
                             },
                             {
                               "type": "object",
@@ -453,8 +458,7 @@
                                         "name": { "type": "string" },
                                         "exact": { "type": "boolean" }
                                       },
-                                      "required": ["role"],
-                                      "additionalProperties": false
+                                      "required": ["role"]
                                     },
                                     "text": {
                                       "type": "string",
@@ -471,7 +475,12 @@
                                       "maximum": 9007199254740991
                                     }
                                   },
-                                  "additionalProperties": false
+                                  "anyOf": [
+                                    { "required": ["role"] },
+                                    { "required": ["text"] },
+                                    { "required": ["css"] },
+                                    { "required": ["testId"] }
+                                  ]
                                 },
                                 "equals": {
                                   "type": "string",
@@ -483,8 +492,7 @@
                                 "toolName",
                                 "target",
                                 "equals"
-                              ],
-                              "additionalProperties": false
+                              ]
                             },
                             {
                               "type": "object",
@@ -502,12 +510,7 @@
                                   "minLength": 1
                                 }
                               },
-                              "required": [
-                                "kind",
-                                "toolName",
-                                "calledToolName"
-                              ],
-                              "additionalProperties": false
+                              "required": ["kind", "toolName", "calledToolName"]
                             }
                           ]
                         },
@@ -537,8 +540,7 @@
                                       "enum": ["exact", "partial", "ignore"]
                                     }
                                   },
-                                  "required": ["args"],
-                                  "additionalProperties": false
+                                  "required": ["args"]
                                 },
                                 "minCount": {
                                   "type": "integer",
@@ -546,8 +548,7 @@
                                   "maximum": 9007199254740991
                                 }
                               },
-                              "required": ["type", "toolName", "args"],
-                              "additionalProperties": false
+                              "required": ["type", "toolName", "args"]
                             },
                             {
                               "type": "object",
@@ -558,8 +559,7 @@
                                 },
                                 "toolName": { "type": "string", "minLength": 1 }
                               },
-                              "required": ["type", "toolName"],
-                              "additionalProperties": false
+                              "required": ["type", "toolName"]
                             },
                             {
                               "type": "object",
@@ -570,8 +570,7 @@
                                 },
                                 "toolName": { "type": "string", "minLength": 1 }
                               },
-                              "required": ["type", "toolName"],
-                              "additionalProperties": false
+                              "required": ["type", "toolName"]
                             },
                             {
                               "type": "object",
@@ -582,8 +581,7 @@
                                 },
                                 "toolName": { "type": "string", "minLength": 1 }
                               },
-                              "required": ["type", "toolName"],
-                              "additionalProperties": false
+                              "required": ["type", "toolName"]
                             },
                             {
                               "type": "object",
@@ -595,8 +593,7 @@
                                 "needle": { "type": "string", "minLength": 1 },
                                 "caseSensitive": { "type": "boolean" }
                               },
-                              "required": ["type", "needle"],
-                              "additionalProperties": false
+                              "required": ["type", "needle"]
                             },
                             {
                               "type": "object",
@@ -607,8 +604,7 @@
                                 },
                                 "pattern": { "type": "string", "minLength": 1 }
                               },
-                              "required": ["type", "pattern"],
-                              "additionalProperties": false
+                              "required": ["type", "pattern"]
                             },
                             {
                               "type": "object",
@@ -618,8 +614,7 @@
                                   "const": "noToolErrors"
                                 }
                               },
-                              "required": ["type"],
-                              "additionalProperties": false
+                              "required": ["type"]
                             },
                             {
                               "type": "object",
@@ -629,8 +624,7 @@
                                   "const": "finalAssistantMessageNonEmpty"
                                 }
                               },
-                              "required": ["type"],
-                              "additionalProperties": false
+                              "required": ["type"]
                             },
                             {
                               "type": "object",
@@ -645,8 +639,7 @@
                                   "maximum": 9007199254740991
                                 }
                               },
-                              "required": ["type", "tokens"],
-                              "additionalProperties": false
+                              "required": ["type", "tokens"]
                             },
                             {
                               "type": "object",
@@ -657,8 +650,7 @@
                                 },
                                 "toolName": { "type": "string", "minLength": 1 }
                               },
-                              "required": ["type"],
-                              "additionalProperties": false
+                              "required": ["type"]
                             },
                             {
                               "type": "object",
@@ -674,8 +666,7 @@
                                 },
                                 "toolName": { "type": "string", "minLength": 1 }
                               },
-                              "required": ["type", "ms"],
-                              "additionalProperties": false
+                              "required": ["type", "ms"]
                             },
                             {
                               "type": "object",
@@ -686,8 +677,7 @@
                                 },
                                 "toolName": { "type": "string", "minLength": 1 }
                               },
-                              "required": ["type"],
-                              "additionalProperties": false
+                              "required": ["type"]
                             },
                             {
                               "type": "object",
@@ -702,16 +692,14 @@
                                   "maximum": 9007199254740991
                                 }
                               },
-                              "required": ["type", "turns"],
-                              "additionalProperties": false
+                              "required": ["type", "turns"]
                             }
                           ]
                         }
                       ]
                     }
                   },
-                  "required": ["id", "kind", "assertion"],
-                  "additionalProperties": false
+                  "required": ["id", "kind", "assertion"]
                 }
               ]
             }
@@ -739,8 +727,7 @@
                           "enum": ["exact", "partial", "ignore"]
                         }
                       },
-                      "required": ["args"],
-                      "additionalProperties": false
+                      "required": ["args"]
                     },
                     "minCount": {
                       "type": "integer",
@@ -748,8 +735,7 @@
                       "maximum": 9007199254740991
                     }
                   },
-                  "required": ["type", "toolName", "args"],
-                  "additionalProperties": false
+                  "required": ["type", "toolName", "args"]
                 },
                 {
                   "type": "object",
@@ -760,8 +746,7 @@
                     },
                     "toolName": { "type": "string", "minLength": 1 }
                   },
-                  "required": ["type", "toolName"],
-                  "additionalProperties": false
+                  "required": ["type", "toolName"]
                 },
                 {
                   "type": "object",
@@ -769,8 +754,7 @@
                     "type": { "type": "string", "const": "toolNeverCalled" },
                     "toolName": { "type": "string", "minLength": 1 }
                   },
-                  "required": ["type", "toolName"],
-                  "additionalProperties": false
+                  "required": ["type", "toolName"]
                 },
                 {
                   "type": "object",
@@ -778,8 +762,7 @@
                     "type": { "type": "string", "const": "firstToolWas" },
                     "toolName": { "type": "string", "minLength": 1 }
                   },
-                  "required": ["type", "toolName"],
-                  "additionalProperties": false
+                  "required": ["type", "toolName"]
                 },
                 {
                   "type": "object",
@@ -788,8 +771,7 @@
                     "needle": { "type": "string", "minLength": 1 },
                     "caseSensitive": { "type": "boolean" }
                   },
-                  "required": ["type", "needle"],
-                  "additionalProperties": false
+                  "required": ["type", "needle"]
                 },
                 {
                   "type": "object",
@@ -797,16 +779,14 @@
                     "type": { "type": "string", "const": "responseMatches" },
                     "pattern": { "type": "string", "minLength": 1 }
                   },
-                  "required": ["type", "pattern"],
-                  "additionalProperties": false
+                  "required": ["type", "pattern"]
                 },
                 {
                   "type": "object",
                   "properties": {
                     "type": { "type": "string", "const": "noToolErrors" }
                   },
-                  "required": ["type"],
-                  "additionalProperties": false
+                  "required": ["type"]
                 },
                 {
                   "type": "object",
@@ -816,8 +796,7 @@
                       "const": "finalAssistantMessageNonEmpty"
                     }
                   },
-                  "required": ["type"],
-                  "additionalProperties": false
+                  "required": ["type"]
                 },
                 {
                   "type": "object",
@@ -829,8 +808,7 @@
                       "maximum": 9007199254740991
                     }
                   },
-                  "required": ["type", "tokens"],
-                  "additionalProperties": false
+                  "required": ["type", "tokens"]
                 },
                 {
                   "type": "object",
@@ -838,8 +816,7 @@
                     "type": { "type": "string", "const": "widgetRendered" },
                     "toolName": { "type": "string", "minLength": 1 }
                   },
-                  "required": ["type"],
-                  "additionalProperties": false
+                  "required": ["type"]
                 },
                 {
                   "type": "object",
@@ -855,8 +832,7 @@
                     },
                     "toolName": { "type": "string", "minLength": 1 }
                   },
-                  "required": ["type", "ms"],
-                  "additionalProperties": false
+                  "required": ["type", "ms"]
                 },
                 {
                   "type": "object",
@@ -867,8 +843,7 @@
                     },
                     "toolName": { "type": "string", "minLength": 1 }
                   },
-                  "required": ["type"],
-                  "additionalProperties": false
+                  "required": ["type"]
                 },
                 {
                   "type": "object",
@@ -880,8 +855,7 @@
                       "maximum": 9007199254740991
                     }
                   },
-                  "required": ["type", "turns"],
-                  "additionalProperties": false
+                  "required": ["type", "turns"]
                 }
               ]
             }

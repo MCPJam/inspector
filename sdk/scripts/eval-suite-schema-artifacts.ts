@@ -38,16 +38,75 @@ export const REGENERATE_COMMAND =
   "npm run generate:eval-suite-schema -w @mcpjam/sdk";
 
 /**
+ * True for the element-locator object node.
+ *
+ * Identified by shape rather than by reference because the locator reaches the
+ * override hook as the object INSIDE its `.refine()` wrapper, which is not the
+ * exported schema object. `eval-suite-schema-json.test.ts` walks the finished
+ * document and asserts every locator-shaped node carries the constraint, so a
+ * detector that silently stopped matching fails the build rather than quietly
+ * publishing an unconstrained locator.
+ */
+function isElementLocatorNode(node: Record<string, unknown>): boolean {
+  const properties = node.properties as Record<string, unknown> | undefined;
+  if (!properties) return false;
+  return (
+    "role" in properties &&
+    "text" in properties &&
+    "css" in properties &&
+    "testId" in properties &&
+    "nth" in properties
+  );
+}
+
+/** The locator's "at least one reference point" rule, in JSON Schema terms. */
+export const ELEMENT_LOCATOR_ANY_OF = [
+  { required: ["role"] },
+  { required: ["text"] },
+  { required: ["css"] },
+  { required: ["testId"] },
+];
+
+/**
  * The JSON Schema document.
  *
  * Built from the STRUCTURAL schema deliberately: refinements do not project
  * into JSON Schema, so generating from the refined validator would silently
  * publish a schema that is weaker than its own name suggests. The description
  * says which rules are missing rather than leaving a consumer to find out.
+ *
+ * Two things here are load-bearing and easy to get wrong:
+ *
+ *  1. **`io: "input"`.** The default (`"output"`) describes the value zod
+ *     RETURNS, which for a non-strict object is the post-strip shape — so it
+ *     emits `additionalProperties: false` for objects the validator actually
+ *     accepts-and-strips. This document's job is to validate INPUT files, and
+ *     publishing the output shape made the two validators disagree: an extra
+ *     field inside a step was rejected by the JSON Schema and silently dropped
+ *     by zod. `"input"` describes what is accepted, so the objects the suite
+ *     file itself declares `.strict()` still close (`additionalProperties:
+ *     false`) while the reused step/predicate objects — which inherit strip
+ *     semantics from the shared authoring union — stay open in BOTH validators.
+ *     Whether that union should become strict is a change to a cross-repo
+ *     mirrored schema and does not belong to this generator.
+ *  2. **The locator `anyOf`.** `elementLocatorSchema`'s "at least one of
+ *     role/text/css/testId" is a `.refine()`, and refinements do not project.
+ *     Left alone, an editor validating against the published URL would green-
+ *     light `target: {}` that the SDK then rejects — tooling passing and the
+ *     runtime failing is the worst direction for a divergence, so this one is
+ *     encoded rather than documented away. It is expressible in JSON Schema, so
+ *     it is expressed.
  */
 export function buildEvalSuiteSchemaDocument(): Record<string, unknown> {
   const generated = z.toJSONSchema(evalSuiteFileStructuralSchema, {
     target: "draft-2020-12",
+    io: "input",
+    override: (ctx) => {
+      const node = ctx.jsonSchema as Record<string, unknown>;
+      if (isElementLocatorNode(node)) {
+        node.anyOf = ELEMENT_LOCATOR_ANY_OF.map((entry) => ({ ...entry }));
+      }
+    },
   }) as Record<string, unknown>;
   const { $schema, ...rest } = generated;
   // `$schema` first, then identity, then the shape — so a human opening the
@@ -58,11 +117,17 @@ export function buildEvalSuiteSchemaDocument(): Record<string, unknown> {
     title: `MCPJam eval suite file (schemaVersion ${EVAL_SUITE_SCHEMA_VERSION})`,
     description:
       "Structural contract for an MCPJam eval suite file. Generated from the " +
-      "zod source in @mcpjam/sdk (src/contract/suite-file.ts); the zod " +
-      "validator is the authoritative superset and additionally enforces " +
-      "cross-field rules (unique case ids, unique step ids within a case, and " +
-      "a per-case import block requiring top-level provenance) that JSON " +
-      "Schema cannot express.",
+      "zod source in @mcpjam/sdk (src/contract/suite-file.ts). Describes what " +
+      "is ACCEPTED (zod io:input), so a file this schema accepts is one the " +
+      "SDK validator also accepts structurally. The zod validator remains the " +
+      "authoritative superset: it additionally enforces cross-field rules " +
+      "(unique case ids, unique step ids within a case, and a per-case import " +
+      "block requiring top-level provenance) and a serialized-size cap on " +
+      "tool-call arguments, none of which JSON Schema can express. " +
+      "Objects the suite file declares are closed (additionalProperties: " +
+      "false); reused step and predicate objects inherit strip-unknown " +
+      "semantics from the shared authoring union and are open in both " +
+      "validators.",
     ...rest,
   };
 }

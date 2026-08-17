@@ -30,8 +30,12 @@ import {
   buildEvalSuiteSchemaArtifacts,
 } from "../scripts/eval-suite-schema-artifacts.js";
 import { evalSuiteFileJsonSchema } from "../src/contract/eval-suite.schema.generated.js";
-import { EVAL_SUITE_SCHEMA_ID } from "../src/contract/suite-file.js";
 import {
+  EVAL_SUITE_SCHEMA_ID,
+  evalSuiteFileSchema,
+} from "../src/contract/suite-file.js";
+import {
+  findFixture,
   stripAnnotations,
   suiteFileFixtures as data,
 } from "./support/eval-suite-fixtures.js";
@@ -85,6 +89,50 @@ describe("eval suite JSON Schema — generated, never hand-edited", () => {
   it("compiles under a draft 2020-12 validator", () => {
     expect(() => compiled()).not.toThrow();
   });
+
+  it("constrains EVERY element locator, not just the ones the hook happened to hit", () => {
+    // The locator's "at least one of role/text/css/testId" rule is a zod
+    // `.refine()` and does not project, so the generator injects it. The hook
+    // identifies locator nodes BY SHAPE (the refine wrapper hides the exported
+    // schema object), and a detector that silently stopped matching would
+    // publish an unconstrained locator with nothing failing. So walk the
+    // finished document and check every locator-shaped node carries it.
+    const locators: Array<Record<string, unknown>> = [];
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        node.forEach(walk);
+        return;
+      }
+      if (!node || typeof node !== "object") return;
+      const record = node as Record<string, unknown>;
+      const properties = record.properties as
+        | Record<string, unknown>
+        | undefined;
+      if (
+        properties &&
+        ["role", "text", "css", "testId", "nth"].every(
+          (key) => key in properties
+        )
+      ) {
+        locators.push(record);
+      }
+      Object.values(record).forEach(walk);
+    };
+    walk(evalSuiteFileJsonSchema);
+
+    expect(
+      locators.length,
+      "no locator node found — has the shape changed?"
+    ).toBeGreaterThan(0);
+    for (const locator of locators) {
+      expect(locator.anyOf).toEqual([
+        { required: ["role"] },
+        { required: ["text"] },
+        { required: ["css"] },
+        { required: ["testId"] },
+      ]);
+    }
+  });
 });
 
 describe("eval suite JSON Schema — agrees with zod on the structural half", () => {
@@ -131,5 +179,32 @@ describe("eval suite JSON Schema — agrees with zod on the structural half", ()
     // above vacuous.
     expect(data.reject.some((row) => row.__structural)).toBe(true);
     expect(data.reject.some((row) => !row.__structural)).toBe(true);
+  });
+
+  it("agrees with zod about unknown fields — closed where closed, open where open", () => {
+    // The generator emits the INPUT shape (`io: "input"`). The default output
+    // shape would describe a non-strict object as `additionalProperties:
+    // false`, because zod strips before returning — which made the JSON Schema
+    // reject an extra field inside a step that zod silently accepted and
+    // dropped. Two validators disagreeing about the same file is the bug; this
+    // pins both halves of the agreement.
+    const suite = stripAnnotations(
+      findFixture(data.accept, "minimal")
+    ) as Record<string, unknown>;
+
+    // Objects the suite file DECLARES are closed, in both validators.
+    const unknownCaseField = JSON.parse(JSON.stringify(suite));
+    unknownCaseField.cases[0].timeoutMs = 30_000;
+    expect(validate(unknownCaseField)).toBe(false);
+    expect(evalSuiteFileSchema.safeParse(unknownCaseField).success).toBe(false);
+
+    // Reused STEP objects inherit strip-unknown semantics from the shared
+    // authoring union, so both validators accept. Making that union strict is a
+    // change to a cross-repo mirrored schema and is deliberately not made here;
+    // what matters for the contract is that the two agree.
+    const unknownStepField = JSON.parse(JSON.stringify(suite));
+    unknownStepField.cases[0].steps[0].bogusImportedField = "x";
+    expect(validate(unknownStepField)).toBe(true);
+    expect(evalSuiteFileSchema.safeParse(unknownStepField).success).toBe(true);
   });
 });

@@ -1072,6 +1072,54 @@
     },
     {
       "__kind": "suiteFile",
+      "__label": "interact step whose locator names no reference point",
+      "__why": "A locator bundle must carry at least one of role/text/css/testId. Structural: the `.refine()` does not project into JSON Schema on its own, so the generator encodes it as an `anyOf` of `required` — otherwise an editor validating against the published URL would green-light a file the SDK then rejects, which is the worst direction for a divergence.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            },
+            {
+              "id": "step-2",
+              "kind": "interact",
+              "toolName": "render_receipt",
+              "action": {
+                "kind": "click",
+                "target": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
       "__label": "case with empty steps[]",
       "__why": "A case with no steps runs nothing; graded, it passes vacuously.",
       "__structural": true,
