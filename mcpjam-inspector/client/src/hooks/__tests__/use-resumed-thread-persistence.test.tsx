@@ -549,9 +549,12 @@ describe("useResumedThreadPersistence", () => {
     expect(harness.onConflict).not.toHaveBeenCalled();
   });
 
-  it("does not refresh the rail for a stopped turn on a fresh thread", () => {
-    // The fresh-thread refresh exists so the surface learns the id of the row
-    // its turn created. A stopped turn creates no row.
+  it("still refreshes the rail for a stopped turn on a fresh thread", () => {
+    // A stop does not prove nothing was written: the server checks
+    // `runSucceeded && !aborted` once and then awaits the ingest, so a Stop
+    // landing after that check still lets the commit through. On a fresh thread
+    // that means a ROW may now exist which this surface has never seen, and the
+    // refresh is how it learns the id. It reads, so it stays silent either way.
     const harness = setup({
       resumedVersion: null,
       aborted: true,
@@ -560,8 +563,38 @@ describe("useResumedThreadPersistence", () => {
 
     harness.runTurn();
 
-    expect(harness.refreshAfterStream).not.toHaveBeenCalled();
+    expect(harness.refreshAfterStream).toHaveBeenCalled();
     expect(harness.onUnsaved).not.toHaveBeenCalled();
+  });
+
+  it("silently picks up a version a stopped turn committed anyway", () => {
+    // Same race, resumed thread: the commit landed but cancelling the response
+    // kept its receipt from ever arriving. Without reconciliation
+    // `resumedVersion` stays stale and the NEXT send carries a stale
+    // `expectedVersion` into the false conflict this hook exists to remove.
+    const harness = setup({ aborted: true, receipt: null });
+
+    harness.runTurn();
+    act(() => {
+      harness.view.rerender({ ...harness.props, reactiveSessionVersion: 5 });
+    });
+
+    expect(harness.syncResumedVersion).toHaveBeenCalledWith(5);
+    expect(harness.onUnsaved).not.toHaveBeenCalled();
+  });
+
+  it("never reports a stopped turn as unsaved when no version arrives", () => {
+    // The other half of silence: the watch runs its full window and says
+    // nothing, because an unsaved reply is the intended outcome of a stop.
+    const harness = setup({ aborted: true, receipt: null });
+
+    harness.runTurn();
+    act(() => {
+      vi.advanceTimersByTime(11_000);
+    });
+
+    expect(harness.onUnsaved).not.toHaveBeenCalled();
+    expect(harness.syncResumedVersion).not.toHaveBeenCalled();
   });
 
   it("ignores a stop pressed while nothing is streaming", () => {

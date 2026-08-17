@@ -70,6 +70,15 @@ type PendingReconcile = {
   deadlineAt: number;
   /** True once the "couldn't save" notice has been shown for this turn. */
   notified: boolean;
+  /**
+   * Watch for a late commit but never tell the user about its absence.
+   *
+   * Set for a withdrawn turn, where a missing write is the intended outcome and
+   * a warning would be nonsense — but the version still has to be picked up if
+   * the server committed anyway, or the next send carries a stale
+   * `expectedVersion` into a false conflict.
+   */
+  silent: boolean;
 };
 
 export interface ResumedThreadPersistenceOptions {
@@ -173,12 +182,18 @@ export function useResumedThreadPersistence(
   );
 
   const startReconcile = useCallback(
-    (sessionId: string, baselineVersion: number, windowMs: number) => {
+    (
+      sessionId: string,
+      baselineVersion: number,
+      windowMs: number,
+      options?: { silent?: boolean }
+    ) => {
       pendingReconcileRef.current = {
         sessionId,
         baselineVersion,
         deadlineAt: Date.now() + windowMs,
         notified: false,
+        silent: options?.silent ?? false,
       };
       wakeReconcileWatcher();
     },
@@ -254,10 +269,31 @@ export function useResumedThreadPersistence(
       // this turn. Keeping it here makes the abort path a complete no-op on its
       // own rather than one that depends on a sibling branch.
       pendingReconcileRef.current = null;
-      // No rail refresh and no read-marking either. Both exist to reflect a
-      // write that just landed; this turn wrote nothing, so the rail has
-      // nothing new to learn and the row's unread state is exactly as the
-      // server last left it.
+
+      // "Aborted" does NOT prove nothing was written. The server checks
+      // `runSucceeded && !aborted` once, then awaits the ingest — so a Stop
+      // landing after that check still lets the commit through, while
+      // cancelling the response prevents its receipt from ever reaching us.
+      // The write is real and this client cannot see it.
+      //
+      // So the version is still reconciled, just silently: a bump gets picked
+      // up (otherwise the next send carries a stale `expectedVersion` into the
+      // false conflict this hook exists to remove), and its absence is never
+      // reported, because not saving a withdrawn turn is the intended outcome.
+      if (baseline) {
+        startReconcile(
+          baseline.sessionId,
+          baseline.version,
+          NO_RECEIPT_RECONCILE_WINDOW_MS,
+          { silent: true }
+        );
+        return;
+      }
+
+      // No baseline: a fresh thread, where there is no version to reconcile but
+      // there may now be a ROW this surface has never seen. The rail refresh is
+      // how it learns that row's id, and it is silent either way — it reads.
+      callbacksRef.current.refreshAfterStream();
       return;
     }
 
@@ -368,11 +404,14 @@ export function useResumedThreadPersistence(
       return () => window.clearTimeout(timerId);
     }
 
-    if (!pending.notified) {
+    if (!pending.notified && !pending.silent) {
       // Deadline passed with no version bump. Now — and only now — say the
       // reply is not in history. The thread stays attached: the user's messages
       // are still on screen, and forcing a new thread would lose more than it
       // fixes.
+      //
+      // A silent watch skips this entirely: it belongs to a turn the user
+      // withdrew, so an unsaved reply is the expected result, not news.
       pending.notified = true;
       callbacksRef.current.onUnsaved();
     }
