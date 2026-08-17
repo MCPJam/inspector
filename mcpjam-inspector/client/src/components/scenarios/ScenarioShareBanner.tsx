@@ -53,8 +53,9 @@ function useScenarioShareInvite(scenario: ScenarioSettings) {
   // handing the link out here made the two surfaces disagree — the Edit tab
   // refused to give the link while this strip copied it out anyway. Nothing is
   // rotated or revoked; the token returns when the scenario can run again.
+  const unrunnableReason = scenario.environmentError?.message ?? null;
   const shareLink =
-    scenario.link?.token && !scenario.environmentError
+    scenario.link?.token && !unrunnableReason
       ? buildScenarioLink(scenario.link.token, scenario.name)
       : null;
   const displayLink = shareLink?.replace(/^https?:\/\//, "") ?? null;
@@ -70,7 +71,11 @@ function useScenarioShareInvite(scenario: ScenarioSettings) {
   };
 
   const handleInvite = async () => {
-    if (!normalizedEmail || emailInvalid || isInviting) return;
+    // Inviting mails the same withheld link out, so it stops on the same
+    // condition: an invite to a scenario that can't run is a broken session
+    // with someone else's name on it.
+    if (!normalizedEmail || emailInvalid || isInviting || unrunnableReason)
+      return;
     setIsInviting(true);
     try {
       await upsertScenarioMember({
@@ -90,6 +95,7 @@ function useScenarioShareInvite(scenario: ScenarioSettings) {
 
   return {
     shareLink,
+    unrunnableReason,
     displayLink,
     email,
     setEmail,
@@ -112,6 +118,7 @@ function InviteByEmailControl({
   isInviting,
   normalizedEmail,
   emailInvalid,
+  unrunnableReason,
   handleInvite,
 }: {
   id: string;
@@ -122,6 +129,7 @@ function InviteByEmailControl({
   isInviting: boolean;
   normalizedEmail: string;
   emailInvalid: boolean;
+  unrunnableReason: string | null;
   handleInvite: () => void;
 }) {
   return (
@@ -148,6 +156,7 @@ function InviteByEmailControl({
             type="email"
             placeholder="name@company.com"
             value={email}
+            disabled={Boolean(unrunnableReason)}
             onChange={(event) => setEmail(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -162,12 +171,28 @@ function InviteByEmailControl({
           <Button
             type="button"
             size="sm"
-            disabled={!normalizedEmail || emailInvalid || isInviting}
+            disabled={
+              !normalizedEmail ||
+              emailInvalid ||
+              isInviting ||
+              Boolean(unrunnableReason)
+            }
             onClick={() => void handleInvite()}
           >
             {isInviting ? "…" : "Invite"}
           </Button>
         </div>
+        {/* The trigger stays live so the reason is reachable — a popover that
+            refuses to open leaves the author guessing why. */}
+        {unrunnableReason ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid={`${id}-invite-unrunnable`}
+          >
+            {unrunnableReason} Point this scenario at a working environment to
+            invite testers again.
+          </p>
+        ) : null}
         {emailInvalid ? (
           <p
             id={`${id}-email-error`}
@@ -192,6 +217,7 @@ function ShareActions({
   isInviting,
   normalizedEmail,
   emailInvalid,
+  unrunnableReason,
   handleCopyLink,
   handleInvite,
   showInvite,
@@ -206,6 +232,7 @@ function ShareActions({
   isInviting: boolean;
   normalizedEmail: string;
   emailInvalid: boolean;
+  unrunnableReason: string | null;
   handleCopyLink: () => void;
   handleInvite: () => void;
   showInvite: boolean;
@@ -223,6 +250,7 @@ function ShareActions({
           isInviting={isInviting}
           normalizedEmail={normalizedEmail}
           emailInvalid={emailInvalid}
+          unrunnableReason={unrunnableReason}
           handleInvite={handleInvite}
         />
       ) : null}

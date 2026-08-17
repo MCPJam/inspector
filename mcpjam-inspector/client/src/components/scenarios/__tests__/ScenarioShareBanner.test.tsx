@@ -92,6 +92,61 @@ describe("ScenarioShareBanner", () => {
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Copy link" })).toBeDisabled();
   });
+
+  it("invites a tester when the scenario can run", async () => {
+    render(<ScenarioShareBanner scenario={scenario} />);
+
+    fireEvent.click(screen.getByTestId("user-testing-share-invite"));
+    fireEvent.change(screen.getByLabelText("Invite with email"), {
+      target: { value: "tester@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+
+    await waitFor(() =>
+      expect(upsertScenarioMemberMock).toHaveBeenCalledWith({
+        scenarioId: "cb-1",
+        email: "tester@example.com",
+        sendInviteEmail: true,
+      }),
+    );
+  });
+
+  it("does not email a tester while the environment can't resolve", async () => {
+    // Withholding the link but leaving Invite live mailed the same dead link
+    // out under the author's name.
+    const { rerender } = render(<ScenarioShareBanner scenario={scenario} />);
+
+    fireEvent.click(screen.getByTestId("user-testing-share-invite"));
+    fireEvent.change(screen.getByLabelText("Invite with email"), {
+      target: { value: "tester@example.com" },
+    });
+
+    rerender(
+      <ScenarioShareBanner
+        scenario={
+          {
+            ...scenario,
+            environmentError: {
+              code: "ENV_ARCHIVED",
+              message: "Environment archived.",
+            },
+          } as ScenarioSettings
+        }
+      />,
+    );
+
+    const emailInput = screen.getByLabelText("Invite with email");
+    expect(emailInput).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Invite" })).toBeDisabled();
+    expect(
+      screen.getByTestId("user-testing-share-invite-unrunnable"),
+    ).toHaveTextContent("Environment archived.");
+
+    fireEvent.keyDown(emailInput, { key: "Enter" });
+    fireEvent.click(screen.getByRole("button", { name: "Invite" }));
+
+    await waitFor(() => expect(upsertScenarioMemberMock).not.toHaveBeenCalled());
+  });
 });
 
 describe("ScenarioShareEmptyPanel", () => {
