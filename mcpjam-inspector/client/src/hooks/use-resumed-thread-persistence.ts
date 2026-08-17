@@ -219,25 +219,43 @@ export function useResumedThreadPersistence(
     sendBaselineRef.current = null;
     if (!enabled) return;
 
-    // The user stopped the turn. Nothing below applies, because there is
-    // nothing to reconcile: the server persists only `runSucceeded && !aborted`
-    // (`server/utils/mcpjam-stream-handler.ts`, `onFinishEngine`), so an aborted
+    // Both consumed BEFORE the abort check, because an abort can race a receipt
+    // that already arrived. The server writes the receipt once the ingest has
+    // committed and before it closes the stream, so a Stop pressed inside that
+    // window reports `isAbort: true` for a turn the server has already saved —
+    // and the persist can hold the stream open for seconds, which is exactly
+    // when a user reaches for Stop. Discarding that receipt would strand
+    // `resumedVersion` on its pre-turn value, and the next send would carry a
+    // stale `expectedVersion` into a false conflict: the bug this hook exists
+    // to remove.
+    const aborted = callbacksRef.current.consumeTurnAborted();
+    const receipt = callbacksRef.current.consumePersistReceipt();
+    // Only a receipt that PROVES a write outlives the abort. `saved`/`duplicate`
+    // carry the authoritative new version, so they fall through and are handled
+    // exactly as they would be on a turn nobody stopped.
+    const receiptProvesWrite =
+      receipt?.outcome === "saved" || receipt?.outcome === "duplicate";
+
+    // The user stopped the turn and nothing was committed. There is nothing to
+    // reconcile: the server persists only `runSucceeded && !aborted`
+    // (`server/utils/mcpjam-stream-handler.ts`, `onFinishEngine`), so such a
     // turn produces no receipt AND no version bump — the exact signature this
     // hook otherwise reads as a dropped write. Left to run, the no-receipt
     // branch would watch the subscription for its full 10 s and then tell the
     // user their reply "couldn't be saved", which is a false alarm about a
     // deliberate action: not saving a withdrawn turn IS the intended outcome.
-    if (callbacksRef.current.consumeTurnAborted()) {
-      // Consume and discard. A receipt is not expected here, but a straggler
-      // left in place would be handed to the NEXT turn's post-stream pass as if
-      // it described that turn.
-      callbacksRef.current.consumePersistReceipt();
+    //
+    // A `failed`, `skipped`, or `conflict` receipt is suppressed here too: the
+    // turn was withdrawn, so there is no reply to warn about and none to fork
+    // away from. A real conflict has not been lost — the session is still
+    // ahead, so the next send reports it with a reply actually worth saving.
+    if (aborted && !receiptProvesWrite) {
       // Belt and braces — the stream-start branch above already cleared it for
       // this turn. Keeping it here makes the abort path a complete no-op on its
       // own rather than one that depends on a sibling branch.
       pendingReconcileRef.current = null;
       // No rail refresh and no read-marking either. Both exist to reflect a
-      // write that just landed; an aborted turn wrote nothing, so the rail has
+      // write that just landed; this turn wrote nothing, so the rail has
       // nothing new to learn and the row's unread state is exactly as the
       // server last left it.
       return;
@@ -246,8 +264,6 @@ export function useResumedThreadPersistence(
     if (activeHistorySessionId) {
       callbacksRef.current.markHistorySessionRead(activeHistorySessionId);
     }
-
-    const receipt = callbacksRef.current.consumePersistReceipt();
 
     // A turn on a fresh (non-resumed) thread has no baseline to advance. It DOES
     // need the rail refresh: this is the turn that created the row, so the

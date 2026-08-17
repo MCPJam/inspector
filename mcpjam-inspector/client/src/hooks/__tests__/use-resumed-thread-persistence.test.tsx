@@ -512,10 +512,11 @@ describe("useResumedThreadPersistence", () => {
     expect(harness.onUnsaved).toHaveBeenCalledTimes(1);
   });
 
-  it("discards a straggler receipt from a stopped turn", () => {
-    // An aborted turn is not supposed to produce a receipt. If one raced the
-    // abort anyway, leaving it in place would hand it to the NEXT turn's
-    // post-stream pass as though it described that turn.
+  it("honors a saved receipt that wins the race against the stop", () => {
+    // The server writes the receipt once the ingest has committed and before it
+    // closes the stream, so a Stop pressed in that window reports an abort for a
+    // turn that WAS saved. Discarding the receipt would strand `resumedVersion`
+    // on its pre-turn value and send the next turn into a false conflict.
     const harness = setup({
       aborted: true,
       receipt: { outcome: "saved", chatSessionId: "c", version: 5 },
@@ -524,7 +525,28 @@ describe("useResumedThreadPersistence", () => {
     harness.runTurn();
 
     expect(harness.consumePersistReceipt).toHaveBeenCalledTimes(1);
+    expect(harness.syncResumedVersion).toHaveBeenCalledWith(5);
+    expect(harness.onUnsaved).not.toHaveBeenCalled();
+  });
+
+  it("still says nothing when a stopped turn's receipt reports no write", () => {
+    // The complement: only a receipt that PROVES a write outlives the abort.
+    // A withdrawn turn has no reply to warn about, so `failed` stays silent —
+    // and the receipt is still consumed so it cannot leak into the next turn.
+    const harness = setup({
+      aborted: true,
+      receipt: { outcome: "failed", chatSessionId: "c" },
+    });
+
+    harness.runTurn();
+    act(() => {
+      vi.advanceTimersByTime(11_000);
+    });
+
+    expect(harness.consumePersistReceipt).toHaveBeenCalledTimes(1);
     expect(harness.syncResumedVersion).not.toHaveBeenCalled();
+    expect(harness.onUnsaved).not.toHaveBeenCalled();
+    expect(harness.onConflict).not.toHaveBeenCalled();
   });
 
   it("does not refresh the rail for a stopped turn on a fresh thread", () => {
