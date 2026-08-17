@@ -211,18 +211,38 @@ export function useResumedThreadPersistence(
 
     const receipt = callbacksRef.current.consumePersistReceipt();
 
-    // The rail refresh is deliberately NOT fired before the outcome is known.
-    // It resolves asynchronously and writes back the session id and version it
-    // fetched — so on a conflict it would race the fork and reattach the very
-    // thread we just detached from, restoring its version onto the new one.
-    // Everything else wants it, so it runs on every path except that.
-    if (receipt?.outcome !== "conflict") {
+    // A turn on a fresh (non-resumed) thread has no baseline to advance and
+    // nothing to conflict with. It DOES need the rail refresh: this is the turn
+    // that created the row, so the refresh is how the surface learns its id.
+    if (!baseline) {
       callbacksRef.current.refreshAfterStream();
+      return;
     }
 
-    // A turn on a fresh (non-resumed) thread has no baseline to advance and
-    // nothing to conflict with — the rail refresh above is all it needs.
-    if (!baseline) return;
+    // The rail refresh is deliberately NOT fired before the outcome is known,
+    // and on two outcomes not at all. It resolves asynchronously and writes
+    // whatever version it read into the baseline, which is wrong twice over:
+    //
+    //  - on a `conflict` it races the fork and reattaches the very thread the
+    //    detach just left, restoring its version onto the new one;
+    //  - on a `saved`/`duplicate` the receipt already carries the authoritative
+    //    version — the one the ingest just committed — while a detail read can
+    //    still be serving the pre-ingest value. Letting it land would DOWNGRADE
+    //    the baseline, so the next send would carry a stale `expectedVersion`,
+    //    take a false 409, and detach a thread nobody else ever touched. That
+    //    is the exact failure this whole change exists to remove.
+    //
+    // The reactive session subscription re-enables once the stream ends and
+    // keeps the rail current on both paths, so nothing is lost by skipping it.
+    const skipRailRefresh =
+      receipt?.outcome === "conflict" ||
+      receipt?.outcome === "saved" ||
+      receipt?.outcome === "duplicate";
+    if (!skipRailRefresh) {
+      // Every remaining outcome is one where the server's own copy is the best
+      // evidence available, so the refresh is wanted.
+      callbacksRef.current.refreshAfterStream();
+    }
 
     if (!receipt) {
       // Deploy skew: a new client bundle against an inspector server that does

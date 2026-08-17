@@ -708,6 +708,7 @@ export async function persistChatSessionToConvex(
         {
           failureKind,
           ...(status !== undefined ? { statusCode: status } : {}),
+          ...(preview ? { responsePreview: preview } : {}),
           sourceType: options.sourceType,
           origin: options.origin,
         },

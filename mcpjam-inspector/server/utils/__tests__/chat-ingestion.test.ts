@@ -703,6 +703,40 @@ describe("chat-ingestion", () => {
       );
     });
 
+    it("carries the 4xx preview into the typed event too", async () => {
+      // The request-context path is what production actually logs through, so
+      // the detail has to survive there and not just in the fallback logger.
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          new Response("modelId is required", { status: 400 })
+        ) as typeof fetch;
+      const c = makeTestContext();
+
+      await persistChatSessionToConvex(
+        {
+          chatSessionId: "bad-request",
+          modelId: "openai/gpt-oss-120b",
+          modelSource: "mcpjam",
+          authHeader: "Bearer bearer-token",
+          origin: "playground",
+          startedAt: 1,
+        },
+        c
+      );
+
+      expect(mockLogger.event).toHaveBeenCalledWith(
+        "chat.session.persist.failed",
+        expect.any(Object),
+        expect.objectContaining({
+          failureKind: "http_error",
+          statusCode: 400,
+          responsePreview: expect.stringContaining("modelId is required"),
+        }),
+        undefined
+      );
+    });
+
     it("reports not-attempted without a session id, auth, or Convex URL", async () => {
       const base = {
         modelId: "openai/gpt-oss-120b",

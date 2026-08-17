@@ -1534,8 +1534,9 @@ chatV2.post("/", async (c) => {
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
           // Hosted sessions finally honor the CAS the client already sends.
-          ...(body.expectedVersion !== undefined
-            ? { expectedVersion: body.expectedVersion }
+          // Read from the SCHEMA-VALIDATED body, not the raw cast one.
+          ...(hostedBody.expectedVersion !== undefined
+            ? { expectedVersion: hostedBody.expectedVersion }
             : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
           // preserving the legacy behavior where chat-v2 fed the post-

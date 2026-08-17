@@ -129,7 +129,6 @@ describe("useResumedThreadPersistence", () => {
     expect(harness.onConflict).not.toHaveBeenCalled();
     expect(harness.onUnsaved).not.toHaveBeenCalled();
     expect(harness.markHistorySessionRead).toHaveBeenCalledWith(SESSION_ID);
-    expect(harness.refreshAfterStream).toHaveBeenCalled();
   });
 
   it("treats a duplicate receipt exactly like a save", () => {
@@ -373,16 +372,38 @@ describe("useResumedThreadPersistence", () => {
     expect(harness.refreshAfterStream).not.toHaveBeenCalled();
   });
 
-  it("refreshes the rail on every non-conflict outcome", () => {
+  it("does NOT refresh the rail on a saved or duplicate receipt", () => {
+    // The receipt carries the version the ingest just committed; a detail read
+    // can still be serving the pre-ingest one, and it writes whatever it reads
+    // into the baseline. Letting it land would downgrade the baseline, so the
+    // next send would take a false 409 and detach a thread nobody touched.
     for (const receipt of [
       { outcome: "saved" as const, chatSessionId: "c", version: 5 },
+      { outcome: "duplicate" as const, chatSessionId: "c", version: 5 },
+    ]) {
+      const harness = setup({ receipt });
+      harness.runTurn();
+      expect(harness.syncResumedVersion).toHaveBeenCalledWith(5);
+      expect(harness.refreshAfterStream).not.toHaveBeenCalled();
+    }
+  });
+
+  it("refreshes the rail when the server's own copy is the best evidence", () => {
+    for (const receipt of [
       { outcome: "skipped" as const, chatSessionId: "c", version: 4 },
       { outcome: "failed" as const, chatSessionId: "c" },
+      null,
     ]) {
       const harness = setup({ receipt });
       harness.runTurn();
       expect(harness.refreshAfterStream).toHaveBeenCalled();
     }
+  });
+
+  it("refreshes the rail for a fresh thread — that is how it learns the new row", () => {
+    const harness = setup({ resumedVersion: null, receipt: null });
+    harness.runTurn();
+    expect(harness.refreshAfterStream).toHaveBeenCalled();
   });
 
   it("drops a pending reconciliation when the rail is disabled mid-flight", () => {

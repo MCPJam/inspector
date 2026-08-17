@@ -228,6 +228,14 @@ export type RequestEventMap = {
       | "exception"
       | "version_conflict";
     statusCode?: number;
+    /**
+     * Sanitized, length-capped excerpt of the ingest's response body (see
+     * `sanitizeDiagnosticText`: secrets, emails and bearer tokens are redacted
+     * and it is truncated). Carried mainly for 4xx, where the body text names
+     * the misconfiguration and is the difference between a diagnosable failure
+     * and a bare status code.
+     */
+    responsePreview?: string;
     sourceType?: "scenario" | "direct" | "eval" | "swarm";
     // Product-surface discriminator carried alongside sourceType so PostHog
     // can pivot persist failures by surface without rejoining to chatSessions.
