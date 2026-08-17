@@ -147,7 +147,36 @@ function canonicalizeCspSource(value: string): string {
   const stripped = value.replace(/['"<>;]/g, "").trim();
   // Any interior whitespace means this entry would fan out into multiple
   // CSP sources at emit time, past whatever the clamp inspected.
-  return /\s/.test(stripped) ? "" : stripped;
+  if (/\s/.test(stripped)) return "";
+  if (hasTrailingDotHost(stripped)) return "";
+  return stripped;
+}
+
+/**
+ * True when the source's host ends in the root-zone dot (`https://localhost.`,
+ * `*.mcpjam.com.`).
+ *
+ * A terminal dot spells the same host to DNS and to the browser, but not to
+ * the clamp: `isDangerousHostname` tests `host === "localhost"` and
+ * `host.endsWith(".localhost")`, and `matchesAnyDeny` compares deny patterns
+ * as plain strings — the dotted spelling matches neither, so `https://localhost.`
+ * survives the loopback clamp and `https://mcpjam.com.` survives the MCPJam
+ * clamp, while the browser resolves both to the protected target. (IPv4
+ * literals are safe: the URL parser already strips the dot from `127.0.0.1.`.)
+ *
+ * Dropped rather than rewritten, on the same reasoning as whitespace: a
+ * declaration has no legitimate need for the root-dot spelling, and rewriting
+ * it would mean this helper deciding what the App "meant".
+ */
+function hasTrailingDotHost(source: string): boolean {
+  try {
+    return new URL(source).hostname.endsWith(".");
+  } catch {
+    // Schemeless / wildcard forms (`*.example.com.`, `example.com.`) don't
+    // parse as URLs. Fall back to the host-ish prefix before any path.
+    const hostish = source.split("/")[0];
+    return hostish.endsWith(".") && hostish !== ".";
+  }
 }
 
 /**

@@ -354,6 +354,68 @@ describe("hosted /widget-content — malformed declarations", () => {
     expect(body.csp.connectDomains).toEqual(["https://legit.example"]);
   });
 
+  it("drops root-dot host spellings that evade the loopback and MCPJam clamps", async () => {
+    // `https://localhost.` is the same host to DNS and to the browser, but
+    // not to the clamp: `isDangerousHostname` tests `=== "localhost"` and
+    // `.endsWith(".localhost")`, and the URL parser preserves the terminal
+    // dot on names (it strips it on IPv4 literals). Same trick evades
+    // `matchesAnyDeny` for the MCPJam origins. Left intact, a hosted App
+    // could reach services on the tester's own machine.
+    mockResource({
+      contentMeta: {
+        ui: {
+          csp: {
+            connectDomains: [
+              "https://localhost.",
+              "https://foo.localhost.",
+              "https://mcpjam.com.",
+              "https://legit.example",
+            ],
+          },
+        },
+      },
+    });
+    const res = await postWidgetContent(makeApp(), "permissive");
+    const body = await res.json();
+    expect(body.csp.connectDomains).toEqual(["https://legit.example"]);
+  });
+
+  it("drops schemeless and wildcard root-dot spellings too", async () => {
+    mockResource({
+      contentMeta: {
+        ui: { csp: { connectDomains: ["*.mcpjam.com.", "localhost."] } },
+      },
+    });
+    const res = await postWidgetContent(makeApp(), "permissive");
+    const body = await res.json();
+    expect(body.csp.connectDomains).toEqual([]);
+  });
+
+  it("leaves ordinary hosts and IPv4 literals alone", async () => {
+    // Guard against over-eager stripping: the fix must not eat legitimate
+    // declarations.
+    mockResource({
+      contentMeta: {
+        ui: {
+          csp: {
+            connectDomains: [
+              "https://esm.sh",
+              "*.example.com",
+              "https://example.com/path",
+            ],
+          },
+        },
+      },
+    });
+    const res = await postWidgetContent(makeApp(), "permissive");
+    const body = await res.json();
+    expect(body.csp.connectDomains).toEqual([
+      "https://esm.sh",
+      "*.example.com",
+      "https://example.com/path",
+    ]);
+  });
+
   it("drops whitespace-bearing entries on the legacy path too", async () => {
     mockResource({
       contentMeta: {
