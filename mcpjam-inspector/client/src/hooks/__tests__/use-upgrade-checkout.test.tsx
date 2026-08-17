@@ -5,17 +5,24 @@ import {
   useUpgradeCheckout,
 } from "../use-upgrade-checkout";
 
-const { billingState, startPlanChange, toastError, toastSuccess, trackMock } =
-  vi.hoisted(() => ({
-    billingState: {
-      planCatalog: undefined as unknown,
-      isLoadingPlanCatalog: false,
-    },
-    startPlanChange: vi.fn(),
-    toastError: vi.fn(),
-    toastSuccess: vi.fn(),
-    trackMock: vi.fn(),
-  }));
+const {
+  billingState,
+  startPlanChange,
+  toastError,
+  toastInfo,
+  toastSuccess,
+  trackMock,
+} = vi.hoisted(() => ({
+  billingState: {
+    planCatalog: undefined as unknown,
+    isLoadingPlanCatalog: false,
+  },
+  startPlanChange: vi.fn(),
+  toastError: vi.fn(),
+  toastInfo: vi.fn(),
+  toastSuccess: vi.fn(),
+  trackMock: vi.fn(),
+}));
 
 vi.mock("@/hooks/useOrganizationBilling", () => ({
   useOrganizationBilling: () => ({
@@ -35,7 +42,7 @@ vi.mock("@/hooks/useOrganizationBilling", () => ({
 
 vi.mock("@/lib/analytics", () => ({ track: trackMock }));
 vi.mock("@/lib/toast", () => ({
-  toast: { error: toastError, success: toastSuccess },
+  toast: { error: toastError, info: toastInfo, success: toastSuccess },
 }));
 
 function planCatalog(
@@ -213,6 +220,74 @@ describe("useUpgradeCheckout", () => {
 
     expect(outcome!).toEqual({ redirected: false, shouldDismiss: false });
     expect(startPlanChange).not.toHaveBeenCalled();
+  });
+
+  it("holds checkout when the catalog resolved without a Team entry", async () => {
+    // Distinct from the loading case above: nothing is in flight, there is
+    // simply no plan to sell. The `!teamEntry` guard is the one that stops it.
+    billingState.planCatalog = undefined;
+    billingState.isLoadingPlanCatalog = false;
+    const { result } = renderHook(() =>
+      useUpgradeCheckout({
+        organizationId: "org-1",
+        origin: "evals",
+        limitKind: "evalIterations",
+      })
+    );
+
+    let outcome: Awaited<ReturnType<typeof result.current.start>>;
+    await act(async () => {
+      outcome = await result.current.start();
+    });
+
+    expect(outcome!).toEqual({ redirected: false, shouldDismiss: false });
+    expect(startPlanChange).not.toHaveBeenCalled();
+  });
+
+  it("hands checkout to the browser on desktop instead of navigating in place", async () => {
+    // The desktop shell cancels in-app navigation to an external origin, so
+    // `location.assign` would leave the dialog stranded behind a page that
+    // never moves. Open a real browser tab and release the dialog instead.
+    billingState.planCatalog = planCatalog(["annual"]);
+    startPlanChange.mockResolvedValue({
+      kind: "checkout",
+      checkoutUrl: "https://checkout.stripe.com/c/pay/cs_test_123",
+      subscription: { plan: "team" },
+    });
+    const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
+    (window as { isElectron?: boolean }).isElectron = true;
+
+    try {
+      const { result } = renderHook(() =>
+        useUpgradeCheckout({
+          organizationId: "org-1",
+          origin: "evals",
+          limitKind: "evalIterations",
+        })
+      );
+
+      let outcome: Awaited<ReturnType<typeof result.current.start>>;
+      await act(async () => {
+        outcome = await result.current.start();
+      });
+
+      expect(openSpy).toHaveBeenCalledWith(
+        "https://checkout.stripe.com/c/pay/cs_test_123",
+        "_blank",
+        "noopener,noreferrer"
+      );
+      // The dialog closes here, unlike the same-tab path where the page is
+      // already on its way out.
+      expect(outcome!).toEqual({ redirected: true, shouldDismiss: true });
+      // The return token is only worth writing for a return that can land in
+      // this session; checkout finishing in another browser can't use it.
+      expect(window.sessionStorage.getItem("mcpjam.upgradeReturnToken")).toBe(
+        null
+      );
+    } finally {
+      delete (window as { isElectron?: boolean }).isElectron;
+      openSpy.mockRestore();
+    }
   });
 
   it("reports an in-place plan update and tells the dialog to close", async () => {

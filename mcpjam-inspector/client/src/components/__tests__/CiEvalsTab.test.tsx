@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   },
   useEvalQueries: vi.fn(),
   useEvalHandlers: vi.fn(),
+  evalTabContext: { organizationId: "org-1" as string | null },
   deleteSuiteMutation: vi.fn(),
   directDeleteRun: vi.fn().mockResolvedValue(undefined),
 }));
@@ -169,7 +170,7 @@ vi.mock("../evals/trace-viewer", () => ({
 
 vi.mock("@/hooks/use-eval-tab-context", () => ({
   useEvalTabContext: () => ({
-    organizationId: "org-1",
+    organizationId: mocks.evalTabContext.organizationId,
     connectedServerNames: new Set(),
     userMap: new Map(),
     canDeleteSuite: false,
@@ -218,7 +219,7 @@ function makeSuite(overrides: Partial<EvalSuite> = {}): EvalSuite {
 }
 
 function makeEntry(
-  overrides: Partial<EvalSuiteOverviewEntry> = {},
+  overrides: Partial<EvalSuiteOverviewEntry> = {}
 ): EvalSuiteOverviewEntry {
   const latestRun =
     overrides.latestRun === undefined ? null : overrides.latestRun;
@@ -237,7 +238,7 @@ function makeEntry(
 }
 
 function makeQueries(
-  overrides: Partial<ReturnType<typeof baseQueries>> = {},
+  overrides: Partial<ReturnType<typeof baseQueries>> = {}
 ): ReturnType<typeof baseQueries> {
   return {
     ...baseQueries(),
@@ -268,6 +269,7 @@ describe("CiEvalsTab first-run NUX", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.route.current = { type: "list" };
+    mocks.evalTabContext.organizationId = "org-1";
     mocks.useEvalQueries.mockReturnValue(baseQueries());
   });
 
@@ -275,7 +277,7 @@ describe("CiEvalsTab first-run NUX", () => {
     mocks.useEvalQueries.mockReturnValue(
       makeQueries({
         isOverviewLoading: true,
-      }),
+      })
     );
 
     render(<CiEvalsTab convexProjectId="ws-1" />);
@@ -290,7 +292,7 @@ describe("CiEvalsTab first-run NUX", () => {
     expect(screen.getByText("Run your first eval")).toBeInTheDocument();
     expect(screen.getByTestId("sdk-eval-quickstart")).toBeInTheDocument();
     expect(
-      screen.queryByText("Select a suite or commit"),
+      screen.queryByText("Select a suite or commit")
     ).not.toBeInTheDocument();
   });
 
@@ -299,7 +301,7 @@ describe("CiEvalsTab first-run NUX", () => {
     mocks.useEvalQueries.mockReturnValue(
       makeQueries({
         sortedSuites: [makeEntry()],
-      }),
+      })
     );
 
     render(<CiEvalsTab convexProjectId="ws-1" />);
@@ -314,7 +316,7 @@ describe("CiEvalsTab first-run NUX", () => {
     mocks.useEvalQueries.mockReturnValue(
       makeQueries({
         sortedSuites: [makeEntry({ latestRun: run, recentRuns: [run] })],
-      }),
+      })
     );
 
     render(<CiEvalsTab convexProjectId="ws-1" />);
@@ -327,7 +329,7 @@ describe("CiEvalsTab first-run NUX", () => {
     mocks.useEvalQueries.mockReturnValue(
       makeQueries({
         sortedSuites: [makeEntry({ suite: makeSuite({ source: "ui" }) })],
-      }),
+      })
     );
 
     render(<CiEvalsTab convexProjectId="ws-1" />);
@@ -348,7 +350,7 @@ describe("CiEvalsTab first-run NUX", () => {
             recentRuns: [run],
           }),
         ],
-      }),
+      })
     );
 
     render(<CiEvalsTab convexProjectId="ws-1" />);
@@ -363,7 +365,19 @@ describe("CiEvalsTab first-run NUX", () => {
     render(<CiEvalsTab convexProjectId="ws-1" />);
 
     expect(mocks.useEvalHandlers).toHaveBeenCalledWith(
-      expect.objectContaining({ organizationId: "org-1" }),
+      expect.objectContaining({ organizationId: "org-1" })
+    );
+  });
+
+  it("passes null through when the project has no organization", () => {
+    // A personal/local project has none. The handlers must receive the real
+    // absence rather than a stale id from a previously scoped project.
+    mocks.evalTabContext.organizationId = null;
+
+    render(<CiEvalsTab convexProjectId="ws-1" />);
+
+    expect(mocks.useEvalHandlers).toHaveBeenCalledWith(
+      expect.objectContaining({ organizationId: null })
     );
   });
 
@@ -376,7 +390,7 @@ describe("CiEvalsTab first-run NUX", () => {
             suite: makeSuite({ source: "ui", lastSdkRunAt: 123 }),
           }),
         ],
-      }),
+      })
     );
 
     render(<CiEvalsTab convexProjectId="ws-1" />);
