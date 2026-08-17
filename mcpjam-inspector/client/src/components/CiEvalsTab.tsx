@@ -32,6 +32,11 @@ import {
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useEvalsRunsRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
+import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
+import {
+  calculateEvalIterationRequest,
+  getEvalIterationQuotaDisabledReason,
+} from "@/lib/eval-iteration-quota";
 import {
   aggregateSuite,
   formatRunId,
@@ -42,6 +47,7 @@ import { useRunDetailData } from "./evals/use-suite-data";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
+import { getRunnableCaseModels } from "./evals/single-test-case-runner";
 import {
   CiSuiteListSidebar,
   type SidebarMode,
@@ -115,6 +121,7 @@ export function CiEvalsTab({
       : null;
 
   const {
+    organizationId,
     connectedServerNames,
     userMap,
     canDeleteSuite,
@@ -124,6 +131,17 @@ export function CiEvalsTab({
     isAuthenticated,
     projectId: convexProjectId,
   });
+  const {
+    quota: evalIterationQuota,
+    isLoading: isEvalIterationQuotaLoading,
+  } = useEvalIterationQuota({
+    organizationId,
+    enabled: Boolean(organizationId),
+  });
+  const evalRunsDisabledReason = useMemo(
+    () => getEvalIterationQuotaDisabledReason(evalIterationQuota),
+    [evalIterationQuota],
+  );
 
   const { servers: ciProjectServers = [] } = useProjectServers({
     isAuthenticated,
@@ -326,6 +344,32 @@ export function CiEvalsTab({
     projectServers: ciProjectServers,
     availableModels,
   });
+
+  const guardEvalIterationQuota = useCallback(
+    (requestedIterations = 1) => {
+      if (!organizationId) return true;
+      if (isEvalIterationQuotaLoading) {
+        toast.error("Checking your eval iteration limit. Try again shortly.");
+        return false;
+      }
+      const disabledReason = getEvalIterationQuotaDisabledReason(
+        evalIterationQuota,
+        requestedIterations,
+      );
+      if (!disabledReason) return true;
+      toast.error(disabledReason);
+      return false;
+    },
+    [evalIterationQuota, isEvalIterationQuotaLoading, organizationId],
+  );
+
+  const handleRerunWithQuota = useCallback(
+    (...args: Parameters<typeof handlers.handleRerun>) => {
+      if (!guardEvalIterationQuota()) return;
+      return handlers.handleRerun(...args);
+    },
+    [guardEvalIterationQuota, handlers],
+  );
 
   const suiteAggregate = useMemo(() => {
     if (!selectedSuite || !queries.suiteDetails) return null;
@@ -809,7 +853,7 @@ export function CiEvalsTab({
                       isRunDetailView ? setRunDetailSidebarSortBy : undefined
                     }
                     omitRunIterationList={isRunDetailView}
-                    onRerun={handlers.handleRerun}
+                    onRerun={handleRerunWithQuota}
                     onReplayRun={handlers.handleReplayRun}
                     onCancelRun={handlers.handleCancelRun}
                     onDelete={handleDeleteSuite}
@@ -829,10 +873,22 @@ export function CiEvalsTab({
                     canDeleteRuns={canDeleteRuns}
                     readOnlyConfig
                     omitSuiteHeader
+                    evalRunsDisabledReason={evalRunsDisabledReason}
+                    guardEvalIterationQuota={guardEvalIterationQuota}
                     onRunTestCase={
                       selectedSuite
-                        ? (tc, opts) => {
+                          ? (tc, opts) => {
                             void (async () => {
+                              const requestedIterations =
+                                calculateEvalIterationRequest(
+                                  getRunnableCaseModels(tc).length,
+                                  opts?.iterationOverride ?? tc.runs ?? 1,
+                                );
+                              if (
+                                !guardEvalIterationQuota(requestedIterations)
+                              ) {
+                                return;
+                              }
                               const data = await handlers.handleRunTestCase(
                                 selectedSuite,
                                 tc,

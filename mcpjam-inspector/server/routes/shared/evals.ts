@@ -24,6 +24,7 @@ import {
 } from "@mcpjam/sdk/host-config/internal";
 import {
   resolveSteps,
+  reserveQuickRunIterations,
   runEvalSuiteWithAiSdk,
   streamTestCase,
   type EvalPinnedSkillSource,
@@ -2179,19 +2180,24 @@ export async function runEvalTestCaseWithManager(
   const expectedIterationId =
     quickResult?.quickRunIterationOutcomes?.[0]?.iterationId;
 
-  let latestIteration: unknown = null;
-  if (expectedIterationId) {
-    latestIteration = await convexClient.query(
-      "testSuites:getTestIteration" as any,
-      { iterationId: expectedIterationId }
+  if (!expectedIterationId) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Quick run completed without creating an iteration."
     );
   }
+
+  const latestIteration: unknown = await convexClient.query(
+    "testSuites:getTestIteration" as any,
+    { iterationId: expectedIterationId }
+  );
   if (!latestIteration) {
-    const recentIterations = await convexClient.query(
-      "testSuites:listTestIterations" as any,
-      { testCaseId }
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Quick run iteration could not be loaded."
     );
-    latestIteration = recentIterations?.[0] || null;
   }
 
   if (
@@ -2578,6 +2584,11 @@ export async function streamEvalTestCaseWithManager(
     // the run's own teardown, which aborts through this signal.
     await: { signal: streamAbortController.signal },
   });
+  const [precreatedIterationIds] = await reserveQuickRunIterations(
+    convexClient,
+    [test],
+    testCaseId
+  );
   const tools = (
     suiteHostPolicy || singleCaseTasksSeam
       ? await clientManager.getToolsForAiSdk(resolvedServerIds, {
@@ -2636,6 +2647,7 @@ export async function streamEvalTestCaseWithManager(
           suiteHostConfig,
           toolSignals: streamToolSignals,
           environment: runtimeEnvironment,
+          precreatedIterationIds,
           emit: (event: EvalStreamEvent) => {
             try {
               controller.enqueue(sseEncode(event));

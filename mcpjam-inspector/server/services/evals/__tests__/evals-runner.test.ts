@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ConvexError } from "convex/values";
 
 const generateTextMock = vi.hoisted(() => vi.fn());
 const streamTextMock = vi.hoisted(() => vi.fn());
@@ -137,7 +138,11 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     // not from the runner's `convexHttpUrl` parameter. Set both so the
     // engine paths and any direct-fetch paths target the same host.
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
-    convexClient.mutation.mockResolvedValue({ iterationId: "iter-1" });
+    convexClient.mutation.mockResolvedValue({
+      iterationId: "iter-1",
+      iterationIds: ["iter-1"],
+      iterationIdGroups: [["iter-1"]],
+    });
     convexClient.query.mockResolvedValue({ status: "running" });
     convexClient.action.mockResolvedValue(undefined);
     mcpClientManager.getToolsForAiSdk.mockResolvedValue({});
@@ -288,6 +293,57 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       runEvalSuiteWithAiSdk(buildQuickRunConfig() as any)
     ).rejects.toThrow(
       'Could not start eval because "Asana" failed to list tools. Reconnect the server and try again.'
+    );
+  });
+
+  it("rejects a quick run before model or tool execution when quota reservation fails", async () => {
+    const request = buildQuickRunConfig() as any;
+    request.config.tests = [
+      { ...request.config.tests[0], runs: 2 },
+      {
+        ...request.config.tests[0],
+        runs: 2,
+        model: "claude-sonnet-4",
+        provider: "anthropic",
+      },
+    ];
+    convexClient.mutation.mockRejectedValueOnce(
+      new ConvexError({
+        code: "billing_limit_reached",
+        message: "Eval iteration limit reached",
+        limit: "maxEvalIterationsPerMonth",
+        currentValue: 76,
+        allowed: 75,
+        resetsAt: Date.UTC(2026, 7, 14),
+        windowKind: "day",
+      })
+    );
+
+    await expect(
+      runEvalSuiteWithAiSdk(request)
+    ).rejects.toMatchObject({
+      status: 402,
+      code: "BILLING_LIMIT_REACHED",
+      details: expect.objectContaining({
+        code: "billing_limit_reached",
+        allowed: 75,
+      }),
+    });
+
+    expect(createLlmModelMock).not.toHaveBeenCalled();
+    expect(mcpClientManager.getToolsForAiSdk).not.toHaveBeenCalled();
+    expect(generateTextMock).not.toHaveBeenCalled();
+    expect(streamTextMock).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
+    expect(convexClient.mutation).toHaveBeenCalledWith(
+      "testSuites:recordQuickRunBatchStart",
+      expect.objectContaining({
+        batches: [
+          expect.objectContaining({ count: 2 }),
+          expect.objectContaining({ count: 2 }),
+        ],
+      })
     );
   });
 
@@ -1684,13 +1740,14 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         )
       );
 
-    // The iteration row is created via `mutation` (default mock returns
-    // { iterationId: "iter-1" }); the finalize call goes through `action`
+    // The iteration rows are created via the atomic batch mutation; the
+    // finalize call goes through `action`
     // (testSuites:updateTestIteration). Convex serializes `passed` into
     // separate `result` ("failed") and `status` ("failed") fields — see
     // `finishIterationDirectly`.
     convexClient.mutation.mockResolvedValueOnce({
-      iterationId: "iter-failed-setup",
+      iterationIds: ["iter-failed-setup"],
+      iterationIdGroups: [["iter-failed-setup"]],
     });
 
     try {
@@ -1763,7 +1820,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       .mockRejectedValueOnce(new Error("simulated prep failure"));
 
     convexClient.mutation.mockResolvedValueOnce({
-      iterationId: "iter-negative-setup-fail",
+      iterationIds: ["iter-negative-setup-fail"],
+      iterationIdGroups: [["iter-negative-setup-fail"]],
     });
 
     try {
@@ -1821,7 +1879,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       .mockRejectedValueOnce(new Error("backend stream prep boom"));
 
     convexClient.mutation.mockResolvedValueOnce({
-      iterationId: "iter-stream-setup-fail",
+      iterationIds: ["iter-stream-setup-fail"],
+      iterationIdGroups: [["iter-stream-setup-fail"]],
     });
 
     const emitted: Array<Record<string, unknown>> = [];

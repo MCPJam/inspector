@@ -50,6 +50,7 @@ import { ConfirmationDialogs } from "./evals/ConfirmationDialogs";
 import { useEvalQueries } from "./evals/use-eval-queries";
 import { useEvalMutations } from "./evals/use-eval-mutations";
 import { useEvalHandlers } from "./evals/use-eval-handlers";
+import { getRunnableCaseModels } from "./evals/single-test-case-runner";
 import { isDraftTestCaseId } from "./evals/draft-test-case";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { SuiteSwitcher } from "./evals/suite-switcher";
@@ -61,7 +62,10 @@ import {
   CreateSuiteDialog,
   type CreateSuitePayload,
 } from "./evals/create-suite-dialog";
-import { getEvalIterationQuotaDisabledReason } from "@/lib/eval-iteration-quota";
+import {
+  calculateEvalIterationRequest,
+  getEvalIterationQuotaDisabledReason,
+} from "@/lib/eval-iteration-quota";
 import { track } from "@/lib/analytics";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
@@ -167,7 +171,10 @@ function EvalsTabContent({
     projectId: projectId ?? null,
     isDirectGuest,
   });
-  const { quota: evalIterationQuota } = useEvalIterationQuota({
+  const {
+    quota: evalIterationQuota,
+    isLoading: isEvalIterationQuotaLoading,
+  } = useEvalIterationQuota({
     organizationId,
     enabled: Boolean(organizationId),
   });
@@ -259,13 +266,27 @@ function EvalsTabContent({
     directDeleteTestCase,
   } = handlers;
 
-  const guardEvalIterationQuota = useCallback(() => {
-    if (!evalRunsDisabledReason) {
-      return true;
-    }
-    toast.error(evalRunsDisabledReason);
-    return false;
-  }, [evalRunsDisabledReason]);
+  const guardEvalIterationQuota = useCallback(
+    (requestedIterations = 1) => {
+      if (!organizationId) {
+        return true;
+      }
+      if (isEvalIterationQuotaLoading) {
+        toast.error("Checking your eval iteration limit. Try again shortly.");
+        return false;
+      }
+      const disabledReason = getEvalIterationQuotaDisabledReason(
+        evalIterationQuota,
+        requestedIterations
+      );
+      if (!disabledReason) {
+        return true;
+      }
+      toast.error(disabledReason);
+      return false;
+    },
+    [evalIterationQuota, isEvalIterationQuotaLoading, organizationId]
+  );
 
   const handleRerunWithQuota = useCallback(
     (...args: Parameters<typeof handlers.handleRerun>) => {
@@ -279,7 +300,17 @@ function EvalsTabContent({
 
   const handleRunTestCaseWithQuota = useCallback(
     (...args: Parameters<typeof handlers.handleRunTestCase>) => {
-      if (!guardEvalIterationQuota()) {
+      const testCase = args[1];
+      const options = args[2];
+      const modelCount = options?.selectedModel
+        ? 1
+        : getRunnableCaseModels(testCase).length;
+      const iterationCount = options?.iterationOverride ?? testCase.runs ?? 1;
+      if (
+        !guardEvalIterationQuota(
+          calculateEvalIterationRequest(modelCount, iterationCount)
+        )
+      ) {
         return Promise.resolve(null);
       }
       return handlers.handleRunTestCase(...args);
@@ -1166,6 +1197,7 @@ function EvalsTabContent({
           canDeleteRuns={canDeleteRuns}
           hideRunActions
           evalRunsDisabledReason={evalRunsDisabledReason}
+          guardEvalIterationQuota={guardEvalIterationQuota}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
             void (async () => {

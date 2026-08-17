@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import {
   getStepsBlockReason,
@@ -45,6 +46,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
 vi.mock("@/lib/apis/evals-api", () => ({
   listEvalTools: vi.fn().mockResolvedValue({ tools: [] }),
   runEvalTestCase: vi.fn(),
+}));
+
+vi.mock("@/components/chat-v2/thread/part-switch", () => ({
+  PartSwitch: () => null,
 }));
 
 vi.mock("convex/react", () => ({
@@ -184,5 +189,46 @@ describe("TestTemplateEditor prompt validation UI", () => {
 
     const runButton = screen.getByRole("button", { name: /Quick Run/ });
     expect(runButton).toBeDisabled();
+  });
+
+  it("checks the shared quota guard before starting a Quick Run", async () => {
+    const user = userEvent.setup();
+    const guardEvalIterationQuota = vi.fn(() => false);
+    useQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:listTestCases") {
+        return [{ ...caseDoc, query: "Hello" }];
+      }
+      if (name === "testSuites:getTestSuite") {
+        return {
+          _id: "suite-1",
+          environment: { servers: ["srv"] },
+        };
+      }
+      return undefined;
+    });
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+        suiteIterations={[]}
+        guardEvalIterationQuota={guardEvalIterationQuota}
+      />
+    );
+
+    const runButton = await screen.findByRole("button", { name: /Quick Run/ });
+    await waitFor(() => expect(runButton).toBeEnabled());
+    await user.click(runButton);
+
+    expect(guardEvalIterationQuota).toHaveBeenCalledWith(1);
   });
 });

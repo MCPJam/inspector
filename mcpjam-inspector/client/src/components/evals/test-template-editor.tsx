@@ -54,6 +54,7 @@ import {
   type MultiModelCardSummary,
 } from "@/components/chat-v2/model-compare-card-header";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { calculateEvalIterationRequest } from "@/lib/eval-iteration-quota";
 import type { ModelDefinition } from "@/shared/types";
 import type { RemoteServer } from "@/hooks/useProjects";
 import {
@@ -246,6 +247,8 @@ interface TestTemplateEditorProps {
     serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   projectServers?: RemoteServer[];
+  /** Shared org quota gate; receives models multiplied by attempts. */
+  guardEvalIterationQuota?: (requestedIterations: number) => boolean;
   /**
    * Called after an unsaved draft case is persisted for the first time, with the
    * new Convex id, so the parent can swap the `draft:<kind>` route for the real
@@ -678,6 +681,7 @@ export function TestTemplateEditor({
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
+  guardEvalIterationQuota,
   onDraftSaved,
 }: TestTemplateEditorProps) {
   // Resolves the WorkOS token for signed-in users and the guest bearer for
@@ -1997,6 +2001,17 @@ export function TestTemplateEditor({
     );
     if (runModelValues.length === 0) {
       toast.error("Select at least one model to run.");
+      return;
+    }
+
+    const requestedIterations = calculateEvalIterationRequest(
+      runModelValues.length,
+      iterationOverride
+    );
+    if (
+      guardEvalIterationQuota &&
+      !guardEvalIterationQuota(requestedIterations)
+    ) {
       return;
     }
 
