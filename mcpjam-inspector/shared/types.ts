@@ -699,23 +699,54 @@ export const isBedrockModelId = (modelId: string): boolean => {
  * the same request surface, so an inference profile for one of these families
  * fails identically.
  *
- * Matched as a substring because the same model reaches us under four id
- * shapes: hosted ("anthropic/claude-opus-4.7"), a Bedrock inference profile
- * ("us.anthropic.claude-opus-4-7-20260205-v1:0"), a Bedrock ARN, and bare
- * ("claude-sonnet-5"). Dots are folded to dashes first so the hosted and
- * Bedrock spellings of a version normalize to the same token; the trailing
- * digit guard keeps "claude-opus-5" from matching a future "claude-opus-50".
+ * Expressed as a per-family "removed from this version onward" threshold rather
+ * than a list of exact ids: the removal is monotonic within a family, so
+ * enumerating versions would silently regress the moment Opus 4.9 ships. A
+ * family with no entry here (Haiku) has not dropped the parameters in any
+ * released version, and gets no forward guess.
  */
-const TEMPERATURE_REJECTING_MODEL_PATTERN =
-  /(?:^|[^a-z0-9])claude-(?:opus-4-7|opus-4-8|opus-5|sonnet-5|fable-5|mythos-5)(?![0-9])/;
+const TEMPERATURE_REMOVED_FROM_VERSION: Record<
+  string,
+  { major: number; minor: number }
+> = {
+  opus: { major: 4, minor: 7 },
+  sonnet: { major: 5, minor: 0 },
+  fable: { major: 5, minor: 0 },
+  mythos: { major: 5, minor: 0 },
+};
+
+/**
+ * Family and version out of a model id. Matched as a substring because the same
+ * model reaches us under four id shapes: hosted ("anthropic/claude-opus-4.7"), a
+ * Bedrock inference profile ("us.anthropic.claude-opus-4-7-20260205-v1:0"), a
+ * Bedrock ARN, and bare ("claude-sonnet-5"). Dots are folded to dashes before
+ * matching so the hosted and Bedrock spellings of a version agree.
+ *
+ * The minor group is capped at two digits so the release date that follows a
+ * bare major on Bedrock ("claude-opus-4-20250514-v1:0") is not read as one.
+ */
+const CLAUDE_FAMILY_VERSION_PATTERN =
+  /(?:^|[^a-z0-9])claude-(opus|sonnet|haiku|fable|mythos)-([0-9]+)(?:-([0-9]{1,2})(?![0-9]))?/;
 
 /**
  * True when the model rejects a `temperature` request field. Callers must omit
  * the field entirely rather than sending a default.
  */
 export const modelRejectsTemperature = (modelId: string | Model): boolean => {
-  return TEMPERATURE_REJECTING_MODEL_PATTERN.test(
+  const match = CLAUDE_FAMILY_VERSION_PATTERN.exec(
     String(modelId).toLowerCase().replace(/\./g, "-")
+  );
+  if (!match) return false;
+
+  const threshold = TEMPERATURE_REMOVED_FROM_VERSION[match[1]];
+  if (!threshold) return false;
+
+  const major = Number(match[2]);
+  // A bare major ("claude-sonnet-5") is that family's .0 release.
+  const minor = match[3] === undefined ? 0 : Number(match[3]);
+  return (
+    major > threshold.major ||
+    (major === threshold.major && minor >= threshold.minor)
   );
 };
 

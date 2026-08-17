@@ -33,6 +33,12 @@ describe("modelRejectsTemperature", () => {
       // Bare (custom / anthropic-compatible providers).
       "claude-opus-5",
       "claude-mythos-5",
+      // Versions past the threshold, including a two-digit minor, must match
+      // without anyone editing this file when they ship.
+      "anthropic/claude-opus-4.9",
+      "anthropic/claude-opus-4.10",
+      "us.anthropic.claude-opus-4-9-20260801-v1:0",
+      "anthropic/claude-opus-6",
     ];
     for (const id of ids) {
       expect(modelRejectsTemperature(id), id).toBe(true);
@@ -49,6 +55,14 @@ describe("modelRejectsTemperature", () => {
       "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
       "us.anthropic.claude-haiku-4-5-20251001-v1:0",
       "openai/gpt-4o-mini",
+      // A bare major on Bedrock is followed by the release date; it must not be
+      // read as a minor version, which would push Opus 4 over the 4.7 threshold.
+      "anthropic.claude-opus-4-20250514-v1:0",
+      "anthropic/claude-opus-4",
+      // Haiku has no threshold, so no version of it is guessed at.
+      "anthropic/claude-haiku-5",
+      // Legacy "claude-<major>-<family>" ordering must not parse as a version.
+      "anthropic.claude-3-opus-20240229-v1:0",
       // Ollama bare ids must not false-positive.
       "llama3.1:8b",
       "mistral:latest",
