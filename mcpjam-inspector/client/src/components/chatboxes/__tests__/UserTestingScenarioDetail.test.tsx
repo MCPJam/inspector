@@ -635,25 +635,40 @@ describe("UserTestingScenarioDetail", () => {
       expect(lastComposerProps().value.environmentIds).toEqual(["env-1"]);
     });
 
-    it("does not render the composer while the row is loading, or flag-off", () => {
+    it("does not render the composer while the row is loading", () => {
       environmentState.row = undefined;
-      const { unmount } = renderEdit({
-        environmentId: "env-1",
-        environmentName: "Checkout flow",
-      });
-      expect(
-        screen.queryByTestId("stub-environment-composer"),
-      ).not.toBeInTheDocument();
-      unmount();
-
-      flagState.environmentsEnabled = false;
-      environmentState.row = namedRow;
       renderEdit({
         environmentId: "env-1",
         environmentName: "Checkout flow",
       });
       expect(
         screen.queryByTestId("stub-environment-composer"),
+      ).not.toBeInTheDocument();
+    });
+
+    /**
+     * The scenario that needs this MOST is the flag-off one: it was created
+     * with a single server and has no other way to change it — its backing
+     * client is hidden from every client surface. The composer keeps its own
+     * saved-environment picker behind the flag, so what renders here is the
+     * client and server-group pair, which is what Swarms shows a flag-off
+     * project too.
+     */
+    it("still renders the composer flag-off — that is where a stuck scenario is", () => {
+      flagState.environmentsEnabled = false;
+      environmentState.row = namedRow;
+      renderEdit({
+        environmentId: "env-1",
+        environmentName: "Checkout flow",
+      });
+
+      openSetup();
+      expect(
+        screen.getByTestId("stub-environment-composer"),
+      ).toBeInTheDocument();
+      // Promotion stays gated: it would name a row into a list with no page.
+      expect(
+        screen.queryByTestId("user-testing-save-as-environment"),
       ).not.toBeInTheDocument();
     });
 

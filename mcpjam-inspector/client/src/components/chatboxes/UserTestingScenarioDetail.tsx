@@ -128,16 +128,23 @@ export function UserTestingScenarioDetail({
 
   // The environment row itself — for `origin` and `revision`, which the
   // chatbox settings envelope deliberately doesn't carry. Host-backed
-  // scenarios (no environmentId) skip the query entirely, and so does a
-  // project without `project-environments-enabled`: promotion's whole payoff
-  // is "now manage it from Environments", a surface that flag gates — offering
-  // it flag-off would mutate a row the user then has no page to see. NOTE:
-  // `chatbox.environmentName` is non-null even for an ad-hoc row (the backend
-  // synthesizes a label from the client name), so ad-hoc-ness must come from
-  // this row, never from name presence on the envelope.
+  // scenarios (no environmentId) skip the query entirely.
+  //
+  // NOT gated on `project-environments-enabled` any more. Editing the setup is
+  // the thing this row unlocks, and a flag-off scenario is exactly the one that
+  // needs it: it was created with a single server and had no other way to
+  // change it, because its backing client is hidden from every client surface
+  // (`isPrivateScenarioBackingHost`). The flag still gates PROMOTION — "Save as
+  // environment" would mutate a row into a list the user has no page for — and
+  // it gates itself, because the promote affordance rides in the environment
+  // picker's footer and the picker only renders behind the flag.
+  //
+  // NOTE: `chatbox.environmentName` is non-null even for an ad-hoc row (the
+  // backend synthesizes a label from the client name), so ad-hoc-ness must come
+  // from this row, never from name presence on the envelope.
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environment = useProjectEnvironment(
-    environmentsEnabled && chatbox.environmentId ? chatbox.projectId : null,
+    chatbox.environmentId ? chatbox.projectId : null,
     chatbox.environmentId ?? null,
   );
   // Fail closed: `undefined` (loading) and `null` (not visible) both hide the
@@ -145,6 +152,11 @@ export function UserTestingScenarioDetail({
   const environmentIsAdhoc = Boolean(
     environment && isAdhocEnvironment(environment),
   );
+  // Promotion needs somewhere to promote TO. Stated here rather than resting on
+  // "the footer rides in a picker the flag already hides": that is true today
+  // and is not the rule — the rule is that naming a row the user has no page
+  // for is a dead end.
+  const canPromoteEnvironment = environmentIsAdhoc && environmentsEnabled;
 
   // ── Setup editor: the shared composer, committing through REBIND ────────
   //
@@ -154,8 +166,12 @@ export function UserTestingScenarioDetail({
   // itself is never mutated — a named row may back suites and other runs, and
   // an ad-hoc row is immutable by construction. Session history stays with the
   // chatbox either way.
+  //
+  // Still queried flag-off: the resolver reuses a matching NAMED row rather
+  // than minting an ad-hoc twin of it, and a flag-off project can hold named
+  // rows that Swarms created.
   const namedEnvironments = useProjectEnvironments(
-    environmentsEnabled && chatbox.environmentId ? chatbox.projectId : null,
+    chatbox.environmentId ? chatbox.projectId : null,
   );
   const liveNamedEnvironments = useMemo(
     () => (namedEnvironments ?? []).filter((env) => !env.archivedAt),
@@ -201,9 +217,7 @@ export function UserTestingScenarioDetail({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [environment?.environmentId, environment?.revision]);
 
-  const composerActive = Boolean(
-    environmentsEnabled && chatbox.environmentId && environment,
-  );
+  const composerActive = Boolean(chatbox.environmentId && environment);
   // Held closed until the NAMED list settles, like the create flow: the
   // resolver reuses a matching named environment, and resolving against an
   // empty not-yet-loaded list would mint an unnamed twin of one that exists.
@@ -665,7 +679,7 @@ export function UserTestingScenarioDetail({
                   inModal
                   testIdPrefix="user-testing-detail"
                   environmentPickerFooter={
-                    environmentIsAdhoc ? (
+                    canPromoteEnvironment ? (
                       <button
                         type="button"
                         onClick={() => setNameEnvironmentOpen(true)}
@@ -919,7 +933,7 @@ export function UserTestingScenarioDetail({
                 inModal
                 testIdPrefix="user-testing-detail"
                 environmentPickerFooter={
-                  environmentIsAdhoc ? (
+                  canPromoteEnvironment ? (
                     // The row behind this setup is ad-hoc: content-addressed,
                     // immutable, labeled by its client rather than a name.
                     // Saving it (in place, same id) turns it into a curated

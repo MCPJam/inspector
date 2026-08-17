@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { useConvexAuth } from "convex/react";
 import { ArrowLeft, ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
@@ -19,7 +20,9 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useHostList } from "@/hooks/useClients";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { environmentLabel } from "@/lib/environment-label";
 import {
@@ -50,10 +53,24 @@ import { cn } from "@/lib/utils";
  * different client" a one-click change instead of a trip to /environments to
  * curate a second row.
  *
- * The strip is always offered — it renders behind `project-environments-enabled`
- * like the rest of this surface. Only RESOLVING a composed setup needs the
- * ad-hoc backend, and that is checked when Save uses it: hiding the control
- * instead would be indistinguishable from the feature not existing.
+ * **This is the ONLY create flow, flag or no flag.** `EnvironmentComposer`
+ * gates only its saved-environment picker on `project-environments-enabled`;
+ * the client and server-group pills render either way, which is what Swarms has
+ * always shown a flag-off project. So flag-off this screen asks for a client
+ * and an optional server group and composes an ad-hoc row from them — the same
+ * thing the flow it replaces did, except that one hard-coded exactly one server
+ * and left the result uneditable forever.
+ *
+ * Composing needs the backend's `ensureAdhocEnvironments`, and flag-off that is
+ * not a new requirement: `hosts.createHost({owner: 'user_testing'})` — the
+ * legacy flow's only write — has called `ensureOneAdhocEnvironment` internally
+ * since the day scenarios became environment-backed, and the client-callable
+ * mutation shipped BEFORE it. A deployment that can serve the flow this
+ * replaces can serve this one. That is why there is no legacy fallback here.
+ *
+ * The strip is always offered for the same reason. Only RESOLVING a composed
+ * setup needs the ad-hoc backend, and that is checked when Save uses it: hiding
+ * the control instead would be indistinguishable from the feature not existing.
  *
  * **Nothing is written until Save.** Every choice is local state; the single
  * write is `onCreateScenario`, injected by the parent — the same inversion
@@ -71,7 +88,11 @@ import { cn } from "@/lib/utils";
 interface UserTestingScenarioCreateFlowProps {
   projectId: string;
   onCancel: () => void;
-  /** Navigates to the Environments editor with `name` pre-seeded. */
+  /**
+   * Navigates to the Environments editor with `name` pre-seeded. Only offered
+   * behind `project-environments-enabled` — flag-off the route guard bounces
+   * that navigation, so the handoff would be a link to nowhere.
+   */
   onCreateEnvironment: () => void;
   /**
    * The ONLY write path: publishes the environment, applying the name and
@@ -94,8 +115,14 @@ export function UserTestingScenarioCreateFlow({
   onCreateScenario,
 }: UserTestingScenarioCreateFlowProps) {
   const computersEnabled = useComputersEnabled();
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environments = useProjectEnvironments(projectId);
   const resolveComposerTargets = useComposerResolver(projectId);
+  // Only to default the name off the picked client, the way picking a saved
+  // environment defaults it off that environment's label. `useConvexAuth`
+  // rather than a prop, like `ClientsPill` right below in the same strip.
+  const { isAuthenticated } = useConvexAuth();
+  const { hosts } = useHostList({ isAuthenticated, projectId });
   const [target, setTarget] = useState<EnvironmentComposerState>(
     emptyComposerState
   );
@@ -138,13 +165,22 @@ export function UserTestingScenarioCreateFlow({
   const handleTargetChange = (next: EnvironmentComposerState) => {
     setTarget(next);
     if (userEditedNameRef.current) return;
-    // Follow the saved environment's label while the name is untouched. A
-    // composed setup has nothing to label yet, so the placeholder takes over.
+    // Follow the pick while the name is untouched: a saved environment's label,
+    // or — composing, which is the ONLY mode a flag-off project has — the
+    // client's name. Naming it after the client is what the flow this replaces
+    // did, and without it a flag-off user picks a client and then meets a
+    // required field with nothing in it.
     const pickedId = next.environmentIds[0] ?? null;
     const picked = isComposeMode(next)
       ? undefined
       : liveEnvironments.find((env) => env.environmentId === pickedId);
-    setName(picked ? environmentLabel(picked) : "");
+    if (picked) {
+      setName(environmentLabel(picked));
+      return;
+    }
+    const hostId = next.stack.hostIds[0];
+    const client = hostId ? hosts.find((h) => h.hostId === hostId) : undefined;
+    setName(client?.name ?? "");
   };
 
   const handleCreateEnvironment = () => {
@@ -225,40 +261,43 @@ export function UserTestingScenarioCreateFlow({
           New scenario
         </h1>
         <p className="mt-1.5 text-sm text-muted-foreground">
-          Publish one of your environments behind a link you can hand to a real
-          person, then read what happened in their sessions.
+          {environmentsEnabled
+            ? "Publish one of your environments behind a link you can hand to a real person, then read what happened in their sessions."
+            : "Publish a client and the servers it can reach behind a link you can hand to a real person, then read what happened in their sessions."}
         </p>
 
         <div className="mt-6 space-y-5">
           <div className="space-y-2">
             <Label>
-              Environment
+              {/* Flag-off there is no environment CONTROL in the strip — just
+                  a client and a server group — so naming the section after the
+                  thing it composes would point at a picker that isn't there.
+                  Same words Swarms uses for the same strip. */}
+              {environmentsEnabled ? "Environment" : "Where it runs"}
               <RequiredMark />
             </Label>
             {/* No empty state any more: a project with zero environments is not
                 a dead end, because the strip can build the one this scenario
                 needs. The handoff below still covers curating a named one. */}
-            {
-              <>
-                <EnvironmentComposer
-                  projectId={projectId}
-                  environments={liveEnvironments}
-                  value={target}
-                  onChange={handleTargetChange}
-                  maxTargets={1}
-                  disabled={isSaving}
-                  testIdPrefix="user-testing-create"
-                />
-                <button
-                  type="button"
-                  onClick={handleCreateEnvironment}
-                  data-testid="user-testing-create-new-environment"
-                  className="text-xs text-primary hover:underline"
-                >
-                  None of these fit — build a new environment
-                </button>
-              </>
-            }
+            <EnvironmentComposer
+              projectId={projectId}
+              environments={liveEnvironments}
+              value={target}
+              onChange={handleTargetChange}
+              maxTargets={1}
+              disabled={isSaving}
+              testIdPrefix="user-testing-create"
+            />
+            {environmentsEnabled ? (
+              <button
+                type="button"
+                onClick={handleCreateEnvironment}
+                data-testid="user-testing-create-new-environment"
+                className="text-xs text-primary hover:underline"
+              >
+                None of these fit — build a new environment
+              </button>
+            ) : null}
             {/* Why Save is inert, said where the choice is made. Only once the
                 list has SETTLED: before that the loading line below is the
                 honest answer, and two hints would contradict each other. */}
@@ -267,9 +306,11 @@ export function UserTestingScenarioCreateFlow({
                 className="text-xs text-muted-foreground"
                 data-testid="user-testing-create-environment-required"
               >
-                Required — pick a saved environment or compose one. A scenario
-                without one has nothing for a tester to run, so it isn&apos;t
-                created and no tester link is issued.
+                {environmentsEnabled
+                  ? "Required — pick a saved environment or compose one."
+                  : "Required — pick the client a tester will see. Its server group is optional, and covers every server you want them to reach."}{" "}
+                A scenario without one has nothing for a tester to run, so it
+                isn&apos;t created and no tester link is issued.
               </p>
             ) : null}
             {!environmentsSettled ? (
@@ -277,7 +318,7 @@ export function UserTestingScenarioCreateFlow({
                 className="text-xs text-muted-foreground"
                 data-testid="user-testing-create-environments-loading"
               >
-                Loading this project&apos;s environments…
+                Loading this project&apos;s setup…
               </p>
             ) : null}
             {computersEnabled ? (
