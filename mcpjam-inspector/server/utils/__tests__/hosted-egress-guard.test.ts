@@ -11,6 +11,8 @@ import {
 describe("isBlockedEgressHost", () => {
   it("blocks an empty hostname", () => {
     expect(isBlockedEgressHost("", true)).toBe(true);
+    expect(isBlockedEgressHost(" ", true)).toBe(true);
+    expect(isBlockedEgressHost("\t\n", true)).toBe(true);
   });
 });
 /** Never consulted — reaching it means the literal check failed to short-circuit. */
