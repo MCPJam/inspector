@@ -2852,8 +2852,8 @@ describe("mcp-oauth", () => {
         expect.stringMatching(/\.convex\.site\/registry\/oauth\/token$/),
         expect.anything()
       );
-    });
 
+    });
   });
 
   describe("MCPOAuthProvider.saveTokens convex binding", () => {
@@ -3426,6 +3426,7 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
 describe("formatOAuthCallbackError", () => {
   const invalidGrantMessage =
     "OAuth token exchange failed (invalid_grant): the authorization server rejected the authorization code. Check whether the code expired or was reused, and whether the redirect URI, client ID, and PKCE verifier match.";
+  const unknownCallbackMessage = "Unknown callback error";
 
   let formatOAuthCallbackError: typeof import("../mcp-oauth").formatOAuthCallbackError;
 
@@ -3443,8 +3444,14 @@ describe("formatOAuthCallbackError", () => {
       invalidGrantMessage,
     ],
     [new Error("invalid_grant"), invalidGrantMessage],
-    [null, "Unknown callback error"],
-    ["", ""],
+    ["Provider temporarily unavailable", "Provider temporarily unavailable"],
+    [null, unknownCallbackMessage],
+    [undefined, unknownCallbackMessage],
+    ["", unknownCallbackMessage],
+    [new Error(""), unknownCallbackMessage],
+    [{ message: "" }, unknownCallbackMessage],
+    [{ message: null }, unknownCallbackMessage],
+    [{ message: undefined }, unknownCallbackMessage],
   ])("formats callback error context for %s", (error, expected) => {
     expect(formatOAuthCallbackError(error)).toBe(expected);
   });

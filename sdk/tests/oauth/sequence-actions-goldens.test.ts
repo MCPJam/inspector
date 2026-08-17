@@ -129,27 +129,30 @@ describe.each(CASES)(
 describe.each(ALL_VERSIONS.filter((version) => version !== "2025-03-26"))(
   "sequence actions (%s / invalid resource metadata URL)",
   (protocolVersion) => {
-    it("displays the raw value without crashing", () => {
-      const resourceMetadataUrl = "/.well-known/oauth-protected-resource";
-
-      const actions = buildOAuthSequenceActions({
-        protocolVersion,
-        registrationStrategy: "dcr",
-        flowState: {
-          ...EMPTY_OAUTH_FLOW_STATE,
-          resourceMetadataUrl,
-        },
-      });
+    it.each<[unknown, string]>([
+      [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource (not an absolute URL)",
+      ],
+      ["", '"" (not an absolute URL)'],
+      [null, "null (not an absolute URL)"],
+    ])("annotates malformed value %j without crashing", (value, displayed) => {
+      let actions: ReturnType<typeof buildOAuthSequenceActions> = [];
+      expect(() => {
+        actions = buildOAuthSequenceActions({
+          protocolVersion,
+          registrationStrategy: "dcr",
+          flowState: {
+            ...EMPTY_OAUTH_FLOW_STATE,
+            resourceMetadataUrl: value,
+          } as OAuthFlowState,
+        });
+      }).not.toThrow();
 
       expect(
         actions.find((action) => action.id === "request_resource_metadata")
           ?.details
-      ).toEqual([
-        {
-          label: "GET",
-          value: `${resourceMetadataUrl} (not an absolute URL)`,
-        },
-      ]);
+      ).toEqual([{ label: "GET", value: displayed }]);
     });
   }
 );
@@ -162,29 +165,66 @@ describe.each(ALL_VERSIONS.filter((version) => version !== "2025-03-26"))(
 describe.each(ALL_VERSIONS)(
   "sequence actions (%s / relative authorization server endpoints)",
   (protocolVersion) => {
-    it("displays the raw endpoints without crashing", () => {
-      const actions = buildOAuthSequenceActions({
-        protocolVersion,
-        registrationStrategy: "dcr",
-        flowState: {
-          ...EMPTY_OAUTH_FLOW_STATE,
-          authorizationServerMetadata: {
-            issuer: "https://auth-server.example.com",
-            authorization_endpoint: "/authorize",
-            token_endpoint: "/token",
-            response_types_supported: ["code"],
-          },
-        } as OAuthFlowState,
-      });
+    it.each<[unknown, unknown, string, string]>([
+      [
+        "/token",
+        "/authorize",
+        "/token (not an absolute URL)",
+        "/authorize (not an absolute URL)",
+      ],
+      [
+        "",
+        "/authorize",
+        '"" (not an absolute URL)',
+        "/authorize (not an absolute URL)",
+      ],
+      [
+        null,
+        "/authorize",
+        "null (not an absolute URL)",
+        "/authorize (not an absolute URL)",
+      ],
+      [
+        "/token",
+        "",
+        "/token (not an absolute URL)",
+        '"" (not an absolute URL)',
+      ],
+      [
+        "/token",
+        null,
+        "/token (not an absolute URL)",
+        "null (not an absolute URL)",
+      ],
+    ])(
+      "annotates malformed token %j and authorization %j without crashing",
+      (tokenEndpoint, authorizationEndpoint, displayedToken, displayedAuth) => {
+        let actions: ReturnType<typeof buildOAuthSequenceActions> = [];
+        expect(() => {
+          actions = buildOAuthSequenceActions({
+            protocolVersion,
+            registrationStrategy: "dcr",
+            flowState: {
+              ...EMPTY_OAUTH_FLOW_STATE,
+              authorizationServerMetadata: {
+                issuer: "https://auth-server.example.com",
+                authorization_endpoint: authorizationEndpoint,
+                token_endpoint: tokenEndpoint,
+                response_types_supported: ["code"],
+              },
+            } as OAuthFlowState,
+          });
+        }).not.toThrow();
 
-      expect(
-        actions.find(
-          (action) => action.id === "received_authorization_server_metadata"
-        )?.details
-      ).toEqual([
-        { label: "Token", value: "/token (not an absolute URL)" },
-        { label: "Auth", value: "/authorize (not an absolute URL)" },
-      ]);
-    });
+        expect(
+          actions.find(
+            (action) => action.id === "received_authorization_server_metadata"
+          )?.details
+        ).toEqual([
+          { label: "Token", value: displayedToken },
+          { label: "Auth", value: displayedAuth },
+        ]);
+      }
+    );
   }
 );

@@ -72,12 +72,18 @@ function truncate(value: string, length: number): string {
  * misconfiguration would look like a normal step; the suffix is what makes the
  * two distinguishable on screen.
  */
-function pathnameOrRawValue(value: string): string {
-  try {
-    return new URL(value).pathname;
-  } catch {
-    return `${value} (not an absolute URL)`;
+function pathnameOrRawValue(value: unknown): string {
+  if (typeof value === "string" && value.trim() !== "") {
+    try {
+      return new URL(value).pathname;
+    } catch {
+      return `${value} (not an absolute URL)`;
+    }
   }
+
+  const displayedValue =
+    typeof value === "string" ? JSON.stringify(value) : String(value);
+  return `${displayedValue} (not an absolute URL)`;
 }
 
 function resourceDetailValue(
@@ -115,7 +121,7 @@ function protectedResourceMetadataActions(
       description: "Server returns 401 with WWW-Authenticate header",
       from: "mcpServer",
       to: "client",
-      details: flowState.resourceMetadataUrl
+      details: flowState.resourceMetadataUrl !== undefined
         ? [{ label: "Note", value: "Extract resource_metadata URL" }]
         : undefined,
     },
@@ -125,7 +131,7 @@ function protectedResourceMetadataActions(
       description: "Client requests metadata from well-known URI",
       from: "client",
       to: "mcpServer",
-      details: flowState.resourceMetadataUrl
+      details: flowState.resourceMetadataUrl !== undefined
         ? [
             {
               label: "GET",

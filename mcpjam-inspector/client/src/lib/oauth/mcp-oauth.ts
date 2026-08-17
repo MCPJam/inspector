@@ -2944,14 +2944,19 @@ function invalidGrantReason(message: string): string | undefined {
 }
 
 export function formatOAuthCallbackError(error: unknown): string {
-  const errorMessage =
+  const rawMessage =
     error instanceof Error
       ? error.message
       : typeof error === "string"
       ? error
       : error && typeof error === "object" && "message" in error
-      ? String((error as { message: unknown }).message)
-      : "Unknown callback error";
+      ? (error as { message: unknown }).message
+      : undefined;
+  const errorMessage =
+    rawMessage == null ||
+    (typeof rawMessage === "string" && rawMessage.trim() === "")
+      ? "Unknown callback error"
+      : String(rawMessage);
 
   // `invalid_grant` is tested FIRST because the `client_id` check below is a
   // bare substring match, and the standard description for a rejected code
@@ -3272,16 +3277,8 @@ export async function completeHostedOAuthCallback(
       oauthResourceUrl,
     };
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : typeof error === "object" &&
-          error !== null &&
-          "message" in error &&
-          typeof (error as { message?: unknown }).message === "string"
-        ? (error as { message: string }).message
-        : String(error);
-    failOAuthTraceStep(callbackTrace, callbackTrace.currentStep, message, {
+    const callbackError = formatOAuthCallbackError(error);
+    failOAuthTraceStep(callbackTrace, callbackTrace.currentStep, callbackError, {
       message: "OAuth callback failed.",
     });
     const backendTrace =
@@ -3303,7 +3300,7 @@ export async function completeHostedOAuthCallback(
     }
     return {
       success: false,
-      error: formatOAuthCallbackError(message),
+      error: callbackError,
       oauthTrace: mergedTrace,
     };
   } finally {
