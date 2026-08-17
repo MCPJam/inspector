@@ -81,8 +81,16 @@ function pathnameOrRawValue(value: unknown): string {
     }
   }
 
-  const displayedValue =
-    typeof value === "string" ? JSON.stringify(value) : String(value);
+  let displayedValue: string;
+  try {
+    displayedValue =
+      typeof value === "string" ||
+      (typeof value === "object" && value !== null)
+        ? JSON.stringify(value) ?? String(value)
+        : String(value);
+  } catch {
+    displayedValue = "[unserializable value]";
+  }
   return `${displayedValue} (not an absolute URL)`;
 }
 

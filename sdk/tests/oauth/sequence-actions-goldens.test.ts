@@ -136,6 +136,10 @@ describe.each(ALL_VERSIONS.filter((version) => version !== "2025-03-26"))(
       ],
       ["", '"" (not an absolute URL)'],
       [null, "null (not an absolute URL)"],
+      [
+        { href: "/.well-known/oauth-protected-resource" },
+        '{"href":"/.well-known/oauth-protected-resource"} (not an absolute URL)',
+      ],
     ])("annotates malformed value %j without crashing", (value, displayed) => {
       let actions: ReturnType<typeof buildOAuthSequenceActions> = [];
       expect(() => {
@@ -195,6 +199,12 @@ describe.each(ALL_VERSIONS)(
         null,
         "/token (not an absolute URL)",
         "null (not an absolute URL)",
+      ],
+      [
+        { href: "/token" },
+        ["/authorize"],
+        '{"href":"/token"} (not an absolute URL)',
+        '["/authorize"] (not an absolute URL)',
       ],
     ])(
       "annotates malformed token %j and authorization %j without crashing",
