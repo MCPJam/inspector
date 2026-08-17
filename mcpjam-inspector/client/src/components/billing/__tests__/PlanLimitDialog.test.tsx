@@ -390,7 +390,7 @@ describe("PlanLimitDialog", () => {
 
       await waitFor(() => {
         expect(toastSuccess).toHaveBeenCalledWith(
-          expect.stringMatching(/You're on our Team plan/)
+          expect.stringMatching(/You're on the Team plan/)
         );
       });
       // The surface the user was blocked on is preserved; only the upgrade
@@ -422,7 +422,7 @@ describe("PlanLimitDialog", () => {
       view.rerender(<PlanLimitDialog />);
       await waitFor(() => {
         expect(toastSuccess).toHaveBeenCalledWith(
-          expect.stringMatching(/You're on our Team plan/)
+          expect.stringMatching(/You're on the Team plan/)
         );
       });
       expect(window.location.search).toBe("");
@@ -478,7 +478,7 @@ describe("PlanLimitDialog", () => {
         });
 
         expect(toastSuccess).toHaveBeenCalledWith(
-          expect.stringMatching(/You're on our Team plan/)
+          expect.stringMatching(/You're on the Team plan/)
         );
         expect(trackMock).toHaveBeenCalledWith(
           "plan_limit_upgrade_returned",
@@ -505,7 +505,7 @@ describe("PlanLimitDialog", () => {
 
       await waitFor(() => {
         expect(toastSuccess).toHaveBeenCalledWith(
-          expect.stringMatching(/You're on our Team plan/)
+          expect.stringMatching(/You're on the Team plan/)
         );
       });
     });

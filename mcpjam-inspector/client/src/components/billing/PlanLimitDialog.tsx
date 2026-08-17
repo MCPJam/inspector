@@ -149,8 +149,8 @@ function UpgradeReturnFlow({
       const teamName = planCatalog?.plans.team.displayName ?? "Team";
       toast.success(
         upgradeReturn.origin === "credits"
-          ? `You're on our ${teamName} plan. Your credits are available now.`
-          : `You're on our ${teamName} plan. Run your suite again to pick up where you left off.`
+          ? `You're on the ${teamName} plan. Your credits are available now.`
+          : `You're on the ${teamName} plan. Run your suite again to pick up where you left off.`
       );
     }
 
