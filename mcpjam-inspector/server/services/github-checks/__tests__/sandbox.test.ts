@@ -6,6 +6,7 @@ import {
   clampOutput,
   cloneAndCheckout,
   OUTPUT_CLAMP_CHARS,
+  redactCloneCredential,
   PROBE_MAX_RESPONSE_BYTES,
   waitForMcpInitialize,
   type CheckSandbox,
@@ -623,6 +624,261 @@ describe("cloneAndCheckout", () => {
     // injected text stays inside nested quotes.
     expect(box.calls[0].command.startsWith("bash -lc '")).toBe(true);
     expect(box.calls[0].command).not.toMatch(/;\s*rm -rf \/\s*'?\s*&&/);
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // PRIVATE REPOSITORIES
+  // ═════════════════════════════════════════════════════════════════════════
+  //
+  // The credential is a short-lived `contents: read` installation token, and
+  // every test below is about one of two things: that it reaches git at all,
+  // and that it reaches NOTHING ELSE. The second is the interesting half —
+  // a token that leaks into a check's output is readable by anyone who can see
+  // the pull request.
+
+  /** Computed INDEPENDENTLY of the module, so the test is not a mirror of it. */
+  const basicValue = (token: string) =>
+    Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+
+  /** The three shapes a credential can escape in. */
+  const credentialForms = (token: string) => [
+    token,
+    basicValue(token),
+    `AUTHORIZATION: basic ${basicValue(token)}`,
+  ];
+
+  const TOKEN = "ghs_privateRepoToken1234567890";
+
+  it("carries the credential on the clone AND the fetch, in a header, never in the URL", async () => {
+    const headSha = "c".repeat(40);
+    const box = fakeSandbox({ stdout: { "rev-parse HEAD": `${headSha}\n` } });
+
+    await cloneAndCheckout(box.sandbox, {
+      repoFullName: "mcpjam/private-fixture",
+      prNumber: 7,
+      headSha,
+      cloneToken: TOKEN,
+    });
+
+    const script = scriptOf(box.calls[0].command);
+    const header = `http.extraheader=AUTHORIZATION: basic ${basicValue(TOKEN)}`;
+    // BOTH authenticated requests: the PR ref is a second fetch against the same
+    // private repository, and a clone that works followed by a fetch that 404s
+    // is the shape of forgetting it.
+    expect(script).toContain(`git -c '${header}' clone --depth 50`);
+    expect(script).toContain(`git -c '${header}' fetch --depth 50 origin`);
+    // The URL stays the ORDINARY public-looking HTTPS one. A credential in the
+    // URL is written verbatim into `.git/config`, where the PR's own build runs.
+    expect(script).toContain("'https://github.com/mcpjam/private-fixture.git'");
+    expect(script).not.toContain("x-access-token:");
+    expect(script).not.toMatch(/https:\/\/[^'\s]*@github\.com/);
+    // The RAW token never appears anywhere in the command stream — only the
+    // base64 of `x-access-token:<token>` does.
+    expect(script).not.toContain(TOKEN);
+    // Not an env var, not a file, not a credential helper.
+    expect(box.calls[0].opts?.envs).toBeUndefined();
+    expect(script).not.toContain("credential.helper");
+    expect(script).not.toContain("git config");
+  });
+
+  it("keeps the credential off the checkout and everything after it", async () => {
+    // `-c` is process-scoped, so it is gone the moment git exits. What must not
+    // happen is it being added to commands that do not need it: a detached
+    // checkout is purely local, and `rev-parse` reads the clone we already have.
+    const headSha = "c".repeat(40);
+    const box = fakeSandbox({ stdout: { "rev-parse HEAD": `${headSha}\n` } });
+
+    await cloneAndCheckout(box.sandbox, {
+      repoFullName: "mcpjam/private-fixture",
+      prNumber: 7,
+      headSha,
+      cloneToken: TOKEN,
+    });
+
+    const script = scriptOf(box.calls[0].command);
+    const [checkoutSegment] = script.split("git checkout").slice(1);
+    expect(checkoutSegment).toBeDefined();
+    expect(checkoutSegment).not.toContain("extraheader");
+    // The sha assertion is its own command, and carries nothing.
+    const revParse = box.calls[1].command;
+    expect(revParse).toContain("rev-parse HEAD");
+    expect(revParse).not.toContain("extraheader");
+    for (const form of credentialForms(TOKEN)) {
+      expect(revParse).not.toContain(form);
+    }
+    // Exactly two `-c` occurrences in the whole script: the clone and the fetch.
+    expect(script.match(/-c 'http\.extraheader=/g)).toHaveLength(2);
+  });
+
+  it("leaves the anonymous clone byte-for-byte unchanged", async () => {
+    // The public path is the overwhelming majority of checks, and it must not
+    // acquire so much as a stray space from the private one existing.
+    const headSha = "a".repeat(40);
+    const box = fakeSandbox({ stdout: { "rev-parse HEAD": `${headSha}\n` } });
+
+    await cloneAndCheckout(box.sandbox, {
+      repoFullName: "mcpjam/mcp-check-fixture",
+      prNumber: 7,
+      headSha,
+    });
+
+    expect(scriptOf(box.calls[0].command)).toBe(
+      [
+        "set -e",
+        "rm -rf /home/user/repo",
+        "git clone --depth 50 'https://github.com/mcpjam/mcp-check-fixture.git' /home/user/repo",
+        "cd /home/user/repo",
+        "git fetch --depth 50 origin 'pull/7/head'",
+        `git checkout --detach '${headSha}'`,
+      ].join(" && ")
+    );
+  });
+
+  it("redacts every credential form out of a failing clone's output", async () => {
+    // git prints the failing request on some errors, and the output travels to
+    // the check's details on somebody's pull request.
+    const box = fakeSandbox({
+      exitCodes: { "clone --depth 50": 128 },
+      stderr: {
+        "clone --depth 50": [
+          `fatal: unable to access 'https://github.com/mcpjam/private-fixture.git/'`,
+          `> AUTHORIZATION: basic ${basicValue(TOKEN)}`,
+          `token was ${TOKEN}`,
+        ].join("\n"),
+      },
+    });
+
+    const error = (await cloneAndCheckout(box.sandbox, {
+      repoFullName: "mcpjam/private-fixture",
+      prNumber: 7,
+      headSha: "c".repeat(40),
+      cloneToken: TOKEN,
+    }).catch((e) => e)) as CheckStepError;
+
+    expect(error.outcome).toBe("infra_error");
+    const observable = `${error.message}\n${error.detailsMarkdown ?? ""}`;
+    for (const form of credentialForms(TOKEN)) {
+      expect(observable).not.toContain(form);
+    }
+    // Redacted, not merely truncated: the surrounding diagnostic survives, so
+    // the author still learns the clone failed and against which repository.
+    expect(error.detailsMarkdown).toContain("fatal: unable to access");
+    expect(error.detailsMarkdown).toContain("[redacted]");
+  });
+
+  it("redacts a thrown transport error that echoes the whole command", async () => {
+    // THE IMPORTANT ONE. `runForeground`'s transport branch folds
+    // `errorMessage(error)` into a `CheckStepError`, and the E2B SDK's errors
+    // quote the command they were running — which, for a private clone, is the
+    // command carrying the auth header. Nothing about that is redacted by
+    // clamping, and this path does not even go through the clamp.
+    const box = fakeSandbox({
+      throwOn: (command) =>
+        command.includes("clone --depth 50")
+          ? new Error(`sandbox unavailable while running: ${command}`)
+          : undefined,
+    });
+
+    const error = (await cloneAndCheckout(box.sandbox, {
+      repoFullName: "mcpjam/private-fixture",
+      prNumber: 7,
+      headSha: "c".repeat(40),
+      cloneToken: TOKEN,
+    }).catch((e) => e)) as CheckStepError;
+
+    expect(error).toBeInstanceOf(CheckStepError);
+    // Ours, not the PR's — E2B being unreachable says nothing about the code.
+    expect(error.outcome).toBe("infra_error");
+    const observable = `${error.message}\n${error.detailsMarkdown ?? ""}\n${
+      error.stack ?? ""
+    }`;
+    for (const form of credentialForms(TOKEN)) {
+      expect(observable).not.toContain(form);
+    }
+    expect(error.message).toContain("sandbox command failed");
+  });
+
+  it("redacts a clone that overran its own deadline", async () => {
+    // The deadline branch clamps, and clamping is a LENGTH boundary: a clamped
+    // header is still a header. Redaction has to happen first.
+    vi.useFakeTimers();
+    try {
+      const box = fakeSandbox({
+        throwOn: (command) => {
+          if (!command.includes("clone --depth 50")) return undefined;
+          vi.setSystemTime(Date.now() + 6 * 60_000);
+          return Object.assign(new Error("timeout"), {
+            stderr: `giving up on AUTHORIZATION: basic ${basicValue(TOKEN)}`,
+          });
+        },
+      });
+
+      const error = (await cloneAndCheckout(box.sandbox, {
+        repoFullName: "mcpjam/private-fixture",
+        prNumber: 7,
+        headSha: "c".repeat(40),
+        cloneToken: TOKEN,
+      }).catch((e) => e)) as CheckStepError;
+
+      const observable = `${error.message}\n${error.detailsMarkdown ?? ""}`;
+      for (const form of credentialForms(TOKEN)) {
+        expect(observable).not.toContain(form);
+      }
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("redactCloneCredential", () => {
+  const TOKEN = "ghs_aB3.+/=xyz";
+  const basic = Buffer.from(`x-access-token:${TOKEN}`, "utf8").toString(
+    "base64"
+  );
+
+  it("removes the raw token, the base64, and the header", async () => {
+    const text = [
+      `raw ${TOKEN} here`,
+      `encoded ${basic} here`,
+      `git -c 'http.extraheader=AUTHORIZATION: basic ${basic}' clone --depth 50`,
+    ].join("\n");
+
+    const out = redactCloneCredential(text, TOKEN);
+    expect(out).not.toContain(TOKEN);
+    expect(out).not.toContain(basic);
+    expect(out).toContain("[redacted]");
+    // The shell quoting around the header survives, so the surrounding command
+    // is still readable as a command.
+    expect(out).toContain("' clone --depth 50");
+  });
+
+  it("removes an AUTHORIZATION header even with no token to compare against", async () => {
+    // The defence that does not depend on us having guessed the encoding: any
+    // basic header goes, token or not. That is what covers a future command
+    // that grows one before anybody remembers to thread the secret through.
+    const out = redactCloneCredential(
+      "> AUTHORIZATION: Basic c29tZXRoaW5nRWxzZQ==",
+      undefined
+    );
+    expect(out).not.toContain("c29tZXRoaW5nRWxzZQ==");
+    expect(out).toContain("[redacted]");
+  });
+
+  it("is a literal replacement, so regex metacharacters in a token still match", async () => {
+    // `.` and `+` in a token would widen or break a pattern built by
+    // interpolation. This token has both.
+    expect(redactCloneCredential(`prefix ${TOKEN} suffix`, TOKEN)).toBe(
+      "prefix [redacted] suffix"
+    );
+    // And a token-shaped string that is NOT the token is left alone.
+    expect(redactCloneCredential("ghs_aB3X+/=xyz", TOKEN)).toBe(
+      "ghs_aB3X+/=xyz"
+    );
+  });
+
+  it("is idempotent, so a doubly-redacted string stays readable", async () => {
+    const once = redactCloneCredential(`AUTHORIZATION: basic ${basic}`, TOKEN);
+    expect(redactCloneCredential(once, TOKEN)).toBe(once);
   });
 });
 
