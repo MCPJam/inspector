@@ -17176,7 +17176,13 @@
               "unpublishUserTestingScenario",
               "changeUserTestingExposure",
               "manageUserTestingGuestExecution",
-              "requestInsights"
+              "requestInsights",
+              "readEvals",
+              "writeEvalSuites",
+              "launchEvalRun",
+              "deleteAnyEvalSuite",
+              "deleteAnyEvalRun",
+              "exportEvalTraces"
             ],
             "description": "The booleans to branch on, derived server-side rather than left for each caller to re-derive from `role` plus flag state.",
             "properties": {
@@ -17215,6 +17221,30 @@
               },
               "requestInsights": {
                 "type": "boolean"
+              },
+              "readEvals": {
+                "type": "boolean",
+                "description": "Reading eval suites, runs, iterations and traces."
+              },
+              "writeEvalSuites": {
+                "type": "boolean",
+                "description": "Authoring suites and cases — every eval write short of deleting. Unlike the swarm keys this counts a project GRANT, not organization rank alone."
+              },
+              "launchEvalRun": {
+                "type": "boolean",
+                "description": "Starting a suite or case run."
+              },
+              "deleteAnyEvalSuite": {
+                "type": "boolean",
+                "description": "Deleting a suite SOMEONE ELSE created — the project admin tier. The creator of a suite may always delete it whatever their role, so `false` here does not mean you cannot delete your own."
+              },
+              "deleteAnyEvalRun": {
+                "type": "boolean",
+                "description": "Same tier and same creator exception, for runs."
+              },
+              "exportEvalTraces": {
+                "type": "boolean",
+                "description": "Whether the trace export surface is open. Export still filters row by row against the caller, so this does not promise every session in the project lands in the file."
               }
             }
           }
