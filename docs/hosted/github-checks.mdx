@@ -1,0 +1,88 @@
+---
+title: "GitHub checks"
+description: "Declare how MCPJam builds and starts your MCP server on pull requests using mcpjam.yaml"
+---
+
+MCPJam can run an automated health check on every pull request to your MCP server repository. Add a `mcpjam.yaml` file at the root of your repository to declare exactly how the check should build and start your server.
+
+## mcpjam.yaml
+
+Place `mcpjam.yaml` at the repository root. The file must begin with `version: 1`.
+
+```yaml
+version: 1
+
+checks:
+  build: npm ci && npm run build
+  start: npm start
+  port: 3001
+  path: /mcp
+```
+
+### Fields
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `build` | Yes | Shell command to build the server. Runs in the foreground before `start`. |
+| `start` | Yes | Shell command to start the server. Runs in the background. |
+| `port` | Yes | Port the server listens on (1–65535). |
+| `path` | Yes | HTTP path of the MCP endpoint. Must start with `/`. |
+| `transport` | No | Transport protocol. Only `streamable-http` is supported in version 1 (also the default). |
+| `env` | No | Environment variables passed to the build and start commands. See below. |
+
+Unknown keys inside `checks:` are rejected — a stray key is treated as a typo rather than silently ignored.
+
+## Declaring a build and start environment
+
+Use `checks.env` to pass configuration literals that your server needs in order to build or start:
+
+```yaml
+version: 1
+
+checks:
+  build: npm ci && npm run build
+  start: npm start
+  port: 3001
+  path: /mcp
+  env:
+    LOG_LEVEL: debug
+    FIXTURE_MODE: strict
+```
+
+The environment is injected into both the build command and the start command. It is never written into the command strings themselves — values travel beside the command, not inside it.
+
+### Key format
+
+Keys must be uppercase POSIX environment variable names: they must match `^[A-Z][A-Z0-9_]*$`. For example, `LOG_LEVEL` and `FIXTURE_MODE` are valid; `log_level`, `0BAD`, and `LOG-LEVEL` are not.
+
+### Limits
+
+| Limit | Value |
+|-------|-------|
+| Maximum entries | 20 |
+| Maximum key length | 64 characters |
+| Maximum value length | 1,024 characters |
+
+Anything outside these limits is **rejected, never truncated or coerced**. A shortened value is a different configuration from the one you committed, and a check that started a server with it would report a verdict about something you never wrote.
+
+All values must be strings. Quote numbers and booleans:
+
+```yaml
+env:
+  PORT_MODE: "8080"   # correct — quoted string
+  STRICT: "true"      # correct — quoted string
+```
+
+An empty map (`env: {}`) is treated the same as omitting `env` entirely.
+
+### These are not secrets
+
+`checks.env` is for non-secret configuration literals — flags a server needs in order to boot, not credentials. The values come from a file committed to your repository (readable by anyone who can read the repo) and are stored verbatim. Nothing redacts them and nothing expires them.
+
+Do not put API keys, tokens, or passwords in `checks.env`.
+
+## Validation errors
+
+If `mcpjam.yaml` is present but invalid, the check fails with a message that names the field and the violated constraint. The check does not fall through to heuristic detection — an invalid declared config is reported honestly rather than silently replaced with a guess.
+
+Error messages echo key names (so you can see which key is wrong) but never echo values.
