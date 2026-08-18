@@ -54,6 +54,38 @@ new EvalTest(options: EvalTestConfig)
   `mintCaseId()` inline: an id regenerated on every run is not an identity.
   Constructing an `EvalTest` without an `id` throws, and the error carries a
   freshly minted id to paste.
+
+  **Migrating from `externalCaseId`:** If your test already declares
+  `externalCaseId`, reuse that value verbatim as `id` — do not mint a new one.
+  The hosted history for that case is keyed on `externalCaseId`, so setting
+  `id` to the same value keeps the history intact. Setting `id` to a different
+  value is a hard error at ingest.
+
+  ```typescript
+  // Before
+  new EvalTest({ externalCaseId: "case_123", name: "refunds a duplicate charge", ... })
+
+  // After — reuse the existing externalCaseId as id
+  new EvalTest({ id: "case_123", externalCaseId: "case_123", name: "refunds a duplicate charge", ... })
+  ```
+</Warning>
+
+<Warning>
+  **New in 5.0: step objects reject unknown fields.** `prompt`, `toolCall`,
+  `interact`, and `assert` steps — and their nested sub-objects such as
+  `elementLocator` and widget assertions — are now **closed schemas**. A step
+  carrying a field the contract does not declare fails to parse instead of
+  silently dropping that field.
+
+  Two things are deliberately left open:
+  - `toolCallStep.arguments` — the tool's own argument object, whose keys come
+    from the server's input schema.
+  - A `Predicate` inside an `assert` step — predicates are a separate contract
+    module with their own versioning.
+
+  If you generate steps programmatically (for example, from an LLM or an
+  importer), remove any fields that are not part of the step contract before
+  passing them to the SDK.
 </Warning>
 
 <Warning>
