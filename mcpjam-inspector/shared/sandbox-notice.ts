@@ -1,5 +1,5 @@
 /**
- * Transient SSE data part carrying a one-time fact about the chatbox
+ * Transient SSE data part carrying a one-time fact about the scenario
  * conversation's ephemeral sandbox.
  *
  * Mirrors `data-harness-reset` (see `harness-session.ts`) and exists for the

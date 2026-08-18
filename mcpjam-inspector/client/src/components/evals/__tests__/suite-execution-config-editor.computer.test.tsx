@@ -41,7 +41,7 @@ function projectDefaultWithComputer() {
     serverIds: [],
     optionalServerIds: [],
     builtInToolIds: ["web_search", "bash"],
-    // A project default may legitimately attach a computer (for chatbox
+    // A project default may legitimately attach a computer (for scenario
     // hosts). Resetting an eval suite to it must NOT carry the computer over.
     computer: { kind: "personal", workdir: "/srv" },
     connectionDefaults: { headers: {}, requestTimeout: 10000 },

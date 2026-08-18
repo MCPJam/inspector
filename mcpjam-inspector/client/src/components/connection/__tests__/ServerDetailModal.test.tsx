@@ -168,6 +168,13 @@ describe("ServerDetailModal", () => {
     });
   });
 
+  it("prevents browser translation from rewriting the portaled dialog", () => {
+    render(<ServerDetailModal {...defaultProps} />);
+
+    expect(screen.getByRole("dialog")).toHaveAttribute("translate", "no");
+    expect(screen.getByRole("dialog")).toHaveClass("notranslate");
+  });
+
   // Regression: local mode used to hand this modal the LOCAL project id (a
   // `crypto.randomUUID()` value). `projectServerConfig:getConfig` validates
   // `projectId` as `v.id("projects")`, so the query rejected during render

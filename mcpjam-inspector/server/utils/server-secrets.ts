@@ -175,7 +175,7 @@ export async function fetchRuntimeServerSecrets(args: {
   projectId: string;
   serverId: string;
   accessScope?: "project_member" | "chat_v2";
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   /**
    * When the caller authenticated via a WorkOS API key, Inspector exchanges
@@ -236,7 +236,7 @@ export async function fetchRuntimeServerSecrets(args: {
         projectId: args.projectId,
         serverId: args.serverId,
         ...(args.accessScope ? { accessScope: args.accessScope } : {}),
-        ...(args.chatboxId ? { chatboxId: args.chatboxId } : {}),
+        ...(args.scenarioId ? { scenarioId: args.scenarioId } : {}),
         ...(typeof args.accessVersion === "number"
           ? { accessVersion: args.accessVersion }
           : {}),

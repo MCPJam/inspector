@@ -847,7 +847,7 @@ Get the status and summary of an eval run.
 
 ## `tunnel`
 
-Expose a local MCP server through an MCPJam relay tunnel and register it as a server in your hosted project, so evals and chatboxes can target it. Requires an `sk_` API key or a prior `mcpjam login`. The tunnel stays up until Ctrl-C; the server record outlives the session (calls fail fast at the edge until you re-run, which revives the same URL slug with a fresh secret).
+Expose a local MCP server through an MCPJam relay tunnel and register it as a server in your hosted project, so evals and scenarios can target it. Requires an `sk_` API key or a prior `mcpjam login`. The tunnel stays up until Ctrl-C; the server record outlives the session (calls fail fast at the edge until you re-run, which revives the same URL slug with a fresh secret).
 
 ```bash
 # HTTP target

@@ -8,7 +8,7 @@
  * everything.
  *
  * Pass `enabled: false` on surfaces whose end user is not the inspector
- * operator (the standalone chatbox chat route): inspector-driving tools must
+ * operator (the standalone scenario chat route): inspector-driving tools must
  * not exist on that page at all. Toggling `enabled` registers/unregisters
  * accordingly.
  */
