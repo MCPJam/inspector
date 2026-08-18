@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useMutation, useQuery } from "convex/react";
 import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/client-config-v2";
-import type { ChatboxMode } from "./useChatboxes";
+import type { ScenarioMode } from "./useScenarios";
 import { shouldQueryProjectId } from "./useProjects";
 import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
 
@@ -32,7 +32,7 @@ export interface HostDetail {
   hostId: string;
   name: string;
   config: HostConfigDtoV2;
-  // Additive: the Chatbox surface reads this to decide whether to render the
+  // Additive: the Scenario surface reads this to decide whether to render the
   // "managed by Swarms, no publish surface" notice instead of back-minting.
   ownerScope?: HostOwnerScope;
 }
@@ -150,21 +150,21 @@ export function useHostMutations() {
     projectId: string;
     name: string;
     input: HostConfigInputV2;
-    // `'journeys'` → mint a standalone (chatbox-less) host owned by the Swarm
+    // `'journeys'` → mint a standalone (scenario-less) host owned by the Swarm
     // surface. `'user_testing'` → mint the host, an ad-hoc environment over
-    // it, and an ENVIRONMENT-backed chatbox, all in one transaction; the
+    // it, and an ENVIRONMENT-backed scenario, all in one transaction; the
     // scenario's servers then resolve live from the host config instead of
-    // being copied into the chatbox. Absent → legacy behavior (a host-backed
-    // chatbox is minted).
+    // being copied into the scenario. Absent → legacy behavior (a host-backed
+    // scenario is minted).
     owner?: "journeys" | "user_testing";
-    // Access mode for the auto-minted chatbox. Absent → 'project_members'.
-    // Set here rather than with a follow-up setChatboxMode so a scenario is
+    // Access mode for the auto-minted scenario. Absent → 'project_members'.
+    // Set here rather than with a follow-up setScenarioMode so a scenario is
     // never briefly readable by the wrong audience. Ignored for journeys hosts.
-    chatboxMode?: ChatboxMode;
+    scenarioMode?: ScenarioMode;
   }) => Promise<{
     hostId: string;
     hostConfigId: string;
-    chatboxId: string | null;
+    scenarioId: string | null;
     // Present only for `owner: 'user_testing'` — the ad-hoc environment the
     // scenario resolves through, needed to rebind its setup later.
     environmentId?: string;

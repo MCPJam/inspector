@@ -1,6 +1,6 @@
 import { X } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
-import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import type { ThemeMode } from "@/types/preferences/theme";
@@ -83,7 +83,7 @@ export function HostFocusPanel({
   // identity-row indicator follows the new tag so the input still lights
   // up red when empty.
   const behaviorIssues = fieldsWithIssues(attention, "behavior");
-  const logoSrc = getChatboxHostLogo(draft.hostStyle, draft.chatUiOverride);
+  const logoSrc = getScenarioHostLogo(draft.hostStyle, draft.chatUiOverride);
 
   // Tools is GA; Computer is flag-gated (or shown when already attached).
   const visibleTabs = useVisibleHostFocusTabs(draft);

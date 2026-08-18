@@ -1,7 +1,7 @@
 /**
  * production-checks-worker.ts — polling grader for production scoring.
  *
- * Grades REAL User Testing sessions against their chatbox's rubric of
+ * Grades REAL User Testing sessions against their scenario's rubric of
  * deterministic checks. Same pull/claim architecture as
  * `scheduled-evals-worker.ts` — the backend's idle detector enqueues
  * `productionCheckTriggers` rows, this loop claims one at a time over the
@@ -11,7 +11,7 @@
  * Two deliberate simplifications versus the scheduled-evals worker:
  *   - NO delegated user token. The claim response carries everything the
  *     grade needs (rubric, transcript envelope, token totals), the routes are
- *     service-token-gated, and the rubric comes from the chatbox config read
+ *     service-token-gated, and the rubric comes from the scenario config read
  *     inside the claim transaction — a worker cannot choose what it grades
  *     against, so there is no user authority to borrow.
  *   - NO external pipeline. Grading is a pure `evaluatePredicates` call over
@@ -127,7 +127,7 @@ async function claimNext(claimedBy: string): Promise<ClaimOutcome> {
     throw new Error(`claim failed (${status}): ${JSON.stringify(body)}`);
   }
   if (body.claimed !== true) {
-    // `retry` means the mutation consumed a stale trigger (chatbox disabled,
+    // `retry` means the mutation consumed a stale trigger (scenario disabled,
     // session gone) — the queue behind it may still hold live work.
     return body.retry === true ? { kind: "drained" } : { kind: "empty" };
   }
@@ -231,7 +231,7 @@ export async function executeClaimedCheck(
       // the same session grades identically whichever grader asks.
       toolCalls: extractToolCallsFromEnvelopeMessages(messages),
       usage: claimUsage(claim.usage),
-      // Real chatbox sessions rarely carry render observations (no browser
+      // Real scenario sessions rarely carry render observations (no browser
       // harness on that surface); absent stays absent so `widget*` checks
       // fail closed rather than passing on no signal.
       ...(Array.isArray(observations) && observations.length > 0
@@ -344,7 +344,7 @@ export function startProductionChecksWorker(options?: {
           waitMs = 250;
         } else if (outcome.kind === "claimed") {
           await execute(outcome.claim);
-          // Drain mode: an idle chatbox enqueues sessions in a burst.
+          // Drain mode: an idle scenario enqueues sessions in a burst.
           waitMs = 1_000;
         }
       } catch (error) {

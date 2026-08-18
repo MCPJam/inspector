@@ -40,7 +40,7 @@ vi.mock("@/hooks/useSharedChatThreads", () => ({
   useSharedChatTurnTraces: () => ({ traces: [] }),
   useSessionBrowserArtifacts: () => ({ artifacts: [] }),
 }));
-vi.mock("@/components/chatboxes/session-readiness", () => ({
+vi.mock("@/components/scenarios/session-readiness", () => ({
   SessionInsightBar: () => null,
 }));
 

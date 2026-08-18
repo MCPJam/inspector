@@ -17,7 +17,7 @@ import {
 } from "@mcpjam/design-system/popover";
 import { useHostList } from "@/hooks/useClients";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
-import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
+import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 
 export function ClientsPill({

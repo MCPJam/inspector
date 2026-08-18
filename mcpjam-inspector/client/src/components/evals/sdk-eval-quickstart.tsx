@@ -95,6 +95,10 @@ describe("MCP eval quickstart", () => {
     "agent calls greet across a two-turn case",
     async () => {
       const evalTest = new EvalTest({
+        // A case's identity. Mint it once (mintCaseId() from
+        // "@mcpjam/sdk/contract") and keep the literal — history joins on the
+        // id, so renaming the case below never forks it.
+        id: "c_learning_server_greet",
         name: "learning-server-greet-multi-turn",
         expectedToolCalls: [{ toolName: "greet" }],
         test: async (agent) => {

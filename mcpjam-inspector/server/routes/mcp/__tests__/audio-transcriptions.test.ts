@@ -123,7 +123,7 @@ describe("audio transcriptions route", () => {
         },
         projectId: "project-voice",
         selectedServerIds: ["server-1"],
-        chatboxId: "chatbox-1",
+        scenarioId: "scenario-1",
         accessVersion: 3,
       });
       return new Response(
@@ -144,7 +144,7 @@ describe("audio transcriptions route", () => {
       body: JSON.stringify({
         projectId: "project-voice",
         selectedServerIds: ["server-1"],
-        chatboxId: "chatbox-1",
+        scenarioId: "scenario-1",
         accessVersion: 3,
         input_audio: {
           data: "UklGRiQA",

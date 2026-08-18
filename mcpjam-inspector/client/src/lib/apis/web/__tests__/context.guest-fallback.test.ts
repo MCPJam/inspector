@@ -59,24 +59,24 @@ describe("getApiAuthorizationHeader guest fallback", () => {
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
-  it("prefers guest token for chatbox guests without calling WorkOS", async () => {
+  it("prefers guest token for scenario guests without calling WorkOS", async () => {
     const getAccessToken = vi
       .fn()
       .mockResolvedValue("workos-token-should-skip");
     setApiContext({
-      projectId: "ws-chatbox",
+      projectId: "ws-scenario",
       isAuthenticated: false,
       serverIdsByName: { bench: "srv-1" },
       getAccessToken,
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
       accessVersion: 1,
     });
 
-    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-chatbox");
+    vi.mocked(getGuestBearerToken).mockResolvedValue("guest-scenario");
 
     const result = await getApiAuthorizationHeader();
 
-    expect(result).toBe("Bearer guest-chatbox");
+    expect(result).toBe("Bearer guest-scenario");
     expect(getAccessToken).not.toHaveBeenCalled();
   });
 
@@ -165,7 +165,7 @@ describe("getApiAuthorizationHeader guest fallback", () => {
     vi.useRealTimers();
   });
 
-  it("prefers guest token for guest-owned projects (unauthed + projectId, no share/chatbox)", async () => {
+  it("prefers guest token for guest-owned projects (unauthed + projectId, no share/scenario)", async () => {
     // Pre-"guests are users" this case returned null because a set projectId
     // was treated as proof of an authed session. Guests can now own projects,
     // so this path must surface a guest bearer.
@@ -252,11 +252,11 @@ describe("guest-owned project request building", () => {
     );
   });
 
-  it("buildServerRequest uses project path for chatbox guests", () => {
+  it("buildServerRequest uses project path for scenario guests", () => {
     setApiContext({
-      projectId: "ws-chatbox",
+      projectId: "ws-scenario",
       isAuthenticated: false,
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
       accessVersion: 1,
       serverIdsByName: { "my-server": "srv-1" },
     });
@@ -264,10 +264,10 @@ describe("guest-owned project request building", () => {
     const result = buildServerRequest("my-server");
 
     expect(result).toMatchObject({
-      projectId: "ws-chatbox",
+      projectId: "ws-scenario",
       serverId: "srv-1",
       serverName: "my-server",
-      chatboxId: "cbx_123",
+      scenarioId: "cbx_123",
       accessVersion: 1,
     });
   });
