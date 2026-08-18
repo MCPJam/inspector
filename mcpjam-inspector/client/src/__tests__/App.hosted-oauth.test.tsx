@@ -23,11 +23,11 @@ import {
   writeBillingSignInReturnPath,
 } from "../lib/billing-deep-link";
 import {
-  clearChatboxSession,
-  readChatboxSignInReturnPath,
-  writeChatboxSignInReturnPath,
-  writeChatboxSession,
-} from "../lib/chatbox-session";
+  clearScenarioSession,
+  readScenarioSignInReturnPath,
+  writeScenarioSignInReturnPath,
+  writeScenarioSession,
+} from "../lib/scenario-session";
 
 const existingConvexUser = {
   _id: "user-1",
@@ -213,7 +213,7 @@ vi.mock("convex/react", () => ({
     }
     return result;
   },
-  // Hooks like useChatboxBackfillForProject call the returned mutation as
+  // Hooks like useScenarioBackfillForProject call the returned mutation as
   // a thenable; return a resolved promise so `.catch(...)` doesn't crash.
   useMutation: () => vi.fn(() => Promise.resolve(undefined)),
   useAction: () => vi.fn(() => Promise.resolve(undefined)),
@@ -475,15 +475,15 @@ vi.mock("../components/hosted/HostedShellGate", () => ({
 vi.mock("../components/hosted/hosted-shell-gate-state", () => ({
   resolveHostedShellGateState: () => mockHostedShellGateState.value,
 }));
-vi.mock("../components/hosted/ChatboxChatPage", () => ({
-  ChatboxChatPage: () => <button type="button">Authorize</button>,
-  getChatboxPathTokenFromLocation: () => null,
+vi.mock("../components/hosted/ScenarioChatPage", () => ({
+  ScenarioChatPage: () => <button type="button">Authorize</button>,
+  getScenarioPathTokenFromLocation: () => null,
 }));
 
 describe("App hosted OAuth callback handling", () => {
   beforeEach(() => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     localStorage.clear();
     localStorage.setItem(
       "mcp-onboarding-state",
@@ -542,14 +542,14 @@ describe("App hosted OAuth callback handling", () => {
       () => new Promise<never>(() => {})
     );
 
-    writeChatboxSession({
-      chatboxId: "sbx_1",
+    writeScenarioSession({
+      scenarioId: "sbx_1",
       accessVersion: 1,
       payload: {
         projectId: "ws_1",
-        chatboxId: "sbx_1",
+        scenarioId: "sbx_1",
         name: "Asaan",
-        description: "Hosted chatbox",
+        description: "Hosted scenario",
         hostStyle: "claude",
         mode: "invited_only",
         allowGuestAccess: false,
@@ -571,12 +571,12 @@ describe("App hosted OAuth callback handling", () => {
       },
     });
     writeHostedOAuthPendingMarker({
-      surface: "chatbox",
+      surface: "scenario",
       projectId: "ws_1",
       serverId: "srv_asana",
       sessionId: "hosted-session-1",
       accessScope: "chat_v2",
-      chatboxId: "sbx_1",
+      scenarioId: "sbx_1",
       accessVersion: 1,
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
@@ -600,7 +600,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
         expect.objectContaining({
-          surface: "chatbox",
+          surface: "scenario",
           serverName: "asana",
         }),
         "oauth-code",
@@ -613,7 +613,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("captures and copies sanitized OAuth Debugger boundary errors", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     localStorage.clear();
     sessionStorage.clear();
     window.history.replaceState({}, "", "/oauth-flow");
@@ -650,7 +650,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(writeText.mock.calls[0]?.[0]).toContain("[redacted]");
   });
 
-  it("uses hosted completion for guest chatbox session callbacks", async () => {
+  it("uses hosted completion for guest scenario session callbacks", async () => {
     mockConvexAuthState.isAuthenticated = false;
 
     render(<App />);
@@ -659,11 +659,11 @@ describe("App hosted OAuth callback handling", () => {
       expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
       expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
         expect.objectContaining({
-          surface: "chatbox",
+          surface: "scenario",
           projectId: "ws_1",
           serverId: "srv_asana",
           sessionId: "hosted-session-1",
-          chatboxId: "sbx_1",
+          scenarioId: "sbx_1",
         }),
         "oauth-code",
         expect.objectContaining({
@@ -674,14 +674,14 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("uses hosted completion for authenticated chatbox callbacks without a hosted session id", async () => {
+  it("uses hosted completion for authenticated scenario callbacks without a hosted session id", async () => {
     clearHostedOAuthPendingState();
     writeHostedOAuthPendingMarker({
-      surface: "chatbox",
+      surface: "scenario",
       projectId: "ws_1",
       serverId: "srv_asana",
       accessScope: "chat_v2",
-      chatboxId: "sbx_1",
+      scenarioId: "sbx_1",
       accessVersion: 1,
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
@@ -696,11 +696,11 @@ describe("App hosted OAuth callback handling", () => {
       expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
       expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
         expect.objectContaining({
-          surface: "chatbox",
+          surface: "scenario",
           projectId: "ws_1",
           serverId: "srv_asana",
           sessionId: null,
-          chatboxId: "sbx_1",
+          scenarioId: "sbx_1",
         }),
         "oauth-code",
         expect.objectContaining({
@@ -711,14 +711,14 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  it("reports a clear guest session error when a chatbox callback bearer is unavailable", async () => {
+  it("reports a clear guest session error when a scenario callback bearer is unavailable", async () => {
     mockConvexAuthState.isAuthenticated = false;
     mockGetGuestBearerToken.mockResolvedValue(null);
 
     render(<App />);
 
     await waitFor(() => {
-      expect(readHostedOAuthResumeMarker("chatbox")?.errorMessage).toBe(
+      expect(readHostedOAuthResumeMarker("scenario")?.errorMessage).toBe(
         "Your guest session expired. Reopen the swarm link and try again."
       );
     });
@@ -726,8 +726,8 @@ describe("App hosted OAuth callback handling", () => {
     expect(mockHandleOAuthCallback).not.toHaveBeenCalled();
   });
 
-  it("attaches the WorkOS bearer when a signed-in user returns to a chatbox callback", async () => {
-    // Regression for the chatbox OAuth 403: on chatbox routes useApiContext is
+  it("attaches the WorkOS bearer when a signed-in user returns to a scenario callback", async () => {
+    // Regression for the scenario OAuth 403: on scenario routes useApiContext is
     // gated off, so authFetch's default header resolver demoted signed-in
     // users to guest bearers. The fix explicitly fetches the WorkOS access
     // token and passes it as authorizationHeader, bypassing apiContext.
@@ -742,8 +742,8 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
         expect.objectContaining({
-          surface: "chatbox",
-          chatboxId: "sbx_1",
+          surface: "scenario",
+          scenarioId: "sbx_1",
         }),
         "oauth-code",
         expect.objectContaining({
@@ -757,7 +757,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not keep the hosted loading screen for project OAuth callbacks", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     writeHostedOAuthPendingMarker({
       surface: "project",
       projectId: "ws_1",
@@ -785,11 +785,11 @@ describe("App hosted OAuth callback handling", () => {
 
   it("escapes a stale queryless callback page back to the root shell", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     localStorage.removeItem("mcp-oauth-pending");
     localStorage.removeItem("mcp-serverUrl-asana");
     window.history.replaceState({}, "", "/callback");
-    writeChatboxSignInReturnPath("/chatbox/asana/token-123");
+    writeScenarioSignInReturnPath("/user-testing/asana/token-123");
     mockConvexAuthState.isAuthenticated = false;
     mockConvexAuthState.isLoading = false;
     mockWorkOsAuthState.user = null;
@@ -805,7 +805,7 @@ describe("App hosted OAuth callback handling", () => {
       screen.queryByTestId("callback-auth-timeout")
     ).not.toBeInTheDocument();
     expect(mockWorkOsAuthState.signIn).not.toHaveBeenCalled();
-    expect(readChatboxSignInReturnPath()).toBe("/chatbox/asana/token-123");
+    expect(readScenarioSignInReturnPath()).toBe("/user-testing/asana/token-123");
   });
 
   it("clears stale client auth state before retrying a timed-out callback", async () => {
@@ -813,7 +813,7 @@ describe("App hosted OAuth callback handling", () => {
 
     try {
       clearHostedOAuthPendingState();
-      clearChatboxSession();
+      clearScenarioSession();
       localStorage.removeItem("mcp-oauth-pending");
       localStorage.removeItem("mcp-serverUrl-asana");
       window.history.replaceState({}, "", "/callback?code=oauth-code");
@@ -1038,13 +1038,13 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
-  // (Removed) "passes a billing-safe project id to the chatboxes tab" —
-  // the old test asserted that ChatboxesTab received
+  // (Removed) "passes a billing-safe project id to the scenarios tab" —
+  // the old test asserted that ScenariosTab received
   // `{ projectId: null, organizationId, isBillingContextPending }` when
   // cloud sync was off, gating the org-scoped billing gate. After the
-  // 1:1 host↔chatbox consolidation the tab signature is just
+  // 1:1 host↔scenario consolidation the tab signature is just
   // `{ projectId, isAuthenticated }` (no org / billing props), and the
-  // ChatboxesRoute forwards the route-context `convexProjectId` whether
+  // ScenariosRoute forwards the route-context `convexProjectId` whether
   // cloud sync is on or off. The previous invariant no longer maps to a
   // prop on this component, so the test was deleted rather than
   // rewritten against a different surface.
@@ -1083,7 +1083,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
         expect.objectContaining({
-          surface: "chatbox",
+          surface: "scenario",
           serverName: "asana",
         }),
         "oauth-code",
@@ -1098,7 +1098,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("passes the valid organization route into app state for project actions", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-3");
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
@@ -1144,7 +1144,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("keeps the sidebar-selected org active when navigating back to servers", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-a");
 
     const setActiveOrganizationIdSpy = vi.fn();
@@ -1222,7 +1222,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("preserves the newly selected org when navigating away immediately", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-a");
 
     const setActiveOrganizationIdSpy = vi.fn();
@@ -1292,7 +1292,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not snap initial project hydration back to servers", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/#settings");
 
     mockUseAppState.mockImplementation(() => {
@@ -1329,7 +1329,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("lands on servers when switching active organization from org models", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-a/models");
 
     const setActiveOrganizationIdSpy = vi.fn();
@@ -1400,7 +1400,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("keeps sidebar project creation enabled for uncapped free routed orgs", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-3");
     mockUseFeatureFlagEnabled.mockImplementation(
       (flag: string) => flag === "billing-entitlements-ui"
@@ -1501,7 +1501,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("shows billing handoff loading and triggers sign-in for guest billing entry", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     const signIn = vi.fn();
@@ -1532,7 +1532,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("restores the billing callback back into the billing flow when session intent exists", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     sessionStorage.clear();
     persistCheckoutIntent({ plan: "team", interval: "annual" });
     writeBillingSignInReturnPath("/billing");
@@ -1571,7 +1571,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("falls back to the default callback destination when billing session intent is missing", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     sessionStorage.clear();
     writeBillingSignInReturnPath("/billing");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
@@ -1589,7 +1589,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("keeps a persisted billing resume alive when /billing returns without query params", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     sessionStorage.clear();
     persistCheckoutIntent({ plan: "team", interval: "annual" });
     window.history.replaceState({}, "", "/billing");
@@ -1645,13 +1645,13 @@ describe("App hosted OAuth callback handling", () => {
     ).toBe(true);
   });
 
-  it("prefers chatbox callback restoration over billing callback restoration", async () => {
+  it("prefers scenario callback restoration over billing callback restoration", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     sessionStorage.clear();
     persistCheckoutIntent({ plan: "team", interval: "annual" });
     writeBillingSignInReturnPath("/billing");
-    writeChatboxSignInReturnPath("/chatbox/demo/token-123");
+    writeScenarioSignInReturnPath("/user-testing/demo/token-123");
     window.history.replaceState({}, "", "/callback?code=oauth-code");
 
     const replaceStateSpy = vi.spyOn(window.history, "replaceState");
@@ -1662,14 +1662,14 @@ describe("App hosted OAuth callback handling", () => {
       expect(replaceStateSpy).toHaveBeenCalledWith(
         {},
         "",
-        "/chatbox/demo/token-123"
+        "/user-testing/demo/token-123"
       );
     });
   });
 
   it("keeps billing resume behind the checkout spinner for signed-in users", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -1727,7 +1727,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("drops the billing overlay when checkout intent is consumed", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -1779,7 +1779,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("drops the billing overlay when checkout navigation starts", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -1834,7 +1834,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("clears billing handoff state when no organization is available", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -1865,7 +1865,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("renders the organization route from the hash even before active org state catches up", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-1");
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
@@ -1906,7 +1906,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("optimistically switches to the first owned org after deleting the current org", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-deleted");
 
     const setActiveOrganizationId = vi.fn();
@@ -1996,7 +1996,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("falls back to the first remaining org when no owned org remains after delete", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-deleted");
 
     const setActiveOrganizationId = vi.fn();
@@ -2066,7 +2066,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("clears deleted-org fallback state without switching away from a different active org", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-member");
 
     const setActiveOrganizationId = vi.fn();
@@ -2161,7 +2161,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("clears org and synced project selection when deleting the last org", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-deleted");
 
     const setActiveOrganizationId = vi.fn();
@@ -2233,27 +2233,27 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe("/servers");
   });
 
-  // (Removed) "still renders the chatboxes tab when project premiumness
-  // denies chatbox creation" — chatbox creation no longer happens on the
-  // /chatboxes tab (it's the publish surface for a host-bound chatbox
+  // (Removed) "still renders the scenarios tab when project premiumness
+  // denies scenario creation" — scenario creation no longer happens on the
+  // /scenarios tab (it's the publish surface for a host-bound scenario
   // that's created with the host). The test's premise — that the tab
   // has its own billing gate for creation — no longer exists, so the
   // test was deleted rather than rewritten.
 
   it("navigates back to the User Testing tab after callback completion", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     writeHostedOAuthPendingMarker({
-      surface: "chatbox",
+      surface: "scenario",
       projectId: "ws_1",
       serverId: "srv_asana",
-      sessionId: "hosted-session-chatboxes",
+      sessionId: "hosted-session-scenarios",
       accessScope: "chat_v2",
-      chatboxId: "sbx_1",
+      scenarioId: "sbx_1",
       accessVersion: 1,
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
-      returnPath: "#chatboxes",
+      returnPath: "#scenarios",
     });
     // User Testing is flag-gated at the route, not just in the sidebar — the
     // callback can only land back on it for a user who has the flag.
@@ -2272,7 +2272,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      // A legacy `#chatboxes` return path resolves to the tab id `chatboxes`,
+      // A legacy `#scenarios` return path resolves to the tab id `scenarios`,
       // whose canonical path is now `/user-testing`.
       expect(window.location.pathname).toBe("/user-testing");
       expect(screen.getByText("User Testing Tab")).toBeInTheDocument();
@@ -2282,7 +2282,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("keeps Playground mounted when onboarding chrome is restored", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -2312,7 +2312,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("restores chrome after leaving Playground mid-onboarding", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -2342,7 +2342,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("auto-routes a Convex-authenticated hosted guest into Playground onboarding once startup is ready", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
@@ -2371,7 +2371,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("auto-routes a Convex-authenticated hosted guest from the default route into Playground onboarding", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/");
     mockHandleOAuthCallback.mockReset();
@@ -2392,7 +2392,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not auto-route a guest row already marked as having seen onboarding", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
@@ -2413,7 +2413,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("auto-routes an unseen guest when the only saved server is the incomplete first-run Excalidraw row", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
@@ -2449,7 +2449,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not auto-route to Playground when any saved server already exists", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
@@ -2483,7 +2483,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not auto-route to Playground while the guest project is still provisioning", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
@@ -2506,7 +2506,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not auto-route to Playground before hosted guest Convex auth is ready", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
@@ -2528,7 +2528,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not auto-route to Playground while the hosted shell is still auth-loading", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
@@ -2547,7 +2547,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not flash Home while hosted auth is still loading on the default route", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/");
     mockHandleOAuthCallback.mockReset();
@@ -2566,7 +2566,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not flash Home while hosted guest auth is unresolved on the default route", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/");
     mockHandleOAuthCallback.mockReset();
@@ -2588,7 +2588,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not flash Home while hosted project and server state hydrate on the default route", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/");
     mockHandleOAuthCallback.mockReset();
@@ -2616,7 +2616,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not hijack a non-default hash route for first-run guests", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUnseenOnboardingState();
     window.history.replaceState({}, "", "/tools");
     mockHandleOAuthCallback.mockReset();
@@ -2635,7 +2635,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not let localStorage hide NUX for a fresh guest user row", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     localStorage.setItem(
       "mcp-onboarding-state",
       JSON.stringify({ status: "seen", shownAt: Date.now() })
@@ -2658,7 +2658,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("does not auto-route signed-in users into Playground once startup is ready", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
     mockWorkOsAuthState.user = { id: "user-1" };
@@ -2675,7 +2675,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("renders Suites mode on /evals", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -2697,7 +2697,7 @@ describe("App hosted OAuth callback handling", () => {
     // mode under Evaluate now and ships to everyone, so there is no flag read,
     // no "Loading Runs..." spinner, and no redirect back to Suites.
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/evals/runs");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
@@ -2717,7 +2717,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("redirects conformance to home when the feature flag is disabled", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/conformance");
     mockHandleOAuthCallback.mockReset();
 
@@ -2732,7 +2732,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("keeps host template deep links in place while auth is loading", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/hosts?template=slack");
     mockHandleOAuthCallback.mockReset();
     mockConvexAuthState.isAuthenticated = false;
@@ -2751,7 +2751,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("syncs direct host URLs into the global previewed host selection", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
       activeProjectId: "project_local",
@@ -2809,7 +2809,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("redirects xaa-flow to home when the xaa flag is disabled", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
 
@@ -2825,7 +2825,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("renders xaa-flow when the xaa flag is enabled", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
@@ -2844,7 +2844,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("passes OAuth-only project server selector props on the XAA Debugger tab", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
@@ -2900,7 +2900,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("passes OAuth-only server selector props on the OAuth Debugger tab", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/oauth-flow");
     mockHandleOAuthCallback.mockReset();
     const appStateMock = createAppStateMock();
@@ -2958,7 +2958,7 @@ describe("App hosted OAuth callback handling", () => {
 
   it("leaves the header server selector unfiltered outside the OAuth Debugger tab", async () => {
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/tools");
     mockHandleOAuthCallback.mockReset();
 
@@ -2980,7 +2980,7 @@ describe("App hosted OAuth callback handling", () => {
     // Runs used to gate on `cicd` because it was its own tab. Both lenses are
     // one tab now, so the tab-keyed gate is `evals` for both.
     clearHostedOAuthPendingState();
-    clearChatboxSession();
+    clearScenarioSession();
     window.history.replaceState({}, "", "/evals/runs");
     mockHandleOAuthCallback.mockReset();
     mockUseAppState.mockImplementation(() => ({

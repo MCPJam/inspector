@@ -80,6 +80,7 @@ add(test: EvalTest): void
 
 ```typescript
 suite.add(new EvalTest({
+  id: "c_addition",
   name: "addition",
   test: async (agent) => {
     const r = await agent.run("Add 2 and 3");
@@ -88,6 +89,7 @@ suite.add(new EvalTest({
 }));
 
 suite.add(new EvalTest({
+  id: "c_multiplication",
   name: "multiplication",
   test: async (agent) => {
     const r = await agent.run("Multiply 4 by 5");
@@ -373,16 +375,19 @@ async function main() {
   });
 
   suite.add(new EvalTest({
+    id: "c_add",
     name: "add",
     test: async (a) => (await a.run("Add 2+3")).hasToolCall("add"),
   }));
 
   suite.add(new EvalTest({
+    id: "c_echo",
     name: "echo",
     test: async (a) => (await a.run("Echo 'test'")).hasToolCall("echo"),
   }));
 
   suite.add(new EvalTest({
+    id: "c_longrunningoperation",
     name: "longRunningOperation",
     test: async (a) => (await a.run("Run a long operation")).hasToolCall("longRunningOperation"),
   }));

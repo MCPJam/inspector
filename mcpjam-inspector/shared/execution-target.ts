@@ -9,7 +9,7 @@
  *
  * ## Why a union instead of another optional pointer
  *
- * chat-v2 already carried `chatboxId` and a legacy `hostId`, resolved by branch
+ * chat-v2 already carried `scenarioId` and a legacy `hostId`, resolved by branch
  * precedence. Adding `environmentId` as a third optional field would mean a body
  * with two pointers silently executing against one of them — the caller believes
  * they launched an environment, the server ran a bare host. So ingress
@@ -17,7 +17,7 @@
  * ({@link InternalExecutionTarget}) and REJECTS ambiguous combinations instead
  * of shadowing them.
  *
- * `chatboxId` is deliberately NOT folded into the public
+ * `scenarioId` is deliberately NOT folded into the public
  * {@link HostedExecutionTarget}: it is an access-bearing transport field (the
  * redeemed share-link identity, paired with `accessVersion`), not a statement
  * about which configuration to execute. It stays where it is and simply
@@ -53,7 +53,7 @@ export type EnvironmentOverrides = {
 /**
  * The closed union every hosted chat ingress normalizes to. Unlike the public
  * wire type this also covers the two shapes that were never explicit targets:
- * a chatbox-bound turn and a plain ad-hoc project chat.
+ * a scenario-bound turn and a plain ad-hoc project chat.
  */
 export type InternalExecutionTarget =
   | { kind: "host"; hostId: string }
@@ -62,7 +62,7 @@ export type InternalExecutionTarget =
       environmentId: string;
       overrides?: EnvironmentOverrides;
     }
-  | { kind: "chatbox"; chatboxId: string }
+  | { kind: "scenario"; scenarioId: string }
   | { kind: "adhoc"; projectId: string };
 
 export type NormalizeExecutionTargetResult =
@@ -71,7 +71,7 @@ export type NormalizeExecutionTargetResult =
 
 /** Raw, untrusted ingress fields. Every one is optional on the wire. */
 export interface ExecutionTargetIngress {
-  chatboxId?: unknown;
+  scenarioId?: unknown;
   executionTarget?: unknown;
   environmentOverrides?: unknown;
   /** Legacy pointer kept for compatibility; normalized to `{ kind: "host" }`. */
@@ -175,17 +175,17 @@ function parseEnvironmentOverrides(
  *
  * Precedence, in order — the FIRST two rules are rejections, never fallbacks:
  *
- *   1. `chatboxId` + `executionTarget`  → invalid combination (400).
- *      A chatbox pins its own host server-side; an explicit target alongside it
+ *   1. `scenarioId` + `executionTarget`  → invalid combination (400).
+ *      A scenario pins its own host server-side; an explicit target alongside it
  *      would either be ignored (silently wrong) or override a published
- *      chatbox's configuration from a share-link body (a security regression).
+ *      scenario's configuration from a share-link body (a security regression).
  *   2. legacy `hostId` + `executionTarget` → invalid combination (400).
  *      Two statements about what to run. Old clients send only `hostId`, new
  *      clients send only `executionTarget`; a body with both is a bug, and
  *      picking a winner is exactly the silent shadowing this normalizer exists
  *      to prevent.
  *   3. `executionTarget`  → use it.
- *   4. `chatboxId`        → chatbox turn (unchanged legacy behavior; a chatbox
+ *   4. `scenarioId`        → scenario turn (unchanged legacy behavior; a scenario
  *      has always won over a stray `hostId`).
  *   5. legacy `hostId`    → `{ kind: "host" }`.
  *   6. neither            → ad-hoc direct chat.
@@ -196,17 +196,17 @@ function parseEnvironmentOverrides(
 export function normalizeExecutionTarget(
   ingress: ExecutionTargetIngress
 ): NormalizeExecutionTargetResult {
-  const chatboxId = nonEmptyString(ingress.chatboxId);
+  const scenarioId = nonEmptyString(ingress.scenarioId);
   const hostId = nonEmptyString(ingress.hostId);
   const projectId = nonEmptyString(ingress.projectId) ?? "";
   const hasExecutionTarget =
     ingress.executionTarget !== undefined && ingress.executionTarget !== null;
 
-  if (hasExecutionTarget && chatboxId) {
+  if (hasExecutionTarget && scenarioId) {
     return {
       ok: false,
       error:
-        "chatboxId and executionTarget cannot be combined — a chatbox already pins its own execution configuration.",
+        "scenarioId and executionTarget cannot be combined — a scenario already pins its own execution configuration.",
     };
   }
   if (hasExecutionTarget && hostId) {
@@ -248,7 +248,7 @@ export function normalizeExecutionTarget(
       error: "environmentOverrides requires an environment executionTarget.",
     };
   }
-  if (chatboxId) return { ok: true, target: { kind: "chatbox", chatboxId } };
+  if (scenarioId) return { ok: true, target: { kind: "scenario", scenarioId } };
   if (hostId) return { ok: true, target: { kind: "host", hostId } };
   return { ok: true, target: { kind: "adhoc", projectId } };
 }

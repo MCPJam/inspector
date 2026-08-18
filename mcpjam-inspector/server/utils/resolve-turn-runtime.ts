@@ -1,5 +1,5 @@
 /**
- * `resolveTurnRuntime` — the shared runtime adapter that turns a chatbox's
+ * `resolveTurnRuntime` — the shared runtime adapter that turns a scenario's
  * `ModelDefinition` (+ auth/attribution context) into a concrete
  * {@link TurnRuntime} for {@link runUnifiedAssistantTurn}, plus the three
  * side-concerns that live alongside runtime selection:
@@ -45,8 +45,8 @@ import type {
 /**
  * Per-run attribution stamped onto the resulting usage record. `journeyRunId`
  * ties spend to a swarm (journey-execution) run; absent for real chat.
- * (The chatbox session-simulation arm — `synthesisRunId` — was removed with
- * the chatbox synthetic surface.)
+ * (The scenario session-simulation arm — `synthesisRunId` — was removed with
+ * the scenario synthetic surface.)
  */
 export type TurnRunAttribution = { journeyRunId: string } | undefined;
 
@@ -54,17 +54,17 @@ export type TurnRunAttribution = { journeyRunId: string } | undefined;
  * The narrowed source-of-traffic marker forwarded into chat-ingestion /
  * usage writeback. Mirrors `RunAssistantTurnOptions["sourceType"]`.
  */
-export type TurnSourceType = "direct" | "chatbox" | "eval" | "swarm";
+export type TurnSourceType = "direct" | "scenario" | "eval" | "swarm";
 
 export interface ResolveTurnRuntimeArgs {
   modelDefinition: ModelDefinition;
   projectId: string;
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   /** Selected MCP server ids — flow into the byok body + local-usage body. */
   serverIds?: string[];
-  /** Narrowed source marker (chatbox for synthetic). Used for local-usage. */
+  /** Narrowed source marker (scenario for synthetic). Used for local-usage. */
   sourceType: TurnSourceType;
   chatSessionId?: string;
   /**
@@ -141,7 +141,7 @@ export async function resolveTurnRuntime(
     modelDefinition: args.modelDefinition,
     projectId: args.projectId,
     authHeader: args.authHeader,
-    chatboxId: args.chatboxId,
+    scenarioId: args.scenarioId,
     accessVersion: args.accessVersion,
     serverIds: args.serverIds,
   });
@@ -163,7 +163,7 @@ export async function resolveTurnRuntime(
       Object.keys(args.tools as Record<string, unknown>).length > 0
     ) {
       throw new Error(
-        "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this chatbox or switch the provider to cloud runtime.",
+        "Synthetic runs on local-runtime org BYOK models don't yet support approval-required tool calls. Disable tool approval on this scenario or switch the provider to cloud runtime.",
       );
     }
 
@@ -212,7 +212,7 @@ export async function resolveTurnRuntime(
         turnId: result.turnTrace?.turnId,
         promptIndex: result.turnTrace?.promptIndex,
         authHeader: args.authHeader,
-        chatboxId: args.chatboxId,
+        scenarioId: args.scenarioId,
         accessVersion: args.accessVersion,
         selectedServers: args.serverIds,
         serverIds: args.serverIds,

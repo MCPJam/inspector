@@ -6,7 +6,7 @@
  * hostConfig-to-fields read inline. The reads drifted: chat-v2 (mcp +
  * web) routes resolved `systemPrompt` / `temperature` / `requireToolApproval`
  * / `respectToolVisibility` / `progressiveToolDiscovery` / `modelId` from
- * `fetchChatboxRuntimeConfig` for chatbox sessions; the eval runner only
+ * `fetchScenarioRuntimeConfig` for scenario sessions; the eval runner only
  * extracted policy fields (`extractHostExecutionPolicy`) from
  * `suiteHostConfig` and never read `systemPrompt` / `temperature` /
  * `selectedServerIds` — even though the suite hostConfig record carries
@@ -47,7 +47,7 @@ import { readTasksPolicy, type TasksPolicy } from "@mcpjam/sdk";
  * How the resolver picks a winner when both the hostConfig and the
  * caller-supplied overrides provide a value for the same field.
  *
- * - `host-wins`: hostConfig value beats override (chat chatbox security
+ * - `host-wins`: hostConfig value beats override (chat scenario security
  *   model — guest / share-link clients can't bypass the host's pinned
  *   config). Override only used when the host omits the field.
  * - `override-wins`: caller's override beats hostConfig value (eval
