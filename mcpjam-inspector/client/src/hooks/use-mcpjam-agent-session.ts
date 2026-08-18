@@ -8,7 +8,7 @@
  * else.
  *
  * Per the plan, this is deliberately NOT a second `useChatSession`. If
- * Ollama / custom providers / app tools / chatbox / widget / trace
+ * Ollama / custom providers / app tools / scenario / widget / trace
  * branches surface later, parameterize `useChatSession` and route the
  * agent through it instead.
  */

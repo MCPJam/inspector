@@ -160,7 +160,7 @@ vi.mock("@ai-sdk/react", async () => {
       currentIdRef.current = id;
       const getSnapshot = React.useCallback(
         () => mockState.sessionMessages.get(id) ?? EMPTY_MESSAGES,
-        [id],
+        [id]
       );
       const subscribe = React.useCallback(
         (listener: () => void) => {
@@ -170,12 +170,12 @@ vi.mock("@ai-sdk/react", async () => {
             listeners.delete(listener);
           };
         },
-        [id],
+        [id]
       );
       const messages = React.useSyncExternalStore(
         subscribe,
         getSnapshot,
-        getSnapshot,
+        getSnapshot
       );
       const setMessages = React.useCallback(
         (updater: any[] | ((messages: any[]) => any[])) => {
@@ -189,7 +189,7 @@ vi.mock("@ai-sdk/react", async () => {
             listener();
           }
         },
-        [],
+        []
       );
 
       // Bound to THIS render's `id`, mirroring the real hook: `useChat` returns
@@ -209,7 +209,7 @@ vi.mock("@ai-sdk/react", async () => {
           }
           return mockState.sendMessage({ sessionId: id, ...payload });
         },
-        [id],
+        [id]
       );
 
       return {
@@ -265,7 +265,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: hostedSelectedServerIds,
         },
-      }),
+      })
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -314,7 +314,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: hostedSelectedServerIds,
         },
-      }),
+      })
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -351,7 +351,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: hostedSelectedServerIds,
         },
-      }),
+      })
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -385,7 +385,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      }),
+      })
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -447,8 +447,8 @@ describe("useChatSession fork preservation", () => {
           {
             status: 200,
             headers: { "Content-Type": "application/json" },
-          },
-        ),
+          }
+        )
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -459,7 +459,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      }),
+      })
     );
 
     act(() => {
@@ -502,7 +502,7 @@ describe("useChatSession fork preservation", () => {
     expect(result.current.resumedVersion).toBe(7);
     expect(result.current.systemPrompt).toBe("Restored prompt");
     expect(fetchMock).toHaveBeenCalledWith(
-      "https://storage.test/restored.json",
+      "https://storage.test/restored.json"
     );
   });
 
@@ -520,8 +520,8 @@ describe("useChatSession fork preservation", () => {
           {
             status: 200,
             headers: { "Content-Type": "application/json" },
-          },
-        ),
+          }
+        )
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -538,7 +538,7 @@ describe("useChatSession fork preservation", () => {
         initialProps: {
           selectedServers: ["server-1"],
         },
-      },
+      }
     );
 
     act(() => {
@@ -588,7 +588,7 @@ describe("useChatSession fork preservation", () => {
         initialProps: {
           selectedServers: ["server-1"],
         },
-      },
+      }
     );
     const initialChatSessionId = result.current.chatSessionId;
     const message = {
@@ -651,8 +651,8 @@ describe("useChatSession fork preservation", () => {
           {
             status: 200,
             headers: { "Content-Type": "application/json" },
-          },
-        ),
+          }
+        )
     );
     vi.stubGlobal("fetch", fetchMock);
 
@@ -660,10 +660,11 @@ describe("useChatSession fork preservation", () => {
     // loaded messages. The default mock returns [], which would mask the fix
     // because pickTranscriptForLiveTracePreview would have nothing to pick.
     const { convertToModelMessages } = await import("ai");
-    vi.mocked(convertToModelMessages).mockImplementation(async (messages) =>
-      // Pass-through: the rehydrated UIMessages already carry tool-call /
-      // tool-result parts in the shape extractToolData expects.
-      (messages ?? []) as any,
+    vi.mocked(convertToModelMessages).mockImplementation(
+      async (messages) =>
+        // Pass-through: the rehydrated UIMessages already carry tool-call /
+        // tool-result parts in the shape extractToolData expects.
+        (messages ?? []) as any
     );
 
     const { result } = renderHook(() =>
@@ -673,7 +674,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      }),
+      })
     );
 
     act(() => {
@@ -704,15 +705,15 @@ describe("useChatSession fork preservation", () => {
       const envelopeMessages = result.current.liveTraceEnvelope?.messages ?? [];
       expect(envelopeMessages.length).toBeGreaterThan(0);
       const assistant = envelopeMessages.find(
-        (m: any) => m.role === "assistant",
+        (m: any) => m.role === "assistant"
       );
       const parts = Array.isArray(assistant?.parts) ? assistant.parts : [];
       expect(
         parts.some(
           (p: any) =>
             (p.type === "dynamic-tool" || p.type === "tool-call") &&
-            p.toolCallId === "call-1",
-        ),
+            p.toolCallId === "call-1"
+        )
       ).toBe(true);
     });
   });
@@ -728,7 +729,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      }),
+      })
     );
 
     act(() => {
@@ -770,7 +771,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      }),
+      })
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -868,7 +869,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      }),
+      })
     );
 
     const user = {
@@ -903,7 +904,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      }),
+      })
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -943,7 +944,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      }),
+      })
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -1004,7 +1005,7 @@ describe("useChatSession fork preservation", () => {
           selectedServerIds: [],
           ensureServerIds,
         },
-      }),
+      })
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -1044,7 +1045,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      }),
+      })
     );
     const initialChatSessionId = result.current.chatSessionId;
 
@@ -1071,6 +1072,127 @@ describe("useChatSession fork preservation", () => {
     expect(mockState.sendMessage).not.toHaveBeenCalled();
   });
 
+  it("detachToLocalFork points subsequent sends at the NEW session, not the detached one", async () => {
+    // The exact production failure this exists to stop: the detach path used to
+    // fire-and-forget `startChatWithMessages`, and post-detach turns kept
+    // writing to the OLD chatSessionId — which is how they reached the ingest
+    // replay heuristic on the old row and got silently dropped.
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      })
+    );
+    const detachedChatSessionId = result.current.chatSessionId;
+
+    const user = {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "hello" }],
+    } as any;
+    const assistant = {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{ type: "text", text: "reply" }],
+    } as any;
+
+    act(() => {
+      result.current.setMessages([user, assistant]);
+      result.current.syncResumedVersion(7);
+    });
+
+    let bodyAtSend: Record<string, unknown> | undefined;
+    mockState.sendMessage.mockImplementation(() => {
+      bodyAtSend = mockState.lastTransportOptions.body();
+    });
+
+    // Not wrapped in `act(async () => ...)` — resolution rides a
+    // `useLayoutEffect` after commit, which an enclosing async act() would
+    // defer until its own promise settles. See the rewind tests above.
+    const fork = await result.current.detachToLocalFork([user, assistant]);
+
+    expect(fork).not.toBeNull();
+    expect(fork!.chatSessionId).not.toBe(detachedChatSessionId);
+    expect(result.current.chatSessionId).toBe(fork!.chatSessionId);
+    // The transcript rides across so the user keeps seeing their conversation.
+    expect(result.current.messages).toEqual([user, assistant]);
+    // The fork's hydration drops the guard, so its first ingest carries no
+    // expectedVersion against a row it has never written to.
+    expect(result.current.resumedVersion).toBeNull();
+
+    await act(async () => {
+      await result.current.sendMessage({ text: "after the detach" });
+    });
+
+    expect(bodyAtSend).toMatchObject({ chatSessionId: fork!.chatSessionId });
+    // Says WHICH Chat instance ran the send — a stale instance would post the
+    // detached session's own store. The transport body alone cannot show this.
+    expect(mockState.sendsBySession.has(detachedChatSessionId)).toBe(false);
+    expect(mockState.sendsBySession.get(fork!.chatSessionId)).toEqual([
+      { text: "after the detach" },
+    ]);
+  });
+
+  it("detachToLocalFork returns null and leaves the interloper's resumedVersion alone", async () => {
+    // A superseded hydration resolves the same promise as a committed one, so
+    // resolution is not proof. When a history-thread load wins the race the
+    // live session is now that thread — clearing ITS optimistic-concurrency
+    // guard would let the next send clobber whatever another tab wrote.
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { id: "restored-user", role: "user", content: "restored question" },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      })
+    );
+
+    const user = {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "hello" }],
+    } as any;
+
+    act(() => {
+      result.current.setMessages([user]);
+    });
+
+    let fork: { chatSessionId: string } | null = null;
+    const detachPromise = result.current.detachToLocalFork([user]).then((r) => {
+      fork = r;
+    });
+    void result.current.loadChatSession({
+      chatSessionId: "restored-session",
+      messagesBlobUrl: "https://storage.test/detach-race.json",
+      version: 7,
+    });
+    await detachPromise;
+
+    await waitFor(() => {
+      expect(result.current.chatSessionId).toBe("restored-session");
+    });
+
+    expect(fork).toBeNull();
+    // Not null: the detach must not tear down the guard belonging to the
+    // session that actually went live.
+    expect(result.current.resumedVersion).toBe(7);
+  });
+
   it("refuses to send when a concurrent session switch wins the race", async () => {
     const { result } = renderHook(() =>
       useChatSession({
@@ -1079,7 +1201,7 @@ describe("useChatSession fork preservation", () => {
           projectId: "project-1",
           selectedServerIds: [],
         },
-      }),
+      })
     );
 
     act(() => {

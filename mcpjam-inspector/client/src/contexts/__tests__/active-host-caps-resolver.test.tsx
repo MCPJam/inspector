@@ -155,8 +155,8 @@ describe("ActiveHostCapsResolverScope (resolver)", () => {
     );
   });
 
-  it("synthesizes host caps from the template seed when activeHost is null (hosted chatbox case)", () => {
-    // Hosted chatbox bootstrap payload doesn't carry clientCapabilities
+  it("synthesizes host caps from the template seed when activeHost is null (hosted scenario case)", () => {
+    // Hosted scenario bootstrap payload doesn't carry clientCapabilities
     // yet (follow-up). Until then, the scope synthesizes them from the
     // host style. Codex seed → no UI extension.
     const { getByTestId } = mountWithState({
