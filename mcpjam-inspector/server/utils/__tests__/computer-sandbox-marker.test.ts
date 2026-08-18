@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  planChatboxSandbox,
+  planScenarioSandbox,
   readComputerSandboxMode,
-} from "../chatbox-runtime-config.js";
+} from "../scenario-runtime-config.js";
 
 /**
  * The `computerSandbox` marker has THREE states, and the third one — absence —
@@ -24,7 +24,7 @@ describe("readComputerSandboxMode", () => {
 
   it("returns null for an OLD BACKEND — never 'unavailable'", () => {
     // Absent must not be read as "no image": that would silently strip bash
-    // from every chatbox the moment a deploy skewed.
+    // from every scenario the moment a deploy skewed.
     expect(readComputerSandboxMode({ computer: { kind: "personal" } })).toBe(
       null
     );
@@ -46,13 +46,13 @@ describe("readComputerSandboxMode", () => {
 });
 
 /**
- * The plan is the ONLY thing standing between a chatbox turn and a call that
+ * The plan is the ONLY thing standing between a scenario turn and a call that
  * spends money, so the matrix is pinned exhaustively. The load-bearing row is
  * `not_a_data_plane`: provisioning is bearer-authed and succeeds from any
  * inspector, but a server without the E2B credentials can never exec in the
  * box — the old code stranded a billable sandbox whose every command failed.
  */
-describe("planChatboxSandbox", () => {
+describe("planScenarioSandbox", () => {
   const ephemeral = {
     mode: "ephemeral" as const,
     bashRequested: true,
@@ -61,12 +61,12 @@ describe("planChatboxSandbox", () => {
   };
 
   it("provisions only when every requirement holds", () => {
-    expect(planChatboxSandbox(ephemeral)).toEqual({ action: "provision" });
+    expect(planScenarioSandbox(ephemeral)).toEqual({ action: "provision" });
   });
 
   it("suppresses WITH a tester notice when this server is not a data plane", () => {
     expect(
-      planChatboxSandbox({ ...ephemeral, ephemeralCloudAvailable: false })
+      planScenarioSandbox({ ...ephemeral, ephemeralCloudAvailable: false })
     ).toEqual({
       action: "suppress",
       suppressReason: "not_a_data_plane",
@@ -76,7 +76,7 @@ describe("planChatboxSandbox", () => {
 
   it("checks the data plane before the session id — the tester deserves the explanation either way", () => {
     expect(
-      planChatboxSandbox({
+      planScenarioSandbox({
         ...ephemeral,
         ephemeralCloudAvailable: false,
         hasChatSessionId: false,
@@ -86,13 +86,13 @@ describe("planChatboxSandbox", () => {
 
   it("suppresses silently (log-only) without a chatSessionId", () => {
     expect(
-      planChatboxSandbox({ ...ephemeral, hasChatSessionId: false })
+      planScenarioSandbox({ ...ephemeral, hasChatSessionId: false })
     ).toEqual({ action: "suppress", suppressReason: "no_chat_session_id" });
   });
 
   it("suppresses on an `unavailable` marker regardless of anything else", () => {
     expect(
-      planChatboxSandbox({
+      planScenarioSandbox({
         ...ephemeral,
         mode: "unavailable",
         ephemeralCloudAvailable: false,
@@ -106,9 +106,9 @@ describe("planChatboxSandbox", () => {
 
   it("does nothing for a legacy (marker-absent) config — even on a non-data-plane server", () => {
     // Absent marker = personal-computer behavior; the preflight must not
-    // start stripping bash from legacy chatboxes on deploy skew.
+    // start stripping bash from legacy scenarios on deploy skew.
     expect(
-      planChatboxSandbox({
+      planScenarioSandbox({
         ...ephemeral,
         mode: null,
         ephemeralCloudAvailable: false,
@@ -118,7 +118,7 @@ describe("planChatboxSandbox", () => {
 
   it("does nothing when the turn never asked for bash — no notice noise", () => {
     expect(
-      planChatboxSandbox({
+      planScenarioSandbox({
         ...ephemeral,
         bashRequested: false,
         ephemeralCloudAvailable: false,

@@ -30,7 +30,7 @@ import {
   useSessionBrowserArtifacts,
   type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
-import { SessionInsightBar } from "@/components/chatboxes/session-readiness";
+import { SessionInsightBar } from "@/components/scenarios/session-readiness";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
 import {
@@ -213,7 +213,7 @@ interface ShareUsageThreadDetailProps {
  * minus `direct`, which keeps its own adapter because it must also serve
  * guest/HOSTED_MODE actors over the HTTP detail route.
  */
-const PROMOTABLE_SOURCE_TYPES = new Set(["swarm", "chatbox"]);
+const PROMOTABLE_SOURCE_TYPES = new Set(["swarm", "scenario"]);
 
 /**
  * Fetch span blobs from turn trace URLs and flatten into a single span array.
@@ -380,7 +380,7 @@ export function ShareUsageThreadDetail({
     return adaptTraceToUiMessages({
       trace: { messages: messages as any, widgetSnapshots },
       toolResultDisplay:
-        thread?.sourceType === "chatbox" ? "attached-to-tool" : "sibling-text",
+        thread?.sourceType === "scenario" ? "attached-to-tool" : "sibling-text",
     });
   }, [messages, thread?.sourceType, widgetSnapshots]);
 
@@ -513,8 +513,8 @@ export function ShareUsageThreadDetail({
         ? `${Math.round(duration / 1000)}s`
         : `${Math.round(duration / 60000)}m`
       : null;
-  const isChatboxThread = thread.sourceType === "chatbox";
-  const reasoningDisplayMode = isChatboxThread ? "collapsible" : "collapsed";
+  const isScenarioThread = thread.sourceType === "scenario";
+  const reasoningDisplayMode = isScenarioThread ? "collapsible" : "collapsed";
 
   const feedbackSummary = thread.feedback ?? null;
   const feedbackHeadlineValue = feedbackSummary
