@@ -1747,6 +1747,25 @@ export interface PlatformCapabilities {
     /** The guest-execution spend caps. Genuinely project-admin upstream. */
     manageUserTestingGuestExecution: boolean;
     requestInsights: boolean;
+    /** Reading eval suites, runs, iterations and traces. */
+    readEvals: boolean;
+    /** Authoring suites and cases — every eval write short of deleting. */
+    writeEvalSuites: boolean;
+    launchEvalRun: boolean;
+    /**
+     * Deleting a suite SOMEONE ELSE created — the project admin tier. The
+     * creator of a suite may always delete it whatever their role, so a
+     * `false` here does not mean you cannot delete your own.
+     */
+    deleteAnyEvalSuite: boolean;
+    /** Same tier and same creator exception, for runs. */
+    deleteAnyEvalRun: boolean;
+    /**
+     * Whether the trace export surface is open. Export still filters row by
+     * row against the caller, so this is not a promise that every session in
+     * the project lands in the file.
+     */
+    exportEvalTraces: boolean;
   };
 }
 
