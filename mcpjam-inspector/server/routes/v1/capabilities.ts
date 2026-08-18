@@ -79,13 +79,13 @@ const ROLE_RANK: Record<string, number> = {
  * agent that inferred "no flag ⇒ nothing works" would refuse to stop a run
  * precisely when stopping it matters most.
  *
- * User testing splits FINER than "admin publishes, members read". The chatbox
- * mutations behind the day-to-day controls — `setChatboxMode`,
- * `updateChatbox`, `rotateChatboxLink`, `upsertChatboxMember`,
- * `removeChatboxMember` — gate at `requireWorkspaceRole(..., 'guest')`
+ * User testing splits FINER than "admin publishes, members read". The scenario
+ * mutations behind the day-to-day controls — `setScenarioMode`,
+ * `updateScenario`, `rotateScenarioLink`, `upsertScenarioMember`,
+ * `removeScenarioMember` — gate at `requireWorkspaceRole(..., 'guest')`
  * upstream: an ordinary member CAN do all of them, and none sit behind the
- * beta flag. Only `publishEnvironmentChatbox`, `rebindEnvironmentChatbox` and
- * `setChatboxGuestExecution` require project admin, and of those only
+ * beta flag. Only `publishEnvironmentScenario`, `rebindEnvironmentScenario` and
+ * `setScenarioGuestExecution` require project admin, and of those only
  * publish/rebind are flag-gated. Reporting the member-level controls as
  * admin-gated would DENY capabilities callers actually hold — this endpoint's
  * own failure mode, delivered by the endpoint itself.
@@ -148,7 +148,7 @@ function deriveCapabilities(row: CapabilitiesRow) {
     /**
      * Mode changes, member invites/removals, link rotation, renames. These
      * gate at WORKSPACE membership upstream (`requireWorkspaceRole(...,
-     * 'guest')` on every one of the chatbox mutations) — an ordinary member
+     * 'guest')` on every one of the scenario mutations) — an ordinary member
      * can do all of them — and none of them check the beta flag. Guest
      * execution is NOT here: it is the one exposure control that genuinely
      * needs admin, split out below.
@@ -164,7 +164,7 @@ function deriveCapabilities(row: CapabilitiesRow) {
      */
     changeUserTestingExposure: isMember,
     /**
-     * The guest-execution spend caps (`setChatboxGuestExecution`), which are
+     * The guest-execution spend caps (`setScenarioGuestExecution`), which are
      * genuinely project-ADMIN upstream (`canManageProjectMembers`, same bar
      * as publishing). Kept separate from `changeUserTestingExposure` so the
      * membership-level controls above are not misreported as admin-only.

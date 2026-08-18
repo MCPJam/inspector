@@ -20,7 +20,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import type { HostListItem } from "@/hooks/useClients";
-import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
+import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
 import type { HostThemeMode } from "@/lib/client-styles";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";

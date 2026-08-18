@@ -3,18 +3,18 @@
  *
  * NAMING. A scenario is what a visitor lands on when you share a link: one
  * project environment, published for people outside the project to talk to.
- * Internally every one of these is a `chatboxes` row, and it will stay that
- * way — this is a transport-DTO rename, not a migration. "Chatbox" is the
+ * Internally every one of these is a `scenarios` row, and it will stay that
+ * way — this is a transport-DTO rename, not a migration. "Scenario" is the
  * older name, it is deprecated publicly, and the existing
- * `/projects/:p/chatboxes` reads keep serving until GA.
+ * `/projects/:p/scenarios` reads keep serving until GA.
  *
- * The rename is worth the churn because "chatbox" is ambiguous inside the
+ * The rename is worth the churn because "scenario" is ambiguous inside the
  * codebase in a way it never was for customers: `kind:"swarm"`, `swarm_grant`,
- * and `swarmId: v.id('chatboxes')` all refer to GUEST EXECUTION on a chatbox —
+ * and `swarmId: v.id('scenarios')` all refer to GUEST EXECUTION on a scenario —
  * this product — and have nothing to do with the Swarms product, which lives
  * under `/journeys`. Two products, two nouns.
  *
- * WHY THIS FILE EXISTS SEPARATELY from the chatbox reads in `catalog.ts`: that
+ * WHY THIS FILE EXISTS SEPARATELY from the scenario reads in `catalog.ts`: that
  * module is a read-only proxy over the Convex `/v1/*` surface, forwarding
  * whole requests. These are WRITES that call Convex mutations directly, with
  * their own authorization shape and their own error mapping — putting them in
@@ -29,7 +29,7 @@
  * flag must still be able to take a live scenario down.
  *
  * GUESTS. These paths match no rule in `GUEST_ALLOWED_V1_RULES`, so guests are
- * denied by default, which is correct and intended: the existing chatbox GET
+ * denied by default, which is correct and intended: the existing scenario GET
  * rules exist for share-link flows, and extending anything guest-shaped to the
  * scenario surface needs its own security review first.
  */
@@ -48,9 +48,9 @@ import {
 
 const scenarios = new Hono();
 
-/** Convex `chatboxes:publishEnvironmentChatbox` result. */
+/** Convex `scenarios:publishEnvironmentScenario` result. */
 type PublishedScenarioRow = {
-  chatboxId: string;
+  scenarioId: string;
   environmentId: string;
   name: string;
   mode: "project_members" | "invited_only" | "anyone_with_link";
@@ -61,9 +61,9 @@ type PublishedScenarioRow = {
 
 function toScenarioDto(row: PublishedScenarioRow) {
   return {
-    // `chatboxId` upstream. The public id is the scenario's id; a caller
+    // `scenarioId` upstream. The public id is the scenario's id; a caller
     // should never have to learn the internal table's name to use this API.
-    id: row.chatboxId,
+    id: row.scenarioId,
     environmentId: row.environmentId,
     name: row.name,
     /**
@@ -141,7 +141,7 @@ async function requireEnvironmentInProject(
  * them: a caller passing `mode` believed they had closed the window.
  *
  * IGNORED ON A REPUBLISH, because they are create-time only upstream. That is
- * not a gap — changing an existing scenario's mode is `setChatboxMode`, and
+ * not a gap — changing an existing scenario's mode is `setScenarioMode`, and
  * quietly re-applying `mode` here would make a routine idempotent publish able
  * to widen a scenario someone had since narrowed by hand.
  */
@@ -208,7 +208,7 @@ scenarios.put(
     let result: PublishedScenarioRow;
     try {
       result = (await client.mutation(
-        "chatboxes:publishEnvironmentChatbox" as never,
+        "scenarios:publishEnvironmentScenario" as never,
         {
           environmentId,
           ...(overrides.name !== undefined ? { name: overrides.name } : {}),
@@ -271,12 +271,12 @@ scenarios.delete(
     const client = createConvexClient(await getConvexBearerForRequest(c));
     await requireEnvironmentInProject(client, projectId, environmentId);
 
-    let result: { deleted: boolean; chatboxId?: string };
+    let result: { deleted: boolean; scenarioId?: string };
     try {
       result = (await client.mutation(
-        "chatboxes:unpublishEnvironmentChatbox" as never,
+        "scenarios:unpublishEnvironmentScenario" as never,
         { environmentId } as never
-      )) as { deleted: boolean; chatboxId?: string };
+      )) as { deleted: boolean; scenarioId?: string };
     } catch (error) {
       throw translateConvexWriteError(error, {
         resource: "Scenario",
@@ -287,7 +287,7 @@ scenarios.delete(
     return v1Resource(c, {
       environmentId,
       deleted: result.deleted,
-      ...(result.chatboxId !== undefined ? { id: result.chatboxId } : {}),
+      ...(result.scenarioId !== undefined ? { id: result.scenarioId } : {}),
     });
   }
 );

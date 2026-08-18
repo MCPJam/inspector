@@ -330,8 +330,8 @@ export async function resolveEnvironmentForRuntime(
 // ── Projections used by the executing caller ────────────────────────────────
 //
 // Parameter types are `Pick`s of the full spec on purpose: the Phase 5
-// environment-backed chatbox payload (`ChatboxEnvironmentRuntime`, see
-// `utils/chatbox-runtime-config.ts`) carries the same `servers`/`skills`
+// environment-backed scenario payload (`ScenarioEnvironmentRuntime`, see
+// `utils/scenario-runtime-config.ts`) carries the same `servers`/`skills`
 // shapes without the rest of the spec, and reuses these projections instead of
 // growing a drifting second copy.
 

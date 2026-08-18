@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { PerplexityMarkIndicator } from "../perplexity-mark";
-import { ChatboxHostThemeProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostThemeProvider } from "@/contexts/scenario-client-style-context";
 
 describe("PerplexityMarkIndicator", () => {
   it("renders the scrolling Perplexity-mark sprite strip", () => {
@@ -42,18 +42,18 @@ describe("PerplexityMarkIndicator", () => {
     expect(container.textContent).toContain("Thinking");
   });
 
-  it("defaults to data-theme='dark' when no chatbox host theme is mounted", () => {
+  it("defaults to data-theme='dark' when no scenario host theme is mounted", () => {
     const { getByTestId } = render(<PerplexityMarkIndicator />);
     expect(getByTestId("loading-indicator-perplexity").dataset.theme).toBe(
       "dark"
     );
   });
 
-  it("switches to data-theme='light' under a light chatbox host theme", () => {
+  it("switches to data-theme='light' under a light scenario host theme", () => {
     const { getByTestId } = render(
-      <ChatboxHostThemeProvider value="light">
+      <ScenarioHostThemeProvider value="light">
         <PerplexityMarkIndicator />
-      </ChatboxHostThemeProvider>
+      </ScenarioHostThemeProvider>
     );
     expect(getByTestId("loading-indicator-perplexity").dataset.theme).toBe(
       "light"

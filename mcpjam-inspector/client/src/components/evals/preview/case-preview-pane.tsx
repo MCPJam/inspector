@@ -1,6 +1,6 @@
 /**
  * CasePreviewPane — the editor's right pane. A `Preview | Runs` toggle (mirrors
- * the Chatboxes Preview/Host-graph switch) over two caller-provided slots:
+ * the Scenarios Preview/Host-graph switch) over two caller-provided slots:
  *   • Preview — the forming conversation (edit-time spec, later live/replay).
  *   • Runs    — run history for this case.
  *

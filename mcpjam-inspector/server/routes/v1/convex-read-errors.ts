@@ -23,7 +23,7 @@ import { redactForLog, redactedErrorForCapture } from "./redact-log-message.js";
  *   `resolveAuthorizedChatSession`: "ChatSession not found or unauthorized"
  *
  * The workspace wordings matter because the user-testing reads
- * (`chatboxes:getChatbox`, `chatSessions:getSession`) authorize at WORKSPACE
+ * (`scenarios:getScenario`, `chatSessions:getSession`) authorize at WORKSPACE
  * scope — before they were matched here, a cross-workspace probe classified
  * as `upstream` and answered 502, which both paged Sentry and told the prober
  * the id exists somewhere they cannot see (404 = missing, 502 = exists).

@@ -106,7 +106,7 @@ export async function maybeAppendEnvironmentContext(args: {
 }
 
 /**
- * Model-facing copy for a chatbox sandbox notice.
+ * Model-facing copy for a scenario sandbox notice.
  *
  * Separate from the client toast copy (`use-chat-session.ts`) on purpose: the
  * user needs to know what happened, the model needs to know what to DO about

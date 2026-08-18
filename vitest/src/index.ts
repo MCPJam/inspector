@@ -61,6 +61,16 @@ export type EvalCasePlan = {
   testName: string;
   /** The hosted case id, when this case came from a hosted corpus. */
   scenarioId?: string;
+  /**
+   * The case's DECLARED id (`EvalTestConfig.id`).
+   *
+   * Surfaced so a CI reporter can key a case by its identity rather than by a
+   * title that gets renamed. Deliberately NOT used in the vitest title: the
+   * `[scenarioId]` suffix is the hosted-dashboard grep handle and still rides
+   * `externalCaseId`, so changing what the suffix carries would break the greps
+   * that exist.
+   */
+  caseId?: string;
 };
 
 export type EvalSuitePlan = {
@@ -82,9 +92,15 @@ export function planEvalSuite(
 ): EvalSuitePlan {
   const cases = suite.getAll().map((test): EvalCasePlan => {
     const testName = test.getName();
-    const scenarioId = test.getConfig().externalCaseId;
+    const config = test.getConfig();
+    const scenarioId = config.externalCaseId;
+    // Read defensively: a user can end up with `@mcpjam/vitest` beside an older
+    // `@mcpjam/sdk` copy, where `id` does not exist yet. An absent `caseId` is
+    // a missing convenience; a thrown TypeError would be a broken test run.
+    const caseId = (config as { id?: string }).id;
+    const declared = caseId === undefined ? {} : { caseId };
     if (scenarioId === undefined) {
-      return { title: testName, testName };
+      return { title: testName, testName, ...declared };
     }
     // A corpus already suffixes `[id]` onto cases whose titles collide, so
     // appending unconditionally would render `Title [id] [id]`.
@@ -93,6 +109,7 @@ export function planEvalSuite(
       title: testName.endsWith(suffix) ? testName : `${testName}${suffix}`,
       testName,
       scenarioId,
+      ...declared,
     };
   });
 

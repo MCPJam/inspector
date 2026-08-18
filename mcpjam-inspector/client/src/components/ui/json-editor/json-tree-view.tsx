@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { cn } from "@/lib/utils";
 import { useJsonTreeState } from "./use-json-tree-state";
 import { JsonTreeNode } from "./json-tree-node";
@@ -26,18 +25,13 @@ export function JsonTreeView({
   collapseStringsAfterLength,
   onCopy,
 }: JsonTreeViewProps) {
-  const { isCollapsed, toggleCollapse, initializeFromValue } = useJsonTreeState(
-    {
-      defaultExpandDepth,
-      initialCollapsedPaths: controlledCollapsedPaths,
-      onCollapseChange,
-    },
-  );
-
-  // Initialize collapse state based on defaultExpandDepth
-  useEffect(() => {
-    initializeFromValue(value);
-  }, [value, initializeFromValue]);
+  // The hook takes the value so defaultExpandDepth applies on the first render.
+  const { isCollapsed, toggleCollapse } = useJsonTreeState({
+    value,
+    defaultExpandDepth,
+    initialCollapsedPaths: controlledCollapsedPaths,
+    onCollapseChange,
+  });
 
   return (
     <div
