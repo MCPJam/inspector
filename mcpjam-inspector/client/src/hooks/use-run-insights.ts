@@ -4,7 +4,7 @@
  *
  * TWO SURFACES, ONE LIFECYCLE. A swarm wave is keyed on
  * `(projectId, swarmRunGroupId)`; a User Testing window is keyed on
- * `(chatboxId, windowGroupId)`. Everything else — the optimistic `requested`
+ * `(scenarioId, windowGroupId)`. Everything else — the optimistic `requested`
  * flag, the sticky feature-missing latch, the error classifier, the
  * auto-request-once rule — is identical, so the scope branches only on which
  * query/mutation name to call and what args to pass. Same shape as
@@ -36,11 +36,11 @@ import {
   type SwarmWaveInsightsDto,
 } from "@/lib/swarm-api";
 import {
-  CHATBOX_INSIGHTS_MUTATIONS,
-  CHATBOX_INSIGHTS_QUERIES,
-  type ChatboxWindowInsights,
-  type ChatboxWindowInsightsDto,
-} from "@/lib/chatbox-insights-api";
+  SCENARIO_INSIGHTS_MUTATIONS,
+  SCENARIO_INSIGHTS_QUERIES,
+  type ScenarioWindowInsights,
+  type ScenarioWindowInsightsDto,
+} from "@/lib/scenario-insights-api";
 
 /**
  * Which cohort's narration to read. The group id is REQUIRED on both arms: it
@@ -49,14 +49,14 @@ import {
  */
 export type RunInsightsScope =
   | { kind: "swarm"; projectId: string; swarmRunGroupId: string }
-  | { kind: "chatbox"; chatboxId: string; groupId: string };
+  | { kind: "scenario"; scenarioId: string; groupId: string };
 
 /** The narrated payload, in the shape both surfaces share. */
-export type RunInsightsPayload = SwarmWaveInsights | ChatboxWindowInsights;
+export type RunInsightsPayload = SwarmWaveInsights | ScenarioWindowInsights;
 
 export type UseRunInsightsResult = {
   /** Undefined while loading; null when never requested for this cohort. */
-  dto: SwarmWaveInsightsDto | ChatboxWindowInsightsDto | null | undefined;
+  dto: SwarmWaveInsightsDto | ScenarioWindowInsightsDto | null | undefined;
   insights: RunInsightsPayload | null;
   /** Lane B findings — swarm only; User Testing has no discovery lane. */
   discovery: SwarmWaveDiscovery | null;
@@ -149,7 +149,7 @@ function classifyRunInsightError(err: unknown): {
   const unavailable =
     permanent ||
     raw.includes("wave_not_found") ||
-    raw.includes("chatbox_not_found") ||
+    raw.includes("scenario_not_found") ||
     raw.includes("Server Error");
   return { unavailable, permanent, message: raw };
 }
@@ -159,7 +159,7 @@ function cohortKeyOf(scope: RunInsightsScope | null): string {
   if (!scope) return "";
   return scope.kind === "swarm"
     ? `swarm:${scope.projectId}:${scope.swarmRunGroupId}`
-    : `chatbox:${scope.chatboxId}:${scope.groupId}`;
+    : `scenario:${scope.scenarioId}:${scope.groupId}`;
 }
 
 export function useRunInsights(
@@ -197,26 +197,26 @@ export function useRunInsights(
   const isSwarm = scope?.kind === "swarm";
   const queryName = isSwarm
     ? SWARM_QUERIES.getWaveInsights
-    : CHATBOX_INSIGHTS_QUERIES.getWindowInsights;
+    : SCENARIO_INSIGHTS_QUERIES.getWindowInsights;
   const queryArgs = !scope
     ? "skip"
     : scope.kind === "swarm"
       ? { projectId: scope.projectId, swarmRunGroupId: scope.swarmRunGroupId }
-      : { chatboxId: scope.chatboxId, windowGroupId: scope.groupId };
+      : { scenarioId: scope.scenarioId, windowGroupId: scope.groupId };
 
   const dto = useQuery(queryName as any, queryArgs as any) as
     | SwarmWaveInsightsDto
-    | ChatboxWindowInsightsDto
+    | ScenarioWindowInsightsDto
     | null
     | undefined;
 
   const requestSwarm = useMutation(SWARM_MUTATIONS.requestWaveInsights as any);
   const cancelSwarm = useMutation(SWARM_MUTATIONS.cancelWaveInsights as any);
   const requestWindow = useMutation(
-    CHATBOX_INSIGHTS_MUTATIONS.requestWindowInsights as any,
+    SCENARIO_INSIGHTS_MUTATIONS.requestWindowInsights as any,
   );
   const cancelWindow = useMutation(
-    CHATBOX_INSIGHTS_MUTATIONS.cancelWindowInsights as any,
+    SCENARIO_INSIGHTS_MUTATIONS.cancelWindowInsights as any,
   );
 
   /** Shared body. `auto` distinguishes the first-view attempt from a press. */
@@ -245,7 +245,7 @@ export function useRunInsights(
               swarmRunGroupId: scope.swarmRunGroupId,
               force,
             } as any)
-          : requestWindow({ chatboxId: scope.chatboxId, force } as any);
+          : requestWindow({ scenarioId: scope.scenarioId, force } as any);
       promise.catch((err: unknown) => {
         const classified = classifyRunInsightError(err);
         // Superseded: a newer attempt is in flight, or the user has moved to
@@ -296,7 +296,7 @@ export function useRunInsights(
       return;
     }
     await cancelWindow({
-      chatboxId: scope.chatboxId,
+      scenarioId: scope.scenarioId,
       windowGroupId: scope.groupId,
     } as any);
   }, [scope, unavailable, cancelSwarm, cancelWindow]);
