@@ -169,12 +169,26 @@ function unrecognizedKeyIssues(
   return found;
 }
 
-/** Delete `keys` from the object at `path`, in a structural clone of `value`. */
+/**
+ * Delete `keys` from the object at `path`, in a structural clone of `value`.
+ *
+ * Returns `undefined` when the value cannot be cloned. `structuredClone`
+ * throws on a function, a symbol or a class instance it does not know — and
+ * the values under UNRECOGNIZED keys are exactly the ones nothing has
+ * validated, so that is reachable (a client draft holding an event handler,
+ * say). Letting it escape would take down the whole array over one bad step,
+ * which is worse than the drop it replaced.
+ */
 function withoutKeys(
   value: unknown,
   removals: Array<{ path: PropertyKey[]; keys: string[] }>
 ): unknown {
-  const clone = structuredClone(value);
+  let clone: unknown;
+  try {
+    clone = structuredClone(value);
+  } catch {
+    return undefined;
+  }
   for (const { path, keys } of removals) {
     let target: unknown = clone;
     for (const segment of path) {
@@ -228,7 +242,9 @@ export function normalizeSteps(value: unknown): TestStep[] {
     }
     const removals = unrecognizedKeyIssues(parsed.error.issues);
     if (removals.length === 0) continue;
-    const retry = testStepSchema.safeParse(withoutKeys(value[i], removals));
+    const cleaned = withoutKeys(value[i], removals);
+    if (cleaned === undefined) continue;
+    const retry = testStepSchema.safeParse(cleaned);
     if (retry.success) out.push(retry.data);
   }
   return out;

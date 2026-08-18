@@ -198,11 +198,21 @@ export interface EvalTestConfig {
    * case's history on the run page. Identity rides HERE, never on `name`:
    * display names collide and get renamed.
    *
-   * Retained UNCHANGED alongside the new required {@link EvalTestConfig.id}:
-   * this one has live wire semantics that a deployed backend depends on, while
-   * `id` is the declared identity the contract now requires. Converging the two
-   * is a backend change and happens after the mirroring backend work ships —
-   * until then, nothing about the upload payload changes.
+   * Kept alongside the new required {@link EvalTestConfig.id}: this one has
+   * live wire semantics that a deployed backend depends on, while `id` is the
+   * declared identity the contract now requires. Converging the two is a
+   * backend change that happens after the mirroring backend work ships.
+   *
+   * **NORMALIZED at construction**: surrounding whitespace is trimmed, and a
+   * whitespace-only value is dropped as though it were absent. The value you
+   * read back from `getConfig()` and the value uploaded are therefore the
+   * trimmed one. This is not a wire change so much as the removal of a second
+   * spelling: the hosted key has always been derived from
+   * `externalCaseId.trim()`, so the trimmed form was already the identity —
+   * it just used to travel beside a padded copy of itself, which also showed
+   * up in the `[id]` suffix `@mcpjam/vitest` appends to a test name. An
+   * unpadded value, which is every value anybody actually writes, is
+   * byte-identical to before.
    */
   externalCaseId?: string;
   /**

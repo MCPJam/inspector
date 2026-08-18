@@ -390,6 +390,21 @@ describe("normalize", () => {
     });
   });
 
+  it("drops — never throws — when an unknown value cannot be cloned", () => {
+    // The values under unrecognized keys are precisely the ones nothing has
+    // validated, so a function or a symbol can reach here (a client draft
+    // holding an event handler, say). `structuredClone` throws on those, and
+    // letting it escape would take down the whole array over one bad step —
+    // strictly worse than the drop it replaced.
+    const steps = [
+      { id: "1", kind: "prompt", prompt: "kept" },
+      { id: "2", kind: "prompt", prompt: "b", onChange: () => undefined },
+      { id: "3", kind: "prompt", prompt: "also kept" },
+    ];
+    expect(() => normalizeSteps(steps)).not.toThrow();
+    expect(normalizeSteps(steps).map((s) => s.id)).toEqual(["1", "3"]);
+  });
+
   it("still drops a step that is broken for any OTHER reason", () => {
     // The re-validation is what makes stripping safe: nothing survives that
     // does not parse cleanly afterwards.
