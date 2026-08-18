@@ -471,15 +471,16 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     label: "Protocol version",
     path: "mcpProfile.mcpProtocolVersion",
     description:
-      "Host default pin. Per-server overrides win. Undefined = SDK chooses at request time.",
+      'Host default selection. "auto" negotiates at connect time; concrete versions pin that exact era. Per-server overrides win.',
     kind: {
       kind: "enum",
       options: [
+        "auto",
         "2025-03-26",
         "2025-06-18",
         "2025-11-25",
         "2026-07-28",
-      ] as ReadonlyArray<McpProtocolVersion>,
+      ] as ReadonlyArray<McpProtocolVersion | "auto">,
     },
     read: (cfg) => mcpProfile(cfg)?.mcpProtocolVersion,
   },

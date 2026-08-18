@@ -43,10 +43,9 @@ import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
 /**
- * "auto" is the UI-only sentinel for "no pin stored" — it maps to
- * `mcpProfile.mcpProtocolVersion === undefined`, NOT to a wire literal.
- * Deliberately not labelled with a version number: absence means the SDK
- * picks the version at connect time, so hardcoding a revision into that
+ * "auto" is a stored selection policy, NOT a wire literal. The SDK negotiates
+ * at connect time and never emits the string itself. Deliberately not labelled
+ * with a version number: hardcoding a revision into that
  * label would go stale the moment the SDK's default moves (the sequenced
  * Phase-5 `versionNegotiation: 'auto'` activation) without anything in
  * this file changing.
@@ -112,7 +111,7 @@ const HOST_PROTOCOL_OPTIONS: Array<{
 /**
  * Which versions this client may actually be pinned to.
  *
- * The backend refuses to store a STATEFUL pin the client does not also
+ * The backend refuses to store a concrete pin the client does not also
  * advertise in `initialize.supportedProtocolVersions` — the SDK's
  * `ConflictingProtocolVersionPin` rule in `canonicalizeMcpProfile`. Presets
  * carry that list (VS Code ships `["2025-11-25"]`), so offering every version
@@ -120,15 +119,12 @@ const HOST_PROTOCOL_OPTIONS: Array<{
  * opaque "Server Error". Offer what actually saves instead.
  *
  * The advertised list is the whole answer, INCLUDING for stateless revisions.
- * The backend only validates stateful pins (stateless ones skip the initialize
- * handshake, so `ConflictingProtocolVersionPin` never fires for them), but
- * "the backend would accept it" is not the same as "this client speaks it":
- * offering `2026-07-28` on a client that never advertised it emulates a
+ * Offering `2026-07-28` on a client that never advertised it would emulate a
  * product capability that does not exist. A client supports a revision when it
  * lists that revision — there is no separate stateless-support flag.
  *
  * Exempt from the filter:
- * - `"auto"`, which stores no pin at all and so claims nothing.
+ * - `"auto"`, which is a negotiation policy rather than a concrete pin.
  * - The stored value, so a row already pinned outside its own advertised list
  *   keeps rendering its selection instead of silently reading as "Automatic".
  *   Same don't-strand-the-user rule as the policy controls further down.
@@ -214,7 +210,7 @@ type ProtocolDoc = {
    * persistence; per-server pins live on the server card's Connection
    * overrides section.
    */
-  mcpProtocolVersion?: McpProtocolVersion;
+  mcpProtocolVersion?: HostProtocolDropdownValue;
   /**
    * Whether the simulated client mirrors `x-mcp-header` tool arguments into
    * `Mcp-Param-*` request headers (SEP-2243, 2026-07-28). Absent → `"mirror"`,
@@ -517,14 +513,13 @@ export function applyJsonToDraft(
     if (cleaned.length > 0) supportedProtocolVersions = cleaned;
   }
 
-  // mcpProtocolVersion — membership-gate via `isKnownProtocolVersion`
-  // so typo strings fall back to `undefined` (= "SDK default") rather
-  // than slipping through to the SDK's open-routing predicate. Absent
-  // / wrong type also collapses to undefined for the same canonical-
-  // hash-stability reason documented in the type.
-  let mcpProtocolVersion: McpProtocolVersion | undefined;
+  // `auto` is a stored selection policy; every other accepted value is a
+  // concrete wire revision. Typo strings still collapse to undefined.
+  let mcpProtocolVersion: HostProtocolDropdownValue | undefined;
   const rawProtocolVersion = parsed.mcpProtocolVersion;
-  if (
+  if (rawProtocolVersion === "auto") {
+    mcpProtocolVersion = "auto";
+  } else if (
     typeof rawProtocolVersion === "string" &&
     isKnownProtocolVersion(rawProtocolVersion)
   ) {
@@ -658,8 +653,10 @@ export function ProtocolTab({
   // "Automatic" — matching what the connect path does with them anyway.
   const storedProtocolVersion = draft.mcpProfile?.mcpProtocolVersion;
   const selectedDropdownValue: HostProtocolDropdownValue =
-    storedProtocolVersion !== undefined &&
-    isKnownProtocolVersion(storedProtocolVersion)
+    storedProtocolVersion === "auto"
+      ? "auto"
+      : storedProtocolVersion !== undefined &&
+        isKnownProtocolVersion(storedProtocolVersion)
       ? storedProtocolVersion
       : "auto";
 
@@ -677,23 +674,20 @@ export function ProtocolTab({
   );
   const protocolOptionsRestricted =
     protocolOptions.length < HOST_PROTOCOL_OPTIONS.length;
-  // A stored stateful pin outside the advertised list — a legacy row, or one
+  // A stored concrete pin outside the advertised list — a legacy row, or one
   // hand-edited in the JSON. Its option is force-kept (see the helper), which
   // can pad the list back to full length, so this must be detected directly
   // rather than inferred from the option count. Saving such a draft throws
   // `ConflictingProtocolVersionPin`; warn before Save does.
   const selectedPinUnadvertised =
     selectedDropdownValue !== "auto" &&
-    !isStatelessProtocolVersion(selectedDropdownValue) &&
     advertisedProtocolVersions !== undefined &&
     advertisedProtocolVersions.length > 0 &&
     !advertisedProtocolVersions.includes(selectedDropdownValue);
 
-  // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
-  // directly (parallel to the JSON editor's applyJsonToDraft path) so the
-  // JSON view round-trips immediately. Maps the UI-only "default" sentinel
-  // to `undefined` — preserves canonical-hash stability so the SDK can
-  // upgrade its default version without churning every stored host config.
+  // Dropdown handler. `undefined` here means the user selected Automatic;
+  // persist the explicit policy so ChatGPT's default can differ from a legacy
+  // row whose field is genuinely absent.
   const setProtocolVersion = (next: McpProtocolVersion | undefined) => {
     const warning = legacyProtocolSupportWarning(
       draft.hostStyle,
@@ -724,7 +718,7 @@ export function ProtocolTab({
       const updated: HostConfigMcpProfileV1 = {
         ...base,
         initialize,
-        mcpProtocolVersion: next,
+        mcpProtocolVersion: next ?? "auto",
       };
       return {
         ...prev,
@@ -858,7 +852,7 @@ export function ProtocolTab({
         <div className="flex items-center gap-3">
           <span
             className="text-[12px] font-medium"
-            title="Automatic: store no pin — MCPJam picks the wire version at connect time. Any other choice pins that exact revision for every server on this client."
+            title="Automatic: negotiate at connect time. Any other choice pins that exact revision for every server on this client."
           >
             {fProtocolVersion.label}
           </span>
@@ -893,7 +887,7 @@ export function ProtocolTab({
             materially, so they get their own copy: a stateless pin has no
             legacy fallback, while a stateful pin narrows the initialize
             handshake to that one version. "Automatic" gets no line — the
-            absence of a pin needs no explanation and keeps the panel quiet in
+            selection policy needs no extra explanation and keeps the panel quiet in
             the default state. */}
         {selectedDropdownValue !== "auto" && (
           <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
@@ -905,8 +899,7 @@ export function ProtocolTab({
         {/* Without this line a preset-backed client reads as a broken control:
             the missing revisions look arbitrary, and the list that removed them
             is invisible unless the JSON editor below is open. Name both. The
-            claim is scoped to pre-2026 revisions — stateless versions skip the
-            initialize handshake and stay pinnable regardless of the list. */}
+            list constrains every concrete pin, including 2026. */}
         {protocolOptionsRestricted && (
           <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
             This client advertises{" "}
