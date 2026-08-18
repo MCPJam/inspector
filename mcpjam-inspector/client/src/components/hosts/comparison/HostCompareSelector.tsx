@@ -15,7 +15,7 @@ import {
   CommandList,
 } from "@mcpjam/design-system/command";
 import { cn } from "@/lib/utils";
-import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import type { HostThemeMode } from "@/lib/client-styles";
@@ -320,7 +320,7 @@ function HostCompareChip({
 }) {
   const logoSrc =
     subject !== undefined
-      ? getChatboxHostLogo(
+      ? getScenarioHostLogo(
           subject.hostStyle,
           subject.config.chatUiOverride,
           themeMode
@@ -413,7 +413,7 @@ function HostCompareOverflowMenu({
               const subject = subjectsByHost[host.hostId];
               const logoSrc =
                 subject !== undefined
-                  ? getChatboxHostLogo(
+                  ? getScenarioHostLogo(
                       subject.hostStyle,
                       subject.config.chatUiOverride,
                       themeMode

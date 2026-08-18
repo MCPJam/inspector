@@ -3,9 +3,9 @@ import { MessageCircle } from "lucide-react";
 import { ModelDefinition } from "@/shared/types";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
 import { LoadingIndicatorContent } from "./loading-indicator-content";
 import { getAssistantAvatarDescriptor } from "./assistant-avatar";
 import { CopilotMessageHeader } from "@/components/chat-v2/thread/copilot-message-header";
@@ -16,18 +16,18 @@ export function ThinkingIndicator({
   model: ModelDefinition;
 }) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
   const assistantAvatar = getAssistantAvatarDescriptor({
     model,
-    themeMode: chatboxHostTheme ?? themeMode,
-    chatboxHostStyle,
+    themeMode: scenarioHostTheme ?? themeMode,
+    scenarioHostStyle,
   });
-  const shouldRenderAssistantAvatar = chatboxHostStyle === null;
+  const shouldRenderAssistantAvatar = scenarioHostStyle === null;
   // Copilot's UI keeps the "Copilot + mascot" row visible during the
   // thinking state too — the dot sits BELOW it. Matches MessageView's
   // own conditional render so the header is identical in both phases.
-  const shouldRenderCopilotHeader = chatboxHostStyle === "copilot";
+  const shouldRenderCopilotHeader = scenarioHostStyle === "copilot";
 
   if (shouldRenderCopilotHeader) {
     return (

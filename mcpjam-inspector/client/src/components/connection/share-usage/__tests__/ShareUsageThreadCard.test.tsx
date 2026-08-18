@@ -21,7 +21,7 @@ function thread(
 ): SharedChatThread {
   return {
     _id: "t1",
-    sourceType: "chatbox",
+    sourceType: "scenario",
     chatSessionId: "cs1",
     messageCount: 4,
     startedAt: 0,

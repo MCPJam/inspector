@@ -7,14 +7,14 @@ import {
   cancelEvalRunOperation,
   createTunnelOperation,
   diagnoseServerOperation,
-  getChatboxOperation,
+  getScenarioOperation,
   runEvalCaseOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getPluginVersionOperation,
   getServerPromptOperation,
-  listChatboxesOperation,
+  listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   listEvalRunIterationsOperation,
@@ -245,7 +245,7 @@ const PLUGIN_VERSION = {
   readyAt: 2,
 };
 
-const CHATBOXES = [
+const SCENARIOS = [
   {
     id: "box-1",
     projectId: "project-new",
@@ -263,8 +263,8 @@ const CHATBOXES = [
   },
 ];
 
-const CHATBOX_DETAIL = {
-  ...CHATBOXES[0],
+const SCENARIO_DETAIL = {
+  ...SCENARIOS[0],
   modelId: "anthropic/claude-haiku-4.5",
   systemPrompt: "Be helpful.",
   temperature: 0.3,
@@ -503,11 +503,11 @@ function makeClient(overrides: FixtureOverrides = {}): {
         { status: created ? 201 : 200 }
       );
     }
-    if (/^\/api\/v1\/projects\/[^/]+\/chatboxes$/.test(path)) {
-      return Response.json({ items: CHATBOXES });
+    if (/^\/api\/v1\/projects\/[^/]+\/scenarios$/.test(path)) {
+      return Response.json({ items: SCENARIOS });
     }
-    if (/^\/api\/v1\/projects\/[^/]+\/chatboxes\/[^/]+$/.test(path)) {
-      return Response.json(CHATBOX_DETAIL);
+    if (/^\/api\/v1\/projects\/[^/]+\/scenarios\/[^/]+$/.test(path)) {
+      return Response.json(SCENARIO_DETAIL);
     }
     if (path === "/api/v1/chat-sessions") {
       return Response.json({ items: SESSIONS });
@@ -1205,35 +1205,35 @@ describe("eval run polling operations", () => {
   });
 });
 
-describe("chatbox operations", () => {
-  it("lists the project's chatboxes", async () => {
+describe("scenario operations", () => {
+  it("lists the project's scenarios", async () => {
     const { client } = makeClient();
 
-    const result = await listChatboxesOperation.execute({}, { client });
+    const result = await listScenariosOperation.execute({}, { client });
 
     expect(result.project.id).toBe("project-new");
-    expect(result.items).toEqual(CHATBOXES);
+    expect(result.items).toEqual(SCENARIOS);
   });
 
-  it("resolves a chatbox by name and fetches its detail", async () => {
+  it("resolves a scenario by name and fetches its detail", async () => {
     const { client, fetchMock } = makeClient();
 
-    const result = await getChatboxOperation.execute(
-      { chatbox: "support" },
+    const result = await getScenarioOperation.execute(
+      { scenario: "support" },
       { client }
     );
 
-    expect(result.chatbox).toEqual(CHATBOX_DETAIL);
-    expect(callsTo(fetchMock, "/chatboxes/box-1")[0]?.pathname).toBe(
-      "/api/v1/projects/project-new/chatboxes/box-1"
+    expect(result.scenario).toEqual(SCENARIO_DETAIL);
+    expect(callsTo(fetchMock, "/scenarios/box-1")[0]?.pathname).toBe(
+      "/api/v1/projects/project-new/scenarios/box-1"
     );
   });
 
-  it("lists the available chatboxes when the selector misses", async () => {
+  it("lists the available scenarios when the selector misses", async () => {
     const { client } = makeClient();
 
-    const error = await getChatboxOperation
-      .execute({ chatbox: "missing" }, { client })
+    const error = await getScenarioOperation
+      .execute({ scenario: "missing" }, { client })
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(PlatformApiError);
@@ -1700,8 +1700,8 @@ describe("operation catalog consistency", () => {
     get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
     create_tunnel: { name: "t" },
     close_tunnel: { serverId: "s" },
-    list_chatboxes: {},
-    get_chatbox: { chatbox: "c" },
+    list_scenarios: {},
+    get_scenario: { scenario: "c" },
     list_chat_sessions: {},
     list_journeys: {},
     list_journey_runs: { journey: "j" },

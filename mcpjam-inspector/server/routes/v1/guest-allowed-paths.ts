@@ -97,8 +97,8 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
     // hand a guest any future mutation added at the same URL for free.
     methods: ["GET"],
   },
-  { pattern: /^\/projects\/[^/]+\/chatboxes$/ },
-  { pattern: /^\/projects\/[^/]+\/chatboxes\/[^/]+$/ },
+  { pattern: /^\/projects\/[^/]+\/scenarios$/ },
+  { pattern: /^\/projects\/[^/]+\/scenarios\/[^/]+$/ },
 ];
 
 export function isGuestAllowedV1Request(

@@ -13,11 +13,11 @@
  */
 import { create } from "zustand";
 import type { ChatHistorySession } from "@/lib/apis/web/chat-history-api";
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 
 export interface PlaygroundChatHistoryBridge {
   activeSessionId: string | null;
-  hostStyle: ChatboxHostStyle | undefined;
+  hostStyle: ScenarioHostStyle | undefined;
   isAuthenticated: boolean;
   isStreaming: boolean;
   projectId: string | null | undefined;

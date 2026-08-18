@@ -9,7 +9,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { Label } from "@mcpjam/design-system/label";
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 import { getHostCapabilitiesForStyle } from "@/lib/client-styles";
 
 /**
@@ -25,7 +25,7 @@ import { getHostCapabilitiesForStyle } from "@/lib/client-styles";
 export interface HostCapabilitiesOverrideDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  hostStyle: ChatboxHostStyle;
+  hostStyle: ScenarioHostStyle;
   /** Current saved override; undefined means "using host style preset". */
   override: Record<string, unknown> | undefined;
   /** Called on Save with the parsed override or undefined to reset to preset. */

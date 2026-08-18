@@ -183,7 +183,7 @@ describe("GET /api/web/computers/config", () => {
 
   it("remote-only: personal cloud works, ephemeral does NOT — the capability split", async () => {
     // `remoteDataPlaneUrl` delegates only personal-computer exec/terminal;
-    // eval/swarm/chatbox sandboxes need THIS process to hold the creds. A
+    // eval/swarm/scenario sandboxes need THIS process to hold the creds. A
     // single "cloud available" bit would lie to exactly those surfaces.
     vi.stubEnv(
       "COMPUTERS_REMOTE_DATA_PLANE_URL",

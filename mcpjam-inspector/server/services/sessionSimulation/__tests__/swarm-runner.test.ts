@@ -152,7 +152,7 @@ describe("swarm single-host runner — attempt ordering", () => {
     expect(adapter.runtime.modelDefinition.id).toBe(
       "anthropic/claude-haiku-4.5"
     );
-    expect(adapter.runtime.chatboxId).toBeUndefined();
+    expect(adapter.runtime.scenarioId).toBeUndefined();
     expect(adapter.persist).toMatchObject({
       sourceType: "swarm",
       origin: "swarm",
@@ -163,7 +163,7 @@ describe("swarm single-host runner — attempt ordering", () => {
     });
     // Per-turn widget-snapshot capture rides `onTurnPersisted`, through the
     // mutation's DIRECT auth branch: launcher bearer + session id, and NO
-    // chatboxId/accessVersion (swarm has no chatbox surface).
+    // scenarioId/accessVersion (swarm has no scenario surface).
     expect(adapter.onTurnPersisted).toBeTypeOf("function");
     const fakeMessages = [{ role: "assistant", content: "done" }];
     const fakeManager = { tag: "manager" };

@@ -57,7 +57,7 @@ export interface FetchMcpAppsWidgetContentRequest {
   viewParams?: Record<string, unknown>;
   /**
    * Route through /api/web even on local builds. Set from
-   * `useWebManagedServers()` by chatbox-runtime renderers whose serverId
+   * `useWebManagedServers()` by scenario-runtime renderers whose serverId
    * is a Convex id the local /api/apps pool can't resolve.
    */
   forceWebEndpoint?: boolean;

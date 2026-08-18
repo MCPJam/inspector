@@ -18,7 +18,7 @@
  */
 export type HostOwnerScope =
   | { type: "suite"; testSuiteId: string }
-  | { type: "chatbox"; chatboxId: string }
+  | { type: "scenario"; scenarioId: string }
   | { type: "journeys" }
   | { type: "user_testing" }
   | null;
@@ -34,7 +34,7 @@ export type HostOwnerScope =
  * lifecycle safe to be automatic.
  *
  * `journeys` hosts are deliberately NOT included: they are standalone clients
- * the Clients surface is meant to show. They are hidden from the CHATBOX
+ * the Clients surface is meant to show. They are hidden from the SCENARIO
  * surface instead, which is a different rule with a different owner — see
  * `hosts.ownerScope` in the backend schema.
  */
