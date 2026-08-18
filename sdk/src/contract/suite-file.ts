@@ -15,22 +15,26 @@
  *     the loader; materializing them here would mean a file grows fields it
  *     never declared every time it round-trips, and the diff of an unchanged
  *     suite would be full of values nobody wrote.
- *  2. **Every object this file DECLARES is `.strict()`.** A mis-mapped import
- *     field must fail loudly rather than be silently dropped — the failure mode
- *     this schema exists to prevent is an importer that "succeeds" while quietly
- *     discarding half of what it read. Strictness also matches Convex
- *     `v.object`, which rejects unknown fields, so a permissive schema here
- *     would accept payloads the backend refuses.
+ *  2. **Every object this file DECLARES is `.strict()`, and so is every object
+ *     the step union declares.** A mis-mapped import field must fail loudly
+ *     rather than be silently dropped — the failure mode this schema exists to
+ *     prevent is an importer that "succeeds" while quietly discarding half of
+ *     what it read. Strictness also matches Convex `v.object`, which rejects
+ *     unknown fields, so a permissive schema here would accept payloads the
+ *     backend refuses.
  *
- *     The REUSED schemas are the stated exception: `stepsSchema` and
- *     `predicateSchema` are the shared authoring union, whose objects strip
- *     unknown keys today and are hand-mirrored by Convex. Making them strict is
- *     a semantic change to a cross-repo mirrored schema with ~55 consumers in
- *     the inspector, so it is not made here as a side effect of adding a file
- *     format. What IS guaranteed is that the generated JSON Schema describes
- *     the same behaviour (see the generator's `io: "input"` note): the two
- *     validators never disagree about which files they accept, even where they
- *     are both permissive.
+ *     `stepsSchema` closed with this file (see `./steps.ts`), because step
+ *     level is where a mis-mapped import field actually lands and leaving it
+ *     open reproduced the whole failure one level down. Two reused things stay
+ *     open on purpose: a tool call's own `arguments` object, whose keys belong
+ *     to the server's input schema rather than to this contract, and
+ *     `predicateSchema`, which is a separate contract module with its own
+ *     mirror, its own fixtures and many more authoring surfaces — closing it is
+ *     a change made THERE, with its own consumer audit, not a side effect of
+ *     adding a file format. What IS guaranteed is that the generated JSON
+ *     Schema describes the same behaviour (see the generator's `io: "input"`
+ *     note): the two validators never disagree about which files they accept,
+ *     even where they are both permissive.
  *
  * ── Reserved values are ERRORS, not ignored ─────────────────────────────────
  *

@@ -39,6 +39,7 @@
  * predicate validators) — edit the SDK module and the mirror in the same PR.
  */
 
+import type { z } from "zod";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
   isAssertStep,
@@ -101,13 +102,14 @@ export type {
  * three copies is how "Input value equals" and "Input equals…" ended up on
  * screen for the same assertion.
  */
-export const WIDGET_ASSERTION_LABELS: Record<WidgetAssertion["kind"], string> = {
-  textVisible: "Text visible",
-  elementVisible: "Element visible",
-  elementHidden: "Element hidden",
-  inputValue: "Input value equals",
-  widgetToolCalled: "View called tool",
-};
+export const WIDGET_ASSERTION_LABELS: Record<WidgetAssertion["kind"], string> =
+  {
+    textVisible: "Text visible",
+    elementVisible: "Element visible",
+    elementHidden: "Element hidden",
+    inputValue: "Input value equals",
+    widgetToolCalled: "View called tool",
+  };
 
 // ── case-level selectors (replace isPinnedTurn / isPinnedOnly / countModelTurns) ─
 type MaybeStep = { kind?: unknown };
@@ -133,16 +135,117 @@ export function isModelFree(steps: unknown): boolean {
 
 // ── normalization ─────────────────────────────────────────────────────────────
 /**
+ * Collect every `unrecognized_keys` issue in an error tree, including the ones
+ * nested inside union branches.
+ *
+ * Union branches disagree by construction — an `assert` step's payload is
+ * matched against both the (strict) widget-assertion union and the (open)
+ * predicate union — so a key one branch calls unrecognized may be perfectly
+ * declared by another. That is safe here ONLY because the caller re-validates
+ * after stripping and keeps nothing that fails: an over-eager strip produces a
+ * step that no longer parses, which is dropped exactly as it would have been.
+ */
+function unrecognizedKeyIssues(
+  issues: readonly z.core.$ZodIssue[],
+  basePath: PropertyKey[] = []
+): Array<{ path: PropertyKey[]; keys: string[] }> {
+  const found: Array<{ path: PropertyKey[]; keys: string[] }> = [];
+  for (const issue of issues) {
+    // A union branch reports paths RELATIVE to that branch, so the enclosing
+    // `invalid_union`'s own path has to be carried down. Without it every
+    // nested strip lands at the wrong depth and — being re-validated — the
+    // step is silently dropped anyway, which is the bug this whole function
+    // exists to prevent.
+    if (issue.code === "unrecognized_keys") {
+      found.push({ path: [...basePath, ...issue.path], keys: [...issue.keys] });
+    } else if (issue.code === "invalid_union") {
+      for (const branch of issue.errors) {
+        found.push(
+          ...unrecognizedKeyIssues(branch, [...basePath, ...issue.path])
+        );
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * Delete `keys` from the object at `path`, in a structural clone of `value`.
+ *
+ * Returns `undefined` when the value cannot be cloned. `structuredClone`
+ * throws on a function, a symbol or a class instance it does not know — and
+ * the values under UNRECOGNIZED keys are exactly the ones nothing has
+ * validated, so that is reachable (a client draft holding an event handler,
+ * say). Letting it escape would take down the whole array over one bad step,
+ * which is worse than the drop it replaced.
+ */
+function withoutKeys(
+  value: unknown,
+  removals: Array<{ path: PropertyKey[]; keys: string[] }>
+): unknown {
+  let clone: unknown;
+  try {
+    clone = structuredClone(value);
+  } catch {
+    return undefined;
+  }
+  for (const { path, keys } of removals) {
+    let target: unknown = clone;
+    for (const segment of path) {
+      if (!target || typeof target !== "object") {
+        target = undefined;
+        break;
+      }
+      target = (target as Record<PropertyKey, unknown>)[segment];
+    }
+    if (!target || typeof target !== "object") continue;
+    for (const key of keys) {
+      delete (target as Record<string, unknown>)[key];
+    }
+  }
+  return clone;
+}
+
+/**
  * Structurally normalize a steps array (round-trip shape only; semantic
  * validation is the route Zod boundary + Convex mutation's job). Drops anything
  * that isn't a known step kind.
+ *
+ * ── Why this STRIPS unknown keys rather than dropping the step ───────────────
+ *
+ * The step union is `.strict()`, so a step carrying an undeclared key does not
+ * parse. That strictness is aimed at the CONTRACT boundaries — the route Zod
+ * schemas and the Convex `v.object` validators — where an importer's mis-mapped
+ * field must fail loudly rather than vanish.
+ *
+ * This function is not one of those boundaries. It is the shared normalizer on
+ * the editor load path, the execution paths, and the LLM case-GENERATION path
+ * (`server/routes/v1/evals.ts`), where the input is model output that nobody
+ * validated. Letting strictness reach here would turn "the generator invented a
+ * field" into "the whole step disappeared", and a generated case silently
+ * losing a prompt is a worse outcome than the stray key ever was.
+ *
+ * So: parse; if the only complaint is unrecognized keys, remove exactly those
+ * and re-validate. Re-validating is what makes this safe — nothing is kept
+ * unless it parses cleanly afterwards, so a step that was broken for any other
+ * reason is dropped exactly as before, and the strict boundaries above are
+ * untouched.
  */
 export function normalizeSteps(value: unknown): TestStep[] {
   if (!Array.isArray(value)) return [];
   const out: TestStep[] = [];
   for (let i = 0; i < value.length; i++) {
     const parsed = testStepSchema.safeParse(value[i]);
-    if (parsed.success) out.push(parsed.data);
+    if (parsed.success) {
+      out.push(parsed.data);
+      continue;
+    }
+    const removals = unrecognizedKeyIssues(parsed.error.issues);
+    if (removals.length === 0) continue;
+    const cleaned = withoutKeys(value[i], removals);
+    if (cleaned === undefined) continue;
+    const retry = testStepSchema.safeParse(cleaned);
+    if (retry.success) out.push(retry.data);
   }
   return out;
 }
