@@ -7,7 +7,7 @@ export type BillingInterval = "monthly" | "annual";
 export type BillingModel = "free" | "flat" | "per_seat" | "contact";
 export type BillingFeatureName =
   | "evals"
-  | "chatboxes"
+  | "scenarios"
   | "cicd"
   | "customDomains"
   | "auditLog"
@@ -17,7 +17,7 @@ export type BillingLimitName =
   | "maxMembers"
   | "maxProjects"
   | "maxServersPerProject"
-  | "maxChatboxesPerProject"
+  | "maxScenariosPerProject"
   | "maxEvalRunsPerMonth"
   | "maxEvalIterationsPerMonth"
   | "insightsPerDay"
@@ -31,14 +31,14 @@ export type BillingLimitName =
 
 /** Mirrors backend premiumness gate keys exactly. */
 export type PremiumnessGateKey =
-  | "chatboxes"
+  | "scenarios"
   | "evals"
   | "cicd"
   | "auditLog"
   | "maxMembers"
   | "maxProjects"
   | "maxServersPerProject"
-  | "maxChatboxesPerProject"
+  | "maxScenariosPerProject"
   | "maxEvalRunsPerMonth"
   | "maxEvalIterationsPerMonth"
   | "insightsPerDay"

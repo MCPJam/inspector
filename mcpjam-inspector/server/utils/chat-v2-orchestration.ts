@@ -49,7 +49,7 @@ import {
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { PinnableSkill } from "../../shared/skill-types.js";
 import { logger } from "./logger.js";
-import { isGPT5Model, type ModelDefinition } from "@/shared/types";
+import { modelSupportsTemperature, type ModelDefinition } from "@/shared/types";
 import {
   UI_TOOL_NAME_REGEX,
   uiToolCallNeedsApproval,
@@ -976,7 +976,7 @@ export async function prepareChatV2(
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
-  // a stale id baked into a chatbox config). Passing them through reaches
+  // a stale id baked into a scenario config). Passing them through reaches
   // ensureConnected and throws "Unknown MCP server", 500-ing the whole chat.
   const knownSelectedServers = selectedServers?.filter((id) =>
     mcpClientManager.hasServer(id)
@@ -1340,9 +1340,9 @@ export async function prepareChatV2(
     .join("\n\n");
 
   // 4. Temperature resolution
-  const resolvedTemperature = isGPT5Model(modelDefinition.id)
-    ? undefined
-    : temperature ?? DEFAULT_TEMPERATURE;
+  const resolvedTemperature = modelSupportsTemperature(modelDefinition.id)
+    ? temperature ?? DEFAULT_TEMPERATURE
+    : undefined;
 
   // 5. Message scrubber
   const scrubMessages = (msgs: ModelMessage[]) =>

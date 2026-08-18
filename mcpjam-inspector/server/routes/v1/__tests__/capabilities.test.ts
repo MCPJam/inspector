@@ -97,7 +97,7 @@ describe("capability derivation", () => {
   });
 
   it("gives a member the exposure controls but not guest execution", async () => {
-    // The chatbox mutations behind mode changes, member edits and link
+    // The scenario mutations behind mode changes, member edits and link
     // rotation gate at workspace MEMBERSHIP upstream — reporting them as
     // admin-only denied capabilities the caller actually held, this
     // endpoint's own failure mode. Guest execution is the one exposure
@@ -174,7 +174,7 @@ describe("capability derivation", () => {
     const body = (await (await get()).json()) as Body;
     expect(body.can.cancelJourneyRun).toBe(true);
     expect(body.can.unpublishUserTestingScenario).toBe(true);
-    // The scenario controls stay true too: none of the chatbox mutations
+    // The scenario controls stay true too: none of the scenario mutations
     // behind them (mode, members, rotate, guest execution) check the beta
     // flag — only publish/rebind do. Claiming otherwise would deny writes
     // the backend accepts.

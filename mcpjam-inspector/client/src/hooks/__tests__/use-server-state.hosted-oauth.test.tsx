@@ -237,9 +237,9 @@ describe("useServerState hosted OAuth callback guards", () => {
     readStoredOAuthConfigMock.mockReturnValue({});
   });
 
-  it("defers hosted chatbox OAuth callbacks to App.tsx", async () => {
+  it("defers hosted scenario OAuth callbacks to App.tsx", async () => {
     writeHostedOAuthPendingMarker({
-      surface: "chatbox",
+      surface: "scenario",
       serverName: "asana",
       serverUrl: "https://mcp.asana.com/sse",
       returnPath: "#asaan",

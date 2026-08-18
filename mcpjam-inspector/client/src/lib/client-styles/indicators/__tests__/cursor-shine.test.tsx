@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { CursorShineIndicator } from "../cursor-shine";
-import { ChatboxHostThemeProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostThemeProvider } from "@/contexts/scenario-client-style-context";
 
 describe("CursorShineIndicator", () => {
   it("renders the shimmering 'Planning next moves' text node", () => {
@@ -42,8 +42,8 @@ describe("CursorShineIndicator", () => {
     expect(container.textContent).toContain("Planning next moves");
   });
 
-  it("defaults to data-theme='dark' when no chatbox host theme is mounted", () => {
-    // Matches the inspector's "no chatbox context" fallback (see
+  it("defaults to data-theme='dark' when no scenario host theme is mounted", () => {
+    // Matches the inspector's "no scenario context" fallback (see
     // CopilotMessageHeader). The dark base is the verbatim #E4E4E4
     // capture; light mode overrides via the [data-theme="light"] rule.
     const { getByTestId } = render(<CursorShineIndicator />);
@@ -52,11 +52,11 @@ describe("CursorShineIndicator", () => {
     ).toBe("dark");
   });
 
-  it("switches to data-theme='light' under a light chatbox host theme", () => {
+  it("switches to data-theme='light' under a light scenario host theme", () => {
     const { getByTestId } = render(
-      <ChatboxHostThemeProvider value="light">
+      <ScenarioHostThemeProvider value="light">
         <CursorShineIndicator />
-      </ChatboxHostThemeProvider>,
+      </ScenarioHostThemeProvider>,
     );
     expect(
       getByTestId("loading-indicator-cursor-shine").dataset.theme,
