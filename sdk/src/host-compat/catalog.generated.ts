@@ -452,7 +452,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           elicitation: false,
         },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
           clientInfo: {
             name: "claude-ai",
             version: "0.1.0",
