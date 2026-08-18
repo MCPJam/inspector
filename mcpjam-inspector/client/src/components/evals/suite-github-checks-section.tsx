@@ -13,8 +13,13 @@ import { useAppNavigate } from "@/lib/app-navigation";
 import {
   GITHUB_CHECKS_UNAVAILABLE_MESSAGE,
   useGithubChecksSettings,
+  type GithubCheckOutagePolicy,
   type InstallationRepo,
 } from "@/hooks/useGithubChecksSettings";
+import {
+  OutagePolicyExplainer,
+  OutagePolicySelectItems,
+} from "@/components/settings/github-checks-outage-policy";
 
 /**
  * "Run this suite on every pull request", on the suite itself.
@@ -30,6 +35,11 @@ import {
  * visible at once — offering them here would let you retarget a repo away from
  * the suite you are standing on, which reads as a mistake even when it is not.
  *
+ * The outage policy is the ONE thing this narrow surface still has to ask for.
+ * It is set at connect time and it is not editable here, so skipping it would
+ * make this the path that quietly produces rows nobody chose a policy for —
+ * exactly the legacy state the settings page has to warn about.
+ *
  * Renders nothing at all when GitHub Checks is unavailable for the org.
  */
 export function SuiteGithubChecksSection({
@@ -42,13 +52,17 @@ export function SuiteGithubChecksSection({
   organizationId?: string | null;
 }) {
   const appNavigate = useAppNavigate();
-  const { availability, repos, connectRepo, listInstallationRepos } =
+  const { availability, repos, connectVerifiedRepo, listInstallationRepos } =
     useGithubChecksSettings(organizationId);
 
   const [installationRepos, setInstallationRepos] = useState<
     InstallationRepo[] | null
   >(null);
   const [pickerRepo, setPickerRepo] = useState("");
+  // Unset until chosen. A default here would be a decision made for someone.
+  const [pickerPolicy, setPickerPolicy] = useState<
+    GithubCheckOutagePolicy | ""
+  >("");
   const [connecting, setConnecting] = useState(false);
 
   const isEnabled = availability?.state === "enabled";
@@ -57,6 +71,7 @@ export function SuiteGithubChecksSection({
     let cancelled = false;
     setInstallationRepos(null);
     setPickerRepo("");
+    setPickerPolicy("");
     if (!isEnabled) {
       return () => {
         cancelled = true;
@@ -98,15 +113,20 @@ export function SuiteGithubChecksSection({
         );
 
   const handleConnect = async () => {
-    if (!pickerRepo || !projectId) return;
+    if (!pickerRepo || !projectId || !pickerPolicy) return;
     setConnecting(true);
     try {
-      await connectRepo({
+      // The server-VERIFIED connect: it proves the pinned installation can
+      // actually reach this repository before any row is written. The
+      // unverified mutation is still deployed and must not be called.
+      await connectVerifiedRepo({
         repoFullName: pickerRepo,
         projectId,
         suiteId,
+        outagePolicy: pickerPolicy,
       });
       setPickerRepo("");
+      setPickerPolicy("");
       toast.success("Repository connected.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -157,14 +177,29 @@ export function SuiteGithubChecksSection({
             ))}
           </SelectContent>
         </Select>
+        <Select
+          value={pickerPolicy}
+          onValueChange={(value) =>
+            setPickerPolicy(value as GithubCheckOutagePolicy)
+          }
+        >
+          <SelectTrigger className="w-52" aria-label="Outage policy">
+            <SelectValue placeholder="Select an outage policy" />
+          </SelectTrigger>
+          <SelectContent>
+            <OutagePolicySelectItems />
+          </SelectContent>
+        </Select>
         <Button
           size="sm"
           onClick={() => void handleConnect()}
-          disabled={connecting || !pickerRepo || !projectId}
+          disabled={connecting || !pickerRepo || !projectId || !pickerPolicy}
         >
           <Plus className="mr-2 size-3.5" aria-hidden /> Connect
         </Button>
       </div>
+
+      <OutagePolicyExplainer className="space-y-1 text-xs text-muted-foreground" />
 
       {installationRepos !== null && connectableRepos.length === 0 ? (
         <p className="text-xs text-muted-foreground">
