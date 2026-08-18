@@ -57,7 +57,7 @@ function buildTitle(
  * `defaultHostId` pre-seeds the new-suite client attachment with the host the
  * session actually executes against, so a promoted case replays against the
  * same client emulation. It prefers the backend's `suggestedHostAttachment`
- * over the raw `hostId`: on environment-backed chatboxes the session row
+ * over the raw `hostId`: on environment-backed scenarios the session row
  * records the PUBLISH-TIME host (display-only), while the environment — which
  * live-follows and may have been re-pointed since — owns the real one. Falling
  * back to `hostId` keeps this working against a backend that predates the

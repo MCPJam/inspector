@@ -102,28 +102,28 @@ vi.mock("@/stores/preferences/preferences-provider", () => ({
     selector({ hostCapabilitiesOverride: null }),
 }));
 
-vi.mock("@/contexts/chatbox-client-style-context", () => ({
-  ChatboxHostStyleProvider: ({ children }: { children: React.ReactNode }) => (
+vi.mock("@/contexts/scenario-client-style-context", () => ({
+  ScenarioHostStyleProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
-  ChatboxHostThemeProvider: ({ children }: { children: React.ReactNode }) => (
+  ScenarioHostThemeProvider: ({ children }: { children: React.ReactNode }) => (
     <>{children}</>
   ),
-  ChatboxChatUiOverrideProvider: ({
+  ScenarioChatUiOverrideProvider: ({
     children,
   }: {
     children: React.ReactNode;
   }) => <>{children}</>,
-  useChatboxChatUiOverride: () => undefined,
+  useScenarioChatUiOverride: () => undefined,
 }));
 
-vi.mock("@/contexts/chatbox-client-capabilities-override-context", () => ({
-  ChatboxHostCapabilitiesOverrideProvider: ({
+vi.mock("@/contexts/scenario-client-capabilities-override-context", () => ({
+  ScenarioHostCapabilitiesOverrideProvider: ({
     children,
   }: {
     children: React.ReactNode;
   }) => <>{children}</>,
-  useChatboxHostCapabilitiesOverride: () => undefined,
+  useScenarioHostCapabilitiesOverride: () => undefined,
 }));
 
 vi.mock("@/contexts/active-mcp-profile-context", () => ({
@@ -377,7 +377,7 @@ describe("MultiModelPlaygroundCard", () => {
         />,
       );
 
-      const shell = container.querySelector(".chatbox-host-shell");
+      const shell = container.querySelector(".scenario-host-shell");
       expect(shell).not.toBeNull();
       expect(shell!.className).not.toContain("min-h-[");
     });
@@ -413,7 +413,7 @@ describe("MultiModelPlaygroundCard", () => {
         />,
       );
 
-      const shell = container.querySelector(".chatbox-host-shell");
+      const shell = container.querySelector(".scenario-host-shell");
       expect(shell).not.toBeNull();
       expect(shell!.className).toContain("min-h-[34rem]");
     });

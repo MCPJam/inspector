@@ -3,26 +3,6 @@
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Call every check a check, and show the reason it failed.\n\nThe deterministic-checks foundation was already unified in code — one `Predicate` union, one pure fail-closed evaluator in `@mcpjam/sdk`, one race-safe `chatSessionChecks` table. What a user saw was six nouns for that one concept and five formatters for the same predicate, so surfaces that share an implementation read as unrelated features.\n\n**One noun.** \"Checks\" everywhere, with scope carried by a qualifier rather than a different word: \"Default checks\" on suite settings, \"Whole-run checks\" where \"Global gates\" was, \"Step checks\" unchanged. \"Grading\" stays as the umbrella over checks-plus-judge, which is what `journey-list.tsx` and the code name `gradingConfig` already called it. Gone from UI copy: \"gates\", \"criterion/criteria\", \"Deterministic checks\", \"Scoring rubric\". The swarm cap message stops leaking the storage word (\"At most 25 checks — remove one to add another\", not \"A rubric holds at most 25 criteria\"). Convex fields, code identifiers and test ids are untouched — this is copy, not a migration. GitHub Checks, an unrelated homonym, is not involved.\n\n**One label vocabulary.** `formatCriterion` in `shared/predicate-kinds.ts` is now the single formatter: the Insights scorecard (`criterionDisplayName`) and the swarm findings panel (`findingName`) delegate to it instead of reimplementing label-then-kind, joining the run scorecard which already did. Each keeps its own raw-`criterionId` fallback — deliberate, and the reason it cannot move into the shared helper: a finding whose check no longer appears in the run's pinned rubric is a real row with real counts, and `formatCriterion` has no id to name it with. The eval iteration's checks list stops printing the raw discriminator (`widgetRendered`) as its row title and prints the human label, keeping `summarizePredicate` beside it for argument specifics; that row was the last surface speaking the code's vocabulary at the user. `WIDGET_ASSERTION_LABELS` moves to `shared/steps.ts` beside the union it names, so the step-list sub-editor, the Add Step picker and the click-to-assert chooser stop keeping three private copies — which is how the same assertion came to be called both \"Input value equals\" and \"Input equals…\". `INLINE_ASSERT_LABELS` stays and is now documented as the turn-scoped VARIANT of `PREDICATE_KIND_LABELS`, not a fork: \"no tool errors\" and \"no tool errors so far\" are different claims.\n\n**Per-session check verdicts, with the evaluator's reasons.** A new Checks block on the shared session detail (Swarms sessions and User Testing sessions) renders each check's name, PASS/FAIL, and the evaluator's `reason` string. Those strings have been persisted since the rubric path shipped — `chatSessionChecks.criterionResults[].reason` is the only place they live, deliberately dropped from the compact `chatSessions.criteria` projection that feeds list payloads — and until now nothing rendered them, so a failing check could be counted on a scorecard and never explained. It is fed by `chatSessionChecks:getCheckRunsForSession`, a fully-built authorized query that had zero consumers.\n\nThree properties the block holds to:\n\n- **Run status is never folded into verdicts.** \"Grading broke\" and \"the check failed\" stay distinct badges, the same doctrine the run scorecard's four count columns enforce. A dead runner is not a product regression.\n- **A grading failure is never hidden by age.** Re-grades accumulate rows, so the newest run leads and older ones collapse behind \"Previous runs (N)\" — but a `failed` run is pulled out of that disclosure and rendered unconditionally.\n- **Judge rows are excluded, including the ones with nothing to show.** `chatSessionChecks` holds both graders' rows and `source` does not separate them: `on_demand` is written by both, and `scheduled` by the judge. A judge row that failed or is still running carries no `goalCompletionResult`, so a presence-based rule would render exactly those as empty duplicate \"Checks\" groups. Classification now reads a `runKind` column the backend stamps, falling back on legacy rows to the producer-minted `checkRunId` shape and only then to snapshot shape — so the panel is correct against a deployment where the backend hasn't been promoted yet.\n\nThe block hides itself when a session has no checks rows. Eval sessions are the deliberate case: they persist verdicts on `testIteration.metadata.predicates` and write no `chatSessionChecks` rows at all, and the eval surfaces keep rendering `PredicatesList` against that metadata.\n\n**The widget-assertion seam, made deliberate.** DOM assertions stay a separate vocabulary from transcript predicates, and `shared/steps.ts` now says why rather than leaving it to be re-derived: a `Predicate` is evaluated against a persisted transcript and can be re-graded from stored data months later, a `WidgetAssertion` is evaluated against a live DOM and nothing persisted can reproduce it. That is the whole reason `widgetRendered` is a predicate while `textVisible` is not, and why swarms — no `TestStep[]`, no browser harness — cannot use widget assertions at all. Picker items for them now carry a \"Checked in the live view\" hint so the distinction is visible where the choice is made, and the comment names the condition that would justify revisiting the split: a persisted-DOM-snapshot capability.",
-      "id": "checks-one-vocabulary-and-session-verdicts"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Automatically connect Excalidraw after a new Playground finishes setup, with Claude selected by default and ChatGPT using GPT-5.6 Luna.",
-      "id": "default-nux-claude-gpt-luna"
-    },
-    {
-      "releases": [
-        {
           "name": "@mcpjam/sdk",
           "type": "patch"
         },
@@ -31,8 +11,58 @@
           "type": "patch"
         }
       ],
-      "summary": "Say which protocol version a server refused, and offer the setting that fixes it.\n\nA connection pinned to a modern protocol version needs the server to advertise it via `server/discover`, and in pin mode there is deliberately no fallback — the pin exists to reproduce one specific client's wire behavior. When the server doesn't offer it, the upstream client raises `SdkError(EraNegotiationFailed)` naming the version it wanted. The manager then tried the SSE transport, that failed too (a modern-only server answers `405`), and both failures were folded into one message: \"Failed to connect to MCP server … using HTTP transports … SSE error: Non-200 status code (405).\" What reached the user described the SECOND attempt's symptom. The version was never mentioned, so a user whose client profile pins the latest revision against a server that hasn't adopted it was told their server was unreachable — with no hint that the cause was a dropdown.\n\nThe manager now recognizes that case and throws `ProtocolVersionPinUnsupported`, carrying `serverId` and `protocolVersion` as fields and naming both in its message. The version is read from the resolved config, never parsed out of the upstream prose: the manager is what chose the pin, and an upstream reword must not be able to empty the field. Pin mode is detected through `resolveVersionNegotiation` — the same helper the negotiation telemetry uses — so an `auto` connection, which probes and falls back on its own, can never produce this error. Both HTTP exits raise it, including the `disableSseFallback` path, which is where modern-only servers are most likely to land.\n\n`describeError` resolves it to a new slug, `sdk/protocol_version_pin_unsupported`, whose origin is `user_config`. That matters beyond copy: the previous classification was `transport/fetch_failed` (`ambiguous`), so on hosted chat this failure was attributed to MCPJam and paged the team for a version pin. Its catalog entry says what to do — set the version to Automatic, or pick one the server advertises.\n\nIn the inspector, both surfaces that can meet this failure now render **Change protocol version**, opening that client's MCP Protocol tab (`/hosts/:hostId?hostTab=protocol`, via a new exported `buildHostFocusTabPath`). On the chat banner it deliberately replaces the retry rather than joining it: the pin is stored, so resending the identical turn fails identically until someone changes the setting — the opposite of the upstream-error-page case next to it, where resending IS the fix. On a server card it fills `ErrorCard`'s existing `action` slot, which was already documented for exactly this (\"one affordance that actually FIXES this error\"). Where a surface has no host id (chatbox, environment), the link degrades to the clients list rather than building a path the `:hostId` route rejects.\n\nThe two surfaces gate differently, because they hold different evidence. A server card reads `lastNormalizedError.slug`, which is always populated — `CONNECT_FAILURE` either carries the block the backend attached or the reducer derives one with `describeError` — so it matches on the slug. Chat has no normalized block to read at all and matches the message clause instead.\n\nThe chat surfaces recognize the failure by a clause in the message, because that is all that survives: the AI SDK collapses a failed response into `new Error(await response.text())`, so the class, the `normalized` block and the response headers are gone by the time a banner sees anything. Both sides pin the clause in tests, and the SDK-side test names the inspector files to update if the wording changes.",
-      "id": "protocol-version-pin-message"
+      "summary": "Keep OAuth diagnostics visible when a server advertises a metadata URL that is not absolute — the protected-resource URL or an authorization-server endpoint — and when it rejects an authorization code with `invalid_grant`. The sequence diagram now marks the unparsable value instead of crashing, and the token-exchange error keeps the authorization server's own explanation.",
+      "id": "calm-pandas-display"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "`shared/steps`, `shared/scripted-steps` and `shared/probe-config` now re-export\nthe canonical step union from `@mcpjam/sdk/contract` instead of defining it.\n\nThe union is part of the evaluation contract — it is what a suite file carries\nand what the hosted API accepts — and the SDK's new suite-file schema reuses it.\nThe SDK cannot import this app (the dependency direction is shared → sdk), so\nleaving the definition here would have meant a hand-mirrored copy inside the SDK:\na third sibling beside this file and the Convex validator, guaranteed to drift.\nThe definition moved; these modules re-export it.\n\nNo consumer changes: all ~55 importers of `shared/steps` are untouched, the\nexisting shared step tests pass unmodified, and a new test asserts referential\nidentity (`sharedSteps.testStepSchema === contract.testStepSchema`) so a copy can\nnever quietly replace the re-export. `WIDGET_ASSERTION_LABELS` deliberately\nstayed behind — display copy is not contract, and the SDK has no business\nshipping this app's wording.\n\nAlso: exported SDK test files now emit the case's declared `id` (required by\n`@mcpjam/sdk` 5.0), using the dashboard case's own id so an exported code-first\ntest joins back to the same hosted history rather than starting a new one. A\ncase that has no id — a config test, an unsaved draft — gets a freshly MINTED\nid rather than one numbered by position: a positional id is order-dependent\nidentity, so inserting a case above it would hand a different case that id on\nthe next export and join each to the other's history. Validity is checked with\nthe contract's `isOpaqueId` rather than a local regex, so the exporter cannot\ndrift from the rule the SDK enforces at construction.",
+      "id": "eval-suite-file-contract-inspector"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/vitest",
+          "type": "minor"
+        }
+      ],
+      "summary": "Track `@mcpjam/sdk` 5.0, and surface each case's declared id on the plan.\n\n`EvalCasePlan` gains an optional `caseId`, read from `EvalTestConfig.id`, so a CI\nreporter can key a case by its identity instead of by a title that gets renamed.\nVitest titles are unchanged: the ` [caseId]` suffix is the handle people grep the\nhosted dashboard with and still rides `externalCaseId`, so moving the suffix onto\nthe declared id would break those greps.\n\nThe `@mcpjam/sdk` dependency range is left at `^4.3.0` in the repo on purpose and\nmust NOT be hand-bumped to `^5.0.0`: the workspace sdk is still 4.x until this\nrelease train runs, and a range no local version satisfies makes npm stop linking\nthe workspace copy and try to fetch an unpublished 5.x from the registry\n(`ETARGET` on `npm ci`). Changesets rewrites the range as part of `changeset\nversion`, which is what `updateInternalDependencies` is configured for.\n\n`caseId` is read defensively rather than assumed. A consumer can end up with this\npackage beside an older `@mcpjam/sdk` copy — a mismatched transitive range, a pnpm\nlayout — where `id` does not exist yet; an absent `caseId` is a missing\nconvenience, whereas a thrown `TypeError` would be a broken test run. Old\n`@mcpjam/sdk` 4.x therefore keeps working at runtime: the wrapper only calls\n`getAll` / `getName` / `getConfig` / `run` / `getFailureReport`, all of which\nexist in both majors. What such a consumer does NOT get is the compile-time\nrequirement — their own `EvalTest` constructions are checked by their own SDK\ncopy, so `id` only becomes mandatory once they upgrade it.",
+      "id": "eval-suite-file-contract-vitest"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "major"
+        }
+      ],
+      "summary": "Canonical contract types for eval suites: a versioned suite-file schema, the\nstep union's new home, declared case identity, and the Wave-0 chain vocabulary.\n\n## BREAKING: `EvalTestConfig.id` is now required\n\nA case's identity used to be its `name`. That meant renaming a test forked its\nhosted history — the dashboard started a fresh series and orphaned the old one —\nbecause the backend derives a case key from the case's content and title when no\nexplicit identity is present. `id` separates the two: history joins on `id`, and\n`name` is free to change.\n\n```diff\n const test = new EvalTest({\n+  id: \"c_V1StGXR8Z5jdHi6Bmy\",\n   name: \"refunds a duplicate charge\",\n   test: async (executor) => { … },\n });\n```\n\nMint one ONCE and commit the literal:\n\n```ts\nimport { mintCaseId } from \"@mcpjam/sdk/contract\";\nconsole.log(mintCaseId()); // c_V1StGXR8Z5jdHi6Bmy — paste this in\n```\n\nAny URL-safe string of 1–128 characters (`A-Z a-z 0-9 _ -`) is accepted, so an id\nyou already maintain — a hosted case id, a ticket number, a slug — works as-is;\nthe `c_` prefix is a grep convenience, not a rule. Constructing an `EvalTest`\nwithout an `id` throws, and the error carries a freshly minted id to paste. The\nid is deliberately NOT derived from `name` when absent: deriving it would\nrecreate the exact bug being retired while looking like it worked. Do not call\n`mintCaseId()` inline either — an id regenerated per run is not an identity.\n\n`EvalSuite.add` now also rejects duplicate ids. Duplicate names always collided\nvisibly (the suite keys results by name); duplicate ids do not, and two cases\nsharing one silently merge into a single case's history.\n\n`externalCaseId` is unchanged and keeps its live wire semantics — it remains the\nhosted join key. **Nothing about the upload payload changes in this release**:\n`id` is threaded through types and constructors only, so published 4.x clients\nand every hosted surface behave exactly as before.\n\n## New: the eval suite file (`@mcpjam/sdk/contract`)\n\n`evalSuiteFileSchema` validates a whole suite as one declarative document:\n`schemaVersion`, `mode`, `reportingMode`, `suite`, `target`, `defaults`\n(model, repetitions, `passThreshold`, `validity`, `toolPolicy`, `captureLevel`),\noptional import `provenance`, and `cases[]` — each case carrying steps reused\nverbatim from the canonical step union, optional predicate `assertions`, per-case\noverrides, and an optional `import` record.\n\nThree properties are load-bearing:\n\n- **Reserved values are validation ERRORS, never accepted-and-ignored.** `mode:\n  \"serverContract\"`, `reportingMode: \"restricted\" | \"summary\"` and\n  `captureLevel: \"metadataOnly\" | \"none\"` name capabilities that do not exist\n  yet. A file asking for reduced capture and getting full capture would be a\n  privacy failure with a paper trail claiming otherwise, so each is a `z.literal`\n  whose error names the reserved value and the v1 stance — and the generated JSON\n  Schema emits `const`, rejecting them structurally too.\n- **No `.default()` anywhere.** An omitted field stays omitted, so a parsed file\n  round-trips byte-stably through canonical JSON and the diff of an unchanged\n  suite is empty. Default *semantics* are documented in JSDoc beside each field\n  (`validity.minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1) and applied by\n  a loader, not materialized here.\n- **Every object the file declares is `.strict()`.** An importer that invents or\n  mis-maps a suite-level field fails loudly instead of having it dropped on the\n  floor — and it matches Convex `v.object`, which rejects unknown fields. The\n  reused step and predicate schemas are the stated exception: they are the\n  shared authoring union, they strip unknown keys today, and making them strict\n  is a semantic change to a cross-repo mirrored schema rather than something a\n  new file format should do as a side effect.\n\n`schemaVersion` is `const \"1\"`: additive optional fields stay within `\"1\"`, a\nbreaking revision becomes `\"2\"`, and a v1 validator handed a `\"2\"` file says the\nCLI/SDK needs upgrading rather than sending someone to edit a correct file.\n\nShipped alongside: `eval-suite.schema.json` (draft 2020-12, `$id`\n`https://mcpjam.com/schemas/eval-suite/v1.json`) plus the same document exported\nas `evalSuiteFileJsonSchema` for consumers without a JSON import path. Both are\ngenerated from the zod source and a test byte-compares them against a fresh\ngeneration, so they can never be hand-edited into disagreement.\n\nThe schema describes what is ACCEPTED (`io: \"input\"`), not what zod returns, so\nthe two validators agree on which files they accept — including where both are\npermissive. The element locator's \"at least one of role/text/css/testId\" rule is\na refinement that would not project, so the generator encodes it as an `anyOf`\nof `required`; leaving it out would let an editor green-light a `target: {}` the\nSDK then rejects, and tooling passing while the runtime fails is the worst\ndirection for a divergence. What genuinely cannot be expressed in JSON Schema —\nunique case ids, unique step ids within a case, an `import` block requiring\ntop-level `provenance`, and the serialized-size cap on tool-call arguments —\nstays zod-only, and the fixtures annotate every reject row with whether the JSON\nSchema must catch it too.\n\n## New: the step union's canonical home is now the SDK\n\n`TestStep` and everything defining it — the four step schemas\n(`prompt`/`toolCall`/`interact`/`assert`), the interact actions, the widget\nassertions, `elementLocatorSchema`, the text/wait/args/render-timeout caps and\nthe narrowing helpers — now live in `@mcpjam/sdk/contract`. They previously lived\nin the inspector app, which the SDK cannot import, so a suite-file schema in the\nSDK would have needed a hand-mirrored second copy. There is still exactly one\ndefinition; the inspector re-exports it and a test asserts referential identity\nso a copy can never quietly replace the re-export.\n\n## New: the user-value chain vocabulary\n\n`USER_VALUE_STAGES`, `STAGE_STATES`, `FAILURE_CATEGORIES`, `ITERATION_STATUSES`\nand `IMPORT_MAPPING_STATUSES` as const arrays, derived types and zod enums.\n`USER_VALUE_STAGES` order is **normative** — \"not reached\" is derived from\nposition in it, so sorting the array changes which stages a failure is reported\nto have blocked. Stage states are strings with no numeric encoding: `notReached`,\n`notMeasured` and `notApplicable` are three different reasons there is no\nverdict, and collapsing them is how \"we never checked\" gets rendered as \"it\npassed\". `ITERATION_STATUSES` extends the six statuses the backend persists with\n`setup_failed` (our environment broke, not the server's) and `skipped`\n(deliberately not run, unlike `cancelled`).\n\n## New: `@mcpjam/sdk/contract` identity helpers\n\n`opaqueIdSchema` (`^[A-Za-z0-9_-]{1,128}$` — URL, path and CLI safe), plus\n`mintCaseId()` / `mintSuiteId()` using `crypto.getRandomValues`. Validators never\nrequire our prefix: ids are opaque, and demanding `c_` would reject every id the\nplatform has already issued.",
+      "id": "eval-suite-file-contract"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add the versioned evaluation contract and make scoring the single verdict path.\n\n`@mcpjam/sdk/contract` is a new browser-safe subpath carrying one shape for\nevery eval surface: `ScoreDefinition` / `ResolvedScoreDefinition`,\n`ScoreResult`, and the hashed `EvaluationConfigSnapshot` that joins them.\nHashing is pinned cross-runtime (RFC 8785-style canonical JSON + SHA-256 over\nresolved definitions) so the SDK, the CLI, the inspector client and the Convex\nbackend all derive the same digest.\n\n`EvalTest` now derives `passed` exclusively from gating scores. `test()`,\n`expectedToolCalls` and each predicate are projected into scores rather than\nbeing consulted separately, so scoring replaces the old verdict expression\ninstead of joining it as another opinion. Verdicts are unchanged for existing\ntests: each source contributes one gating score of exactly the value it used to\ncontribute, and `predicateResults` / `toolMatch` stay populated from the same\nsingle evaluation that feeds the scores.\n\nNew: `predicateScorer`, `judgeScorer` and a `scorers` config field, with\nrunner-enforced per-scorer timeouts and a concurrency cap. Judges are advisory\nby default; a gating scorer that errors or is skipped fails the iteration\nunless the author opts out. Scores ride on `metadata.scores` /\n`metadata.evaluationConfig`, and the run's `evaluationConfigHash` is sent on\nrun start.",
+      "id": "great-donkeys-smile"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/vitest",
+          "type": "minor"
+        }
+      ],
+      "summary": "New package: run MCPJam eval suites inside vitest.\n\n`describeEvalSuite(name, suite, options)` registers one `it` per eval case,\nplus a final `it` for the gate policy when one is given. `suite.run()` is\ncalled ONCE in `beforeAll` — the suite uploads a single hosted run and\ncomputes one aggregate evaluation-config hash, so running it per test would\nproduce N of each. Each test is an assertion over that one result, which is\nwhy the timeout that matters is `hookTimeoutMs` (default 300000) rather than\nany per-test one.\n\nDeliberately a wrapper, not a vitest Reporter. A reporter observes tests; it\ncannot decide what a test is. Evals want the opposite, so failures land on\nnamed tests in every vitest UI, watch mode and CI annotation that already\nexists — and a reporter has no seat for the gate, which is a verdict over the\nwhole run rather than any one case.\n\nA case materialized from a hosted corpus is titled `name [caseId]`, from its\nexplicit `externalCaseId` and never inferred from the test name, so a failing\ntest greps back to the dashboard row it came from. `testEval` is the\nsingle-test seat; `planEvalSuite`, `runAndAssertCase` and `gateFailureMessage`\nare pure and exported so the naming and failure rules can be asserted\ndirectly.\n\n`vitest` is a peer dependency at `>=3.2.0 <4`, tested at 3.2.4. Vitest 4 is\nunvalidated and excluded from the range rather than assumed compatible. The\nbuilt tarball is installed into a clean project and exercised by three child\n`vitest run` processes on every CI pass — proving a passing suite exits 0, a\nfailing case exits non-zero naming the case, and a breached policy exits\nnon-zero with the gate table, which a workspace-internal test cannot show.",
+      "id": "olive-jars-vitest"
     },
     {
       "releases": [
@@ -43,14 +73,42 @@
         {
           "name": "@mcpjam/cli",
           "type": "minor"
+        }
+      ],
+      "summary": "Add run-over-run comparison and comparative gates.\n\n`compareEvalRun` on the platform client fetches\n`GET /projects/{p}/eval-runs/{runId}/compare`: per-case status (`regressed`,\n`fixed`, `new_case`, `removed_case`, `changed`, `unchanged_passed`,\n`unchanged_failed`), per-scorer pass-rate and mean deltas from the\nevaluation contract, and whether the evaluation config changed. Omitting\n`baseRunId` compares against the nearest earlier completed run in the same\nsuite; a run with no comparable predecessor throws a `PlatformApiError` with\n`details.reason: \"BASELINE_NOT_FOUND\"`, which is an incomplete comparison\nrather than a failing one.\n\nNew `compare-stats` module: Wilson score intervals and Newcombe's\nhybrid-score interval for the difference between two pass rates, plus\n`assessPassRateRegression`. \"The pass rate dropped 4 points\" is not evidence\nof a regression at 10 iterations, so the verdict has three states —\n`insufficient_data` is not `no_regression`. The interval bounds are pinned\nagainst statsmodels, not against a second reading of the implementation.\n`detectFlakyCases` reports within-run instability, which is never gated.\n\n`GatePolicy` gains three comparative fields — `noDeterministicRegressions`,\n`maximumP95LatencyIncreaseMs` and `passRateRegression` — evaluated by the new\n`evaluateCompareGates`. Passing any of them to the single-run `evaluateGates`\nis now a usage error rather than a silent no-op. The statistical and latency\ngates are non-gateable unless the two runs cover the same population: same\ncase set, same scenario configs, same evaluation config, and equal per-case\niteration weighting. Deterministic per-case regressions still gate under a\npopulation change, since they join by case key.\n\nNew `mcpjam eval compare` applies that policy to a hosted run and sets an\nexit code (0 pass, 1 regression, 2 usage, 3 incomplete), with\n`--reporter json-summary|junit-xml` and `--out` via the same structured\nreport the server-diff reporter uses. It has no `--wait`: an unfinished run\nreturns an incomplete comparison (exit 3) rather than being gated against a\npartial population.\n\nAlso exported: `calculateLatencyStats` / `calculatePercentile` from the main\nentry, already used internally by the gate engine.\n\nAlso adds the hosted-corpus core: `buildCorpus` / `loadCorpusFromLock`\nmaterialize hosted eval cases into local `EvalTest`s and record them in a\nlock whose content hash is a versioned semantic allowlist. A case a local run\ncannot execute (a widget step, a direct tool call) raises\n`HostedOnlyCaseError` naming the case and step. `unsupported: \"skip\"` records\nit under `skipped` and omits it from both the materialized cases and the lock —\ninspect `skipped` to detect an incomplete corpus.\n`EvalTestConfig` gains `externalCaseId`, `isNegativeTest` and\n`expectedOutput`, so a materialized case keeps hosted grading semantics and\njoins the hosted case's history on the run page.\n\nNew `mcpjam eval pull --suite <id-or-name>` writes that corpus to\n`mcpjam-evals.lock.json`, and `--frozen` verifies the lock against the hosted\nsuite without writing — exit 1 when the corpus drifted, and drift alone. The\nlock is written through a sibling temp file and a rename, because a\nhalf-written lock does not look broken: it looks like a corpus that lost\ncases, and the next `--frozen` run would report drift nobody caused. Content\ndrift and grading drift are reported as separate kinds, since \"someone edited\nthe case\" and \"someone changed how it is graded\" have different fixes.\nEverything that means no comparison happened — no lock, an unreadable lock, a\nlock from another `lockVersion`, a failed fetch — is exit 3.",
+      "id": "proud-pumas-compare"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "patch"
         },
+        {
+          "name": "@mcpjam/cli",
+          "type": "patch"
+        }
+      ],
+      "summary": "Keep eval credentials out of logs, error trackers, and exported report files.\n\nEval replay configs carry live `accessToken` / `refreshToken` / `clientSecret`\nvalues, and they legitimately travel in the ingest request body — replay cannot\nauthorize an MCP call without them. That is fine while the body is the only\nplace they appear. It stops being fine the moment something quotes the request\nback.\n\nTwo paths did. The backend's failure message was passed through\n`normalizeReportingErrorMessage` verbatim into `EvalReportingError`, which the\nSDK writes to stderr and sends to Sentry as the exception value — so a validator\nthat echoes the rejected argument, which is exactly what Convex's\n`ArgumentValidationError` does, published live credentials to a log line and a\nthird-party error tracker. Separately, `--out` and `--reporter` are two exports\nof the same run, and only the reporter half was redacted: `writeJsonArtifact`\nwrote whatever it was handed straight to disk, so the identical report left\nclean through one flag and in the clear through the other.\n\nBoth are now redacted at the point the data becomes an artifact rather than at\neach sink, so a new caller inherits the guarantee instead of having to remember\nit. The request body is deliberately unchanged — redacting it would silently\nbreak replay while looking like hardening — and a canary-secret regression test\nasserts both directions: the planted credential must reach the request body, and\nmust reach nothing else.\n\nAdds `redactTelemetryString`, a string-specialized `redactForTelemetry` for\nmessage-shaped sinks.",
+      "id": "redact-eval-reporting-sinks"
+    },
+    {
+      "releases": [
         {
           "name": "@mcpjam/inspector",
           "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
         }
       ],
-      "summary": "Set a scenario's name, description and access mode in the same call that publishes it.\n\nPublishing an environment used to take whatever defaults the scenario was created with, so \"publish this, but only for invited people\" was two operations — a publish, then an update — with a window between them where the share link was live in the DEFAULT mode. Anyone holding the URL during that window got in.\n\n`publishScenario` on the SDK's platform client, and the `publish_scenario` operation behind it, now accept optional `name`, `description` and `mode` (`project_members` | `invited_only` | `anyone_with_link`) and forward them to the v1 route, which applies them at create time. The CLI exposes the same three as `--name`, `--description` and `--mode` on `mcpjam scenarios publish`; a misspelled `--mode` is answered locally as a usage error rather than spending a round trip to learn the flag was typed wrong.\n\nThe overrides are CREATE-TIME ONLY. Publishing is idempotent, and re-publishing an already-published environment keeps returning the existing scenario — it does not quietly re-apply the overrides, because that would make a routine re-publish able to change who can open a live link. When overrides were sent and discarded for that reason, the result says `overridesIgnored: true`, and the scenario in the response carries the scenario's REAL name and mode: a caller who asked for `invited_only` must never conclude the link is restricted when it is not. Changing an existing scenario stays `mcpjam user-testing update` / `update_user_testing_scenario`.\n\nCallers that pass no overrides are unaffected — the request body stays empty, exactly what already went on the wire.",
-      "id": "publish-scenario-create-time-overrides"
+      "summary": "Release the latest Inspector, CLI, and SDK updates.\n\n- Add the versioned evaluation contract, comparison gates, corpus locking, and score reporting across all three surfaces.\n- Add unified session search, clearer API failures, and safer hosted launch guardrails.",
+      "id": "releases-2026-08-16"
     },
     {
       "releases": [
@@ -59,42 +117,79 @@
           "type": "patch"
         }
       ],
-      "summary": "Stop reporting an unreachable target MCP server as an MCPJam outage on hosted chat.\n\nA connection-class failure — the ECONN\\* errno family, \"fetch failed\", \"socket hang up\", a refused or reset connection — leaves `mapRuntimeError` as `502 SERVER_UNREACHABLE`. The code and the message were already right: the message says outright that this is a connection problem with the target server, not an MCPJam outage. The status contradicted both, and on hosted the status is the only part that survives.\n\nHosted traffic runs behind Cloudflare, which replaces an origin 5xx with its own branded error page. That discards the JSON envelope AND the `x-mcpjam-error-origin` header `webError` attaches for exactly this purpose. What reaches the browser is a Cloudflare HTML page with no verdict on it, so the chat client falls back to its documented rule — a 5xx from our own route is ours — and reports a user's own unreachable MCP server as an MCPJam failure. The user is told MCPJam was briefly unreachable when their server was the thing that refused, and the same event pages us.\n\n`/api/web/chat-v2` now maps that class through `mapTargetServerError`, which answers `424 Failed Dependency`: the request was well-formed, and something it depends on failed. Any 4xx would have cleared the edge; 424 is the one that describes it honestly. The status is mutated on the already-mapped error rather than rebuilt, so `origin`, `normalized` and the capture-dedupe cause link all survive — `origin` is what the header carries.\n\nThe downgrade also requires the failure to NAME a server. Declaring the hop at the catch site is not sufficient on its own: a chat turn's outer catch spans more than its MCP work — `/stream/org/resolve` reaches MCPJam's own Convex deployment with a bare `fetch`, and undici raises `TypeError(\"fetch failed\")` for it, which is indistinguishable to the shared mapper from the user's server refusing. Every connect failure `MCPClientManager` raises quotes the server it was reaching (`Failed to connect to MCP server \"<id>\" …`), and nothing else in a hosted turn produces that phrase, so that is the positive test. It matches MCPJam's own wording rather than a server's, which is what makes a message check safe here. A target-server failure raised somewhere that doesn't name the server keeps 502 and pages us — a false page, which is the correct direction to be wrong in.\n\nDeliberately a separate entry point rather than a change to `mapRuntimeError`. That mapper is a shared envelope with no hop information: the same branch catches a failed fetch to MCPJam's own Convex deployment (`/api/web/server-secrets` reaches nothing else) and the router-wide `web.onError`. Downgrading those would stop paging us during our OWN outage, which is strictly worse than the problem being fixed — so the status now follows the rule the origin already does, and the catch site that knows the hop declares it. A pre-built `WebRouteError` is passed through untouched for the same reason: a deliberate 502 is how a caller says its hop was internal.\n\n`requestLogContextMiddleware` now treats 424 as a failure alongside the 5xx range. Without that, moving these failures out of 5xx would also move them out of `http.request.failed` and lose the `errorCode`/`origin`/`slug` breakdown — the Axiom slice that makes an unpaged `ambiguous` bucket measurable, and therefore promotable later as a data decision rather than a guess.\n\nA target TIMEOUT is downgraded on the same terms. `classifyRuntimeError` tests \"timed out\" before the connection patterns, so a server that accepts the connection and then goes quiet — an overloaded or half-deployed one — exits as `504 TIMEOUT` and never reaches the 502 branch at all. Cloudflare replaces a 504 exactly as it replaces a 502, so that class kept arriving as an MCPJam outage and kept paging us, one branch over from the fix. Silence is genuinely weaker evidence than a refusal (it can be our own container starving rather than their server being slow), which is what `namesAnMcpServer` is for: a timeout raised while reaching a named MCP server is theirs, and a timeout from our own hops carries no such name, keeps 504, and keeps paging.\n\nUnchanged: upstream auth rejections still answer 401/403, an unclassified throw still answers 500 even when a server is named, and every other route still answers 502 for an unreachable dependency.",
-      "id": "user-server-unreachable-424"
+      "summary": "Stop silently dropping every message after a failed detach.\n\nWhen `detachToLocalFork` cannot confirm its fork went live, the surface stays on\nthe old chat session — with `resumedVersion` deliberately preserved — while its\nhistory selection is cleared. Every later send then carried a stale\n`expectedVersion`, the server returned a 409, and the resulting `conflict`\nreceipt reached a post-stream branch that returned without doing anything. The\nturn was lost, no notice was shown, and the state repeated for every message\nuntil the page was reloaded.\n\nA `conflict` now routes to the detach handler even when the turn has no version\nbaseline, so the user either moves to a fresh thread or is told the move failed.\nThe rail refresh stays suppressed on that path, and no other receipt outcome\nchanges behaviour.",
+      "id": "silent-turn-loss-after-failed-detach"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Pressing Stop no longer claims the reply could not be saved.\n\nPressing Stop during a turn on a resumed chat-history thread produced an error toast about ten seconds later: \"This reply couldn't be saved to your chat history. It's still visible here.\" Nothing had gone wrong — the user had cancelled the turn on purpose — and it fired on every Stop, on both the chat tab and the playground.\n\nThree correct behaviors combined into a wrong one. The AI SDK has no distinct \"aborted\" status: on abort it sets `status: \"ready\"` and returns (`ai/dist/index.mjs`, in `makeRequest`'s catch — `if (isAbort || err.name === \"AbortError\") { this.setStatus({ status: \"ready\" }); return null; }`). The server deliberately does not persist an aborted turn — `onFinishEngine` in `server/utils/mcpjam-stream-handler.ts` gates the persist and the `data-persist-receipt` write on `runSucceeded && !aborted` — so no receipt is emitted and the session version never moves. And `useResumedThreadPersistence`, seeing a normal end-of-stream with no receipt, falls back to watching the session subscription for a version bump, which is exactly the deploy-skew case it was built for. The bump never came, the 10 s window expired, and the hook reported a dropped write.\n\n`useChatSession` now records whether the turn was aborted and exposes it as `consumeTurnAborted()`, alongside the existing `consumePersistReceipt()` and with the same consume-once semantics. It is sourced from the AI SDK's own `onFinish({ isAbort })` rather than from the Stop button, so an abort from any source counts and every finished turn overwrites a stopped predecessor. `useResumedThreadPersistence` checks it right after the send baseline is consumed and returns: no reconcile, no toast, no rail refresh and no read-marking, because an aborted turn wrote nothing for the rail to learn. Any receipt that raced the abort is consumed and discarded so it cannot be handed to the next turn.",
+      "id": "stop-no-false-unsaved-toast"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Give User Testing one create flow, and let a scenario's setup be edited without Project Environments.\n\nFlag-off, `/user-testing/new` rendered a separate form that offered a single-select Server dropdown and wrote `serverIds: [serverId]`. A tester could reach exactly one MCP server, and nothing could change that afterwards: the scenario's backing client is tagged `owner: 'user_testing'`, which `isPrivateScenarioBackingHost` hides from every client list and picker, and the \"Edit setup\" affordance on the scenario page was gated on `project-environments-enabled`. A scenario created in that state was frozen at one server for the rest of its life.\n\nNothing needed to be built for this. `EnvironmentComposer` gates only its saved-environment picker on the flag — the client pill and `ServerGroupPicker` render either way, which is what a flag-off project has always seen in the Swarms create flow. So `/user-testing/new` now uses that composer in both flag states: flag-off it asks for a client and an optional server group and resolves them to an ad-hoc environment, which reaches a whole server group instead of one server. The single-server form and its test are deleted rather than kept as a fallback.\n\nComposing needs the backend's `ensureAdhocEnvironments`, and that is not a new requirement flag-off. The deleted flow's only write was `hosts.createHost({owner: 'user_testing'})`, which has called `ensureOneAdhocEnvironment` internally since scenarios became environment-backed, and the client-callable mutation shipped before that. Any deployment that could serve the old flow can serve this one, which is why there is no legacy resolution path.\n\n\"Edit setup\" now appears for any environment-backed scenario, flag or no flag — the flag-off scenario is precisely the one that had no other way to change its servers. Promotion stays gated: \"Save as environment\" would name a row into a list the user has no page for.\n\nThe scenario name now defaults to the picked client's name when a setup is composed, the way it defaults to the environment's label when one is picked. Without it a flag-off user picked a client and met a required field nothing filled — the deleted flow defaulted the name off the client template for the same reason.",
+      "id": "user-testing-composer-without-environments"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/inspector",
-      "type": "minor",
-      "oldVersion": "2.38.0",
+      "name": "@mcpjam/sdk",
+      "type": "major",
+      "oldVersion": "4.3.0",
       "changesets": [
-        "checks-one-vocabulary-and-session-verdicts",
-        "default-nux-claude-gpt-luna",
-        "protocol-version-pin-message",
-        "publish-scenario-create-time-overrides",
-        "user-server-unreachable-424"
+        "calm-pandas-display",
+        "eval-suite-file-contract",
+        "great-donkeys-smile",
+        "proud-pumas-compare",
+        "redact-eval-reporting-sinks",
+        "releases-2026-08-16"
       ],
-      "newVersion": "2.39.0"
+      "newVersion": "5.0.0"
     },
     {
-      "name": "@mcpjam/sdk",
+      "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "4.2.0",
+      "oldVersion": "2.39.0",
       "changesets": [
-        "protocol-version-pin-message",
-        "publish-scenario-create-time-overrides"
+        "calm-pandas-display",
+        "eval-suite-file-contract-inspector",
+        "releases-2026-08-16",
+        "silent-turn-loss-after-failed-detach",
+        "stop-no-false-unsaved-toast",
+        "user-testing-composer-without-environments"
       ],
-      "newVersion": "4.3.0"
+      "newVersion": "2.40.0"
+    },
+    {
+      "name": "@mcpjam/vitest",
+      "type": "minor",
+      "oldVersion": "0.0.0",
+      "changesets": [
+        "eval-suite-file-contract-vitest",
+        "olive-jars-vitest"
+      ],
+      "newVersion": "0.1.0"
     },
     {
       "name": "@mcpjam/cli",
       "type": "minor",
-      "oldVersion": "3.22.0",
+      "oldVersion": "3.23.0",
       "changesets": [
-        "publish-scenario-create-time-overrides"
+        "proud-pumas-compare",
+        "redact-eval-reporting-sinks",
+        "releases-2026-08-16"
       ],
-      "newVersion": "3.23.0"
+      "newVersion": "3.24.0"
     },
     {
       "name": "@mcpjam/mcp",
@@ -102,6 +197,13 @@
       "oldVersion": "0.0.1",
       "changesets": [],
       "newVersion": "0.0.1"
+    },
+    {
+      "name": "@mcpjam/widget-react",
+      "type": "patch",
+      "oldVersion": "0.1.5",
+      "changesets": [],
+      "newVersion": "0.1.6"
     }
   ]
 }
