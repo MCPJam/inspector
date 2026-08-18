@@ -344,6 +344,89 @@ describe("selectors", () => {
 });
 
 describe("normalize", () => {
+  it("strips unknown keys instead of dropping the whole step", () => {
+    // `normalizeSteps` is NOT a contract boundary. It runs on the editor load
+    // path, the execution paths, and the LLM case-GENERATION path, where the
+    // input is model output nobody validated. Letting the union's strictness
+    // reach here would turn "the generator invented a field" into "the whole
+    // step disappeared" — a generated case silently losing a prompt is a worse
+    // outcome than the stray key ever was. The strict boundaries (route Zod,
+    // Convex `v.object`) still reject loudly; this one cleans and keeps.
+    const generated = [
+      { id: "1", kind: "prompt", prompt: "a", confidence: 0.9 },
+      {
+        id: "2",
+        kind: "interact",
+        toolName: "t",
+        action: {
+          kind: "click",
+          target: { testId: "confirm", xpath: "//button" },
+        },
+      },
+      {
+        id: "3",
+        kind: "assert",
+        assertion: {
+          kind: "textVisible",
+          toolName: "t",
+          text: "ok",
+          negate: false,
+        },
+      },
+    ];
+    const normalized = normalizeSteps(generated);
+    expect(normalized).toHaveLength(3);
+    expect(normalized[0]).toEqual({ id: "1", kind: "prompt", prompt: "a" });
+    expect(normalized[1]).toEqual({
+      id: "2",
+      kind: "interact",
+      toolName: "t",
+      action: { kind: "click", target: { testId: "confirm" } },
+    });
+    expect(normalized[2]).toEqual({
+      id: "3",
+      kind: "assert",
+      assertion: { kind: "textVisible", toolName: "t", text: "ok" },
+    });
+  });
+
+  it("still drops a step that is broken for any OTHER reason", () => {
+    // The re-validation is what makes stripping safe: nothing survives that
+    // does not parse cleanly afterwards.
+    expect(
+      normalizeSteps([
+        { id: "1", kind: "navigate", url: "https://example.com" },
+        {
+          id: "2",
+          kind: "interact",
+          toolName: "t",
+          action: { kind: "click", target: {} },
+        },
+        { id: "3", kind: "prompt" },
+        { id: "4", kind: "prompt", prompt: "kept", stray: 1 },
+      ]).map((s) => s.id)
+    ).toEqual(["4"]);
+  });
+
+  it("ACCEPTS a predicate carrying an undeclared field", () => {
+    // Predicates are the stated exception: the step PARSES rather than
+    // failing, so it survives whole. The stray key itself is dropped by zod's
+    // ordinary strip on a non-strict object — which is what this normalizer
+    // has always returned, and is unchanged by closing the step objects.
+    const [step] = normalizeSteps([
+      {
+        id: "1",
+        kind: "assert",
+        assertion: { type: "widgetRendered", toolName: "t", extra: true },
+      },
+    ]);
+    expect(step).toEqual({
+      id: "1",
+      kind: "assert",
+      assertion: { type: "widgetRendered", toolName: "t" },
+    });
+  });
+
   it("drops junk entries; signature stable for equal input", () => {
     const raw = [
       { id: "1", kind: "prompt", prompt: "a" },
