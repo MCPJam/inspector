@@ -346,24 +346,27 @@ export function GithubChecksRoute({
     }
   };
 
-  // Live visibility, keyed by the same normalization the connected-repo join
-  // uses. Only an explicit boolean is recorded: a repository GitHub returned
-  // without `private`, one that is not in this listing at all, and a listing
-  // that has not loaded or has failed all fall through to `undefined`, which
-  // renders no badge.
+  // ONE normalization for every repository-name comparison on this page, on
+  // both sides of every join. The backend stores the canonical lowercase form,
+  // so today only the candidate strictly needs it — but two spellings of "the
+  // same repository" is exactly how a padded listing entry earns a visibility
+  // badge from one comparison while slipping past the already-connected filter
+  // beside it, landing in the picker as an offer the submit then refuses.
+  const normalizeRepoName = (fullName: string) => fullName.trim().toLowerCase();
+
+  // Live visibility. Only an explicit boolean is recorded: a repository GitHub
+  // returned without `private`, one that is not in this listing at all, and a
+  // listing that has not loaded or has failed all fall through to `undefined`,
+  // which renders no badge.
   const visibilityByRepo = new Map<string, boolean>();
   for (const repo of installationRepos ?? []) {
     if (typeof repo.private === "boolean") {
-      visibilityByRepo.set(repo.fullName.trim().toLowerCase(), repo.private);
+      visibilityByRepo.set(normalizeRepoName(repo.fullName), repo.private);
     }
   }
 
-  // Both sides lowercased. The backend stores the canonical lowercase form, so
-  // today only the candidate strictly needs it — but relying on that means a
-  // contract change silently reintroduces duplicate offers, and normalizing
-  // both is free.
   const alreadyConnected = new Set(
-    rows.map((row) => row.repoFullName.toLowerCase())
+    rows.map((row) => normalizeRepoName(row.repoFullName))
   );
   // Offer nothing until the connected list has actually loaded. `rows` is `[]`
   // while `repos` is undefined, so filtering then would advertise repositories
@@ -372,7 +375,7 @@ export function GithubChecksRoute({
     repos === undefined
       ? []
       : (installationRepos ?? []).filter(
-          (repo) => !alreadyConnected.has(repo.fullName.toLowerCase())
+          (repo) => !alreadyConnected.has(normalizeRepoName(repo.fullName))
         );
 
   return (
@@ -449,7 +452,7 @@ export function GithubChecksRoute({
                     </span>
                     <RepoVisibilityBadge
                       isPrivate={visibilityByRepo.get(
-                        row.repoFullName.trim().toLowerCase()
+                        normalizeRepoName(row.repoFullName)
                       )}
                     />
                   </div>

@@ -355,6 +355,29 @@ describe("GithubChecksRoute connect flow", () => {
     expect(connectButton()).toBeEnabled();
   });
 
+  it("does not offer a connected repository whose listing name is padded", async () => {
+    mockRepos.value = [ROW];
+    // One normalization on both sides, or none: a padded entry that earns a
+    // visibility badge from one comparison and slips past the already-connected
+    // filter beside it becomes an offer the submit is refused for.
+    mockListInstallationRepos.mockResolvedValue([
+      { fullName: " MCPJam/MCP-Check-Fixture ", private: true },
+      { fullName: "mcpjam/other-repo", private: false },
+    ]);
+    const user = userEvent.setup();
+    renderRoute();
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await user.click(screen.getByLabelText("Repository"));
+
+    expect(
+      await screen.findByRole("option", { name: "mcpjam/other-repo" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: /MCP-Check-Fixture/i })
+    ).not.toBeInTheDocument();
+  });
+
   it("preselects neither policy", () => {
     renderRoute();
 

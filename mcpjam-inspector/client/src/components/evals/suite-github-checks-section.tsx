@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Github, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
@@ -65,6 +65,21 @@ export function SuiteGithubChecksSection({
   >("");
   const [connecting, setConnecting] = useState(false);
 
+  // Whether this instance is still on screen. The `ErrorBoundary` wrapping this
+  // section in `suite-iterations-view` is KEYED BY organizationId, so switching
+  // organizations remounts the component with a connect still in flight. That
+  // completion belongs to the organization that is gone — and while React drops
+  // the state writes for an unmounted tree, `toast` is global and would happily
+  // announce a repository connected to an organization the user has left. An
+  // org-id ref cannot see this: the remounted instance starts with a fresh one.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const isEnabled = availability?.state === "enabled";
 
   useEffect(() => {
@@ -125,10 +140,14 @@ export function SuiteGithubChecksSection({
         suiteId,
         outagePolicy: pickerPolicy,
       });
+      if (!mountedRef.current) return;
       setPickerRepo("");
       setPickerPolicy("");
       toast.success("Repository connected.");
     } catch (error) {
+      // Same rule for the failure: an error about an organization the user has
+      // already left is noise they cannot act on.
+      if (!mountedRef.current) return;
       const message = error instanceof Error ? error.message : String(error);
       toast.error(
         message.includes("not currently available")
