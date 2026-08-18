@@ -21,4 +21,10 @@ shipping this app's wording.
 
 Also: exported SDK test files now emit the case's declared `id` (required by
 `@mcpjam/sdk` 5.0), using the dashboard case's own id so an exported code-first
-test joins back to the same hosted history rather than starting a new one.
+test joins back to the same hosted history rather than starting a new one. A
+case that has no id — a config test, an unsaved draft — gets a freshly MINTED
+id rather than one numbered by position: a positional id is order-dependent
+identity, so inserting a case above it would hand a different case that id on
+the next export and join each to the other's history. Validity is checked with
+the contract's `isOpaqueId` rather than a local regex, so the exporter cannot
+drift from the rule the SDK enforces at construction.

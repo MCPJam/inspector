@@ -274,6 +274,62 @@ describe("eval-export", () => {
     expect(sdkFile).toContain("Generated from MCPJam");
   });
 
+  it("mints a fresh id for a case that has none, never a positional one", () => {
+    // A positional fallback (`c_exported_2`) is order-dependent identity:
+    // inserting a case above this one would hand a DIFFERENT case this id on
+    // the next export, joining each to the other's history. The exported id
+    // must therefore be minted, and it must be a valid opaque id.
+    const exportCase = {
+      title: "No id anywhere",
+      query: "Fetch the weather",
+      runs: 1,
+      isNegativeTest: false,
+      expectedToolCalls: [],
+      promptTurns: [
+        {
+          id: "turn-1",
+          prompt: "Fetch the weather",
+          expectedToolCalls: [],
+        },
+      ],
+    };
+
+    const build = (index: number) =>
+      buildSdkTestFile({
+        suite: { name: "Project export", description: "Generated from MCPJam" },
+        // Pad with leading cases so a positional scheme would produce a
+        // different number for the same case in the two files.
+        cases: [
+          ...Array.from({ length: index }, (_unused, i) => ({
+            ...exportCase,
+            id: `c_filler_${i + 1}`,
+            title: `Filler ${i + 1}`,
+          })),
+          exportCase,
+        ],
+        serverConnections: buildServerConnections(["weather"], {
+          weather: connectedHttpServer,
+        }),
+      });
+
+    // Case ids only — the generated file also declares server connection ids.
+    const caseIdsIn = (file: string) =>
+      [...file.matchAll(/^\s*id: "(c_[^"]+)",$/gm)]
+        .map((match) => match[1] as string)
+        .filter((id) => !id.startsWith("c_filler_"));
+
+    const first = caseIdsIn(build(0));
+    const second = caseIdsIn(build(2));
+
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(1);
+    expect(first[0]).toMatch(/^c_[A-Za-z0-9_-]{21}$/);
+    // Two exports of an id-less case are two different cases as far as anything
+    // downstream can tell. What must never happen is the id tracking POSITION.
+    expect(second[0]).toMatch(/^c_[A-Za-z0-9_-]{21}$/);
+    expect(second[0]).not.toBe("c_exported_3");
+  });
+
   it("prefers persisted cases over run snapshots when both exist", () => {
     const persistedCase: EvalCase = {
       _id: "persisted-case",

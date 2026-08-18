@@ -138,8 +138,18 @@ export const iterationStatusSchema = z.enum(ITERATION_STATUSES);
  *     **This is the pessimistic default at every write boundary**: `exact` is a
  *     claim that must be earned by a rule, and "I could not find a rule" is
  *     `approximated`, never `exact`.
- *   - `unsupported`  — the source construct has no counterpart here.
- *   - `unresolved`   — the converter could not tell; a human must look.
+ *   - `unsupported`  — the source construct has no counterpart here. Preserved
+ *     in the mapping report, never smuggled into the executable suite as a
+ *     weakened assertion.
+ *   - `unresolved`   — something the case references (a tool name, a server, a
+ *     fixture) did not resolve against live discovery. **This one is decided by
+ *     CODE, not by the caller**: the validator re-resolves every reference
+ *     itself, so a converter can neither claim it nor claim its way out of it.
+ *
+ * `unsupported` and `unresolved` are also the two that cannot be accepted into
+ * eligibility. An `approximated` case can run once a human accepts the
+ * documented semantic difference; these two must be repaired and revalidated
+ * first, because there is nothing coherent to accept.
  */
 export const IMPORT_MAPPING_STATUSES = [
   "exact",
