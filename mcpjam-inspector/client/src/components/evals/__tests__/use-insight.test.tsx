@@ -12,9 +12,10 @@ vi.mock("convex/react", () => ({
 beforeEach(() => {
   requestMutationMock.mockReset();
   requestMutationMock.mockResolvedValue(undefined);
+  __resetAutoRequestClaims();
 });
 
-import { useInsight } from "../use-insight";
+import { useInsight, __resetAutoRequestClaims } from "../use-insight";
 import type { EvalSuiteRun } from "../types";
 
 type GoalRun = EvalSuiteRun & {
@@ -42,6 +43,75 @@ const config = {
   requestMutation: "goalCompletion:requestGoalCompletion",
   cancelMutation: "goalCompletion:cancelGoalCompletion",
 };
+
+describe("useInsight auto-request de-duplication (CONVEX-AR)", () => {
+  it("fires ONCE when several components observe the same run", async () => {
+    // The bug: three eval surfaces auto-request on first view. Each hook
+    // instance had its own attempted-flag, so each one requested, and every
+    // caller after the first was rejected with "already being generated".
+    const run = makeRun({ _id: "run-shared" });
+
+    const first = renderHook(() => useInsight(run, config));
+    const second = renderHook(() => useInsight(run, config));
+    const third = renderHook(() => useInsight(run, config));
+
+    expect(requestMutationMock).toHaveBeenCalledTimes(1);
+    expect(requestMutationMock).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteRunId: "run-shared" }),
+    );
+
+    first.unmount();
+    second.unmount();
+    third.unmount();
+  });
+
+  it("scopes the claim per run, so a different run still auto-requests", () => {
+    renderHook(() => useInsight(makeRun({ _id: "run-a" }), config));
+    renderHook(() => useInsight(makeRun({ _id: "run-b" }), config));
+
+    expect(requestMutationMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("scopes the claim per mutation, so surfaces don't block each other", () => {
+    const run = makeRun({ _id: "run-shared" });
+    renderHook(() => useInsight(run, config));
+    renderHook(() =>
+      useInsight(run, {
+        ...config,
+        requestMutation: "serverQuality:requestServerQuality",
+      }),
+    );
+
+    expect(requestMutationMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("releases the claim when the request fails, so a remount can retry", async () => {
+    // Otherwise one transient failure would disable first-view generation for
+    // that run for the rest of the session.
+    requestMutationMock.mockRejectedValueOnce(new Error("network blip"));
+    const run = makeRun({ _id: "run-retry" });
+
+    const first = renderHook(() => useInsight(run, config));
+    await act(async () => {});
+    first.unmount();
+
+    requestMutationMock.mockResolvedValue(undefined);
+    renderHook(() => useInsight(run, config));
+
+    expect(requestMutationMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not claim when auto-request is off", () => {
+    const run = makeRun({ _id: "run-manual" });
+    renderHook(() => useInsight(run, config, { autoRequest: false }));
+    expect(requestMutationMock).not.toHaveBeenCalled();
+
+    // The claim was never taken, so a surface that DOES auto-request still
+    // gets its first-view generation.
+    renderHook(() => useInsight(run, config));
+    expect(requestMutationMock).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("useInsight requested lifecycle", () => {
   it("keeps `requested` across the re-run gap, then clears when a fresh result lands", () => {
