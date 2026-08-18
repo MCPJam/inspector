@@ -12,20 +12,22 @@
  */
 
 import { z } from "zod";
+import {
+  MAX_PROBE_ARGS_CHARS,
+  MAX_PROBE_RENDER_TIMEOUT_MS,
+} from "@mcpjam/sdk/contract";
 
 export const TEST_CASE_TYPES = ["prompt", "widget_probe"] as const;
 export type TestCaseType = (typeof TEST_CASE_TYPES)[number];
 
-/** Probe render budget ceiling — matches the backend validator's cap. */
-export const MAX_PROBE_RENDER_TIMEOUT_MS = 120_000;
-
 /**
- * Max serialized size (chars) of a probe's pinned arguments — matches
- * `MAX_PROBE_ARGS_CHARS` in the mcpjam-backend validator (`convex/lib/probeConfig.ts`).
- * Arguments are stored verbatim and snapshotted into every iteration, so an
- * unbounded blob would bloat rows.
+ * Both caps now live in the SDK contract (`@mcpjam/sdk/contract`) beside the
+ * `toolCall` step that enforces them, because the suite-file schema published
+ * from the SDK reuses that step and the SDK cannot import this directory.
+ * Re-exported here so every existing importer is unchanged — this is a
+ * re-export, NOT a second copy.
  */
-export const MAX_PROBE_ARGS_CHARS = 100_000;
+export { MAX_PROBE_ARGS_CHARS, MAX_PROBE_RENDER_TIMEOUT_MS };
 
 /**
  * Placeholder toolName stamped by "New case → Widget probe" (the backend

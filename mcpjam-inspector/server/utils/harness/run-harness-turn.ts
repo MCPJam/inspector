@@ -83,7 +83,10 @@ import type {
   ChatEngineLoopResult,
   MCPJamHandlerOptions,
 } from "../mcpjam-stream-handler.js";
-import type { PersistedTurnTrace } from "../chat-ingestion.js";
+import {
+  writePersistReceipt,
+  type PersistedTurnTrace,
+} from "../chat-ingestion.js";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import { createOffsetInterval } from "@/shared/eval-trace";
 import { getCanonicalModelId } from "@/shared/types";
@@ -443,7 +446,7 @@ export async function runHarnessTurn(
   // One typed route.operation.failed per turn; the system fallback covers
   // callers with no request context (evals/swarms).
   const failureReporter = oncePerTurn(
-    failureReporterOption ?? createSystemStreamFailureReporter("harness-turn"),
+    failureReporterOption ?? createSystemStreamFailureReporter("harness-turn")
   );
   // Canonicalize the model id up front (bare hosted ids like `gpt-5-nano` →
   // `openai/gpt-5-nano`). Everything downstream — supportsModel, the adapter's
@@ -2334,7 +2337,10 @@ export async function runHarnessTurn(
     }
   };
 
-  const onFinishEngine = async () => {
+  // `receiptWriter` is the raw stream writer, passed in only on the ui-sink
+  // path. See the `createUIMessageStream` call below for why this now runs from
+  // `execute`'s finally rather than the SDK's `onFinish`.
+  const onFinishEngine = async (receiptWriter?: ChunkWriter) => {
     // Broker teardown runs FIRST — the model stream has ended, so revoke the lease
     // + clear the E2B egress rule before the persistence/cleanup callbacks below,
     // which could hang and would otherwise keep the credential live until TTL/cron.
@@ -2370,12 +2376,28 @@ export async function runHarnessTurn(
       // sidecar did NOT advance — release the lane best-effort.
       let persistOk = false;
       try {
-        await onConversationComplete?.(
+        const persistOutcome = await onConversationComplete?.(
           [...messageHistory],
           trace,
           runSucceeded ? capturedHarnessCommit : undefined
         );
-        persistOk = true;
+        // The callback RESOLVING is not the same as the turn being saved. Now
+        // that it reports an outcome, a `failed`/`skipped`/`conflict` result
+        // resolves normally — treating that as success would leave the harness
+        // lease held against a sidecar commit that never landed. Only an actual
+        // commit (or a recognized duplicate of one) counts; everything else
+        // takes the same release path a thrown persist does.
+        persistOk =
+          !onConversationComplete ||
+          persistOutcome === undefined ||
+          persistOutcome.outcome === "saved" ||
+          persistOutcome.outcome === "duplicate";
+        if (persistOutcome && chatSessionId) {
+          writePersistReceipt(receiptWriter, persistOutcome, {
+            chatSessionId,
+            turnId: trace.turnId,
+          });
+        }
       } catch (persistErr) {
         logger.error("[harness] onConversationComplete failed", persistErr);
       }
@@ -2412,8 +2434,21 @@ export async function runHarnessTurn(
 
   if (streamSink === "ui") {
     const stream = createUIMessageStream({
-      execute: executeEngine,
-      onFinish: onFinishEngine,
+      // Run finalization from `execute`'s finally rather than the SDK's
+      // `onFinish`, mirroring the emulated engine (mcpjam-stream-handler.ts).
+      // Two reasons: `onFinish` runs with no writer, so the persist receipt
+      // could never be emitted from there; and passing the callback at all
+      // enables the SDK's own message-state reducer, which the emulated engine
+      // had to abandon because it throws on cross-response tool parts.
+      // `onFinishEngine` never consumed the reducer's argument, so this is a
+      // strict reduction in exposure.
+      execute: async (context) => {
+        try {
+          await executeEngine(context);
+        } finally {
+          await onFinishEngine(context.writer);
+        }
+      },
     });
     const response = createUIMessageStreamResponse({ stream });
     return { response, messageHistory, aborted: false };

@@ -210,10 +210,7 @@ export const taskGetSchema = projectServerSchema.extend({
 });
 
 export const taskGetBatchSchema = projectServerSchema.extend({
-  taskIds: z
-    .array(z.string().min(1))
-    .min(1)
-    .max(HOSTED_TASK_BATCH_MAX_SHARED),
+  taskIds: z.array(z.string().min(1)).min(1).max(HOSTED_TASK_BATCH_MAX_SHARED),
 });
 
 export const taskListSchema = projectServerSchema.extend({
@@ -313,6 +310,13 @@ export const hostedChatSchema = z
     // See projectServerSchema — scenario identity is `scenarioId` + `accessVersion`.
     scenarioId: z.string().min(1).optional(),
     accessVersion: z.number().int().nonnegative().optional(),
+    /**
+     * Optimistic-concurrency baseline for a resumed history thread: the session
+     * version the client believes it is continuing from. Validated here rather
+     * than forwarded raw, so a malformed value is a 400 at this boundary
+     * instead of an arg-validation failure deep inside the ingest action.
+     */
+    expectedVersion: z.number().int().nonnegative().optional(),
   })
   .passthrough();
 
@@ -1142,7 +1146,7 @@ export async function createAuthorizedManager(
      * `server/utils/mrtr-hosted-collector.ts`).
      */
     mrtrInputCollectorForServer?: (
-      serverId: string,
+      serverId: string
     ) => MrtrInputCollector | undefined;
     /**
      * The turn's execution scope, forwarded to the computer reservation that
@@ -1884,9 +1888,7 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
             : {}),
           ...(truncatePagination ? { firstPageOnly: true } : {}),
           ...(disableMrtr ? { supportsMrtr: false } : {}),
-          ...(suppressParamMirroring
-            ? { mirrorToolParamHeaders: false }
-            : {}),
+          ...(suppressParamMirroring ? { mirrorToolParamHeaders: false } : {}),
         }
       : undefined;
 
@@ -2008,7 +2010,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
      * connection on today's non-MRTR path.
      */
     mrtrInputCollectorForServer?: (
-      serverId: string,
+      serverId: string
     ) => MrtrInputCollector | undefined;
   }
 ): Promise<{
@@ -2156,7 +2158,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
  */
 function forwardLogMessagesInto(
   manager: InstanceType<typeof MCPClientManager>,
-  rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined,
+  rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined
 ) {
   return (serverId: string) => {
     if (!rpcCollector) return;
