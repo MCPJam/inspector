@@ -502,11 +502,12 @@ export interface IterationToEvalResultOptions {
    *
    * Optional and never defaulted, because this converter cannot know it: it
    * receives a `casePrefix`, not an `EvalTest`. Passing it is what lets a
-   * reporter built on these helpers join a renamed test to its hosted history
-   * — but note that `caseTitle` here is synthesized PER ITERATION, so one id
-   * across a run's iterations groups them as one case rather than one case per
-   * iteration. That is a deliberate choice for the caller to make, which is why
-   * nothing here supplies it on their behalf.
+   * reporter built on these helpers join a renamed test to its hosted history.
+   *
+   * Supplying one across a run's iterations declares them ONE case rather than
+   * one case per iteration — a change to how they land hosted, which is why
+   * nothing supplies it on the caller's behalf. See {@link runToEvalResults}
+   * for the `caseTitle` consequence.
    */
   caseId?: string;
 }
@@ -606,6 +607,15 @@ export interface RunToEvalResultsOptions {
 
 /**
  * Convert all iterations from an EvalRunResult to EvalResultInput payloads.
+ *
+ * The per-iteration `-iter-N` title suffix is what makes each iteration land as
+ * its OWN hosted case, so it is dropped when a declared `caseId` is supplied:
+ * that id says these iterations are one case, and the backend then titles that
+ * case from the first result it accepts (`sdkEvals.ts`, the grouped-stats
+ * `title` is set once and never revised) — leaving a case that holds N
+ * iterations named after iteration 1, or after iteration 2 when the first is
+ * skipped. Nothing is lost by dropping it: the iteration number already rides
+ * every result as `metadata.iterationNumber`.
  */
 export function runToEvalResults(
   run: EvalRunResult,
@@ -613,7 +623,10 @@ export function runToEvalResults(
 ): EvalResultInput[] {
   return run.iterationDetails.map((iteration, index) =>
     iterationToEvalResult(iteration, index, {
-      caseTitle: `${options.casePrefix}-iter-${index + 1}`,
+      caseTitle:
+        options.caseId !== undefined
+          ? options.casePrefix
+          : `${options.casePrefix}-iter-${index + 1}`,
       provider: options.provider,
       model: options.model,
       expectedToolCalls: options.expectedToolCalls,

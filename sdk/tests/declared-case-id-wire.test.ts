@@ -336,12 +336,22 @@ describe("declared case id on the upload", () => {
       caseId: "c_run",
     });
     expect(declared.map((result) => result.caseId)).toEqual(["c_run", "c_run"]);
-    // `caseTitle` is still synthesized per iteration — supplying an id groups
-    // them, it does not rename them.
-    expect(declared.map((result) => result.caseTitle)).toEqual([
-      "run-iter-1",
-      "run-iter-2",
+    // The `-iter-N` suffix is what makes each iteration its own hosted case, so
+    // declaring one id drops it: the backend titles a grouped case from the
+    // first result it accepts, and keeping the suffix would leave a case that
+    // holds both iterations named "run-iter-1".
+    expect(declared.map((result) => result.caseTitle)).toEqual(["run", "run"]);
+    // The iteration number is not lost — it rides the metadata, as it did
+    // before this option existed.
+    expect(declared.map((result) => result.metadata?.iterationNumber)).toEqual([
+      1, 2,
     ]);
+    // And without an id, the per-iteration titles are exactly as they were.
+    expect(
+      runToEvalResults(run, { casePrefix: "run" }).map(
+        (result) => result.caseTitle
+      )
+    ).toEqual(["run-iter-1", "run-iter-2"]);
 
     const suite = suiteRunToEvalResults(
       new Map([
@@ -381,8 +391,19 @@ describe("declared case id on the upload", () => {
 
     expect(bare[0].caseId).toBeUndefined();
     expect("caseId" in bare[0]).toBe(false);
-    const { caseId: _dropped, ...withoutCaseId } = declared[0];
-    expect(withoutCaseId).toEqual(bare[0]);
+
+    // Declaring an id changes exactly two keys and no others: `caseId` is
+    // added, and `caseTitle` loses the `-iter-N` suffix because the id says
+    // these iterations are one case rather than one case each.
+    const {
+      caseId: _dropped,
+      caseTitle: declaredTitle,
+      ...declaredRest
+    } = declared[0];
+    const { caseTitle: bareTitle, ...bareRest } = bare[0];
+    expect(declaredRest).toEqual(bareRest);
+    expect(bareTitle).toBe("run-iter-1");
+    expect(declaredTitle).toBe("run");
   });
 
   it("forwards caseId through the low-level prompt mappers", () => {

@@ -157,8 +157,6 @@ function missingCaseIdFix(
 
 /**
  * A case's identity must be DECLARED, and it must be usable in a URL, a file
- * path and a CLI argument./**
- * A case's identity must be DECLARED, and it must be usable in a URL, a file
  * path and a CLI argument.
  *
  * Deliberately NOT derived from `name` when absent: deriving it would recreate

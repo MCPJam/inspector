@@ -59,11 +59,14 @@ strict/non-strict behavior.
 `SuiteRunToEvalResultsOptions` gain an optional `caseId` (and `caseIdByTest` for
 the suite variant, mirroring `expectedToolCallsByTest`). These converters
 receive a `casePrefix` rather than an `EvalTest`, so they cannot know the
-declared identity — it is offered and never defaulted. Note that
-`runToEvalResults` synthesizes `caseTitle` per iteration, so supplying one id
-across a run groups its iterations as a single hosted case instead of one case
-per iteration; that is the caller's choice to make. Passing nothing produces the
-same payload as before, byte for byte.
+declared identity — it is offered and never defaulted. Supplying one id across a
+run groups its iterations as a single hosted case instead of one case per
+iteration; that is the caller's choice to make. `runToEvalResults` also drops
+its per-iteration `-iter-N` `caseTitle` suffix when an id is given, since that
+suffix is what made each iteration a separate case and a grouped case would
+otherwise be titled after its first iteration. The iteration number still rides
+`metadata.iterationNumber`. Passing nothing produces the same payload as before,
+byte for byte.
 
 The low-level mappers stay permissive: `promptsToEvalResult` and
 `PromptResult.toEvalResult` forward whatever `caseId` the caller passes and do
