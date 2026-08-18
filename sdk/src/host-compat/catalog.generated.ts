@@ -1591,7 +1591,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               media: true,
             },
             resourcePrefersBorder: true,
-            downloadFile: false,
+            downloadFile: true,
             requestTeardown: true,
             widgetDisplayModeRequests: "accept",
           },
