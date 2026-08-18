@@ -97,12 +97,11 @@ function assertLocallyEvaluablePredicates(
  * must never be replaced by a secondary error about generating an example.
  */
 function suggestedCaseId(config: EvalTestConfig): string {
-  // TRIMMED, matching the hosted key exactly: the backend derives
-  // `external:` + `externalCaseId.trim()`, so the trimmed value IS the join
-  // key, and suggesting the padded original would suggest a string the charset
-  // check on the next line rejects.
-  const external = config.externalCaseId?.trim();
-  // …and only when it can BE an id at all: `externalCaseId` was never
+  // Already normalized by the constructor, so what is suggested is exactly
+  // what goes on the wire and exactly what the hosted key is derived from —
+  // there is no second spelling for the suggestion to disagree with.
+  const external = config.externalCaseId;
+  // Suggested only when it can BE an id at all: `externalCaseId` was never
   // charset-bound, and suggesting a value the very next line rejects is worse
   // than suggesting a fresh one.
   if (external && opaqueIdSchema.safeParse(external).success) {
@@ -128,14 +127,14 @@ function assertDeclaredCaseId(config: EvalTestConfig): void {
   const label = config.name ? `"${config.name}"` : "(unnamed)";
   if (config.id === undefined || config.id === null || config.id === "") {
     const suggestion = suggestedCaseId(config);
-    const reusesExternal = suggestion === config.externalCaseId?.trim();
+    const reusesExternal = suggestion === config.externalCaseId;
     throw new Error(
       `EvalTest ${label} has no \`id\`. A case's identity is declared, not ` +
         `derived from its name — otherwise renaming the test forks its hosted ` +
         `history. ` +
         (reusesExternal
           ? `This test already declares \`externalCaseId\`, which is the key its ` +
-            `hosted history is joined on, so use that value: `
+            `hosted history is joined on, so reuse it verbatim: `
           : `Mint one once and commit it: `) +
         `id: "${suggestion}"`
     );
@@ -454,6 +453,25 @@ export class EvalTest {
   constructor(config: EvalTestConfig) {
     if (!config.test) {
       throw new Error("Invalid config: must provide 'test' function");
+    }
+    // Normalize `externalCaseId` ONCE, here, so exactly one value is in play
+    // for the rest of this object's life. The hosted key is derived from the
+    // trimmed value (`external:` + `externalCaseId.trim()`), so a padded
+    // config carried two spellings of one identity: the padded one on the
+    // wire and in the `[id]` grep suffix, the trimmed one as the actual join
+    // key. Whitespace-only is dropped rather than kept, matching the backend,
+    // which treats an empty trimmed value as no external id at all.
+    if (config.externalCaseId !== undefined) {
+      const trimmed = config.externalCaseId.trim();
+      if (trimmed !== config.externalCaseId) {
+        const rest = { ...config };
+        if (trimmed) {
+          rest.externalCaseId = trimmed;
+        } else {
+          delete rest.externalCaseId;
+        }
+        config = rest;
+      }
     }
     assertDeclaredCaseId(config);
     assertValidMatchOptions(config.matchOptions ?? {});

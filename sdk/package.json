@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/sdk",
-  "version": "4.3.0",
+  "version": "5.0.0",
   "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
   "type": "module",
   "main": "dist/index.js",
@@ -159,7 +159,7 @@
     "tsx": "^4.21.0",
     "typescript": "^5.3.3",
     "typescript-eslint": "^8.53.1",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^3.0.101",

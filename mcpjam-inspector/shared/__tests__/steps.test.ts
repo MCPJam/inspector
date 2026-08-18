@@ -103,6 +103,195 @@ describe("TestStep schema", () => {
     ).toBe(false);
   });
 
+  it("closes every strict action and assertion variant", () => {
+    // Table-driven so a variant cannot be closed in the schema and left
+    // untested here — an untested closure is one a later edit silently
+    // reopens. `base` is a valid step; `stray` is the one undeclared key.
+    const cases: Array<{ label: string; step: unknown }> = [
+      {
+        label: "interact/key",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: { kind: "key", key: "Enter", modifiers: ["shift"] },
+        },
+      },
+      {
+        label: "interact/scroll",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: { kind: "scroll", direction: "down", smooth: true },
+        },
+      },
+      {
+        label: "interact/wait",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: { kind: "wait", ms: 100, reason: "settle" },
+        },
+      },
+      {
+        label: "interact/type",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: {
+            kind: "type",
+            target: { testId: "q" },
+            text: "hi",
+            delayMs: 10,
+          },
+        },
+      },
+      {
+        label: "toolCall",
+        step: {
+          id: "x",
+          kind: "toolCall",
+          serverName: "s",
+          toolName: "t",
+          arguments: {},
+          timeoutMs: 1000,
+        },
+      },
+      {
+        label: "assert/elementVisible",
+        step: {
+          id: "x",
+          kind: "assert",
+          assertion: {
+            kind: "elementVisible",
+            toolName: "t",
+            target: { testId: "q" },
+            within: 500,
+          },
+        },
+      },
+      {
+        label: "assert/inputValue",
+        step: {
+          id: "x",
+          kind: "assert",
+          assertion: {
+            kind: "inputValue",
+            toolName: "t",
+            target: { testId: "q" },
+            equals: "x",
+            trim: true,
+          },
+        },
+      },
+      {
+        label: "assert/widgetToolCalled",
+        step: {
+          id: "x",
+          kind: "assert",
+          assertion: {
+            kind: "widgetToolCalled",
+            toolName: "t",
+            calledToolName: "u",
+            times: 2,
+          },
+        },
+      },
+      {
+        label: "locator/role",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: {
+            kind: "click",
+            target: { role: { role: "button", label: "Confirm" } },
+          },
+        },
+      },
+    ];
+    for (const { label, step } of cases) {
+      expect(testStepSchema.safeParse(step).success, label).toBe(false);
+    }
+  });
+
+  it("rejects null and empty values where a value is required", () => {
+    const bad: Array<{ label: string; step: unknown }> = [
+      { label: "null step", step: null },
+      { label: "empty object", step: {} },
+      {
+        label: "null arguments",
+        step: {
+          id: "x",
+          kind: "toolCall",
+          serverName: "s",
+          toolName: "t",
+          arguments: null,
+        },
+      },
+      {
+        label: "empty serverName",
+        step: {
+          id: "x",
+          kind: "toolCall",
+          serverName: "",
+          toolName: "t",
+          arguments: {},
+        },
+      },
+      {
+        label: "locator with no reference point",
+        step: {
+          id: "x",
+          kind: "interact",
+          toolName: "t",
+          action: { kind: "click", target: {} },
+        },
+      },
+      {
+        label: "null assertion",
+        step: { id: "x", kind: "assert", assertion: null },
+      },
+    ];
+    for (const { label, step } of bad) {
+      expect(testStepSchema.safeParse(step).success, label).toBe(false);
+    }
+    // Two emptys the STRUCTURAL schema accepts on purpose, recorded so the
+    // boundary is stated rather than assumed. An empty prompt string is a
+    // legitimate (if useless) authored value, and an empty `id` is caught one
+    // layer up — `assertValidSteps` in the Convex mirror requires a non-empty
+    // id, as does the suite-file validator. Tightening `id` here is a change
+    // to the union's field TYPES, not to its unknown-key policy, so it is not
+    // made as a side effect of closing the objects.
+    expect(
+      testStepSchema.safeParse({ id: "x", kind: "prompt", prompt: "" }).success
+    ).toBe(true);
+    expect(
+      testStepSchema.safeParse({ id: "", kind: "prompt", prompt: "hi" }).success
+    ).toBe(true);
+  });
+
+  it("leaves the reused predicate union open", () => {
+    // The stated exception. Predicates are a separate contract module with
+    // their own mirror and their own fixtures; closing them is a change made
+    // there, so a stray key inside one must still parse here — otherwise this
+    // union quietly acquired a second contract's policy.
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "assert",
+        assertion: {
+          type: "widgetRendered",
+          toolName: "t",
+          somethingThePredicateContractDoesNotDeclare: true,
+        },
+      }).success
+    ).toBe(true);
+  });
+
   it("keeps a tool call's own arguments object open", () => {
     // `arguments` is the SERVER's input shape, not ours. Closing it would mean
     // this contract had to know every tool's parameters.
