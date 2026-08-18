@@ -42,10 +42,15 @@ describe("TestStep schema", () => {
       {
         id: "e",
         kind: "assert",
-        assertion: { kind: "textVisible", toolName: "create_view", text: "Hello" },
+        assertion: {
+          kind: "textVisible",
+          toolName: "create_view",
+          text: "Hello",
+        },
       },
     ];
-    for (const s of steps) expect(testStepSchema.safeParse(s).success).toBe(true);
+    for (const s of steps)
+      expect(testStepSchema.safeParse(s).success).toBe(true);
     expect(stepsSchema.safeParse(steps).success).toBe(true);
   });
 
@@ -59,12 +64,65 @@ describe("TestStep schema", () => {
     expect(testStepSchema.safeParse(bad).success).toBe(false);
   });
 
+  it("rejects an unknown field on a step, and on a step's sub-objects", () => {
+    // The step union is CLOSED. A mis-mapped import field must fail here
+    // rather than be stripped: the Convex mirror is built from `v.object` and
+    // has always rejected unknown keys, so a permissive schema meant the two
+    // validators disagreed about the same case — discovered at ingest, far
+    // from the converter that wrote it.
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "prompt",
+        prompt: "hi",
+        retries: 3,
+      }).success
+    ).toBe(false);
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "interact",
+        toolName: "t",
+        action: {
+          kind: "click",
+          target: { testId: "confirm", xpath: "//button[1]" },
+        },
+      }).success
+    ).toBe(false);
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "assert",
+        assertion: {
+          kind: "textVisible",
+          toolName: "t",
+          text: "y",
+          negate: true,
+        },
+      }).success
+    ).toBe(false);
+  });
+
+  it("keeps a tool call's own arguments object open", () => {
+    // `arguments` is the SERVER's input shape, not ours. Closing it would mean
+    // this contract had to know every tool's parameters.
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "toolCall",
+        serverName: "s",
+        toolName: "t",
+        arguments: { anythingTheServerDeclares: true, nested: { ok: 1 } },
+      }).success
+    ).toBe(true);
+  });
+
   it("discriminates WidgetAssertion (kind) from Predicate (type)", () => {
     expect(
-      isWidgetAssertion({ kind: "textVisible", toolName: "t", text: "x" }),
+      isWidgetAssertion({ kind: "textVisible", toolName: "t", text: "x" })
     ).toBe(true);
     expect(isWidgetAssertion({ type: "widgetRendered", toolName: "t" })).toBe(
-      false,
+      false
     );
   });
 });
@@ -116,13 +174,18 @@ describe("promptTurnsToSteps migration", () => {
       {
         id: "turn-1",
         prompt: "Draw a cat",
-        expectedToolCalls: [{ toolName: "create_view", arguments: { q: "cat" } }],
+        expectedToolCalls: [
+          { toolName: "create_view", arguments: { q: "cat" } },
+        ],
         widgetChecks: [
           {
             toolName: "create_view",
             steps: [
               { kind: "click", target: { testId: "canvas" } },
-              { kind: "assert", assertion: { type: "textVisible", text: "Hello" } },
+              {
+                kind: "assert",
+                assertion: { type: "textVisible", text: "Hello" },
+              },
             ],
           },
         ],
@@ -194,7 +257,10 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
             toolName: "create_view",
             steps: [
               { kind: "click", target: { testId: "canvas" } },
-              { kind: "assert", assertion: { type: "textVisible", text: "Hi" } },
+              {
+                kind: "assert",
+                assertion: { type: "textVisible", text: "Hi" },
+              },
             ],
           },
         ],
@@ -228,7 +294,11 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
       checks: [{ type: "noToolErrors" }],
     });
     expect(back[1]).toMatchObject({
-      pinnedToolCall: { serverName: "amazon", toolName: "search", arguments: { q: "fryer" } },
+      pinnedToolCall: {
+        serverName: "amazon",
+        toolName: "search",
+        arguments: { q: "fryer" },
+      },
     });
   });
 
@@ -243,12 +313,19 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
         id: "i",
         kind: "interact",
         toolName: "view-cart",
-        action: { kind: "click", target: { role: { role: "button", name: "Add to cart" } } },
+        action: {
+          kind: "click",
+          target: { role: { role: "button", name: "Add to cart" } },
+        },
       },
       {
         id: "a",
         kind: "assert",
-        assertion: { type: "toolCalledWith", toolName: "clear-cart", args: { args: {} } },
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "clear-cart",
+          args: { args: {} },
+        },
       },
     ];
     const [turn] = stepsToPromptTurns(steps);
@@ -271,7 +348,10 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
         id: "i1",
         kind: "interact",
         toolName: "search-products",
-        action: { kind: "click", target: { role: { role: "button", name: "Add to cart" } } },
+        action: {
+          kind: "click",
+          target: { role: { role: "button", name: "Add to cart" } },
+        },
       },
       {
         id: "i2",
@@ -288,9 +368,9 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
       "interact",
     ]);
     // Idempotent: a second pass keeps the same order (no snap-back).
-    expect(promptTurnsToSteps(stepsToPromptTurns(back)).map((s) => s.kind)).toEqual(
-      back.map((s) => s.kind),
-    );
+    expect(
+      promptTurnsToSteps(stepsToPromptTurns(back)).map((s) => s.kind)
+    ).toEqual(back.map((s) => s.kind));
   });
 
   it("preserves a check INTERLEAVED between two interacts", () => {
@@ -328,13 +408,20 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
       {
         id: "a",
         kind: "assert",
-        assertion: { type: "toolCalledWith", toolName: "view-cart", args: { args: {} } },
+        assertion: {
+          type: "toolCalledWith",
+          toolName: "view-cart",
+          args: { args: {} },
+        },
       },
       {
         id: "i",
         kind: "interact",
         toolName: "view-cart",
-        action: { kind: "click", target: { role: { role: "button", name: "Add" } } },
+        action: {
+          kind: "click",
+          target: { role: { role: "button", name: "Add" } },
+        },
       },
     ];
     const [turn] = stepsToPromptTurns(steps);
@@ -343,11 +430,9 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
     expect(turn!.expectedToolCalls).toEqual([
       { toolName: "view-cart", arguments: {} },
     ]);
-    expect(promptTurnsToSteps(stepsToPromptTurns(steps)).map((s) => s.kind)).toEqual([
-      "prompt",
-      "assert",
-      "interact",
-    ]);
+    expect(
+      promptTurnsToSteps(stepsToPromptTurns(steps)).map((s) => s.kind)
+    ).toEqual(["prompt", "assert", "interact"]);
   });
 });
 

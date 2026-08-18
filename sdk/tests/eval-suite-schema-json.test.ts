@@ -184,10 +184,9 @@ describe("eval suite JSON Schema — agrees with zod on the structural half", ()
   it("agrees with zod about unknown fields — closed where closed, open where open", () => {
     // The generator emits the INPUT shape (`io: "input"`). The default output
     // shape would describe a non-strict object as `additionalProperties:
-    // false`, because zod strips before returning — which made the JSON Schema
-    // reject an extra field inside a step that zod silently accepted and
-    // dropped. Two validators disagreeing about the same file is the bug; this
-    // pins both halves of the agreement.
+    // false`, because zod strips before returning — publishing a schema
+    // stricter than the validator it documents. Two validators disagreeing
+    // about the same file is the bug; this pins both halves of the agreement.
     const suite = stripAnnotations(
       findFixture(data.accept, "minimal")
     ) as Record<string, unknown>;
@@ -198,13 +197,28 @@ describe("eval suite JSON Schema — agrees with zod on the structural half", ()
     expect(validate(unknownCaseField)).toBe(false);
     expect(evalSuiteFileSchema.safeParse(unknownCaseField).success).toBe(false);
 
-    // Reused STEP objects inherit strip-unknown semantics from the shared
-    // authoring union, so both validators accept. Making that union strict is a
-    // change to a cross-repo mirrored schema and is deliberately not made here;
-    // what matters for the contract is that the two agree.
+    // …and so are STEP objects, since the step union closed too. Step level is
+    // where a mis-mapped import field actually lands, and it is also where the
+    // Convex `v.object` mirror has always rejected — so an open schema here
+    // meant an agent's mistake was dropped silently by one validator and
+    // refused by the other.
     const unknownStepField = JSON.parse(JSON.stringify(suite));
     unknownStepField.cases[0].steps[0].bogusImportedField = "x";
-    expect(validate(unknownStepField)).toBe(true);
-    expect(evalSuiteFileSchema.safeParse(unknownStepField).success).toBe(true);
+    expect(validate(unknownStepField)).toBe(false);
+    expect(evalSuiteFileSchema.safeParse(unknownStepField).success).toBe(false);
+
+    // What stays open is what this contract does not own: the tool's own
+    // argument object. Closing it would mean the suite-file schema had to know
+    // every server's input schema.
+    const extraToolArgument = JSON.parse(JSON.stringify(suite));
+    extraToolArgument.cases[0].steps.push({
+      id: "step-2",
+      kind: "toolCall",
+      serverName: "billing",
+      toolName: "get_charge",
+      arguments: { chargeId: "ch_4471", anythingTheServerDeclares: true },
+    });
+    expect(validate(extraToolArgument)).toBe(true);
+    expect(evalSuiteFileSchema.safeParse(extraToolArgument).success).toBe(true);
   });
 });

@@ -35,6 +35,34 @@
  * Mirrored by the Convex validator in mcpjam-backend `convex/lib/steps.ts`
  * (same hand-mirroring arrangement as `scriptedSteps` / `probeConfig` / the
  * predicate validators) — edit both in the same PR.
+ *
+ * ── Every object DECLARED here is `.strict()` ────────────────────────────────
+ *
+ * A field this union does not declare is an ERROR, never a silently dropped
+ * key. Two reasons, and the second is the one that forced the change:
+ *
+ *  1. The Convex mirror is built from `v.object`, which rejects unknown fields.
+ *     A permissive schema here accepted step payloads the backend refuses, so
+ *     the two validators disagreed about which files are valid — and the
+ *     disagreement was invisible until ingest.
+ *  2. Steps are the surface an IMPORTER writes. A converter that mis-maps a
+ *     source field into a step (`text` where the contract says `prompt`) must
+ *     fail at the line that is wrong, not produce a step that runs and asserts
+ *     nothing. Silently discarding half of what was read is the exact failure
+ *     the closed-schema rule exists to prevent, and step level is where a
+ *     mis-mapped field actually lands.
+ *
+ * Two things are deliberately NOT closed:
+ *
+ *  - `toolCallStep.arguments` — the tool's OWN argument object. Its keys come
+ *    from the server's input schema, not from this contract; closing it would
+ *    mean this file had to know every tool's arguments.
+ *  - The reused `predicateSchema` inside an `assert` step. That union is a
+ *    separate contract module (`../predicates/types.ts`) with its own Convex
+ *    mirror and its own parity fixtures, and it is authored from many more
+ *    surfaces than steps (swarm rubrics, the Checks panel, suite defaults).
+ *    Closing it is a change to THAT contract, made there with its own consumer
+ *    audit — not a side effect of closing this one.
  */
 
 import { z } from "zod";
@@ -76,12 +104,14 @@ export const elementLocatorSchema = z
         name: z.string().optional(),
         exact: z.boolean().optional(),
       })
+      .strict()
       .optional(),
     text: z.string().min(1).optional(),
     css: z.string().min(1).optional(),
     testId: z.string().min(1).optional(),
     nth: z.number().int().nonnegative().optional(),
   })
+  .strict()
   .refine((loc) => !!(loc.role || loc.text || loc.css || loc.testId), {
     message: "locator must specify at least one of role/text/css/testId",
   });
@@ -97,11 +127,13 @@ export const TEST_STEP_KINDS = [
 export type TestStepKind = (typeof TEST_STEP_KINDS)[number];
 
 // ── prompt ──────────────────────────────────────────────────────────────────
-export const promptStepSchema = z.object({
-  id: z.string(),
-  kind: z.literal("prompt"),
-  prompt: z.string(),
-});
+export const promptStepSchema = z
+  .object({
+    id: z.string(),
+    kind: z.literal("prompt"),
+    prompt: z.string(),
+  })
+  .strict();
 export type PromptStep = z.infer<typeof promptStepSchema>;
 
 // ── toolCall (deterministic, model-free) ────────────────────────────────────
@@ -118,58 +150,72 @@ const toolCallArgumentsSchema = z.record(z.string(), z.unknown()).refine(
   }
 );
 
-export const toolCallStepSchema = z.object({
-  id: z.string(),
-  kind: z.literal("toolCall"),
-  // `serverId` is the stable project-server reference (resolved against the run
-  // environment's serverBindings at execution time); `serverName` is the display
-  // fallback. Id wins when both are present.
-  serverId: z.string().min(1).optional(),
-  serverName: z.string().min(1),
-  toolName: z.string().min(1),
-  arguments: toolCallArgumentsSchema,
-  /** Per-call render budget override (ms); harness default applies when absent. */
-  renderTimeoutMs: z
-    .number()
-    .int()
-    .positive()
-    .max(MAX_PROBE_RENDER_TIMEOUT_MS)
-    .optional(),
-});
+export const toolCallStepSchema = z
+  .object({
+    id: z.string(),
+    kind: z.literal("toolCall"),
+    // `serverId` is the stable project-server reference (resolved against the
+    // run environment's serverBindings at execution time); `serverName` is the
+    // display fallback. Id wins when both are present.
+    serverId: z.string().min(1).optional(),
+    serverName: z.string().min(1),
+    toolName: z.string().min(1),
+    // NOT closed, and never should be: this is the tool's OWN argument object,
+    // whose keys belong to the server's input schema rather than to ours.
+    arguments: toolCallArgumentsSchema,
+    /** Per-call render budget override (ms); harness default applies when absent. */
+    renderTimeoutMs: z
+      .number()
+      .int()
+      .positive()
+      .max(MAX_PROBE_RENDER_TIMEOUT_MS)
+      .optional(),
+  })
+  .strict();
 export type ToolCallStep = z.infer<typeof toolCallStepSchema>;
 
 // ── interact (PURE actions — never an assertion) ─────────────────────────────
 export const interactActionSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("click"),
-    target: elementLocatorSchema,
-    clickType: z.enum(["left", "double", "right"]).optional(),
-  }),
-  z.object({
-    kind: z.literal("type"),
-    target: elementLocatorSchema,
-    text: z.string().max(MAX_SCRIPTED_STEP_TEXT_CHARS),
-  }),
-  z.object({ kind: z.literal("key"), key: z.string().min(1) }),
-  z.object({
-    kind: z.literal("scroll"),
-    direction: z.enum(["up", "down"]),
-    amount: z.number().int().positive().optional(),
-  }),
-  z.object({
-    kind: z.literal("wait"),
-    ms: z.number().int().positive().max(MAX_SCRIPTED_WAIT_MS),
-  }),
+  z
+    .object({
+      kind: z.literal("click"),
+      target: elementLocatorSchema,
+      clickType: z.enum(["left", "double", "right"]).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("type"),
+      target: elementLocatorSchema,
+      text: z.string().max(MAX_SCRIPTED_STEP_TEXT_CHARS),
+    })
+    .strict(),
+  z.object({ kind: z.literal("key"), key: z.string().min(1) }).strict(),
+  z
+    .object({
+      kind: z.literal("scroll"),
+      direction: z.enum(["up", "down"]),
+      amount: z.number().int().positive().optional(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("wait"),
+      ms: z.number().int().positive().max(MAX_SCRIPTED_WAIT_MS),
+    })
+    .strict(),
 ]);
 export type InteractAction = z.infer<typeof interactActionSchema>;
 
-export const interactStepSchema = z.object({
-  id: z.string(),
-  kind: z.literal("interact"),
-  /** The widget this action targets (the tool that rendered it). */
-  toolName: z.string().min(1),
-  action: interactActionSchema,
-});
+export const interactStepSchema = z
+  .object({
+    id: z.string(),
+    kind: z.literal("interact"),
+    /** The widget this action targets (the tool that rendered it). */
+    toolName: z.string().min(1),
+    action: interactActionSchema,
+  })
+  .strict();
 export type InteractStep = z.infer<typeof interactStepSchema>;
 
 // ── assert ───────────────────────────────────────────────────────────────────
@@ -212,32 +258,42 @@ export type InteractStep = z.infer<typeof interactStepSchema>;
  * two vocabularies goes away.
  */
 export const widgetAssertionSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("textVisible"),
-    toolName: z.string().min(1),
-    text: z.string().min(1).max(MAX_SCRIPTED_STEP_TEXT_CHARS),
-  }),
-  z.object({
-    kind: z.literal("elementVisible"),
-    toolName: z.string().min(1),
-    target: elementLocatorSchema,
-  }),
-  z.object({
-    kind: z.literal("elementHidden"),
-    toolName: z.string().min(1),
-    target: elementLocatorSchema,
-  }),
-  z.object({
-    kind: z.literal("inputValue"),
-    toolName: z.string().min(1),
-    target: elementLocatorSchema,
-    equals: z.string().max(MAX_SCRIPTED_STEP_TEXT_CHARS),
-  }),
-  z.object({
-    kind: z.literal("widgetToolCalled"),
-    toolName: z.string().min(1),
-    calledToolName: z.string().min(1),
-  }),
+  z
+    .object({
+      kind: z.literal("textVisible"),
+      toolName: z.string().min(1),
+      text: z.string().min(1).max(MAX_SCRIPTED_STEP_TEXT_CHARS),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("elementVisible"),
+      toolName: z.string().min(1),
+      target: elementLocatorSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("elementHidden"),
+      toolName: z.string().min(1),
+      target: elementLocatorSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("inputValue"),
+      toolName: z.string().min(1),
+      target: elementLocatorSchema,
+      equals: z.string().max(MAX_SCRIPTED_STEP_TEXT_CHARS),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("widgetToolCalled"),
+      toolName: z.string().min(1),
+      calledToolName: z.string().min(1),
+    })
+    .strict(),
 ]);
 export type WidgetAssertion = z.infer<typeof widgetAssertionSchema>;
 
@@ -252,11 +308,13 @@ export const stepAssertionPayloadSchema = z.union([
 ]);
 export type StepAssertionPayload = WidgetAssertion | Predicate;
 
-export const assertStepSchema = z.object({
-  id: z.string(),
-  kind: z.literal("assert"),
-  assertion: stepAssertionPayloadSchema,
-});
+export const assertStepSchema = z
+  .object({
+    id: z.string(),
+    kind: z.literal("assert"),
+    assertion: stepAssertionPayloadSchema,
+  })
+  .strict();
 export type AssertStep = z.infer<typeof assertStepSchema>;
 
 // ── the union ────────────────────────────────────────────────────────────────

@@ -787,6 +787,97 @@
     },
     {
       "__kind": "suiteFile",
+      "__label": "unknown field inside a step",
+      "__why": "Closed one level FURTHER down, where a mis-mapped import field actually lands: an agent converting an upstream suite gets step fields wrong more often than top-level ones. Left open, `retries` here would be dropped on the floor by Zod and rejected by the Convex `v.object` mirror — the two validators disagreeing about the same file, discovered at ingest.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471.",
+              "retries": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "unknown field inside a step's nested locator",
+      "__why": "The step union's sub-objects are closed too, not just the four step objects. A locator carrying `xpath` names a reference point the harness cannot resolve; silently dropping it leaves a step that targets whatever the remaining locators happen to match.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            },
+            {
+              "id": "step-2",
+              "kind": "interact",
+              "toolName": "render_receipt",
+              "action": {
+                "kind": "click",
+                "target": {
+                  "testId": "confirm-refund",
+                  "xpath": "//button[1]"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
       "__label": "step with an unknown kind (\"navigate\")",
       "__why": "Steps are reused VERBATIM from the canonical union; the suite file introduces no dialect of its own.",
       "__structural": true,

@@ -24,7 +24,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
   $id: "https://mcpjam.com/schemas/eval-suite/v1.json",
   title: "MCPJam eval suite file (schemaVersion 1)",
   description:
-    "Structural contract for an MCPJam eval suite file. Generated from the zod source in @mcpjam/sdk (src/contract/suite-file.ts). Describes what is ACCEPTED (zod io:input), so a file this schema accepts is one the SDK validator also accepts structurally. The zod validator remains the authoritative superset: it additionally enforces cross-field rules (unique case ids, unique step ids within a case, and a per-case import block requiring top-level provenance) and a serialized-size cap on tool-call arguments, none of which JSON Schema can express. Objects the suite file declares are closed (additionalProperties: false); reused step and predicate objects inherit strip-unknown semantics from the shared authoring union and are open in both validators.",
+    "Structural contract for an MCPJam eval suite file. Generated from the zod source in @mcpjam/sdk (src/contract/suite-file.ts). Describes what is ACCEPTED (zod io:input), so a file this schema accepts is one the SDK validator also accepts structurally. The zod validator remains the authoritative superset: it additionally enforces cross-field rules (unique case ids, unique step ids within a case, and a per-case import block requiring top-level provenance) and a serialized-size cap on tool-call arguments, none of which JSON Schema can express. Objects the suite file and the step union declare are closed (additionalProperties: false). A tool call's own `arguments` object and the reused predicate union stay open in both validators: their keys are owned by the server's input schema and by a separate contract module respectively.",
   type: "object",
   properties: {
     schemaVersion: { type: "string", const: "1" },
@@ -155,6 +155,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                     prompt: { type: "string" },
                   },
                   required: ["id", "kind", "prompt"],
+                  additionalProperties: false,
                 },
                 {
                   type: "object",
@@ -182,6 +183,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                     "toolName",
                     "arguments",
                   ],
+                  additionalProperties: false,
                 },
                 {
                   type: "object",
@@ -206,6 +208,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                     exact: { type: "boolean" },
                                   },
                                   required: ["role"],
+                                  additionalProperties: false,
                                 },
                                 text: { type: "string", minLength: 1 },
                                 css: { type: "string", minLength: 1 },
@@ -216,6 +219,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   maximum: 9007199254740991,
                                 },
                               },
+                              additionalProperties: false,
                               anyOf: [
                                 { required: ["role"] },
                                 { required: ["text"] },
@@ -229,6 +233,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                             },
                           },
                           required: ["kind", "target"],
+                          additionalProperties: false,
                         },
                         {
                           type: "object",
@@ -245,6 +250,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                     exact: { type: "boolean" },
                                   },
                                   required: ["role"],
+                                  additionalProperties: false,
                                 },
                                 text: { type: "string", minLength: 1 },
                                 css: { type: "string", minLength: 1 },
@@ -255,6 +261,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                   maximum: 9007199254740991,
                                 },
                               },
+                              additionalProperties: false,
                               anyOf: [
                                 { required: ["role"] },
                                 { required: ["text"] },
@@ -265,6 +272,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                             text: { type: "string", maxLength: 5000 },
                           },
                           required: ["kind", "target", "text"],
+                          additionalProperties: false,
                         },
                         {
                           type: "object",
@@ -273,6 +281,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                             key: { type: "string", minLength: 1 },
                           },
                           required: ["kind", "key"],
+                          additionalProperties: false,
                         },
                         {
                           type: "object",
@@ -286,6 +295,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                             },
                           },
                           required: ["kind", "direction"],
+                          additionalProperties: false,
                         },
                         {
                           type: "object",
@@ -298,11 +308,13 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                             },
                           },
                           required: ["kind", "ms"],
+                          additionalProperties: false,
                         },
                       ],
                     },
                   },
                   required: ["id", "kind", "toolName", "action"],
+                  additionalProperties: false,
                 },
                 {
                   type: "object",
@@ -325,6 +337,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                 },
                               },
                               required: ["kind", "toolName", "text"],
+                              additionalProperties: false,
                             },
                             {
                               type: "object",
@@ -345,6 +358,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                         exact: { type: "boolean" },
                                       },
                                       required: ["role"],
+                                      additionalProperties: false,
                                     },
                                     text: { type: "string", minLength: 1 },
                                     css: { type: "string", minLength: 1 },
@@ -355,6 +369,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                       maximum: 9007199254740991,
                                     },
                                   },
+                                  additionalProperties: false,
                                   anyOf: [
                                     { required: ["role"] },
                                     { required: ["text"] },
@@ -364,6 +379,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                 },
                               },
                               required: ["kind", "toolName", "target"],
+                              additionalProperties: false,
                             },
                             {
                               type: "object",
@@ -384,6 +400,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                         exact: { type: "boolean" },
                                       },
                                       required: ["role"],
+                                      additionalProperties: false,
                                     },
                                     text: { type: "string", minLength: 1 },
                                     css: { type: "string", minLength: 1 },
@@ -394,6 +411,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                       maximum: 9007199254740991,
                                     },
                                   },
+                                  additionalProperties: false,
                                   anyOf: [
                                     { required: ["role"] },
                                     { required: ["text"] },
@@ -403,6 +421,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                 },
                               },
                               required: ["kind", "toolName", "target"],
+                              additionalProperties: false,
                             },
                             {
                               type: "object",
@@ -420,6 +439,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                         exact: { type: "boolean" },
                                       },
                                       required: ["role"],
+                                      additionalProperties: false,
                                     },
                                     text: { type: "string", minLength: 1 },
                                     css: { type: "string", minLength: 1 },
@@ -430,6 +450,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                       maximum: 9007199254740991,
                                     },
                                   },
+                                  additionalProperties: false,
                                   anyOf: [
                                     { required: ["role"] },
                                     { required: ["text"] },
@@ -445,6 +466,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                 "target",
                                 "equals",
                               ],
+                              additionalProperties: false,
                             },
                             {
                               type: "object",
@@ -460,6 +482,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                                 },
                               },
                               required: ["kind", "toolName", "calledToolName"],
+                              additionalProperties: false,
                             },
                           ],
                         },
@@ -640,6 +663,7 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
                     },
                   },
                   required: ["id", "kind", "assertion"],
+                  additionalProperties: false,
                 },
               ],
             },

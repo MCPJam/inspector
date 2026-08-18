@@ -57,7 +57,7 @@ overrides, and an optional `import` record.
 Three properties are load-bearing:
 
 - **Reserved values are validation ERRORS, never accepted-and-ignored.** `mode:
-  "serverContract"`, `reportingMode: "restricted" | "summary"` and
+"serverContract"`, `reportingMode: "restricted" | "summary"` and
   `captureLevel: "metadataOnly" | "none"` name capabilities that do not exist
   yet. A file asking for reduced capture and getting full capture would be a
   privacy failure with a paper trail claiming otherwise, so each is a `z.literal`
@@ -65,16 +65,18 @@ Three properties are load-bearing:
   Schema emits `const`, rejecting them structurally too.
 - **No `.default()` anywhere.** An omitted field stays omitted, so a parsed file
   round-trips byte-stably through canonical JSON and the diff of an unchanged
-  suite is empty. Default *semantics* are documented in JSDoc beside each field
+  suite is empty. Default _semantics_ are documented in JSDoc beside each field
   (`validity.minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1) and applied by
   a loader, not materialized here.
-- **Every object the file declares is `.strict()`.** An importer that invents or
-  mis-maps a suite-level field fails loudly instead of having it dropped on the
-  floor — and it matches Convex `v.object`, which rejects unknown fields. The
-  reused step and predicate schemas are the stated exception: they are the
-  shared authoring union, they strip unknown keys today, and making them strict
-  is a semantic change to a cross-repo mirrored schema rather than something a
-  new file format should do as a side effect.
+- **Every object the file declares is `.strict()`, and so is every object the
+  step union declares.** An importer that invents or mis-maps a field fails
+  loudly instead of having it dropped on the floor — and it matches Convex
+  `v.object`, which rejects unknown fields. See the breaking note below on why
+  the step union closed too. Two reused things stay open on purpose: a tool
+  call's own `arguments` object, whose keys belong to the server's input schema
+  rather than to this contract, and `predicateSchema`, a separate contract
+  module with its own mirror, its own fixtures and many more authoring
+  surfaces.
 
 `schemaVersion` is `const "1"`: additive optional fields stay within `"1"`, a
 breaking revision becomes `"2"`, and a v1 validator handed a `"2"` file says the
@@ -108,6 +110,55 @@ in the inspector app, which the SDK cannot import, so a suite-file schema in the
 SDK would have needed a hand-mirrored second copy. There is still exactly one
 definition; the inspector re-exports it and a test asserts referential identity
 so a copy can never quietly replace the re-export.
+
+## BREAKING: the step union rejects unknown fields
+
+`promptStepSchema`, `toolCallStepSchema`, `interactStepSchema`,
+`assertStepSchema`, `elementLocatorSchema`, every `interactActionSchema` member
+and every `widgetAssertionSchema` member are now `.strict()`. A key none of them
+declares is an error rather than a silently stripped field.
+
+The asymmetry this removes was not cosmetic. The Convex mirror of this union is
+built from `v.object`, which has always rejected unknown fields, so a permissive
+schema here meant the same step payload was quietly trimmed by one validator and
+refused by the other — a disagreement that only surfaced at ingest, far from the
+code that wrote the step. Step level is also exactly where a mis-mapped import
+field lands: an agent converting an upstream suite gets step fields wrong more
+often than top-level ones, and "succeeded, dropped half of it" is the failure
+the closed-schema rule exists to prevent.
+
+Two things stay open, deliberately:
+
+- `toolCallStep.arguments` — the tool's own argument object. Its keys come from
+  the server's input schema, not from this contract.
+- A `Predicate` inside an `assert` step. That union is a separate contract
+  module (`@mcpjam/sdk/predicates`) with its own Convex mirror, its own parity
+  fixtures and many more authoring surfaces (swarm rubrics, the Checks panel,
+  suite defaults). Closing it is a change made there, with its own consumer
+  audit.
+
+The generated JSON Schema follows: step objects now carry
+`additionalProperties: false` because that is the validator's real behaviour,
+not an artifact of the output projection.
+
+## Changed: the missing-`id` error suggests your `externalCaseId`
+
+An `EvalTest` that already declares `externalCaseId` and is missing `id` is now
+told to reuse that value verbatim rather than to mint a fresh one:
+
+```
+EvalTest "refunds a duplicate charge" has no `id`. … This test already declares
+`externalCaseId`, which is the key its hosted history is joined on, so reuse it
+verbatim: id: "case_123"
+```
+
+`id := externalCaseId` is the migration rule for existing external-id users. The
+two are one identity, and a backend that accepts both requires them to agree —
+so minting a fresh id beside an existing `externalCaseId` is a conflict by
+construction, and the old suggestion walked people straight into it. Mint-fresh
+is still the suggestion when there is no `externalCaseId`, and so is it when the
+`externalCaseId` in hand falls outside the opaque-id charset (suggesting a value
+the next line rejects would be worse than suggesting a new one).
 
 ## New: the user-value chain vocabulary
 

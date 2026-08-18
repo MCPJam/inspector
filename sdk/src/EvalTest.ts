@@ -82,10 +82,28 @@ function assertLocallyEvaluablePredicates(
 /**
  * An id to SUGGEST in the missing-`id` error.
  *
- * Minting can fail in a runtime with no CSPRNG, and an error about a missing
- * id must never be replaced by a secondary error about generating an example.
+ * **A config that already carries `externalCaseId` is suggested THAT value**,
+ * not a fresh mint. `externalCaseId` is the hosted join key: the backend keys
+ * such a case as `external:<id>`, and the declared id is required to agree with
+ * it (a `caseId` that differs from `externalCaseId` is a hard error at ingest,
+ * because two identity claims on one result is not something to pick a winner
+ * between). So `id := externalCaseId` is THE migration rule for existing
+ * external-id users — it lands the declared id in the same join the case
+ * already lives under, and its hosted history continues. Suggesting a fresh
+ * mint here would walk people straight into that conflict error.
+ *
+ * Minting is still the suggestion when there is no `externalCaseId`, and
+ * minting can fail in a runtime with no CSPRNG — an error about a missing id
+ * must never be replaced by a secondary error about generating an example.
  */
-function suggestedCaseId(): string {
+function suggestedCaseId(config: EvalTestConfig): string {
+  const external = config.externalCaseId?.trim();
+  // Only when it can BE an id: `externalCaseId` was never charset-bound, and
+  // suggesting a value the very next line rejects is worse than suggesting a
+  // fresh one.
+  if (external && opaqueIdSchema.safeParse(external).success) {
+    return external;
+  }
   try {
     return mintCaseId();
   } catch {
@@ -105,16 +123,25 @@ function suggestedCaseId(): string {
 function assertDeclaredCaseId(config: EvalTestConfig): void {
   const label = config.name ? `"${config.name}"` : "(unnamed)";
   if (config.id === undefined || config.id === null || config.id === "") {
+    const suggestion = suggestedCaseId(config);
+    const reusesExternal = suggestion === config.externalCaseId?.trim();
     throw new Error(
       `EvalTest ${label} has no \`id\`. A case's identity is declared, not ` +
         `derived from its name — otherwise renaming the test forks its hosted ` +
-        `history. Mint one once and commit it: id: "${suggestedCaseId()}"`
+        `history. ` +
+        (reusesExternal
+          ? `This test already declares \`externalCaseId\`, which is the key its ` +
+            `hosted history is joined on, so reuse it verbatim: `
+          : `Mint one once and commit it: `) +
+        `id: "${suggestion}"`
     );
   }
   const parsed = opaqueIdSchema.safeParse(config.id);
   if (!parsed.success) {
     throw new Error(
-      `EvalTest ${label} has an invalid \`id\` (${JSON.stringify(config.id)}): ` +
+      `EvalTest ${label} has an invalid \`id\` (${JSON.stringify(
+        config.id
+      )}): ` +
         `${parsed.error.issues.map((issue) => issue.message).join("; ")}. ` +
         `Ids travel in URLs, file paths and CLI arguments.`
     );
@@ -875,7 +902,9 @@ export class EvalTest {
   private async scoreIteration(params: {
     promptResults: PromptResult[];
     tokens: { input: number; output: number; total: number };
-    legacy: { kind: "returned"; passed: boolean } | { kind: "threw"; error: unknown };
+    legacy:
+      | { kind: "returned"; passed: boolean }
+      | { kind: "threw"; error: unknown };
     evaluationConfig: EvaluationConfigSnapshot;
     options: EvalTestRunOptions;
     skipNonDeterministic?: string;
@@ -885,7 +914,10 @@ export class EvalTest {
     toolMatch: EvalToolCallMatchResult | undefined;
     passed: boolean;
   }> {
-    const context = this.buildScorerContext(params.promptResults, params.tokens);
+    const context = this.buildScorerContext(
+      params.promptResults,
+      params.tokens
+    );
     const definitions = params.evaluationConfig.definitions;
     const byId = new Map(
       definitions.map((definition) => [definition.scorerId, definition])
@@ -904,7 +936,9 @@ export class EvalTest {
     const scores: ScoreResult[] = [];
 
     // 1. test()
-    const legacyDefinition = definitionFor(legacyTestScoreDefinition().scorerId);
+    const legacyDefinition = definitionFor(
+      legacyTestScoreDefinition().scorerId
+    );
     scores.push(
       params.legacy.kind === "returned"
         ? fromLegacyTestOutcome(legacyDefinition, params.legacy.passed)
