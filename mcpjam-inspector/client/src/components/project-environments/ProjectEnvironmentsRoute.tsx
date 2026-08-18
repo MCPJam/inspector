@@ -33,7 +33,7 @@ import {
 import { ProjectEnvironmentEditor } from "./ProjectEnvironmentEditor";
 import { EnvironmentCanvasPanel } from "./EnvironmentCanvasPanel";
 import { useProjectEnvironmentConsumers } from "./use-project-environment-consumers";
-import { useEnvironmentChatbox } from "@/hooks/useChatboxes";
+import { useEnvironmentScenario } from "@/hooks/useScenarios";
 import {
   takeEnvironmentDraftSeed,
   type EnvironmentDraftSeed,
@@ -496,13 +496,13 @@ function EnvironmentDetail({
   const restoreEnvironment = useRestoreProjectEnvironment();
   const [confirmingArchive, setConfirmingArchive] = useState(false);
   const [busy, setBusy] = useState(false);
-  const { suiteCount, journeyCount, chatboxCount } =
+  const { suiteCount, journeyCount, scenarioCount } =
     useProjectEnvironmentConsumers(
       projectId,
       confirmingArchive ? environment.environmentId : null
     );
-  // Reads the shared chatbox-list subscription, so this costs no extra query.
-  const { chatbox: publishedScenario } = useEnvironmentChatbox({
+  // Reads the shared scenario-list subscription, so this costs no extra query.
+  const { scenario: publishedScenario } = useEnvironmentScenario({
     isAuthenticated,
     projectId,
     environmentId: environment.environmentId,
@@ -515,23 +515,23 @@ function EnvironmentDetail({
   // stays hedged ("may be incomplete"). Wait for BOTH to settle before
   // reporting, so a half-loaded state can't flash a misleading zero.
   const referenceSummary =
-    suiteCount === null || journeyCount === null || chatboxCount === null
+    suiteCount === null || journeyCount === null || scenarioCount === null
       ? "Checking references…"
       : (() => {
           const suitePart = `${suiteCount} suite${suiteCount === 1 ? "" : "s"}`;
           const journeyPart = `${journeyCount} journey${
             journeyCount === 1 ? "" : "s"
           }`;
-          // The published chatbox is called out separately: unlike suites and
-          // journeys (which fail at their next launch), a chatbox share link
+          // The published scenario is called out separately: unlike suites and
+          // journeys (which fail at their next launch), a scenario share link
           // is live for outsiders and starts failing the moment this archives.
-          const chatboxPart =
-            chatboxCount > 0
+          const scenarioPart =
+            scenarioCount > 0
               ? " Its published tester link stops working immediately."
               : "";
           return suiteCount + journeyCount > 0
-            ? `${suitePart} and ${journeyPart} reference it (count may be incomplete).${chatboxPart}`
-            : `No referencing suites or journeys found (count may be incomplete).${chatboxPart}`;
+            ? `${suitePart} and ${journeyPart} reference it (count may be incomplete).${scenarioPart}`
+            : `No referencing suites or journeys found (count may be incomplete).${scenarioPart}`;
         })();
 
   const onArchive = async () => {
@@ -595,7 +595,7 @@ function EnvironmentDetail({
                 // this is only the pointer back to it, so someone editing an
                 // environment can see it has real testers behind a live link.
                 <Link
-                  to={buildUserTestingScenarioPath(publishedScenario.chatboxId)}
+                  to={buildUserTestingScenarioPath(publishedScenario.scenarioId)}
                   data-testid="environment-published-scenario"
                   className="flex items-center gap-1.5 text-xs text-primary hover:underline"
                 >

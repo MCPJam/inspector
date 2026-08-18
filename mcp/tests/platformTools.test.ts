@@ -85,8 +85,8 @@ const WIDGET_TOOLS: Record<string, keyof typeof PLATFORM_WIDGET_RESOURCE_URIS> =
     list_eval_suite_runs: "eval_suite_runs",
     get_eval_run: "eval_run",
     list_eval_run_iterations: "eval_run_iterations",
-    list_chatboxes: "chatboxes",
-    get_chatbox: "chatbox",
+    list_scenarios: "scenarios",
+    get_scenario: "scenario",
   };
 
 const PLAIN_TOOLS = [
@@ -316,8 +316,8 @@ describe("platform tool registration", () => {
       "resolve_project_environment",
       "list_project_plugins",
       "get_plugin_version",
-      "list_chatboxes",
-      "get_chatbox",
+      "list_scenarios",
+      "get_scenario",
       "list_chat_sessions",
       "search_sessions",
       "get_capabilities",
@@ -534,10 +534,10 @@ describe("widget payload tagging", () => {
   it("tags the widget callback's payload in both channels and leaves the plain callback untagged", async () => {
     stubPlatformFetch({
       "/projects": PROJECTS_PAGE,
-      "/chatboxes": {
+      "/scenarios": {
         items: [
           {
-            id: "chatbox-1",
+            id: "scenario-1",
             name: "Support bot",
             serverCount: 0,
             serverNames: [],
@@ -551,13 +551,13 @@ describe("widget payload tagging", () => {
       fakeToolContext({ bearerToken: "jwt" })
     );
     const registration = registrations.find(
-      (candidate) => candidate.name === "list_chatboxes"
+      (candidate) => candidate.name === "list_scenarios"
     )!;
 
     const tagged = (await registration.ui!.callback!({})) as ToolResult;
     expect(tagged.isError).toBeUndefined();
-    expect(tagged.structuredContent?.widget).toBe("chatboxes");
-    expect(JSON.parse(tagged.content[0]!.text).widget).toBe("chatboxes");
+    expect(tagged.structuredContent?.widget).toBe("scenarios");
+    expect(JSON.parse(tagged.content[0]!.text).widget).toBe("scenarios");
 
     const plain = (await registration.callback({})) as ToolResult;
     expect(plain.isError).toBeUndefined();

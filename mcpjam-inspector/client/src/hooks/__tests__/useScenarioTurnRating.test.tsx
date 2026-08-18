@@ -1,0 +1,1027 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
+import { act, renderHook } from "@testing-library/react";
+import { ConvexError } from "convex/values";
+
+import { useScenarioTurnRating } from "../useScenarioTurnRating";
+
+const mockSubmitScore = vi.fn();
+const mockUseQuery = vi.fn();
+
+vi.mock("convex/react", () => ({
+  useMutation: (name: string) => {
+    if (name === "sessionScores:submitScore") return mockSubmitScore;
+    throw new Error(`Unexpected mutation: ${name}`);
+  },
+  useQuery: (name: string, args: unknown) => mockUseQuery(name, args),
+}));
+
+const CHAT_SESSION_ID = "chat-session-1";
+const TURN_ID = "turn-abc";
+
+async function flushMicrotasks() {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  });
+}
+
+function staleError() {
+  return new ConvexError({
+    code: "scenario_access_stale",
+    message: "stale",
+    currentAccessVersion: 2,
+  });
+}
+
+describe("useScenarioTurnRating", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockUseQuery.mockReturnValue(undefined);
+    mockSubmitScore.mockResolvedValue({ status: "ok" });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("submits without a promptIndex — the server derives it from the turn trace", async () => {
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 4,
+      });
+    });
+    await flushMicrotasks();
+
+    expect(mockSubmitScore).toHaveBeenCalledWith({
+      scenarioId: "cbx_1",
+      accessVersion: 1,
+      chatSessionId: CHAT_SESSION_ID,
+      turnId: TURN_ID,
+      key: "user_rating",
+      value: 4,
+    });
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 4,
+      status: "submitted",
+    });
+  });
+
+  it("does not report submitted on not_ready", async () => {
+    // `not_ready` means the ingest race hasn't resolved. Rendering "submitted"
+    // would tell a tester their words were saved when no row exists.
+    vi.useFakeTimers();
+    mockSubmitScore.mockResolvedValue({ status: "not_ready" });
+
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 2,
+      });
+    });
+    await flushMicrotasks();
+
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "pending"
+    );
+  });
+
+  it("retries not_ready with backoff and settles once the turn lands", async () => {
+    vi.useFakeTimers();
+    mockSubmitScore
+      .mockResolvedValueOnce({ status: "not_ready" })
+      .mockResolvedValue({ status: "ok" });
+
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 5,
+      });
+    });
+    await flushMicrotasks();
+    expect(mockSubmitScore).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    await flushMicrotasks();
+
+    expect(mockSubmitScore).toHaveBeenCalledTimes(2);
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "submitted"
+    );
+  });
+
+  it("a superseded not_ready retry never overwrites a newer rating", async () => {
+    // The exact ingest-race window: rate 3★ right as the turn ends →
+    // not_ready arms a retry for the OLD value; the tester revises to 5★,
+    // which lands. The armed retry must self-cancel — before the generation
+    // guard it would re-enter and quietly persist 3★ over the 5★.
+    vi.useFakeTimers();
+    mockSubmitScore
+      .mockResolvedValueOnce({ status: "not_ready" })
+      .mockResolvedValue({ status: "ok" });
+
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 3,
+      });
+    });
+    await flushMicrotasks();
+    expect(mockSubmitScore).toHaveBeenCalledTimes(1);
+
+    // Revision lands while the 3★ retry timer is still armed.
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 5,
+      });
+    });
+    await flushMicrotasks();
+    expect(mockSubmitScore).toHaveBeenCalledTimes(2);
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 5,
+      status: "submitted",
+    });
+
+    // Burn through every backoff tier: the superseded retry must neither hit
+    // the server nor touch the key's state.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    await flushMicrotasks();
+
+    expect(mockSubmitScore).toHaveBeenCalledTimes(2);
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 5,
+      status: "submitted",
+    });
+    const values = mockSubmitScore.mock.calls.map(
+      (call) => (call[0] as { value: number }).value
+    );
+    expect(values).toEqual([3, 5]);
+  });
+
+  it("a fresh click stands down a superseded stale-queue entry", async () => {
+    // Rating A hits stale access and queues; before the redeem lands the
+    // tester revises and the new submission succeeds. The queued A is now
+    // superseded — the stale backoff must stop re-asking for a redeem the
+    // newer submission proved unnecessary, not keep firing over a queue
+    // entry whose generation guard would discard it anyway.
+    vi.useFakeTimers();
+    mockSubmitScore
+      .mockRejectedValueOnce(staleError())
+      .mockResolvedValue({ status: "ok" });
+    const onStaleHostedAccess = vi.fn();
+
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+        onStaleHostedAccess,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 2,
+      });
+    });
+    await flushMicrotasks();
+    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 5,
+      });
+    });
+    await flushMicrotasks();
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 5,
+      status: "submitted",
+    });
+
+    // Burn every stale-backoff tier: the timer must find an empty queue and
+    // stand down instead of re-asking.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(120_000);
+    });
+    await flushMicrotasks();
+
+    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 5,
+      status: "submitted",
+    });
+  });
+
+  it("queues on stale access, asks for a re-redeem, and replays on the new version", async () => {
+    mockSubmitScore.mockRejectedValueOnce(staleError());
+    const onStaleHostedAccess = vi.fn();
+
+    const { result, rerender } = renderHook(
+      (props: { accessVersion: number }) =>
+        useScenarioTurnRating({
+          enabled: true,
+          scenarioId: "cbx_1",
+          accessVersion: props.accessVersion,
+          onStaleHostedAccess,
+        }),
+      { initialProps: { accessVersion: 1 } }
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 1,
+      });
+    });
+    await flushMicrotasks();
+
+    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+    // Still in flight, not failed — the rating is queued, not lost.
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "pending"
+    );
+    expect(mockSubmitScore).toHaveBeenCalledTimes(1);
+
+    mockSubmitScore.mockResolvedValue({ status: "ok" });
+    rerender({ accessVersion: 2 });
+    await flushMicrotasks();
+
+    expect(mockSubmitScore).toHaveBeenCalledTimes(2);
+    expect(mockSubmitScore).toHaveBeenLastCalledWith(
+      expect.objectContaining({ accessVersion: 2, value: 1 })
+    );
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "submitted"
+    );
+  });
+
+  it("reports an error for a rejection that is not a stale-access one", async () => {
+    mockSubmitScore.mockRejectedValue(
+      new ConvexError({ code: "score_value_out_of_range", message: "nope" })
+    );
+
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 9,
+      });
+    });
+    await flushMicrotasks();
+
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "error"
+    );
+  });
+
+  it("rehydrates stored stars once the session is observed", async () => {
+    mockUseQuery.mockReturnValue([
+      { turnId: TURN_ID, value: 3, comment: "meh" },
+    ]);
+
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+      })
+    );
+
+    // The query is skipped until the widget reports which session is on
+    // screen — the id is minted inside ChatTabV2, not passed down.
+    expect(mockUseQuery).toHaveBeenLastCalledWith(
+      "sessionScores:listMySessionScores",
+      "skip"
+    );
+
+    act(() => {
+      result.current.observeChatSession(CHAT_SESSION_ID);
+    });
+
+    expect(mockUseQuery).toHaveBeenLastCalledWith(
+      "sessionScores:listMySessionScores",
+      { scenarioId: "cbx_1", accessVersion: 1, chatSessionId: CHAT_SESSION_ID }
+    );
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toEqual({
+      value: 3,
+      comment: "meh",
+      status: "submitted",
+    });
+  });
+
+  it("gives up visibly after the not_ready retry budget is spent", async () => {
+    // The bound exists so a turn that never lands does not spin forever. The
+    // terminal state has to be `error` — `pending` would keep claiming the
+    // rating is in flight.
+    vi.useFakeTimers();
+    mockSubmitScore.mockResolvedValue({ status: "not_ready" });
+
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 3,
+      });
+    });
+    await flushMicrotasks();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+    await flushMicrotasks();
+
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "error"
+    );
+    const callsAtGiveUp = mockSubmitScore.mock.calls.length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+    expect(mockSubmitScore).toHaveBeenCalledTimes(callsAtGiveUp);
+  });
+
+  it("stays inert while the hosted identity has not resolved", async () => {
+    // `enabled` is the config gate; a missing scenarioId is the not-yet-redeemed
+    // gate. Both must keep the query skipped and the mutation unsent.
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({ enabled: true, scenarioId: undefined })
+    );
+
+    act(() => {
+      result.current.observeChatSession(CHAT_SESSION_ID);
+    });
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 4,
+      });
+    });
+    await flushMicrotasks();
+
+    expect(mockSubmitScore).not.toHaveBeenCalled();
+    expect(mockUseQuery).toHaveBeenLastCalledWith(
+      "sessionScores:listMySessionScores",
+      "skip"
+    );
+  });
+
+  it("replays when identity returns on the SAME accessVersion", async () => {
+    // A blip where scenarioId goes missing and comes back unchanged would never
+    // re-run a replay effect keyed only on accessVersion — the rating would sit
+    // in `pending` forever.
+    mockSubmitScore.mockRejectedValueOnce(staleError());
+
+    const { result, rerender } = renderHook(
+      (props: { scenarioId: string | undefined }) =>
+        useScenarioTurnRating({
+          enabled: true,
+          scenarioId: props.scenarioId,
+          accessVersion: 1,
+          onStaleHostedAccess: () => {},
+        }),
+      { initialProps: { scenarioId: "cbx_1" as string | undefined } }
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 2,
+      });
+    });
+    await flushMicrotasks();
+    expect(mockSubmitScore).toHaveBeenCalledTimes(1);
+
+    mockSubmitScore.mockResolvedValue({ status: "ok" });
+    // Identity drops and returns — accessVersion never moves.
+    rerender({ scenarioId: undefined });
+    await flushMicrotasks();
+    rerender({ scenarioId: "cbx_1" });
+    await flushMicrotasks();
+
+    expect(mockSubmitScore).toHaveBeenCalledTimes(2);
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "submitted"
+    );
+  });
+
+  it("clears state for a retry dropped by a scenario switch", async () => {
+    // Dropping the retry is right — the rating is for a conversation no longer
+    // on screen — but leaving the key on `pending` would show a permanent
+    // spinner if the tester navigated back.
+    vi.useFakeTimers();
+    mockSubmitScore.mockResolvedValue({ status: "not_ready" });
+
+    const { result, rerender } = renderHook(
+      (props: { scenarioId: string }) =>
+        useScenarioTurnRating({
+          enabled: true,
+          scenarioId: props.scenarioId,
+          accessVersion: 1,
+        }),
+      { initialProps: { scenarioId: "cbx_1" } }
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 3,
+      });
+    });
+    await flushMicrotasks();
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "pending"
+    );
+
+    rerender({ scenarioId: "cbx_2" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    await flushMicrotasks();
+
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "idle"
+    );
+  });
+
+  it("keeps a rehydrated comment when the first action is a star change", async () => {
+    // The optimistic map is empty on that first click, so the merge has to
+    // reach past it to what the server already reported.
+    mockUseQuery.mockReturnValue([
+      { turnId: TURN_ID, value: 2, comment: "lost my order" },
+    ]);
+
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+      })
+    );
+
+    act(() => {
+      result.current.observeChatSession(CHAT_SESSION_ID);
+    });
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 5,
+      });
+    });
+    await flushMicrotasks();
+
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 5,
+      comment: "lost my order",
+    });
+  });
+
+  it("survives StrictMode's mount → cleanup → mount cycle", async () => {
+    // A cleanup-only `unmountedRef` write latches true on the synthetic
+    // teardown and never clears, silently disabling every unmount guard — in
+    // development only, which is the worst place for it to hide.
+    vi.useFakeTimers();
+    mockSubmitScore.mockRejectedValue(staleError());
+    const onStaleHostedAccess = vi.fn();
+
+    const { result } = renderHook(
+      () =>
+        useScenarioTurnRating({
+          enabled: true,
+          scenarioId: "cbx_1",
+          accessVersion: 1,
+          onStaleHostedAccess,
+        }),
+      { wrapper: StrictMode }
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 1,
+      });
+    });
+    await flushMicrotasks();
+
+    // Recovery still runs: the direct ask fires, and the backoff re-arms.
+    expect(onStaleHostedAccess).toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    await flushMicrotasks();
+    expect(onStaleHostedAccess.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it("does not re-ask for a redeem after unmount", async () => {
+    // A mutation can reject after the page is gone; the rejection handler must
+    // not re-arm timers or ask for a redeem for a chat nobody is looking at.
+    vi.useFakeTimers();
+    let rejectWrite: ((reason: unknown) => void) | undefined;
+    mockSubmitScore.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectWrite = reject;
+        })
+    );
+    const onStaleHostedAccess = vi.fn();
+
+    const { result, unmount } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+        onStaleHostedAccess,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 1,
+      });
+    });
+    await flushMicrotasks();
+
+    unmount();
+    rejectWrite?.(staleError());
+    await flushMicrotasks();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+
+    // Zero, not "at most one": the direct ask in the catch block is just as
+    // wrong as a re-armed timer once the page is gone.
+    expect(onStaleHostedAccess).not.toHaveBeenCalled();
+  });
+
+  it("drops a queued retry once the active scenario changes", async () => {
+    // A retry that fires after a scenario switch would submit the old session
+    // and turn under the new scenario's credentials. The server rejects that,
+    // but spending a round-trip and surfacing an error for a rating no longer
+    // on screen is worse than dropping it.
+    vi.useFakeTimers();
+    mockSubmitScore.mockResolvedValue({ status: "not_ready" });
+
+    const { result, rerender } = renderHook(
+      (props: { scenarioId: string }) =>
+        useScenarioTurnRating({
+          enabled: true,
+          scenarioId: props.scenarioId,
+          accessVersion: 1,
+        }),
+      { initialProps: { scenarioId: "cbx_1" } }
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 3,
+      });
+    });
+    await flushMicrotasks();
+    expect(mockSubmitScore).toHaveBeenCalledTimes(1);
+
+    rerender({ scenarioId: "cbx_2" });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    await flushMicrotasks();
+
+    // The retry fired, saw the identity move, and stopped.
+    expect(mockSubmitScore).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-asks for a redeem on a backoff, then gives up visibly", async () => {
+    // If the host's redeem never succeeds, `accessVersion` never advances and
+    // the replay effect never fires — the rating would sit in `pending`
+    // forever. An honest dead end beats a silent hang.
+    vi.useFakeTimers();
+    mockSubmitScore.mockRejectedValue(staleError());
+    const onStaleHostedAccess = vi.fn();
+
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+        onStaleHostedAccess,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 1,
+      });
+    });
+    await flushMicrotasks();
+    expect(onStaleHostedAccess).toHaveBeenCalledTimes(1);
+
+    // Redeem keeps failing: the hook keeps asking on a growing backoff.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000);
+    });
+    await flushMicrotasks();
+    expect(onStaleHostedAccess.mock.calls.length).toBeGreaterThan(1);
+
+    // Eventually it stops asking and says so.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60000);
+    });
+    await flushMicrotasks();
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID).status).toBe(
+      "error"
+    );
+  });
+
+  it("keeps a turn's comment when only the stars are resubmitted", async () => {
+    // `comment: undefined` means "leave the stored comment alone" to the
+    // mutation; the optimistic state has to say the same thing or the widget
+    // blanks an annotation the server still holds.
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({
+        enabled: true,
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+      })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 2,
+        comment: "lost my order",
+      });
+    });
+    await flushMicrotasks();
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 4,
+      });
+    });
+    await flushMicrotasks();
+
+    expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+      value: 4,
+      comment: "lost my order",
+    });
+  });
+
+  it("does nothing when the surface is disabled", async () => {
+    const { result } = renderHook(() =>
+      useScenarioTurnRating({ enabled: false, scenarioId: "cbx_1" })
+    );
+
+    act(() => {
+      result.current.submit({
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        value: 4,
+      });
+    });
+    await flushMicrotasks();
+
+    expect(mockSubmitScore).not.toHaveBeenCalled();
+  });
+
+  describe("score key follows the scenario's widget style", () => {
+    it("writes user_thumb when the scenario picked thumbs", async () => {
+      const { result } = renderHook(() =>
+        useScenarioTurnRating({
+          enabled: true,
+          scenarioId: "cbx_1",
+          accessVersion: 1,
+          scoreKey: "user_thumb",
+        })
+      );
+
+      act(() => {
+        result.current.submit({
+          chatSessionId: CHAT_SESSION_ID,
+          turnId: TURN_ID,
+          value: 0,
+        });
+      });
+      await flushMicrotasks();
+
+      expect(mockSubmitScore).toHaveBeenCalledWith({
+        scenarioId: "cbx_1",
+        accessVersion: 1,
+        chatSessionId: CHAT_SESSION_ID,
+        turnId: TURN_ID,
+        key: "user_thumb",
+        value: 0,
+      });
+      // A thumbs-down is a rated turn, not an unrated one.
+      expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+        value: 0,
+        status: "submitted",
+      });
+    });
+
+    it("defaults to user_rating when no style was configured", async () => {
+      const { result } = renderHook(() =>
+        useScenarioTurnRating({
+          enabled: true,
+          scenarioId: "cbx_1",
+          accessVersion: 1,
+        })
+      );
+
+      act(() => {
+        result.current.submit({
+          chatSessionId: CHAT_SESSION_ID,
+          turnId: TURN_ID,
+          value: 4,
+        });
+      });
+      await flushMicrotasks();
+
+      expect(mockSubmitScore).toHaveBeenCalledWith(
+        expect.objectContaining({ key: "user_rating" })
+      );
+    });
+
+    it("a not_ready retry resubmits under the key it was created with", async () => {
+      // The retry fires long after the click. If it read the key live and the
+      // scenario had been switched to stars meanwhile, a thumbs-down's `0`
+      // would be resubmitted as a star value and rejected out of range —
+      // losing the tester's judgement to an error they cannot act on.
+      vi.useFakeTimers();
+      mockSubmitScore.mockResolvedValue({ status: "not_ready" });
+
+      const { result, rerender } = renderHook(
+        (props: { scoreKey: "user_rating" | "user_thumb" }) =>
+          useScenarioTurnRating({
+            enabled: true,
+            scenarioId: "cbx_1",
+            accessVersion: 1,
+            scoreKey: props.scoreKey,
+          }),
+        {
+          initialProps: {
+            scoreKey: "user_thumb",
+          } as { scoreKey: "user_rating" | "user_thumb" },
+        }
+      );
+
+      act(() => {
+        result.current.submit({
+          chatSessionId: CHAT_SESSION_ID,
+          turnId: TURN_ID,
+          value: 0,
+        });
+      });
+      await flushMicrotasks();
+
+      // The scenario's style changes while the retry is armed.
+      rerender({ scoreKey: "user_rating" });
+      mockSubmitScore.mockResolvedValue({ status: "ok" });
+      await act(async () => {
+        vi.advanceTimersByTime(400);
+        await Promise.resolve();
+      });
+      await flushMicrotasks();
+
+      for (const call of mockSubmitScore.mock.calls) {
+        expect(call[0]).toMatchObject({ key: "user_thumb", value: 0 });
+      }
+    });
+
+    it("rehydration ignores rows written under the other style", async () => {
+      // `listMySessionScores` returns every key it holds. Keyed by turn alone,
+      // a leftover star row would land in the thumbs widget's slot and
+      // rehydrate as "value 4", which thumbs cannot render honestly.
+      mockUseQuery.mockReturnValue([
+        { key: "user_rating", turnId: TURN_ID, value: 4, comment: "fine" },
+        { key: "user_thumb", turnId: "turn-other", value: 0 },
+      ]);
+
+      const { result } = renderHook(() =>
+        useScenarioTurnRating({
+          enabled: true,
+          scenarioId: "cbx_1",
+          accessVersion: 1,
+          scoreKey: "user_thumb",
+        })
+      );
+
+      act(() => {
+        result.current.observeChatSession(CHAT_SESSION_ID);
+      });
+
+      // The star-rated turn reads as unrated in the thumbs widget — truthful:
+      // it carries no judgement in the style this scenario now asks for. The
+      // row itself survives and still counts in the PM-facing rollup.
+      expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toEqual({
+        status: "idle",
+      });
+      expect(
+        result.current.getState(CHAT_SESSION_ID, "turn-other")
+      ).toMatchObject({ value: 0, status: "submitted" });
+    });
+
+    it("a rating submitted under the old style does not leak into the new widget", async () => {
+      // The optimistic map wins over the (key-filtered) persisted read, so it
+      // has to be namespaced by key too — otherwise a 4★ submitted this
+      // page-load rehydrates into the thumbs widget as a "submitted" rating
+      // no thumb can represent.
+      const { result, rerender } = renderHook(
+        (props: { scoreKey: "user_rating" | "user_thumb" }) =>
+          useScenarioTurnRating({
+            enabled: true,
+            scenarioId: "cbx_1",
+            accessVersion: 1,
+            scoreKey: props.scoreKey,
+          }),
+        {
+          initialProps: {
+            scoreKey: "user_rating",
+          } as { scoreKey: "user_rating" | "user_thumb" },
+        }
+      );
+
+      act(() => {
+        result.current.submit({
+          chatSessionId: CHAT_SESSION_ID,
+          turnId: TURN_ID,
+          value: 4,
+          comment: "fine",
+        });
+      });
+      await flushMicrotasks();
+      expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+        value: 4,
+        status: "submitted",
+      });
+
+      rerender({ scoreKey: "user_thumb" });
+
+      expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toEqual({
+        status: "idle",
+      });
+
+      // ...and switching back finds the star rating still there.
+      rerender({ scoreKey: "user_rating" });
+      expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+        value: 4,
+        status: "submitted",
+      });
+    });
+
+    it("a submission under the new style cannot cancel the old style's retry", async () => {
+      // Generations are per (key, session, turn). Sharing them across styles
+      // would let a stars click supersede a queued thumbs retry on the same
+      // turn — silently dropping a judgement the tester actually made.
+      vi.useFakeTimers();
+      mockSubmitScore.mockResolvedValue({ status: "not_ready" });
+
+      const { result, rerender } = renderHook(
+        (props: { scoreKey: "user_rating" | "user_thumb" }) =>
+          useScenarioTurnRating({
+            enabled: true,
+            scenarioId: "cbx_1",
+            accessVersion: 1,
+            scoreKey: props.scoreKey,
+          }),
+        {
+          initialProps: {
+            scoreKey: "user_thumb",
+          } as { scoreKey: "user_rating" | "user_thumb" },
+        }
+      );
+
+      act(() => {
+        result.current.submit({
+          chatSessionId: CHAT_SESSION_ID,
+          turnId: TURN_ID,
+          value: 0,
+        });
+      });
+      await flushMicrotasks();
+
+      // Style switches and the tester rates the same turn again, as stars.
+      rerender({ scoreKey: "user_rating" });
+      mockSubmitScore.mockResolvedValue({ status: "ok" });
+      act(() => {
+        result.current.submit({
+          chatSessionId: CHAT_SESSION_ID,
+          turnId: TURN_ID,
+          value: 5,
+        });
+      });
+      await flushMicrotasks();
+
+      // The queued thumbs retry still fires rather than being superseded.
+      mockSubmitScore.mockClear();
+      await act(async () => {
+        vi.advanceTimersByTime(400);
+        await Promise.resolve();
+      });
+      await flushMicrotasks();
+
+      expect(mockSubmitScore).toHaveBeenCalledWith(
+        expect.objectContaining({ key: "user_thumb", value: 0 })
+      );
+    });
+
+    it("a keyless rehydration row is read as stars", async () => {
+      // Rows projected by a backend that predates the key field.
+      mockUseQuery.mockReturnValue([{ turnId: TURN_ID, value: 3 }]);
+
+      const { result } = renderHook(() =>
+        useScenarioTurnRating({
+          enabled: true,
+          scenarioId: "cbx_1",
+          accessVersion: 1,
+          scoreKey: "user_rating",
+        })
+      );
+
+      act(() => {
+        result.current.observeChatSession(CHAT_SESSION_ID);
+      });
+
+      expect(result.current.getState(CHAT_SESSION_ID, TURN_ID)).toMatchObject({
+        value: 3,
+        status: "submitted",
+      });
+    });
+  });
+});

@@ -39,7 +39,7 @@ import {
 import { useSharedAppState } from "@/state/app-state-context";
 import { UI_CONTEXT_PART_TYPE } from "@/shared/ui-context";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
-import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
+import { useScenarioHostStyle } from "@/contexts/scenario-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import {
   ToolRenderOverride,
@@ -188,7 +188,7 @@ export function PartSwitch({
 
   const appState = useSharedAppState();
   const resolveHostCaps = useActiveHostCapsResolver();
-  const hostStyle = useChatboxHostStyle();
+  const hostStyle = useScenarioHostStyle();
 
   const toolInfoFromPart =
     isToolPart(part) || isDynamicTool(part)

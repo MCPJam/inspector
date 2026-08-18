@@ -22,7 +22,7 @@ export const INSIGHTS_ENVELOPE_QUERIES = {
   /** Journey run → resolved through its wave; carries `runHealth`. */
   journeyRun: "swarmWaveInsights:getJourneyRunInsightsEnvelope",
   /** Scenario → its latest frozen window. Workspace MEMBERS only. */
-  scenario: "chatboxWindowInsights:getScenarioInsightsEnvelope",
+  scenario: "scenarioWindowInsights:getScenarioInsightsEnvelope",
 } as const;
 
 export type InsightsEnvelopeStatus =

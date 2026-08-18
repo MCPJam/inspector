@@ -10,7 +10,7 @@ const {
   prepareChatV2Mock,
   handleMCPJamFreeChatModelMock,
   fetchHostRuntimeConfigMock,
-  fetchChatboxRuntimeConfigMock,
+  fetchScenarioRuntimeConfigMock,
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
   convexQueryMock,
@@ -18,7 +18,7 @@ const {
   prepareChatV2Mock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
   fetchHostRuntimeConfigMock: vi.fn(),
-  fetchChatboxRuntimeConfigMock: vi.fn(),
+  fetchScenarioRuntimeConfigMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
   convexQueryMock: vi.fn(),
@@ -79,14 +79,14 @@ vi.mock("../../../utils/host-runtime-config.js", () => ({
 }));
 
 // Spread the REAL module: this suite exercises the environment-TARGET path,
-// which never fetches a chatbox config, but chat-v2 imports several pure
+// which never fetches a scenario config, but chat-v2 imports several pure
 // readers from here. A bare factory would leave those undefined and 500 the
 // route for a reason that has nothing to do with what is under test.
-vi.mock("../../../utils/chatbox-runtime-config.js", async () => {
+vi.mock("../../../utils/scenario-runtime-config.js", async () => {
   const actual = await vi.importActual<
-    typeof import("../../../utils/chatbox-runtime-config.js")
-  >("../../../utils/chatbox-runtime-config.js");
-  return { ...actual, fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock };
+    typeof import("../../../utils/scenario-runtime-config.js")
+  >("../../../utils/scenario-runtime-config.js");
+  return { ...actual, fetchScenarioRuntimeConfig: fetchScenarioRuntimeConfigMock };
 });
 
 // The harness preflight checks server-level runtime prerequisites (broker
@@ -176,7 +176,7 @@ describe("web chat-v2 — environment execution target", () => {
       resolvedTemperature: 0.7,
     });
     fetchHostRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
-    fetchChatboxRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
     handleMCPJamFreeChatModelMock.mockImplementation(async (options: any) => {
       await options.onConversationComplete?.(
         [{ role: "user", content: "hi" }],
@@ -239,14 +239,14 @@ describe("web chat-v2 — environment execution target", () => {
     else process.env.CONVEX_URL = originalConvexUrl;
   });
 
-  it("400s chatboxId + executionTarget instead of silently picking one", async () => {
+  it("400s scenarioId + executionTarget instead of silently picking one", async () => {
     const { app, token } = createWebTestApp();
     const response = await postJson(
       app,
       "/api/web/chat-v2",
       {
         ...BASE_BODY,
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 1,
         executionTarget: { kind: "environment", environmentId: "env_1" },
       },
@@ -258,7 +258,7 @@ describe("web chat-v2 — environment execution target", () => {
     );
     // Neither resolution path may have run.
     expect(convexQueryMock).not.toHaveBeenCalled();
-    expect(fetchChatboxRuntimeConfigMock).not.toHaveBeenCalled();
+    expect(fetchScenarioRuntimeConfigMock).not.toHaveBeenCalled();
   });
 
   it("400s legacy hostId + executionTarget", async () => {

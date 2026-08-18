@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * The hosted tools/execute route's recovery-index write: when a tool call
  * creates a task on either wire, the route fires a best-effort registry
  * upsert — after the CreateTaskResult is already in hand, never awaited, and
- * never able to fail the call. A non-task result writes nothing, and chatbox
+ * never able to fail the call. A non-task result writes nothing, and scenario
  * visitors (not project members) are skipped entirely. There is deliberately
  * NO guest branch — see the backend route header: guests are not a special
  * case.
@@ -163,7 +163,7 @@ describe("hosted tools/execute registry write", () => {
     await flush();
   });
 
-  it("skips the registry for chatbox-scoped callers", async () => {
+  it("skips the registry for scenario-scoped callers", async () => {
     setManager({
       executeTool: vi.fn().mockResolvedValue({
         task: { taskId: "task-1", status: "working" },
