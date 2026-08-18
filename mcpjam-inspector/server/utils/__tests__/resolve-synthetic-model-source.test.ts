@@ -182,7 +182,7 @@ describe("buildSyntheticModelDefinition", () => {
 
   it("derives provider='bedrock' for bare Bedrock-shaped ids", () => {
     // Org Bedrock models surface bare inference-profile ids in the picker,
-    // so chatbox runtime configs store them without a "bedrock/" prefix.
+    // so scenario runtime configs store them without a "bedrock/" prefix.
     expect(
       buildSyntheticModelDefinition(
         "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
@@ -224,7 +224,7 @@ describe("buildSyntheticModelDefinition", () => {
 
   it("falls back to provider='ollama' for bare ids (no slash, no recognized prefix)", () => {
     // Catalog never carries bare ids today, so the realistic BYOK case is
-    // an Ollama-style local model stored on a chatbox runtime config.
+    // an Ollama-style local model stored on a scenario runtime config.
     const result = buildSyntheticModelDefinition("llama-3:8b");
     expect(result).toEqual({
       id: "llama-3:8b",

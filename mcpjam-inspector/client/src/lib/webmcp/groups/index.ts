@@ -18,7 +18,7 @@ import { buildEvalsUiTools } from "./evals";
 import { buildSwarmsUiTools } from "./swarms";
 import { buildHostsUiTools } from "./hosts";
 import { buildComputerUiTools } from "./computer";
-import { buildChatboxesUiTools } from "./chatboxes";
+import { buildScenariosUiTools } from "./scenarios";
 import { buildResourcesUiTools } from "./resources";
 import { buildPromptsUiTools } from "./prompts";
 import { buildOAuthFlowUiTools } from "./oauth-flow";
@@ -32,7 +32,7 @@ export const SURFACE_TOOL_GROUPS: Partial<Record<AppSurfaceId, UiToolGroup>> =
     swarms: { surfaceId: "swarms", buildTools: buildSwarmsUiTools },
     hosts: { surfaceId: "hosts", buildTools: buildHostsUiTools },
     computer: { surfaceId: "computer", buildTools: buildComputerUiTools },
-    chatboxes: { surfaceId: "chatboxes", buildTools: buildChatboxesUiTools },
+    scenarios: { surfaceId: "scenarios", buildTools: buildScenariosUiTools },
     resources: { surfaceId: "resources", buildTools: buildResourcesUiTools },
     prompts: { surfaceId: "prompts", buildTools: buildPromptsUiTools },
     "oauth-flow": {

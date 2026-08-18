@@ -117,7 +117,7 @@ export function Shell({
   return (
     <main
       className={cn(
-        "app-theme-scope chatbox-host-shell min-h-full bg-background text-foreground font-sans",
+        "app-theme-scope scenario-host-shell min-h-full bg-background text-foreground font-sans",
         isDark && "dark"
       )}
       data-theme-preset={themePreset}

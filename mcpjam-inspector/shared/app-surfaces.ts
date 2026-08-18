@@ -229,10 +229,10 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
-    // The surface id stays `chatboxes` — it keys the billing feature, the
+    // The surface id stays `scenarios` — it keys the billing feature, the
     // agent tool group, and the Convex tables. Only the product name and the
     // URL changed.
-    id: "chatboxes",
+    id: "scenarios",
     canonicalPath: "/user-testing",
     routePatterns: [
       "user-testing",
@@ -240,7 +240,7 @@ export const APP_SURFACES = [
       "user-testing/:scenarioId/edit",
       "user-testing/:scenarioId",
     ],
-    navSegments: ["chatboxes"],
+    navSegments: ["scenarios"],
     title: "User Testing",
     purpose:
       "Share a scenario — one client, one server — with real people, then review the sessions they had with it.",

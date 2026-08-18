@@ -41,7 +41,7 @@ type ServerGroupPickerProps = {
   value: string | null;
   /**
    * The full attachment record is passed alongside the id so callers
-   * that persist by server set (e.g. chatboxes) don't have to re-read
+   * that persist by server set (e.g. scenarios) don't have to re-read
    * the live query — which lags behind for just-created rows.
    */
   onChange: (

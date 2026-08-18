@@ -66,7 +66,7 @@ function parseSources(value: string | undefined): string[] | undefined {
     .filter((entry) => entry.length > 0);
   if (parsed.length === 0) {
     throw usageError(
-      "--source was given but names no surfaces. Pass a comma-separated list (direct, chatbox, eval, swarm), or omit the flag to search all of them."
+      "--source was given but names no surfaces. Pass a comma-separated list (direct, scenario, eval, swarm), or omit the flag to search all of them."
     );
   }
   return parsed;
@@ -93,7 +93,7 @@ export function registerSessionsCommands(program: Command): void {
         )
         .option(
           "--source <types>",
-          "Comma-separated surfaces: direct, chatbox, eval, swarm. Defaults to all."
+          "Comma-separated surfaces: direct, scenario, eval, swarm. Defaults to all."
         )
         .option("--status <status>", "active (default) or archived")
         .option("--limit <n>", "Results per page (1-200)")
@@ -115,7 +115,7 @@ export function registerSessionsCommands(program: Command): void {
       // place to update when one is added.
       scope: options.scope as "titles" | "transcripts" | undefined,
       sourceTypes: parseSources(options.source) as
-        | ("direct" | "chatbox" | "eval" | "swarm")[]
+        | ("direct" | "scenario" | "eval" | "swarm")[]
         | undefined,
       status: options.status as "active" | "archived" | undefined,
       limit: parseIntegerOption(options.limit, "--limit", {
