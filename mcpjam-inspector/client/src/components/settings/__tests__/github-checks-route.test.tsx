@@ -46,8 +46,6 @@ const {
 
 // The availability gate is the unit under test; the data layer is stubbed.
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
-  GITHUB_CHECKS_UNAVAILABLE_MESSAGE:
-    "GitHub Checks settings are not currently available.",
   useGithubChecksSettings: () => ({
     availability: mockAvailability.value,
     isEnabled: mockAvailability.value?.state === "enabled",

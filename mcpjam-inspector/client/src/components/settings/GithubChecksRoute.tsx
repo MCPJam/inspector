@@ -21,8 +21,8 @@ import {
 } from "./github-checks-outage-policy";
 import { SettingsSection } from "../setting/SettingsSection";
 import { SettingsPageShell } from "./SettingsPageShell";
+import { githubChecksWriteErrorMessage } from "@/lib/github-checks-errors";
 import {
-  GITHUB_CHECKS_UNAVAILABLE_MESSAGE,
   useGithubChecksSettings,
   type GithubCheckOutagePolicy,
   type GithubCheckRepoConfigRow,
@@ -161,12 +161,7 @@ export function GithubChecksRoute({
    * response — the next render redirects if it is genuinely off now.
    */
   const handleWriteError = useCallback((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("not currently available")) {
-      toast.error(GITHUB_CHECKS_UNAVAILABLE_MESSAGE);
-      return;
-    }
-    toast.error(message);
+    toast.error(githubChecksWriteErrorMessage(error));
   }, []);
 
   useEffect(() => {
