@@ -53,6 +53,22 @@ describe("fetchHostRuntimeConfig", () => {
     });
   });
 
+  it("rejects a blank bearer as 401 without hitting the network", async () => {
+    // Regression: an unauthenticated local Playground turn on a host-bound
+    // conversation sent `Bearer ` (empty), Convex threw "Invalid
+    // authentication header", the backend answered 500 and the route
+    // collapsed it to a 502 the client reported as MCPJam's fault.
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    for (const bearer of ["", "   ", "Bearer "]) {
+      const result = await fetchHostRuntimeConfig({ hostId: "h1", bearer });
+      expect(result.ok).toBe(false);
+      expect(result).toMatchObject({ status: 401 });
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("does not double-prefix an already-Bearer token", async () => {
     let auth = "";
     mockFetch((_url, init) => {
