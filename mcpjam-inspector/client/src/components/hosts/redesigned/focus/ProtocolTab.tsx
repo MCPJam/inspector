@@ -111,17 +111,10 @@ const HOST_PROTOCOL_OPTIONS: Array<{
 /**
  * Which versions this client may actually be pinned to.
  *
- * The backend refuses to store a concrete pin the client does not also
- * advertise in `initialize.supportedProtocolVersions` — the SDK's
- * `ConflictingProtocolVersionPin` rule in `canonicalizeMcpProfile`. Presets
- * carry that list (VS Code ships `["2025-11-25"]`), so offering every version
- * on those clients produced choices that could only fail at Save with an
- * opaque "Server Error". Offer what actually saves instead.
- *
- * The advertised list is the whole answer, INCLUDING for stateless revisions.
- * Offering `2026-07-28` on a client that never advertised it would emulate a
- * product capability that does not exist. A client supports a revision when it
- * lists that revision — there is no separate stateless-support flag.
+ * Catalog profiles carry the complete verified list across both eras. The
+ * nested `initialize.supportedProtocolVersions` list is only the legacy 2025
+ * accept-list; modern 2026 support is discovered through `server/discover` and
+ * must not be added to initialize just to make the dropdown offer it.
  *
  * Exempt from the filter:
  * - `"auto"`, which is a negotiation policy rather than a concrete pin.
@@ -660,30 +653,39 @@ export function ProtocolTab({
       ? storedProtocolVersion
       : "auto";
 
-  // Versions this client advertises — narrows the dropdown so it can't offer a
-  // pin the backend would reject. MCPJam deliberately has no capability list;
-  // ignore singleton lists persisted by the old canonicalizer so existing
-  // rows remain able to switch revisions. See `visibleHostProtocolOptions`.
+  // Prefer the catalog's cross-era support list. The nested initialize list is
+  // only a fallback for custom/legacy profiles because it describes 2025
+  // negotiation and intentionally omits modern discovery revisions.
+  const catalogProtocolVersions = buildHostCompatProfiles().find(
+    (item) => item.id === draft.hostStyle
+  )?.supportedProtocolVersions;
+  const initializeProtocolVersions =
+    draft.mcpProfile?.initialize?.supportedProtocolVersions;
   const advertisedProtocolVersions =
     draft.hostStyle === "mcpjam"
       ? undefined
-      : draft.mcpProfile?.initialize?.supportedProtocolVersions;
+      : catalogProtocolVersions ?? initializeProtocolVersions;
   const protocolOptions = visibleHostProtocolOptions(
     advertisedProtocolVersions,
     selectedDropdownValue
   );
   const protocolOptionsRestricted =
     protocolOptions.length < HOST_PROTOCOL_OPTIONS.length;
-  // A stored concrete pin outside the advertised list — a legacy row, or one
+  // A stored concrete pin outside the verified list — a legacy row, or one
   // hand-edited in the JSON. Its option is force-kept (see the helper), which
   // can pad the list back to full length, so this must be detected directly
-  // rather than inferred from the option count. Saving such a draft throws
-  // `ConflictingProtocolVersionPin`; warn before Save does.
+  // rather than inferred from the option count.
   const selectedPinUnadvertised =
     selectedDropdownValue !== "auto" &&
     advertisedProtocolVersions !== undefined &&
     advertisedProtocolVersions.length > 0 &&
     !advertisedProtocolVersions.includes(selectedDropdownValue);
+  const selectedPinConflictsWithInitialize =
+    selectedDropdownValue !== "auto" &&
+    !isStatelessProtocolVersion(selectedDropdownValue) &&
+    initializeProtocolVersions !== undefined &&
+    initializeProtocolVersions.length > 0 &&
+    !initializeProtocolVersions.includes(selectedDropdownValue);
 
   // Dropdown handler. `undefined` here means the user selected Automatic;
   // persist the explicit policy so ChatGPT's default can differ from a legacy
@@ -852,7 +854,7 @@ export function ProtocolTab({
         <div className="flex items-center gap-3">
           <span
             className="text-[12px] font-medium"
-            title="Automatic: negotiate at connect time. Any other choice pins that exact revision for every server on this client."
+            title="Automatic: negotiate at connect time. Any other choice pins that exact revision unless a server has its own protocol override."
           >
             {fProtocolVersion.label}
           </span>
@@ -897,29 +899,31 @@ export function ProtocolTab({
           </p>
         )}
         {/* Without this line a preset-backed client reads as a broken control:
-            the missing revisions look arbitrary, and the list that removed them
-            is invisible unless the JSON editor below is open. Name both. The
-            list constrains every concrete pin, including 2026. */}
+            the missing revisions look arbitrary, so name the verified list. */}
         {protocolOptionsRestricted && (
           <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
-            This client advertises{" "}
+            This client is verified for{" "}
             {(advertisedProtocolVersions ?? []).join(", ")}, so no other version
-            can be pinned. Edit <code>supportedProtocolVersions</code> in the
-            JSON below to offer more.
+            can be pinned.
           </p>
         )}
         {/* Fires independently of the option count above: force-keeping the
-            stored pin's option can pad the list back to full length, so an
-            unadvertised pin needs its own detection. Saving this draft is what
-            the ConflictingProtocolVersionPin backend rule rejects. */}
-        {selectedPinUnadvertised && (
+            stored pin's option can pad the list back to full length. Only a
+            legacy pin outside initialize is a save error; a modern mismatch is
+            an advisory catalog warning. */}
+        {selectedPinConflictsWithInitialize ? (
           <p className="mt-1.5 text-[11px] leading-snug text-destructive">
-            Pinned to {selectedDropdownValue}, which this client does not
-            advertise ({(advertisedProtocolVersions ?? []).join(", ")}). Saving
-            will fail — pick an advertised version, or add it to{" "}
+            Pinned to {selectedDropdownValue}, which is absent from the legacy
+            initialize list ({(initializeProtocolVersions ?? []).join(", ")}).
+            Saving will fail — pick an accepted 2025 version, or add it to{" "}
             <code>supportedProtocolVersions</code> in the JSON below.
           </p>
-        )}
+        ) : selectedPinUnadvertised ? (
+          <p className="mt-1.5 text-[11px] leading-snug text-destructive">
+            Pinned to {selectedDropdownValue}, which is not verified for this
+            client ({(advertisedProtocolVersions ?? []).join(", ")}).
+          </p>
+        ) : null}
         <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
           <div className="min-w-0">
             <span className="text-[12px] font-medium">

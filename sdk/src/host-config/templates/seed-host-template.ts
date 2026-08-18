@@ -586,6 +586,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        mcpProtocolVersion: "auto",
+        mrtrModes: {
+          requestState: false,
+          elicitation: false,
+        },
         initialize: {
           supportedProtocolVersions: ["2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
@@ -688,6 +693,39 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // sandbox-proxy.html: inner gets spec-4 only), matching real
             // claude.ai's outer-grants / inner-trims pattern.
             allowFeatures: { fullscreen: "*" },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: true,
+            hostContextChanged: true,
+            resourceTeardown: true,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            resourceCacheTtl: true,
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
           },
         },
       };
@@ -844,7 +882,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         initialize: {
-          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          supportedProtocolVersions: ["2025-11-25"],
           // Stored in the established connection-profile envelope. The
           // runtime sends initialize only when a 2025 protocol is selected.
           clientInfo: { name: "openai-mcp", version: "1.0.0" },
@@ -856,6 +894,20 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // (e.g. OpenAI Apps SDK widgets) need this to take that path.
           uiInitialize: {
             hostInfo: { name: "chatgpt", version: "0.0.1" },
+          },
+          mcpAppsOverrides: {
+            cspConnectDomains: {
+              fetch: false,
+              xhr: false,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: false,
+              stylesheet: false,
+              image: false,
+              font: false,
+              media: false,
+            },
           },
           // Vendor compat-runtime shims. Real ChatGPT exposes the
           // OpenAI Apps SDK `window.openai` surface to widget HTML, so
@@ -1121,7 +1173,18 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             sandboxPermissions: false,
             cspFrameDomains: false,
             cspBaseUriDomains: false,
-            resourcePrefersBorder: false,
+            cspConnectDomains: {
+              fetch: false,
+              xhr: false,
+            },
+            cspResourceDomains: {
+              script: false,
+              stylesheet: false,
+              image: false,
+              font: false,
+              media: false,
+            },
+            resourcePrefersBorder: true,
             downloadFile: false,
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
@@ -1330,7 +1393,21 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
             // need this to take that path. Version pinned to a real probed
             // build; bump when capturing a fresh probe.
-            hostInfo: { name: "Cursor", version: "3.4.20" },
+            hostInfo: { name: "Cursor", version: "3.14.27" },
+          },
+          mcpAppsOverrides: {
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
           },
           sandbox: {
             csp: {

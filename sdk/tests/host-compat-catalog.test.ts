@@ -375,6 +375,21 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
     }
   });
 
+  it("preserves partial CSP findings from live catalogs", () => {
+    const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
+      envelopeFor(bundled(), { source: "live" })
+    );
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      const parsedCapabilities =
+        parsed.data.catalog.hostsById.goose.mcpProfile?.apps?.mcpAppsOverrides;
+      expect(parsedCapabilities?.cspConnectDomains).toEqual({
+        fetch: false,
+        xhr: false,
+      });
+    }
+  });
+
   it("strips unknown keys instead of failing", () => {
     const catalog = bundled() as Record<string, unknown>;
     catalog.futureTopLevelField = { anything: true };

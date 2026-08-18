@@ -240,10 +240,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
     claude: {
       id: "claude",
       label: "Claude",
-      provenance: "assumed",
+      provenance: "probe",
       rendersMcpApps: true,
-      supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1784764800000,
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+      verifiedAt: 1786492800000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -446,6 +446,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       },
       mcpProfile: {
         profileVersion: 1,
+        mcpProtocolVersion: "auto",
+        mrtrModes: {
+          requestState: false,
+          elicitation: false,
+        },
         initialize: {
           supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
@@ -514,9 +519,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
-            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
-            toolCancelled: true,
             hostContextChanged: true,
             resourceTeardown: true,
             toolInfo: true,
@@ -527,11 +531,24 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            cspFrameDomains: true,
-            cspBaseUriDomains: true,
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            resourceCacheTtl: true,
             resourcePrefersBorder: true,
             downloadFile: true,
-            requestTeardown: true,
+            requestTeardown: false,
             widgetDisplayModeRequests: "accept",
           },
         },
@@ -725,13 +742,12 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
-        toolCallCancellation: false,
         mrtrModes: {
           requestState: true,
           elicitation: false,
         },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "openai-mcp",
             version: "1.0.0",
@@ -784,7 +800,10 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen", "pip"],
+            toolInputPartial: true,
+            toolCancelled: true,
             hostContextChanged: true,
+            resourceTeardown: true,
             toolInfo: true,
             openLinks: true,
             serverTools: true,
@@ -818,6 +837,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               testedUpToHeight: 10000,
               limitObserved: false,
             },
+            downloadFile: false,
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
           },
@@ -989,7 +1009,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26"],
-      verifiedAt: 1784764800000,
+      verifiedAt: 1786579200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1186,7 +1206,18 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             sandboxPermissions: false,
             cspFrameDomains: false,
             cspBaseUriDomains: false,
-            resourcePrefersBorder: false,
+            cspConnectDomains: {
+              fetch: false,
+              xhr: false,
+            },
+            cspResourceDomains: {
+              script: false,
+              stylesheet: false,
+              image: false,
+              font: false,
+              media: false,
+            },
+            resourcePrefersBorder: true,
             downloadFile: false,
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
@@ -1430,7 +1461,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1784764800000,
+      verifiedAt: 1786579200000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1515,7 +1546,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           uiInitialize: {
             hostInfo: {
               name: "Cursor",
-              version: "3.4.20",
+              version: "3.14.27",
             },
           },
           sandbox: {
@@ -1530,7 +1561,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
-            availableDisplayModes: ["inline", "fullscreen", "pip"],
+            availableDisplayModes: ["inline"],
             toolInputPartial: true,
             toolCancelled: true,
             hostContextChanged: true,
@@ -1545,8 +1576,20 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             sandboxPermissions: true,
             cspFrameDomains: true,
             cspBaseUriDomains: true,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
             resourcePrefersBorder: true,
-            downloadFile: true,
+            downloadFile: false,
             requestTeardown: true,
             widgetDisplayModeRequests: "accept",
           },

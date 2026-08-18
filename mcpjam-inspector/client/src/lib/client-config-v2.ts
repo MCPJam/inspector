@@ -623,6 +623,14 @@ export function mergeMcpAppsCapabilities(
         ? modesOverride
         : (["inline"] as ResolvedMcpAppsCapabilities["availableDisplayModes"])
       : base.availableDisplayModes;
+  const cspConnectDomains =
+    base.cspConnectDomains || override.cspConnectDomains
+      ? { ...base.cspConnectDomains, ...override.cspConnectDomains }
+      : undefined;
+  const cspResourceDomains =
+    base.cspResourceDomains || override.cspResourceDomains
+      ? { ...base.cspResourceDomains, ...override.cspResourceDomains }
+      : undefined;
   return {
     availableDisplayModes,
     toolInputPartial: override.toolInputPartial ?? base.toolInputPartial,
@@ -639,6 +647,8 @@ export function mergeMcpAppsCapabilities(
     sandboxPermissions: override.sandboxPermissions ?? base.sandboxPermissions,
     cspFrameDomains: override.cspFrameDomains ?? base.cspFrameDomains,
     cspBaseUriDomains: override.cspBaseUriDomains ?? base.cspBaseUriDomains,
+    cspConnectDomains,
+    cspResourceDomains,
     resourcePrefersBorder:
       override.resourcePrefersBorder ?? base.resourcePrefersBorder,
     downloadFile: override.downloadFile ?? base.downloadFile,

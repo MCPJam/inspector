@@ -234,6 +234,32 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       read: (cfg) => effMcpApps(cfg)[key],
     })
   ),
+  ...(["fetch", "xhr", "websocket"] as const).map(
+    (key): HostConfigFieldDef => ({
+      id: `appsCap.cspConnectDomains.${key}`,
+      section: "apps",
+      subsection: "MCP Apps capabilities",
+      label: `cspConnectDomains.${key}`,
+      path: `mcpProfile.apps.mcpAppsOverrides.cspConnectDomains.${key}`,
+      description: `Allow widget ${key} connections to declared CSP connect domains.`,
+      kind: { kind: "boolean" },
+      read: (cfg) =>
+        mcpProfile(cfg)?.apps?.mcpAppsOverrides?.cspConnectDomains?.[key],
+    })
+  ),
+  ...(["script", "stylesheet", "image", "font", "media"] as const).map(
+    (key): HostConfigFieldDef => ({
+      id: `appsCap.cspResourceDomains.${key}`,
+      section: "apps",
+      subsection: "MCP Apps capabilities",
+      label: `cspResourceDomains.${key}`,
+      path: `mcpProfile.apps.mcpAppsOverrides.cspResourceDomains.${key}`,
+      description: `Allow widget ${key} resources from declared CSP resource domains.`,
+      kind: { kind: "boolean" },
+      read: (cfg) =>
+        mcpProfile(cfg)?.apps?.mcpAppsOverrides?.cspResourceDomains?.[key],
+    })
+  ),
 ];
 
 /** "OpenAI compat shim" subsection — effective window.openai surface. */

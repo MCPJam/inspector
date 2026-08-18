@@ -10,10 +10,11 @@
  * Keeps the function physically in the HTML (where it ships to the
  * browser) while still letting us assert on the merge contract.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
+import { JSDOM } from "jsdom";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const html = fs.readFileSync(
@@ -23,9 +24,9 @@ const html = fs.readFileSync(
     "routes",
     "apps",
     "mcp-apps",
-    "sandbox-proxy.html",
+    "sandbox-proxy.html"
   ),
-  "utf8",
+  "utf8"
 );
 
 // Extract sanitizeDomain + buildCSP source from the inline <script>.
@@ -49,15 +50,28 @@ function extract(name: string): string {
 
 const sanitize = extract("sanitizeDomain");
 const build = extract("buildCSP");
+const buildGuard = extract("buildConnectGuardScript");
 
 // eslint-disable-next-line @typescript-eslint/no-implied-eval
 const buildCSP = new Function(
   "csp",
   "cspDirectives",
-  `${sanitize}\n${build}\nreturn buildCSP(csp, cspDirectives);`,
+  "cspSubtypePolicy",
+  `${sanitize}\n${build}\nreturn buildCSP(csp, cspDirectives, cspSubtypePolicy);`
 ) as (
   csp: unknown,
   cspDirectives?: Record<string, string[]>,
+  cspSubtypePolicy?: Record<string, unknown>
+) => string;
+
+// eslint-disable-next-line @typescript-eslint/no-implied-eval
+const buildConnectGuardScript = new Function(
+  "cspSubtypePolicy",
+  "cspDirectives",
+  `${buildGuard}\nreturn buildConnectGuardScript(cspSubtypePolicy, cspDirectives);`
+) as (
+  cspSubtypePolicy?: Record<string, unknown>,
+  cspDirectives?: Record<string, string[]>
 ) => string;
 
 describe("sandbox-proxy buildCSP merge rule", () => {
@@ -69,7 +83,7 @@ describe("sandbox-proxy buildCSP merge rule", () => {
   it("drops 'none' when cspDirectives adds real tokens to an otherwise-empty directive", () => {
     const out = buildCSP(
       { frameDomains: [] },
-      { "frame-src": ["https://embed.example.com"] },
+      { "frame-src": ["https://embed.example.com"] }
     );
     expect(out).toContain("frame-src https://embed.example.com");
     expect(out).not.toContain("frame-src 'none'");
@@ -78,7 +92,7 @@ describe("sandbox-proxy buildCSP merge rule", () => {
   it("deduplicates when cspDirectives overlaps with domain-derived tokens", () => {
     const out = buildCSP(
       { connectDomains: ["https://api.example.com"] },
-      { "connect-src": ["https://api.example.com", "https://api2.example.com"] },
+      { "connect-src": ["https://api.example.com", "https://api2.example.com"] }
     );
     const connectLine = out
       .split(";")
@@ -87,7 +101,7 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     expect(connectLine).toBeDefined();
     const tokens = connectLine!.slice("connect-src ".length).split(/\s+/);
     expect(tokens.filter((t) => t === "https://api.example.com")).toHaveLength(
-      1,
+      1
     );
     expect(tokens).toContain("https://api2.example.com");
   });
@@ -95,7 +109,7 @@ describe("sandbox-proxy buildCSP merge rule", () => {
   it("merges cspDirectives into script-src on top of 'unsafe-inline'", () => {
     const out = buildCSP(
       { resourceDomains: [] },
-      { "script-src": ["'unsafe-eval'", "'wasm-unsafe-eval'"] },
+      { "script-src": ["'unsafe-eval'", "'wasm-unsafe-eval'"] }
     );
     const scriptLine = out
       .split(";")
@@ -105,6 +119,137 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     expect(scriptLine).toContain("'unsafe-eval'");
     expect(scriptLine).toContain("'wasm-unsafe-eval'");
   });
+
+  it("applies resource-domain support per directive without removing host tokens", () => {
+    const out = buildCSP(
+      { resourceDomains: ["https://cdn.example.com"] },
+      { "script-src": ["https://host.example.com"] },
+      {
+        cspResourceDomains: {
+          script: false,
+          stylesheet: true,
+          image: false,
+          font: true,
+          media: false,
+        },
+      }
+    );
+    expect(out).toContain(
+      "script-src 'unsafe-inline' data: blob: https://host.example.com"
+    );
+    expect(out).toContain(
+      "style-src 'unsafe-inline' data: blob: https://cdn.example.com"
+    );
+    expect(out).toContain("img-src data: blob:");
+    expect(out).toContain("font-src data: blob: https://cdn.example.com");
+    expect(out).toContain("media-src data: blob:");
+  });
+
+  it("keeps shared connect domains for true or unknown APIs", () => {
+    const csp = { connectDomains: ["https://api.example.com"] };
+    expect(
+      buildCSP(csp, undefined, {
+        cspConnectDomains: { fetch: false, xhr: false },
+      })
+    ).toContain("connect-src https://api.example.com");
+    expect(
+      buildCSP(csp, undefined, {
+        cspConnectDomains: {
+          fetch: false,
+          xhr: false,
+          websocket: false,
+        },
+      })
+    ).toContain("connect-src 'none'");
+  });
+
+  it.each([
+    [
+      "Claude",
+      {
+        cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+        cspResourceDomains: {
+          script: true,
+          stylesheet: true,
+          image: true,
+          font: true,
+          media: true,
+        },
+      },
+      true,
+    ],
+    [
+      "Cursor",
+      {
+        cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+        cspResourceDomains: {
+          script: true,
+          stylesheet: true,
+          image: true,
+          font: true,
+          media: true,
+        },
+      },
+      true,
+    ],
+    [
+      "ChatGPT",
+      {
+        cspConnectDomains: { fetch: false, xhr: false, websocket: true },
+        cspResourceDomains: {
+          script: false,
+          stylesheet: false,
+          image: false,
+          font: false,
+          media: false,
+        },
+      },
+      false,
+    ],
+    [
+      "Goose",
+      {
+        cspConnectDomains: { fetch: false, xhr: false },
+        cspResourceDomains: {
+          script: false,
+          stylesheet: false,
+          image: false,
+          font: false,
+          media: false,
+        },
+      },
+      false,
+    ],
+  ] as const)(
+    "matches the %s declared-domain canary",
+    (_host, policy, resourceDomainsAllowed) => {
+      const out = buildCSP(
+        {
+          connectDomains: ["https://api.example.com"],
+          resourceDomains: ["https://cdn.example.com"],
+        },
+        undefined,
+        policy
+      );
+      const resourceDirectives = [
+        "script-src",
+        "style-src",
+        "img-src",
+        "font-src",
+        "media-src",
+      ];
+      for (const directive of resourceDirectives) {
+        const line = out
+          .split(";")
+          .map((entry) => entry.trim())
+          .find((entry) => entry.startsWith(`${directive} `));
+        expect(line?.includes("https://cdn.example.com")).toBe(
+          resourceDomainsAllowed
+        );
+      }
+      expect(out).toContain("connect-src https://api.example.com");
+    }
+  );
 
   it("appends unknown cspDirectives keys verbatim", () => {
     const out = buildCSP({}, { "form-action": ["'self'"] });
@@ -227,9 +372,12 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     // time, but if it ever drifts the proxy must not blindly concatenate
     // a token like `"'self'; script-src *"` into the CSP — that would
     // break out of the intended directive and smuggle a wildcard.
-    const out = buildCSP({}, {
-      "connect-src": ["'self'; script-src *"],
-    });
+    const out = buildCSP(
+      {},
+      {
+        "connect-src": ["'self'; script-src *"],
+      }
+    );
     // The injected directive must not appear in the output.
     expect(out).not.toContain("script-src *");
     // The hostile token must not be emitted under connect-src either.
@@ -283,7 +431,7 @@ describe("sandbox-proxy buildCSP merge rule", () => {
           "'self\"><script>alert(1)</script>",
           "https://evil<>.example",
         ],
-      },
+      }
     );
     expect(out).not.toContain("<script>");
     expect(out).not.toContain('">');
@@ -305,7 +453,7 @@ describe("sandbox-proxy buildCSP merge rule", () => {
       {},
       {
         'x"><script>alert(1)</script><x ': ["'self'"],
-      },
+      }
     );
     expect(out).not.toContain("<script>");
     expect(out).not.toContain('"');
@@ -317,10 +465,100 @@ describe("sandbox-proxy buildCSP merge rule", () => {
     // The key is concatenated into the output via `name + " " + tokens`,
     // so a crafted name like `"worker-src *; script-src"` would smuggle
     // a second directive even if every value token is clean.
-    const out = buildCSP({}, {
-      "worker-src *; script-src": ["'unsafe-eval'"],
-    });
+    const out = buildCSP(
+      {},
+      {
+        "worker-src *; script-src": ["'unsafe-eval'"],
+      }
+    );
     expect(out).not.toContain("script-src 'unsafe-eval'");
     expect(out).not.toContain("worker-src *");
+  });
+});
+
+describe("sandbox-proxy connect subtype guards", () => {
+  it("blocks false fetch, emits a compatible violation, and keeps unknown websocket untouched", async () => {
+    const nativeFetch = vi.fn(() => Promise.resolve(new Response("ok")));
+    const postMessage = vi.fn();
+    let originalWebSocket: unknown;
+    const script = buildConnectGuardScript({
+      cspConnectDomains: { fetch: false, xhr: false },
+    });
+    const dom = new JSDOM(
+      `<!doctype html><html><head>${script}</head></html>`,
+      {
+        runScripts: "dangerously",
+        url: "https://widget.example.test/",
+        beforeParse(window) {
+          Object.defineProperty(window, "fetch", {
+            value: nativeFetch,
+            configurable: true,
+            writable: true,
+          });
+          window.postMessage = postMessage as typeof window.postMessage;
+          originalWebSocket = window.WebSocket;
+        },
+      }
+    );
+
+    await expect(
+      dom.window.fetch("https://declared.example.test/data")
+    ).rejects.toThrow("Failed to fetch");
+    expect(nativeFetch).not.toHaveBeenCalled();
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "mcp-apps:csp-violation",
+        directive: "connect-src",
+        effectiveDirective: "connect-src",
+        subtype: "fetch",
+        blockedUri: "https://declared.example.test/data",
+      }),
+      "*"
+    );
+
+    const xhr = new dom.window.XMLHttpRequest();
+    xhr.open("GET", "https://declared.example.test/xhr");
+    expect(() => xhr.send()).toThrow();
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "mcp-apps:csp-violation",
+        directive: "connect-src",
+        subtype: "xhr",
+        blockedUri: "https://declared.example.test/xhr",
+      }),
+      "*"
+    );
+    expect(dom.window.WebSocket).toBe(originalWebSocket);
+  });
+
+  it("lets explicit host-owned connect-src sources through", async () => {
+    const response = new Response("ok");
+    const nativeFetch = vi.fn(() => Promise.resolve(response));
+    const postMessage = vi.fn();
+    const script = buildConnectGuardScript(
+      { cspConnectDomains: { fetch: false } },
+      { "connect-src": ["https://host.example.test"] }
+    );
+    const dom = new JSDOM(
+      `<!doctype html><html><head>${script}</head></html>`,
+      {
+        runScripts: "dangerously",
+        url: "https://widget.example.test/",
+        beforeParse(window) {
+          Object.defineProperty(window, "fetch", {
+            value: nativeFetch,
+            configurable: true,
+            writable: true,
+          });
+          window.postMessage = postMessage as typeof window.postMessage;
+        },
+      }
+    );
+
+    await expect(
+      dom.window.fetch("https://host.example.test/data")
+    ).resolves.toBe(response);
+    expect(nativeFetch).toHaveBeenCalledOnce();
+    expect(postMessage).not.toHaveBeenCalled();
   });
 });

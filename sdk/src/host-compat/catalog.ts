@@ -245,6 +245,12 @@ function cloneProfile(p: HostCompatProfile): HostCompatProfile {
           availableDisplayModes: p.capabilities.availableDisplayModes
             ? [...p.capabilities.availableDisplayModes]
             : undefined,
+          cspConnectDomains: p.capabilities.cspConnectDomains
+            ? { ...p.capabilities.cspConnectDomains }
+            : undefined,
+          cspResourceDomains: p.capabilities.cspResourceDomains
+            ? { ...p.capabilities.cspResourceDomains }
+            : undefined,
         }
       : undefined,
     sandboxPermissionAllow: p.sandboxPermissionAllow

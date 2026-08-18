@@ -2340,10 +2340,9 @@ export class MCPClientManager {
       const wantsStateless =
         resolvedProtocolVersion !== undefined &&
         isStatelessProtocolVersion(resolvedProtocolVersion);
-      // Resolve negotiation independently from the client's support list. The
-      // list says which revisions the client can speak; the selection says
-      // whether to auto-negotiate or pin one era. Upstream uses the same list
-      // to constrain modern discovery candidates and legacy fallback.
+      // Resolve negotiation independently from the legacy initialize list.
+      // Upstream keeps modern server/discover candidates in a separate list,
+      // so Auto can discover 2026 without leaking it into initialize.
       const versionNegotiation = resolveVersionNegotiation(
         resolvedProtocolVersion
       );
@@ -2354,10 +2353,8 @@ export class MCPClientManager {
       // explicit `supportedProtocolVersions` (per-server or default) still
       // wins for an explicit pin — pinning at one layer while overriding the
       // other would be ambiguous and the override is the more specific signal.
-      // Automatic mode honors the same declared support list. This is what
-      // lets a host truthfully say "2025-11-25 + 2026-07-28" once, then let
-      // the SDK select between those eras without accidentally falling back
-      // to some other legacy revision.
+      // Automatic mode honors this list only for its legacy fallback. Modern
+      // candidates remain owned by upstream's separate discovery list.
       const resolvedSupportedProtocolVersions =
         config.supportedProtocolVersions ??
         this.defaultSupportedProtocolVersions ??

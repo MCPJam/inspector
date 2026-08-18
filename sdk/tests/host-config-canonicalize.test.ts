@@ -388,6 +388,35 @@ describe("canonicalizeHostConfigV2 — validation", () => {
     ).toThrow(/must contain at least one mode/);
   });
 
+  it("preserves partial CSP probe findings", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          apps: {
+            mcpAppsOverrides: {
+              cspConnectDomains: { fetch: false, xhr: false },
+              cspResourceDomains: {
+                script: false,
+                stylesheet: false,
+                image: false,
+                font: false,
+                media: false,
+              },
+            },
+          },
+        },
+      })
+    );
+
+    expect(c.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: false, xhr: false },
+    });
+    expect(
+      c.mcpProfile?.apps?.mcpAppsOverrides?.cspConnectDomains
+    ).not.toHaveProperty("websocket");
+  });
+
   it("drops spec permission features from allowFeatures and blocks injection", () => {
     const c = canonicalizeHostConfigV2(
       base({
@@ -437,14 +466,14 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
     expect(c.mcpProfile?.initialize).toBeUndefined();
   });
 
-  it("preserves automatic dual-era selection in the existing initialize envelope", () => {
+  it("preserves automatic selection with a legacy-only initialize envelope", () => {
     const c = canonicalizeHostConfigV2(
       base({
         mcpProfile: {
           profileVersion: 1,
           mcpProtocolVersion: "auto",
           initialize: {
-            supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+            supportedProtocolVersions: ["2025-11-25"],
             clientInfo: { name: "openai-mcp", version: "1.0.0" },
           },
         },
@@ -453,7 +482,7 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
     expect(c.mcpProfile).toMatchObject({
       mcpProtocolVersion: "auto",
       initialize: {
-        supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+        supportedProtocolVersions: ["2025-11-25"],
         clientInfo: { name: "openai-mcp", version: "1.0.0" },
       },
     });
@@ -473,18 +502,20 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
     ).toThrow(/ConflictingProtocolVersionPin/);
   });
 
-  it("also rejects an unadvertised concrete 2026 pin", () => {
-    expect(() =>
-      canonicalizeHostConfigV2(
-        base({
-          mcpProfile: {
-            profileVersion: 1,
-            mcpProtocolVersion: "2026-07-28",
-            initialize: { supportedProtocolVersions: ["2025-11-25"] },
-          },
-        })
-      )
-    ).toThrow(/ConflictingProtocolVersionPin/);
+  it("keeps a modern pin separate from the legacy initialize accept-list", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          mcpProtocolVersion: "2026-07-28",
+          initialize: { supportedProtocolVersions: ["2025-11-25"] },
+        },
+      })
+    );
+    expect(c.mcpProfile?.mcpProtocolVersion).toBe("2026-07-28");
+    expect(c.mcpProfile?.initialize?.supportedProtocolVersions).toEqual([
+      "2025-11-25",
+    ]);
   });
 });
 
