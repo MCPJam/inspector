@@ -547,6 +547,39 @@ type PredicateResult = {
 
 ---
 
+### EvalReportingError
+
+Thrown by `reportEvalResults()` and (when `strict: true`) by `reportEvalResultsSafely()` when an upload fails. Extends `Error`.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `isBillingLimitReached` | `boolean` | The org's billing limit was reached. No results were filed. |
+| `isReportingBackendIncompatible` | `boolean` | The destination rejected a field this SDK sends — the reporting backend is older than the SDK's minimum contract. No results were filed, and retrying will not help. Upgrade the destination or point `baseUrl` at one that accepts declared case ids. |
+| `statusCode` | `number \| undefined` | HTTP status code from the backend, if available. |
+| `attemptCount` | `number \| undefined` | Number of upload attempts made before giving up. |
+| `endpoint` | `string \| undefined` | The endpoint path that was called. |
+
+```typescript
+import { reportEvalResults, EvalReportingError } from "@mcpjam/sdk";
+
+try {
+  await reportEvalResults({ suiteName: "CI", results, baseUrl: myBaseUrl });
+} catch (err) {
+  if (err instanceof EvalReportingError) {
+    if (err.isReportingBackendIncompatible) {
+      // The destination predates @mcpjam/sdk 6 — upgrade it or switch baseUrl.
+      console.error("Reporting backend needs upgrade:", err.message);
+    } else if (err.isBillingLimitReached) {
+      console.error("Billing limit reached");
+    } else {
+      throw err;
+    }
+  }
+}
+```
+
+---
+
 ### ReportEvalResultsOutput
 
 | Property | Type | Description |
