@@ -13,8 +13,8 @@ import {
   type HostedServerValidateResponse,
 } from "@/lib/apis/web/servers-api";
 import {
-  getHostedChatboxAccessVersion,
-  getHostedChatboxId,
+  getHostedScenarioAccessVersion,
+  getHostedScenarioId,
   getHostedOAuthToken,
 } from "@/lib/apis/web/context";
 import { BootstrapNotReadyError } from "@/lib/app-ready";
@@ -66,14 +66,14 @@ function buildHostedValidationContext(
 ): HostedServerValidateContext | undefined {
   if (!options?.projectId) return undefined;
 
-  const chatboxId = getHostedChatboxId();
+  const scenarioId = getHostedScenarioId();
   return {
     projectId: options.projectId,
     serverId,
     ...(options.serverName ? { serverName: options.serverName } : {}),
-    ...(chatboxId ? { accessScope: "chat_v2" } : {}),
-    ...(chatboxId ? { chatboxId } : {}),
-    ...(chatboxId ? { accessVersion: getHostedChatboxAccessVersion() } : {}),
+    ...(scenarioId ? { accessScope: "chat_v2" } : {}),
+    ...(scenarioId ? { scenarioId } : {}),
+    ...(scenarioId ? { accessVersion: getHostedScenarioAccessVersion() } : {}),
     // Surface the resolver-path `mcpProfile.initialize.*` pins to the
     // hosted validate request. Without this the hosted branch dropped
     // them silently: `connectionDefaults` was computed by

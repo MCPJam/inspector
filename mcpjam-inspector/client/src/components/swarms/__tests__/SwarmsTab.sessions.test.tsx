@@ -207,7 +207,7 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
     </div>
   ),
 }));
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/hooks/useViews", () => ({

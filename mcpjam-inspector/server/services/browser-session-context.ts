@@ -1,6 +1,6 @@
 /**
  * browser-session-context.ts — per-session browser-rendered MCP App context for
- * any runner that mocks a user session (eval iterations, synthetic chatbox
+ * any runner that mocks a user session (eval iterations, synthetic scenario
  * sessions).
  *
  * Grown out of the eval-only `browser-eval-context.ts` (PR 14): the harness

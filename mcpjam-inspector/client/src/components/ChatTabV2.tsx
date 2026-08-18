@@ -80,7 +80,15 @@ import { MultiModelStartersEmptyLayout } from "@/components/chat-v2/multi-model-
 import { useJsonRpcPanelVisibility } from "@/hooks/use-json-rpc-panel";
 import { CollapsedPanelStrip } from "@/components/ui/collapsed-panel-strip";
 import { useChatSession } from "@/hooks/use-chat-session";
-import type { ChatSessionResetReason } from "@/hooks/use-chat-session";
+import {
+  DETACH_FORK_FAILED_MESSAGE,
+  type ChatSessionResetReason,
+} from "@/hooks/use-chat-session";
+import {
+  RESUMED_THREAD_CONFLICT_MESSAGE,
+  RESUMED_THREAD_UNSAVED_MESSAGE,
+  useResumedThreadPersistence,
+} from "@/hooks/use-resumed-thread-persistence";
 import { useDirectChatSessionSubscription } from "@/hooks/use-direct-chat-session-subscription";
 import { addTokenToUrl, authFetch } from "@/lib/session-token";
 import { cn } from "@/lib/utils";
@@ -124,7 +132,7 @@ import {
   getChatComposerInteractivity,
   useChatStopControls,
 } from "@/hooks/use-chat-stop-controls";
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 import type { WidgetModelContextEntry } from "@/shared/chat-v2";
 import { upsertWidgetModelContextEntry } from "@/lib/widget-model-context";
 import { buildAssistantPromptIndex } from "@/components/chat-v2/turn-ordinals";
@@ -151,19 +159,19 @@ interface ChatTabProps {
   executionConfig?: ExecutionConfig;
   reasoningDisplayMode?: ReasoningDisplayMode;
   showHostStyleSelector?: boolean;
-  hostStyle?: ChatboxHostStyle;
-  onHostStyleChange?: (hostStyle: ChatboxHostStyle) => void;
+  hostStyle?: ScenarioHostStyle;
+  onHostStyleChange?: (hostStyle: ScenarioHostStyle) => void;
   onOAuthRequired?: (details?: HostedOAuthRequiredDetails) => void;
-  /** When true, blocks sending until chatbox onboarding/OAuth completes. */
-  chatboxComposerBlocked?: boolean;
-  chatboxComposerBlockedReason?: string;
+  /** When true, blocks sending until scenario onboarding/OAuth completes. */
+  scenarioComposerBlocked?: boolean;
+  scenarioComposerBlockedReason?: string;
   /** Optional (off-by-default) servers the tester can attach from minimal chat. */
-  chatboxOptionalInventory?: Array<{
+  scenarioOptionalInventory?: Array<{
     serverId: string;
     serverName: string;
     useOAuth: boolean;
   }>;
-  onEnableChatboxOptionalServer?: (serverId: string) => void;
+  onEnableScenarioOptionalServer?: (serverId: string) => void;
   evalChatHandoff?: EvalChatHandoff | null;
   onEvalChatHandoffConsumed?: (id: string) => void;
   /**
@@ -187,7 +195,6 @@ interface ChatTabProps {
 }
 
 type ChatTraceViewMode = "chat" | "timeline" | "raw";
-const RESUMED_THREAD_REFRESH_RETRIES = 2;
 
 export function ChatTabV2({
   connectedOrConnectingServerConfigs,
@@ -209,10 +216,10 @@ export function ChatTabV2({
   hostStyle,
   onHostStyleChange,
   onOAuthRequired,
-  chatboxComposerBlocked = false,
-  chatboxComposerBlockedReason,
-  chatboxOptionalInventory,
-  onEnableChatboxOptionalServer,
+  scenarioComposerBlocked = false,
+  scenarioComposerBlockedReason,
+  scenarioOptionalInventory,
+  onEnableScenarioOptionalServer,
   evalChatHandoff,
   onEvalChatHandoffConsumed,
   renderAssistantTurnActions,
@@ -347,9 +354,9 @@ export function ChatTabV2({
       : null
   );
   const navigate = useAppNavigate();
-  const hostedChatboxId = hostedContext?.chatboxId;
+  const hostedScenarioId = hostedContext?.scenarioId;
   const hostedAccessVersion = hostedContext?.accessVersion;
-  const hostedChatboxSurface = hostedContext?.chatboxSurface;
+  const hostedScenarioSurface = hostedContext?.scenarioSurface;
   const effectiveHostedProjectId = hostedContext?.projectId ?? convexProjectId;
   const modelConfigOrganizationId = hostedContext?.projectId
     ? null
@@ -360,11 +367,11 @@ export function ChatTabV2({
   const hostedOrgModelConfig = useHostedOrgModelConfig({
     projectId: effectiveHostedProjectId,
     organizationId: modelConfigOrganizationId,
-    // Chatbox surfaces resolve their model from the chatbox row
+    // Scenario surfaces resolve their model from the scenario row
     // (executionConfig.modelId), and share-link guests aren't members of the
     // host's project — so the project-scoped config query would throw and crash
-    // the page. Skip it whenever we're inside a chatbox.
-    disabled: Boolean(hostedChatboxId),
+    // the page. Skip it whenever we're inside a scenario.
+    disabled: Boolean(hostedScenarioId),
   });
   const { serversById, serversByName } = useProjectServers({
     isAuthenticated: isConvexAuthenticated,
@@ -388,14 +395,14 @@ export function ChatTabV2({
   );
   const effectiveHostedSelectedServerIds =
     hostedContext?.selectedServerIds ?? hostedSelectedServerIds;
-  const effectiveHostedOAuthTokens = hostedChatboxId
+  const effectiveHostedOAuthTokens = hostedScenarioId
     ? undefined
     : hostedContext?.oauthTokens ?? hostedOAuthTokens;
   const isHostedDirectGuest =
     HOSTED_MODE &&
     !isConvexAuthenticated &&
     !effectiveHostedProjectId &&
-    !hostedChatboxId;
+    !hostedScenarioId;
 
   // Use shared chat session hook
   const {
@@ -431,6 +438,9 @@ export function ChatTabV2({
     systemPromptTokenCountLoading,
     resetChat: baseResetChat,
     startChatWithMessages,
+    detachToLocalFork,
+    consumePersistReceipt,
+    consumeTurnAborted,
     loadChatSession,
     rewindToMessage,
     syncResumedVersion,
@@ -465,8 +475,8 @@ export function ChatTabV2({
     // Phase 3: forward the resolved chat-tab host style so direct
     // chat traces persist with `claude`/`chatgpt` rather than
     // defaulting to `'claude'` regardless of user choice. Backend
-    // ingestion ignores it for chatbox flows (those resolve from the
-    // chatbox row), so it's safe to forward unconditionally.
+    // ingestion ignores it for scenario flows (those resolve from the
+    // scenario row), so it's safe to forward unconditionally.
     hostStyle:
       hostStyle === "claude" || hostStyle === "chatgpt" ? hostStyle : undefined,
     minimalMode,
@@ -490,7 +500,7 @@ export function ChatTabV2({
 
   // Chat history handlers
   const showHistoryRail = Boolean(
-    HOSTED_MODE && !minimalMode && !hostedChatboxId
+    HOSTED_MODE && !minimalMode && !hostedScenarioId
   );
   const {
     session: reactiveHistorySession,
@@ -700,19 +710,40 @@ export function ChatTabV2({
       cancelPendingHistorySelection();
       setPendingDirectVisibility("private");
       setLoadedThreadOwnerUserId(null);
-      syncResumedVersion(null);
-      if (hasConversationMessages) {
-        startChatWithMessages(cloneUiMessages(messages), {
-          toolRenderOverrides: restoredToolRenderOverrides,
-        });
+
+      if (!hasConversationMessages) {
+        // Nothing to fork — with no transcript there is no snapshot that could
+        // be written back over the old row, so dropping the guard is enough.
+        syncResumedVersion(null);
+        toast.error(toastMessage);
+        return;
       }
-      toast.error(toastMessage);
+
+      // Verified rather than fire-and-forget: the reassuring toast may only be
+      // shown once the fork is confirmed live. `resumedVersion` is cleared by
+      // the fork's own hydration, so it survives a fork that never commits.
+      void detachToLocalFork(cloneUiMessages(messages), {
+        toolRenderOverrides: restoredToolRenderOverrides,
+      })
+        .then((fork) => {
+          toast.error(fork ? toastMessage : DETACH_FORK_FAILED_MESSAGE);
+        })
+        .catch((error) => {
+          // `void` silences the linter, not the rejection. The guard teardown
+          // above has already run, so swallowing this would leave the user on a
+          // thread they must not write to with no notice at all.
+          console.error(
+            "[ChatTabV2] Failed to fork the detached thread",
+            error
+          );
+          toast.error(DETACH_FORK_FAILED_MESSAGE);
+        });
     },
     [
       hasConversationMessages,
       messages,
       restoredToolRenderOverrides,
-      startChatWithMessages,
+      detachToLocalFork,
       syncResumedVersion,
       cancelPendingHistorySelection,
     ]
@@ -833,47 +864,6 @@ export function ChatTabV2({
       showHistoryRail,
       syncResumedVersion,
     ]
-  );
-
-  const refreshHistorySessionAfterStream = useCallback(
-    async (
-      resumedThreadSendBaseline: {
-        sessionId: string;
-        version: number;
-      } | null
-    ) => {
-      const maxAttempts = resumedThreadSendBaseline
-        ? RESUMED_THREAD_REFRESH_RETRIES + 1
-        : 2;
-
-      for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-        try {
-          const detail = await refreshCurrentHistorySession({
-            markRead: true,
-          });
-
-          if (
-            !resumedThreadSendBaseline ||
-            (detail &&
-              detail._id === resumedThreadSendBaseline.sessionId &&
-              detail.version > resumedThreadSendBaseline.version)
-          ) {
-            return detail;
-          }
-        } catch (error) {
-          if (attempt >= maxAttempts - 1) {
-            throw error;
-          }
-        }
-
-        if (attempt < maxAttempts - 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 250));
-        }
-      }
-
-      return null;
-    },
-    [refreshCurrentHistorySession]
   );
 
   useEffect(() => {
@@ -1174,78 +1164,31 @@ export function ChatTabV2({
     }
   }, [selectedServerNames]);
 
-  const previousStatusRef = useRef(status);
-  useEffect(() => {
-    const previousStatus = previousStatusRef.current;
-    previousStatusRef.current = status;
-    const wasStreaming =
-      previousStatus === "submitted" || previousStatus === "streaming";
-    const isNowStreaming = status === "submitted" || status === "streaming";
-    const hasStartedStream = !wasStreaming && isNowStreaming;
-
-    if (hasStartedStream) {
-      resumedThreadSendBaselineRef.current =
-        showHistoryRail && activeHistorySessionId && resumedVersion !== null
-          ? {
-              sessionId: activeHistorySessionId,
-              version: resumedVersion,
-            }
-          : null;
-      return;
-    }
-
-    if (!wasStreaming) {
-      return;
-    }
-
-    if (status === "error") {
-      resumedThreadSendBaselineRef.current = null;
-      return;
-    }
-
-    const resumedThreadSendBaseline = resumedThreadSendBaselineRef.current;
-    resumedThreadSendBaselineRef.current = null;
-    const hasCompletedStream = status === "ready";
-
-    if (!hasCompletedStream || !showHistoryRail) {
-      return;
-    }
-
-    if (activeHistorySessionId) {
-      void markHistorySessionRead(activeHistorySessionId);
-    }
-
-    const timerId = window.setTimeout(() => {
-      void (async () => {
-        const detail = await refreshHistorySessionAfterStream(
-          resumedThreadSendBaseline
-        );
-
-        if (
-          resumedThreadSendBaseline &&
-          (!detail ||
-            detail._id !== resumedThreadSendBaseline.sessionId ||
-            detail.version <= resumedThreadSendBaseline.version)
-        ) {
-          detachHistorySession(
-            "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread."
-          );
-        }
-      })().catch((error) => {
+  useResumedThreadPersistence({
+    sendBaselineRef: resumedThreadSendBaselineRef,
+    enabled: showHistoryRail,
+    status,
+    activeHistorySessionId,
+    resumedVersion,
+    consumePersistReceipt,
+    consumeTurnAborted,
+    reactiveSessionVersion: reactiveHistorySession?.version,
+    syncResumedVersion,
+    markHistorySessionRead: (sessionId) => {
+      void markHistorySessionRead(sessionId);
+    },
+    refreshAfterStream: () => {
+      void refreshCurrentHistorySession({ markRead: true }).catch((error) => {
         console.error("[ChatTabV2] Failed to refresh chat history", error);
       });
-    }, 250);
-
-    return () => window.clearTimeout(timerId);
-  }, [
-    activeHistorySessionId,
-    detachHistorySession,
-    markHistorySessionRead,
-    refreshHistorySessionAfterStream,
-    resumedVersion,
-    showHistoryRail,
-    status,
-  ]);
+    },
+    onConflict: () => {
+      detachHistorySession(RESUMED_THREAD_CONFLICT_MESSAGE);
+    },
+    onUnsaved: () => {
+      toast.error(RESUMED_THREAD_UNSAVED_MESSAGE);
+    },
+  });
 
   // Check if thread is empty
   const isThreadEmpty = !hasConversationMessages;
@@ -1276,8 +1219,8 @@ export function ChatTabV2({
     enableMultiModelChat &&
     !minimalMode &&
     !executionConfig?.modelId &&
-    !hostedChatboxId &&
-    !hostedChatboxSurface &&
+    !hostedScenarioId &&
+    !hostedScenarioSurface &&
     pendingDirectVisibility !== "project" &&
     availableModels.length > 1;
   // When viewing a history session, fall back to single-model rendering so
@@ -1791,14 +1734,14 @@ export function ChatTabV2({
   const historyRailStreaming = isStreamingActive;
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive,
-    composerDisabled: submitBlocked || chatboxComposerBlocked,
+    composerDisabled: submitBlocked || scenarioComposerBlocked,
   });
 
   let placeholder = minimalMode
     ? MINIMAL_CHAT_COMPOSER_PLACEHOLDER
     : DEFAULT_CHAT_COMPOSER_PLACEHOLDER;
-  if (chatboxComposerBlocked && chatboxComposerBlockedReason) {
-    placeholder = chatboxComposerBlockedReason;
+  if (scenarioComposerBlocked && scenarioComposerBlockedReason) {
+    placeholder = scenarioComposerBlockedReason;
   } else if (isAuthLoading) {
     placeholder = "Loading...";
   } else if (disableForAuthentication) {
@@ -1981,7 +1924,7 @@ export function ChatTabV2({
 
   // An upstream hop returning an error page (a gateway 502 in front of
   // MCPJam) is transient, and resending is the entire fix. Without this the
-  // banner offered `Reset chat` alone, which on the chatbox surfaces throws
+  // banner offered `Reset chat` alone, which on the scenario surfaces throws
   // away the session the tester's whole run exists to collect.
   //
   // Gated on the formatter's own code, not on `isRetryable`: the server sets
@@ -1997,7 +1940,7 @@ export function ChatTabV2({
   // dropdown away. Send the user there instead of leaving them to find it.
   //
   // The host id comes from the turn's own hosted context, so the link lands on
-  // the client that actually holds the pin. It is absent on chatbox and
+  // the client that actually holds the pin. It is absent on scenario and
   // environment surfaces, where `buildHostFocusTabPath` degrades to the clients
   // list rather than building a path the `:hostId` route would reject.
   const changeProtocolVersionHandler =
@@ -2293,7 +2236,7 @@ export function ChatTabV2({
     temperature,
     onTemperatureChange: setTemperature,
     onResetChat: handleResetAllChats,
-    submitDisabled: submitBlocked || chatboxComposerBlocked,
+    submitDisabled: submitBlocked || scenarioComposerBlocked,
     tokenUsage,
     selectedServers: selectedConnectedServerNames,
     mcpToolsTokenCount,
@@ -2326,18 +2269,18 @@ export function ChatTabV2({
           ...(effectiveHostedSelectedServerIds.length > 0
             ? { selectedServerIds: effectiveHostedSelectedServerIds }
             : {}),
-          ...(hostedChatboxId ? { chatboxId: hostedChatboxId } : {}),
+          ...(hostedScenarioId ? { scenarioId: hostedScenarioId } : {}),
           ...(hostedAccessVersion !== undefined
             ? { accessVersion: hostedAccessVersion }
             : {}),
         }
       : undefined,
     voiceInputAuthHeaders: authHeaders,
-    chatboxAttachableServers:
-      chatboxOptionalInventory && chatboxOptionalInventory.length > 0
-        ? chatboxOptionalInventory
+    scenarioAttachableServers:
+      scenarioOptionalInventory && scenarioOptionalInventory.length > 0
+        ? scenarioOptionalInventory
         : undefined,
-    onAttachChatboxServer: onEnableChatboxOptionalServer,
+    onAttachScenarioServer: onEnableScenarioOptionalServer,
     onManageOrgProviders: manageOrgProviders,
   };
 
@@ -2473,7 +2416,9 @@ export function ChatTabV2({
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
                             onRetry={errorRetryHandler}
-                            onChangeProtocolVersion={changeProtocolVersionHandler}
+                            onChangeProtocolVersion={
+                              changeProtocolVersionHandler
+                            }
                             onResetChat={handleResetAllChats}
                           />
                         </div>
@@ -2740,7 +2685,9 @@ export function ChatTabV2({
                               limitKind={errorMessage.limitKind}
                               retryAfterMs={errorMessage.retryAfterMs}
                               onRetry={errorRetryHandler}
-                            onChangeProtocolVersion={changeProtocolVersionHandler}
+                              onChangeProtocolVersion={
+                                changeProtocolVersionHandler
+                              }
                               onResetChat={baseResetChat}
                             />
                           </div>
@@ -2837,9 +2784,9 @@ export function ChatTabV2({
                               : undefined
                           }
                           // Also gated on `showHistoryRail`, not just compare
-                          // mode. `ChatTabV2` is the published chatbox runtime
-                          // too (`ChatboxChatPage` renders it with `minimalMode`
-                          // and a `hostedContext.chatboxId`), and it ships in
+                          // mode. `ChatTabV2` is the published scenario runtime
+                          // too (`ScenarioChatPage` renders it with `minimalMode`
+                          // and a `hostedContext.scenarioId`), and it ships in
                           // non-hosted builds (desktop / `npx` inspector) —
                           // surfaces where `showHistoryRail` is false because
                           // there is no history UI at all.
@@ -2885,7 +2832,9 @@ export function ChatTabV2({
                             limitKind={errorMessage.limitKind}
                             retryAfterMs={errorMessage.retryAfterMs}
                             onRetry={errorRetryHandler}
-                            onChangeProtocolVersion={changeProtocolVersionHandler}
+                            onChangeProtocolVersion={
+                              changeProtocolVersionHandler
+                            }
                             onResetChat={baseResetChat}
                           />
                         </div>

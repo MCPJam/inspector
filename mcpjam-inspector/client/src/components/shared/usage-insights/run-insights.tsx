@@ -52,20 +52,20 @@ import {
   type UseRunInsightsResult,
 } from "@/hooks/use-run-insights";
 import {
-  CHATBOX_INSIGHTS_QUERIES,
-  type ChatboxFinding,
-  type ChatboxWindowSignals,
-} from "@/lib/chatbox-insights-api";
+  SCENARIO_INSIGHTS_QUERIES,
+  type ScenarioFinding,
+  type ScenarioWindowSignals,
+} from "@/lib/scenario-insights-api";
 import { InsightBannerShell } from "@/components/evals/insight-banner-shell";
 
 /**
- * Which surface's rail this is. The chatbox arm carries no group id: the rail
+ * Which surface's rail this is. The scenario arm carries no group id: the rail
  * DERIVES it from `getWindowSignals.latestGroupId`, so the narration it reads
  * always describes the window whose signals it is showing.
  */
 export type RunInsightsSurface =
   | { kind: "swarm"; projectId: string; swarmRunGroupId: string }
-  | { kind: "chatbox"; chatboxId: string };
+  | { kind: "scenario"; scenarioId: string };
 
 /**
  * A signal, in the shape the rail renders. Structurally the swarm candidate
@@ -304,13 +304,13 @@ function useRailData(surface: RunInsightsSurface): {
   ) as SwarmFinding[] | undefined;
 
   const windowSignals = useQuery(
-    CHATBOX_INSIGHTS_QUERIES.getWindowSignals as any,
-    (isSwarm ? "skip" : { chatboxId: surface.chatboxId }) as any,
-  ) as ChatboxWindowSignals | null | undefined;
+    SCENARIO_INSIGHTS_QUERIES.getWindowSignals as any,
+    (isSwarm ? "skip" : { scenarioId: surface.scenarioId }) as any,
+  ) as ScenarioWindowSignals | null | undefined;
   const windowFindings = useQuery(
-    CHATBOX_INSIGHTS_QUERIES.listChatboxFindings as any,
-    (isSwarm ? "skip" : { chatboxId: surface.chatboxId }) as any,
-  ) as ChatboxFinding[] | undefined;
+    SCENARIO_INSIGHTS_QUERIES.listScenarioFindings as any,
+    (isSwarm ? "skip" : { scenarioId: surface.scenarioId }) as any,
+  ) as ScenarioFinding[] | undefined;
 
   if (isSwarm) {
     return {
@@ -380,7 +380,7 @@ function useNarrationScope(
       };
     }
     return latestGroupId
-      ? { kind: "chatbox", chatboxId: surface.chatboxId, groupId: latestGroupId }
+      ? { kind: "scenario", scenarioId: surface.scenarioId, groupId: latestGroupId }
       : null;
   }, [surface, latestGroupId]);
 }
@@ -1223,7 +1223,7 @@ function InsightRow({
   const [expanded, setExpanded] = useState(false);
   // ONE mutation for both surfaces. It is scope-branched server-side — the
   // finding row's own scope decides whether it authorizes by project role or
-  // by the chatbox's workspace role — so the rail names it once, from where it
+  // by the scenario's workspace role — so the rail names it once, from where it
   // lives.
   const dismissMut = useMutation(SWARM_MUTATIONS.dismissFinding as any);
   const undismissMut = useMutation(SWARM_MUTATIONS.undismissFinding as any);

@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
+import { useScenarioHostTheme } from "@/contexts/scenario-client-style-context";
 
 /**
  * Cursor's thinking indicator — the "shine" effect applied to the
@@ -40,8 +40,8 @@ import { useChatboxHostTheme } from "@/contexts/chatbox-client-style-context";
  */
 export function CursorShineIndicator({ className }: { className?: string }) {
   // Chat-shell host theme. Falls back to "dark" to match the rest of
-  // the inspector's "no chatbox context" behavior (see CopilotMessageHeader).
-  const chatboxHostTheme = useChatboxHostTheme() ?? "dark";
+  // the inspector's "no scenario context" behavior (see CopilotMessageHeader).
+  const scenarioHostTheme = useScenarioHostTheme() ?? "dark";
 
   return (
     <span
@@ -51,7 +51,7 @@ export function CursorShineIndicator({ className }: { className?: string }) {
       <span
         aria-hidden="true"
         data-testid="loading-indicator-cursor-shine"
-        data-theme={chatboxHostTheme}
+        data-theme={scenarioHostTheme}
         className="cursor-shine-indicator text-sm"
       >
         Planning next moves

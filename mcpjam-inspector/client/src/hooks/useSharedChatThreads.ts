@@ -3,20 +3,20 @@ import type {
   EvalTraceBrowserInteractionStepView,
   EvalTraceWidgetRenderObservationView,
 } from "@/shared/eval-trace";
-import type { SessionReadiness } from "@/components/chatboxes/session-readiness";
+import type { SessionReadiness } from "@/components/scenarios/session-readiness";
 // Type-only import, so the SharedChatThread import on the other side is not a
 // runtime cycle. One declaration of the backend contract, not two.
 import type { SessionCriteria } from "@/lib/swarm-api";
-import type { SessionSentiment } from "@/hooks/chatbox-usage-filters";
+import type { SessionSentiment } from "@/hooks/scenario-usage-filters";
 
-export type SharedChatSourceType = "chatbox" | "swarm";
+export type SharedChatSourceType = "scenario" | "swarm";
 
 export interface SharedChatThread {
   _id: string;
   sourceType: SharedChatSourceType;
   surface?: "preview" | "share_link";
   shareId?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   chatSessionId: string;
   serverId?: string;
   userId?: string;
@@ -32,7 +32,7 @@ export interface SharedChatThread {
    * WORST-TURN policy: `feedbackRating` is the minimum rating across the
    * session's turns and `feedbackComment` is that turn's comment. The backend
    * maps them from `chatSessions.feedback.{min, worstComment}`; they stay flat
-   * because every filter and sort in `chatbox-usage-filters.ts` reads them.
+   * because every filter and sort in `scenario-usage-filters.ts` reads them.
    */
   feedbackRating?: number | null;
   feedbackComment?: string | null;
@@ -105,7 +105,7 @@ export interface SharedChatThread {
   /** Collapsed tool route, e.g. `search→get`. `no_tools` when none ran. */
   pathKey?: string;
   /**
-   * The hostConfigId that was active on the chatbox's referenced host
+   * The hostConfigId that was active on the scenario's referenced host
    * when this session opened. Pinned at session-insert time; survives
    * host edits forward so the UI can show "this session ran against
    * config rev #N". Use `useSessionHistoricalHostConfig` to resolve it
@@ -137,20 +137,20 @@ export interface SharedChatThread {
     }>;
     pluginServerIds?: string[];
   };
-  /** AI-generated chatbox session. Drives the "Synthetic" badge + filter. */
+  /** AI-generated scenario session. Drives the "Synthetic" badge + filter. */
   synthetic?: boolean;
   personaId?: string;
   personaLabel?: string;
   synthesisRunId?: string;
   /**
-   * Phase 1 deterministic readiness. The list query (`listByChatbox`) returns
+   * Phase 1 deterministic readiness. The list query (`listByScenario`) returns
    * the compact `status`/`verdict`/`issueCount` signal; the detail query
    * (`getSession`) returns the full record with denormalized findings.
    */
   readiness?: SessionReadiness;
   /**
    * Compact deterministic rubric verdict (mirrors `chatSessions.criteria`).
-   * Absent on chatbox threads and on swarm threads whose run carried no
+   * Absent on scenario threads and on swarm threads whose run carried no
    * rubric — those render no criterion chip rather than a misleading 0/0.
    */
   criteria?: SessionCriteria;
@@ -187,7 +187,7 @@ export interface SessionHistoricalHostConfig {
   serverIds: string[];
   optionalServerIds: string[];
   serverCount: number;
-  /** Name of the host the chatbox *currently* references, if any. */
+  /** Name of the host the scenario *currently* references, if any. */
   currentHostName: string | null;
 }
 
@@ -226,10 +226,10 @@ export function useSharedChatThreadList({
   sourceId: string | null;
 }) {
   const queryArgs = sourceId
-    ? ({ chatboxId: sourceId, limit: 50, includeInternal: true } as any)
+    ? ({ scenarioId: sourceId, limit: 50, includeInternal: true } as any)
     : "skip";
 
-  const threads = useQuery("chatSessions:listByChatbox" as any, queryArgs) as
+  const threads = useQuery("chatSessions:listByScenario" as any, queryArgs) as
     | SharedChatThread[]
     | undefined;
 

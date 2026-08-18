@@ -1,51 +1,51 @@
 /**
  * The `:scenarioId` resolution ladder, and the standalone-host must-fix.
  *
- * `:scenarioId` is a CHATBOX id. This suite pins the three things that ladder
+ * `:scenarioId` is a SCENARIO id. This suite pins the three things that ladder
  * owes its callers: links minted under the old host-id scheme still land on
  * the right scenario, an id that resolves to nothing says so without ever
- * reaching the wire (`getChatbox` declares `v.id('chatboxes')` — an unknown id
+ * reaching the wire (`getScenario` declares `v.id('scenarios')` — an unknown id
  * THROWS out of useQuery and takes the screen with it), and a Journeys-owned
- * host — which has no share surface and therefore no chatbox at all — gets the
+ * host — which has no share surface and therefore no scenario at all — gets the
  * "Managed by Swarms" dead-end instead of a bare not-found.
  *
- * The surface no longer provisions anything on mount: a host without a chatbox
+ * The surface no longer provisions anything on mount: a host without a scenario
  * simply has no scenario. `ensureMock` is asserted-never here to keep it that
  * way.
  */
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostListItem } from "@/hooks/useClients";
-import type { ChatboxListItem } from "@/hooks/useChatboxes";
+import type { ScenarioListItem } from "@/hooks/useScenarios";
 
 const {
   ensureMock,
   navigateMock,
   hostListState,
   listState,
-  chatboxState,
-  chatboxQuerySpy,
+  scenarioState,
+  scenarioQuerySpy,
 } = vi.hoisted(() => ({
   ensureMock: vi.fn().mockResolvedValue(undefined),
   navigateMock: vi.fn(),
   hostListState: { hosts: [] as HostListItem[], isLoading: false },
   listState: {
-    chatboxes: [] as ChatboxListItem[] | undefined,
+    scenarios: [] as ScenarioListItem[] | undefined,
     isLoading: false,
   },
-  chatboxState: { chatbox: null as unknown, isLoading: false },
+  scenarioState: { scenario: null as unknown, isLoading: false },
   // A spy, not a plain factory: one case asserts on the ARGS the surface hands
-  // the chatbox query.
-  chatboxQuerySpy:
+  // the scenario query.
+  scenarioQuerySpy:
     vi.fn<
-      (args: { isAuthenticated: boolean; chatboxId: string | null }) => void
+      (args: { isAuthenticated: boolean; scenarioId: string | null }) => void
     >(),
 }));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
   useMutation: (name: string) =>
-    name === "chatboxes:ensureChatboxForHost" ? ensureMock : vi.fn(),
+    name === "scenarios:ensureScenarioForHost" ? ensureMock : vi.fn(),
 }));
 
 vi.mock("react-router", () => ({
@@ -60,18 +60,18 @@ vi.mock("@/hooks/useClients", () => ({
   useHostMutations: () => ({ createHost: vi.fn() }),
 }));
 
-vi.mock("@/hooks/useChatboxes", () => ({
-  useChatbox: (args: {
+vi.mock("@/hooks/useScenarios", () => ({
+  useScenario: (args: {
     isAuthenticated: boolean;
-    chatboxId: string | null;
+    scenarioId: string | null;
   }) => {
-    chatboxQuerySpy(args);
-    return chatboxState;
+    scenarioQuerySpy(args);
+    return scenarioState;
   },
-  useChatboxList: () => listState,
-  useChatboxMutations: () => ({ deleteChatbox: vi.fn() }),
-  useEnvironmentChatboxMutations: () => ({
-    publishEnvironmentChatbox: vi.fn(),
+  useScenarioList: () => listState,
+  useScenarioMutations: () => ({ deleteScenario: vi.fn() }),
+  useEnvironmentScenarioMutations: () => ({
+    publishEnvironmentScenario: vi.fn(),
   }),
 }));
 
@@ -97,10 +97,10 @@ vi.mock("@/lib/toast", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 // Stub the heavy children so we don't pull their whole dependency trees; none
 // of the states under test render them anyway.
-vi.mock("@/components/chatboxes/UserTestingScenarioDetail", () => ({
+vi.mock("@/components/scenarios/UserTestingScenarioDetail", () => ({
   UserTestingScenarioDetail: () => <div data-testid="scenario-detail" />,
 }));
-vi.mock("@/components/chatboxes/UserTestingOverviewPanel", () => ({
+vi.mock("@/components/scenarios/UserTestingOverviewPanel", () => ({
   UserTestingOverviewPanel: () => <div data-testid="scenario-overview" />,
 }));
 
@@ -122,9 +122,9 @@ function hostFixture(overrides: Partial<HostListItem>): HostListItem {
   };
 }
 
-function rowFixture(overrides: Partial<ChatboxListItem>): ChatboxListItem {
+function rowFixture(overrides: Partial<ScenarioListItem>): ScenarioListItem {
   return {
-    chatboxId: "cb-1",
+    scenarioId: "cb-1",
     projectId: "proj-1",
     name: "Payments beta",
     hostStyle: "cursor",
@@ -154,13 +154,13 @@ describe("UserTestingTab — scenario resolution", () => {
   afterEach(() => {
     ensureMock.mockClear();
     navigateMock.mockClear();
-    chatboxQuerySpy.mockClear();
+    scenarioQuerySpy.mockClear();
     hostListState.hosts = [];
     hostListState.isLoading = false;
-    listState.chatboxes = [];
+    listState.scenarios = [];
     listState.isLoading = false;
-    chatboxState.chatbox = null;
-    chatboxState.isLoading = false;
+    scenarioState.scenario = null;
+    scenarioState.isLoading = false;
   });
 
   it("shows the Swarms dead-end for a Journeys-owned host, and never provisions", async () => {
@@ -168,7 +168,7 @@ describe("UserTestingTab — scenario resolution", () => {
     // list points at it. Without this branch it would read as "not found",
     // which hides the reason and the way out.
     hostListState.hosts = [hostFixture({ ownerScope: { type: "journeys" } })];
-    listState.chatboxes = [];
+    listState.scenarios = [];
 
     renderScenario();
 
@@ -181,10 +181,10 @@ describe("UserTestingTab — scenario resolution", () => {
     });
   });
 
-  it("redirects a legacy host-id link onto its chatbox id", async () => {
+  it("redirects a legacy host-id link onto its scenario id", async () => {
     // Every link copied before the identity change carries a host id.
-    listState.chatboxes = [
-      rowFixture({ chatboxId: "cb-42", namedHostId: "host-real" }),
+    listState.scenarios = [
+      rowFixture({ scenarioId: "cb-42", namedHostId: "host-real" }),
     ];
 
     renderScenario("host-real");
@@ -202,10 +202,10 @@ describe("UserTestingTab — scenario resolution", () => {
     // Environment-backed rows carry a `namedHostId` for DISPLAY only, and
     // several can point at the same host. Matching on it would hand an old
     // link to an unrelated scenario — the same rule the backend's
-    // `getHostPublishChatbox` enforces.
-    listState.chatboxes = [
+    // `getHostPublishScenario` enforces.
+    listState.scenarios = [
       rowFixture({
-        chatboxId: "cb-env",
+        scenarioId: "cb-env",
         namedHostId: "host-real",
         environmentId: "env-1",
       }),
@@ -218,7 +218,7 @@ describe("UserTestingTab — scenario resolution", () => {
   });
 
   it("waits for the list before deciding anything", async () => {
-    listState.chatboxes = undefined;
+    listState.scenarios = undefined;
     listState.isLoading = true;
 
     renderScenario();
@@ -230,10 +230,10 @@ describe("UserTestingTab — scenario resolution", () => {
   });
 
   it("a host with no scenario is not-found — nothing is minted on the way in", async () => {
-    // This used to back-mint a chatbox on mount. A scenario is now something
+    // This used to back-mint a scenario on mount. A scenario is now something
     // that already exists; a client without one simply isn't one.
     hostListState.hosts = [hostFixture({ ownerScope: null })];
-    listState.chatboxes = [];
+    listState.scenarios = [];
 
     renderScenario();
 
@@ -247,19 +247,19 @@ describe("UserTestingTab — scenario resolution", () => {
   });
 
   it("never puts an unknown :scenarioId on the wire", async () => {
-    // `getChatbox` declares `v.id('chatboxes')`, so a hand-typed or stale id
+    // `getScenario` declares `v.id('scenarios')`, so a hand-typed or stale id
     // does not come back null — it THROWS out of useQuery and takes the screen
     // with it. Validating against the loaded list first is what keeps a bad
     // URL from white-screening the app.
     hostListState.hosts = [hostFixture({ hostId: "host-real" })];
-    listState.chatboxes = [rowFixture({ chatboxId: "cb-1" })];
+    listState.scenarios = [rowFixture({ scenarioId: "cb-1" })];
 
     renderScenario("not-a-real-id");
 
     expect(await screen.findByText(/Scenario not found/i)).toBeInTheDocument();
-    expect(chatboxQuerySpy).toHaveBeenCalled();
-    for (const [args] of chatboxQuerySpy.mock.calls) {
-      expect(args.chatboxId).toBeNull();
+    expect(scenarioQuerySpy).toHaveBeenCalled();
+    for (const [args] of scenarioQuerySpy.mock.calls) {
+      expect(args.scenarioId).toBeNull();
     }
   });
 });
