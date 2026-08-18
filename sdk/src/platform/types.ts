@@ -125,11 +125,11 @@ export interface PlatformChatSession {
  * Which session surface a row came from. Open-ended on the wire: switch on it
  * and tolerate an unknown value rather than assuming this list is closed.
  */
-export type PlatformSessionSourceType = "direct" | "chatbox" | "eval" | "swarm";
+export type PlatformSessionSourceType = "direct" | "scenario" | "eval" | "swarm";
 
 /** The session's parent run, discriminated on `kind`. Also open-ended. */
 export interface PlatformSessionParentRef {
-  kind: "evalRun" | "journeyRun" | "chatbox";
+  kind: "evalRun" | "journeyRun" | "scenario";
   /** Human-readable parent name; null when the parent row is gone. */
   label: string | null;
   iterationId?: string;
@@ -138,7 +138,7 @@ export interface PlatformSessionParentRef {
   suiteId?: string | null;
   journeyRunId?: string;
   journeyRefId?: string | null;
-  chatboxId?: string;
+  scenarioId?: string;
 }
 
 /** Where a human goes to read a session. Always present. */
@@ -1013,51 +1013,51 @@ export interface PlatformEvalStepResult {
 }
 
 /**
- * Share link for a chatbox. The URL embeds the access token; it is visible
- * to any caller who can read the chatbox (same audience as the hosted UI).
+ * Share link for a scenario. The URL embeds the access token; it is visible
+ * to any caller who can read the scenario (same audience as the hosted UI).
  */
-export interface PlatformChatboxLink {
+export interface PlatformScenarioLink {
   /** App-relative share path. */
   path: string;
   /** Absolute share URL. */
   url: string;
 }
 
-/** A server attached to a chatbox (HTTP servers only). */
-export interface PlatformChatboxServer {
+/** A server attached to a scenario (HTTP servers only). */
+export interface PlatformScenarioServer {
   id: string;
   name: string;
   url: string | null;
   useOAuth: boolean;
 }
 
-/** Summary of a published chatbox, as returned by the list endpoint. */
-export interface PlatformChatbox {
+/** Summary of a published scenario, as returned by the list endpoint. */
+export interface PlatformScenarioSummary {
   id: string;
   projectId: string | null;
   name: string;
   description: string | null;
   /** Who can use it: "project_members" | "invited_only" | "anyone_with_link". */
   mode: string | null;
-  /** Chat surface style the chatbox renders (e.g. "claude", "chatgpt"). */
+  /** Chat surface style the scenario renders (e.g. "claude", "chatgpt"). */
   hostStyle: string | null;
   hostId: string | null;
   hostName: string | null;
   serverCount: number;
   serverNames: string[];
-  link: PlatformChatboxLink | null;
+  link: PlatformScenarioLink | null;
   createdAt: number | null;
   updatedAt: number | null;
 }
 
-/** A chatbox's full read-only settings: summary plus host execution config. */
-export interface PlatformChatboxDetail extends PlatformChatbox {
-  /** Model the chatbox chats with. */
+/** A scenario's full read-only settings: summary plus host execution config. */
+export interface PlatformScenarioDetail extends PlatformScenarioSummary {
+  /** Model the scenario chats with. */
   modelId: string | null;
   systemPrompt: string | null;
   temperature: number | null;
   requireToolApproval: boolean;
-  servers: PlatformChatboxServer[];
+  servers: PlatformScenarioServer[];
 }
 
 /**
@@ -1073,7 +1073,7 @@ export type PlatformDoctorReport = ServerDoctorResult<unknown>;
  * Response of `POST /projects/{p}/tunnels` — the relay grant the caller
  * hosts the tunnel WebSocket with, plus the registered server record's
  * identity. The `url` embeds the plaintext `?k=` bearer secret (also
- * persisted on the server record so evals/chatboxes can target it); treat
+ * persisted on the server record so evals/scenarios can target it); treat
  * the whole grant as a credential. Re-creating rotates the secret and
  * revokes the previous grant.
  */
@@ -1240,10 +1240,14 @@ export interface PlatformJourneyRunSession {
 // ── Scenarios (the API surface for user testing) ─────────────────────────────
 //
 // A scenario is a project environment published for people outside the project
-// to talk to. Internally these are `chatboxes` rows and will stay that way —
-// the rename is a transport-DTO boundary, not a migration. The older
-// `list_chatboxes` / `get_chatbox` operations still work against the old
-// routes until GA.
+// to talk to. It is a `scenarios` row all the way down: this used to be a
+// transport-DTO rename over a `chatboxes` table, and that split is gone —
+// storage, routes and operations all say scenario now.
+//
+// `PlatformScenario` here is the PUBLISH response. The list/read shapes are
+// `PlatformScenarioSummary` and `PlatformScenarioDetail` above; they were
+// named for the old table, and kept the `Summary` suffix rather than colliding
+// with this one.
 
 export interface PlatformScenario {
   id: string;

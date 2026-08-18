@@ -53,7 +53,7 @@ function createPlanCatalog() {
         prices: { monthly: 0, annual: 0 },
         features: {
           evals: true,
-          chatboxes: true,
+          scenarios: true,
           cicd: false,
           customDomains: false,
           auditLog: false,
@@ -63,7 +63,7 @@ function createPlanCatalog() {
         limits: {
           maxMembers: null,
           maxProjects: null,
-          maxChatboxesPerProject: null,
+          maxScenariosPerProject: null,
           maxEvalRunsPerMonth: null,
           insightsPerDay: null,
         },
@@ -79,7 +79,7 @@ function createPlanCatalog() {
         prices: { monthly: 3800, annual: 36000 },
         features: {
           evals: true,
-          chatboxes: true,
+          scenarios: true,
           cicd: true,
           customDomains: true,
           auditLog: false,
@@ -89,7 +89,7 @@ function createPlanCatalog() {
         limits: {
           maxMembers: null,
           maxProjects: null,
-          maxChatboxesPerProject: null,
+          maxScenariosPerProject: null,
           maxEvalRunsPerMonth: null,
           insightsPerDay: null,
         },
@@ -108,7 +108,7 @@ function createPlanCatalog() {
         prices: { monthly: null, annual: null },
         features: {
           evals: true,
-          chatboxes: true,
+          scenarios: true,
           cicd: true,
           customDomains: true,
           auditLog: true,
@@ -118,7 +118,7 @@ function createPlanCatalog() {
         limits: {
           maxMembers: null,
           maxProjects: null,
-          maxChatboxesPerProject: null,
+          maxScenariosPerProject: null,
           maxEvalRunsPerMonth: null,
           insightsPerDay: null,
         },
@@ -1768,7 +1768,7 @@ describe("OrganizationsTab billing", () => {
           source: "subscription",
           features: {
             evals: true,
-            chatboxes: true,
+            scenarios: true,
             cicd: true,
             customDomains: true,
             auditLog: false,

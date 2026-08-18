@@ -160,7 +160,7 @@ describe("buildSandboxBashTool — lifetime wording", () => {
     expect(tool.description).not.toMatch(/PERSISTS/);
   });
 
-  it("tells a chatbox model the box survives between turns", () => {
+  it("tells a scenario model the box survives between turns", () => {
     // Not cosmetic: a model that believes its files vanish will re-create
     // scratch files each turn and never build on earlier work — defeating the
     // point of a conversation-scoped shell.

@@ -49,8 +49,8 @@ What you can do with it today:
   restore the named execution bundles (host + optional server group + optional
   pinned skills and plugin versions) that eval suites and journeys run against,
   and **preview** what one resolves to before launching it
-- **List a project's chatboxes** — name, access mode, attached servers, and
-  share link — and **read one chatbox's settings**: model, system prompt,
+- **List a project's scenarios** — name, access mode, attached servers, and
+  share link — and **read one scenario's settings**: model, system prompt,
   tool-approval policy, and resolved servers
 - **Author eval suites** — create a runnable suite (name, default model, servers, test cases) synchronously and get a `suiteId` back; no run is started and no credits are spent
 - **Run eval suites asynchronously** — create a run from a saved suite, get a `202` + `runId`
@@ -294,12 +294,12 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
 | --- | --- |
 | `POST .../agent` | Run ONE assistant turn over a `messages` history (`{role: "user"\|"assistant", content}` items, max 50 messages × 8 KB each, 96 KB total). The model is pinned server-side and billed to the project. The turn can read project servers/suites/runs and **create eval suites**; it can NOT start runs — kick those off yourself with `POST .../eval-runs`. Responds synchronously with `reply`, the `toolCalls` it made, `createdResources` (ids + app links), and token `usage`. Capped at 4 concurrent turns per organization and ~90 s wall clock. **Not idempotent — never blind-retry**: dedupe on your own trigger identity, and on an error response check `details.createdResources` (and, after a lost response, list suites) before retrying, or you'll create duplicates |
 
-**Chatboxes** (`/projects/{projectId}/chatboxes...`) — read-only:
+**Scenarios** (`/projects/{projectId}/scenarios...`) — read-only:
 
 | Endpoint | What it does |
 | --- | --- |
-| `GET .../chatboxes` | List the project's published chatboxes: name, access mode, attached servers, share link |
-| `GET .../chatboxes/{chatboxId}` | One chatbox's settings: model, system prompt, tool-approval policy, resolved servers |
+| `GET .../scenarios` | List the project's published scenarios: name, access mode, attached servers, share link |
+| `GET .../scenarios/{scenarioId}` | One scenario's settings: model, system prompt, tool-approval policy, resolved servers |
 
 <Note>
   **Swarms and User Testing are enabled per organization.** Everything in the

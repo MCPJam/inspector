@@ -306,7 +306,7 @@ vi.mock("@/hooks/useViews", () => ({
   useDbUserReady: () => true,
   useProjectServers: () => ({ servers: [], isLoading: false }),
 }));
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/lib/toast", () => ({
