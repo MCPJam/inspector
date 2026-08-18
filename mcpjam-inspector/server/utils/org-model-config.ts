@@ -43,12 +43,12 @@ export type ResolveOrgModelConfigAuth = {
   authHeader?: string;
   bearerToken?: string;
   /**
-   * Chatbox identity is `chatboxId` + `accessVersion`. The cache key hashes
+   * Scenario identity is `scenarioId` + `accessVersion`. The cache key hashes
    * these so a link-token rotation does not invalidate model-config cache
    * entries, while an `accessVersion` bump (mode change, revoke, allowlist
    * edit) does.
    */
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   serverIds?: string[];
 };
@@ -126,16 +126,16 @@ function buildCacheKey(
   auth: ResolveOrgModelConfigAuth | undefined,
 ): string {
   const target = formatTargetForCache(params);
-  // Cache key hashes (chatboxId, accessVersion) so a link-token rotation
+  // Cache key hashes (scenarioId, accessVersion) so a link-token rotation
   // doesn't invalidate cache entries while an accessVersion bump (mode
   // change, revoke, allowlist edit) does.
   const authHash = createHash("sha256")
     .update(
       JSON.stringify({
         authorization: normalizeAuthHeader(auth) ?? "",
-        chatboxId: auth?.chatboxId?.trim() ?? "",
+        scenarioId: auth?.scenarioId?.trim() ?? "",
         accessVersion:
-          auth?.chatboxId && auth.chatboxId.trim() &&
+          auth?.scenarioId && auth.scenarioId.trim() &&
           Number.isFinite(auth?.accessVersion)
             ? auth.accessVersion
             : null,
@@ -182,10 +182,10 @@ export async function resolveOrgModelConfig(
       },
       body: JSON.stringify({
         ...params,
-        ...(auth?.chatboxId?.trim()
-          ? { chatboxId: auth.chatboxId.trim() }
+        ...(auth?.scenarioId?.trim()
+          ? { scenarioId: auth.scenarioId.trim() }
           : {}),
-        ...(auth?.chatboxId?.trim() && Number.isFinite(auth?.accessVersion)
+        ...(auth?.scenarioId?.trim() && Number.isFinite(auth?.accessVersion)
           ? { accessVersion: auth.accessVersion }
           : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
@@ -475,9 +475,9 @@ function buildRuntimeCacheKey(
     .update(
       JSON.stringify({
         authorization: normalizeAuthHeader(auth) ?? "",
-        chatboxId: auth?.chatboxId?.trim() ?? "",
+        scenarioId: auth?.scenarioId?.trim() ?? "",
         accessVersion:
-          auth?.chatboxId && auth.chatboxId.trim() &&
+          auth?.scenarioId && auth.scenarioId.trim() &&
           Number.isFinite(auth?.accessVersion)
             ? auth.accessVersion
             : null,
@@ -549,10 +549,10 @@ export async function resolveOrgProviderRuntimeForTarget(
         ...target,
         providerKey,
         model,
-        ...(auth?.chatboxId?.trim()
-          ? { chatboxId: auth.chatboxId.trim() }
+        ...(auth?.scenarioId?.trim()
+          ? { scenarioId: auth.scenarioId.trim() }
           : {}),
-        ...(auth?.chatboxId?.trim() && Number.isFinite(auth?.accessVersion)
+        ...(auth?.scenarioId?.trim() && Number.isFinite(auth?.accessVersion)
           ? { accessVersion: auth.accessVersion }
           : {}),
         ...(serverIds.length > 0 ? { serverIds } : {}),
@@ -658,7 +658,7 @@ export interface SyntheticModelResolution {
 }
 
 /**
- * Single source of truth for "what model-source class is this chatbox?"
+ * Single source of truth for "what model-source class is this scenario?"
  * Mirrors the three-way split the chat path does in `web-chat-turn.ts`,
  * narrowed to the surfaces synthetic can target (no user-API-key direct).
  *
@@ -682,7 +682,7 @@ export async function resolveSyntheticModelSource(args: {
   modelDefinition: ModelDefinition;
   projectId: string;
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   serverIds?: string[];
 }): Promise<SyntheticModelResolution> {
@@ -703,7 +703,7 @@ export async function resolveSyntheticModelSource(args: {
         modelIdStr,
         {
           authHeader: args.authHeader,
-          chatboxId: args.chatboxId,
+          scenarioId: args.scenarioId,
           accessVersion: args.accessVersion,
           serverIds: args.serverIds,
         },
@@ -717,13 +717,13 @@ export async function resolveSyntheticModelSource(args: {
 
 // ---------------------------------------------------------------------------
 // Synthetic model-definition builder — used by the synthetic runner when
-// the chatbox is on a BYOK model that isn't in the static SUPPORTED_MODELS
+// the scenario is on a BYOK model that isn't in the static SUPPORTED_MODELS
 // catalog (Ollama BYOK, custom: providers, OpenRouter-style ids, etc.).
 // ---------------------------------------------------------------------------
 
 /**
  * Build a `ModelDefinition` from a bare modelId string (e.g. the value
- * `runtime.config.modelId` returns from `fetchChatboxRuntimeConfig`).
+ * `runtime.config.modelId` returns from `fetchScenarioRuntimeConfig`).
  *
  * Resolution order:
  *   1. Blank id — THROWS. An unpinned host persists modelId "", and without
@@ -740,7 +740,7 @@ export async function resolveSyntheticModelSource(args: {
  *      this function deliberately holds NO copy of them.
  *
  * Callers: the synthetic session runner (which only has
- * `runtime.config.modelId` — the chatbox runtime endpoint doesn't expose
+ * `runtime.config.modelId` — the scenario runtime endpoint doesn't expose
  * provider today) and the chat routes' host-wins merges, where the host
  * config likewise pins a bare modelId and the provider must come from the
  * id shape, never from the request body's model.

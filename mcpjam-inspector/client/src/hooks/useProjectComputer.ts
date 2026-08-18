@@ -161,7 +161,7 @@ export interface ComputersDataPlaneConfig {
   localConfigured: boolean;
   remoteDataPlaneUrl: string | null;
   /**
-   * Can this inspector EXECUTE in ephemeral (eval/swarm/chatbox) sandboxes?
+   * Can this inspector EXECUTE in ephemeral (eval/swarm/scenario) sandboxes?
    * Distinct from personal-computer availability: `remoteDataPlaneUrl`
    * delegates only personal bash/terminal, so a remote-only inspector can
    * drive a personal Computer yet cannot run a single disposable-sandbox

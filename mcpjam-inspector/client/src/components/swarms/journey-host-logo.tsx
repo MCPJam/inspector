@@ -1,4 +1,4 @@
-import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
+import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
 
 /**
  * Small host logo mark keyed by display name. Shared by the new-journey form

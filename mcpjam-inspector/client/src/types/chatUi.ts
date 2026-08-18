@@ -1,9 +1,9 @@
 // Shared "Chat UI" types — single source of truth for the chatUi envelope
 // that wraps welcome/feedback dialogs (and future surfaces / branding).
-// Consumed by the chatbox builder, the hosted chat runtime, and the
+// Consumed by the scenario builder, the hosted chat runtime, and the
 // playground bootstrap normalizer.
 
-export interface ChatboxWelcomeDialogSettings {
+export interface ScenarioWelcomeDialogSettings {
   enabled: boolean;
   body?: string;
 }
@@ -18,7 +18,7 @@ export interface ChatboxWelcomeDialogSettings {
  * running against an older backend still typechecks, and goes away with the
  * backend's deploy B.
  */
-export interface ChatboxFeedbackDialogSettings {
+export interface ScenarioFeedbackDialogSettings {
   enabled: boolean;
   /** Completed tool calls between feedback prompts in hosted sessions (not user message count). */
   everyNToolCalls?: number;
@@ -31,7 +31,7 @@ export interface ChatboxFeedbackDialogSettings {
  * into the same session rollup server-side, so the Sessions filters do not
  * branch on this.
  */
-export type ChatboxPerTurnFeedbackStyle = "stars" | "thumbs";
+export type ScenarioPerTurnFeedbackStyle = "stars" | "thumbs";
 
 /**
  * Per-turn ratings: a rating plus an optional comment under each assistant
@@ -41,10 +41,10 @@ export type ChatboxPerTurnFeedbackStyle = "stars" | "thumbs";
  * fully-defaulted envelope through redeem, so a `true` default would enable
  * this everywhere the moment the UI shipped.
  */
-export interface ChatboxPerTurnFeedbackSettings {
+export interface ScenarioPerTurnFeedbackSettings {
   enabled: boolean;
   /** Absent ⇒ `stars`, which is what every scenario predating thumbs had. */
-  style?: ChatboxPerTurnFeedbackStyle;
+  style?: ScenarioPerTurnFeedbackStyle;
   /** Label above the widget. Empty ⇒ the widget's own copy. */
   prompt?: string;
   commentPlaceholder?: string;
@@ -52,10 +52,10 @@ export interface ChatboxPerTurnFeedbackSettings {
 }
 
 export interface ChatUiSurfaces {
-  welcome?: ChatboxWelcomeDialogSettings | null;
-  /** @deprecated see `ChatboxFeedbackDialogSettings`. */
-  feedback?: ChatboxFeedbackDialogSettings | null;
-  perTurnFeedback?: ChatboxPerTurnFeedbackSettings | null;
+  welcome?: ScenarioWelcomeDialogSettings | null;
+  /** @deprecated see `ScenarioFeedbackDialogSettings`. */
+  feedback?: ScenarioFeedbackDialogSettings | null;
+  perTurnFeedback?: ScenarioPerTurnFeedbackSettings | null;
 }
 
 export interface ChatUiSettings {

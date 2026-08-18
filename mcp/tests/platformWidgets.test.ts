@@ -32,12 +32,12 @@ describe("getPlatformWidgetView", () => {
     ).toBe("eval_run");
     expect(
       getPlatformWidgetView(
-        tagPlatformWidgetPayload("chatbox", {
+        tagPlatformWidgetPayload("scenario", {
           project: PROJECT,
-          chatbox: { id: "chatbox-1", name: "Support" },
+          scenario: { id: "scenario-1", name: "Support" },
         })
       )
-    ).toBe("chatbox");
+    ).toBe("scenario");
   });
 
   it("rejects non-objects and unknown tags", () => {
@@ -57,7 +57,7 @@ describe("getPlatformWidgetView", () => {
   it("rejects tagged payloads whose envelope is malformed", () => {
     // items missing entirely.
     expect(
-      getPlatformWidgetView({ widget: "chatboxes", project: PROJECT })
+      getPlatformWidgetView({ widget: "scenarios", project: PROJECT })
     ).toBeUndefined();
     // items present but not an array.
     expect(
