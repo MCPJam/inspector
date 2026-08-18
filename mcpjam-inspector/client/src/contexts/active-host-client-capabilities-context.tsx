@@ -32,9 +32,9 @@ const NO_OP_RESOLVER: ActiveHostCapsResolver = () => undefined;
 /**
  * Per-scope resolver that returns the effective `clientCapabilities` for
  * the active host + the tool's server. Mirrors
- * {@link ActiveMcpProfileContext} / {@link ChatboxHostCapabilitiesOverrideContext}:
+ * {@link ActiveMcpProfileContext} / {@link ScenarioHostCapabilitiesOverrideContext}:
  * a single Provider sets the value for whatever scope owns the host
- * config (chatbox, eval suite, direct chat). Downstream readers call
+ * config (scenario, eval suite, direct chat). Downstream readers call
  * {@link useActiveHostCapsResolver} and pass the tool's `serverId`.
  *
  * **`clientCapabilities` vs `hostCapabilities`:**
@@ -43,7 +43,7 @@ const NO_OP_RESOLVER: ActiveHostCapsResolver = () => undefined;
  *     UI extension lives here under
  *     `extensions["io.modelcontextprotocol/ui"]`.
  *   - `hostCapabilities` (handled by
- *     {@link ChatboxHostCapabilitiesOverrideProvider}) is what the host
+ *     {@link ScenarioHostCapabilitiesOverrideProvider}) is what the host
  *     advertises to WIDGETS via the MCP Apps `ui/initialize` response.
  *
  * **Why a resolver and not a cached value:** the render gate must agree
@@ -73,10 +73,10 @@ export function useActiveHostCapsResolver(): ActiveHostCapsResolver {
  *      same call as the connect path, so the render gate and `initialize`
  *      always evaluate the same capability blob.
  *   3. Falls back to the template seed for `hostStyle` when no persisted
- *      `activeHost` is in scope — preserves prefs-only and hosted-chatbox
+ *      `activeHost` is in scope — preserves prefs-only and hosted-scenario
  *      paths where the bootstrap doesn't carry full host capabilities.
  *
- * Apply once per chat surface root (analog to `ChatboxHostStyleProvider`).
+ * Apply once per chat surface root (analog to `ScenarioHostStyleProvider`).
  *
  * **Product note on per-server overrides:** a server with its own
  * `clientCapabilities` advertising the UI extension will render widgets
@@ -103,7 +103,7 @@ export function ActiveHostCapsResolverScope({
   const catalogState = useHostCatalog();
 
   // Effective host. When the surface has no persisted active host
-  // (prefs-only Chat tab, hosted chatbox whose bootstrap doesn't carry
+  // (prefs-only Chat tab, hosted scenario whose bootstrap doesn't carry
   // clientCapabilities yet), synthesize one from the template seed for
   // the current `hostStyle`. This keeps Codex etc. gating correctly even
   // without a Convex host record.
