@@ -15,7 +15,10 @@ import {
   sanitizeWidgetForBackend,
   type SharedChatWidgetSnapshotPayload,
 } from "@/shared/widget-snapshot";
-import { isStaleHostedAccessError } from "@/lib/hosted-access-errors";
+import {
+  isServerOutsideScenarioError,
+  isStaleHostedAccessError,
+} from "@/lib/hosted-access-errors";
 
 interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
@@ -233,6 +236,11 @@ export function useSharedChatWidgetCapture({
   // until an unrelated widget/message change happens to retrigger the
   // debounced sweep.
   const pendingStaleRetryRef = useRef(new Set<string>());
+  // ToolCallIds whose snapshot the backend refused for good — their server is
+  // not in the scenario allowlist and the transcript naming it won't change.
+  // Hook-owned rather than folded into `persistedSnapshotToolCallIdsRef`,
+  // which is rebuilt from props on every change and would drop the entry.
+  const abandonedToolCallIdsRef = useRef(new Set<string>());
   // Bounded backoff state for re-asking the parent to redeem. Tracks how
   // many times the timer has refired (without an accessVersion bump in
   // between) and the currently-scheduled timer. Reset to zero whenever
@@ -339,6 +347,7 @@ export function useSharedChatWidgetCapture({
       cachedBlobsRef.current.clear();
       retryCountRef.current.clear();
       pendingStaleRetryRef.current.clear();
+      abandonedToolCallIdsRef.current.clear();
       clearPendingStaleRefresh();
       for (const timer of pendingTimersRef.current.values()) {
         clearTimeout(timer);
@@ -398,6 +407,9 @@ export function useSharedChatWidgetCapture({
       return;
     }
     if (persistedSnapshotToolCallIdsRef.current.has(toolCallId)) {
+      return;
+    }
+    if (abandonedToolCallIdsRef.current.has(toolCallId)) {
       return;
     }
     if (!toolSource.serverId) {
@@ -552,7 +564,30 @@ export function useSharedChatWidgetCapture({
         // belong to a different scope now.
         return;
       }
-      if (isStaleHostedAccessError(error)) {
+      if (isServerOutsideScenarioError(error)) {
+        // TERMINAL. This widget's server left the scenario allowlist, and the
+        // transcript that names it is not going to change, so every sweep
+        // re-offers the same doomed toolCallId. Checked BEFORE the retry
+        // ladder below, which `shouldRetryPendingSnapshot` would otherwise
+        // arm: its `result == null` early return makes the catch path retry
+        // on any error, so one dead snapshot burned six backend calls (the
+        // shape visible in Sentry CONVEX-19N — bursts of exactly six).
+        //
+        // Abandoned so the debounced sweep stops re-picking it. Not a
+        // stale-access case: there is no fresher accessVersion to redeem for.
+        abandonedToolCallIdsRef.current.add(toolCallId);
+        cachedBlobsRef.current.delete(toolCallId);
+        retryCountRef.current.delete(toolCallId);
+        const staleTimer = pendingTimersRef.current.get(toolCallId);
+        if (staleTimer) {
+          clearTimeout(staleTimer);
+          pendingTimersRef.current.delete(toolCallId);
+        }
+        console.warn(
+          "[useSharedChatWidgetCapture] Server is no longer in the scenario allowlist; dropping snapshot for",
+          toolCallId,
+        );
+      } else if (isStaleHostedAccessError(error)) {
         // Drop cached blobs uploaded under the stale accessVersion, queue
         // this toolCallId for replay once the fresh accessVersion arrives,
         // and ask the owner to re-redeem. The reset effect drains the

@@ -598,6 +598,89 @@ describe("useSharedChatWidgetCapture", () => {
     unmount();
   });
 
+  it("abandons a snapshot whose server left the scenario allowlist instead of retrying it", async () => {
+    // Sentry CONVEX-19N. A transcript outlives the allowlist, so this
+    // toolCallId is re-offered on every sweep and the backend refuses it every
+    // time. `shouldRetryPendingSnapshot` used to arm the ladder anyway (its
+    // `result == null` early return makes the catch path retry on any error),
+    // turning one dead snapshot into six backend calls.
+    const onStaleHostedAccess = vi.fn();
+    class OutsideAllowlistError extends Error {
+      data: { code: string; message: string };
+      constructor() {
+        super("Server is not in the scenario allowlist");
+        this.data = {
+          code: "server_not_in_scenario_allowlist",
+          message: "Server is not in the scenario allowlist",
+        };
+      }
+    }
+    mockCreateWidgetSnapshot.mockReset();
+    mockCreateWidgetSnapshot.mockRejectedValue(new OutsideAllowlistError());
+
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-outside",
+        hostedScenarioId: "cbx_1",
+        hostedAccessVersion: 1,
+        onStaleHostedAccess,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "call-outside",
+                input: { q: "hello" },
+                output: { result: "world", _serverId: "server-gone" },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-outside",
+            {
+              toolCallId: "call-outside",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    await flushMicrotasks();
+
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+
+    // The retry ladder tops out around 10s a step; a minute covers all five.
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    await flushMicrotasks();
+
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+    // Nor is it a stale-access case: re-redeeming buys nothing here.
+    expect(onStaleHostedAccess).not.toHaveBeenCalled();
+
+    unmount();
+  });
+
   it("retries stale snapshots even after the first refresh callback fails to advance accessVersion", async () => {
     // P2 from review: if the parent's /redeem fetch fails, hostedAccessVersion
     // never bumps, so the reset effect never runs. The hook must still fire
