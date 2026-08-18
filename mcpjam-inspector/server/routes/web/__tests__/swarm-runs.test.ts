@@ -297,7 +297,7 @@ describe("web routes — swarm single-host launch", () => {
 
     expect(createAuthorizedManagerMock).toHaveBeenCalledTimes(1);
     const call = createAuthorizedManagerMock.mock.calls[0]!;
-    // 7th positional arg = clientCapabilities (mirrors the chatbox path).
+    // 7th positional arg = clientCapabilities (mirrors the scenario path).
     expect(call[6]).toEqual({ roots: { listChanged: true } });
     const options = call[7] as any;
     // INITIALIZE pins come from mcpProfile, not connectionDefaults.

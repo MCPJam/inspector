@@ -6,7 +6,7 @@ const mockDetectUIType = vi.fn();
 
 // After the renderer consolidation (Phase 3), every UI-bearing tool —
 // Apps SDK, MCP Apps, or dual-metadata — routes through MCPAppsRenderer.
-// The previous chatgpt-vs-mcp branching by chatbox style is gone.
+// The previous chatgpt-vs-mcp branching by scenario style is gone.
 
 vi.mock("../mcp-apps/mcp-apps-renderer", () => ({
   MCPAppsRenderer: ({ toolName }: { toolName: string }) => (

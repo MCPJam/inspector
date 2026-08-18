@@ -4,7 +4,7 @@ import type {
 } from "@/hooks/useOrganizationBilling";
 import { formatPlanName } from "@/lib/billing-entitlements";
 
-type BillingUpsellIntent = "members" | "chatboxes";
+type BillingUpsellIntent = "members" | "scenarios";
 
 function formatCurrencyAmount(amount: number, currency: string): string {
   return new Intl.NumberFormat(undefined, {
@@ -27,7 +27,7 @@ function formatLimitLabel(
   return `${value} ${value === 1 ? singular : plural}`;
 }
 
-function formatChatboxesPerProjectLabel(
+function formatScenariosPerProjectLabel(
   value: number | null | undefined,
 ): string {
   if (value == null) {
@@ -92,8 +92,8 @@ export function getBillingUpsellTeaser(params: {
           "project",
           "projects",
         )}`
-      : `${formatPlanName(upgradePlan)} includes ${formatChatboxesPerProjectLabel(
-          entry.limits.maxChatboxesPerProject,
+      : `${formatPlanName(upgradePlan)} includes ${formatScenariosPerProjectLabel(
+          entry.limits.maxScenariosPerProject,
         )} and ${formatLimitLabel(
           entry.limits.maxMembers,
           "member",

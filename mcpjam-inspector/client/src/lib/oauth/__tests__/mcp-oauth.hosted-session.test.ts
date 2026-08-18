@@ -93,7 +93,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverUrl: "https://mcp.asana.com/sse",
         sessionId: "hosted-session-1",
         accessScope: "project_member",
-        chatboxId: null,
+        scenarioId: null,
         returnPath: "#servers",
         startedAt: Date.now(),
       },
@@ -132,6 +132,64 @@ describe("mcp-oauth hosted callback sessions", () => {
     });
   });
 
+  it("records and returns the same formatted hosted callback error", async () => {
+    authFetchMock.mockImplementation((url: string) => {
+      if (url === "https://test.convex.site/web/oauth/session/progress") {
+        return Promise.resolve(
+          new Response(JSON.stringify({ success: false, error: "not found" }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" },
+          })
+        );
+      }
+
+      if (url === "https://test.convex.site/web/oauth/complete") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              success: false,
+              error:
+                "Uncaught InvalidGrantError: Token is not active\n    at async exchangeGenericAuthorizationCode",
+            }),
+            {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            }
+          )
+        );
+      }
+
+      throw new Error(`Unexpected authFetch URL: ${url}`);
+    });
+
+    const { completeHostedOAuthCallback } = await import("../mcp-oauth");
+    const result = await completeHostedOAuthCallback(
+      {
+        surface: "project",
+        projectId: "ws_1",
+        serverId: "srv_asana",
+        serverName: "asana",
+        serverUrl: "https://mcp.asana.com/sse",
+        sessionId: "hosted-session-1",
+        accessScope: "project_member",
+        scenarioId: null,
+        returnPath: "#servers",
+        startedAt: Date.now(),
+      },
+      "oauth-code",
+      { callbackState: "oauth-state-1" }
+    );
+
+    const expectedError =
+      "OAuth token exchange failed (invalid_grant): the authorization server rejected the authorization code. Check whether the code expired or was reused, and whether the redirect URI, client ID, and PKCE verifier match. Server response: Token is not active";
+    expect(result.success).toBe(false);
+    expect(result.error).toBe(expectedError);
+    expect(result.oauthTrace?.error).toBe(expectedError);
+    expect(
+      result.oauthTrace?.steps.find((step) => step.status === "error")?.error
+    ).toBe(expectedError);
+  });
+
   it("uses the flow session version for sessionless completion and reconnect", async () => {
     storeSessionless2026Flow();
     authFetchMock.mockResolvedValue(
@@ -156,7 +214,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverName: "asana",
         serverUrl: "https://mcp.asana.com/sse",
         accessScope: "project_member",
-        chatboxId: null,
+        scenarioId: null,
         returnPath: "#servers",
         startedAt: Date.now(),
       },
@@ -212,7 +270,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           serverName: "asana",
           serverUrl: "https://mcp.asana.com/sse",
           accessScope: "project_member",
-          chatboxId: null,
+          scenarioId: null,
           returnPath: "#servers",
           startedAt: Date.now(),
         },
@@ -253,7 +311,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverName: "asana",
         serverUrl: "https://mcp.asana.com/sse",
         accessScope: "project_member",
-        chatboxId: null,
+        scenarioId: null,
         returnPath: "#servers",
         startedAt: Date.now(),
       },
@@ -298,7 +356,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverUrl: "https://mcp.asana.com/sse",
         sessionId: "hosted-session-1",
         accessScope: "project_member",
-        chatboxId: null,
+        scenarioId: null,
         returnPath: "#servers",
         startedAt: Date.now(),
       },
@@ -371,7 +429,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverUrl: "https://mcp.linear.app",
         sessionId: "hosted-session-1",
         accessScope: "project_member",
-        chatboxId: null,
+        scenarioId: null,
         returnPath: "#servers",
         startedAt: Date.now(),
       },
@@ -426,7 +484,7 @@ describe("mcp-oauth hosted callback sessions", () => {
         serverUrl: "https://mcp.linear.app",
         sessionId: "hosted-session-1",
         accessScope: "project_member",
-        chatboxId: null,
+        scenarioId: null,
         returnPath: "#servers",
         startedAt: Date.now(),
       },
@@ -513,7 +571,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           serverUrl: "https://mcp.asana.com/sse",
           sessionId: "hosted-session-1",
           accessScope: "project_member",
-          chatboxId: null,
+          scenarioId: null,
           returnPath: "#servers",
           startedAt: Date.now(),
         },
@@ -634,7 +692,7 @@ describe("mcp-oauth hosted callback sessions", () => {
           serverUrl: "https://mcp.linear.app/mcp",
           sessionId: "hosted-session-1",
           accessScope: "project_member",
-          chatboxId: null,
+          scenarioId: null,
           returnPath: "#servers",
           startedAt: Date.now(),
         },

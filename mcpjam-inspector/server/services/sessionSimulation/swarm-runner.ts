@@ -52,7 +52,7 @@ import type {
  * persona-driven sessions SEQUENTIALLY (one active session per host); at most
  * {@link MAX_CONCURRENT_HOSTS} hosts are active concurrently. The per-session
  * host-turn machinery is the shared {@link runSyntheticHostSession} core
- * (identical to chatbox session-simulation); this file owns the swarm surface:
+ * (identical to scenario session-simulation); this file owns the swarm surface:
  * the claim→run→persist→terminal attempt ordering, the swarm persona driver,
  * swarm transcript attribution, an independent heartbeat, graceful shutdown
  * registration, and the two run-level short-circuits below.
@@ -103,7 +103,7 @@ function targetSessionIdentity(target: PinnedHostExecutionSpec): {
 
 /**
  * Builds a fresh, fully-connected manager scoped to one pinned host's
- * `serverIds`. Host-aware (unlike the chatbox {@link SimulationManagerFactory})
+ * `serverIds`. Host-aware (unlike the scenario {@link SimulationManagerFactory})
  * so a single fan-out run can connect different servers per host.
  */
 export type JourneyManagerFactory = (host: PinnedHostExecutionSpec) => Promise<{
@@ -668,7 +668,7 @@ async function runJourneyFanOut(
         // (render observations, Computer Use steps, the replay `.webm`). Swarms
         // are the ONE surface that opts into Computer Use, so they generate the
         // richest interaction record — and until this existed they kept none of
-        // it. No chatboxId/accessVersion: the write authorizes through the
+        // it. No scenarioId/accessVersion: the write authorizes through the
         // mutation's direct-session branch, where this runner IS the launcher
         // who owns every session row the run mints.
         const browserArtifacts = createBrowserArtifactOutbox({
@@ -1006,8 +1006,8 @@ async function runJourneyFanOut(
               // legacy live-pool). The shared core routes them to prepareChatV2
               // (`skillsSource`) or the harness pinned path — never a live query.
               ...(pinnedSkills !== undefined ? { pinnedSkills } : {}),
-              // Swarm authorizes via project membership — no chatbox access
-              // version, no chatbox id.
+              // Swarm authorizes via project membership — no scenario access
+              // version, no scenario id.
             },
             authHeader: `Bearer ${bearer}`,
             // Each attempt gets a fresh manager + browser context, scoped to THIS
@@ -1043,9 +1043,9 @@ async function runJourneyFanOut(
             // capture-before-teardown so the replay video is collected while
             // Chromium is still alive and uploaded once it isn't.
             browserArtifacts,
-            // Per-turn MCP App widget-snapshot capture, same as the chatbox
+            // Per-turn MCP App widget-snapshot capture, same as the scenario
             // surface but through `createWidgetSnapshot`'s direct-session auth
-            // branch (no chatboxId/accessVersion): the runner authenticates as
+            // branch (no scenarioId/accessVersion): the runner authenticates as
             // the run launcher, who owns every swarm session row, and each
             // snapshot carries its originating `serverId`. Without this the
             // Swarms session viewers have no `sharedChatWidgetSnapshots` rows
