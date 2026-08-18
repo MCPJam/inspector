@@ -128,7 +128,7 @@ The 2026 RC client is a **preview**. A handful of pieces from the SEP family are
 - `subscriptions/listen` (long-lived notification stream)
 - Server-initiated requests via MRTR / `InputRequiredResult` for sampling and listRoots embedded in responses (elicitation via `input_required` is supported — see [Multi-round input](#multi-round-input-mcp-2026-07-28-input_required))
 - Resumption tokens
-- Automatic detection (HTTP and stdio) falls back to the legacy `initialize` handshake. An explicit 2026 pin remains exact and does not fall back.
+- Automatic detection (HTTP and stdio) falls back to the legacy `initialize` handshake when `server/discover` is not available. An explicit 2026 pin remains exact and does not fall back.
 
 For everything else — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, OAuth refresh, custom headers, progress notifications — the RC client behaves like the legacy one.
 
