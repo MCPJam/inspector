@@ -8,9 +8,20 @@ import {
 import { HOSTED_MODE } from "@/lib/config";
 import { resolvePromptTurns, type PromptTurn } from "@/shared/steps";
 import { promptTurnsToSteps, type TestStep } from "@/shared/steps";
+import { mintCaseId } from "@mcpjam/sdk/contract";
 
 export type CreateEvalTestCaseInput = {
   suiteId: string;
+  /**
+   * The case's DECLARED identity, minted by the caller (`mintCaseId` from
+   * `@mcpjam/sdk/contract`). The platform validates the charset and enforces
+   * suite-scoped uniqueness; it never derives one, because deriving an id from
+   * content or position is the content-hash identity declared ids replace.
+   *
+   * Stored as `declaredCaseId`. NEVER the row's `caseKey`, which stays the
+   * platform's own random `ui_*` storage key.
+   */
+  caseId?: string;
   title: string;
   query: string;
   models: Array<{ model: string; provider: string }>;
@@ -74,6 +85,7 @@ function toCreateTestCaseInput(
 
   return {
     suiteId,
+    caseId: mintCaseId(),
     title: test.title || "Generated test",
     query: test.query || test.promptTurns?.[0]?.prompt || "",
     models,

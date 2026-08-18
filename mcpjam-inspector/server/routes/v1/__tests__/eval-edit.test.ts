@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { isOpaqueId } from "@mcpjam/sdk/contract";
 import { Hono } from "hono";
 
 // Covers the v1 eval-edit surface: suite settings/schedule/delete + case CRUD
@@ -164,7 +165,62 @@ function defaultQueryImpl(name: string) {
   return Promise.resolve(null);
 }
 
-function defaultMutationImpl(name: string) {
+/**
+ * Stand in for `testSuites:createTestCases`, committing every item.
+ *
+ * Shaped like the real mutation's reply rather than a bare id: the routes read
+ * `caseUpsert.committed[i].testCaseId` and the effective `caseId`, so a mock
+ * that returned only an id would let a route that ignores the batch envelope
+ * keep passing.
+ */
+function batchCreateResult(args: { cases?: Array<Record<string, unknown>> }) {
+  const cases = args?.cases ?? [];
+  return {
+    caseUpsert: {
+      committed: cases.map((item, index) => ({
+        index,
+        title: String(item.title ?? ""),
+        testCaseId: `case_${index + 1}`,
+        ...(item.caseId ? { caseId: String(item.caseId) } : {}),
+        replayed: false,
+      })),
+      failed: [],
+    },
+    duplicatePolicy: {
+      ...(args?.duplicatePolicy !== undefined
+        ? { requestedPolicy: String(args.duplicatePolicy) }
+        : {}),
+      effectivePolicy: "block",
+      coerced: false,
+    },
+    warnings: [],
+  };
+}
+
+/**
+ * The args of one case authored through `testSuites:createTestCases`.
+ *
+ * Every first-party create — the single-case route included — now goes through
+ * the batch mutation, so the per-case payload lives at `cases[i]` rather than
+ * being the whole mutation argument.
+ */
+function authoredCaseArgs(index = 0): any {
+  const call = convexMutationMock.mock.calls.find(
+    (c) => c[0] === "testSuites:createTestCases"
+  );
+  return call?.[1]?.cases?.[index];
+}
+
+/** Every case authored across all batch calls, in order. */
+function allAuthoredCaseArgs(): any[] {
+  return convexMutationMock.mock.calls
+    .filter((c) => c[0] === "testSuites:createTestCases")
+    .flatMap((c) => c[1]?.cases ?? []);
+}
+
+function defaultMutationImpl(name: string, args?: any) {
+  if (name === "testSuites:createTestCases")
+    return Promise.resolve(batchCreateResult(args));
   if (name === "testSuites:createTestCase") return Promise.resolve("case_1");
   if (name === "testSuites:updateTestCase") return Promise.resolve(CASE_DOC);
   if (name === "testSuites:updateTestSuite") return Promise.resolve(SUITE_DOC);
@@ -185,8 +241,8 @@ describe("v1 eval-edit routes", () => {
     convexQueryMock.mockImplementation((name: string) =>
       defaultQueryImpl(name)
     );
-    convexMutationMock.mockImplementation((name: string) =>
-      defaultMutationImpl(name)
+    convexMutationMock.mockImplementation((name: string, args?: any) =>
+      defaultMutationImpl(name, args)
     );
   });
 
@@ -931,9 +987,7 @@ describe("v1 eval-edit routes", () => {
       }
     );
     expect(res.status).toBe(201);
-    const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:createTestCase"
-    )![1];
+    const args = authoredCaseArgs();
     // Provider resolved via the catalog, not dropped to [].
     expect(args.models).toEqual([
       { model: "claude-sonnet-4-5", provider: "anthropic" },
@@ -974,9 +1028,7 @@ describe("v1 eval-edit routes", () => {
         }
       );
       expect(res.status).toBe(201);
-      const args = convexMutationMock.mock.calls.find(
-        (c) => c[0] === "testSuites:createTestCase"
-      )![1];
+      const args = authoredCaseArgs();
       expect(args.models).toEqual([{ model, provider }]);
     }
   );
@@ -998,9 +1050,7 @@ describe("v1 eval-edit routes", () => {
       }
     );
     expect(res.status).toBe(201);
-    const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:createTestCase"
-    )![1];
+    const args = authoredCaseArgs();
     expect(args.models).toEqual([
       { model: "newvendor/some-model", provider: "newvendor" },
     ]);
@@ -1025,9 +1075,7 @@ describe("v1 eval-edit routes", () => {
       }
     );
     expect(res.status).toBe(201);
-    const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:createTestCase"
-    )![1];
+    const args = authoredCaseArgs();
     expect(args.models).toEqual([]);
   });
 
@@ -1044,9 +1092,7 @@ describe("v1 eval-edit routes", () => {
       }
     );
     expect(res.status).toBe(201);
-    const args = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:createTestCase"
-    )![1];
+    const args = authoredCaseArgs();
     expect(args.models).toEqual([
       { model: "openai/gpt-5", provider: "openai" },
     ]);
@@ -1082,7 +1128,7 @@ describe("v1 eval-edit routes", () => {
     expect(res.status).toBe(400);
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:createTestCase"
+        (c) => c[0] === "testSuites:createTestCases"
       )
     ).toBe(false);
   });
@@ -1215,12 +1261,10 @@ describe("v1 eval-edit routes", () => {
     expect(generateEvalTestsMock).toHaveBeenCalled();
     expect(
       convexMutationMock.mock.calls.some(
-        (c) => c[0] === "testSuites:createTestCase"
+        (c) => c[0] === "testSuites:createTestCases"
       )
     ).toBe(true);
-    const createArgs = convexMutationMock.mock.calls.find(
-      (c) => c[0] === "testSuites:createTestCase"
-    )![1];
+    const createArgs = authoredCaseArgs();
     expect(createArgs.steps).toHaveLength(2);
     expect(createArgs.steps[0]).toMatchObject({
       kind: "prompt",
@@ -1350,7 +1394,7 @@ describe("v1 eval-edit routes", () => {
     // second LLM spend.
     const calls = convexMutationMock.mock.calls.map((c) => c[0]);
     const ledgerIndex = calls.indexOf("testSuites:recordCaseGeneration");
-    const firstCaseIndex = calls.indexOf("testSuites:createTestCase");
+    const firstCaseIndex = calls.indexOf("testSuites:createTestCases");
     expect(ledgerIndex).toBeGreaterThanOrEqual(0);
     expect(firstCaseIndex).toBeGreaterThan(ledgerIndex);
 
@@ -1359,11 +1403,12 @@ describe("v1 eval-edit routes", () => {
     // attempt's rows. Asserting the literal derivation (not just "some
     // string") is the point: a fresh-per-attempt or operation-independent key
     // would still be a non-empty string and would still duplicate cases.
-    const caseCalls = convexMutationMock.mock.calls.filter(
-      (c) => c[0] === "testSuites:createTestCase"
-    );
-    expect(caseCalls).toHaveLength(2);
-    const keys = caseCalls.map((c) => c[1].idempotencyKey);
+    // One BATCH now carries both cases, so the per-item keys are read off the
+    // items rather than off two separate mutation calls. The derivation is
+    // unchanged: the caller still derives them, positionally, per draft.
+    const caseItems = allAuthoredCaseArgs();
+    expect(caseItems).toHaveLength(2);
+    const keys = caseItems.map((item: any) => item.idempotencyKey);
     expect(keys).toEqual([
       deriveItemIdempotencyKey("proposal:act_1:generate_eval_cases", "0"),
       deriveItemIdempotencyKey("proposal:act_1:generate_eval_cases", "1"),
@@ -1514,10 +1559,10 @@ describe("v1 eval-edit routes", () => {
         ? Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] })
         : defaultQueryImpl(name)
     );
-    convexMutationMock.mockImplementation((name: string) => {
-      if (name === "testSuites:createTestCase")
+    convexMutationMock.mockImplementation((name: string, args?: any) => {
+      if (name === "testSuites:createTestCases")
         return Promise.reject(new Error("Server Error\nUncaught Error: nope"));
-      return defaultMutationImpl(name);
+      return defaultMutationImpl(name, args);
     });
     const res = await request(
       "POST",
@@ -1706,9 +1751,7 @@ describe("v1 eval-edit routes", () => {
     const body = (await res.json()) as any;
     expect(body.counts).toEqual({ normal: 1, negative: 1 });
 
-    const createArgs = convexMutationMock.mock.calls
-      .filter((c) => c[0] === "testSuites:createTestCase")
-      .map((c) => c[1]);
+    const createArgs = allAuthoredCaseArgs();
     const posArgs = createArgs.find((a: any) => a.title === "Pos");
     const negArgs = createArgs.find((a: any) => a.title === "Neg");
     // Positive draft keeps its tool calls and is NOT marked negative.
@@ -1727,5 +1770,358 @@ describe("v1 eval-edit routes", () => {
     expect(negArgs.steps).toEqual([
       expect.objectContaining({ kind: "prompt", prompt: "meta question" }),
     ]);
+  });
+
+  // ── Wave-0 declared identity + the batch authoring surface ───────────────
+
+  it("mints a declared id for a create that does not carry one", async () => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      {
+        title: "no id",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+      }
+    );
+    expect(res.status).toBe(201);
+    // This first-party surface mints rather than leaving the case identity-less.
+    expect(isOpaqueId(authoredCaseArgs().caseId)).toBe(true);
+  });
+
+  it("forwards a caller-supplied id as the declared case id, unchanged", async () => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      {
+        id: "c_from_suite_file",
+        title: "declared",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+      }
+    );
+    expect(res.status).toBe(201);
+    const args = authoredCaseArgs();
+    expect(args.caseId).toBe("c_from_suite_file");
+    // A declared identity is never written into the storage key (D7).
+    expect(args.caseKey).toBeUndefined();
+  });
+
+  it("rejects an id outside the opaque-id charset at the boundary", async () => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      {
+        id: "not a valid id",
+        title: "bad id",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:createTestCases"
+      )
+    ).toBe(false);
+  });
+
+  it("reports a duplicate declared id as 409, not as a created case", async () => {
+    convexMutationMock.mockImplementation((name: string, args?: any) => {
+      if (name === "testSuites:createTestCases")
+        return Promise.resolve({
+          caseUpsert: {
+            committed: [],
+            failed: [
+              {
+                index: 0,
+                title: "dupe",
+                caseId: "c_taken",
+                code: "DUPLICATE_CASE_ID",
+                message: 'Case id "c_taken" is already used in this suite.',
+              },
+            ],
+          },
+          duplicatePolicy: { effectivePolicy: "block", coerced: false },
+          warnings: [],
+        });
+      return defaultMutationImpl(name, args);
+    });
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      {
+        id: "c_taken",
+        title: "dupe",
+        steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+      }
+    );
+    expect(res.status).toBe(409);
+    const body = (await res.json()) as any;
+    expect(body.details.reason).toBe("DUPLICATE_CASE_ID");
+  });
+
+  it("reports a semantic per-item failure as 400", async () => {
+    convexMutationMock.mockImplementation((name: string, args?: any) => {
+      if (name === "testSuites:createTestCases")
+        return Promise.resolve({
+          caseUpsert: {
+            committed: [],
+            failed: [
+              {
+                index: 0,
+                title: "bad",
+                code: "INVALID_CASE",
+                message:
+                  "Positive test cases must include at least one assertion",
+              },
+            ],
+          },
+          duplicatePolicy: { effectivePolicy: "block", coerced: false },
+          warnings: [],
+        });
+      return defaultMutationImpl(name, args);
+    });
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      { title: "bad", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("GET exposes the declared id alongside the platform id", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestCase"
+        ? Promise.resolve({ ...CASE_DOC, declaredCaseId: "c_readback" })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "GET",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+    );
+    const body = (await res.json()) as any;
+    // Two DIFFERENT identities: the row id addresses the case in a URL, the
+    // declared id is what the author committed to a suite file.
+    expect(body.id).toBe("case_1");
+    expect(body.declaredId).toBe("c_readback");
+  });
+
+  it("omits declaredId for a case authored before declared identity existed", async () => {
+    const res = await request(
+      "GET",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1"
+    );
+    const body = (await res.json()) as any;
+    expect(body).not.toHaveProperty("declaredId");
+  });
+
+  it("POST /cases/batch authors every case in ONE mutation", async () => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+      {
+        cases: [
+          { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
+          {
+            id: "c_b",
+            title: "b",
+            steps: [{ id: "s1", kind: "prompt", prompt: "b" }],
+          },
+        ],
+      }
+    );
+    expect(res.status).toBe(201);
+    const batchCalls = convexMutationMock.mock.calls.filter(
+      (c) => c[0] === "testSuites:createTestCases"
+    );
+    expect(batchCalls).toHaveLength(1);
+    expect(batchCalls[0][1].cases).toHaveLength(2);
+    // Missing ids are minted; supplied ones are kept.
+    expect(isOpaqueId(batchCalls[0][1].cases[0].caseId)).toBe(true);
+    expect(batchCalls[0][1].cases[1].caseId).toBe("c_b");
+
+    const body = (await res.json()) as any;
+    expect(body.created).toEqual([
+      {
+        index: 0,
+        id: "case_1",
+        declaredId: expect.any(String),
+        title: "a",
+        replayed: false,
+      },
+      {
+        index: 1,
+        id: "case_2",
+        declaredId: "c_b",
+        title: "b",
+        replayed: false,
+      },
+    ]);
+    expect(body.failed).toEqual([]);
+    expect(body.duplicatePolicy).toEqual({
+      effectivePolicy: "block",
+      coerced: false,
+    });
+  });
+
+  it("POST /cases/batch reports a refused case WITHOUT rolling back its siblings", async () => {
+    convexMutationMock.mockImplementation((name: string, args?: any) => {
+      if (name === "testSuites:createTestCases")
+        return Promise.resolve({
+          caseUpsert: {
+            committed: [
+              {
+                index: 0,
+                title: "a",
+                testCaseId: "case_1",
+                caseId: "c_a",
+                replayed: false,
+              },
+            ],
+            failed: [
+              {
+                index: 1,
+                title: "b",
+                code: "DUPLICATE_CONTENT",
+                message: "This case has the same definition as case_9.",
+              },
+            ],
+          },
+          duplicatePolicy: { effectivePolicy: "block", coerced: false },
+          warnings: [],
+        });
+      return defaultMutationImpl(name, args);
+    });
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+      {
+        cases: [
+          { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
+          { title: "b", steps: [{ id: "s1", kind: "prompt", prompt: "b" }] },
+        ],
+      }
+    );
+    // 201, not 4xx: case "a" really was written, and a 4xx would tell the
+    // caller to retry a write that already landed.
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as any;
+    expect(body.created).toHaveLength(1);
+    expect(body.failed).toEqual([
+      {
+        index: 1,
+        title: "b",
+        code: "DUPLICATE_CONTENT",
+        message: "This case has the same definition as case_9.",
+      },
+    ]);
+  });
+
+  it("POST /cases/batch reports a policy coercion rather than applying it silently", async () => {
+    convexMutationMock.mockImplementation((name: string, args?: any) => {
+      if (name === "testSuites:createTestCases")
+        return Promise.resolve({
+          caseUpsert: { committed: [], failed: [] },
+          duplicatePolicy: {
+            requestedPolicy: "blcok",
+            effectivePolicy: "block",
+            coerced: true,
+          },
+          warnings: [
+            {
+              code: "DUPLICATE_POLICY_COERCED",
+              message: 'Unrecognized duplicatePolicy "blcok"; applied "block".',
+            },
+          ],
+        });
+      return defaultMutationImpl(name, args);
+    });
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+      {
+        cases: [
+          { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
+        ],
+        duplicatePolicy: "blcok",
+      }
+    );
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as any;
+    expect(body.duplicatePolicy).toEqual({
+      requestedPolicy: "blcok",
+      effectivePolicy: "block",
+      coerced: true,
+    });
+    expect(body.warnings).toHaveLength(1);
+  });
+
+  it("POST /cases/batch forwards the duplicate policy and its override reason", async () => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+      {
+        cases: [
+          { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
+        ],
+        duplicatePolicy: "create_anyway",
+        overrideReason: "porting a fixture verbatim",
+      }
+    );
+    expect(res.status).toBe(201);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:createTestCases"
+    )![1];
+    expect(args.duplicatePolicy).toBe("create_anyway");
+    expect(args.overrideReason).toBe("porting a fixture verbatim");
+  });
+
+  it("POST /cases/batch refuses more than the cap in one call", async () => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+      {
+        cases: Array.from({ length: 101 }, (_, i) => ({
+          title: `case-${i}`,
+          steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+        })),
+      }
+    );
+    expect(res.status).toBe(400);
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:createTestCases"
+      )
+    ).toBe(false);
+  });
+
+  it("POST /cases/batch refuses an empty cases array", async () => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+      { cases: [] }
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("POST /cases/batch names the offending entry when one has no steps", async () => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+      {
+        cases: [
+          { title: "ok", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
+          { title: "no steps" },
+        ],
+      }
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as any;
+    expect(body.message).toContain("cases[1]");
+    // Nothing is authored: a batch with an unusable entry is a mistake about
+    // the whole request, caught before the first write.
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:createTestCases"
+      )
+    ).toBe(false);
   });
 });
