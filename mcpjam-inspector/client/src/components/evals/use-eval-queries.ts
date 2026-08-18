@@ -31,6 +31,12 @@ export function useEvalQueries({
   // guest token via the unified auth provider — so a separate WorkOS `user`
   // check would wrongly skip queries for guests with a project.
   const hasActorAccess = isDirectGuest || (isAuthenticated && isUserReady);
+  // Authenticated, but the `users` row is still bootstrapping: the queries are
+  // skipped and an answer IS coming, so this window must report as loading.
+  // Reporting it as settled-and-empty makes `EvalsTab`'s redirect read a
+  // deep-linked suite as deleted and bounce it, and flashes the "no suites"
+  // hero over a project that has suites.
+  const isActorBootstrapping = !isDirectGuest && isAuthenticated && !isUserReady;
 
   const suiteOverviewArgs = useMemo(() => {
     if (projectId) {
@@ -48,8 +54,9 @@ export function useEvalQueries({
     enableOverviewQuery ? (suiteOverviewArgs as any) : "skip"
   ) as EvalSuiteOverviewEntry[] | undefined;
 
-  const enableSuiteDetailsQuery =
-    hasActorAccess && !!selectedSuiteId && deletingSuiteId !== selectedSuiteId;
+  const hasSelectedSuiteInPlay =
+    !!selectedSuiteId && deletingSuiteId !== selectedSuiteId;
+  const enableSuiteDetailsQuery = hasActorAccess && hasSelectedSuiteInPlay;
   const suiteDetails = useQuery(
     "testSuites:getAllTestCasesAndIterationsBySuite" as any,
     enableSuiteDetailsQuery ? ({ suiteId: selectedSuiteId } as any) : "skip"
@@ -66,10 +73,14 @@ export function useEvalQueries({
       : "skip"
   ) as EvalSuiteRun[] | undefined;
 
-  const isOverviewLoading = enableOverviewQuery && suiteOverview === undefined;
+  const isOverviewLoading =
+    isActorBootstrapping || (enableOverviewQuery && suiteOverview === undefined);
   const isSuiteDetailsLoading =
-    enableSuiteDetailsQuery && suiteDetails === undefined;
-  const isSuiteRunsLoading = enableSuiteDetailsQuery && suiteRuns === undefined;
+    (isActorBootstrapping && hasSelectedSuiteInPlay) ||
+    (enableSuiteDetailsQuery && suiteDetails === undefined);
+  const isSuiteRunsLoading =
+    (isActorBootstrapping && hasSelectedSuiteInPlay) ||
+    (enableSuiteDetailsQuery && suiteRuns === undefined);
 
   const selectedSuiteEntry = useMemo(() => {
     if (!selectedSuiteId || !suiteOverview) return null;

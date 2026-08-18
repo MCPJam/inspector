@@ -142,9 +142,12 @@ describe("useEvalQueries", () => {
 
     expect(result.current.enableOverviewQuery).toBe(false);
     expect(result.current.enableSuiteDetailsQuery).toBe(false);
-    expect(result.current.isOverviewLoading).toBe(false);
-    expect(result.current.isSuiteDetailsLoading).toBe(false);
-    expect(result.current.isSuiteRunsLoading).toBe(false);
+    // Skipped, but still LOADING: an answer is coming once the row lands, and
+    // EvalsTab reads "not loading + no matching suite" as a deleted suite and
+    // bounces the deep link.
+    expect(result.current.isOverviewLoading).toBe(true);
+    expect(result.current.isSuiteDetailsLoading).toBe(true);
+    expect(result.current.isSuiteRunsLoading).toBe(true);
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getTestSuitesOverview",
       "skip"

@@ -32,6 +32,7 @@ import { EmptyState } from "./components/ui/empty-state";
 import {
   canManageAsOwnerOrAdmin,
   canViewSwarms,
+  shouldQueryProjectId,
   useProjectQueries,
   useViewerProjectRole,
 } from "./hooks/useProjects";
@@ -964,10 +965,12 @@ function useTemplateVerifyDeepLink({
 
   useEffect(() => {
     if (!requestedTemplateId || !isAuthenticated || handledRef.current) return;
-    // Wait for the host list before deciding create-vs-open. `useHostList`
-    // stays loading while `projectId` is still a placeholder, so this also
-    // guards `createHost` from firing with a not-yet-real project id.
-    if (hostsLoading) return;
+    // Wait for the host list before deciding create-vs-open, and never mint a
+    // host against an id `createHost` would reject. The projectId check is
+    // stated here rather than left to `useHostList`'s loading flag: the two
+    // are separate hooks, and a change to that flag's skip semantics must not
+    // be able to let `createHost` fire with a not-yet-real project id.
+    if (hostsLoading || !shouldQueryProjectId(projectId)) return;
     const template = HOST_TEMPLATES.find((t) => t.id === requestedTemplateId);
     if (!template) return;
     handledRef.current = true;
@@ -3024,9 +3027,10 @@ export default function App() {
       ? ({ projectId: convexProjectId } as never)
       : "skip"
   ) as ProjectServerConfigDto | null | undefined;
+  // A skipped query reads as `undefined`, so this already covers the window
+  // where `canQueryProjectServerConfig` is false for a project-scoped session.
   const isProjectServerConfigLoading =
-    Boolean(convexProjectId) &&
-    (!isUserReady || projectServerConfigDto === undefined);
+    Boolean(convexProjectId) && projectServerConfigDto === undefined;
   // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
   // changes so it can't bleed across projects. `activeHostId` is owned by
   // useAppState (project-keyed in localStorage) and self-resets.

@@ -96,6 +96,13 @@ export function SaveAsTestCaseAction({
   // below), so it stays scoped to authed sessions with a project.
   const attachmentPickersEnabled =
     convexAuthed && isUserReady && Boolean(projectId);
+  // Authed with a project, but the `users` row is still bootstrapping: the
+  // pickers DO apply to this session, their data just hasn't landed. Without
+  // this, `newSuiteRequirementsMet` short-circuits on the disabled pickers and
+  // saves a legacy-shaped suite with no server or host attached — the exact
+  // thing the requirement exists to prevent.
+  const attachmentPickersPending =
+    convexAuthed && !isUserReady && Boolean(projectId);
 
   const { serverAttachments: projectServerAttachments } =
     useProjectServerAttachments({
@@ -152,6 +159,7 @@ export function SaveAsTestCaseAction({
 
   const canSubmit =
     !submitting &&
+    !attachmentPickersPending &&
     caseTitle.trim().length > 0 &&
     (destinationMode === "existing"
       ? Boolean(selectedSuiteId)

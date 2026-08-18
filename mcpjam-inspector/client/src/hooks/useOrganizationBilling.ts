@@ -237,7 +237,8 @@ export function useOrganizationBilling(
 ) {
   const projectId = options?.projectId ?? null;
   const isUserReady = useDbUserReady();
-  const enabled = (options?.enabled ?? true) && isUserReady;
+  const callerEnabled = options?.enabled ?? true;
+  const enabled = callerEnabled && isUserReady;
   const shouldQueryOrganization = enabled && !!organizationId;
   const shouldQueryProject = shouldQueryOrganization && !!projectId;
   const shouldQuerySeatPaymentIntent =
@@ -597,10 +598,18 @@ export function useOrganizationBilling(
     ]
   );
 
+  // The caller asked for billing and we're only waiting on the `users` row.
+  // These flags feed `useProjectBillingGate`, and a gate that reads as settled
+  // resolves to "not denied, free plan" — i.e. it fails OPEN and lets a
+  // limited action through. An unfinished answer must read as loading.
+  const isAwaitingUserRow = callerEnabled && !isUserReady && !!organizationId;
+
   const isLoadingOrganizationPremiumness =
-    shouldQueryOrganization && organizationPremiumness === undefined;
+    isAwaitingUserRow ||
+    (shouldQueryOrganization && organizationPremiumness === undefined);
   const isLoadingProjectPremiumness =
-    shouldQueryProject && projectPremiumness === undefined;
+    (isAwaitingUserRow && !!projectId) ||
+    (shouldQueryProject && projectPremiumness === undefined);
 
   return {
     billingStatus,
@@ -609,12 +618,16 @@ export function useOrganizationBilling(
     entitlements,
     activeSeatPaymentIntent,
     planCatalog,
-    isLoadingBilling: shouldQueryOrganization && billingStatus === undefined,
+    isLoadingBilling:
+      isAwaitingUserRow ||
+      (shouldQueryOrganization && billingStatus === undefined),
     isLoadingEntitlements:
-      shouldQueryOrganization && entitlements === undefined,
+      isAwaitingUserRow ||
+      (shouldQueryOrganization && entitlements === undefined),
     isLoadingOrganizationPremiumness,
     isLoadingProjectPremiumness,
-    isLoadingPlanCatalog: shouldQueryOrganization && planCatalog === undefined,
+    isLoadingPlanCatalog:
+      isAwaitingUserRow || (shouldQueryOrganization && planCatalog === undefined),
     isStartingPlanChange,
     pendingPlanChangeTarget,
     isOpeningPortal,

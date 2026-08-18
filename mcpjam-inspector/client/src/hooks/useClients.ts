@@ -89,9 +89,13 @@ export function useHostList({
 
   return {
     hosts,
-    isLoading:
-      (isAuthenticated && hasQueryableProjectId && !isUserReady) ||
-      (shouldQuery && result === undefined),
+    // Loading in EVERY skip window, not just while the query is in flight.
+    // `HostsRoute` reads an empty list as a dead permalink and bounces it, and
+    // the `?template=` flow reads it as "no such host yet" and mints one — both
+    // are wrong while the answer is merely unknown (signed out, `projectId`
+    // still a placeholder, or the `users` row still bootstrapping), so those
+    // windows must read as pending rather than as an answered empty.
+    isLoading: result === undefined,
   };
 }
 
@@ -148,11 +152,12 @@ export function useHost({
 
   return {
     host: result ?? null,
-    // A skipped query never resolves, so reporting it as loading would leave
-    // callers (the Connect canvas, the compare grid) spinning forever.
-    isLoading:
-      (isAuthenticated && hasQueryableHostId && !isUserReady) ||
-      (shouldQuery && result === undefined),
+    // Loading only while an answer is actually coming: signed out, or a hostId
+    // that can never resolve (a catalog slug in the URL), reports NOT loading,
+    // because that query stays skipped forever and callers (the Connect canvas,
+    // the compare grid) would spin forever waiting on it. Waiting for the
+    // `users` row IS loading — that skip does resolve, once bootstrap lands.
+    isLoading: isAuthenticated && hasQueryableHostId && result === undefined,
   };
 }
 

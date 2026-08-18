@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
+import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import {
   Circle,
   Code2,
@@ -868,7 +869,16 @@ export function TestTemplateEditor({
       .slice(0, 200);
   }, [suiteIterations, selectedTestCaseId]);
 
-  const suite = useQuery("testSuites:getTestSuite" as any, { suiteId }) as any;
+  // Same readiness gate the suite list upstream uses: a signed-in actor must
+  // wait for its `users` row, while a direct guest — which never gets one —
+  // keeps reading. Without it these two fire on their own schedule when the
+  // editor stays mounted across an identity change.
+  const canQuerySuite = useActorCanQuery();
+
+  const suite = useQuery(
+    "testSuites:getTestSuite" as any,
+    canQuerySuite ? ({ suiteId } as any) : "skip",
+  ) as any;
 
   /**
    * Suite-level hostConfig (v2). The same query SuiteExecutionConfigEditor
@@ -877,7 +887,7 @@ export function TestTemplateEditor({
    */
   const suiteHostConfigDto = useQuery(
     "hostConfigsV2:getSuiteConfig" as any,
-    { suiteId } as any,
+    canQuerySuite ? ({ suiteId } as any) : "skip",
   ) as HostConfigDtoV2 | null | undefined;
 
   /**

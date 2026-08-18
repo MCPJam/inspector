@@ -123,6 +123,12 @@ export function ConvertSessionDialogCore({
   const isUserReady = useDbUserReady();
   const attachmentPickersEnabled =
     convexAuthed && isUserReady && Boolean(effectiveProjectId);
+  // Authed with a project, but the `users` row is still bootstrapping: the
+  // pickers DO apply to this session, their data just hasn't landed. Without
+  // this, `newSuiteRequirementsMet` short-circuits on the disabled pickers and
+  // imports into a legacy-shaped suite with nothing attached.
+  const attachmentPickersPending =
+    convexAuthed && !isUserReady && Boolean(effectiveProjectId);
   const {
     servers,
     serversById,
@@ -341,6 +347,7 @@ export function ConvertSessionDialogCore({
   const canSubmit =
     Boolean(summary) &&
     Boolean(effectiveProjectId) &&
+    !attachmentPickersPending &&
     !detail.loading &&
     !detail.error &&
     caseTitle.trim().length > 0 &&

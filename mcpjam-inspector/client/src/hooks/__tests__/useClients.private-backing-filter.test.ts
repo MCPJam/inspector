@@ -107,6 +107,26 @@ describe("useHostList private-backing filter", () => {
     expect(result.current.hosts).toEqual([]);
   });
 
+  // `HostsRoute` reads a settled empty list as "this permalink is dead" and
+  // bounces it with a toast, and the `?template=` flow reads it as "no such
+  // host yet" and mints a duplicate. Neither window has an answer yet, so both
+  // must report loading rather than an answered empty.
+  it.each([
+    ["signed out", { isAuthenticated: false, projectId: PROJECT_ID }],
+    [
+      "a placeholder project id",
+      { isAuthenticated: true, projectId: "project_pending" },
+    ],
+  ])("reports loading while the query is skipped for %s", (_label, args) => {
+    mockUseQuery.mockReturnValue(undefined);
+
+    const { result } = renderHook(() => useHostList(args));
+
+    expect(mockUseQuery).toHaveBeenCalledWith("hosts:listHosts", "skip");
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.hosts).toEqual([]);
+  });
+
   it("queries with a trimmed project id", () => {
     mockUseQuery.mockReturnValue(HOSTS);
 
