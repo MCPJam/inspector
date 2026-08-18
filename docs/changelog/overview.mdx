@@ -9,6 +9,18 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-08-18
+
+#### Changed
+
+- **`@mcpjam/sdk` 6.0 — eval step schemas closed, `caseId` sent on upload**
+  - **Step objects now reject unknown fields.** `prompt`, `toolCall`, `interact`, and `assert` steps — and their nested sub-objects (`elementLocator`, widget assertions, interact actions) — are closed schemas. A step carrying a field the contract does not declare fails to parse instead of silently dropping it. Two things remain open deliberately: `toolCallStep.arguments` (keys come from the server's input schema) and a `Predicate` inside an `assert` step. If you generate steps programmatically, remove any fields outside the contract before passing them to the SDK.
+  - **Declared `id` is now sent on every upload.** The `id` field declared on `EvalTest` now rides the wire on every result upload. A renamed test keeps its hosted history instead of forking it — the platform resolves by `id` first and adopts it onto the existing case record.
+  - **`id` and `externalCaseId` must agree.** Declaring both with different values now throws at construction (previously it was only rejected at ingest). Migration: set `id` to the same value as your existing `externalCaseId`.
+
+- **GitHub PR checks now work on private repositories**
+  - Eval suites configured to run GitHub PR checks can now clone and check private repositories. The clone uses a short-lived, repository-scoped token that is never written to disk and is not available to the PR's own build steps.
+
 ### 2026-06-26
 
 #### Added
