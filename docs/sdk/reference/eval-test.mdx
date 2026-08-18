@@ -28,11 +28,33 @@ new EvalTest(options: EvalTestConfig)
 
 | Property            | Type                     | Required | Description                                                                    |
 | ------------------- | ------------------------ | -------- | ------------------------------------------------------------------------------ |
-| `name`              | `string`                 | Yes      | Unique identifier for the test                                                 |
+| `id`                | `string`                 | Yes      | The case's identity. **Required from 5.0** — see below.                         |
+| `name`              | `string`                 | Yes      | Human-readable display name for the test                                       |
 | `test`              | `TestFunction`           | Yes      | The test function to run                                                       |
 | `expectedToolCalls` | `EvalExpectedToolCall[]` | No       | Tool calls the iteration must make. **Enforced locally from 3.0** — see below. |
 | `matchOptions`      | `EvalMatchOptions`       | No       | How `expectedToolCalls` is matched (order, arguments, extras)                   |
 | `predicates`        | `Predicate[]`            | No       | Deterministic transcript checks that gate each iteration                        |
+
+<Warning>
+  **New in 5.0: `id` is required.** A case's identity used to be its `name`, so
+  renaming a test forked its history — the run page started a fresh series and
+  the old one was orphaned. `id` separates the two: history joins on `id`, and
+  `name` is free to change.
+
+  Mint one **once** and commit the literal beside the test:
+
+  ```typescript
+  import { mintCaseId } from "@mcpjam/sdk/contract";
+  console.log(mintCaseId()); // c_V1StGXR8Z5jdHi6Bmy — paste this in
+  ```
+
+  Any URL-safe string of 1–128 characters (`A-Z a-z 0-9 _ -`) is accepted, so an
+  id you already have — a hosted case id, a ticket number, a slug you maintain —
+  works as-is; the `c_` prefix is only a grep convenience. Do **not** call
+  `mintCaseId()` inline: an id regenerated on every run is not an identity.
+  Constructing an `EvalTest` without an `id` throws, and the error carries a
+  freshly minted id to paste.
+</Warning>
 
 <Warning>
   **Changed in 3.0.** `expectedToolCalls` used to be reporting metadata only:
@@ -63,6 +85,7 @@ Deterministic, state-based checks evaluated against the iteration transcript —
 
 ```typescript
 const test = new EvalTest({
+  id: "c_books_the_venue",
   name: "books the venue",
   expectedToolCalls: [{ toolName: "book_venue" }],
   matchOptions: { toolCallOrder: "strict" },
@@ -96,6 +119,7 @@ Both `HostRunner`, `HostRuntime`, and mock executors implement the `HostExecutor
 
 ```typescript
 const test = new EvalTest({
+  id: "c_addition_accuracy",
   name: "addition-accuracy",
   test: async (agent) => {
     const result = await agent.run("Add 2 and 3");
@@ -510,6 +534,7 @@ async function main() {
   });
 
   const test = new EvalTest({
+    id: "c_addition",
     name: "addition",
     test: async (agent) => {
       const r = await agent.run("Add 2 and 3");

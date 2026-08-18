@@ -74,6 +74,7 @@ describe("EvalSuite", () => {
     it("should add tests and retrieve by name", () => {
       const suite = new EvalSuite();
       const test1 = new EvalTest({
+        id: "c_suite_1",
         name: "addition",
         test: async (agent) => {
           const r = await agent.run("Add 2+3");
@@ -81,6 +82,7 @@ describe("EvalSuite", () => {
         },
       });
       const test2 = new EvalTest({
+        id: "c_suite_2",
         name: "multiply",
         test: async (agent) => {
           const r = await agent.run("Multiply 4*5");
@@ -100,6 +102,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
+          id: "c_suite_3",
           name: "test",
           test: async (agent) => {
             await agent.run("Prompt 1");
@@ -111,6 +114,7 @@ describe("EvalSuite", () => {
       expect(() => {
         suite.add(
           new EvalTest({
+            id: "c_suite_4",
             name: "test",
             test: async (agent) => {
               await agent.run("Prompt 2");
@@ -121,9 +125,37 @@ describe("EvalSuite", () => {
       }).toThrow('Test with name "test" already exists in suite');
     });
 
+    it("should throw when adding a duplicate case id under a different name", () => {
+      // Duplicate NAMES collide visibly (the suite keys results by name).
+      // Duplicate IDS do not: everything that outlives the run — hosted
+      // history, a lock file, a report row — joins on the id, so two cases
+      // sharing one would silently merge into a single case's history.
+      const suite = new EvalSuite();
+      suite.add(
+        new EvalTest({
+          id: "c_shared",
+          name: "first",
+          test: async () => true,
+        })
+      );
+
+      expect(() => {
+        suite.add(
+          new EvalTest({
+            id: "c_shared",
+            name: "second",
+            test: async () => true,
+          })
+        );
+      }).toThrow(
+        'Test with id "c_shared" already exists in suite (as "first")'
+      );
+    });
+
     it("should return all tests with getAll", () => {
       const suite = new EvalSuite();
       const test1 = new EvalTest({
+        id: "c_suite_5",
         name: "test1",
         test: async (agent) => {
           await agent.run("Prompt 1");
@@ -131,6 +163,7 @@ describe("EvalSuite", () => {
         },
       });
       const test2 = new EvalTest({
+        id: "c_suite_6",
         name: "test2",
         test: async (agent) => {
           await agent.run("Prompt 2");
@@ -153,6 +186,7 @@ describe("EvalSuite", () => {
 
       suite.add(
         new EvalTest({
+          id: "c_suite_7",
           name: "test1",
           test: async (agent) => {
             await agent.run("Prompt 1");
@@ -164,6 +198,7 @@ describe("EvalSuite", () => {
 
       suite.add(
         new EvalTest({
+          id: "c_suite_8",
           name: "test2",
           test: async (agent) => {
             await agent.run("Prompt 2");
@@ -187,6 +222,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite({ name: "Math" });
       suite.add(
         new EvalTest({
+          id: "c_suite_9",
           name: "addition",
           test: async (agent) => {
             const r = await agent.run("Add 2+3");
@@ -196,6 +232,7 @@ describe("EvalSuite", () => {
       );
       suite.add(
         new EvalTest({
+          id: "c_suite_10",
           name: "multiply",
           test: async (agent) => {
             const r = await agent.run("Multiply 4*5");
@@ -224,6 +261,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
+          id: "c_suite_11",
           name: "addition",
           test: async (agent) => {
             const r = await agent.run("Add 2+3");
@@ -233,6 +271,7 @@ describe("EvalSuite", () => {
       );
       suite.add(
         new EvalTest({
+          id: "c_suite_12",
           name: "multiply",
           test: async (agent) => {
             const r = await agent.run("Multiply 4*5");
@@ -264,6 +303,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
+          id: "c_suite_13",
           name: "test1",
           test: async (agent) => {
             await agent.run("Prompt 1");
@@ -273,6 +313,7 @@ describe("EvalSuite", () => {
       );
       suite.add(
         new EvalTest({
+          id: "c_suite_14",
           name: "test2",
           test: async (agent) => {
             await agent.run("Prompt 2");
@@ -303,6 +344,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
+          id: "c_suite_15",
           name: "test1",
           test: async (agent) => {
             await agent.run("Prompt 1");
@@ -312,6 +354,7 @@ describe("EvalSuite", () => {
       );
       suite.add(
         new EvalTest({
+          id: "c_suite_16",
           name: "test2",
           test: async (agent) => {
             await agent.run("Prompt 2");
@@ -345,6 +388,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
+          id: "c_suite_17",
           name: "test1",
           test: async (agent) => {
             await agent.run("Prompt 1");
@@ -354,6 +398,7 @@ describe("EvalSuite", () => {
       );
       suite.add(
         new EvalTest({
+          id: "c_suite_18",
           name: "test2",
           test: async (agent) => {
             await agent.run("Prompt 2");
@@ -380,6 +425,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
+          id: "c_suite_19",
           name: "test",
           test: async (agent) => {
             await agent.run("Prompt");
@@ -419,6 +465,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
+          id: "c_suite_20",
           name: "test",
           test: async (agent) => {
             const r = await agent.run("Prompt");
@@ -440,6 +487,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
+          id: "c_suite_21",
           name: "test",
           test: async (agent) => {
             const r = await agent.run("Prompt");
@@ -461,6 +509,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
+          id: "c_suite_22",
           name: "test1",
           test: async (agent) => {
             await agent.run("Prompt 1");
@@ -470,6 +519,7 @@ describe("EvalSuite", () => {
       );
       suite.add(
         new EvalTest({
+          id: "c_suite_23",
           name: "test2",
           test: async (agent) => {
             await agent.run("Prompt 2");
@@ -491,6 +541,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
+          id: "c_suite_24",
           name: "test",
           test: async (agent) => {
             await agent.run("Prompt");
@@ -509,6 +560,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite();
       suite.add(
         new EvalTest({
+          id: "c_suite_25",
           name: "test1",
           test: async (agent) => {
             await agent.run("Prompt 1");
@@ -518,6 +570,7 @@ describe("EvalSuite", () => {
       );
       suite.add(
         new EvalTest({
+          id: "c_suite_26",
           name: "test2",
           test: async (agent) => {
             await agent.run("Prompt 2");
@@ -550,6 +603,7 @@ describe("EvalSuite", () => {
       const suite = new EvalSuite({ name: "Math" });
       suite.add(
         new EvalTest({
+          id: "c_suite_27",
           name: "addition",
           test: async (agent) => {
             const r = await agent.run("Add 2+3");
@@ -559,6 +613,7 @@ describe("EvalSuite", () => {
       );
       suite.add(
         new EvalTest({
+          id: "c_suite_28",
           name: "multiply",
           test: async (agent) => {
             const r = await agent.run("Multiply 4*5");
@@ -583,6 +638,7 @@ describe("EvalSuite", () => {
 
       suite.add(
         new EvalTest({
+          id: "c_suite_29",
           name: "with-expected",
           test: async (agent) => {
             await agent.run("Search");
@@ -593,6 +649,7 @@ describe("EvalSuite", () => {
       );
       suite.add(
         new EvalTest({
+          id: "c_suite_30",
           name: "without-expected",
           test: async (agent) => {
             await agent.run("Other");
