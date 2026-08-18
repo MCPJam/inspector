@@ -7,7 +7,7 @@ vi.mock("../../apps/SandboxProxyHtml.bundled.js", () => ({
 import { buildOAuthRequirementProjection } from "../servers.js";
 
 /**
- * SUTB-9: the chatbox auth gate used to read `useOAuth`, which a stored `auto`
+ * SUTB-9: the scenario auth gate used to read `useOAuth`, which a stored `auto`
  * row also carries. The projection has to keep answering that mirror for
  * existing consumers while reporting the upfront requirement separately.
  */

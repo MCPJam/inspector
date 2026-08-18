@@ -89,7 +89,7 @@ async function resolveHostedHttpConfig(
     wsBody.serverId,
     {
       accessScope: wsBody.accessScope,
-      chatboxId: wsBody.chatboxId,
+      scenarioId: wsBody.scenarioId,
       accessVersion: wsBody.accessVersion,
     }
   );
@@ -144,7 +144,7 @@ async function resolveHostedServerConfig(
     wsBody.serverId,
     {
       accessScope: wsBody.accessScope,
-      chatboxId: wsBody.chatboxId,
+      scenarioId: wsBody.scenarioId,
       accessVersion: wsBody.accessVersion,
     }
   );

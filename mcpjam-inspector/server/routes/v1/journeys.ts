@@ -9,8 +9,8 @@
  * text as the product name it is.
  *
  * The naming trap this avoids is real and lives one repo over: `kind:"swarm"`,
- * `swarm_grant`, and `swarmId: v.id('chatboxes')` in the backend all refer to
- * chatbox GUEST EXECUTION — the user-testing product — and have nothing to do
+ * `swarm_grant`, and `swarmId: v.id('scenarios')` in the backend all refer to
+ * scenario GUEST EXECUTION — the user-testing product — and have nothing to do
  * with the Swarms product. A public `/swarms` route would have inherited that
  * ambiguity permanently.
  *

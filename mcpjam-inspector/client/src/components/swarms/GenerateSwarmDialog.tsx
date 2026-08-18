@@ -127,7 +127,7 @@ export function GenerateSwarmDialog({
   const [personaCommitted, setPersonaCommitted] = useState(false);
   // Synchronous latch so a double-click can't dispatch two BILLED generations
   // before React commits `pending` and renders the button disabled. Same
-  // pattern as `rebuildInFlightRef` in ChatboxUsagePanel; the state above is
+  // pattern as `rebuildInFlightRef` in ScenarioUsagePanel; the state above is
   // still what drives rendering.
   const generateInFlightRef = useRef(false);
 

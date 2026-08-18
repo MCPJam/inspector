@@ -227,7 +227,7 @@ beforeEach(() => {
   createHostMock.mockResolvedValue({
     hostId: "host-new",
     hostConfigId: "cfg-new",
-    chatboxId: null,
+    scenarioId: null,
   });
   updateHostServersMock.mockResolvedValue({ hostId: "host-1", hostConfigId: "cfg-1b" });
   deleteHostMock.mockResolvedValue(undefined);
