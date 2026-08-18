@@ -279,7 +279,7 @@ servers.post(
       body.serverId,
       {
         accessScope: body.accessScope,
-        chatboxId: body.chatboxId,
+        scenarioId: body.scenarioId,
         accessVersion: body.accessVersion,
       }
     );

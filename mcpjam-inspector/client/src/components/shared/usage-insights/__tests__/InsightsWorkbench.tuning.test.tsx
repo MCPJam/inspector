@@ -25,7 +25,7 @@ const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown, toastMock } =
 vi.mock("@/lib/toast", () => ({ toast: toastMock }));
 
 // The workbench's freshness chip reads Convex directly. These suites render it
-// outside a provider, and the chip's own query is chatbox-scoped (skipped on a
+// outside a provider, and the chip's own query is scenario-scoped (skipped on a
 // swarm scope), so a stub client is the whole requirement.
 vi.mock("convex/react", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();

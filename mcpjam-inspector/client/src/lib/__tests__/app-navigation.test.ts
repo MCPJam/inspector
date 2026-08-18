@@ -182,7 +182,7 @@ describe("pathnameToActiveTab", () => {
 
   it("uses servers for unknown paths", () => {
     expect(pathnameToActiveTab("/not-a-tab")).toBe("servers");
-    expect(pathnameToActiveTab("/chatbox-session-slug")).toBe("servers");
+    expect(pathnameToActiveTab("/scenario-session-slug")).toBe("servers");
   });
 
   it("ignores legacy hashes outside a Router", () => {
@@ -193,8 +193,8 @@ describe("pathnameToActiveTab", () => {
     expect(result.current).toBe("home");
   });
 
-  it("does not treat arbitrary chatbox session hashes as app tabs", () => {
-    window.location.hash = "#chatbox-slug";
+  it("does not treat arbitrary scenario session hashes as app tabs", () => {
+    window.location.hash = "#scenario-slug";
 
     const { result } = renderHook(() => useActiveTab());
 
@@ -294,7 +294,7 @@ describe("path navigation compatibility helpers", () => {
     expect(navigationTargetToPath("not-a-tab")).toBe("/servers");
   });
 
-  it("recognizes old hash bookmarks without claiming chatbox slugs", () => {
+  it("recognizes old hash bookmarks without claiming scenario slugs", () => {
     expect(legacyHashBookmarkToPath("#servers")).toBe("/servers");
     expect(legacyHashBookmarkToPath("#/evals/suite/s_1")).toBe(
       "/evals/suite/s_1"
@@ -302,7 +302,7 @@ describe("path navigation compatibility helpers", () => {
     expect(legacyHashBookmarkToPath("#organizations/org-a/billing")).toBe(
       "/organizations/org-a/billing"
     );
-    expect(legacyHashBookmarkToPath("#chatbox-slug")).toBeNull();
+    expect(legacyHashBookmarkToPath("#scenario-slug")).toBeNull();
   });
 
   it("normalizes the initial legacy hash bookmark before router mount", () => {

@@ -32,10 +32,10 @@ declare global {
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
 
-type AuthFetchSurface = "chatbox";
+type AuthFetchSurface = "scenario";
 
 const AUTH_FETCH_SURFACE_BY_PATH: Record<string, AuthFetchSurface> = {
-  "/api/web/chatboxes/bootstrap": "chatbox",
+  "/api/web/scenarios/bootstrap": "scenario",
 };
 
 function resolveAuthFetchSurface(

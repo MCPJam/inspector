@@ -16,7 +16,7 @@ import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InsightsWorkbench } from "../InsightsWorkbench";
-import { chipKey, type UsageFilterState } from "@/hooks/chatbox-usage-filters";
+import { chipKey, type UsageFilterState } from "@/hooks/scenario-usage-filters";
 import type { CriterionFacet } from "@/hooks/useUsageInsights";
 
 const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown } = vi.hoisted(() => ({
@@ -25,7 +25,7 @@ const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown } = vi.hoisted(() => (
 }));
 
 // The workbench's freshness chip reads Convex directly. These suites render it
-// outside a provider, and the chip's own query is chatbox-scoped (skipped on a
+// outside a provider, and the chip's own query is scenario-scoped (skipped on a
 // swarm scope), so a stub client is the whole requirement.
 vi.mock("convex/react", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
