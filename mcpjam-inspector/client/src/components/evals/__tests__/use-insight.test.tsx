@@ -111,6 +111,28 @@ describe("useInsight auto-request de-duplication (CONVEX-AR)", () => {
     renderHook(() => useInsight(run, config));
     expect(requestMutationMock).toHaveBeenCalledTimes(1);
   });
+
+  it("a null run claims nothing, and the run it receives later still fires", () => {
+    // The hook's run is nullable at every real call site — the test-case
+    // detail passes `pickLatestCompletedRun(runs)`, null until the suite's runs
+    // load, and the insights band passes a `targetRun` that resolves to null
+    // when no run is selected yet. Keying the claim off a run id means a null
+    // render must not burn the claim of the run that arrives after it, or the
+    // surfaces that mount before their data would never auto-request at all.
+    const { rerender } = renderHook(
+      ({ run }: { run: GoalRun | null }) => useInsight(run, config),
+      { initialProps: { run: null as GoalRun | null } },
+    );
+
+    expect(requestMutationMock).not.toHaveBeenCalled();
+
+    rerender({ run: makeRun({ _id: "run-after-null" }) });
+
+    expect(requestMutationMock).toHaveBeenCalledTimes(1);
+    expect(requestMutationMock).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteRunId: "run-after-null" }),
+    );
+  });
 });
 
 describe("useInsight requested lifecycle", () => {
