@@ -96,6 +96,13 @@ const DEFAULT_INPUT_SCHEMA = { type: "object" } as const;
 
 const SUPPRESSED_UI_LOG_METHODS = new Set(["ui/notifications/size-changed"]);
 const PIP_MAX_HEIGHT = "min(40vh, 600px)";
+/**
+ * Grace period before an App that reported a CSP violation but hasn't
+ * signalled `ui/initialize` is declared blocked. A View that loads a
+ * blocked-but-optional asset (an analytics beacon, a font) still boots, so
+ * the notice must not flash in front of a widget that is merely slow.
+ */
+const CSP_BLOCKED_NOTICE_DELAY_MS = 1500;
 const SAFE_OPEN_IN_APP_PROTOCOLS = new Set(["http:", "https:"]);
 
 function toSafeOpenInAppUrl(value: string): string | null {
@@ -799,10 +806,10 @@ export function MCPAppsRendererSurface({
   const { environment, resolvers } = host;
   const themeMode = environment.themeMode;
   const sharedHostStyle = environment.sharedHostStyle;
-  const chatboxHostStyle = environment.chatboxHostStyle;
-  const chatboxHostTheme = environment.chatboxHostTheme;
+  const scenarioHostStyle = environment.scenarioHostStyle;
+  const scenarioHostTheme = environment.scenarioHostTheme;
   const hostCapabilitiesOverride = environment.hostCapabilitiesOverride;
-  // Active hostConfig.mcpProfile from the surrounding scope (chatbox session,
+  // Active hostConfig.mcpProfile from the surrounding scope (scenario session,
   // project default, eval suite) is bound inside the adapter's resolvers (3d-iii);
   // the renderer keys its capability memos on `profileKey` and reads only the
   // minimal projections it inspects (sandbox overrides + hostInfo override).
@@ -822,9 +829,9 @@ export function MCPAppsRendererSurface({
   const liveEffectiveCompatRuntime = useMemo(
     () =>
       resolvers.resolveEffectiveCompatRuntime({
-        hostStyle: chatboxHostStyle ?? sharedHostStyle,
+        hostStyle: scenarioHostStyle ?? sharedHostStyle,
       }),
-    [activeMcpProfileKey, chatboxHostStyle, sharedHostStyle]
+    [activeMcpProfileKey, scenarioHostStyle, sharedHostStyle]
   );
   const liveInjectOpenAiCompat = liveEffectiveCompatRuntime.injected;
   // Capability surface accompanying `liveInjectOpenAiCompat`. Travels
@@ -869,9 +876,9 @@ export function MCPAppsRendererSurface({
   const isPlaygroundActive = environment.isPlaygroundActive;
   const configuredHostTheme = resolvers.extractHostTheme(baseHostContext);
   const resolvedTheme = isPlaygroundActive
-    ? configuredHostTheme ?? chatboxHostTheme ?? themeMode
-    : chatboxHostTheme ?? themeMode;
-  // Redeemed chatbox sessions resolve servers via Convex on every
+    ? configuredHostTheme ?? scenarioHostTheme ?? themeMode
+    : scenarioHostTheme ?? themeMode;
+  // Redeemed scenario sessions resolve servers via Convex on every
   // platform; widget-content fetches and bridge resource/prompt calls
   // must take the hosted API branch even on local builds. Mirrored into
   // a ref because the bridge handlers close over long-lived callbacks.
@@ -879,7 +886,7 @@ export function MCPAppsRendererSurface({
   const webManagedServersRef = useRef(webManagedServers);
   webManagedServersRef.current = webManagedServers;
   // CSP mode is derived from the surface kind + minimalMode + the playground's
-  // selected mode (see WidgetHost). Chatbox surfaces (published runtime,
+  // selected mode (see WidgetHost). Scenario surfaces (published runtime,
   // Preview, Sessions transcript) and minimal mode default to `permissive` —
   // end-user-facing demo surfaces where an incomplete `_meta.ui.csp`
   // declaration would render a blank widget; the playground uses its selected
@@ -891,9 +898,9 @@ export function MCPAppsRendererSurface({
   // `surface.kind` is sourced from the WidgetSurfaceContext (NOT
   // `isPlaygroundActive`), so it is stable from the first render — the
   // iframe-creation-time policy does not flip and tear down/rebuild the iframe
-  // (and "chatbox" wins over "playground", as before).
+  // (and "scenario" wins over "playground", as before).
   const cspMode: CspMode =
-    host.surface.kind === "chatbox" || minimalMode
+    host.surface.kind === "scenario" || minimalMode
       ? "permissive"
       : host.surface.kind === "playground"
       ? host.surface.playgroundCspMode
@@ -945,7 +952,7 @@ export function MCPAppsRendererSurface({
   // the View would see inconsistent HostContext.
   const earlyEffectiveHostStyle = isPlaygroundActive
     ? sharedHostStyle
-    : chatboxHostStyle;
+    : scenarioHostStyle;
   const earlyEffectiveMcpAppsCapabilities = useMemo(
     () =>
       resolvers.resolveEffectiveMcpAppsCapabilities({
@@ -1197,6 +1204,15 @@ export function MCPAppsRendererSurface({
   const [isReady, setIsReady] = useState(false);
   const [reinitCount, setReinitCount] = useState(0);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // First CSP violation reported by the sandbox proxy for the current bytes.
+  // Kept locally (the debug sink is write-only) so a View that never boots
+  // because its own resources were blocked can say so instead of rendering
+  // an empty box. First violation wins — it is the one that explains the
+  // failure; later ones are usually cascade noise from the same block.
+  const [firstCspBlock, setFirstCspBlock] = useState<{
+    directive?: string;
+    blockedUri?: string;
+  } | null>(null);
   const [widgetHtml, setWidgetHtml] = useState<string | null>(null);
   const [openInAppUrlOverride, setOpenInAppUrlOverride] = useState<
     string | null
@@ -1424,6 +1440,9 @@ export function MCPAppsRendererSurface({
     setWidgetPermissions(undefined);
     setWidgetPermissive(isCachedReplay ? true : false);
     setPrefersBorder(cachedReplayPrefersBorder ?? true);
+    // New bytes incoming — violations recorded against the old ones no
+    // longer describe what is on screen.
+    setFirstCspBlock(null);
   }, [
     cachedReplayWidgetHtmlUrl,
     cachedReplayPrefersBorder,
@@ -1671,6 +1690,9 @@ export function MCPAppsRendererSurface({
       liveRenderIdentityRef.current = null;
       setWidgetHtml(html);
       setWidgetCsp(undefined);
+      // Same reasoning as the live commit below: new bytes, so a violation
+      // held from the previous resource no longer describes the screen.
+      setFirstCspBlock(null);
       setWidgetPermissions(undefined);
       setWidgetPermissive(true);
       setPrefersBorder(initialPrefersBorder ?? true);
@@ -1809,6 +1831,13 @@ export function MCPAppsRendererSurface({
       liveRenderIdentityRef.current = liveRenderIdentityKey;
       setWidgetHtml(html);
       setWidgetCsp(csp);
+      // New bytes are going on screen, so a violation still held here was
+      // reported against the previous ones. The identity-keyed reset effect
+      // above covers a resourceUri/session change; this covers the case it
+      // cannot see — a refetch that commits fresh HTML under the SAME
+      // identity. Stating the invariant at the commit site keeps it local:
+      // new bytes, no stale block.
+      setFirstCspBlock(null);
       setWidgetPermissions(permissions);
       setWidgetPermissive(permissive ?? false);
       setPrefersBorder(prefersBorder ?? true);
@@ -2122,6 +2151,7 @@ export function MCPAppsRendererSurface({
   useEffect(() => {
     if (loadedCspMode !== null && loadedCspMode !== cspMode) {
       clearCspViolations(toolCallId);
+      setFirstCspBlock(null);
     }
   }, [cspMode, loadedCspMode, toolCallId, clearCspViolations]);
   useEffect(() => {
@@ -2135,6 +2165,7 @@ export function MCPAppsRendererSurface({
         loadedMcpAppsCapabilitiesHash !== widgetMcpAppsCapabilitiesReloadKey);
     if (injectionChanged || capabilitiesChanged) {
       clearCspViolations(toolCallId);
+      setFirstCspBlock(null);
     }
   }, [
     widgetInjectOpenAiCompatReloadKey,
@@ -2259,7 +2290,7 @@ export function MCPAppsRendererSurface({
   // These are sent via hostContext.styles.variables - the SDK should pass them through
   const effectiveHostStyle = isPlaygroundActive
     ? sharedHostStyle
-    : chatboxHostStyle;
+    : scenarioHostStyle;
   const hostStyleDefinition =
     resolvers.getHostStyleOrDefault(effectiveHostStyle);
   // Single source of truth for what `hostCapabilities` this view will
@@ -2274,7 +2305,7 @@ export function MCPAppsRendererSurface({
   // commit. Both inputs are stable — `effectiveHostStyle` resolves to a
   // string|null derived from Zustand+context selectors, and
   // `hostCapabilitiesOverride` comes from a context whose Providers (see
-  // ClientStyledChatTabV2 / PlaygroundTab / ChatboxChatPage) read from
+  // ClientStyledChatTabV2 / PlaygroundTab / ScenarioChatPage) read from
   // Zustand selectors that return stable refs until the underlying field
   // mutates.
   // Ref-route the active `window.openai` shim capability surface so
@@ -2614,7 +2645,7 @@ export function MCPAppsRendererSurface({
     // permissive shortcut below bypasses the proxy's `buildCSP(csp,
     // cspDirectives)` path (it builds its own fixed permissive CSP), so
     // without treating cspDirectives as hardening the configured
-    // directives get silently dropped on the chatbox/preview surfaces
+    // directives get silently dropped on the scenario/preview surfaces
     // where host profiles are most meant to apply.
     //
     // Only count entries that contribute at least one token that would
@@ -2643,18 +2674,18 @@ export function MCPAppsRendererSurface({
     // (restrictTo, cspDirectives) and skip CSP injection entirely. Strict
     // applies the host profile.
     //
-    // Chatbox / minimal-mode surfaces also hardcode `cspMode = "permissive"`
+    // Scenario / minimal-mode surfaces also hardcode `cspMode = "permissive"`
     // (line 405) as a UX-friendliness default for end-user demos, NOT as a
     // user choice. The host's `restrictTo` / `cspDirectives` MUST still apply
     // there — otherwise a developer who configures `restrictTo: { connectDomains: ["https://api.acme"] }`
-    // on their chatbox host would have it honored on Connect → Chat but
-    // silently dropped on the public chatbox runtime / Sessions transcript.
+    // on their scenario host would have it honored on Connect → Chat but
+    // silently dropped on the public scenario runtime / Sessions transcript.
     //
     // We can't gate on `isPlaygroundActive` alone: the Playground store is
     // localStorage and leaks across browsing contexts on the same origin
-    // (see line 396), so a chatbox preview iframe can read
+    // (see line 396), so a scenario preview iframe can read
     // `isPlaygroundActive = true` from the parent inspector tab even though
-    // it's a chatbox surface. Require `!isChatboxSurface && !minimalMode` so
+    // it's a scenario surface. Require `!isScenarioSurface && !minimalMode` so
     // the short-circuit is gated on the actual rendering surface, not just
     // the (leakable) playground flag.
     //
@@ -2667,7 +2698,7 @@ export function MCPAppsRendererSurface({
     const userTogglePermissive =
       cspMode === "permissive" &&
       isPlaygroundActive &&
-      host.surface.kind !== "chatbox" &&
+      host.surface.kind !== "scenario" &&
       !minimalMode;
     if (userTogglePermissive) {
       let resolvedPermissions: McpUiResourcePermissions | undefined;
@@ -2882,6 +2913,26 @@ export function MCPAppsRendererSurface({
     () => stableStringifyJson(effectiveSandbox),
     [effectiveSandbox]
   );
+
+  // `SandboxedIframe` keys its resource-ready payload on the resolved csp /
+  // permissions / sandbox attrs, so any change here re-posts the HTML and the
+  // View boots again. A violation recorded against the PREVIOUS policy no
+  // longer describes what is on screen — without this, widening a profile to
+  // unblock an App would leave the notice naming the origin that is now
+  // allowed. Skip the first commit: the initial resolution is not a reload.
+  const lastEffectiveSandboxKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = lastEffectiveSandboxKeyRef.current;
+    lastEffectiveSandboxKeyRef.current = effectiveSandboxKey;
+    if (previous === null || previous === effectiveSandboxKey) return;
+    clearCspViolations(toolCallId);
+    setFirstCspBlock(null);
+    // Readiness deliberately NOT reset here. `effectiveSandboxKey` is also a
+    // dependency of the bridge-connect effect below, which already does
+    // `setIsReady(false)` when it re-runs — so a policy change resets
+    // readiness exactly once, on the path that owns it. Duplicating it here
+    // would be dead code that reads like a second source of truth.
+  }, [effectiveSandboxKey, toolCallId, clearCspViolations]);
 
   // Publish the resolved sandbox payload into the widget-debug store so the
   // Sandbox debug panel can render it. `restrictTo` and `cspMode` come from
@@ -3373,9 +3424,7 @@ export function MCPAppsRendererSurface({
                   // (shared gate with the pre-prompt check above).
                   const safeHref = toSafeDownloadLinkUrl(link.uri);
                   if (safeHref === null) {
-                    throw new Error(
-                      `Unsupported download URI: ${link.uri}`
-                    );
+                    throw new Error(`Unsupported download URI: ${link.uri}`);
                   }
                   window.open(safeHref, "_blank", "noopener,noreferrer");
                 }
@@ -3663,6 +3712,22 @@ export function MCPAppsRendererSurface({
         timestamp: timestamp || Date.now(),
       });
 
+      // Remember the first block so the render path can explain a View
+      // that never boots. Cleared on every reload alongside the debug
+      // store's violation list.
+      setFirstCspBlock(
+        (prev) =>
+          prev ?? {
+            directive:
+              typeof effectiveDirective === "string" && effectiveDirective
+                ? effectiveDirective
+                : typeof directive === "string"
+                ? directive
+                : undefined,
+            blockedUri: typeof blockedUri === "string" ? blockedUri : undefined,
+          }
+      );
+
       if (!minimalMode) {
         console.warn(
           `[MCP Apps CSP Violation] ${directive}: Blocked ${blockedUri}`,
@@ -3868,6 +3933,24 @@ export function MCPAppsRendererSurface({
   };
   const showWidget = isReady && canRenderStreamingInput;
 
+  // An App whose own resources were blocked by CSP never signals ready, so
+  // the iframe sits at `opacity: 0` forever — indistinguishable from a hang.
+  // Surface the block instead, after a grace period so a View that boots
+  // despite a blocked optional asset never flashes the notice.
+  const [cspBlockedNoticeVisible, setCspBlockedNoticeVisible] = useState(false);
+  useEffect(() => {
+    if (!firstCspBlock || isReady) {
+      setCspBlockedNoticeVisible(false);
+      return;
+    }
+    const timer = window.setTimeout(
+      () => setCspBlockedNoticeVisible(true),
+      CSP_BLOCKED_NOTICE_DELAY_MS
+    );
+    return () => window.clearTimeout(timer);
+  }, [firstCspBlock, isReady]);
+  const showCspBlockedNotice = cspBlockedNoticeVisible && !showWidget;
+
   useEffect(() => {
     logWidgetDebug("host-to-ui", "debug/widget-visibility", {
       bridgeTransportReady,
@@ -4008,7 +4091,10 @@ export function MCPAppsRendererSurface({
       ? { position: "absolute" as const, pointerEvents: "none" as const }
       : {}),
   };
-  const showHostChrome = !isFullscreen && matrixGatedPrefersBorder;
+  // Suppress the empty bordered box while the blocked-App notice stands in
+  // for it — otherwise the notice renders *below* the blank box it explains.
+  const showHostChrome =
+    !isFullscreen && matrixGatedPrefersBorder && !showCspBlockedNotice;
   const hostChromeStyle: CSSProperties | undefined = showHostChrome
     ? {
         backgroundColor: mergedStyleVariables["--color-background-primary"],
@@ -4154,6 +4240,32 @@ export function MCPAppsRendererSurface({
       >
         {iframe}
       </div>
+      {/* The App reported a CSP violation and never signalled ready — its
+       * own resources were blocked, so the iframe would otherwise stay an
+       * empty box. Name the blocked directive and the first blocked origin
+       * for developer surfaces; testers get the plain-language line. */}
+      {showCspBlockedNotice && (
+        <div
+          data-testid="mcp-app-csp-blocked-notice"
+          role="status"
+          className="border border-destructive/40 bg-destructive/10 text-destructive text-xs rounded-md px-3 py-2"
+        >
+          <span>
+            {minimalMode
+              ? "This app couldn't load its resources."
+              : `MCP App blocked by Content Security Policy${
+                  firstCspBlock?.directive
+                    ? ` (${firstCspBlock.directive})`
+                    : ""
+                }.`}
+          </span>
+          {firstCspBlock?.blockedUri ? (
+            <span className="mt-0.5 block font-mono break-all opacity-80">
+              {firstCspBlock.blockedUri}
+            </span>
+          ) : null}
+        </div>
+      )}
       {/* SEP-1865 App-Provided Tools: per-iframe busy indicator. Surfaces
        * when the host is dispatching `tools/call` into this iframe (the
        * count comes from `useAppToolsRegistry.pendingControllers`). Sits

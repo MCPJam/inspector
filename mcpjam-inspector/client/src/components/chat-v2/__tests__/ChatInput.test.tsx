@@ -8,9 +8,9 @@ import {
 } from "@testing-library/react";
 import { ChatInput } from "../chat-input";
 import {
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
 import type { ModelDefinition } from "@/shared/types";
 import { authFetch } from "@/lib/session-token";
 
@@ -298,11 +298,11 @@ describe("ChatInput", () => {
       ).toBeInTheDocument();
     });
 
-    it("uses ChatGPT submit styling inside ChatGPT chatboxes", () => {
+    it("uses ChatGPT submit styling inside ChatGPT scenarios", () => {
       render(
-        <ChatboxHostStyleProvider value="chatgpt">
+        <ScenarioHostStyleProvider value="chatgpt">
           <ChatInput {...defaultProps} value="Hello" />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       );
 
       expect(screen.getByRole("button", { name: "Send message" })).toHaveClass(
@@ -312,11 +312,11 @@ describe("ChatInput", () => {
 
     it("keeps the textarea transparent inside a dark host-scoped composer", () => {
       render(
-        <ChatboxHostStyleProvider value="chatgpt">
-          <ChatboxHostThemeProvider value="dark">
+        <ScenarioHostStyleProvider value="chatgpt">
+          <ScenarioHostThemeProvider value="dark">
             <ChatInput {...defaultProps} />
-          </ChatboxHostThemeProvider>
-        </ChatboxHostStyleProvider>
+          </ScenarioHostThemeProvider>
+        </ScenarioHostStyleProvider>
       );
 
       expect(screen.getByPlaceholderText("Type your message...")).toHaveClass(
@@ -670,7 +670,7 @@ describe("ChatInput", () => {
           voiceInputContext={{
             projectId: "project-1",
             selectedServerIds: ["server-1"],
-            chatboxId: "chatbox-1",
+            scenarioId: "scenario-1",
             accessVersion: 2,
           }}
           voiceInputAuthHeaders={{ Authorization: "Bearer user-token" }}
@@ -712,7 +712,7 @@ describe("ChatInput", () => {
         model: "openai/whisper-1",
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "chatbox-1",
+        scenarioId: "scenario-1",
         accessVersion: 2,
         input_audio: {
           data: expect.any(String),
