@@ -10,8 +10,8 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { useAppNavigate } from "@/lib/app-navigation";
+import { githubChecksWriteErrorMessage } from "@/lib/github-checks-errors";
 import {
-  GITHUB_CHECKS_UNAVAILABLE_MESSAGE,
   useGithubChecksSettings,
   type GithubCheckOutagePolicy,
   type InstallationRepo,
@@ -148,12 +148,7 @@ export function SuiteGithubChecksSection({
       // Same rule for the failure: an error about an organization the user has
       // already left is noise they cannot act on.
       if (!mountedRef.current) return;
-      const message = error instanceof Error ? error.message : String(error);
-      toast.error(
-        message.includes("not currently available")
-          ? GITHUB_CHECKS_UNAVAILABLE_MESSAGE
-          : message
-      );
+      toast.error(githubChecksWriteErrorMessage(error));
     } finally {
       setConnecting(false);
     }

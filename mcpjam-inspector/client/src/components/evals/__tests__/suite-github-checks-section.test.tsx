@@ -29,8 +29,6 @@ const {
 }));
 
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
-  GITHUB_CHECKS_UNAVAILABLE_MESSAGE:
-    "GitHub Checks settings are not currently available.",
   useGithubChecksSettings: () => ({
     availability: mockAvailability.value,
     repos: mockRepos.value,

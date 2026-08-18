@@ -101,9 +101,11 @@ const AVAILABILITY_QUERY =
 const LIST_QUERY = "github/checkRepoConfigs:listForOrganization";
 const SUITES_QUERY = "testSuites:getTestSuitesOverview";
 
-/** The one message the UI shows when the backend refuses on availability. */
-export const GITHUB_CHECKS_UNAVAILABLE_MESSAGE =
-  "GitHub Checks settings are not currently available.";
+// The availability message and the rest of this surface's error copy live in
+// `@/lib/github-checks-errors`, which has no React and no Convex client in it.
+// Both components that show these messages stub THIS module wholesale in their
+// tests, so a message defined here would be stubbed out in exactly the tests
+// that ought to be checking it.
 
 export function useGithubChecksAvailability(
   organizationId: string | null | undefined
