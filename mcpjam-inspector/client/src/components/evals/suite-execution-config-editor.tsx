@@ -213,7 +213,7 @@ export function SuiteExecutionConfigEditor({
       // suite's frozen server snapshot. The mutation mints a new v2 row
       // when the project-default content differs from the suite's
       // existing row, or no-ops via dedupe when they already match.
-      // The project default may carry a `computer` (valid for chatbox hosts);
+      // The project default may carry a `computer` (valid for scenario hosts);
       // strip it here so resetting an eval suite to the project default can't
       // smuggle a computer into a config the backend will reject at run start.
       const projectDefaultInput = sanitizeHostConfigForEvalSuite(

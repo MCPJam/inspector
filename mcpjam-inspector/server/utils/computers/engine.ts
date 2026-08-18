@@ -24,7 +24,7 @@
  *    user asked for their machine; running elsewhere unannounced is the exact
  *    dishonesty this program removes.
  *  - Ephemeral sandbox paths never consult this module: `sandbox-bash`,
- *    evals, swarms, and chatbox provisioning have no import path here.
+ *    evals, swarms, and scenario provisioning have no import path here.
  */
 import { HOSTED_MODE, LOCAL_COMPUTER_ENABLED } from "../../config.js";
 import { isComputersDataPlaneConfigured } from "./control-plane-client.js";
@@ -54,7 +54,7 @@ export function resolvePersonalComputerEngine(args: {
 
 export interface PersonalEngineActor {
   isGuest: boolean;
-  isChatboxSession: boolean;
+  isScenarioSession: boolean;
   isJourneySession: boolean;
   executionScopeKind?: "project" | "swarm" | undefined;
 }
@@ -62,7 +62,7 @@ export interface PersonalEngineActor {
 /**
  * Fail-closed downgrade at the tool-construction chokepoint: `local` is legal
  * only for a signed-in member's own direct turn. Every other actor — guests,
- * share-link chatbox sessions, journey/swarm sessions, host-funded swarm
+ * share-link scenario sessions, journey/swarm sessions, host-funded swarm
  * scopes — re-resolves to the cloud family, whatever arrived on ctx. This is
  * the second, independent layer under the route-level parse gates.
  */
@@ -73,7 +73,7 @@ export function coercePersonalEngineForActor(
   if (engine !== "local") return engine;
   const eligible =
     !actor.isGuest &&
-    !actor.isChatboxSession &&
+    !actor.isScenarioSession &&
     !actor.isJourneySession &&
     (actor.executionScopeKind === undefined ||
       actor.executionScopeKind === "project");

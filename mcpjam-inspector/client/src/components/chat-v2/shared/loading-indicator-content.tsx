@@ -1,17 +1,17 @@
 import {
-  useChatboxChatUiOverride,
-  useChatboxHostStyle,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioChatUiOverride,
+  useScenarioHostStyle,
+} from "@/contexts/scenario-client-style-context";
 import {
-  getChatboxHostFamily,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  getScenarioHostFamily,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import { getLoadingIndicatorForStyle } from "@/lib/client-styles";
 import { cn } from "@/lib/utils";
 
 function modelProviderToHostStyle(
   provider: string | null | undefined
-): ChatboxHostStyle | null {
+): ScenarioHostStyle | null {
   if (!provider) return null;
   const normalized = provider.toLowerCase();
   if (normalized === "openai") return "chatgpt";
@@ -21,8 +21,8 @@ function modelProviderToHostStyle(
 
 /**
  * Resolve the host style id used to pick the brand thinking indicator.
- * Prefers the active chatbox host context, falling back to a
- * `modelProvider → host id` mapping for surfaces with no chatbox context
+ * Prefers the active scenario host context, falling back to a
+ * `modelProvider → host id` mapping for surfaces with no scenario context
  * (e.g. Direct Chat without a saved profile).
  *
  * Returns `null` only when neither source resolves; callers should render
@@ -30,14 +30,14 @@ function modelProviderToHostStyle(
  */
 export function useResolvedHostStyleForIndicator(
   modelProvider?: string | null
-): ChatboxHostStyle | null {
-  const chatboxHostStyle = useChatboxHostStyle();
-  return chatboxHostStyle ?? modelProviderToHostStyle(modelProvider);
+): ScenarioHostStyle | null {
+  const scenarioHostStyle = useScenarioHostStyle();
+  return scenarioHostStyle ?? modelProviderToHostStyle(modelProvider);
 }
 
 /** Claude paints its mark beneath the last assistant bubble while streaming. */
 export function usesClaudeInlineStreamingFooter(
-  hostStyle: ChatboxHostStyle | null
+  hostStyle: ScenarioHostStyle | null
 ): boolean {
   return (
     hostStyle != null &&
@@ -52,13 +52,13 @@ export function usesClaudeInlineStreamingFooter(
     // shimmer indicator, so it must NOT paint the Anthropic mark beneath the
     // bubble while streaming. Same opt-out shape as "claude-code".
     hostStyle !== "agentcore" &&
-    getChatboxHostFamily(hostStyle) === "claude"
+    getScenarioHostFamily(hostStyle) === "claude"
   );
 }
 
 /** MCPJam uses its own dot indicator in the same footer slot. */
 export function usesMcpjamInlineStreamingFooter(
-  hostStyle: ChatboxHostStyle | null
+  hostStyle: ScenarioHostStyle | null
 ): boolean {
   return hostStyle === "mcpjam";
 }
@@ -66,18 +66,18 @@ export function usesMcpjamInlineStreamingFooter(
 /**
  * Brand thinking indicator. Looks up the host's `chatUi.loadingIndicator`
  * via the registry; falls back to an animated "Thinking…" string when
- * neither chatbox context nor `modelProvider` resolves to a known host.
+ * neither scenario context nor `modelProvider` resolves to a known host.
  */
 export function LoadingIndicatorContent({
   className,
   modelProvider,
 }: {
   className?: string;
-  /** Optional provider hint for surfaces without a chatbox host context. */
+  /** Optional provider hint for surfaces without a scenario host context. */
   modelProvider?: string | null;
 }) {
   const hostStyle = useResolvedHostStyleForIndicator(modelProvider);
-  const chatUiOverride = useChatboxChatUiOverride();
+  const chatUiOverride = useScenarioChatUiOverride();
 
   if (hostStyle) {
     const Indicator = getLoadingIndicatorForStyle(hostStyle, chatUiOverride);

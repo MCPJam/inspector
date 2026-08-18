@@ -236,14 +236,14 @@ export const navigationSections: NavSection[] = [
         url: "/user-testing",
         icon: Users,
         featureFlag: "sandboxes-enabled",
-        billingFeature: "chatboxes",
+        billingFeature: "scenarios",
       },
       {
         title: "Swarms",
         url: "/swarms",
         icon: Network,
         featureFlag: "sandboxes-enabled",
-        billingFeature: "chatboxes",
+        billingFeature: "scenarios",
       },
       {
         title: "Evaluate",

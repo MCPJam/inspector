@@ -775,7 +775,7 @@ export type HostConfigInputV2 = {
   // canonicalizer rejects any value other than the known harness ids.
   harness?: Harness;
   // Optional during the rollout of project-scoped server config: named hosts
-  // pass `undefined` (server set lives on `projects.serverIds`); chatbox/eval
+  // pass `undefined` (server set lives on `projects.serverIds`); scenario/eval
   // forks still pass real arrays. Normalized to `[]` BEFORE hashing so the
   // canonical / hash output is byte-identical to the old "explicit empty
   // array" case.

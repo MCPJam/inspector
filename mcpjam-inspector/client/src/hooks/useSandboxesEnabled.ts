@@ -3,7 +3,7 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 export const SANDBOXES_FEATURE_FLAG = "sandboxes-enabled";
 
 /**
- * The Chatbox + Swarms product surfaces are gated behind one PostHog flag.
+ * The Scenario + Swarms product surfaces are gated behind one PostHog flag.
  *
  * The sidebar has always filtered its two nav items on this flag
  * (`mcp-sidebar.tsx`), but a nav filter is not a gate: `/swarms` and its

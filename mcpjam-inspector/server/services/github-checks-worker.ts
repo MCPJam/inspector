@@ -28,8 +28,13 @@
  * fails it ~5 minutes later, which shows up on someone's PR as a check that
  * hung and then went neutral.
  *
- * Gated by `GITHUB_CHECKS_WORKER_ENABLED === '1'`; the backend has its own
- * `GITHUB_CHECKS_ENABLED` gate and 404s this whole surface when it is off.
+ * Gated by `GITHUB_CHECKS_WORKER_ENABLED === '1'`. That gate stops this
+ * process from CLAIMING work; it is not a kill switch for the feature. The
+ * backend's `GITHUB_CHECKS_ENABLED` gate — which this comment used to claim
+ * 404s the whole surface — no longer exists, so with the worker off the
+ * webhook still accepts deliveries and still inserts triggers. They sit
+ * `pending` until the backend's 30-minute sweep retires them as
+ * `worker_unavailable`, concluding each check neutral with an explanation.
  */
 
 import { WEB_CALL_TIMEOUT_MS } from "../config.js";
