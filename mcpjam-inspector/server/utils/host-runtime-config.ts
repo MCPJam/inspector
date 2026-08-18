@@ -8,7 +8,7 @@
  * server-authoritative gate that lets a Claude Code host run the real harness:
  * `harness` is never accepted from the body, only read here.
  *
- * Mirrors {@link fetchChatboxRuntimeConfig}. Backed by
+ * Mirrors {@link fetchScenarioRuntimeConfig}. Backed by
  * `convex/http.ts:/web/host/runtime-config`, which walks `host → hostConfig`
  * via `internalGetHostRuntimeConfig` (project-membership gated).
  */

@@ -98,7 +98,7 @@ describe("useHostedOrgModelConfig", () => {
   });
 
   it("skips both queries when disabled, even while authenticated with ids", () => {
-    // Chatbox share-link guests are authenticated (anonymous) but not project
+    // Scenario share-link guests are authenticated (anonymous) but not project
     // members; firing getVisibleConfigForProject would throw and crash the page.
     mockState.queryResults.set(
       "organizationModelProviders:getVisibleConfigForProject",

@@ -213,7 +213,7 @@ export function HomeTab({
 
   // "New chat" inside the takeover keeps the user on the agent surface and
   // swaps the thread for an empty composer (Hero). A session id is minted
-  // only when they actually submit, mirroring the chatbox "Clear chat"
+  // only when they actually submit, mirroring the scenario "Clear chat"
   // affordance — fresh slate without bouncing back to the greeting.
   const handleNewChat = useCallback(() => {
     setSearchParams(

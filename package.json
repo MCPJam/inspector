@@ -44,5 +44,9 @@
   },
   "dependencies": {
     "react-force-graph-2d": "^1.29.1"
+  },
+  "overrides": {
+    "shell-quote": "^1.8.4",
+    "tar": "^7.5.22"
   }
 }

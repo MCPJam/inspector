@@ -4,8 +4,8 @@ const HASH_TAB_ALIASES = {
   connect: "clients",
   /** Legacy alias: `/hosts` and `#hosts` map to the renamed clients tab. */
   hosts: "clients",
-  /** Public path is `/user-testing`; the in-app tab id stays `chatboxes`. */
-  "user-testing": "chatboxes",
+  /** Public path is `/user-testing`; the in-app tab id stays `scenarios`. */
+  "user-testing": "scenarios",
   /**
    * Legacy: Runs was its own tab at `/ci-evals` before both eval lenses
    * merged under `/evals`. Kept so an old `#ci-evals` hash bookmark resolves
@@ -20,7 +20,7 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "servers",
   "host-compare",
   "registry",
-  "chatboxes",
+  "scenarios",
   "swarms",
   "playground",
   "client-config",

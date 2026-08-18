@@ -458,7 +458,7 @@ export interface HostRedesignContext {
   /**
    * Project Computers visualization inputs. All optional so the builder
    * stays pure and callers that don't surface the islands (e.g. the
-   * chatbox read-only canvas) can omit them. When `computersEnabled` is
+   * scenario read-only canvas) can omit them. When `computersEnabled` is
    * not exactly `true`, the builder emits NO island nodes/edges, so the
    * GA canvas is byte-for-byte unchanged.
    */
