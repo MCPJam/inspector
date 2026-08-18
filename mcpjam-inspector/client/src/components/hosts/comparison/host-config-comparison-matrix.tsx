@@ -186,7 +186,11 @@ export function HostConfigComparisonMatrix({
         // just moved inside the border. `max-h-full` lets a short result hug
         // its own content and only claims the full height when the table
         // actually needs it.
-        "flex max-h-full min-h-60 min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]",
+        //
+        // No `min-h-*` either: it would re-floor the card at a fixed height and
+        // put the dead band back for a one- or two-row result. Nothing renders
+        // here that needs a floor — every empty case returns above this.
+        "flex max-h-full min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]",
         mobileOptimized && "max-w-full"
       )}
     >
