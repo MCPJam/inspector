@@ -45,6 +45,7 @@ describe("useEvalIterationQuota", () => {
   // with an in-flight one.
   it.each([
     ["no organizationId", { organizationId: null }],
+    ["empty organizationId", { organizationId: "" }],
     ["enabled: false", { organizationId: "org_1", enabled: false }],
   ])("never loads when the query is skipped (%s)", (_label, args) => {
     mocks.useQuery.mockReturnValue(undefined);

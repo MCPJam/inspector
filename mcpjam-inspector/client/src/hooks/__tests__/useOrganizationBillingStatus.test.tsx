@@ -74,12 +74,57 @@ describe("useOrganizationBilling loading flags", () => {
     expect(result.current.isLoadingPlanCatalog).toBe(false);
   });
 
-  it("reports no loading when the org is absent and queries are skipped", () => {
+  // Both falsy org ids skip. Spelled out separately because the gate is a
+  // truthiness check, and a null-only guard would let "" through to a query.
+  it.each([
+    ["null", null],
+    ["empty string", ""],
+  ])(
+    "reports no loading when the org id is %s and queries are skipped",
+    (_label, organizationId) => {
+      mocks.useQuery.mockReturnValue(undefined);
+
+      const { result } = renderHook(() =>
+        useOrganizationBilling(organizationId)
+      );
+
+      expect(result.current.isLoadingBilling).toBe(false);
+      expect(result.current.isLoadingEntitlements).toBe(false);
+      expect(result.current.isLoadingOrganizationPremiumness).toBe(false);
+      expect(result.current.isLoadingPlanCatalog).toBe(false);
+    }
+  );
+
+  // The project-scoped query has its own gate on top of the org one, so its
+  // flag needs its own in-flight and denied reads to be pinned at all.
+  it("reports loading for project premiumness while its read is in flight", () => {
     mocks.useQuery.mockReturnValue(undefined);
 
-    const { result } = renderHook(() => useOrganizationBilling(null));
+    const { result } = renderHook(() =>
+      useOrganizationBilling("org_1", { projectId: "proj_1" })
+    );
 
-    expect(result.current.isLoadingBilling).toBe(false);
-    expect(result.current.isLoadingPlanCatalog).toBe(false);
+    expect(result.current.isLoadingProjectPremiumness).toBe(true);
+  });
+
+  it("stops reporting project premiumness loading on a denied read", () => {
+    mocks.useQuery.mockReturnValue(null);
+
+    const { result } = renderHook(() =>
+      useOrganizationBilling("org_1", { projectId: "proj_1" })
+    );
+
+    expect(result.current.projectPremiumness).toBeUndefined();
+    expect(result.current.isLoadingProjectPremiumness).toBe(false);
+  });
+
+  // Without a project there is nothing to load, so the flag must stay down
+  // even while the org-scoped reads are still in flight.
+  it("never reports project premiumness loading when no project is given", () => {
+    mocks.useQuery.mockReturnValue(undefined);
+
+    const { result } = renderHook(() => useOrganizationBilling("org_1"));
+
+    expect(result.current.isLoadingProjectPremiumness).toBe(false);
   });
 });
