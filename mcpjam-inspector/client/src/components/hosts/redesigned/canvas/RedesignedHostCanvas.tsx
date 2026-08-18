@@ -655,8 +655,8 @@ interface RedesignedHostCanvasProps {
    * - Selection state is suppressed visually so the canvas reads as
    *   a static summary rather than an interactive picker.
    *
-   * Used by the chatbox builder to embed the host viz as a live but
-   * uneditable summary of the chatbox's referenced host.
+   * Used by the scenario builder to embed the host viz as a live but
+   * uneditable summary of the scenario's referenced host.
    */
   readOnly?: boolean;
   onRequestEdit?: () => void;

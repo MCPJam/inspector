@@ -419,12 +419,19 @@ export async function launchJourneyRun(
         429: ErrorCode.RATE_LIMITED,
       };
       const code = CODE_BY_STATUS[err.status] ?? ErrorCode.VALIDATION_ERROR;
-      throw new WebRouteError(
+      const routeError = new WebRouteError(
         err.status,
         code,
         launchFailureMessage(err),
         launchFailureDetails(err)
       );
+      // The wave fan-out and every generic client read `Retry-After` to decide
+      // WHEN to come back; the 429 alone only says "not now". The backend's
+      // daily launch cap sends the UTC roll and its burst brake sends the
+      // bucket refill, so this is the one number nobody downstream can derive.
+      throw err.retryAfter
+        ? routeError.withHeaders({ "Retry-After": err.retryAfter })
+        : routeError;
     }
     throw err;
   }
@@ -546,7 +553,7 @@ export async function launchJourneyRun(
           undefined,
           // Pinned MCP client capabilities from the snapshot — negotiate
           // INITIALIZE with the SAME capabilities the host declared at
-          // run-create time (mirrors the chatbox path), not the current
+          // run-create time (mirrors the scenario path), not the current
           // live config's.
           host.clientCapabilities,
           {

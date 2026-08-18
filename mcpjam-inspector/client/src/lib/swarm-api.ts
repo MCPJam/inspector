@@ -642,7 +642,7 @@ export interface SwarmSessionMetrics {
 
 /**
  * Map a journey session list row into the shape `ShareUsageThreadList` /
- * chatbox Sessions cards expect. Swarm sessions are always synthetic for
+ * scenario Sessions cards expect. Swarm sessions are always synthetic for
  * badge purposes even if an older row omitted the flag.
  */
 export function journeySessionRowToThread(
@@ -746,7 +746,7 @@ export interface SwarmSessionPromoteDetail {
   /**
    * The session row's recorded host attribution. Display/compat — prefer
    * `suggestedHostAttachment.namedHostId` when seeding, because on
-   * environment-backed chatboxes this records the PUBLISH-TIME host while
+   * environment-backed scenarios this records the PUBLISH-TIME host while
    * the environment may since have been re-pointed.
    */
   hostId: string | null;

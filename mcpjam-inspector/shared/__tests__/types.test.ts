@@ -8,70 +8,13 @@ import {
   isMCPJamGuestAllowedModel,
   isMCPJamProvidedModel,
   isModelSupported,
-  modelRejectsTemperature,
+  modelSupportsTemperature,
   normalizeOauthProtocolMode,
   resolveEffectiveOauthProtocolMode,
   resolveOAuthProtocolSelection,
   SERVER_FORM_OAUTH_PROTOCOL_MODES,
   SUPPORTED_MODELS,
 } from "../types.js";
-
-describe("modelRejectsTemperature", () => {
-  it("matches the affected families across every id shape we accept", () => {
-    const ids = [
-      // Hosted / prefixed, dot-separated version.
-      "anthropic/claude-opus-4.7",
-      "anthropic/claude-opus-4.8",
-      "anthropic/claude-sonnet-5",
-      "anthropic/claude-fable-5",
-      // Bedrock inference profiles: geo prefix, dashed version, date + revision.
-      "us.anthropic.claude-opus-4-7-20260205-v1:0",
-      "eu.anthropic.claude-sonnet-5-20260401-v1:0",
-      "global.anthropic.claude-opus-5-20260601-v1:0",
-      // Bedrock ARN.
-      "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-4-8-20260310-v1:0",
-      // Bare (custom / anthropic-compatible providers).
-      "claude-opus-5",
-      "claude-mythos-5",
-      // Versions past the threshold, including a two-digit minor, must match
-      // without anyone editing this file when they ship.
-      "anthropic/claude-opus-4.9",
-      "anthropic/claude-opus-4.10",
-      "us.anthropic.claude-opus-4-9-20260801-v1:0",
-      "anthropic/claude-opus-6",
-    ];
-    for (const id of ids) {
-      expect(modelRejectsTemperature(id), id).toBe(true);
-    }
-  });
-
-  it("leaves models that still accept temperature alone", () => {
-    const ids = [
-      "anthropic/claude-opus-4.6",
-      "anthropic/claude-opus-4.6-fast",
-      "anthropic/claude-sonnet-4.6",
-      "anthropic/claude-haiku-4.5",
-      "claude-sonnet-4-5",
-      "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-      "us.anthropic.claude-haiku-4-5-20251001-v1:0",
-      "openai/gpt-4o-mini",
-      // A bare major on Bedrock is followed by the release date; it must not be
-      // read as a minor version, which would push Opus 4 over the 4.7 threshold.
-      "anthropic.claude-opus-4-20250514-v1:0",
-      "anthropic/claude-opus-4",
-      // Haiku has no threshold, so no version of it is guessed at.
-      "anthropic/claude-haiku-5",
-      // Legacy "claude-<major>-<family>" ordering must not parse as a version.
-      "anthropic.claude-3-opus-20240229-v1:0",
-      // Ollama bare ids must not false-positive.
-      "llama3.1:8b",
-      "mistral:latest",
-    ];
-    for (const id of ids) {
-      expect(modelRejectsTemperature(id), id).toBe(false);
-    }
-  });
-});
 
 describe("MCPJam-provided model classification", () => {
   it("treats openai/gpt-4o-mini as MCPJam-provided", () => {
@@ -176,12 +119,109 @@ describe("MCPJam-provided model classification", () => {
     }
   });
 
+  it("offers the current Anthropic models to BYOK keys, and no retired ones", () => {
+    // The BYOK Anthropic rows are hand-maintained, so they drift behind
+    // Anthropic's releases: a user with a valid key could not select Sonnet 5
+    // or Opus 5, while five ids that now 404 were still listed. See MMA-2.
+    const anthropicIds = SUPPORTED_MODELS.filter(
+      (m) => m.provider === "anthropic"
+    ).map((m) => String(m.id));
+
+    for (const id of [
+      "claude-opus-5",
+      "claude-sonnet-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+    ]) {
+      expect(anthropicIds).toContain(id);
+    }
+
+    // Retired upstream — listing them offers a selection that can only 404.
+    // Opus 4 and Sonnet 4 went out on 2026-06-15, after the 3.x pair.
+    for (const id of [
+      "claude-3-7-sonnet-latest",
+      "claude-3-5-haiku-latest",
+      "claude-opus-4-1",
+      "claude-opus-4-0",
+      "claude-sonnet-4-0",
+    ]) {
+      expect(anthropicIds).not.toContain(id);
+    }
+  });
+
+  it("reports no temperature support for the Anthropic rows that reject it", () => {
+    // Fable 5, Opus 5, Opus 4.8/4.7 and Sonnet 5 answer a temperature with a
+    // 400, so every one of these rows would fail on its first request while
+    // prepareChatV2 sent the slider value. See MMA-2.
+    for (const id of [
+      "claude-fable-5",
+      "claude-opus-5",
+      "claude-opus-4-8",
+      "claude-opus-4-7",
+      "claude-sonnet-5",
+    ]) {
+      expect(modelSupportsTemperature(id)).toBe(false);
+    }
+  });
+
+  it("keeps temperature for the Anthropic rows that still accept it", () => {
+    for (const id of [
+      "claude-opus-4-6",
+      "claude-sonnet-4-6",
+      "claude-sonnet-4-5",
+      "claude-haiku-4-5",
+    ]) {
+      expect(modelSupportsTemperature(id)).toBe(true);
+    }
+  });
+
+  it("gives every BYOK Anthropic row a context length", () => {
+    // getDefaultModel and the token-budget UI both read contextLength; a row
+    // added without one silently degrades those rather than failing loudly.
+    for (const model of SUPPORTED_MODELS.filter(
+      (m) => m.provider === "anthropic"
+    )) {
+      expect(model.contextLength).toBeGreaterThan(0);
+    }
+  });
+
   it("hostedModelDefinitionsFromSnapshot() is a non-empty, all-hosted fallback", () => {
     const hosted = hostedModelDefinitionsFromSnapshot();
     expect(hosted.length).toBeGreaterThan(100);
     expect(hosted.every((m) => m.hosted === true)).toBe(true);
     // Every hosted snapshot model is guest-allowed now (guests un-curated).
     expect(hosted.every((m) => m.guestAllowed === true)).toBe(true);
+  });
+});
+
+describe("modelSupportsTemperature", () => {
+  it("still strips temperature for own-provider GPT-5 models", () => {
+    expect(modelSupportsTemperature("gpt-5")).toBe(false);
+    expect(modelSupportsTemperature("gpt-5.1-codex")).toBe(false);
+  });
+
+  it("keeps temperature for MCPJam-provided models", () => {
+    // The backend owns the body it sends upstream, and hostConfig dedupes on
+    // the value — stripping here would collapse every hosted chat onto 0.7.
+    expect(modelSupportsTemperature("openai/gpt-5")).toBe(true);
+  });
+
+  it("resolves a dated snapshot like the alias it pins", () => {
+    expect(modelSupportsTemperature("claude-opus-5-20260401")).toBe(false);
+  });
+
+  it("resolves a provider-prefixed own-provider id by its model family", () => {
+    // A prefixed id we don't serve ourselves still reaches the same upstream
+    // model on the caller's key, so it rejects temperature just the same.
+    expect(modelSupportsTemperature("anthropic/claude-opus-5")).toBe(false);
+    // The hosted twin we do serve keeps it — the backend owns that body.
+    expect(modelSupportsTemperature("anthropic/claude-sonnet-5")).toBe(true);
+  });
+
+  it("keeps temperature for models it knows nothing about", () => {
+    expect(modelSupportsTemperature("newvendor/some-new-model")).toBe(true);
   });
 });
 

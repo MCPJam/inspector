@@ -10,7 +10,7 @@ vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: () => null,
 }));
 
-vi.mock("@/lib/chatbox-client-style", () => ({
+vi.mock("@/lib/scenario-client-style", () => ({
   resolveHostLogoByDisplayName: mockResolveHostLogoByDisplayName,
 }));
 

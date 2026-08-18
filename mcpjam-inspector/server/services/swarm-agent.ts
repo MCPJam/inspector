@@ -103,7 +103,7 @@ export interface PinnedHostExecutionSpec {
   /**
    * Pinned MCP client capabilities advertised on INITIALIZE, captured at
    * run-create time. Passed into `createAuthorizedManager` so the run negotiates
-   * with the SAME capabilities the host declared (mirrors the chatbox path's
+   * with the SAME capabilities the host declared (mirrors the scenario path's
    * `clientCapabilities`), not whatever the current live config would send.
    */
   clientCapabilities?: Record<string, unknown>;
@@ -226,12 +226,45 @@ export interface SwarmPersonaNextTurnResponse {
 export class SwarmAgentError extends Error {
   readonly status: number;
   readonly bodyText: string;
-  constructor(status: number, bodyText: string, message: string) {
+  /**
+   * The upstream `Retry-After`, verbatim, when the backend sent one.
+   *
+   * The status already crossed this boundary; the header did not, and on a 429
+   * the header is the actionable half. The backend's throttles know when they
+   * lift — a token bucket to the millisecond, a daily cap to the UTC roll —
+   * and re-deriving that on our side would be a guess. Carried as the raw
+   * string rather than parsed seconds so what we forward is exactly what we
+   * were told.
+   */
+  readonly retryAfter?: string;
+  constructor(
+    status: number,
+    bodyText: string,
+    message: string,
+    retryAfter?: string
+  ) {
     super(message);
     this.name = "SwarmAgentError";
     this.status = status;
     this.bodyText = bodyText;
+    this.retryAfter = retryAfter;
   }
+}
+
+/**
+ * `Retry-After` off an upstream response, or `undefined`.
+ *
+ * Bounded and shape-checked before it is allowed to become a header on OUR
+ * response: it arrives from another service, and a header we forward blind is
+ * a header we let someone else set. Delta-seconds only — the RFC also permits
+ * an HTTP-date, which nothing in the backend emits, so accepting it here would
+ * be carrying a format no producer produces.
+ */
+export function upstreamRetryAfter(response: Response): string | undefined {
+  const raw = response.headers.get("retry-after");
+  if (!raw) return undefined;
+  const trimmed = raw.trim();
+  return /^\d{1,7}$/.test(trimmed) ? trimmed : undefined;
 }
 
 // Cross-repo HTTP boundary — attach an AbortSignal timeout to every call.
@@ -265,7 +298,8 @@ async function postJson<T>(
     throw new SwarmAgentError(
       response.status,
       errorText,
-      `swarm-agent ${url} failed (${response.status}): ${errorText}`
+      `swarm-agent ${url} failed (${response.status}): ${errorText}`,
+      upstreamRetryAfter(response)
     );
   }
   return (await response.json()) as T;
@@ -289,7 +323,8 @@ async function getJson<T>(
     throw new SwarmAgentError(
       response.status,
       errorText,
-      `swarm-agent ${url} failed (${response.status}): ${errorText}`
+      `swarm-agent ${url} failed (${response.status}): ${errorText}`,
+      upstreamRetryAfter(response)
     );
   }
   return (await response.json()) as T;
@@ -766,7 +801,7 @@ export async function finalizePendingAttempts(
 
 /**
  * Platform-billed swarm persona driver: produce the next simulated USER message
- * from the run's immutable snapshot. The swarm sibling of the chatbox
+ * from the run's immutable snapshot. The swarm sibling of the scenario
  * `/session-simulation/persona-next-turn`.
  */
 export async function swarmPersonaNextTurn(

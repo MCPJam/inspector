@@ -1,0 +1,219 @@
+/**
+ * `@mcpjam/sdk/contract` — the versioned evaluation contract.
+ *
+ * This module is browser-safe and intentionally has no node-only deps so it
+ * can be imported into client bundles (same convention as `../matchers.ts`).
+ * It is data + pure derivation only: no model calls, no network, no `process`.
+ * The scorer runtime that actually calls a judge lives in the main entry.
+ *
+ * One shape for every eval surface — SDK code-first runs, hosted runs, PR
+ * checks, schedules — so a verdict means the same thing wherever it was
+ * produced:
+ *
+ *   - {@link ScoreDefinition} / {@link ResolvedScoreDefinition} — what a scorer
+ *     is and whether it gates.
+ *   - {@link ScoreResult} — one scorer's verdict for one iteration.
+ *   - {@link EvaluationConfigSnapshot} — the join table between them, hashed.
+ *
+ * The hashing is pinned cross-runtime (canonical JSON + SHA-256 over RESOLVED
+ * definitions) because four runtimes that share no code must agree on it, and
+ * the backend re-derives it to verify score integrity at ingest.
+ *
+ * Alongside the score contract, this entry point is the canonical home of the
+ * shapes every eval surface authors against:
+ *
+ *   - {@link testStepSchema} — the authored step union (relocated here from the
+ *     inspector's `shared/steps.ts`, which now re-exports it, so there is one
+ *     definition rather than a copy per repo).
+ *   - {@link evalSuiteFileSchema} — the versioned suite FILE, plus its
+ *     generated JSON Schema ({@link evalSuiteFileJsonSchema}).
+ *   - {@link opaqueIdSchema} / {@link mintCaseId} — declared, opaque identity.
+ *   - {@link USER_VALUE_STAGES} and the other chain enums — the shared
+ *     vocabulary the reporting and import surfaces mirror.
+ */
+
+export type {
+  EvaluationConfigSnapshot,
+  ResolvedScoreDefinition,
+  ScoreDefinition,
+  ScoreRawOutcome,
+  ScoreResult,
+  ScoreStatus,
+  ScorerContextV1,
+  ScorerErrorPolicy,
+  ScorerIdSource,
+  ScorerRole,
+} from "./types.js";
+
+export {
+  MAX_ERROR_LENGTH,
+  MAX_EVIDENCE_ENTRIES,
+  MAX_EVIDENCE_ENTRY_LENGTH,
+  MAX_RATIONALE_LENGTH,
+  MAX_SCORER_ID_LENGTH,
+  PREDICATES_VERSION,
+} from "./types.js";
+
+export {
+  CanonicalJsonError,
+  canonicalDigest,
+  canonicalJson,
+  sha256Hex,
+} from "./canonical.js";
+
+export {
+  evaluationConfigSnapshotSchema,
+  resolvedScoreDefinitionSchema,
+  scoreDefinitionSchema,
+  scoreResultArraySchema,
+  scoreResultSchema,
+  scoreStatusSchema,
+  scorerErrorPolicySchema,
+  scorerIdSourceSchema,
+  scorerRoleSchema,
+} from "./schemas.js";
+
+export {
+  aggregateEvaluationConfigHash,
+  buildEvaluationConfigSnapshot,
+  definitionHash,
+  errorScoreResult,
+  evaluationConfigHash,
+  finalizeScoreResult,
+  notApplicableScoreResult,
+  resolveScoreDefinition,
+  scorePassed,
+  skippedScoreResult,
+} from "./derive.js";
+
+export {
+  LEGACY_TEST_SCORER_ID,
+  LEGACY_TEST_VERSION,
+  TOOL_MATCH_SCORER_ID,
+  TOOL_MATCH_VERSION,
+  fromCriterionResult,
+  fromGoalCompletionCase,
+  fromLegacyTestOutcome,
+  fromToolMatchResult,
+  generatedPredicateScorerId,
+  legacyTestScoreDefinition,
+  predicateScoreDefinition,
+  scoreResultFromPredicateResult,
+  toolMatchScoreDefinition,
+} from "./adapters.js";
+
+// ── identity ─────────────────────────────────────────────────────────────────
+export type { OpaqueId } from "./identity.js";
+export {
+  CASE_ID_PREFIX,
+  MAX_OPAQUE_ID_LENGTH,
+  MINTED_ID_ENTROPY_CHARS,
+  SUITE_ID_PREFIX,
+  isOpaqueId,
+  mintCaseId,
+  mintSuiteId,
+  opaqueIdSchema,
+} from "./identity.js";
+
+// ── the user-value chain vocabulary ──────────────────────────────────────────
+export type {
+  FailureCategory,
+  ImportMappingStatus,
+  IterationStatus,
+  StageState,
+  UserValueStage,
+} from "./chain.js";
+export {
+  FAILURE_CATEGORIES,
+  IMPORT_MAPPING_STATUSES,
+  ITERATION_STATUSES,
+  STAGE_STATES,
+  USER_VALUE_STAGES,
+  failureCategorySchema,
+  importMappingStatusSchema,
+  iterationStatusSchema,
+  stageStateSchema,
+  userValueStageSchema,
+} from "./chain.js";
+
+// ── the authored step union ──────────────────────────────────────────────────
+export type {
+  AssertStep,
+  ElementLocator,
+  InteractAction,
+  InteractStep,
+  PromptStep,
+  StepAssertionPayload,
+  TestStep,
+  TestStepKind,
+  ToolCallStep,
+  WidgetAssertion,
+} from "./steps.js";
+export {
+  MAX_PROBE_ARGS_CHARS,
+  MAX_PROBE_RENDER_TIMEOUT_MS,
+  MAX_SCRIPTED_STEP_TEXT_CHARS,
+  MAX_SCRIPTED_WAIT_MS,
+  MAX_TEST_STEPS,
+  TEST_STEP_KINDS,
+  assertStepSchema,
+  elementLocatorSchema,
+  interactActionSchema,
+  interactStepSchema,
+  isAssertStep,
+  isInteractStep,
+  isPromptStep,
+  isToolCallStep,
+  isWidgetAssertion,
+  promptStepSchema,
+  stepAssertionPayloadSchema,
+  stepsSchema,
+  testStepSchema,
+  toolCallStepSchema,
+  widgetAssertionSchema,
+} from "./steps.js";
+
+// ── the suite file ───────────────────────────────────────────────────────────
+export type {
+  EvalSuiteFile,
+  EvalSuiteFileCase,
+  EvalSuiteFileCaseImport,
+  EvalSuiteFileDefaults,
+  EvalSuiteFileProvenance,
+  EvalSuiteFileServer,
+  EvalSuiteFileTarget,
+  EvalSuiteFileToolPolicy,
+  EvalSuiteFileValidity,
+} from "./suite-file.js";
+export {
+  EVAL_SUITE_SCHEMA_ID,
+  EVAL_SUITE_SCHEMA_VERSION,
+  MAX_CASE_ASSERTIONS,
+  MAX_REPETITIONS,
+  MAX_SUITE_FILE_CASES,
+  MAX_SUITE_FILE_TITLE_CHARS,
+  RESERVED_CAPTURE_LEVELS,
+  RESERVED_MODES,
+  RESERVED_REPORTING_MODES,
+  evalSuiteFileCaseImportSchema,
+  evalSuiteFileCaseSchema,
+  evalSuiteFileDefaultsSchema,
+  evalSuiteFileProvenanceSchema,
+  evalSuiteFileSchema,
+  evalSuiteFileServerSchema,
+  evalSuiteFileStructuralSchema,
+  evalSuiteFileTargetSchema,
+  evalSuiteFileToolPolicySchema,
+  evalSuiteFileValiditySchema,
+} from "./suite-file.js";
+
+/**
+ * The generated JSON Schema (draft 2020-12) for the suite file.
+ *
+ * Re-exported from the generated `.ts` twin rather than the `.json` artifact:
+ * the contract subpath is consumed by three toolchains and only Node-only code
+ * in this repo uses JSON import attributes. The `.json` file is the artifact
+ * published at the schema's `$id`; the two are byte-identical documents and a
+ * test proves it.
+ */
+export { evalSuiteFileJsonSchema } from "./eval-suite.schema.generated.js";

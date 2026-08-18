@@ -140,6 +140,20 @@ describe("startProductionChecksWorker loop", () => {
     })();
   }
 
+  it("stays inert without the service-token env — the only gate there is", async () => {
+    // No flag guards this worker, so a deployment that is not an
+    // infrastructure peer must self-gate here or every local dev inspector
+    // would start polling.
+    vi.unstubAllEnvs();
+    const claim = vi.fn();
+
+    const handle = startProductionChecksWorker({ claim });
+    await flushLoop();
+    await handle.stop();
+
+    expect(claim).not.toHaveBeenCalled();
+  });
+
   it("claims, executes, and keeps polling", async () => {
     const claim = vi
       .fn()

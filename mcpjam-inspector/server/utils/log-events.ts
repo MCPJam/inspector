@@ -1,4 +1,5 @@
 import type { ErrorOrigin } from "@mcpjam/sdk";
+import type { RouteFailureHop } from "./route-error-report.js";
 
 export type Environment =
   | "prod"
@@ -44,7 +45,7 @@ interface CommonLogContext {
   accessLevel?: AccessLevel | null;
   serverId?: string | null;
   sessionId?: string | null;
-  chatboxId?: string | null;
+  scenarioId?: string | null;
   surface?: Surface | null;
   serverTransport?: ServerTransport | null;
   statusCode?: number | null;
@@ -88,8 +89,16 @@ type RouteOperationFailedFields = {
    * `reportRouteFailure` tags Sentry with (as `route:${source}`).
    */
   source: string;
-  /** Whose hop failed, as declared at the call site. */
-  hop: "user_server_hop" | "mcpjam_internal";
+  /**
+   * Whose hop failed, as declared at the call site.
+   *
+   * Imported from `route-error-report.ts` rather than re-listed. A hand-copied
+   * union here is a literal list `tsc` only checks at the ONE call site that
+   * builds this payload — every other consumer (an APL query, a monitor
+   * predicate) silently disagrees with the source of truth, and a new hop
+   * looks like a compile error in the reporter rather than in this file.
+   */
+  hop: RouteFailureHop;
   /** Effective origin from the capture decision — see the doc block above. */
   origin: ErrorOrigin;
   /** Catalog slug behind `origin`, e.g. `transport/econnrefused`. */
@@ -210,15 +219,42 @@ export type RequestEventMap = {
     path: string;
   };
   "chat.session.persist.failed": {
-    failureKind: "timeout" | "http_error" | "exception" | "version_conflict";
+    failureKind:
+      | "timeout"
+      | "http_error"
+      // A 2xx whose body could not be read, or carried no version. Distinct
+      // from http_error: the request succeeded, the contract did not.
+      | "protocol_error"
+      | "exception"
+      | "version_conflict";
     statusCode?: number;
-    sourceType?: "chatbox" | "direct" | "eval" | "swarm";
+    /**
+     * Sanitized, length-capped excerpt of the ingest's response body (see
+     * `sanitizeDiagnosticText`: secrets, emails and bearer tokens are redacted
+     * and it is truncated). Carried mainly for 4xx, where the body text names
+     * the misconfiguration and is the difference between a diagnosable failure
+     * and a bare status code.
+     */
+    responsePreview?: string;
+    sourceType?: "scenario" | "direct" | "eval" | "swarm";
     // Product-surface discriminator carried alongside sourceType so PostHog
     // can pivot persist failures by surface without rejoining to chatSessions.
     // CAUTION: this `origin` is a DIFFERENT axis from the ErrorOrigin field
     // of the same name on `http.request.failed` / `route.operation.failed` —
     // never join the two in an APL query.
-    origin?: "playground" | "mcpjam_agent" | "chatbox" | "eval" | "swarm";
+    origin?: "playground" | "mcpjam_agent" | "scenario" | "eval" | "swarm";
+  };
+  /**
+   * The backend accepted the request but declined the write, judging the
+   * transcript a replay. Previously invisible — the turn was dropped and
+   * nothing recorded it — which is how hosted turns went missing for months.
+   * Its own event so the silent-drop class is measurable rather than inferred.
+   */
+  "chat.session.persist.skipped": {
+    sourceType?: "scenario" | "direct" | "eval" | "swarm";
+    origin?: "playground" | "mcpjam_agent" | "scenario" | "eval" | "swarm";
+    /** False means the payload had no idempotency key to dedupe on. */
+    hasTurnId: boolean;
   };
   "widget.resource.served": {
     widgetType: "mcp_apps" | "chatgpt_apps";
@@ -384,7 +420,9 @@ function blankToNull(value: string | undefined): string | null {
 }
 
 export function resolveAppVersion(): string | null {
-  return blankToNull(BAKED_VERSION) ?? blankToNull(process.env.npm_package_version);
+  return (
+    blankToNull(BAKED_VERSION) ?? blankToNull(process.env.npm_package_version)
+  );
 }
 
 /**

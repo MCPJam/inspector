@@ -183,7 +183,7 @@ vi.mock("@/shared/types", async () => {
   );
   return {
     ...actual,
-    isGPT5Model: vi.fn().mockReturnValue(false),
+    modelSupportsTemperature: vi.fn().mockReturnValue(true),
   };
 });
 
@@ -202,12 +202,12 @@ vi.mock("../../../utils/guest-auth.js", () => ({
     .mockResolvedValue("Bearer guest-test-token"),
 }));
 
-// Chatbox turns must NEVER skip host-owned config resolution — the route
+// Scenario turns must NEVER skip host-owned config resolution — the route
 // resolves a guest bearer for the fetch when the request carries none.
-const fetchChatboxRuntimeConfigMock = vi.hoisted(() => vi.fn());
-vi.mock("../../../utils/chatbox-runtime-config.js", () => ({
-  fetchChatboxRuntimeConfig: (...args: unknown[]) =>
-    fetchChatboxRuntimeConfigMock(...args),
+const fetchScenarioRuntimeConfigMock = vi.hoisted(() => vi.fn());
+vi.mock("../../../utils/scenario-runtime-config.js", () => ({
+  fetchScenarioRuntimeConfig: (...args: unknown[]) =>
+    fetchScenarioRuntimeConfigMock(...args),
 }));
 
 // Host-bound direct sessions (Playground `hostId`) resolve their host config
@@ -280,12 +280,12 @@ describe("POST /api/mcp/chat-v2", () => {
     });
   });
 
-  describe("chatbox runtime-config gate", () => {
-    it("resolves the process guest bearer for a BEARER-LESS chatbox turn (config never skipped)", async () => {
-      fetchChatboxRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
+  describe("scenario runtime-config gate", () => {
+    it("resolves the process guest bearer for a BEARER-LESS scenario turn (config never skipped)", async () => {
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({ ok: true, config: {} });
 
       await postJson(app, "/api/mcp/chat-v2", {
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         messages: [{ role: "user", content: "hi" }],
         model: { id: "gpt-4", provider: "openai" },
       });
@@ -293,39 +293,39 @@ describe("POST /api/mcp/chat-v2", () => {
       // The route mints a guest bearer later for MCPJam models, so "no
       // incoming bearer" is not a hard stop — the config fetch must use the
       // same process-cached guest bearer rather than being skipped.
-      expect(fetchChatboxRuntimeConfigMock).toHaveBeenCalledWith(
+      expect(fetchScenarioRuntimeConfigMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          chatboxId: "cbx_1",
+          scenarioId: "cbx_1",
           bearer: "Bearer guest-test-token",
         })
       );
     });
 
-    it("FAILS CLOSED (401) when a bearer-less chatbox turn can't resolve any bearer", async () => {
+    it("FAILS CLOSED (401) when a bearer-less scenario turn can't resolve any bearer", async () => {
       const { getProductionGuestAuthHeader } = await import(
         "../../../utils/guest-auth.js"
       );
       vi.mocked(getProductionGuestAuthHeader).mockResolvedValueOnce(null);
 
       const res = await postJson(app, "/api/mcp/chat-v2", {
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         messages: [{ role: "user", content: "hi" }],
         model: { id: "gpt-4", provider: "openai" },
       });
 
       expect(res.status).toBe(401);
-      expect(fetchChatboxRuntimeConfigMock).not.toHaveBeenCalled();
+      expect(fetchScenarioRuntimeConfigMock).not.toHaveBeenCalled();
     });
 
-    it("fails closed when the chatbox config fetch itself fails", async () => {
-      fetchChatboxRuntimeConfigMock.mockResolvedValue({
+    it("fails closed when the scenario config fetch itself fails", async () => {
+      fetchScenarioRuntimeConfigMock.mockResolvedValue({
         ok: false,
         status: 502,
         error: "backend unreachable",
       });
 
       const res = await postAuthenticatedJson({
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         messages: [{ role: "user", content: "hi" }],
         model: { id: "gpt-4", provider: "openai" },
       });
@@ -1636,8 +1636,8 @@ describe("POST /api/mcp/chat-v2", () => {
     });
 
     it("attaches a numeric hostConfig.temperature for GPT-5 (resolvedTemperature: undefined)", async () => {
-      const { isGPT5Model } = await import("@/shared/types");
-      vi.mocked(isGPT5Model).mockReturnValueOnce(true);
+      const { modelSupportsTemperature } = await import("@/shared/types");
+      vi.mocked(modelSupportsTemperature).mockReturnValueOnce(false);
 
       const originalFetch = global.fetch;
       global.fetch = vi

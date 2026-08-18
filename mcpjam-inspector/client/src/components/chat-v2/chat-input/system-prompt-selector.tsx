@@ -17,11 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import {
-  ModelDefinition,
-  isGPT5Model,
-  modelRejectsTemperature,
-} from "@/shared/types";
+import { ModelDefinition, modelSupportsTemperature } from "@/shared/types";
 
 interface SystemPromptSelectorProps {
   systemPrompt: string;
@@ -88,14 +84,12 @@ export function SystemPromptSelector({
     multiModelEnabled && selectedModels && selectedModels.length > 0
       ? selectedModels
       : [currentModel];
-  // GPT-5 ignores temperature; the newer Claude families reject the field
-  // outright. Either way the slider has no effect on those models.
-  const ignoresTemperature = (model: ModelDefinition) =>
-    isGPT5Model(model.id) || modelRejectsTemperature(model.id);
-  const someSelectedModelsIgnoreTemperature =
-    effectiveSelectedModels.some(ignoresTemperature);
-  const allSelectedModelsIgnoreTemperature =
-    effectiveSelectedModels.every(ignoresTemperature);
+  const someSelectedModelsIgnoreTemperature = effectiveSelectedModels.some(
+    (model) => !modelSupportsTemperature(model.id),
+  );
+  const allSelectedModelsIgnoreTemperature = effectiveSelectedModels.every(
+    (model) => !modelSupportsTemperature(model.id),
+  );
 
   const handleOpenChange = (open: boolean) => {
     setIsOpen(open);
@@ -196,12 +190,11 @@ export function SystemPromptSelector({
             />
             {allSelectedModelsIgnoreTemperature ? (
               <p className="text-xs text-muted-foreground">
-                Temperature is not supported by the selected model
-                {effectiveSelectedModels.length > 1 ? "s" : ""}
+                Temperature is not supported for the selected models
               </p>
             ) : someSelectedModelsIgnoreTemperature ? (
               <p className="text-xs text-muted-foreground">
-                Some selected models don't support temperature. The setting
+                Some selected models do not support temperature. The setting
                 still applies to the others.
               </p>
             ) : (

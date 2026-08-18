@@ -1,7 +1,7 @@
 /**
  * production-checks-worker.ts — polling grader for production scoring.
  *
- * Grades REAL User Testing sessions against their chatbox's rubric of
+ * Grades REAL User Testing sessions against their scenario's rubric of
  * deterministic checks. Same pull/claim architecture as
  * `scheduled-evals-worker.ts` — the backend's idle detector enqueues
  * `productionCheckTriggers` rows, this loop claims one at a time over the
@@ -11,7 +11,7 @@
  * Two deliberate simplifications versus the scheduled-evals worker:
  *   - NO delegated user token. The claim response carries everything the
  *     grade needs (rubric, transcript envelope, token totals), the routes are
- *     service-token-gated, and the rubric comes from the chatbox config read
+ *     service-token-gated, and the rubric comes from the scenario config read
  *     inside the claim transaction — a worker cannot choose what it grades
  *     against, so there is no user authority to borrow.
  *   - NO external pipeline. Grading is a pure `evaluatePredicates` call over
@@ -19,9 +19,17 @@
  *     tool-call walker the swarm checks runner uses, so a verdict cannot
  *     depend on which grader asked.
  *
- * Gated by `PRODUCTION_CHECKS_WORKER_ENABLED === '1'` (the backend enqueue,
- * routes, and cron have their own `PRODUCTION_CHECKS_ENABLED` gate; a 404
- * from the claim route means that gate is off and the loop backs off).
+ * ONE switch, and it is the backend's `PRODUCTION_CHECKS_ENABLED`. This worker
+ * has deliberately no flag of its own, unlike its scheduled-evals and
+ * github-checks siblings — a second gate here bought nothing the two existing
+ * ones don't already provide, and cost the failure mode where the feature
+ * reads as ON while silently doing nothing:
+ *
+ *   - being a worker at all requires `CONVEX_HTTP_URL` +
+ *     `INSPECTOR_SERVICE_TOKEN`; a deployment without them is not an
+ *     infrastructure peer and never starts the loop;
+ *   - the feature being off means the claim route 404s, which this loop reads
+ *     as "disabled" and backs off to one poll a minute until it flips.
  */
 
 import { logger } from "../utils/logger";
@@ -61,10 +69,6 @@ type ClaimOutcome =
   /** A trigger was consumed without producing work — poll again immediately. */
   | { kind: "drained" }
   | { kind: "disabled" };
-
-export function isProductionChecksWorkerEnabled(): boolean {
-  return process.env.PRODUCTION_CHECKS_WORKER_ENABLED === "1";
-}
 
 function requiredEnv(): { convexUrl: string; serviceToken: string } | null {
   const convexUrl = process.env.CONVEX_HTTP_URL;
@@ -123,7 +127,7 @@ async function claimNext(claimedBy: string): Promise<ClaimOutcome> {
     throw new Error(`claim failed (${status}): ${JSON.stringify(body)}`);
   }
   if (body.claimed !== true) {
-    // `retry` means the mutation consumed a stale trigger (chatbox disabled,
+    // `retry` means the mutation consumed a stale trigger (scenario disabled,
     // session gone) — the queue behind it may still hold live work.
     return body.retry === true ? { kind: "drained" } : { kind: "empty" };
   }
@@ -227,7 +231,7 @@ export async function executeClaimedCheck(
       // the same session grades identically whichever grader asks.
       toolCalls: extractToolCallsFromEnvelopeMessages(messages),
       usage: claimUsage(claim.usage),
-      // Real chatbox sessions rarely carry render observations (no browser
+      // Real scenario sessions rarely carry render observations (no browser
       // harness on that surface); absent stays absent so `widget*` checks
       // fail closed rather than passing on no signal.
       ...(Array.isArray(observations) && observations.length > 0
@@ -300,8 +304,9 @@ export interface ProductionChecksWorkerHandle {
 }
 
 /**
- * Start the polling loop. Call once from server bootstrap when
- * {@link isProductionChecksWorkerEnabled}. One grade in flight per instance;
+ * Start the polling loop. Called unconditionally from server bootstrap — it
+ * self-gates on the service-token env below, so a deployment that is not an
+ * infrastructure peer gets an inert handle. One grade in flight per instance;
  * multiple instances race safely (the claim is an atomic Convex mutation).
  */
 export function startProductionChecksWorker(options?: {
@@ -317,10 +322,10 @@ export function startProductionChecksWorker(options?: {
   const claim = options?.claim ?? claimNext;
   const execute = options?.execute ?? executeClaimedCheck;
 
+  // Not a worker peer — every local dev and self-hosted inspector lands here.
+  // Silent on purpose: with no flag to contradict, absent credentials are the
+  // normal case rather than a misconfiguration worth warning about.
   if (!requiredEnv()) {
-    logger.warn(
-      "[production-checks] worker enabled but CONVEX_HTTP_URL / INSPECTOR_SERVICE_TOKEN missing; not starting",
-    );
     return { stop: async () => {} };
   }
 
@@ -339,7 +344,7 @@ export function startProductionChecksWorker(options?: {
           waitMs = 250;
         } else if (outcome.kind === "claimed") {
           await execute(outcome.claim);
-          // Drain mode: an idle chatbox enqueues sessions in a burst.
+          // Drain mode: an idle scenario enqueues sessions in a burst.
           waitMs = 1_000;
         }
       } catch (error) {

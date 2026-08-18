@@ -901,7 +901,7 @@ export function buildSecretSyncOptions(formData: ServerFormData): {
  * workspace, no retry will clear it, and the user has to rename.
  */
 type ServerSyncResult =
-  | { ok: true; serverId: string }
+  | { ok: true; projectId: string; serverId: string }
   | { ok: false; reason: "not-saved" }
   | { ok: false; reason: "workspace-name-taken"; takenByProjectId?: string };
 
@@ -1338,7 +1338,7 @@ export function useServerState({
     (
       serverConfig: MCPServerConfig,
       // Optional mcpProfile (hostConfig.mcpProfile) that the caller has
-      // already resolved from a chatbox/project context. When provided,
+      // already resolved from a scenario/project context. When provided,
       // its `initialize.clientInfo` and first
       // `initialize.supportedProtocolVersions` entry flow onto the
       // ConnectionDefaults wire shape. Undefined preserves historical
@@ -1537,15 +1537,15 @@ export function useServerState({
       // The authoritative pending server entry when this probe is part of a
       // form save (handleConnect). Threaded into the resolver so wire-era
       // resolution reads the new config/profile, not the stale stored one.
-      authoritativeServerEntry?: ServerWithName
+      authoritativeServerEntry?: ServerWithName,
+      syncedTarget?: { projectId: string; serverId: string }
     ) => {
       assertClientConfigSynced();
-      // Opt into the resolver path when both projectId and a Convex serverId
-      // are populated in the API context; otherwise fall back to legacy
-      // {serverConfig, serverId} so brand-new servers (not yet synced to
-      // Convex) keep working. The 2-arg call signature is preserved when no
-      // resolver context is available so existing test mocks keep matching.
-      const resolved = tryResolveProjectServer(serverName);
+      // Local and hosted connections both require a Convex project/server id.
+      // A brand-new save passes its just-created target directly so this probe
+      // does not race the reactive API-context mapping; older rows resolve
+      // through the normal name-to-id context.
+      const resolved = syncedTarget ?? tryResolveProjectServer(serverName);
       if (resolved) {
         // Re-resolve WITH the Convex serverId. Callers already applied
         // `withProjectConnectionDefaults`, but they only know the display
@@ -1880,7 +1880,11 @@ export function useServerState({
       const confirmSecretCreateIsOurs = async (
         newServerId: string
       ): Promise<ServerSyncResult> => {
-        const ok: ServerSyncResult = { ok: true, serverId: newServerId };
+        const ok: ServerSyncResult = {
+          ok: true,
+          projectId: latestProjectId,
+          serverId: newServerId,
+        };
         if (!isUserReadyRef.current) return ok;
         let rows: RemoteServer[] | undefined;
         try {
@@ -2030,7 +2034,11 @@ export function useServerState({
           } else {
             await convexUpdateServer(updatePayload);
           }
-          return { ok: true, serverId: serverIdToUpdate };
+          return {
+            ok: true,
+            projectId: latestProjectId,
+            serverId: serverIdToUpdate,
+          };
         }
 
         if (existing.workspaceTwin && hasSecretOperation) {
@@ -2048,7 +2056,11 @@ export function useServerState({
         if (!newId) return SERVER_NOT_SAVED;
         return hasSecretOperation
           ? await confirmSecretCreateIsOurs(newId as string)
-          : { ok: true, serverId: newId as string };
+          : {
+              ok: true,
+              projectId: latestProjectId,
+              serverId: newId as string,
+            };
       } catch (primaryError) {
         const primaryErrorMessage =
           primaryError instanceof Error
@@ -2091,7 +2103,11 @@ export function useServerState({
             } else {
               await convexUpdateServer(updatePayload);
             }
-            return { ok: true, serverId: retryExisting._id };
+            return {
+              ok: true,
+              projectId: latestProjectId,
+              serverId: retryExisting._id,
+            };
           }
           // A twin can surface here even when the first resolve missed it: a
           // sibling project may have won the name concurrently, or — the
@@ -2112,7 +2128,11 @@ export function useServerState({
           if (!newId) return SERVER_NOT_SAVED;
           return hasSecretOperation
             ? await confirmSecretCreateIsOurs(newId as string)
-            : { ok: true, serverId: newId as string };
+            : {
+                ok: true,
+                projectId: latestProjectId,
+                serverId: newId as string,
+              };
         } catch (fallbackError) {
           logger.error("Failed to sync server to Convex", {
             serverName,
@@ -3243,6 +3263,9 @@ export function useServerState({
       });
       const token = nextOpToken(formData.name);
       let hostedServerId: string | undefined;
+      let syncedConnectionTarget:
+        | { projectId: string; serverId: string }
+        | undefined;
       const existingServerForSave = appState.servers[formData.name];
       const formOAuthProfile = buildOAuthProfileFromFormData(
         formData,
@@ -3327,6 +3350,10 @@ export function useServerState({
         );
         if (synced.ok) {
           hostedServerId = synced.serverId;
+          syncedConnectionTarget = {
+            projectId: synced.projectId,
+            serverId: synced.serverId,
+          };
           injectHostedServerMapping(formData.name, synced.serverId);
         } else {
           workspaceNameTaken = synced.reason === "workspace-name-taken";
@@ -3410,7 +3437,8 @@ export function useServerState({
           const storedCredentialResult = await guardedTestConnection(
             withProjectConnectionDefaults(serverConfig),
             formData.name,
-            serverEntryForSave
+            serverEntryForSave,
+            syncedConnectionTarget
           );
           if (isStaleOp(formData.name, token)) return;
           if (storedCredentialResult.success) {
@@ -3611,7 +3639,8 @@ export function useServerState({
               const connectionResult = await guardedTestConnection(
                 withProjectConnectionDefaults(oauthServerConfig),
                 formData.name,
-                serverEntryForSave
+                serverEntryForSave,
+                syncedConnectionTarget
               );
               if (isStaleOp(formData.name, token)) return;
               if (connectionResult.success) {
@@ -3683,7 +3712,8 @@ export function useServerState({
         const result = await guardedTestConnection(
           effectiveConfig,
           formData.name,
-          serverEntryForSave
+          serverEntryForSave,
+          syncedConnectionTarget
         );
         if (isStaleOp(formData.name, token)) return;
         if (result.success) {
@@ -5569,14 +5599,27 @@ export function useServerState({
               ] as const;
             }
 
-            return [
-              resolvedKey,
-              await reconnectServerInternal(resolvedKey, {
-                allowInteractiveOAuthFlow: false,
-                select: false,
-                suppressErrors: true,
-              }),
-            ] as const;
+            const outcome = await reconnectServerInternal(resolvedKey, {
+              allowInteractiveOAuthFlow: false,
+              select: false,
+              suppressErrors: true,
+            });
+
+            // "superseded" means a newer connect op took the pin mid-flight
+            // (e.g. the host-switch recycle racing a send). That op — not this
+            // one — drives the server to its final state, so returning
+            // superseded here would leave the server in NO bucket: not ready,
+            // not failed. Callers that gate on `readyServerNames` (the chat
+            // send path) then refuse to send even though the server is about
+            // to be connected. Follow the newer op to its real outcome.
+            if (outcome.status === "superseded") {
+              return [
+                resolvedKey,
+                await waitForServerReconnectOutcome(resolvedKey),
+              ] as const;
+            }
+
+            return [resolvedKey, outcome] as const;
           }
         )
       );
@@ -5610,10 +5653,10 @@ export function useServerState({
             reauthServerNames.push(serverName);
             break;
           case "superseded":
-            // A newer op is already handling this server; it owns the
-            // outcome. Don't classify it as failed — that would produce a
-            // false "failed to connect" signal for a connection that's just
-            // still in progress.
+            // Resolved above by following the newer op to its real outcome, so
+            // this is unreachable in practice. Kept as a defensive branch: a
+            // superseded connection is still in progress, and classifying it
+            // as failed would raise a false "failed to connect".
             break;
           case "failed":
           default:

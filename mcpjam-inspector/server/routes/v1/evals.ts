@@ -18,6 +18,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import { z } from "zod";
+import {
+  toRunScoreIntegrity,
+  toScoreProjection,
+} from "./eval-score-projection.js";
+import {
+  toRunCompareDto,
+  type RunCompareBaseline,
+} from "./eval-compare-projection.js";
 import { ConvexHttpClient } from "convex/browser";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { createAuthorizedManager, callerContextFromHono } from "../web/auth.js";
@@ -72,6 +80,7 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
+import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { synthesizeServerBody } from "./adapter.js";
 import {
   getCanonicalModelId,
@@ -272,11 +281,11 @@ function publicInlineTestToRunTest(
 
 // Public shape: the web RunEvalsRequestSchema minus hosted-app plumbing the
 // public surface must not accept (`convexAuthToken` comes from the bearer;
-// chatbox/access/storage fields are hosted-client concerns) and minus the
+// scenario/access/storage fields are hosted-client concerns) and minus the
 // internal-contract `tests` (replaced by the public `steps`-based shape).
 const createEvalRunSchema = RunEvalsRequestSchema.omit({
   convexAuthToken: true,
-  chatboxId: true,
+  scenarioId: true,
   accessVersion: true,
   storageServerIds: true,
   tests: true,
@@ -951,6 +960,12 @@ function toRunDto(run: RunDoc) {
     source: run.source ?? "ui",
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
+    // Whether the run's score evidence verified at ingest. ABSENT means no
+    // verdict was produced — a deployment that does not yet check integrity —
+    // and a score gate must treat that exactly like `"invalid"`: absent
+    // evidence is not valid evidence. Omitted rather than nulled so the DTO is
+    // unchanged for every run predating integrity checking.
+    ...toRunScoreIntegrity(run.scoreIntegrity),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
   };
@@ -985,6 +1000,7 @@ function toIterationDto(iteration: IterationDoc) {
     actualToolCalls: iteration.actualToolCalls ?? [],
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
     error: iteration.error ?? null,
+    ...toScoreProjection(iteration.metadata),
   };
 }
 
@@ -2086,26 +2102,109 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   // to load it — including an authorization refusal for a caller who can see
   // the run but not its insights — omits the field rather than failing the
   // read: the run itself is the resource here.
-  let insights: Record<string, unknown> | undefined;
-  try {
-    const envelope = await convex.query(
-      "serverQuality:getEvalRunInsightsEnvelope" as any,
-      { suiteRunId: runId },
-    );
-    if (envelope) insights = envelope as Record<string, unknown>;
-  } catch (error) {
-    // Omission is the documented degradation (an older backend has no such
-    // query), but a genuine failure — schema drift, a rename, a transient
-    // error — looks identical from outside. Log so the two are separable in
-    // production; the run itself is still the resource, so the read stands.
-    console.warn("[v1.evals] insights envelope unavailable", error);
-    insights = undefined;
-  }
+  const insights = await loadInsightsEnvelope("v1.evals", () =>
+    convex.query("serverQuality:getEvalRunInsightsEnvelope" as any, {
+      suiteRunId: runId,
+    }),
+  );
 
   return v1Resource(c, {
     ...toRunDto(run!),
     ...(insights ? { insights } : {}),
   });
+});
+
+// GET /v1/projects/:projectId/eval-runs/:runId/compare
+// This run against a baseline. `?baseRunId=` names one explicitly; omitting it
+// selects the nearest earlier COMPLETED run in the same suite.
+//
+// Baseline resolution is server-side: `listEvalSuiteRuns` has no cursor, so a
+// client walk cannot be bounded-correct, and the policy belongs beside the
+// backend's other baseline resolvers.
+//
+// This calls an ACTION rather than a query — the diff hydrates trace blobs
+// from storage, which a Convex query cannot do. Same reason
+// `getTestSuiteRunDiff` is an action.
+evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const baseRunId = c.req.query("baseRunId");
+  // Forwarded, not dropped: the SDK client sends it, and a silently ignored
+  // knob is worse than an absent one. Parsed defensively — the action clamps
+  // the range, so this only has to refuse non-numbers.
+  const rawPreviewChars = c.req.query("previewChars");
+  const previewChars =
+    rawPreviewChars === undefined ? undefined : Number(rawPreviewChars);
+  if (previewChars !== undefined && !Number.isFinite(previewChars)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "previewChars must be a number",
+    );
+  }
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  // Fetch the compare run FIRST so an unauthorized or cross-project caller
+  // gets a 404 from the cheap read, before the action does any work.
+  let run: RunDoc | null;
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  let result: unknown;
+  try {
+    result = await convex.action("testSuites:compareTestSuiteRuns" as any, {
+      compareRunId: runId,
+      ...(baseRunId ? { baseRunId } : {}),
+      ...(previewChars !== undefined ? { previewChars } : {}),
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+
+  const envelope = (result ?? {}) as Record<string, unknown>;
+  if (envelope.status === "baseline_not_found") {
+    // 404 + a `details.reason`, following the CONCURRENT_RUN_LIMIT idiom.
+    //
+    // NOT 422: the pinned error-status fixture maps 422 to
+    // FEATURE_NOT_SUPPORTED, and minting a new error code is a cross-repo
+    // contract change this route does not get to make. The CLI keys on
+    // `details.reason` and maps it to exit 3 (incomplete) — never exit 1,
+    // which would report a regression nobody observed.
+    return v1Error(
+      c,
+      "NOT_FOUND",
+      baseRunId
+        ? "The requested baseline run was not found, is not completed, or belongs to another suite."
+        : "No earlier completed run in this suite to compare against.",
+      { reason: "BASELINE_NOT_FOUND", ...(baseRunId ? { baseRunId } : {}) },
+    );
+  }
+
+  const baselineSource = (envelope.baseline ?? {}) as Record<string, unknown>;
+  const baseline: RunCompareBaseline = {
+    // Falls back to what the REQUEST asked for, not to a literal. `baseline`
+    // is an audit field — a caller reads it to learn HOW the baseline was
+    // chosen — so publishing an explicitly named run as `previous_completed`
+    // (which a deploy-order skew could cause) is worse than saying nothing.
+    policy:
+      baselineSource.policy === "run" ||
+      (baselineSource.policy === undefined && Boolean(baseRunId))
+        ? "run"
+        : "previous_completed",
+    baseRunId: String(baselineSource.baseRunId ?? ""),
+  };
+
+  return v1Resource(c, toRunCompareDto(envelope.diff, baseline));
 });
 
 // POST /v1/projects/:projectId/eval-runs/:runId/insights
@@ -2135,8 +2234,11 @@ evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
   // rather than a silently-empty body that bills anyway, and `force` must be
   // a real boolean — `{"force":"false"}` is a truthy string, and treating it
   // as consent would charge for a regeneration nobody asked for.
-  const raw = (await c.req.text()).trim();
-  let body: unknown = undefined;
+  const raw = await c.req.text();
+  // Only an ACTUALLY empty body is bodyless. Whitespace is malformed JSON,
+  // and a literal `null` is a value the schema should reject — treating
+  // either as "no body" would bill for a request nobody wrote.
+  let body: unknown = {};
   if (raw.length > 0) {
     try {
       body = JSON.parse(raw);
@@ -2150,7 +2252,7 @@ evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
   }
   const force = parseWithSchema(
     z.object({ force: z.boolean().optional() }).strict(),
-    body ?? {},
+    body,
   ).force;
 
   try {

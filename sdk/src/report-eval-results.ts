@@ -12,6 +12,7 @@ import {
   type SdkEvalsWireHostConfig,
 } from "./sdk-evals-wire-host-config.js";
 import { resolveRunLevelHostSnapshot } from "./sdk-evals-host-config-source.js";
+import { redactTelemetryString } from "./telemetry-redaction.js";
 import type { HostJson } from "./host-config/public-types.js";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
@@ -325,17 +326,35 @@ function normalizeBillingLimitMessage(
   return "Billing limit reached.";
 }
 
+/**
+ * Every ingest failure message the backend hands back funnels through here on
+ * its way into an `EvalReportingError`, and from there into both stderr and
+ * Sentry's exception value. The string is server-controlled, and the ingest
+ * body it describes carries `accessToken`/`refreshToken`/`clientSecret` — a
+ * validator that echoes the rejected argument (Convex's ArgumentValidationError
+ * does exactly that) would otherwise publish live credentials to a log and a
+ * third-party error tracker.
+ *
+ * Redact once, here, rather than at each sink: this is the single point where a
+ * remote string becomes ours, so every downstream consumer inherits the
+ * guarantee instead of having to remember it.
+ */
 function normalizeReportingErrorMessage(
   rawMessage: string
 ): NormalizedReportingError {
   if (!rawMessage.includes("billing_limit_reached")) {
-    return { message: rawMessage, isBillingLimitReached: false };
+    return {
+      message: redactTelemetryString(rawMessage),
+      isBillingLimitReached: false,
+    };
   }
 
   const payload = extractFirstJsonObject(rawMessage);
   const billingMessage = payload ? normalizeBillingLimitMessage(payload) : null;
   return {
-    message: billingMessage ?? "Billing limit reached.",
+    message: billingMessage
+      ? redactTelemetryString(billingMessage)
+      : "Billing limit reached.",
     isBillingLimitReached: true,
   };
 }
@@ -615,9 +634,12 @@ async function uploadBlobToConvex(
         return responseBody.storageId;
       }
 
-      const message =
+      // Same reasoning as `normalizeReportingErrorMessage`: server-controlled
+      // string, and this one reaches a console.warn in the widget-snapshot path.
+      const message = redactTelemetryString(
         responseBody.error ??
-        `Artifact upload failed with status ${response.status}: ${response.statusText}`;
+          `Artifact upload failed with status ${response.status}: ${response.statusText}`
+      );
       if (
         isRetryableStatus(response.status) &&
         attempt < config.retryDelaysMs.length
@@ -867,6 +889,7 @@ async function reportEvalResultsInternal(
         ci: input.ci,
         expectedIterations: input.expectedIterations,
         tags: input.tags,
+        evaluationConfigHash: input.evaluationConfigHash,
         results: resultsWithIterationIds,
         ...wireHostConfigBody,
       }
@@ -887,6 +910,7 @@ async function reportEvalResultsInternal(
     ci: input.ci,
     expectedIterations: input.expectedIterations,
     tags: input.tags,
+    evaluationConfigHash: input.evaluationConfigHash,
     ...wireHostConfigBody,
   });
 

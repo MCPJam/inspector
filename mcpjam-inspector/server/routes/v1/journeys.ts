@@ -9,8 +9,8 @@
  * text as the product name it is.
  *
  * The naming trap this avoids is real and lives one repo over: `kind:"swarm"`,
- * `swarm_grant`, and `swarmId: v.id('chatboxes')` in the backend all refer to
- * chatbox GUEST EXECUTION — the user-testing product — and have nothing to do
+ * `swarm_grant`, and `swarmId: v.id('scenarios')` in the backend all refer to
+ * scenario GUEST EXECUTION — the user-testing product — and have nothing to do
  * with the Swarms product. A public `/swarms` route would have inherited that
  * ambiguity permanently.
  *
@@ -52,6 +52,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { ConvexHttpClient } from "convex/browser";
 import { createConvexClient } from "./convex-client.js";
+import { loadInsightsEnvelope } from "./insights-envelope-load.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
@@ -784,19 +785,15 @@ journeys.get("/projects/:projectId/journey-runs/:runId", async (c) => {
   // The common insights envelope, DETAIL only (lists stay compact) —
   // resolved through the run's wave; runHealth rides beside findings, never
   // inside them. Load failure omits the field rather than failing the read.
-  let insights: Record<string, unknown> | undefined;
-  try {
-    const envelope = await client.query(
+  const insights = await loadInsightsEnvelope("v1.journeys", () =>
+    client.query(
       "swarmWaveInsights:getJourneyRunInsightsEnvelope" as never,
-      { projectId, runId } as never,
-    );
-    if (envelope) insights = envelope as Record<string, unknown>;
-  } catch (error) {
-    // See the eval twin: omission is the documented degradation, logging is
-    // what keeps a real breakage from being indistinguishable from it.
-    console.warn("[v1.journeys] insights envelope unavailable", error);
-    insights = undefined;
-  }
+      {
+        projectId,
+        runId,
+      } as never,
+    ),
+  );
 
   return v1Resource(c, {
     ...toJourneyRunDto(run),
