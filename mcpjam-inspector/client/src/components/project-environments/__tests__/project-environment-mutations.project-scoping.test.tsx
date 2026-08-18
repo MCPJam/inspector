@@ -66,11 +66,11 @@ vi.mock("../use-project-environment-consumers", () => ({
   useProjectEnvironmentConsumers: () => ({
     suiteCount: 0,
     journeyCount: 0,
-    chatboxCount: 0,
+    scenarioCount: 0,
   }),
 }));
-vi.mock("@/hooks/useChatboxes", () => ({
-  useEnvironmentChatbox: () => ({ chatbox: null, isLoading: false }),
+vi.mock("@/hooks/useScenarios", () => ({
+  useEnvironmentScenario: () => ({ scenario: null, isLoading: false }),
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { error: vi.fn(), success: vi.fn() },

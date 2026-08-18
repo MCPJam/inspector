@@ -5,7 +5,7 @@
  */
 import { renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { useTopicMap } from "@/hooks/useChatboxTopicMap";
+import { useTopicMap } from "@/hooks/useScenarioTopicMap";
 
 const { mockUseQuery } = vi.hoisted(() => ({
   mockUseQuery: vi.fn(),

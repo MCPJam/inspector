@@ -139,7 +139,7 @@ describe("SessionsPanel — query contract", () => {
 
     // Selecting every pill means "no filter" — the arg must drop back out so
     // the backend serves the plain project index.
-    for (const pill of ["direct", "chatbox", "eval"]) {
+    for (const pill of ["direct", "scenario", "eval"]) {
       fireEvent.click(screen.getByTestId(`sessions-source-pill-${pill}`));
     }
     expect(lastCall().args).toEqual({ projectId: "p1" });

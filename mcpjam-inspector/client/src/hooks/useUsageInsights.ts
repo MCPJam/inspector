@@ -5,21 +5,21 @@ import type {
   SessionSentiment,
   UsageFilterState,
   UsageFilterChip,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 import type { ClusterTuning } from "@/lib/cluster-tuning";
 
-export type InsightsSourceType = "chatbox";
+export type InsightsSourceType = "scenario";
 
 /**
- * Which surface the insights read from. Chatbox insights key on the chatbox;
+ * Which surface the insights read from. Scenario insights key on the scenario;
  * swarm insights key on the project (and optionally a wave's journey-run ids),
- * because swarm sessions belong to a project, not a chatbox. The two scopes
+ * because swarm sessions belong to a project, not a scenario. The two scopes
  * hit different Convex queries over the same substrate, so everything
  * downstream of the hook is scope-blind.
  */
 export type InsightsScope =
-  | { kind: "chatbox"; chatboxId: string }
+  | { kind: "scenario"; scenarioId: string }
   | { kind: "swarm"; projectId: string; journeyRunIds?: string[] };
 
 export type FeedbackBucketCount = {
@@ -87,7 +87,7 @@ export type ClusterRunState = {
   isStale: boolean;
 };
 
-// One closed vocabulary, one declaration. `chatbox-usage-filters` derives
+// One closed vocabulary, one declaration. `scenario-usage-filters` derives
 // `SessionOutcome` from `SESSION_OUTCOMES`; re-exporting rather than restating
 // it here means a new server outcome cannot leave the drill-down types agreeing
 // with nothing. Re-exported (not just imported) because consumers of the
@@ -221,7 +221,7 @@ export type UsageBreakdown = {
   outcomeFeedbackCalibration: OutcomeFeedbackCalibration[];
   /**
    * Per-criterion pass/fail tallies across the scanned sessions. `[]` on the
-   * chatbox surface (no rubric exists there); optional so a response from a
+   * scenario surface (no rubric exists there); optional so a response from a
    * server predating it still renders the rest of the panel.
    *
    * `label` / `kind` are resolved server-side from the RUN SNAPSHOTS the
@@ -271,7 +271,7 @@ export function useUsageInsights({
   breakdownEnabled,
 }: {
   sourceType?: InsightsSourceType;
-  /** Legacy chatbox key; shorthand for `scope: { kind: "chatbox", … }`. */
+  /** Legacy scenario key; shorthand for `scope: { kind: "scenario", … }`. */
   sourceId?: string | null;
   /** Takes precedence over `sourceId` when both are given. */
   scope?: InsightsScope | null;
@@ -289,19 +289,19 @@ export function useUsageInsights({
   const wantBreakdown = breakdownEnabled ?? enabled;
 
   const effectiveScope: InsightsScope | null =
-    scope ?? (sourceId ? { kind: "chatbox", chatboxId: sourceId } : null);
+    scope ?? (sourceId ? { kind: "scenario", scenarioId: sourceId } : null);
   const isSwarm = effectiveScope?.kind === "swarm";
 
-  // The thread list is a chatbox-surface concern; the swarm Sessions browser
+  // The thread list is a scenario-surface concern; the swarm Sessions browser
   // has its own project-scoped listing, so a swarm scope never subscribes.
   // Filters go to the SERVER, not just to a client-side pass afterward. The
   // query applies them inside its index walk while filling the page; the page
   // caps at 100 rows, so filtering only on the client would narrow that page
   // instead of the scenario, silently hiding every older session that matches.
-  const chatboxArgs =
-    wantThreads && effectiveScope?.kind === "chatbox"
+  const scenarioArgs =
+    wantThreads && effectiveScope?.kind === "scenario"
       ? ({
-          chatboxId: effectiveScope.chatboxId,
+          scenarioId: effectiveScope.scenarioId,
           limit: 100,
           includeInternal: true,
           ...(filters ? { filters: toServerFilters(filters) } : {}),
@@ -318,17 +318,17 @@ export function useUsageInsights({
                   ? { journeyRunIds: effectiveScope.journeyRunIds }
                   : {}),
               }
-            : { chatboxId: effectiveScope.chatboxId }),
+            : { scenarioId: effectiveScope.scenarioId }),
           filters: toServerFilters(filters),
         } as any)
       : "skip";
 
-  const threads = useQuery("chatSessions:listByChatbox" as any, chatboxArgs) as
+  const threads = useQuery("chatSessions:listByScenario" as any, scenarioArgs) as
     | SharedChatThread[]
     | undefined;
 
   // `getUsageBreakdown` already carries `themes` + `latestRun`, so we don't
-  // subscribe to `listClustersByChatbox` — the themes chips, the freshness
+  // subscribe to `listClustersByScenario` — the themes chips, the freshness
   // chip, and the rebuild button all read what they need from `breakdown`.
   const breakdown = useQuery(
     (isSwarm
@@ -337,10 +337,10 @@ export function useUsageInsights({
     breakdownArgs
   ) as UsageBreakdown | null | undefined;
 
-  const rebuildChatbox = useMutation(
-    "chatSessions:rebuildChatboxInsights" as any
+  const rebuildScenario = useMutation(
+    "chatSessions:rebuildScenarioInsights" as any
   ) as unknown as (args: {
-    chatboxId: string;
+    scenarioId: string;
     force?: boolean;
     tuning?: ClusterTuning;
   }) => Promise<RebuildResult>;
@@ -355,7 +355,7 @@ export function useUsageInsights({
 
   // Scope-bound so callers don't restate the key the hook already holds — the
   // caller restating it is exactly how a swarm surface would accidentally
-  // trigger a chatbox rebuild.
+  // trigger a scenario rebuild.
   const rebuild = useCallback(
     async (args?: { force?: boolean; tuning?: ClusterTuning }) => {
       if (!effectiveScope) {
@@ -368,15 +368,15 @@ export function useUsageInsights({
           ...(args?.tuning ? { tuning: args.tuning } : {}),
         });
       }
-      return rebuildChatbox({ chatboxId: effectiveScope.chatboxId, ...args });
+      return rebuildScenario({ scenarioId: effectiveScope.scenarioId, ...args });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scope identity is its key fields
     [
       effectiveScope?.kind,
       effectiveScope?.kind === "swarm"
         ? effectiveScope.projectId
-        : effectiveScope?.chatboxId,
-      rebuildChatbox,
+        : effectiveScope?.scenarioId,
+      rebuildScenario,
       rebuildSwarm,
     ]
   );
@@ -435,7 +435,7 @@ export function useGoalOutcomeDrilldown({
                   ? { journeyRunIds: scope.journeyRunIds }
                   : {}),
               }
-            : { chatboxId: scope.chatboxId }),
+            : { scenarioId: scope.scenarioId }),
           ...(clusterId ? { clusterId } : {}),
           // `undefined` means "any outcome"; `null` means "no outcome
           // recorded". They are different selections, so the distinction has to

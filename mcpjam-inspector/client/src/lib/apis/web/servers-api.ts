@@ -6,13 +6,13 @@ export type HostedServerValidateContext = {
   serverId: string;
   serverName?: string;
   accessScope?: "project_member" | "chat_v2";
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   /**
    * Per-connection MCP `initialize.params.clientInfo` override resolved
    * client-side from `hostConfig.mcpProfile.initialize.clientInfo`. The
    * hosted backend serializes this verbatim into the MCP `initialize`
-   * call so hosted chatbox / inspector sessions honor the same identity
+   * call so hosted scenario / inspector sessions honor the same identity
    * pin as resolver-path local connects. Undefined → SDK defaults.
    *
    * Without this field the hosted path silently dropped `mcpProfile.
@@ -106,10 +106,10 @@ export async function validateHostedServer(
         ...(hostedContext.accessScope
           ? { accessScope: hostedContext.accessScope }
           : {}),
-        ...(hostedContext.chatboxId
-          ? { chatboxId: hostedContext.chatboxId }
+        ...(hostedContext.scenarioId
+          ? { scenarioId: hostedContext.scenarioId }
           : {}),
-        ...(hostedContext.chatboxId &&
+        ...(hostedContext.scenarioId &&
         Number.isFinite(hostedContext.accessVersion)
           ? { accessVersion: hostedContext.accessVersion }
           : {}),

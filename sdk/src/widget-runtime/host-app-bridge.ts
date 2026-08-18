@@ -331,7 +331,15 @@ export function registerHostBridgeHandlers(
     const sendToolCancelledIfAllowed = (reason: string) => {
       const matrix = getMatrix?.() ?? null;
       if (matrix !== null && matrix.toolCancelled === false) return;
-      void bridge.sendToolCancelled({ reason });
+      // Best-effort, like `teardownResource` below: the app-tool call that
+      // failed may itself be what tore the widget down (unmount, teardown,
+      // navigation), so by the time we report the cancellation the bridge can
+      // already be disconnected and `notification()` rejects with "Not
+      // connected". Nobody awaits this notification, so an unguarded reject
+      // surfaces as an unhandled rejection and gets captured as a crash.
+      void Promise.resolve(bridge.sendToolCancelled({ reason })).catch(
+        () => {}
+      );
     };
     bridge.oncalltool = async ({ name, arguments: args }, _extra) => {
       // Model-only tools (visibility: ["model"]) are not callable by apps.

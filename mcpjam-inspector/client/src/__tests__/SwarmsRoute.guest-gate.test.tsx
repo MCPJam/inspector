@@ -29,7 +29,7 @@ const {
     mockRouteContext: {
       billingUiEnabled: true,
       activeTabBillingLocked: false,
-      activeTabBillingFeature: "chatboxes" as string | null,
+      activeTabBillingFeature: "scenarios" as string | null,
       convexProjectId: "project-1" as string | null,
       isAuthenticated: true,
     },
@@ -71,7 +71,7 @@ vi.mock("../hooks/useProjects", async (importOriginal) => {
   };
 });
 
-// App.tsx pulls the chatbox surface (and its codemirror deps) through its
+// App.tsx pulls the scenario surface (and its codemirror deps) through its
 // module graph; stub them so importing the route is cheap.
 vi.mock("../components/swarms/SwarmsTab", () => ({
   SwarmsTab: (props: unknown) => mockSwarmsTab(props),
@@ -118,7 +118,7 @@ describe("SwarmsRoute member-only gate", () => {
     mockUseViewerProjectRole.mockImplementation(() => mockViewerRole);
     mockRouteContext.billingUiEnabled = true;
     mockRouteContext.activeTabBillingLocked = false;
-    mockRouteContext.activeTabBillingFeature = "chatboxes";
+    mockRouteContext.activeTabBillingFeature = "scenarios";
     mockRouteContext.convexProjectId = "project-1";
     mockRouteContext.isAuthenticated = true;
     mockViewerRole.role = undefined;
