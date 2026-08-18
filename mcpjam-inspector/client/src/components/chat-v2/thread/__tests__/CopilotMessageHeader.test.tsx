@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { CopilotMessageHeader } from "../copilot-message-header";
-import { ChatboxHostThemeProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostThemeProvider } from "@/contexts/scenario-client-style-context";
 
 describe("CopilotMessageHeader", () => {
   it("renders the avatar (with monochromatic mascot SVG) and the 'Copilot' name", () => {
@@ -44,7 +44,7 @@ describe("CopilotMessageHeader", () => {
   });
 
   it("uses the Fluent dark foreground (#d6d6d6) by default", () => {
-    // No chatbox host context → fallback to dark, matching the rest of
+    // No scenario host context → fallback to dark, matching the rest of
     // the chat shell's "no host" fallback behavior.
     const { getByTestId } = render(<CopilotMessageHeader />);
     const root = getByTestId("copilot-message-header");
@@ -54,9 +54,9 @@ describe("CopilotMessageHeader", () => {
 
   it("switches to the Fluent light foreground (#424242) under a light host theme", () => {
     const { getByTestId } = render(
-      <ChatboxHostThemeProvider value="light">
+      <ScenarioHostThemeProvider value="light">
         <CopilotMessageHeader />
-      </ChatboxHostThemeProvider>,
+      </ScenarioHostThemeProvider>,
     );
     const root = getByTestId("copilot-message-header");
     expect(root.style.color).toBe("rgb(66, 66, 66)");

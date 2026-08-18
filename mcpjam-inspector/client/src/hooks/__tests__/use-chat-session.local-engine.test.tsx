@@ -230,10 +230,10 @@ describe("useChatSession — local computer engine transmission", () => {
     expect(headers[LOCAL_CONSENT_HEADER]).toBeUndefined();
   });
 
-  it("never sends the local engine on a chatbox (share-link) session", async () => {
+  it("never sends the local engine on a scenario (share-link) session", async () => {
     await renderWithEngine(
       { engine: "local", consentToken: "cap-token-123" },
-      { projectId: "proj-1", chatboxId: "cbx-1", accessVersion: 1 },
+      { projectId: "proj-1", scenarioId: "cbx-1", accessVersion: 1 },
     );
     const { body, headers } = lastTransport();
     expect(body.computerEngine).toBeUndefined();

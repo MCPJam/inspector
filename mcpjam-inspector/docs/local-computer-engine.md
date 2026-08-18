@@ -71,7 +71,7 @@ Every entry point into local execution, with what gates it:
 | Entry point | Gates |
 | --- | --- |
 | Chat `bash` (playground) | non-hosted + kill switch + signed-in non-guest + server-verified consent + per-command approval |
-| Chat `bash` (guest / chatbox / web route) | **never local** — `isGuestChatRequest` forces cloud |
+| Chat `bash` (guest / scenario / web route) | **never local** — `isGuestChatRequest` forces cloud |
 | Comparison cards / org-model turns | same engine resolution as the playground; no separate path |
 | Terminal nonce mint (`POST /api/mcp/computers/local-terminal-token`) | inspector session + verified sign-in + non-guest + kill switch + server-verified consent + availability probe + validated project key |
 | Terminal WebSocket (`GET /api/web/computers/local-terminal`) | allowed `Origin` (**absent Origin rejected**) + availability probe + single-use, 60s, project-bound nonce + the nonce's consent fingerprint must still match the live capability |

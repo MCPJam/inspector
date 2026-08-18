@@ -33,6 +33,7 @@ describe("Bright Data MCP Evals", () => {
   // hasToolCall()
   test("hasToolCall() - verifies correct tool selection", async () => {
     const evalTest = new EvalTest({
+      id: "c_hastoolcall_test",
       name: "hasToolCall-test",
       test: async (runner: HostRunner) => {
         const result = await runner.run("Search for wireless headphones on Amazon");
@@ -46,6 +47,7 @@ describe("Bright Data MCP Evals", () => {
   // getToolCalls()
   test("getToolCalls() - retrieves all tool calls array", async () => {
     const evalTest = new EvalTest({
+      id: "c_gettoolcalls_test",
       name: "getToolCalls-test",
       test: async (runner: HostRunner) => {
         const result = await runner.run("Find laptops on Amazon");
@@ -60,6 +62,7 @@ describe("Bright Data MCP Evals", () => {
   // getToolArguments() + averageTokenUse()
   test("getToolArguments() + averageTokenUse() - validates arguments and tracks tokens", async () => {
     const evalTest = new EvalTest({
+      id: "c_gettoolarguments_tokenuse_test",
       name: "getToolArguments-tokenUse-test",
       test: async (runner: HostRunner) => {
         const result = await runner.run("Search Amazon for gaming keyboards");
@@ -81,6 +84,7 @@ describe("Bright Data MCP Evals", () => {
   // context option (2-turn)
   test("context option - two-turn conversation", async () => {
     const evalTest = new EvalTest({
+      id: "c_context_two_turn",
       name: "context-two-turn",
       test: async (runner: HostRunner) => {
         const r1 = await runner.run("Search for wireless earbuds on Amazon");

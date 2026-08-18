@@ -56,6 +56,44 @@ function truncate(value: string, length: number): string {
   return `${value.substring(0, length)}...`;
 }
 
+/**
+ * Render a server-advertised URL as its path, or say so when it is not a URL.
+ *
+ * Every value this runs on is copied verbatim out of a document the server
+ * under test wrote — the `resource_metadata` challenge parameter, the
+ * authorization-server metadata endpoints — and none of them is validated as
+ * absolute before it lands in flow state. `new URL()` throws on a relative
+ * value, and this builder runs inside the diagram's `useMemo`, so an unguarded
+ * parse takes the whole panel down at exactly the moment its ladder is the
+ * thing worth reading.
+ *
+ * The raw value alone would not be enough. A relative `/.well-known/...`
+ * renders byte-identical to the path of a correct absolute URL, so the
+ * misconfiguration would look like a normal step; the suffix is what makes the
+ * two distinguishable on screen.
+ */
+function pathnameOrRawValue(value: unknown): string {
+  if (typeof value === "string" && value.trim() !== "") {
+    try {
+      return new URL(value).pathname;
+    } catch {
+      return `${value} (not an absolute URL)`;
+    }
+  }
+
+  let displayedValue: string;
+  try {
+    displayedValue =
+      typeof value === "string" ||
+      (typeof value === "object" && value !== null)
+        ? JSON.stringify(value) ?? String(value)
+        : String(value);
+  } catch {
+    displayedValue = "[unserializable value]";
+  }
+  return `${displayedValue} (not an absolute URL)`;
+}
+
 function resourceDetailValue(
   flowState: OAuthFlowState,
   era: SequenceDiagramEraSpec,
@@ -91,7 +129,7 @@ function protectedResourceMetadataActions(
       description: "Server returns 401 with WWW-Authenticate header",
       from: "mcpServer",
       to: "client",
-      details: flowState.resourceMetadataUrl
+      details: flowState.resourceMetadataUrl !== undefined
         ? [{ label: "Note", value: "Extract resource_metadata URL" }]
         : undefined,
     },
@@ -101,11 +139,11 @@ function protectedResourceMetadataActions(
       description: "Client requests metadata from well-known URI",
       from: "client",
       to: "mcpServer",
-      details: flowState.resourceMetadataUrl
+      details: flowState.resourceMetadataUrl !== undefined
         ? [
             {
               label: "GET",
-              value: new URL(flowState.resourceMetadataUrl).pathname,
+              value: pathnameOrRawValue(flowState.resourceMetadataUrl),
             },
           ]
         : undefined,
@@ -287,15 +325,15 @@ export function buildOAuthSequenceDiagramActions(
         ? [
             {
               label: "Token",
-              value: new URL(
+              value: pathnameOrRawValue(
                 flowState.authorizationServerMetadata.token_endpoint,
-              ).pathname,
+              ),
             },
             {
               label: "Auth",
-              value: new URL(
+              value: pathnameOrRawValue(
                 flowState.authorizationServerMetadata.authorization_endpoint,
-              ).pathname,
+              ),
             },
           ]
         : undefined,
