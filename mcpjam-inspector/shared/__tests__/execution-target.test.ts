@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest";
 import { normalizeExecutionTarget } from "../execution-target";
 
 describe("normalizeExecutionTarget", () => {
-  it("REJECTS chatboxId + executionTarget instead of shadowing one", () => {
+  it("REJECTS scenarioId + executionTarget instead of shadowing one", () => {
     // The whole point of the normalizer: a body with two pointers must not
     // execute against one of them silently.
     const result = normalizeExecutionTarget({
-      chatboxId: "cbx_1",
+      scenarioId: "cbx_1",
       executionTarget: { kind: "environment", environmentId: "env_1" },
       projectId: "p_1",
     });
@@ -48,14 +48,14 @@ describe("normalizeExecutionTarget", () => {
     ).toEqual({ ok: true, target: { kind: "host", hostId: "host_1" } });
   });
 
-  it("keeps chatbox precedence over a stray legacy hostId (unchanged legacy behavior)", () => {
+  it("keeps scenario precedence over a stray legacy hostId (unchanged legacy behavior)", () => {
     expect(
       normalizeExecutionTarget({
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         hostId: "host_1",
         projectId: "p_1",
       })
-    ).toEqual({ ok: true, target: { kind: "chatbox", chatboxId: "cbx_1" } });
+    ).toEqual({ ok: true, target: { kind: "scenario", scenarioId: "cbx_1" } });
   });
 
   it("falls through to the ad-hoc direct chat when nothing points anywhere", () => {
@@ -69,7 +69,7 @@ describe("normalizeExecutionTarget", () => {
     expect(
       normalizeExecutionTarget({
         hostId: "",
-        chatboxId: "  ",
+        scenarioId: "  ",
         projectId: "p_1",
       })
     ).toEqual({ ok: true, target: { kind: "adhoc", projectId: "p_1" } });
@@ -199,12 +199,12 @@ describe("normalizeExecutionTarget", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("gives an ephemeral plugin override no route into a chatbox turn", () => {
-    // There is no Playground → Chatbox path: a chatbox is 1:1 with its host and
+  it("gives an ephemeral plugin override no route into a scenario turn", () => {
+    // There is no Playground → Scenario path: a scenario is 1:1 with its host and
     // resolves its own configuration server-side. A body that pairs the two is
     // rejected rather than silently applied to a share-link-reachable turn.
     const result = normalizeExecutionTarget({
-      chatboxId: "cb_1",
+      scenarioId: "cb_1",
       environmentOverrides: { pluginVersionIds: ["pv_1"] },
       projectId: "p_1",
     });

@@ -20,7 +20,7 @@ const {
   mockNavigateApp: vi.fn(),
   mockUseQuery: vi.fn(() => undefined),
   mockThreadState: {
-    sourceType: "chatbox",
+    sourceType: "scenario",
     synthetic: false as boolean,
     readiness: undefined as unknown,
     goalScore: undefined as unknown,
@@ -135,7 +135,7 @@ describe("ShareUsageThreadDetail", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockThreadState.sourceType = "chatbox";
+    mockThreadState.sourceType = "scenario";
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
@@ -186,7 +186,7 @@ describe("ShareUsageThreadDetail", () => {
     });
   });
 
-  it("renders chatbox threads with collapsible reasoning in chat mode", async () => {
+  it("renders scenario threads with collapsible reasoning in chat mode", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
     await waitFor(() => {
@@ -353,7 +353,7 @@ describe("ShareUsageThreadDetail", () => {
 describe("ShareUsageThreadDetail — promote affordance", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockThreadState.sourceType = "chatbox";
+    mockThreadState.sourceType = "scenario";
     mockThreadState.synthetic = false;
     mockThreadState.readiness = undefined;
     mockThreadState.goalScore = undefined;
@@ -507,7 +507,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
 describe("ShareUsageThreadDetail — readiness gating", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockThreadState.sourceType = "chatbox";
+    mockThreadState.sourceType = "scenario";
     mockThreadState.goalScore = undefined;
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,

@@ -139,7 +139,7 @@ v1.route("/", swarmInsights);
 // they live here rather than in the read-proxy catalog. Publishing is behind
 // the `sandboxes-enabled` beta flag server-side; unpublishing deliberately is
 // not. Guest-DENIED by default: no GUEST_ALLOWED_V1_RULES entry matches these,
-// and the existing chatbox guest GETs (which share-link flows depend on) stay
+// and the existing scenario guest GETs (which share-link flows depend on) stay
 // exactly as they are until a guest security review says otherwise.
 v1.route("/", scenarios);
 // User testing — everything you do with a scenario ONCE IT EXISTS: read what

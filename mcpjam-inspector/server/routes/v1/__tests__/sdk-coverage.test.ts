@@ -162,9 +162,9 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/steps":
     "getEvalRunSteps",
 
-  // Chatboxes (deprecated publicly; superseded by scenarios at GA)
-  "get /projects/{projectId}/chatboxes": "listChatboxes",
-  "get /projects/{projectId}/chatboxes/{chatboxId}": "getChatbox",
+  // Scenarios (deprecated publicly; superseded by scenarios at GA)
+  "get /projects/{projectId}/scenarios": "listScenarios",
+  "get /projects/{projectId}/scenarios/{scenarioId}": "getScenario",
 
   // Journeys (Swarms). Flag-gated beta, but the SDK carries them.
   "get /projects/{projectId}/journeys": "listJourneys",

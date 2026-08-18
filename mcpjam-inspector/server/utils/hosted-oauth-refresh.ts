@@ -9,11 +9,11 @@ export type HostedOAuthRefreshOptions = {
   accessScope?: "project_member" | "chat_v2";
   shareToken?: string;
   /**
-   * Resolved chatbox identity (post-redeem). The backend scopes OAuth
-   * credentials by `(userId, chatbox.projectId, serverId)` from this; no
+   * Resolved scenario identity (post-redeem). The backend scopes OAuth
+   * credentials by `(userId, scenario.projectId, serverId)` from this; no
    * link token is forwarded on refresh.
    */
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   serverName?: string;
 };
@@ -56,8 +56,8 @@ export async function forceRefreshHostedOAuthAccessToken(
         serverId,
         ...(options?.accessScope ? { accessScope: options.accessScope } : {}),
         ...(options?.shareToken ? { shareToken: options.shareToken } : {}),
-        ...(options?.chatboxId ? { chatboxId: options.chatboxId } : {}),
-        ...(options?.chatboxId && Number.isFinite(options?.accessVersion)
+        ...(options?.scenarioId ? { scenarioId: options.scenarioId } : {}),
+        ...(options?.scenarioId && Number.isFinite(options?.accessVersion)
           ? { accessVersion: options.accessVersion }
           : {}),
       }),
@@ -132,7 +132,7 @@ export type HostedOAuthUnauthorizedHandlerArgs = {
   serverName: string;
   accessScope?: "project_member" | "chat_v2";
   shareToken?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 };
 
@@ -153,7 +153,7 @@ export function buildHostedOAuthUnauthorizedHandler(
       {
         accessScope: args.accessScope,
         shareToken: args.shareToken,
-        chatboxId: args.chatboxId,
+        scenarioId: args.scenarioId,
         accessVersion: args.accessVersion,
         serverName: args.serverName,
       }
