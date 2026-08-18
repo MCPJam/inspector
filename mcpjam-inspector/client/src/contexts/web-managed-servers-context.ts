@@ -5,8 +5,8 @@ import { createContext, useContext } from "react";
  * servers are Convex-resolved and reachable only through the hosted
  * `/api/web/*` routes — on every platform, not just hosted builds.
  *
- * Provided by the published chatbox runtime (`ChatboxChatPage`) for
- * redeemed share-link sessions: their server set comes from the chatbox's
+ * Provided by the published scenario runtime (`ScenarioChatPage`) for
+ * redeemed share-link sessions: their server set comes from the scenario's
  * host config (Convex ids + Convex-held secrets), so the local
  * `/api/mcp/*` branch — which resolves servers from this browser
  * session's connection pool — can never connect them. Consumers

@@ -258,6 +258,7 @@ const output = await reporter.finalize();
 const reporter = createEvalRunReporter({ suiteName: "Full Suite" });
 
 const test = new EvalTest({
+  id: "c_addition",
   name: "addition",
   test: async (agent) => (await agent.run("Add 2+3")).hasToolCall("add"),
 });

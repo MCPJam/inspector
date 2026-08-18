@@ -50,8 +50,8 @@ feed that renderer the inspector state it currently reads ambiently.
 | `useUIPlaygroundStore` | locale, timeZone, displayMode, capabilities, safeArea, deviceType, isPlaygroundActive | `env.baseHostContext` |
 | `useActiveMcpProfile` | active profile → capability/sandbox/compat resolution | `env.*` (resolved by inspector) |
 | `useHostContextStore` | `draftHostContext` | `env.baseHostContext` |
-| `useChatboxHost{Style,Theme}` + `…CapabilitiesOverride` | per-chatbox overrides | `env.*` |
-| `useIsChatboxSurface` / `useWidgetSurface` | surface identity | `surface.kind` |
+| `useScenarioHost{Style,Theme}` + `…CapabilitiesOverride` | per-scenario overrides | `env.*` |
+| `useIsScenarioSurface` / `useWidgetSurface` | surface identity | `surface.kind` |
 | `useWebManagedServers` | hosted endpoint routing | `surface.webManagedServers` |
 | `usePersistentWidgetSurfaceHost` | persistent surface flag | `surface.persistentSurfaceHost` |
 | `useWidgetDebugStore` (11 setters) | lifecycle / CSP / globals instrumentation | `debug` (1:1 sink) |
@@ -80,7 +80,7 @@ reads above.
    modal chrome via `components.Modal`.
 3. **STAYS in the inspector** (out of scope): the zustand **store
    definitions**; the **profile system** (`client-config-v2`, `client-styles`);
-   the **context providers** (active-mcp-profile, chatbox-\*,
+   the **context providers** (active-mcp-profile, scenario-\*,
    web-managed-servers); and `checkout-dialog-v2` (billing / app-specific —
    explicitly excluded).
 4. **REUSED from `@mcpjam/sdk`** (already shared — no work):
@@ -134,7 +134,7 @@ reads for a single `useWidgetHost()`.
   iframe-rebuild fix (L729-739). `minimalMode` being per-instance is why CSP
   mode is not on the per-server `env`.
 - **Surface collapse:** `kind` merges two distinct context signals
-  (`useIsChatboxSurface`, `useWidgetSurface`); Phase 1 must confirm they are
+  (`useIsScenarioSurface`, `useWidgetSurface`); Phase 1 must confirm they are
   mutually exclusive before collapsing them.
 - **`listResourceTemplates` is host-owned, not the raw api fn.** The renderer
   guards `HOSTED_MODE || webManagedServers` (mcp-apps-renderer.tsx:2861-2868),

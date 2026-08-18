@@ -34,7 +34,7 @@ export type {
   EffectiveCompatRuntime,
   // environment data types
   ThemeMode,
-  ChatboxHostStyle,
+  ScenarioHostStyle,
   DeviceCapabilities,
   DeviceType,
   SafeAreaInsets,
