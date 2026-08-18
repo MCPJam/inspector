@@ -223,7 +223,7 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
 
   it("refuses a binding combined with an execution scope — before any credential is minted", async () => {
     // The ephemeral box is launcher-owned and billed to its run's project; an
-    // execution scope is the host-funded GUEST path on a chatbox's own
+    // execution scope is the host-funded GUEST path on a scenario's own
     // computer. The backend rejects the combination outright; throwing here,
     // at the same place the missing-harness-id guard throws, means no box is
     // bound and no egress transform is ever installed.

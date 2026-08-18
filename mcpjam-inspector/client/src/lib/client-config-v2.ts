@@ -13,13 +13,13 @@
  * `HostStyleId`) stay client-owned: the editor enforces invariants the
  * storage layer leaves optional (required `serverIds`/`optionalServerIds`/
  * `respectToolVisibility`, structured `ChatUiOverride`, closed
- * `ChatboxHostStyle` union). Single client-side source of truth so all four
- * editors (Project Settings, Chatbox Editor/Builder, Eval Suite Settings,
+ * `ScenarioHostStyle` union). Single client-side source of truth so all four
+ * editors (Project Settings, Scenario Editor/Builder, Eval Suite Settings,
  * Connection Settings) speak one shape.
  */
 
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type { ChatboxHostStyle } from "@/lib/chatbox-client-style";
+import type { ScenarioHostStyle } from "@/lib/scenario-client-style";
 import { stableStringifyJson } from "@/lib/client-config";
 import type { ThemeMode } from "@/types/preferences/theme";
 import {
@@ -76,7 +76,7 @@ export type {
   ModelVisibleMcpToolResults,
 };
 
-export type HostStyleId = ChatboxHostStyle;
+export type HostStyleId = ScenarioHostStyle;
 
 /**
  * Personal cloud workstation attached to a host (Project Computers). The
@@ -534,7 +534,7 @@ export function resolveHostInfo(
  */
 export function resolveEffectiveCompatRuntime(args: {
   profile: HostConfigMcpProfileV1 | undefined;
-  hostStyle: ChatboxHostStyle | string | null | undefined;
+  hostStyle: ScenarioHostStyle | string | null | undefined;
 }): EffectiveCompatRuntime {
   const preset = getCompatRuntimeForStyle(args.hostStyle);
   const override = args.profile?.apps?.compatRuntime;
@@ -661,7 +661,7 @@ export function mergeMcpAppsCapabilities(
  */
 export function resolveEffectiveMcpAppsCapabilities(args: {
   profile: HostConfigMcpProfileV1 | undefined;
-  hostStyle: ChatboxHostStyle | string | null | undefined;
+  hostStyle: ScenarioHostStyle | string | null | undefined;
 }): ResolvedMcpAppsCapabilities {
   const hostStylePreset = findHostStyle(args.hostStyle)?.mcp
     .mcpAppsCapabilities;

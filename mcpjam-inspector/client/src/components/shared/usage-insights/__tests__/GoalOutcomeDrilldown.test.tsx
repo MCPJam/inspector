@@ -9,7 +9,7 @@ import {
   EMPTY_USAGE_FILTER,
   toggleChip,
   type InsightsSelection,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 
 const { mockUseGoalOutcomeDrilldown } = vi.hoisted(() => ({
   mockUseGoalOutcomeDrilldown: vi.fn(),
@@ -44,7 +44,7 @@ function renderDrilldown(
 ) {
   return render(
     <GoalOutcomeDrilldown
-      scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+      scope={{ kind: "scenario", scenarioId: "scenario-1" }}
       selection={selection}
       filter={EMPTY_USAGE_FILTER}
       onClose={vi.fn()}
@@ -238,7 +238,7 @@ describe("GoalOutcomeDrilldown", () => {
     });
     rerender(
       <GoalOutcomeDrilldown
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         selection={{
           themes: [
             { dimension: "goal", clusterId: "cluster-b", label: "Refunds" },
@@ -284,7 +284,7 @@ describe("GoalOutcomeDrilldown", () => {
     await user.click(screen.getByRole("button", { name: /Load 25 more/ }));
     rerender(
       <GoalOutcomeDrilldown
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
@@ -330,7 +330,7 @@ describe("GoalOutcomeDrilldown", () => {
     });
     const { rerender } = render(
       <GoalOutcomeDrilldown
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
@@ -353,7 +353,7 @@ describe("GoalOutcomeDrilldown", () => {
     });
     rerender(
       <GoalOutcomeDrilldown
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         selection={CELL_A}
         filter={toggleChip(EMPTY_USAGE_FILTER, {
           kind: "dimension",
@@ -388,7 +388,7 @@ describe("GoalOutcomeDrilldown", () => {
     });
     const { rerender } = render(
       <GoalOutcomeDrilldown
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
@@ -404,7 +404,7 @@ describe("GoalOutcomeDrilldown", () => {
     });
     rerender(
       <GoalOutcomeDrilldown
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
@@ -443,7 +443,7 @@ describe("GoalOutcomeDrilldown", () => {
     });
     rerender(
       <GoalOutcomeDrilldown
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}
@@ -481,7 +481,7 @@ describe("GoalOutcomeDrilldown", () => {
     });
     rerender(
       <GoalOutcomeDrilldown
-        scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
+        scope={{ kind: "scenario", scenarioId: "scenario-1" }}
         selection={CELL_A}
         filter={EMPTY_USAGE_FILTER}
         onClose={vi.fn()}

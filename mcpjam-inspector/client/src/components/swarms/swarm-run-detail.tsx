@@ -33,8 +33,8 @@ import {
   parseSelectionParam,
   serializeSelectionParam,
   type ThemeRef,
-} from "@/hooks/chatbox-usage-filters";
-import { getShareableAppOrigin } from "@/lib/chatbox-session";
+} from "@/hooks/scenario-usage-filters";
+import { getShareableAppOrigin } from "@/lib/scenario-session";
 import {
   SWARM_QUERIES,
   type SwarmOverview,

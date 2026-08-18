@@ -15,7 +15,7 @@ export type RebuildFeedback = {
  * would watch it finish and conclude the knobs do nothing.
  *
  * Shared by both insights panels so the wording of that case cannot drift
- * between the chatbox surface and the swarm one.
+ * between the scenario surface and the swarm one.
  */
 export function rebuildFeedback(result: RebuildResult): RebuildFeedback {
   if (!result.alreadyRunning) {
