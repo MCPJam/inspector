@@ -1016,4 +1016,33 @@ describe("resolveAndStart — the private-repository clone credential", () => {
     // And nothing leaked through the whole recorded attempt log either.
     expect(JSON.stringify(f.attempts)).not.toContain(TOKEN);
   });
+
+  it("redacts before the 500-character bound, so no slice can halve the token", async () => {
+    // Clamping after redacting is safe; redacting after clamping is not. A
+    // token straddling the boundary would be cut in half, and half a token no
+    // longer matches the literal the replacement looks for — so it would survive
+    // into the corpus as a fragment nobody can search for later.
+    const session = fakeSession();
+    const f = fakes({
+      session,
+      clone: () => {
+        // A plain Error, which is the branch `errorDetail` bounds at 500. The
+        // padding puts the token at offsets 488-518, straddling the cut: redact
+        // first and the whole literal goes, clamp first and its first 12
+        // characters survive into the corpus as an unsearchable fragment.
+        throw new Error(`${"padding ".repeat(61)}${TOKEN} trailing`);
+      },
+    });
+
+    await stopOf(resolveAndStart({ ...ARGS, cloneToken: TOKEN }, f.deps));
+
+    const detail =
+      f.attempts.find((attempt) => attempt.phase === "clone" && !attempt.ok)
+        ?.detailsClamped ?? "";
+    expect(detail.length).toBeLessThanOrEqual(500);
+    expect(detail).not.toContain(TOKEN);
+    // No FRAGMENT of it either — the whole literal was replaced before the cut.
+    expect(detail).not.toContain(TOKEN.slice(0, 12));
+    expect(detail).toContain("[redacted]");
+  });
 });

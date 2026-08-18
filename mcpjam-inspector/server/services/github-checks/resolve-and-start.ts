@@ -584,7 +584,14 @@ function recipeOf(planned: PlannedCandidate): ResolvedRecipe {
 }
 
 /**
- * `errorDetail`, with any clone credential removed first.
+ * `errorDetail`, with any clone credential removed BEFORE the 500-character
+ * bound is applied.
+ *
+ * The ordering is the same one `sandbox.ts` makes for `errorMessage`, for the
+ * same reason: a slice that lands mid-token leaves half a token in the corpus,
+ * and a halved token no longer matches the literal the replacement is looking
+ * for. So this redacts the UNCLAMPED text and clamps last — which is why it
+ * cannot simply wrap `errorDetail`.
  *
  * Separate from `errorDetail` rather than folded into it so the redaction is
  * visible at the call site that needs it: the clone is the only phase whose
@@ -594,9 +601,21 @@ function redactedErrorDetail(
   error: unknown,
   cloneToken?: string
 ): string | undefined {
-  const detail = errorDetail(error);
-  if (detail === undefined) return undefined;
-  return redactCloneCredential(detail, cloneToken) || undefined;
+  // Mirrors `errorDetail`'s branches and its BOUNDS exactly — `detailsMarkdown`
+  // arrives already clamped and fenced from `sandbox.ts` and is not re-bounded,
+  // while a bare message is. What differs is only the ORDER: redact, then clamp.
+  if (error instanceof CheckStepError && error.detailsMarkdown !== undefined) {
+    return (
+      redactCloneCredential(error.detailsMarkdown, cloneToken) || undefined
+    );
+  }
+  if (error instanceof Error) {
+    return (
+      redactCloneCredential(error.message, cloneToken).slice(0, 500) ||
+      undefined
+    );
+  }
+  return undefined;
 }
 
 function errorDetail(error: unknown): string | undefined {

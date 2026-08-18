@@ -1284,6 +1284,27 @@ describe("executeClaimedCheck — the private-repository clone credential", () =
     expect(h.reports).toHaveLength(0);
   });
 
+  it("never completes the fresh plan with an empty attempt log", async () => {
+    // The consequence the typed transport failure exists to prevent. An untyped
+    // throw from the mint reaches the generic catch, which has no degraded
+    // marker for it either — so `/complete` would carry no `terminalAttempt`
+    // and the backend would derive an outcome from nothing at all.
+    const h = harness({
+      mintCloneToken: async () => {
+        throw new Error("service route /clone-token timed out after 15000ms");
+      },
+    });
+    await executeClaimedCheck(PRIVATE_CLAIM, "worker-1", h.deps);
+
+    expect(h.events).not.toContain("resolveAndStart");
+    expect(h.completions).toHaveLength(1);
+    expect(h.completions[0].terminalAttempt).toMatchObject({
+      phase: "clone",
+      ok: false,
+      failureKind: "clone_failed",
+    });
+  });
+
   it("treats a null token for a private repository exactly like a failed mint", async () => {
     // `cloneToken: null` is the PUBLIC answer. Arriving for a private claim it
     // means the same thing a 502 does — we cannot clone — so an anonymous
@@ -1454,6 +1475,30 @@ describe("the clone-token wire contract", () => {
     await expect(
       mintCloneTokenForTests("trig-1", "worker-1")
     ).rejects.toBeInstanceOf(LeaseLostError);
+  });
+
+  it("maps a transport failure to a mint failure, not an untyped throw", async () => {
+    // The route rejecting BEFORE it answers — a network failure, or the
+    // service-route's own deadline. Untyped, this would skip the mint-failure
+    // branch entirely and complete the plan with no attempt on it at all.
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("ECONNREFUSED 10.0.0.1:443");
+      })
+    );
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+      vi.unstubAllGlobals();
+    });
+
+    const error = await mintCloneTokenForTests("trig-1", "worker-1").catch(
+      (e) => e
+    );
+    expect(error).toBeInstanceOf(CloneTokenUnavailableError);
+    expect(String(error)).toContain("ECONNREFUSED");
   });
 
   it("maps 502 to a mint failure, without echoing the backend's body", async () => {

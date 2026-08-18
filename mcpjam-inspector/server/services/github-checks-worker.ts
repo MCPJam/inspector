@@ -257,6 +257,10 @@ export class CloneTokenUnavailableError extends Error {
  *                              manufacture a competing completion.
  *   502 (or anything else)     the mint failed backend-side. The message is
  *                              deliberately flat there and stays flat here.
+ *   no answer at all           a transport failure or the route's deadline.
+ *                              Typed as the 502 case, so it reaches the same
+ *                              ladder-level `clone_failed` rather than falling
+ *                              through as an untyped throw.
  *
  * The token is NEVER logged, and no branch of this function puts the response
  * body into an error — a 502's body is a constant string, and a 200's body is
@@ -266,10 +270,28 @@ async function mintCloneToken(
   triggerId: string,
   claimedBy: string
 ): Promise<string | null> {
-  const { status, body } = await postServiceRoute(
-    `${SERVICE_BASE}/clone-token`,
-    { triggerId, claimedBy }
-  );
+  let status: number;
+  let body: any;
+  try {
+    ({ status, body } = await postServiceRoute(`${SERVICE_BASE}/clone-token`, {
+      triggerId,
+      claimedBy,
+    }));
+  } catch (error) {
+    // THE ROUTE NEVER ANSWERED — a network failure, a missing service-token
+    // env, or the service-route's own 15s deadline. Materially identical to a
+    // 502: we hold no credential and cannot clone. It is typed as the same
+    // failure so it takes the same branch, because an untyped throw here would
+    // fall through to the generic catch, which has no degraded marker for it
+    // either — and would complete the freshly opened plan with an EMPTY attempt
+    // log. A check that ran nothing and reported nothing is the one shape the
+    // plan shell exists to prevent.
+    throw new CloneTokenUnavailableError(
+      `the clone-token route could not be reached: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
   if (status === 409) {
     throw new LeaseLostError(String(body?.error ?? "not_the_claim_holder"));
   }
@@ -1304,7 +1326,24 @@ export async function executeClaimedCheck(
     // it is what keeps the blast radius of a `contents: read` mint proportional
     // to the number of checks that genuinely need one.
     if (claimed.repoPrivate) {
-      cloneToken = await deps.mintCloneToken(claimed.triggerId, claimedBy);
+      try {
+        cloneToken = await deps.mintCloneToken(claimed.triggerId, claimedBy);
+      } catch (error) {
+        // THE PHASE DECIDES THE ATTRIBUTION, NOT THE ERROR'S TYPE. `mintCloneToken`
+        // already types its own failures, but this step must hold whatever the
+        // dep throws: anything that is not a lease loss means we reached the
+        // clone with no credential, and it has to land as `clone_failed` on the
+        // plan we just opened. Letting an untyped throw through would take the
+        // generic path, which has no degraded marker for it either — and would
+        // complete a fresh plan with an EMPTY attempt log, a check that ran
+        // nothing and reported nothing.
+        if (error instanceof LeaseLostError) throw error;
+        throw error instanceof CloneTokenUnavailableError
+          ? error
+          : new CloneTokenUnavailableError(
+              error instanceof Error ? error.message : String(error)
+            );
+      }
       if (!cloneToken) {
         // A null token is only ever legal for a public repository. Here it means
         // the same thing a 502 does — we cannot clone — so it gets the same
