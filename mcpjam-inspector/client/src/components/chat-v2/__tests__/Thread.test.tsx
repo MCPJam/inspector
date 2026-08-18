@@ -4,7 +4,7 @@ import type { ReactElement } from "react";
 import { Thread } from "../thread";
 import type { UIMessage } from "@ai-sdk/react";
 import type { ModelDefinition } from "@/shared/types";
-import { ChatboxHostStyleProvider } from "@/contexts/chatbox-client-style-context";
+import { ScenarioHostStyleProvider } from "@/contexts/scenario-client-style-context";
 import { useWidgetSurfaceStore } from "../thread/mcp-apps/widget-surface-store";
 
 const mockMessageView = vi.fn();
@@ -17,7 +17,7 @@ const renderWithHost = (
 ) =>
   render(
     hostStyle ? (
-      <ChatboxHostStyleProvider value={hostStyle}>{ui}</ChatboxHostStyleProvider>
+      <ScenarioHostStyleProvider value={hostStyle}>{ui}</ScenarioHostStyleProvider>
     ) : (
       ui
     ),
@@ -516,7 +516,7 @@ describe("Thread", () => {
 
       expect(screen.getByTestId("fullscreen-chat-overlay")).toBeInTheDocument();
       // The overlay no longer takes a loadingIndicatorVariant prop — it
-      // resolves the brand indicator from ChatboxHostStyleProvider context.
+      // resolves the brand indicator from ScenarioHostStyleProvider context.
       expect(mockFullscreenChatOverlay).toHaveBeenLastCalledWith(
         expect.not.objectContaining({ loadingIndicatorVariant: expect.anything() }),
       );

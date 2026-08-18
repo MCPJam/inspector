@@ -1112,6 +1112,7 @@ export class HostRunner implements HostExecutor {
    * );
    *
    * const test = new EvalTest({
+   *   id: "c_my_test",
    *   name: "my-test",
    *   test: async (executor) => {
    *     const r = await executor.run("test");

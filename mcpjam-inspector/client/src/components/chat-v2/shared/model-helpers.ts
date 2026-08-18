@@ -373,7 +373,7 @@ export const getDefaultModel = (
     // call. See BACK2-628.
     Model.CLAUDE_HAIKU_4_5, // anthropic
     Model.GPT_5_MINI, // openai
-    Model.CLAUDE_3_7_SONNET_LATEST, // anthropic
+    Model.CLAUDE_SONNET_4_5, // anthropic
     Model.GPT_4_1, // openai
     Model.GEMINI_2_5_PRO, // google
     Model.DEEPSEEK_CHAT, // deepseek
