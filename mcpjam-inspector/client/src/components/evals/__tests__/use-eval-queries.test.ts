@@ -144,5 +144,34 @@ describe("useEvalQueries", () => {
       expect(result.current.enableOverviewQuery).toBe(true);
       expect(result.current.isOverviewLoading).toBe(true);
     });
+
+    // The suite-detail gate is a separate expression from the overview one, so
+    // the case above cannot catch a direct guest losing its detail and run
+    // queries. Both must stay live, and neither may be held pending by the
+    // bootstrap term — a direct guest has no bootstrap to wait on.
+    it("still queries suite details and runs for direct guests", () => {
+      const { result } = renderHook(() =>
+        useEvalQueries({
+          isAuthenticated: false,
+          selectedSuiteId: "suite-1",
+          deletingSuiteId: null,
+          projectId: null,
+          organizationId: null,
+          isDirectGuest: true,
+        }),
+      );
+
+      expect(result.current.enableSuiteDetailsQuery).toBe(true);
+      expect(mocks.useQuery).toHaveBeenCalledWith(
+        "testSuites:getAllTestCasesAndIterationsBySuite",
+        { suiteId: "suite-1" },
+      );
+      expect(mocks.useQuery).toHaveBeenCalledWith("testSuites:listTestSuiteRuns", {
+        suiteId: "suite-1",
+        limit: 100,
+      });
+      expect(result.current.isSuiteDetailsLoading).toBe(true);
+      expect(result.current.isSuiteRunsLoading).toBe(true);
+    });
   });
 });
