@@ -561,7 +561,7 @@ describe("PlanLimitDialog", () => {
         );
         // Retired, so a third load says nothing.
         expect(
-          window.sessionStorage.getItem("mcpjam.upgradeReturnToken")
+          window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-1")
         ).toBe(null);
       } finally {
         vi.useRealTimers();
@@ -592,10 +592,11 @@ describe("PlanLimitDialog", () => {
         "plan_limit_upgrade_returned",
         expect.anything()
       );
-      // Retired on sight, so it cannot wait around for a third user either.
-      expect(window.sessionStorage.getItem("mcpjam.upgradeReturnToken")).toBe(
-        null
-      );
+      // user-2 has no ticket of their own, and user-1's is namespaced out of
+      // reach rather than something user-2's session has to notice and clean.
+      expect(
+        window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-2")
+      ).toBe(null);
     });
 
     it("disarms a pending confirmation when the buyer signs out mid-flight", async () => {
@@ -630,9 +631,11 @@ describe("PlanLimitDialog", () => {
         "plan_limit_upgrade_returned",
         expect.anything()
       );
-      expect(window.sessionStorage.getItem("mcpjam.upgradeReturnToken")).toBe(
-        null
-      );
+      // user-1's ticket outlives the sign-out untouched — it is namespaced, so
+      // user-2's session can neither read nor redeem it — and dies with the tab.
+      expect(
+        window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-2")
+      ).toBe(null);
     });
 
     it("does not confirm when sign-out and the paid update land together", async () => {
@@ -678,7 +681,7 @@ describe("PlanLimitDialog", () => {
       });
       expect(toastSuccess).not.toHaveBeenCalled();
       expect(
-        window.sessionStorage.getItem("mcpjam.upgradeReturnToken")
+        window.sessionStorage.getItem("mcpjam.upgradeReturnToken:user-1")
       ).not.toBe(null);
 
       authState.userId = "user-1";

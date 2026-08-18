@@ -149,13 +149,13 @@ function UpgradeReturnFlow({
     if (upgraded) {
       settledRef.current = true;
       // Outcome known — this is the only success path that retires the ticket.
-      clearUpgradeReturnToken();
+      clearUpgradeReturnToken(upgradeReturn.userId);
     } else {
       waitReportedRef.current = true;
       // Kept, deliberately: a webhook slower than the grace window is still a
       // real purchase, and the ticket is what lets a later load confirm it.
       // The TTL retires it if nothing ever settles.
-      markUpgradeReturnWaited();
+      markUpgradeReturnWaited(upgradeReturn.userId);
     }
 
     if (upgraded) {

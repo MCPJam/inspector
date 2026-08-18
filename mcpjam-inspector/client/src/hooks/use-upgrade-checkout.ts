@@ -34,15 +34,26 @@ export const UPGRADE_RETURN_ORIGIN_PARAM = "upgrade_from";
  * It also keeps a stranger's copy of the link from feeding an org id we have no
  * access to into a Convex `v.id` query.
  */
-const UPGRADE_RETURN_TOKEN_KEY = "mcpjam.upgradeReturnToken";
+/**
+ * Scoped by user in the KEY, never stored in the value — the same shape
+ * `active-organization-storage` uses. It keeps an account identifier out of
+ * storage at rest, and it makes a mismatch structurally impossible rather than
+ * something we have to notice and clean up: another user simply has no ticket.
+ */
+const UPGRADE_RETURN_TOKEN_KEY_PREFIX = "mcpjam.upgradeReturnToken";
+
+function upgradeReturnTokenKey(userId: string): string {
+  return `${UPGRADE_RETURN_TOKEN_KEY_PREFIX}:${userId}`;
+}
 const UPGRADE_RETURN_TOKEN_TTL_MS = 2 * 60 * 60 * 1000;
 
 export interface UpgradeReturnTicket {
   organizationId: string;
   origin: UpgradeOrigin;
-  /** Who started this checkout. sessionStorage is per-tab, not per-identity:
-   * without this, signing out and letting someone else sign in inside the same
-   * tab hands them a confirmation — and a conversion — they never earned. */
+  /** Whose ticket this is. Comes from the storage key, not the stored value,
+   * so it is never written down: sessionStorage is per-tab, not per-identity,
+   * and without scoping, signing out and letting someone else sign in inside
+   * the same tab would hand them a confirmation they never earned. */
   userId: string;
   /** We already reported one settlement wait for this checkout. Survives a
    * reload so a slow webhook is still recorded as "late", not "immediate". */
@@ -57,8 +68,8 @@ export function stashUpgradeReturnToken(
   if (typeof window === "undefined") return;
   try {
     window.sessionStorage.setItem(
-      UPGRADE_RETURN_TOKEN_KEY,
-      JSON.stringify({ organizationId, origin, userId, issuedAt: Date.now() })
+      upgradeReturnTokenKey(userId),
+      JSON.stringify({ organizationId, origin, issuedAt: Date.now() })
     );
   } catch {
     // Storage can be unavailable (private mode, blocked cookies). Checkout
@@ -85,12 +96,13 @@ export function readUpgradeReturnToken(
   // still belongs to whoever comes back — a refresh blip is not a new user.
   if (!currentUserId) return null;
   try {
-    const raw = window.sessionStorage.getItem(UPGRADE_RETURN_TOKEN_KEY);
+    const raw = window.sessionStorage.getItem(
+      upgradeReturnTokenKey(currentUserId)
+    );
     if (!raw) return null;
     const parsed = JSON.parse(raw) as {
       organizationId?: string;
       origin?: string;
-      userId?: string;
       issuedAt?: number;
       waited?: boolean;
     };
@@ -99,16 +111,14 @@ export function readUpgradeReturnToken(
       Date.now() - parsed.issuedAt < UPGRADE_RETURN_TOKEN_TTL_MS;
     // The TTL is the give-up: a checkout abandoned at Stripe leaves a ticket
     // nothing will ever settle, and it must not wait in this tab forever.
-    // A ticket belonging to someone else — a previous session in this tab, or
-    // one written before tickets carried an identity — is retired on sight.
-    if (!fresh || !parsed.organizationId || parsed.userId !== currentUserId) {
-      clearUpgradeReturnToken();
+    if (!fresh || !parsed.organizationId) {
+      clearUpgradeReturnToken(currentUserId);
       return null;
     }
     return {
       organizationId: parsed.organizationId,
       origin: parsed.origin === "credits" ? "credits" : "evals",
-      userId: parsed.userId,
+      userId: currentUserId,
       waited: parsed.waited === true,
     };
   } catch {
@@ -117,14 +127,15 @@ export function readUpgradeReturnToken(
 }
 
 /** Records that we already announced a settlement wait for this checkout. */
-export function markUpgradeReturnWaited(): void {
+export function markUpgradeReturnWaited(userId: string): void {
   if (typeof window === "undefined") return;
   try {
-    const raw = window.sessionStorage.getItem(UPGRADE_RETURN_TOKEN_KEY);
+    const key = upgradeReturnTokenKey(userId);
+    const raw = window.sessionStorage.getItem(key);
     if (!raw) return;
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     window.sessionStorage.setItem(
-      UPGRADE_RETURN_TOKEN_KEY,
+      key,
       JSON.stringify({ ...parsed, waited: true })
     );
   } catch {
@@ -132,10 +143,10 @@ export function markUpgradeReturnWaited(): void {
   }
 }
 
-export function clearUpgradeReturnToken(): void {
+export function clearUpgradeReturnToken(userId: string): void {
   if (typeof window === "undefined") return;
   try {
-    window.sessionStorage.removeItem(UPGRADE_RETURN_TOKEN_KEY);
+    window.sessionStorage.removeItem(upgradeReturnTokenKey(userId));
   } catch {
     // Nothing to do; a stale ticket expires on its own via the TTL.
   }
