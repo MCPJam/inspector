@@ -723,7 +723,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         availableDisplayModes: ["inline", "fullscreen", "pip"],
         containerDimensions: {
           height: 400,
-          maxWidth: 672,
+          maxWidth: 768,
         },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
