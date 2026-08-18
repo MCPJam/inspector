@@ -1,7 +1,22 @@
 import { render, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { toast } from "sonner";
 import { Toaster } from "@mcpjam/design-system/sonner";
+
+// Read off disk rather than imported: vitest runs with its default `css: false`,
+// which stubs CSS imports (including `?raw`) to an empty string. A rule copied
+// into this file would only ever test the copy.
+function designSystemStyleDir(): string {
+  let dir = process.cwd();
+  for (let depth = 0; depth < 5; depth += 1) {
+    const candidate = resolve(dir, "design-system/src");
+    if (existsSync(resolve(candidate, "index.css"))) return candidate;
+    dir = dirname(dir);
+  }
+  throw new Error(`design-system/src not found upward from ${process.cwd()}`);
+}
 
 // Sonner styles the toast description from its own resolved theme, not from the
 // CSS vars we hand it. So the theme it resolves has to match the one the app is
@@ -81,6 +96,36 @@ describe("Toaster theme", () => {
     await renderWithToast(<Toaster theme={theme} />);
 
     expect(toasterTheme()).toBe(theme);
+  });
+
+  // Sonner ships its own `[data-description] { color: #3f3f3f }` and injects it
+  // at runtime, so ours reaches the element only by outranking that one. This
+  // pins which declaration wins. It cannot pin the painted colour: jsdom does
+  // not resolve `var()` (a literal colour resolves; `var(--foreground)` comes
+  // back verbatim), so the resolved value is measured in a browser instead —
+  // rgb(232, 232, 232) before this fix, `--foreground` after.
+  it("lets our description colour outrank sonner's own", async () => {
+    const styleDir = designSystemStyleDir();
+    const style = document.createElement("style");
+    style.textContent = [
+      readFileSync(resolve(styleDir, "tokens.css"), "utf8"),
+      // jsdom does not follow @import, and tokens.css is already inlined above.
+      readFileSync(resolve(styleDir, "index.css"), "utf8").replace(
+        /@import[^;]+;/g,
+        ""
+      ),
+    ].join("\n");
+    document.head.appendChild(style);
+
+    try {
+      await renderWithToast();
+
+      const description = document.querySelector("[data-description]");
+      expect(description).not.toBeNull();
+      expect(getComputedStyle(description!).color).toBe("var(--foreground)");
+    } finally {
+      style.remove();
+    }
   });
 
   // Defensive branch: every environment with `document` also has
