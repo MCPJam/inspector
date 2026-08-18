@@ -25,7 +25,7 @@
  *
  * It deliberately does NOT connect the MCPJam platform MCP worker for chat
  * turns any more: those tools mutate the user's workspace (projects,
- * servers, evals, chatboxes) server-side and invisibly, which is exactly
+ * servers, evals, scenarios) server-side and invisibly, which is exactly
  * what this surface is meant not to do. `MCPJAM_AGENT_PLATFORM_TOOLS=1`
  * restores the old ACTION contract wholesale (see
  * `agentPlatformToolsEnabled`). It does not gate the knowledge sources: the
@@ -62,7 +62,7 @@
  *     would fail backend `selectedServerIds` validation against the
  *     project's `servers` rows. The chat appears in the user's history alongside
  *     other direct sessions; per-surface differentiation is client-side.
- *   - Ignores chatbox / appTools / selectedServerIds fields up front — this
+ *   - Ignores scenario / appTools / selectedServerIds fields up front — this
  *     surface owns its MCP tool set. The one client-supplied tool snapshot it
  *     DOES accept is `uiTools` (WebMCP UI tools, validated at the boundary):
  *     the agent panel is the primary surface for driving the inspector UI.
@@ -260,7 +260,7 @@ function buildPlatformConfig(bearerToken: string): HttpServerConfig {
 // validation errors. Server-side use of the parsed body still only reads
 // the explicitly-declared fields below plus `uiTools` (validated by
 // `validateUiToolEntries` before use) — there's no path here that routes
-// a tampered selectedServerIds / appTools / chatbox field into the
+// a tampered selectedServerIds / appTools / scenario field into the
 // streamWebChatTurn call because we don't read them at all.
 const mcpjamAgentSchema = z
   .object({

@@ -235,7 +235,7 @@ describe("runHarnessTurn empty output projection", () => {
 
     // The continuity claim (and therefore the resume-state commit) resolves the
     // `swarm-chat` owner keyed on the run + pinned host + session — never the
-    // Direct/Chatbox lane a swarm turn used to misfile under.
+    // Direct/Scenario lane a swarm turn used to misfile under.
     expect(claimHarnessSessionState).toHaveBeenCalled();
     const owner = (vi.mocked(claimHarnessSessionState).mock.calls[0]![0] as any)
       .owner;

@@ -59,7 +59,7 @@ vi.mock("../lib/app-navigation", async (importOriginal) => {
 
 // App.tsx's import graph pulls in the CodeMirror JSON editor; stub it (and the
 // CodeMirror packages it imports) so the route module loads under jsdom. Mirror
-// of ChatboxesRoute.billing.test.tsx.
+// of ScenariosRoute.billing.test.tsx.
 vi.mock("../components/ui/json-editor/codemirror-json-editor", () => ({
   CodemirrorJsonEditor: () => null,
 }));

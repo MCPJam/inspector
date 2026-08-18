@@ -258,7 +258,7 @@ jobs:
           # this check report the backend as down on every PR.
           CONVEX_HTTP: ${{ env.DEFAULT_BACKEND_VITE_CONVEX_URL }}
         run: |
-          .github/scripts/convex-health-check.sh "$CONVEX_HTTP" "chatboxes:listChatboxes"
+          .github/scripts/convex-health-check.sh "$CONVEX_HTTP" "scenarios:listScenarios"
 
       - name: Dispatch backend preview request
         if: steps.backend_branch.outputs.exists == 'true' && steps.preview_domain.outputs.url != ''
@@ -899,7 +899,7 @@ jobs:
           # .convex.site HTTP-router domain (see initial_health above).
           CONVEX_HTTP: ${{ steps.backend_target.outputs.vite_convex_url }}
         run: |
-          .github/scripts/convex-health-check.sh "$CONVEX_HTTP" "chatboxes:listChatboxes"
+          .github/scripts/convex-health-check.sh "$CONVEX_HTTP" "scenarios:listScenarios"
 
       - name: Update preview comment
         # always() so a failed Railway/WorkOS/health step doesn't leave the

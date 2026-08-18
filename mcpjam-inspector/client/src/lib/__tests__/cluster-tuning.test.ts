@@ -5,7 +5,7 @@
  *
  *   - Balanced must equal the defaults exactly. Every scope inherits its tuning
  *     from its last completed run, so a drift between "Balanced" and "untuned"
- *     would re-theme every chatbox that had never been tuned.
+ *     would re-theme every scenario that had never been tuned.
  *   - The ranges are re-validated server-side. A slider that can reach a value
  *     the mutation rejects turns a knob into an error toast.
  */
