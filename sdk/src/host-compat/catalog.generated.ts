@@ -521,6 +521,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
+            toolCancelled: true,
             hostContextChanged: true,
             resourceTeardown: true,
             toolInfo: true,
@@ -801,6 +802,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen", "pip"],
+            toolInputPartial: true,
+            toolCancelled: true,
             hostContextChanged: true,
             toolInfo: true,
             openLinks: true,
@@ -826,6 +829,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
             resourceCacheTtl: true,
             resourcePrefersBorder: true,
+            downloadFile: false,
             containerSizing: {
               defaultWidth: 670,
               defaultHeight: 398,

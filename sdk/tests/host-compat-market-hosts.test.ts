@@ -60,8 +60,14 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("chatgpt")?.capabilities).toMatchObject({
       serverResources: true,
       logging: true,
+      toolInputPartial: true,
+      toolCancelled: true,
+      downloadFile: false,
     });
-    expect(profileFor("chatgpt")?.capabilities?.downloadFile).toBeUndefined();
+    // resourceTeardown is the single surface the probe found missing.
+    expect(
+      profileFor("chatgpt")?.capabilities?.resourceTeardown
+    ).toBeUndefined();
   });
 
   it("carries each host's advertised protocol versions (or none)", () => {

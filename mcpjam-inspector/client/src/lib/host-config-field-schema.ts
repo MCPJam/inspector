@@ -492,7 +492,10 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     path: "mcpProfile.initialize.supportedProtocolVersions",
     description: "Accept-list supported in the initialize handshake.",
     kind: { kind: "string-array" },
-    read: (cfg) => mcpProfile(cfg)?.initialize?.supportedProtocolVersions,
+    read: (cfg) =>
+      (cfg as { supportedProtocolVersions?: string[] })
+        .supportedProtocolVersions ??
+      mcpProfile(cfg)?.initialize?.supportedProtocolVersions,
   },
 
   // ============================================================
