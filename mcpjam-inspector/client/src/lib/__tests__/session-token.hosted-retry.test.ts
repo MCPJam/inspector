@@ -55,7 +55,7 @@ describe("authFetch hosted 401 retry", () => {
     vi.restoreAllMocks();
   });
 
-  it("retries chatbox bootstrap once with a refreshed guest token after a 401", async () => {
+  it("retries scenario bootstrap once with a refreshed guest token after a 401", async () => {
     vi.mocked(getApiAuthorizationHeader).mockResolvedValueOnce(
       "Bearer stale-token"
     );
@@ -69,10 +69,10 @@ describe("authFetch hosted 401 retry", () => {
         json: () => Promise.resolve({ success: true }),
       } as Response);
 
-    const response = await authFetch("/api/web/chatboxes/bootstrap", {
+    const response = await authFetch("/api/web/scenarios/bootstrap", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: "chatbox-token" }),
+      body: JSON.stringify({ token: "scenario-token" }),
     });
 
     expect(response.status).toBe(200);
@@ -81,7 +81,7 @@ describe("authFetch hosted 401 retry", () => {
     expect(global.fetch).toHaveBeenCalledTimes(2);
     expect(global.fetch).toHaveBeenNthCalledWith(
       2,
-      "/api/web/chatboxes/bootstrap",
+      "/api/web/scenarios/bootstrap",
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: "Bearer fresh-token",
@@ -90,7 +90,7 @@ describe("authFetch hosted 401 retry", () => {
     );
     expect(trackMock).toHaveBeenCalledWith("guest_refresh_success", {
       location: "auth_fetch",
-      surface: "chatbox",
+      surface: "scenario",
       auth_mode: "guest",
       status: "success",
     });
@@ -203,7 +203,7 @@ describe("authFetch hosted 401 retry", () => {
       ok: false,
     } as Response);
 
-    const response = await authFetch("/api/web/chatboxes/bootstrap");
+    const response = await authFetch("/api/web/scenarios/bootstrap");
 
     expect(response.status).toBe(401);
     expect(resetTokenCache).toHaveBeenCalledTimes(1);
@@ -211,7 +211,7 @@ describe("authFetch hosted 401 retry", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1); // no retry
     expect(trackMock).toHaveBeenCalledWith("guest_refresh_failure", {
       location: "auth_fetch",
-      surface: "chatbox",
+      surface: "scenario",
       auth_mode: "guest",
       status: "failure",
       error_kind: "guest_refresh_unavailable",

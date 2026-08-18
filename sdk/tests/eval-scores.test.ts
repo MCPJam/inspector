@@ -225,6 +225,7 @@ describe("verdict equivalence with the legacy expression", () => {
         mockPrompt({ text: entry.text, toolsCalled: entry.toolsCalled })
       );
       const test = new EvalTest({
+        id: "c_score_1",
         name: entry.label,
         ...(entry.predicates ? { predicates: entry.predicates } : {}),
         ...(entry.expectedToolCalls
@@ -257,6 +258,7 @@ describe("no double evaluation", () => {
       mockPrompt({ text: "done", toolsCalled: ["search"] })
     );
     const test = new EvalTest({
+      id: "c_score_2",
       name: "single-eval",
       predicates: [
         { type: "responseContains", needle: "done" },
@@ -283,6 +285,7 @@ describe("case identity does not fork on scorer config", () => {
     const build = async (needle: string) => {
       const agent = mockAgent(() => mockPrompt({ text: "done" }));
       const test = new EvalTest({
+        id: "c_score_3",
         name: "stable-case",
         predicates: [{ type: "responseContains", needle }],
         test: async (executor) => {
@@ -330,6 +333,7 @@ describe("case identity does not fork on scorer config", () => {
   it("writes scores and the snapshot to metadata, never to advancedConfig", async () => {
     const agent = mockAgent(() => mockPrompt({ text: "done" }));
     const test = new EvalTest({
+      id: "c_score_4",
       name: "wire-seat",
       predicates: [{ type: "responseContains", needle: "done" }],
       test: async (executor) => {
@@ -362,6 +366,7 @@ describe("built-in score projections", () => {
   it("reports not_applicable for tool matching when no expectations exist", async () => {
     const agent = mockAgent(() => mockPrompt({ text: "ok" }));
     const test = new EvalTest({
+      id: "c_score_5",
       name: "no-expectations",
       test: async (executor) => {
         await executor.run("go");
@@ -386,6 +391,7 @@ describe("built-in score projections", () => {
   it("turns a thrown test() into an error row, not a zero", async () => {
     const agent = mockAgent(() => mockPrompt({ text: "partial" }));
     const test = new EvalTest({
+      id: "c_score_6",
       name: "thrown-test",
       test: async (executor) => {
         await executor.run("go");
@@ -406,6 +412,7 @@ describe("built-in score projections", () => {
       mockPrompt({ text: "partial", toolsCalled: ["finish"] })
     );
     const test = new EvalTest({
+      id: "c_score_7",
       name: "retry-exhausted",
       predicates: [{ type: "toolCalledAtLeastOnce", toolName: "finish" }],
       test: async (executor) => {
@@ -594,6 +601,7 @@ describe("gating policy", () => {
 
   async function runWith(scorer: Scorer) {
     const test = new EvalTest({
+      id: "c_score_8",
       name: "policy",
       scorers: [scorer],
       test: async (executor) => {
@@ -665,6 +673,7 @@ describe("gating policy", () => {
       onSkipped: "fail",
     });
     const test = new EvalTest({
+      id: "c_score_9",
       name: "skip-policy",
       scorers: [scorer],
       test: async (executor) => {
@@ -684,6 +693,7 @@ describe("gating policy", () => {
       object: { score: 1, reason: "never called" },
     });
     const test = new EvalTest({
+      id: "c_score_10",
       name: "mixed-skip",
       scorers: [
         predicateScorer(
@@ -718,6 +728,7 @@ describe("reserved scorer ids", () => {
     // iteration with no message naming the cause.
     for (const reserved of ["legacy:test", "tool-match"]) {
       const test = new EvalTest({
+        id: "c_score_11",
         name: "collision",
         scorers: [
           predicateScorer({ type: "noToolErrors" }, { id: reserved }),

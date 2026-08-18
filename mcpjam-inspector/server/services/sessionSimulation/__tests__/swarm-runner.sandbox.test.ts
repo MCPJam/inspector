@@ -295,7 +295,9 @@ beforeEach(() => {
   resolveHarnessSandboxMock.mockReset();
   reportAttemptMock.mockReset().mockResolvedValue({ ok: true, applied: true });
   heartbeatJourneyRunMock.mockReset().mockResolvedValue(undefined);
-  persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
+  persistChatSessionToConvexMock
+    .mockReset()
+    .mockResolvedValue({ outcome: "saved", version: 1 });
   resolveSyntheticModelSourceMock
     .mockReset()
     .mockResolvedValue({ source: "mcpjam" });

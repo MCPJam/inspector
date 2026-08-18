@@ -51,7 +51,7 @@ export interface ApiContext {
   /**
    * The active host's enterprise-managed authorization policy (validated
    * `on` value only). Rides ad-hoc chat/eval bodies; ignored server-side
-   * whenever a backend host config exists (chatbox/host-bound turns read
+   * whenever a backend host config exists (scenario/host-bound turns read
    * the policy server-authoritatively instead).
    */
   xaaPolicy?: XaaEnterprisePolicy;
@@ -59,12 +59,12 @@ export interface ApiContext {
   getAccessToken?: GetAccessTokenFn;
   oauthTokensByServerId?: Record<string, string>;
   /**
-   * Resolved chatbox identity. After /api/web/chatboxes/redeem resolves,
-   * the host clones these onto every chatbox-aware API call. The URL link
+   * Resolved scenario identity. After /api/web/scenarios/redeem resolves,
+   * the host clones these onto every scenario-aware API call. The URL link
    * token is consumed only at redemption time and never threaded onto the
    * read path.
    */
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   isAuthenticated?: boolean;
   /** True when a WorkOS session exists (user signed in), even if token hasn't resolved yet. */
@@ -238,7 +238,7 @@ export function injectHostedServerMapping(
 
 export function getHostedProjectId(): string {
   // Context-gated, not mode-gated: local builds populate the same API
-  // context (unified bootstrap, chatbox runtime), and the null check below
+  // context (unified bootstrap, scenario runtime), and the null check below
   // is the real guard. Callers that are genuinely hosted-only stay behind
   // their own HOSTED_MODE forks.
   const projectId = apiContext.projectId;
@@ -416,16 +416,16 @@ export function getHostedOAuthToken(serverId: string): string | undefined {
   return apiContext.oauthTokensByServerId?.[serverId];
 }
 
-export function getHostedChatboxId(): string | undefined {
-  return apiContext.chatboxId;
+export function getHostedScenarioId(): string | undefined {
+  return apiContext.scenarioId;
 }
 
-export function getHostedChatboxAccessVersion(): number | undefined {
+export function getHostedScenarioAccessVersion(): number | undefined {
   return apiContext.accessVersion;
 }
 
 function getHostedAccessScope(): HostedAccessScope | undefined {
-  return getHostedChatboxId() ? "chat_v2" : undefined;
+  return getHostedScenarioId() ? "chat_v2" : undefined;
 }
 
 /**
@@ -474,8 +474,8 @@ export function buildServerRequest(
   const projectId = getHostedProjectId();
   const serverId = resolveHostedServerId(serverNameOrId);
   const oauthToken = getHostedOAuthToken(serverId);
-  const chatboxId = getHostedChatboxId();
-  const accessVersion = getHostedChatboxAccessVersion();
+  const scenarioId = getHostedScenarioId();
+  const accessVersion = getHostedScenarioAccessVersion();
   const accessScope = getHostedAccessScope();
   return {
     projectId,
@@ -501,13 +501,13 @@ export function buildServerRequest(
     // Single-server flows (tools/resources/prompts, validate) enforce the
     // same host policy as batch connects — omitting it here would let these
     // ephemeral connections bypass enterprise-managed auth. Ignored
-    // server-side for chatbox-scoped calls (server-authoritative fetch wins).
+    // server-side for scenario-scoped calls (server-authoritative fetch wins).
     // Only `false` reaches the wire; see `ApiContext.mirrorToolParamHeaders`.
     ...conformanceWireFields(apiContext),
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(chatboxId ? { chatboxId } : {}),
-    ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
+    ...(scenarioId ? { scenarioId } : {}),
+    ...(scenarioId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
   };
 }
 
@@ -525,7 +525,7 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 } {
   assertClientConfigSynced();
@@ -535,8 +535,8 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const protocolVersions = buildBatchProtocolVersionMap(serverIds);
-  const chatboxId = getHostedChatboxId();
-  const accessVersion = getHostedChatboxAccessVersion();
+  const scenarioId = getHostedScenarioId();
+  const accessVersion = getHostedScenarioAccessVersion();
   const accessScope = getHostedAccessScope();
   return {
     projectId,
@@ -557,8 +557,8 @@ export function buildServerBatchRequest(serverNamesOrIds: string[]): {
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(chatboxId ? { chatboxId } : {}),
-    ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
+    ...(scenarioId ? { scenarioId } : {}),
+    ...(scenarioId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
   };
 }
 
@@ -586,7 +586,7 @@ export function buildResolvedServerBatchRequest(input: {
   serverNames: string[];
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 }): {
   projectId: string;
@@ -602,7 +602,7 @@ export function buildResolvedServerBatchRequest(input: {
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 } {
   assertClientConfigSynced();
@@ -626,8 +626,8 @@ export function buildResolvedServerBatchRequest(input: {
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(input.oauthTokens ? { oauthTokens: input.oauthTokens } : {}),
     ...(input.accessScope ? { accessScope: input.accessScope } : {}),
-    ...(input.chatboxId ? { chatboxId: input.chatboxId } : {}),
-    ...(input.chatboxId && Number.isFinite(input.accessVersion)
+    ...(input.scenarioId ? { scenarioId: input.scenarioId } : {}),
+    ...(input.scenarioId && Number.isFinite(input.accessVersion)
       ? { accessVersion: input.accessVersion }
       : {}),
   };
@@ -647,7 +647,7 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   xaaPolicy?: XaaEnterprisePolicy;
   oauthTokens?: Record<string, string>;
   accessScope?: HostedAccessScope;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 } {
   assertClientConfigSynced();
@@ -657,8 +657,8 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
   const serverNames = serverEntries.map((entry) => entry.serverName);
   const oauthTokens = buildHostedOAuthTokensMap(serverIds);
   const protocolVersions = buildBatchProtocolVersionMap(serverIds);
-  const chatboxId = getHostedChatboxId();
-  const accessVersion = getHostedChatboxAccessVersion();
+  const scenarioId = getHostedScenarioId();
+  const accessVersion = getHostedScenarioAccessVersion();
   const accessScope = getHostedAccessScope();
 
   return {
@@ -680,8 +680,8 @@ export function buildHostedEvalServerBatchRequest(serverNamesOrIds: string[]): {
     ...(apiContext.xaaPolicy ? { xaaPolicy: apiContext.xaaPolicy } : {}),
     ...(oauthTokens ? { oauthTokens } : {}),
     ...(accessScope ? { accessScope } : {}),
-    ...(chatboxId ? { chatboxId } : {}),
-    ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
+    ...(scenarioId ? { scenarioId } : {}),
+    ...(scenarioId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
   };
 }
 
