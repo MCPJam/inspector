@@ -1011,8 +1011,13 @@ export function OrganizationBillingSection({
                       annualDiscountPct={annualDiscountPct}
                     />
                   </div>
+                  {/* The catalog resolves to undefined both in flight and on a
+                      denied org read. Only the first is loading — saying so in
+                      the second left denied orgs on a spinner that never ends. */}
                   <div className="rounded-md border border-dashed border-border/70 p-4 text-sm text-muted-foreground">
-                    Loading plan catalog...
+                    {isLoadingPlanCatalog
+                      ? "Loading plan catalog..."
+                      : "Plan catalog unavailable for this organization."}
                   </div>
                 </div>
               ) : (
