@@ -183,7 +183,11 @@ vi.mock("@/shared/types", async () => {
   );
   return {
     ...actual,
-    modelSupportsTemperature: vi.fn().mockReturnValue(true),
+    // A spy over the real predicate, not a stub: the temperature cases below
+    // assert what the route actually sends, and stubbing this to `true` would
+    // have them assert the stub. Still a spy, because one hosted case has to
+    // force the unsupported branch that its own id cannot reach.
+    modelSupportsTemperature: vi.fn(actual.modelSupportsTemperature),
   };
 });
 

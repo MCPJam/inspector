@@ -4,16 +4,6 @@ vi.mock("../skill-tools.js", () => ({
   getSkillToolsAndPrompt: vi.fn(),
 }));
 
-vi.mock("@/shared/types", async () => {
-  const actual = await vi.importActual<typeof import("@/shared/types")>(
-    "@/shared/types"
-  );
-  return {
-    ...actual,
-    modelSupportsTemperature: vi.fn().mockReturnValue(true),
-  };
-});
-
 import {
   buildUiTools,
   buildUiToolsSystemPrompt,

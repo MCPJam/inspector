@@ -13,7 +13,8 @@ const model = (id: string): ModelDefinition => ({
 const REJECTING = model("claude-opus-4-8");
 /**
  * Accepts `temperature` on the wire but ignores it. Must be the BYOK id — the
- * MCPJam-provided "openai/gpt-5" is exempted by `isGPT5Model` on purpose.
+ * MCPJam-provided "openai/gpt-5" is exempted by `modelSupportsTemperature` on
+ * purpose, since the backend owns the body it sends upstream.
  */
 const IGNORING = model("gpt-5");
 const ACCEPTING = model("anthropic/claude-sonnet-4.6");
@@ -53,16 +54,16 @@ describe("SystemPromptSelector temperature control", () => {
 
     expect(sliderIsDisabled()).toBe(true);
     expect(
-      screen.getByText(/Temperature is not supported by the selected models/),
+      screen.getByText(/Temperature is not supported for the selected models/),
     ).toBeInTheDocument();
   });
 
-  it("pluralizes the unsupported message for a single model", () => {
+  it("disables the slider for a single model that rejects temperature", () => {
     renderSelector({ currentModel: REJECTING });
 
     expect(sliderIsDisabled()).toBe(true);
     expect(
-      screen.getByText(/Temperature is not supported by the selected model$/),
+      screen.getByText(/Temperature is not supported for the selected models/),
     ).toBeInTheDocument();
   });
 
@@ -74,7 +75,7 @@ describe("SystemPromptSelector temperature control", () => {
 
     expect(sliderIsDisabled()).toBe(false);
     expect(
-      screen.getByText(/Some selected models don't support temperature/),
+      screen.getByText(/Some selected models do not support temperature/),
     ).toBeInTheDocument();
   });
 
@@ -102,7 +103,7 @@ describe("SystemPromptSelector temperature control", () => {
 
       expect(sliderIsDisabled()).toBe(true);
       expect(
-        screen.getByText(/Temperature is not supported by the selected model$/),
+        screen.getByText(/Temperature is not supported for the selected models/),
       ).toBeInTheDocument();
     },
   );

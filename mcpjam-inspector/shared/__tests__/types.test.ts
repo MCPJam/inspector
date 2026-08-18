@@ -223,6 +223,44 @@ describe("modelSupportsTemperature", () => {
   it("keeps temperature for models it knows nothing about", () => {
     expect(modelSupportsTemperature("newvendor/some-new-model")).toBe(true);
   });
+
+  it("strips temperature for Bedrock ids of an affected family", () => {
+    // The shape the original report came in under: Bedrock serves the same
+    // models over the same request surface, so an inference profile for an
+    // affected family 400s identically. None of these are hosted, so the
+    // MCPJam-provided carve-out does not apply.
+    const ids = [
+      "us.anthropic.claude-opus-4-7-20260205-v1:0",
+      "eu.anthropic.claude-sonnet-5-20260401-v1:0",
+      "arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.anthropic.claude-opus-4-8-20260310-v1:0",
+    ];
+    for (const id of ids) {
+      expect(modelSupportsTemperature(id), id).toBe(false);
+    }
+  });
+
+  it("keeps temperature for a Bedrock id whose family still accepts it", () => {
+    const ids = [
+      "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+      "us.anthropic.claude-haiku-4-5-20251001-v1:0",
+      // A bare major on Bedrock is followed by the release date; it must not
+      // be read as a minor version, which would push Opus 4 over the 4.7
+      // threshold.
+      "anthropic.claude-opus-4-20250514-v1:0",
+    ];
+    for (const id of ids) {
+      expect(modelSupportsTemperature(id), id).toBe(true);
+    }
+  });
+
+  it("covers versions past the cutoff that have not shipped yet", () => {
+    // The threshold is numeric, so a new release in an affected family is
+    // handled without anyone editing this file.
+    expect(modelSupportsTemperature("anthropic/claude-opus-4.9")).toBe(false);
+    expect(modelSupportsTemperature("anthropic/claude-opus-6")).toBe(false);
+    // Haiku never dropped the parameters, so it gets no forward guess.
+    expect(modelSupportsTemperature("anthropic/claude-haiku-5")).toBe(true);
+  });
 });
 
 describe("normalizeOauthProtocolMode (connect-form OAuth protocol)", () => {

@@ -1,4 +1,6 @@
 // Shared types between client and server
+import { modelRejectsTemperature } from "@mcpjam/sdk/browser";
+
 import { HOSTED_MODEL_IDS } from "./hosted-model-ids.generated";
 
 import type {
@@ -241,20 +243,15 @@ export const isMCPJamGuestAllowedModel = (
 };
 
 /**
- * Anthropic ids that reject the sampling parameters: Fable 5, Opus 5, Opus
- * 4.8/4.7 and Sonnet 5 answer a `temperature` with a 400 rather than ignoring
- * it, so sending one fails the whole request. Matched by prefix as well as
- * exactly, so a dated snapshot ("claude-opus-5-20260401") resolves like the
- * alias it pins.
+ * Whether a `temperature` may be sent for this model. False means the field has
+ * to be omitted from the request entirely, not sent as a default or as null.
+ *
+ * Which Anthropic ids reject the sampling parameters lives in `@mcpjam/sdk`
+ * ({@link modelRejectsTemperature}) rather than here, because the SDK's
+ * `HostRunner` builds its own provider request and needs the same answer. The
+ * carve-outs below stay inspector-side: both depend on the hosted catalog,
+ * which the SDK has no view of.
  */
-const MODEL_IDS_REJECTING_TEMPERATURE = [
-  "claude-fable-5",
-  "claude-opus-5",
-  "claude-opus-4-8",
-  "claude-opus-4-7",
-  "claude-sonnet-5",
-];
-
 export const modelSupportsTemperature = (modelId: string | Model): boolean => {
   const id = String(modelId);
   // MCPJam-provided models proxy through the backend, which owns the request
@@ -266,12 +263,7 @@ export const modelSupportsTemperature = (modelId: string | Model): boolean => {
   if (id.includes("gpt-5")) {
     return false;
   }
-  // Own-provider ids can still carry a provider segment (an OpenRouter-style
-  // "anthropic/claude-opus-5"); the family lives in the last one.
-  const bareId = id.slice(id.lastIndexOf("/") + 1);
-  return !MODEL_IDS_REJECTING_TEMPERATURE.some(
-    (rejected) => bareId === rejected || bareId.startsWith(`${rejected}-`)
-  );
+  return !modelRejectsTemperature(id);
 };
 
 export interface ModelDefinition {
@@ -718,65 +710,6 @@ export const isBedrockModelId = (modelId: string): boolean => {
   return (
     /^arn:aws(?:-[a-z0-9-]+)?:bedrock:/i.test(modelId) ||
     BEDROCK_BARE_MODEL_ID_PATTERN.test(modelId)
-  );
-};
-
-/**
- * Claude families that removed the sampling parameters. Anthropic rejects
- * `temperature` (and `top_p` / `top_k`) with a 400 on Opus 4.7 and later,
- * Sonnet 5, Fable 5, and Mythos 5; earlier families (Opus 4.6, Sonnet 4.5,
- * Haiku 4.5, ...) still accept them. Bedrock serves the same models through
- * the same request surface, so an inference profile for one of these families
- * fails identically.
- *
- * Expressed as a per-family "removed from this version onward" threshold rather
- * than a list of exact ids: the removal is monotonic within a family, so
- * enumerating versions would silently regress the moment Opus 4.9 ships. A
- * family with no entry here (Haiku) has not dropped the parameters in any
- * released version, and gets no forward guess.
- */
-const TEMPERATURE_REMOVED_FROM_VERSION: Record<
-  string,
-  { major: number; minor: number }
-> = {
-  opus: { major: 4, minor: 7 },
-  sonnet: { major: 5, minor: 0 },
-  fable: { major: 5, minor: 0 },
-  mythos: { major: 5, minor: 0 },
-};
-
-/**
- * Family and version out of a model id. Matched as a substring because the same
- * model reaches us under four id shapes: hosted ("anthropic/claude-opus-4.7"), a
- * Bedrock inference profile ("us.anthropic.claude-opus-4-7-20260205-v1:0"), a
- * Bedrock ARN, and bare ("claude-sonnet-5"). Dots are folded to dashes before
- * matching so the hosted and Bedrock spellings of a version agree.
- *
- * The minor group is capped at two digits so the release date that follows a
- * bare major on Bedrock ("claude-opus-4-20250514-v1:0") is not read as one.
- */
-const CLAUDE_FAMILY_VERSION_PATTERN =
-  /(?:^|[^a-z0-9])claude-(opus|sonnet|haiku|fable|mythos)-([0-9]+)(?:-([0-9]{1,2})(?![0-9]))?/;
-
-/**
- * True when the model rejects a `temperature` request field. Callers must omit
- * the field entirely rather than sending a default.
- */
-export const modelRejectsTemperature = (modelId: string | Model): boolean => {
-  const match = CLAUDE_FAMILY_VERSION_PATTERN.exec(
-    String(modelId).toLowerCase().replace(/\./g, "-")
-  );
-  if (!match) return false;
-
-  const threshold = TEMPERATURE_REMOVED_FROM_VERSION[match[1]];
-  if (!threshold) return false;
-
-  const major = Number(match[2]);
-  // A bare major ("claude-sonnet-5") is that family's .0 release.
-  const minor = match[3] === undefined ? 0 : Number(match[3]);
-  return (
-    major > threshold.major ||
-    (major === threshold.major && minor >= threshold.minor)
   );
 };
 
