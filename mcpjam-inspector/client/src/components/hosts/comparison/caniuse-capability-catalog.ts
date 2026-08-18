@@ -26,7 +26,6 @@ const PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS = new Set([
   "temperature",
   "systemPrompt",
   "mcpProtocolVersion",
-  "supportedProtocolVersions",
   "clientInfo.name",
   "clientInfo.version",
   "connectionDefaults.requestTimeout",
