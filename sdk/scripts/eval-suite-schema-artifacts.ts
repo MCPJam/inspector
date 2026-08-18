@@ -80,15 +80,14 @@ export const ELEMENT_LOCATOR_ANY_OF = [
  *  1. **`io: "input"`.** The default (`"output"`) describes the value zod
  *     RETURNS, which for a non-strict object is the post-strip shape — so it
  *     emits `additionalProperties: false` for objects the validator actually
- *     accepts-and-strips. This document's job is to validate INPUT files, and
- *     publishing the output shape made the two validators disagree: an extra
- *     field inside a step was rejected by the JSON Schema and silently dropped
- *     by zod. `"input"` describes what is accepted, so the objects the suite
- *     file itself declares `.strict()` still close (`additionalProperties:
- *     false`) while the reused step/predicate objects — which inherit strip
- *     semantics from the shared authoring union — stay open in BOTH validators.
- *     Whether that union should become strict is a change to a cross-repo
- *     mirrored schema and does not belong to this generator.
+ *     accepts-and-strips, publishing a schema stricter than the validator it
+ *     documents. This document's job is to validate INPUT files, so it
+ *     describes what is ACCEPTED. Step objects now close in the zod source too
+ *     (`src/contract/steps.ts`), so `additionalProperties: false` on them is
+ *     the validator's real behaviour rather than an artifact of the output
+ *     projection. What remains open in both validators is what the contract
+ *     genuinely does not own: a tool call's `arguments` object and the reused
+ *     predicate union.
  *  2. **The locator `anyOf`.** `elementLocatorSchema`'s "at least one of
  *     role/text/css/testId" is a `.refine()`, and refinements do not project.
  *     Left alone, an editor validating against the published URL would green-
@@ -124,10 +123,11 @@ export function buildEvalSuiteSchemaDocument(): Record<string, unknown> {
       "(unique case ids, unique step ids within a case, and a per-case import " +
       "block requiring top-level provenance) and a serialized-size cap on " +
       "tool-call arguments, none of which JSON Schema can express. " +
-      "Objects the suite file declares are closed (additionalProperties: " +
-      "false); reused step and predicate objects inherit strip-unknown " +
-      "semantics from the shared authoring union and are open in both " +
-      "validators.",
+      "Objects the suite file and the step union declare are closed " +
+      "(additionalProperties: false). A tool call's own `arguments` object " +
+      "and the reused predicate union stay open in both validators: their " +
+      "keys are owned by the server's input schema and by a separate " +
+      "contract module respectively.",
     ...rest,
   };
 }
