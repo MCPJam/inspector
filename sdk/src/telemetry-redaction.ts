@@ -4,6 +4,21 @@ export function redactForTelemetry(value: unknown): unknown {
   return redactForTelemetryAtPath(value, []);
 }
 
+/**
+ * String-specialized `redactForTelemetry`, for the sinks that hold a message
+ * rather than a payload — a thrown error, a log line, a Sentry exception value.
+ *
+ * The redactor already scrubs strings, but it is typed `unknown -> unknown`, so
+ * every message-shaped caller otherwise re-narrows the result itself. Three
+ * modules grew a private copy of exactly this (`error-describer/describe.ts`,
+ * `conformance-redaction.ts`, `xaa/state-machines/state-machine.ts`); this is
+ * the one they should collapse onto, so a fourth does not appear.
+ */
+export function redactTelemetryString(value: string): string {
+  const redacted = redactForTelemetry(value);
+  return typeof redacted === "string" ? redacted : value;
+}
+
 function redactForTelemetryAtPath(value: unknown, path: string[]): unknown {
   if (Array.isArray(value)) {
     return value.map((entry) => redactForTelemetryAtPath(entry, path));

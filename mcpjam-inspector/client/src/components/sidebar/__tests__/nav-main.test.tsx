@@ -152,8 +152,8 @@ describe("NavMain", () => {
       <NavMain
         items={[
           {
-            title: "Chatboxes",
-            url: "#chatboxes",
+            title: "Scenarios",
+            url: "#scenarios",
             icon: FakeIcon,
           },
         ]}
@@ -161,7 +161,7 @@ describe("NavMain", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Chatboxes" })
+      screen.getByRole("button", { name: "Scenarios" })
     ).toBeInTheDocument();
     expect(screen.queryByText("Plan upgrade required")).not.toBeInTheDocument();
   });
@@ -176,8 +176,8 @@ describe("NavMain", () => {
             icon: FakeIcon,
           },
           {
-            title: "Chatboxes",
-            url: "#chatboxes",
+            title: "Scenarios",
+            url: "#scenarios",
             icon: FakeIcon,
           },
         ]}
@@ -187,7 +187,7 @@ describe("NavMain", () => {
 
     expect(screen.getByTestId("learn-more-servers")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("learn-more-chatboxes")
+      screen.queryByTestId("learn-more-scenarios")
     ).not.toBeInTheDocument();
   });
 

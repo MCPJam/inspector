@@ -1,4 +1,5 @@
 import { useCallback } from "react";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
@@ -19,10 +20,11 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
  * **These hooks can throw, and every call site MUST sit inside an
  * `ErrorBoundary`.** `useQuery` re-throws query errors during render, and
  * ordinary cases produce one here: the backend function is not deployed yet
- * (the two repos release independently), a guest actor (`signedInQuery` rejects
- * guests at the boundary), and a caller who is not a member of the org the
- * caller passed — the backend throws there deliberately, because answering
- * `disabled` would confirm the org exists.
+ * (the two repos release independently), or a caller is not a member of the org
+ * they passed — the backend throws there deliberately, because answering
+ * `disabled` would confirm the org exists. Guests never ask: GitHub Checks is
+ * member-only, so the availability read is skipped when there is no WorkOS
+ * user even though the guest session is Convex-authenticated.
  *
  * The boundary is not optional and not defence in depth: a call in a component
  * that is not itself inside one takes that component's whole page down. That is
@@ -31,9 +33,7 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
  * `IntegrationsRoute`, `GithubChecksRoute`, and
  * `SuiteGithubChecksSettingsSection` in `suite-iterations-view`.
  *
- * A boundary catching this still reports it, which is right for a defect and
- * wrong for a refusal — and an org guest opening a suite produces one every
- * time. The refusals now arrive as a `ConvexError` tagged `kind: 'forbidden'`,
+ * A membership refusal arrives as a `ConvexError` tagged `kind: 'forbidden'`,
  * which `reportCaught` drops. The not-yet-deployed case stays a plain throw and
  * still reports, which is also right: that one means the two repos drifted.
  */
@@ -81,9 +81,12 @@ export const GITHUB_CHECKS_UNAVAILABLE_MESSAGE =
 export function useGithubChecksAvailability(
   organizationId: string | null | undefined
 ): GithubChecksAvailability {
+  const { user } = useAuth();
   const { isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
-  const canQuery = Boolean(isAuthenticated && isUserReady && organizationId);
+  const canQuery = Boolean(
+    isAuthenticated && user && isUserReady && organizationId
+  );
 
   return useQuery(
     AVAILABILITY_QUERY as any,

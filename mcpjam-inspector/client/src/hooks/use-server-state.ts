@@ -1338,7 +1338,7 @@ export function useServerState({
     (
       serverConfig: MCPServerConfig,
       // Optional mcpProfile (hostConfig.mcpProfile) that the caller has
-      // already resolved from a chatbox/project context. When provided,
+      // already resolved from a scenario/project context. When provided,
       // its `initialize.clientInfo` and first
       // `initialize.supportedProtocolVersions` entry flow onto the
       // ConnectionDefaults wire shape. Undefined preserves historical

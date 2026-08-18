@@ -28,7 +28,7 @@ const tools = new Hono();
  * failure is one warn — the tool call already succeeded and the task is
  * running on the MCP server whether or not this row lands.
  *
- * Chatbox visitors are skipped (they are not project members; the registry's
+ * Scenario visitors are skipped (they are not project members; the registry's
  * membership check on the forwarded bearer would 403 them). There is
  * deliberately NO guest branch: the backend route header says "Guests are not
  * a special case" — a guest session has a real `users` row and the same
@@ -41,12 +41,12 @@ async function registerCreatedTaskInRegistry(
     projectId: string;
     serverId: string;
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
   },
   created: { wire: string; task: unknown },
 ): Promise<void> {
   try {
-    if (body.accessScope === "chat_v2" || body.chatboxId) return;
+    if (body.accessScope === "chat_v2" || body.scenarioId) return;
     if (created.wire !== "legacy" && created.wire !== "extension") return;
     const task = created.task as
       | { taskId?: unknown; status?: unknown; createdAt?: unknown }

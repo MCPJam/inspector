@@ -43,12 +43,12 @@ export async function resolvePluginStdioHttpTarget(args: {
   serverId: string;
   serverDisplayName: string;
   accessScope?: "project_member" | "chat_v2";
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   workosApiKeyActingAs?: WorkosApiKeyActingAs;
   /**
    * `false` when the hosted authorize batch resolved a signed-in actor. See the
-   * chatbox note below for why only the anonymous case is refused here.
+   * scenario note below for why only the anonymous case is refused here.
    */
   isAnonymous?: boolean;
   executionScope?: ExecutionScope;
@@ -65,16 +65,16 @@ export async function resolvePluginStdioHttpTarget(args: {
   // round trip plus a secret reveal.
   if (args.workosApiKeyActingAs) return null;
 
-  // SHARE-LINK CHATBOX GUEST. The spec reread goes through
+  // SHARE-LINK SCENARIO GUEST. The spec reread goes through
   // `/web/authorize-batch-local`, which authorizes under the caller's OWN
-  // identity and explicitly rejects `chatboxId` ("chatbox handles are not
-  // supported in local mode"), so a chatbox grant cannot carry it. A signed-in
+  // identity and explicitly rejects `scenarioId` ("scenario handles are not
+  // supported in local mode"), so a scenario grant cannot carry it. A signed-in
   // member re-reads fine under their membership; an anonymous share-link
   // visitor has no membership to re-read under and would collect a confusing
   // 403 several calls deeper. Name the limitation here instead.
   if (args.accessScope === "chat_v2" && args.isAnonymous !== false) {
     logger.info(
-      "[plugin-computer] plugin stdio is not available to share-link chatbox visitors",
+      "[plugin-computer] plugin stdio is not available to share-link scenario visitors",
       { serverId: args.serverId }
     );
     return null;
@@ -87,11 +87,11 @@ export async function resolvePluginStdioHttpTarget(args: {
       serverId: args.serverId,
       serverDisplayName: args.serverDisplayName,
       // The SECRET REVEAL still honors the caller's scope — it is the same
-      // Convex route the hosted mint path uses and it does accept a chatbox
+      // Convex route the hosted mint path uses and it does accept a scenario
       // handle. Only the authorize reread underneath cannot, which is what the
       // guard above is about.
       ...(args.accessScope ? { accessScope: args.accessScope } : {}),
-      ...(args.chatboxId ? { chatboxId: args.chatboxId } : {}),
+      ...(args.scenarioId ? { scenarioId: args.scenarioId } : {}),
       ...(args.accessVersion !== undefined
         ? { accessVersion: args.accessVersion }
         : {}),

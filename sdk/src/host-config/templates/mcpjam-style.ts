@@ -111,7 +111,7 @@ const MCPJAM_LIGHT_DARK_VARS: Record<
   "--color-border-info": ["oklch(0.623 0.214 259)", "oklch(0.7 0.18 259)"],
   "--color-border-danger": ["oklch(0.627 0.208 25.331)", "oklch(0.74 0.18 25.331)"],
   "--color-border-success": ["oklch(0.696 0.17 152.5)", "oklch(0.78 0.16 152)"],
-  // `--color-border-warning` is the source `getChatboxShellStyle` reads
+  // `--color-border-warning` is the source `getScenarioShellStyle` reads
   // to produce shadcn `--primary` for the claude visual family. We pipe
   // MCPJam's brand orange here so primary surfaces (Add Server button,
   // host accent pills, etc.) carry MCPJam orange when the previewed host
