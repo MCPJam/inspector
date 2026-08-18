@@ -97,10 +97,14 @@ function assertLocallyEvaluablePredicates(
  * must never be replaced by a secondary error about generating an example.
  */
 function suggestedCaseId(config: EvalTestConfig): string {
+  // TRIMMED, matching the hosted key exactly: the backend derives
+  // `external:` + `externalCaseId.trim()`, so the trimmed value IS the join
+  // key, and suggesting the padded original would suggest a string the charset
+  // check on the next line rejects.
   const external = config.externalCaseId?.trim();
-  // Only when it can BE an id: `externalCaseId` was never charset-bound, and
-  // suggesting a value the very next line rejects is worse than suggesting a
-  // fresh one.
+  // …and only when it can BE an id at all: `externalCaseId` was never
+  // charset-bound, and suggesting a value the very next line rejects is worse
+  // than suggesting a fresh one.
   if (external && opaqueIdSchema.safeParse(external).success) {
     return external;
   }
@@ -131,7 +135,7 @@ function assertDeclaredCaseId(config: EvalTestConfig): void {
         `history. ` +
         (reusesExternal
           ? `This test already declares \`externalCaseId\`, which is the key its ` +
-            `hosted history is joined on, so reuse it verbatim: `
+            `hosted history is joined on, so use that value: `
           : `Mint one once and commit it: `) +
         `id: "${suggestion}"`
     );
