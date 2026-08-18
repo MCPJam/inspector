@@ -578,10 +578,19 @@ export function useSharedChatWidgetCapture({
         abandonedToolCallIdsRef.current.add(toolCallId);
         cachedBlobsRef.current.delete(toolCallId);
         retryCountRef.current.delete(toolCallId);
-        const staleTimer = pendingTimersRef.current.get(toolCallId);
-        if (staleTimer) {
-          clearTimeout(staleTimer);
+        const abandonedTimer = pendingTimersRef.current.get(toolCallId);
+        if (abandonedTimer) {
+          clearTimeout(abandonedTimer);
           pendingTimersRef.current.delete(toolCallId);
+        }
+        // It can already be queued for stale replay: an earlier attempt hit
+        // `scenario_access_stale`, and this one came back terminal before the
+        // parent's re-redeem landed. Leaving it queued keeps the backoff timer
+        // asking for a fresh accessVersion on behalf of work that will never
+        // run again.
+        pendingStaleRetryRef.current.delete(toolCallId);
+        if (pendingStaleRetryRef.current.size === 0) {
+          clearPendingStaleRefresh();
         }
         console.warn(
           "[useSharedChatWidgetCapture] Server is no longer in the scenario allowlist; dropping snapshot for",
@@ -663,7 +672,12 @@ export function useSharedChatWidgetCapture({
 
     for (const [toolCallId, widget] of widgets) {
       const existingTimer = pendingTimersRef.current.get(toolCallId);
-      if (persistedSnapshotToolCallIdsRef.current.has(toolCallId)) {
+      // Already stored, or refused for good — either way there is nothing left
+      // to capture, so don't keep re-arming a timer whose attempt bails.
+      if (
+        persistedSnapshotToolCallIdsRef.current.has(toolCallId) ||
+        abandonedToolCallIdsRef.current.has(toolCallId)
+      ) {
         if (existingTimer) {
           clearTimeout(existingTimer);
           pendingTimersRef.current.delete(toolCallId);
