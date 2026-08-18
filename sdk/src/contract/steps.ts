@@ -300,11 +300,31 @@ export type WidgetAssertion = z.infer<typeof widgetAssertionSchema>;
 /**
  * An assert step's payload is EITHER a model-level `Predicate` (keyed on `type`)
  * OR a DOM-level `WidgetAssertion` (keyed on `kind`). Disjoint discriminator
- * keys, so a plain union resolves unambiguously.
+ * keys — and an object carrying BOTH is refused rather than resolved.
+ *
+ * That refusal is load-bearing, and it is why the predicate branch is guarded
+ * instead of being left as a bare union member. `{ kind: "textVisible", type:
+ * "noToolErrors", … }` is ambiguous by construction: the widget branch is
+ * closed and rejects the stray `type`, while the predicate branch — open,
+ * because predicates are a separate contract — would happily accept it and
+ * strip every widget field, silently turning "the word 'Refunded' is on
+ * screen" into "no tool errors occurred". The second of those passes almost
+ * always. A green eval that checks something nobody asked for is the worst
+ * outcome available here, and it is exactly what closing the widget objects
+ * would otherwise have introduced.
+ *
+ * The guard is an object declaring `kind` as `never`, intersected with the
+ * predicate branch. It is deliberately NOT a `.refine()` on the union: a
+ * refinement runs on the parsed output, by which point `kind` has already been
+ * stripped and the evidence is gone. It also projects into the generated JSON
+ * Schema (`kind: {not: {}}`), so the published contract and the Convex mirror
+ * — whose `v.object` predicate validators reject the extra keys outright —
+ * agree with this one about the same payload.
  */
+const notAWidgetAssertion = z.object({ kind: z.never().optional() });
 export const stepAssertionPayloadSchema = z.union([
   widgetAssertionSchema,
-  predicateSchema,
+  z.intersection(predicateSchema, notAWidgetAssertion),
 ]);
 export type StepAssertionPayload = WidgetAssertion | Predicate;
 

@@ -306,6 +306,27 @@ describe("TestStep schema", () => {
     ).toBe(true);
   });
 
+  it("refuses an assertion declaring BOTH discriminators", () => {
+    // Ambiguous by construction, and resolving it is worse than refusing it:
+    // the widget branch is closed and rejects the stray `type`, while the
+    // predicate branch is open and would accept the same object, strip every
+    // widget field, and silently turn "the word 'Refunded' is on screen" into
+    // "no tool errors occurred" — which passes almost always. A green eval
+    // checking something nobody asked for is the worst outcome available.
+    expect(
+      testStepSchema.safeParse({
+        id: "x",
+        kind: "assert",
+        assertion: {
+          kind: "textVisible",
+          type: "noToolErrors",
+          toolName: "t",
+          text: "Refunded",
+        },
+      }).success
+    ).toBe(false);
+  });
+
   it("discriminates WidgetAssertion (kind) from Predicate (type)", () => {
     expect(
       isWidgetAssertion({ kind: "textVisible", toolName: "t", text: "x" })
@@ -421,6 +442,32 @@ describe("normalize", () => {
         { id: "4", kind: "prompt", prompt: "kept", stray: 1 },
       ]).map((s) => s.id)
     ).toEqual(["4"]);
+  });
+
+  it("recovers the INTENDED assertion when both discriminators appear", () => {
+    // The contract boundaries refuse this payload outright. Here — the
+    // shape-normalizer on the generation and load paths — the recovery is to
+    // strip the stray discriminator and keep the widget assertion the author
+    // wrote, which is exactly what the schema did before it closed. What must
+    // never happen is the other resolution: quietly keeping `type` and
+    // discarding the DOM check.
+    const [step] = normalizeSteps([
+      {
+        id: "1",
+        kind: "assert",
+        assertion: {
+          kind: "textVisible",
+          type: "noToolErrors",
+          toolName: "t",
+          text: "Refunded",
+        },
+      },
+    ]);
+    expect(step).toEqual({
+      id: "1",
+      kind: "assert",
+      assertion: { kind: "textVisible", toolName: "t", text: "Refunded" },
+    });
   });
 
   it("ACCEPTS a predicate carrying an undeclared field", () => {

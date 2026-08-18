@@ -878,6 +878,55 @@
     },
     {
       "__kind": "suiteFile",
+      "__label": "assertion declaring BOTH discriminators (kind and type)",
+      "__why": "The two assertion vocabularies are disjoint by construction: `kind` is a DOM-level WidgetAssertion, `type` is a transcript Predicate. An object carrying both is ambiguous, and resolving it is worse than refusing it — the widget branch is closed and rejects the stray `type`, while the predicate branch is open and would accept the same object, strip every widget field, and silently turn \"the word 'Refunded' is on screen\" into \"no tool errors occurred\". The second passes almost always, so the eval goes green while checking something nobody asked for.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            },
+            {
+              "id": "step-2",
+              "kind": "assert",
+              "assertion": {
+                "kind": "textVisible",
+                "type": "noToolErrors",
+                "toolName": "render_receipt",
+                "text": "Refunded"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
       "__label": "step with an unknown kind (\"navigate\")",
       "__why": "Steps are reused VERBATIM from the canonical union; the suite file introduces no dialect of its own.",
       "__structural": true,
