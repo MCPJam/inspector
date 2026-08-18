@@ -135,9 +135,9 @@ import { parseDraftTestCaseId } from "./draft-test-case";
 import { collectUniqueModelsFromTestCases } from "@/lib/evals/collect-unique-suite-models";
 import { computeIterationResult } from "./pass-criteria";
 import {
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
 import {
   buildHistoricalCompareRunRecords,
   buildComparePreviewTrace,
@@ -189,12 +189,12 @@ import {
   type TraceEnvelope,
 } from "./trace-viewer-adapter";
 import {
-  getChatboxHostLabel,
-  getChatboxHostLogo,
-  getChatboxShellStyle,
-  normalizeChatboxHostStyleId,
+  getScenarioHostLabel,
+  getScenarioHostLogo,
+  getScenarioShellStyle,
+  normalizeScenarioHostStyleId,
   resolveHostLogoByDisplayName,
-} from "@/lib/chatbox-client-style";
+} from "@/lib/scenario-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 interface TestTemplate {
@@ -1074,10 +1074,10 @@ export function TestTemplateEditor({
   // style, defaulting to MCPJam. Mirrors the server's `loadSuiteHostConfig`
   // default so the chip names the host the run actually uses.
   const suiteHostStyle =
-    normalizeChatboxHostStyleId(hostConfigBaseline?.hostStyle) ??
+    normalizeScenarioHostStyleId(hostConfigBaseline?.hostStyle) ??
     DEFAULT_HOST_STYLE_V2;
-  const suiteHostLabel = getChatboxHostLabel(suiteHostStyle);
-  const suiteHostLogoSrc = getChatboxHostLogo(suiteHostStyle);
+  const suiteHostLabel = getScenarioHostLabel(suiteHostStyle);
+  const suiteHostLogoSrc = getScenarioHostLogo(suiteHostStyle);
 
   const hostNamesById = useMemo(() => {
     const map = new Map<string, string | null>();
@@ -3820,7 +3820,7 @@ function RunColumn({
     record.streamingTrace == null &&
     hasStreamingTrace;
   const shouldRenderChatShell = effectiveActiveTab === "chat";
-  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
+  const shellStyle = getScenarioShellStyle(hostStyle, themeMode);
 
   const displayTokens =
     record.streamingMetrics?.tokensUsed ?? record.metrics.tokensUsed;
@@ -4094,11 +4094,11 @@ function RunColumn({
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-1.5">
         {shouldRenderChatShell ? (
-          <ChatboxHostStyleProvider value={hostStyle}>
-            <ChatboxHostThemeProvider value={themeMode}>
+          <ScenarioHostStyleProvider value={hostStyle}>
+            <ScenarioHostThemeProvider value={themeMode}>
               <div
                 className={cn(
-                  "chatbox-host-shell app-theme-scope flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/50",
+                  "scenario-host-shell app-theme-scope flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/50",
                   themeMode === "dark" && "dark",
                 )}
                 data-host-style={hostStyle}
@@ -4108,8 +4108,8 @@ function RunColumn({
                   {renderedRunContent}
                 </div>
               </div>
-            </ChatboxHostThemeProvider>
-          </ChatboxHostStyleProvider>
+            </ScenarioHostThemeProvider>
+          </ScenarioHostStyleProvider>
         ) : (
           renderedRunContent
         )}

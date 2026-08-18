@@ -50,7 +50,7 @@ import { usePluginsEnabled } from "./usePluginsEnabled";
 // import-progress requirement is a live subscription, not an interval).
 // All skip while `plugins-enabled` is off/loading, the actor is a guest, auth
 // has not resolved, or arguments are absent. Project-scoped hooks gate on
-// `shouldQueryProjectId` (the useProjects/useChatboxes convention): a
+// `shouldQueryProjectId` (the useProjects/useScenarios convention): a
 // transient LOCAL project id (UUID or `local_`/`project_` placeholder) is
 // truthy but would throw an ArgumentValidationError during hydration.
 // ---------------------------------------------------------------------------

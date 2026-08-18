@@ -162,18 +162,18 @@ describe("PlatformApiClient", () => {
     expect(result.status).toBe("closed");
   });
 
-  it("builds chatbox read URLs with encoded path params", async () => {
+  it("builds scenario read URLs with encoded path params", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
     const client = makeClient(fetchMock);
 
-    await client.listChatboxes({ projectId: "p1" });
-    await client.getChatbox({ projectId: "p1", chatboxId: "box/1" });
+    await client.listScenarios({ projectId: "p1" });
+    await client.getScenario({ projectId: "p1", scenarioId: "box/1" });
 
     expect(requestOf(fetchMock, 0).url.pathname).toBe(
-      "/api/v1/projects/p1/chatboxes"
+      "/api/v1/projects/p1/scenarios"
     );
     const detail = requestOf(fetchMock, 1);
-    expect(detail.url.pathname).toBe("/api/v1/projects/p1/chatboxes/box%2F1");
+    expect(detail.url.pathname).toBe("/api/v1/projects/p1/scenarios/box%2F1");
     expect(detail.init.method).toBe("GET");
   });
 

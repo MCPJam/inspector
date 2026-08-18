@@ -3,9 +3,9 @@
  *
  * Used by:
  *  - Project Settings → edits projects.defaultHostConfigId. Copy makes
- *    clear that this seeds new chatboxes, eval suites, and direct chat
+ *    clear that this seeds new scenarios, eval suites, and direct chat
  *    tabs only — editing it does NOT propagate to existing children.
- *  - Chatbox Editor / Builder → edits the chatbox-owned hostConfigId.
+ *  - Scenario Editor / Builder → edits the scenario-owned hostConfigId.
  *  - Eval Suite Settings → edits the suite-owned hostConfigId.
  *  - Connection Settings (legacy) → edits the project default's connection
  *    portion only via a compat wrapper. That tab continues to render its
@@ -69,7 +69,7 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 
 export type HostConfigEditorOwner =
   | "project-default"
-  | "chatbox"
+  | "scenario"
   | "eval-suite"
   | "connection-only"
   | "host";
@@ -103,7 +103,7 @@ export interface HostConfigEditorProps {
 export function ClientConfigEditor({
   value,
   onChange,
-  owner = "chatbox",
+  owner = "scenario",
   availableServers,
   caption,
   className,
@@ -158,7 +158,7 @@ export function ClientConfigEditor({
     owner !== "connection-only" && owner !== "eval-suite" && owner !== "host";
 
   // Built-in tools are an attach surface for every editor owner that drives a
-  // model turn — project default, chatbox, eval suite, and the Connect host
+  // model turn — project default, scenario, eval suite, and the Connect host
   // editor. Unlike servers (which the host editor manages via the canvas),
   // built-ins have no canvas equivalent, so the in-editor list is the only
   // attach surface here. Hide entirely on deployments whose catalog is empty
@@ -345,7 +345,7 @@ export function ClientConfigEditor({
               selected={value.serverIds}
               available={availableServers ?? []}
               onChange={(serverIds) => {
-                // Maintain the invariant the chatbox save path relies on:
+                // Maintain the invariant the scenario save path relies on:
                 // optionalServerIds is a subset of serverIds. When a
                 // server is unchecked from the required list, it must
                 // also leave the optional list — otherwise the saved
