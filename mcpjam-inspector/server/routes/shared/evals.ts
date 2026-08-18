@@ -260,7 +260,7 @@ export const RunEvalsRequestSchema = z.object({
   // hosted variant's `.omit`).
   serverIds: z.array(z.string()),
   serverNames: z.array(z.string()).optional(),
-  chatboxId: z.string().optional(),
+  scenarioId: z.string().optional(),
   accessVersion: z.number().int().nonnegative().optional(),
   storageServerIds: z.array(z.string()).optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
@@ -406,7 +406,7 @@ export const RunTestCaseRequestSchema = z.object({
   serverIds: z
     .array(z.string())
     .min(1, { message: "At least one server must be selected" }),
-  chatboxId: z.string().optional(),
+  scenarioId: z.string().optional(),
   accessVersion: z.number().int().nonnegative().optional(),
   modelApiKeys: z.record(z.string(), z.string()).optional(),
   convexAuthToken: z.string(),
@@ -1540,7 +1540,7 @@ export async function prepareEvalRun(
     tests,
     serverIds,
     serverNames,
-    chatboxId,
+    scenarioId,
     accessVersion,
     storageServerIds,
     modelApiKeys,
@@ -1812,7 +1812,7 @@ export async function prepareEvalRun(
       try {
         const orgConfig = await resolveOrgModelConfig(orgConfigTarget, {
           bearerToken: convexAuthToken,
-          chatboxId,
+          scenarioId,
           accessVersion,
           serverIds: resolvedServerIds,
         });
@@ -2007,7 +2007,7 @@ export async function runEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
-    chatboxId,
+    scenarioId,
     accessVersion,
     skipLastMessageRunUpdate,
     modelApiKeys,
@@ -2140,7 +2140,7 @@ export async function runEvalTestCaseWithManager(
         testCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
-          chatboxId,
+          scenarioId,
           accessVersion,
           serverIds: resolvedServerIds,
         }
@@ -2389,7 +2389,7 @@ export async function streamEvalTestCaseWithManager(
     provider,
     compareRunId,
     serverIds,
-    chatboxId,
+    scenarioId,
     accessVersion,
     skipLastMessageRunUpdate,
     modelApiKeys,
@@ -2521,7 +2521,7 @@ export async function streamEvalTestCaseWithManager(
         streamTestCaseOrgConfigTarget,
         {
           bearerToken: convexAuthToken,
-          chatboxId,
+          scenarioId,
           accessVersion,
           serverIds: resolvedServerIds,
         }

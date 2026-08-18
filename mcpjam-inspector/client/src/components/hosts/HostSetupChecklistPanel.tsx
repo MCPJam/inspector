@@ -128,7 +128,7 @@ export function HostSetupChecklistPanel({
   const didAutoExpandRef = useRef(false);
 
   // First-mount: auto-expand the first attention section. Mirrors the
-  // chatbox setup-checklist behaviour at setup-checklist-panel.tsx:411-426.
+  // scenario setup-checklist behaviour at setup-checklist-panel.tsx:411-426.
   useEffect(() => {
     if (didAutoExpandRef.current) return;
     const order: HostSetupSectionId[] = ["basics", "servers"];

@@ -275,30 +275,30 @@ catalog.get("/trace-exports/otlp", (c) =>
   )
 );
 
-// GET /v1/projects/:projectId/chatboxes
-// The chatboxes published from the project — name, access mode, attached
+// GET /v1/projects/:projectId/scenarios
+// The scenarios published from the project — name, access mode, attached
 // servers, share link.
-catalog.get("/projects/:projectId/chatboxes", (c) =>
-  proxyConvexV1Read(c, "/v1/chatboxes", (target) =>
+catalog.get("/projects/:projectId/scenarios", (c) =>
+  proxyConvexV1Read(c, "/v1/scenarios", (target) =>
     target.searchParams.set("projectId", c.req.param("projectId"))
   )
 );
 
-// GET /v1/projects/:projectId/chatboxes/:chatboxId
-// One chatbox's read-only settings. Project-nested with a cross-check,
-// matching the eval-read contract: the upstream takes a bare chatboxId, so a
-// real chatbox living in a different project must read as NOT_FOUND under
+// GET /v1/projects/:projectId/scenarios/:scenarioId
+// One scenario's read-only settings. Project-nested with a cross-check,
+// matching the eval-read contract: the upstream takes a bare scenarioId, so a
+// real scenario living in a different project must read as NOT_FOUND under
 // this path rather than leak across projects.
-catalog.get("/projects/:projectId/chatboxes/:chatboxId", async (c) => {
+catalog.get("/projects/:projectId/scenarios/:scenarioId", async (c) => {
   const projectId = c.req.param("projectId");
-  const { status, body } = await fetchConvexV1Read(c, "/v1/chatbox", (target) =>
-    target.searchParams.set("chatboxId", c.req.param("chatboxId"))
+  const { status, body } = await fetchConvexV1Read(c, "/v1/scenario", (target) =>
+    target.searchParams.set("scenarioId", c.req.param("scenarioId"))
   );
   if (
     status === 200 &&
     String((body as { projectId?: unknown })?.projectId ?? "") !== projectId
   ) {
-    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Chatbox not found");
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Scenario not found");
   }
   return c.json(body as Record<string, unknown>, status as 200);
 });

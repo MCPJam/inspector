@@ -11,8 +11,8 @@ import { createContext, useContext } from "react";
  *
  * `"chat"` is the default. Surfaces that aren't Playground (Connect →
  * Chat, eval suite editors, replay) inherit it and keep the existing
- * strict `"widget-declared"` CSP behavior, unchanged. Chatbox surface
- * is a separate dimension and stays on `useIsChatboxSurface()`.
+ * strict `"widget-declared"` CSP behavior, unchanged. Scenario surface
+ * is a separate dimension and stays on `useIsScenarioSurface()`.
  */
 export type WidgetSurface = "playground" | "chat";
 

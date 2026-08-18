@@ -56,7 +56,7 @@ example: three calls converted, no test coupling.
   `useCallback((event, props) => …)` with a runtime event string. `track()`
   needs a statically-known name, so these need the names hoisted to constants
   or a small typed dispatcher. Not a straight swap.
-- **`posthogRef.current.capture`** — `hosted/ChatboxChatPage.tsx` holds a ref;
+- **`posthogRef.current.capture`** — `hosted/ScenarioChatPage.tsx` holds a ref;
   migrate the ref usage to `track()` directly (the singleton is fine).
 
 ## Suggested order (funnel-first)

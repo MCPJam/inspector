@@ -24,7 +24,7 @@ import { ErrorCard } from "@/components/ui/error-card";
 import { extractDisplayFromToolResult } from "@/components/chat-v2/shared/tool-result-text";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useActiveHostCapsResolver } from "@/contexts/active-host-client-capabilities-context";
-import { useChatboxHostStyle } from "@/contexts/chatbox-client-style-context";
+import { useScenarioHostStyle } from "@/contexts/scenario-client-style-context";
 import { hostSupportsWidgetRendering } from "@/lib/host-capabilities";
 import { useMcpToolResultImagePreviews } from "@/components/chat-v2/shared/mcp-tool-result-image-preview";
 import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-tool-result-image-preview-grid";
@@ -94,7 +94,7 @@ export function ResultsPanel({
   // serverId the resolver looks up. The tools tab is single-server per
   // panel, so one lookup per render is all we need.
   const resolveHostCaps = useActiveHostCapsResolver();
-  const hostStyle = useChatboxHostStyle();
+  const hostStyle = useScenarioHostStyle();
   const hostSupportsWidgets = hostSupportsWidgetRendering(
     resolveHostCaps(serverName),
     { hostStyle }

@@ -158,17 +158,17 @@ describe("filterByFeatureFlags", () => {
     ]);
   });
 
-  it("keeps Chatboxes behind the existing sandboxes flag", () => {
+  it("keeps Scenarios behind the existing sandboxes flag", () => {
     const sections = [
       {
         id: "connection",
         items: [
           {
-            title: "Chatboxes",
-            url: "#chatboxes",
+            title: "Scenarios",
+            url: "#scenarios",
             icon: FakeIcon,
             featureFlag: "sandboxes-enabled",
-            billingFeature: "chatboxes" as const,
+            billingFeature: "scenarios" as const,
           },
         ],
       },
@@ -178,11 +178,11 @@ describe("filterByFeatureFlags", () => {
       filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items
     ).toEqual([
       {
-        title: "Chatboxes",
-        url: "#chatboxes",
+        title: "Scenarios",
+        url: "#scenarios",
         icon: FakeIcon,
         featureFlag: "sandboxes-enabled",
-        billingFeature: "chatboxes",
+        billingFeature: "scenarios",
       },
     ]);
     expect(
@@ -190,24 +190,24 @@ describe("filterByFeatureFlags", () => {
     ).toHaveLength(0);
   });
 
-  it("marks Chatboxes disabled when billing enforcement denies chatboxes", () => {
+  it("marks Scenarios disabled when billing enforcement denies scenarios", () => {
     const result = applyBillingGateNavState(
       [
         {
           id: "connection",
           items: [
             {
-              title: "Chatboxes",
-              url: "/chatboxes",
+              title: "Scenarios",
+              url: "/scenarios",
               icon: FakeIcon,
-              billingFeature: "chatboxes",
+              billingFeature: "scenarios",
             },
           ],
         },
       ],
       {
         billingUiEnabled: true,
-        gateDenied: { chatboxes: true },
+        gateDenied: { scenarios: true },
         enforcementActive: true,
       }
     );

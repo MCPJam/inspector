@@ -19,8 +19,8 @@ import {
 /**
  * The whole reason `"score"` exists as its own surface: neither of the other
  * two can carry a score run through an OAuth redirect. "project" rewrites the
- * return path to `/servers` (the segment is not an app tab), and "chatbox"
- * expects a chatbox id there is none of.
+ * return path to `/servers` (the segment is not an app tab), and "scenario"
+ * expects a scenario id there is none of.
  */
 
 beforeEach(() => {
@@ -32,7 +32,7 @@ describe("score OAuth surface", () => {
   it("is a recognized surface", () => {
     expect(isHostedOAuthSurface("score")).toBe(true);
     expect(isHostedOAuthSurface("project")).toBe(true);
-    expect(isHostedOAuthSurface("chatbox")).toBe(true);
+    expect(isHostedOAuthSurface("scenario")).toBe(true);
     expect(isHostedOAuthSurface("nope")).toBe(false);
   });
 

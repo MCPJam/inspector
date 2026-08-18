@@ -8,12 +8,12 @@ import {
   threadMatchesUsageFilter,
   type UsageFilterState,
   type UsageSessionFilter,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 import {
   useSharedChatThreadList,
   type SharedChatThread,
 } from "@/hooks/useSharedChatThreads";
-import { SessionReadinessBadge } from "@/components/chatboxes/session-readiness";
+import { SessionReadinessBadge } from "@/components/scenarios/session-readiness";
 import { SessionGoalScoreBadge } from "@/components/shared/session-quality/session-goal-score-badge";
 import {
   feedbackHeadline,
@@ -21,12 +21,12 @@ import {
 } from "@/components/connection/share-usage/feedback-headline";
 
 interface ShareUsageThreadListProps {
-  /** Optional: when `threads` is provided (chatbox Usage panel) these are unused. */
-  sourceType?: "chatbox";
+  /** Optional: when `threads` is provided (scenario Usage panel) these are unused. */
+  sourceType?: "scenario";
   sourceId?: string;
   selectedThreadId: string | null;
   onSelectThread: (threadId: string) => void;
-  /** Legacy preset-only filter, for non-chatbox callers (ShareUsageDialog). */
+  /** Legacy preset-only filter, for non-scenario callers (ShareUsageDialog). */
   usageFilter?: UsageSessionFilter;
   /**
    * Preferred: pre-filtered, pre-sorted threads from the panel. When provided,
@@ -34,7 +34,7 @@ interface ShareUsageThreadListProps {
    */
   threads?: SharedChatThread[] | undefined;
   /**
-   * Richer filter state used by the chatbox Usage panel for empty-state copy
+   * Richer filter state used by the scenario Usage panel for empty-state copy
    * and, on the legacy internal-fetch path, to apply chip filters as well.
    */
   filterState?: UsageFilterState;
@@ -52,7 +52,7 @@ export function ShareUsageThreadList({
   const legacyThreads = useSharedChatThreadList(
     providedThreads === undefined && sourceType && sourceId
       ? { sourceType, sourceId }
-      : { sourceType: sourceType ?? "chatbox", sourceId: null }
+      : { sourceType: sourceType ?? "scenario", sourceId: null }
   );
 
   const threads = useMemo(() => {
@@ -132,7 +132,7 @@ export function ThreadCard({
   isSelected: boolean;
   onSelect: () => void;
 }) {
-  // The session's rating is its WORST turn (see `chatbox-usage-filters.ts`),
+  // The session's rating is its WORST turn (see `scenario-usage-filters.ts`),
   // so the amber treatment fires on "one turn went badly", not "the average
   // was low" — which is the cohort a PM opens this list to find.
   const summary = thread.feedback ?? null;
