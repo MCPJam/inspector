@@ -70,6 +70,15 @@ type PendingReconcile = {
   deadlineAt: number;
   /** True once the "couldn't save" notice has been shown for this turn. */
   notified: boolean;
+  /**
+   * Watch for a late commit but never tell the user about its absence.
+   *
+   * Set for a withdrawn turn, where a missing write is the intended outcome and
+   * a warning would be nonsense — but the version still has to be picked up if
+   * the server committed anyway, or the next send carries a stale
+   * `expectedVersion` into a false conflict.
+   */
+  silent: boolean;
 };
 
 export interface ResumedThreadPersistenceOptions {
@@ -95,6 +104,17 @@ export interface ResumedThreadPersistenceOptions {
   resumedVersion: number | null;
   consumePersistReceipt: () => PersistReceiptData | null;
   /**
+   * Take whether the turn that just ended was ABORTED — the user pressed Stop,
+   * or the active response was aborted some other way.
+   *
+   * Needed because the AI SDK has no "aborted" status: on abort it sets
+   * `status: "ready"` and returns (ai/dist/index.mjs, `makeRequest`'s catch:
+   * `if (isAbort || err.name === "AbortError") { this.setStatus({ status:
+   * "ready" }); return null; }`). A stopped turn therefore reaches the
+   * end-of-stream path below looking exactly like a completed one.
+   */
+  consumeTurnAborted: () => boolean;
+  /**
    * Live version from the session subscription: `undefined` while loading or
    * torn down (it is disabled mid-stream), `null` when the row is gone.
    */
@@ -119,6 +139,7 @@ export function useResumedThreadPersistence(
     activeHistorySessionId,
     resumedVersion,
     consumePersistReceipt,
+    consumeTurnAborted,
     reactiveSessionVersion,
     syncResumedVersion,
     markHistorySessionRead,
@@ -133,6 +154,7 @@ export function useResumedThreadPersistence(
   // and consume the baseline early.
   const callbacksRef = useRef({
     consumePersistReceipt,
+    consumeTurnAborted,
     syncResumedVersion,
     markHistorySessionRead,
     refreshAfterStream,
@@ -141,6 +163,7 @@ export function useResumedThreadPersistence(
   });
   callbacksRef.current = {
     consumePersistReceipt,
+    consumeTurnAborted,
     syncResumedVersion,
     markHistorySessionRead,
     refreshAfterStream,
@@ -159,12 +182,18 @@ export function useResumedThreadPersistence(
   );
 
   const startReconcile = useCallback(
-    (sessionId: string, baselineVersion: number, windowMs: number) => {
+    (
+      sessionId: string,
+      baselineVersion: number,
+      windowMs: number,
+      options?: { silent?: boolean }
+    ) => {
       pendingReconcileRef.current = {
         sessionId,
         baselineVersion,
         deadlineAt: Date.now() + windowMs,
         notified: false,
+        silent: options?.silent ?? false,
       };
       wakeReconcileWatcher();
     },
@@ -205,26 +234,113 @@ export function useResumedThreadPersistence(
     sendBaselineRef.current = null;
     if (!enabled) return;
 
+    // Both consumed BEFORE the abort check, because an abort can race a receipt
+    // that already arrived. The server writes the receipt once the ingest has
+    // committed and before it closes the stream, so a Stop pressed inside that
+    // window reports `isAbort: true` for a turn the server has already saved —
+    // and the persist can hold the stream open for seconds, which is exactly
+    // when a user reaches for Stop. Discarding that receipt would strand
+    // `resumedVersion` on its pre-turn value, and the next send would carry a
+    // stale `expectedVersion` into a false conflict: the bug this hook exists
+    // to remove.
+    const aborted = callbacksRef.current.consumeTurnAborted();
+    const receipt = callbacksRef.current.consumePersistReceipt();
+    // Only a receipt that PROVES a write outlives the abort. `saved`/`duplicate`
+    // carry the authoritative new version, so they fall through and are handled
+    // exactly as they would be on a turn nobody stopped.
+    const receiptProvesWrite =
+      receipt?.outcome === "saved" || receipt?.outcome === "duplicate";
+
+    // The user stopped the turn and nothing was committed. There is nothing to
+    // reconcile: the server persists only `runSucceeded && !aborted`
+    // (`server/utils/mcpjam-stream-handler.ts`, `onFinishEngine`), so such a
+    // turn produces no receipt AND no version bump — the exact signature this
+    // hook otherwise reads as a dropped write. Left to run, the no-receipt
+    // branch would watch the subscription for its full 10 s and then tell the
+    // user their reply "couldn't be saved", which is a false alarm about a
+    // deliberate action: not saving a withdrawn turn IS the intended outcome.
+    //
+    // A `failed`, `skipped`, or `conflict` receipt is suppressed here too: the
+    // turn was withdrawn, so there is no reply to warn about and none to fork
+    // away from. A real conflict has not been lost — the session is still
+    // ahead, so the next send reports it with a reply actually worth saving.
+    if (aborted && !receiptProvesWrite) {
+      // Belt and braces — the stream-start branch above already cleared it for
+      // this turn. Keeping it here makes the abort path a complete no-op on its
+      // own rather than one that depends on a sibling branch.
+      pendingReconcileRef.current = null;
+
+      // "Aborted" does NOT prove nothing was written. The server checks
+      // `runSucceeded && !aborted` once, then awaits the ingest — so a Stop
+      // landing after that check still lets the commit through, while
+      // cancelling the response prevents its receipt from ever reaching us.
+      // The write is real and this client cannot see it.
+      //
+      // So the version is still reconciled, just silently: a bump gets picked
+      // up (otherwise the next send carries a stale `expectedVersion` into the
+      // false conflict this hook exists to remove), and its absence is never
+      // reported, because not saving a withdrawn turn is the intended outcome.
+      if (baseline) {
+        startReconcile(
+          baseline.sessionId,
+          baseline.version,
+          NO_RECEIPT_RECONCILE_WINDOW_MS,
+          { silent: true }
+        );
+        return;
+      }
+
+      // No baseline: a fresh thread, where there is no version to reconcile but
+      // there may now be a ROW this surface has never seen. The rail refresh is
+      // how it learns that row's id, and it is silent either way — it reads.
+      callbacksRef.current.refreshAfterStream();
+      return;
+    }
+
     if (activeHistorySessionId) {
       callbacksRef.current.markHistorySessionRead(activeHistorySessionId);
     }
-
-    const receipt = callbacksRef.current.consumePersistReceipt();
 
     // A turn on a fresh (non-resumed) thread has no baseline to advance. It DOES
     // need the rail refresh: this is the turn that created the row, so the
     // refresh is how the surface learns its id.
     //
-    // A null baseline does not guarantee a null conflict, though. The baseline
-    // is also cleared mid-stream by every deliberate session change (new chat,
-    // archive-all, reset, a rewind's `onBeforeBranch`), and a turn invalidated
-    // that way can still come back with a `conflict` receipt. Refreshing then
-    // could reattach the session the surface just left, which is exactly what
-    // clearing the baseline was protecting against.
+    // A null baseline does not guarantee a null conflict, though — and the case
+    // that matters is NOT the deliberate session changes (new chat, archive-all,
+    // reset, a rewind's `onBeforeBranch`) this guard used to cite. Every one of
+    // those also mints a new `chatSessionId`, so `consumePersistReceipt` rejects
+    // the turn's receipt outright and this branch sees `null`; it never observes
+    // a conflict on that path at all.
+    //
+    // The path it does observe is a FAILED DETACH. `detachToLocalFork` could not
+    // confirm its fork went live, so the surface stayed on the OLD
+    // `chatSessionId` with `resumedVersion` deliberately preserved, while
+    // `cancelPendingHistorySelection` nulled `activeHistorySessionId` — which is
+    // what leaves the baseline null here. Every later send then carries the stale
+    // `expectedVersion`, the server 409s, and the `conflict` receipt names the
+    // still-live old session, so it passes validation and lands right here.
+    // Swallowing it lost that turn, and every turn after it, in silence.
+    //
+    // So a conflict is routed to `onConflict()` even with no baseline. The
+    // surfaces implement it as a detach, which re-attempts the fork: on success
+    // the user moves to a fresh thread and the loop is broken, and on failure
+    // they at least get the fork-failed notice again instead of nothing.
+    //
+    // This is NOT the immediate re-mint `detachToLocalFork` deliberately refuses.
+    // That one fires inside the failed detach itself, where the second
+    // `queueSessionHydration` would clear a `loadChatSession` still resolving and
+    // yank the user out of the thread they just clicked. This fires at the next
+    // turn boundary — a whole request and stream later — by which point any
+    // hydration that superseded the fork has long since committed.
+    //
+    // The rail refresh stays suppressed on that path: it resolves asynchronously
+    // and could reattach the very session the detach is leaving.
     if (!baseline) {
-      if (receipt?.outcome !== "conflict") {
-        callbacksRef.current.refreshAfterStream();
+      if (receipt?.outcome === "conflict") {
+        callbacksRef.current.onConflict();
+        return;
       }
+      callbacksRef.current.refreshAfterStream();
       return;
     }
 
@@ -314,11 +430,14 @@ export function useResumedThreadPersistence(
       return () => window.clearTimeout(timerId);
     }
 
-    if (!pending.notified) {
+    if (!pending.notified && !pending.silent) {
       // Deadline passed with no version bump. Now — and only now — say the
       // reply is not in history. The thread stays attached: the user's messages
       // are still on screen, and forcing a new thread would lose more than it
       // fixes.
+      //
+      // A silent watch skips this entirely: it belongs to a turn the user
+      // withdrew, so an unsaved reply is the expected result, not news.
       pending.notified = true;
       callbacksRef.current.onUnsaved();
     }

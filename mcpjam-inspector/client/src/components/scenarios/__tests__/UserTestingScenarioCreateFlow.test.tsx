@@ -18,6 +18,7 @@ import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 
 const {
   environmentsState,
+  flagState,
   saveSeedMock,
   toastSuccess,
   toastError,
@@ -26,6 +27,7 @@ const {
   environmentsState: {
     value: undefined as ProjectEnvironmentView[] | undefined,
   },
+  flagState: { environments: true },
   saveSeedMock: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
@@ -37,10 +39,12 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   useEnsureAdhocEnvironments: () => ensureAdhocMock,
 }));
 
-// The composer's own slots. `project-environments-enabled` on so its saved-env
-// row renders; the other two off, keeping the strip to clients + server group.
+// The composer's own slots. `project-environments-enabled` defaults on so its
+// saved-env row renders; the flag-off suite at the bottom flips it, because
+// this flow is now the ONLY create flow and has to work either way. The other
+// two stay off, keeping the strip to clients + server group.
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
-  useProjectEnvironmentsEnabled: () => true,
+  useProjectEnvironmentsEnabled: () => flagState.environments,
 }));
 vi.mock("@/hooks/useSkillsEnabled", () => ({
   useSkillsEnabled: () => false,
@@ -132,6 +136,7 @@ function renderFlow(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  flagState.environments = true;
   ensureAdhocMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
       args.stacks.map((stack) => ({
@@ -372,14 +377,28 @@ describe("UserTestingScenarioCreateFlow — composing a setup", () => {
     });
   });
 
-  it("leaves the name to the user — a composed setup has nothing to name it after", () => {
+  /**
+   * The client is what a composed setup HAS to be named after. Leaving the
+   * field empty was survivable while composing was the exotic path; it is the
+   * only path a flag-off project has, and it met that project with a required
+   * field nothing fills.
+   */
+  it("names the scenario after the picked client until the user types", () => {
     renderFlow();
 
     fireEvent.click(screen.getByTestId("user-testing-create-clients-picker"));
     fireEvent.click(screen.getByRole("checkbox", { name: /^claude$/i }));
+    expect(screen.getByTestId("user-testing-create-name")).toHaveValue("Claude");
+    expect(screen.getByTestId("user-testing-create-save")).not.toBeDisabled();
 
-    expect(screen.getByTestId("user-testing-create-name")).toHaveValue("");
-    expect(screen.getByTestId("user-testing-create-save")).toBeDisabled();
+    fireEvent.change(screen.getByTestId("user-testing-create-name"), {
+      target: { value: "Round 2 with real users" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+    expect(screen.getByTestId("user-testing-create-name")).toHaveValue(
+      "Round 2 with real users",
+    );
   });
 
   it("lets an empty project compose instead of dead-ending on the handoff", () => {
@@ -454,5 +473,69 @@ describe("UserTestingScenarioCreateFlow — composing a setup", () => {
     expect(toastError.mock.calls[0][0]).toMatch(/pick a saved environment/i);
     // Still retryable — the button is not left spinning.
     expect(screen.getByTestId("user-testing-create-save")).not.toBeDisabled();
+  });
+});
+
+/**
+ * Flag-off, this is still the create flow — there is no other one any more.
+ *
+ * The composer only gates its SAVED-environment picker on
+ * `project-environments-enabled`; clients and the server group are what a
+ * flag-off project has always seen in Swarms. That is the whole point of
+ * deleting the single-server form: a scenario can now reach a group of servers,
+ * and its setup stays editable afterwards.
+ */
+describe("UserTestingScenarioCreateFlow — without Project Environments", () => {
+  beforeEach(() => {
+    flagState.environments = false;
+  });
+
+  it("composes a scenario from a client and publishes the row it resolves to", async () => {
+    const { onCreateScenario } = renderFlow();
+
+    fireEvent.click(screen.getByTestId("user-testing-create-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+
+    // Named after the client, so Save is reachable without typing.
+    expect(screen.getByTestId("user-testing-create-name")).toHaveValue("Cursor");
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => expect(onCreateScenario).toHaveBeenCalledTimes(1));
+    expect(ensureAdhocMock).toHaveBeenCalledWith({
+      projectId: "p1",
+      stacks: [{ hostId: "host-2" }],
+    });
+    expect(onCreateScenario).toHaveBeenCalledWith({
+      environmentId: "adhoc-host-2",
+      name: "Cursor",
+      mode: "invited_only",
+    });
+  });
+
+  it("offers the server group — the reason this replaced the one-server form", () => {
+    renderFlow();
+    expect(screen.getByTestId("server-group-picker")).toBeInTheDocument();
+  });
+
+  it("hides the parts of the surface a flag-off project cannot reach", () => {
+    renderFlow();
+
+    // No saved-environment picker...
+    expect(
+      screen.queryByTestId("user-testing-create-environment"),
+    ).not.toBeInTheDocument();
+    // ...and no handoff to `/environments`, which the route guard bounces. A
+    // link to nowhere is worse than no link.
+    expect(
+      screen.queryByTestId("user-testing-create-new-environment"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("asks for a client rather than for an environment nobody can pick", () => {
+    renderFlow();
+
+    expect(
+      screen.getByTestId("user-testing-create-environment-required"),
+    ).toHaveTextContent(/pick the client a tester will see/i);
   });
 });

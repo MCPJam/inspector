@@ -117,3 +117,41 @@ test("writeJsonArtifact writes json to disk", async () => {
 
   assert.deepEqual(payload, { ok: true });
 });
+
+// `--out` and `--reporter` are two exports of the same run. The reporter half
+// has always been redacted (see the json-summary test above); the file half was
+// not, so the same report left clean through one flag and in the clear through
+// the other.
+test("writeJsonArtifact redacts the artifact it writes to disk", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-reporting-"));
+  const artifactPath = path.join(directory, "report.json");
+
+  const writtenPath = await writeJsonArtifact(artifactPath, makeReport());
+  const raw = await readFile(writtenPath, "utf8");
+  const payload = JSON.parse(raw);
+
+  assert.equal(
+    payload.metadata.redactedRawResult.content[0].textPreview,
+    "Authorization: [REDACTED]",
+  );
+  assert.equal(raw.includes("top-secret"), false);
+  // Non-sensitive fields must survive — a redactor that eats the report is not
+  // a fix.
+  assert.equal(payload.kind, "tools-call-validation");
+  assert.equal(payload.schemaVersion, 1);
+});
+
+test("writeJsonArtifact keeps planted credentials out of an exported run", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-reporting-"));
+  const artifactPath = path.join(directory, "report.json");
+
+  const canary = "at_canary_1a2b3c4d5e6f7g8h9i0j";
+  const writtenPath = await writeJsonArtifact(artifactPath, {
+    ok: false,
+    servers: [{ serverId: "asana", accessToken: canary }],
+    error: `connection refused (authorization: Bearer ${canary})`,
+  });
+  const raw = await readFile(writtenPath, "utf8");
+
+  assert.equal(raw.includes(canary), false);
+});

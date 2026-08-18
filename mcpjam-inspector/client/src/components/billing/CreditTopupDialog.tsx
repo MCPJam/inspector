@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CoinStackIcon } from "@/components/ui/coin-stack-icon";
 import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
@@ -16,6 +16,7 @@ import {
   type CreditTopupPreset,
   type CreditTopupSource,
 } from "@/hooks/useCreditTopup";
+import { track } from "@/lib/analytics";
 
 interface CreditTopupDialogProps {
   open: boolean;
@@ -40,10 +41,14 @@ export function CreditTopupDialog({
   const [selectedPackageId, setSelectedPackageId] = useState<string | null>(
     null
   );
+  const impressionTrackedRef = useRef(false);
+  const dismissalTrackedRef = useRef(false);
 
   useEffect(() => {
     if (!open) {
       setSelectedPackageId(null);
+      impressionTrackedRef.current = false;
+      dismissalTrackedRef.current = false;
     }
   }, [open]);
 
@@ -53,9 +58,65 @@ export function CreditTopupDialog({
     }
   }, [open, presets, selectedPackageId]);
 
+  useEffect(() => {
+    if (!open || presetsLoading || impressionTrackedRef.current) return;
+
+    impressionTrackedRef.current = true;
+    track("credit_topup_dialog_shown", {
+      location: "credit_topup",
+      source,
+      organization_id: organizationId,
+      organization_resolved: Boolean(organizationId),
+      package_count: presets?.length ?? 0,
+      default_package_id: presets?.[0]?.packageId ?? null,
+      default_price_cents: presets?.[0]?.priceCents ?? null,
+      packages_available: Boolean(presets?.length),
+      has_resume_context: Boolean(chatSessionId && lastUserMessage),
+    });
+  }, [
+    chatSessionId,
+    lastUserMessage,
+    open,
+    organizationId,
+    presets,
+    presetsLoading,
+    source,
+  ]);
+
   const selectedPreset: CreditTopupPreset | undefined = presets?.find(
     (preset) => preset.packageId === selectedPackageId
   );
+
+  const handleDismiss = (dismissalMethod: "cancel" | "dialog") => {
+    onOpenChange(false);
+    if (dismissalTrackedRef.current) return;
+
+    dismissalTrackedRef.current = true;
+    track("credit_topup_dialog_dismissed", {
+      location: "credit_topup",
+      source,
+      organization_id: organizationId,
+      dismissal_method: dismissalMethod,
+      selected_package_id: selectedPreset?.packageId ?? null,
+      selected_price_cents: selectedPreset?.priceCents ?? null,
+    });
+  };
+
+  const handlePackageSelection = (
+    preset: CreditTopupPreset,
+    packageIndex: number
+  ) => {
+    setSelectedPackageId(preset.packageId);
+    track("credit_topup_package_selected", {
+      location: "credit_topup",
+      source,
+      organization_id: organizationId,
+      package_id: preset.packageId,
+      price_cents: preset.priceCents,
+      package_index: packageIndex,
+      package_count: presets?.length ?? 0,
+    });
+  };
 
   const handleConfirm = async () => {
     if (!selectedPreset || !organizationId) return;
@@ -81,13 +142,18 @@ export function CreditTopupDialog({
   };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) handleDismiss("dialog");
+      }}
+    >
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Buy credits to keep chatting</DialogTitle>
           <DialogDescription>
-            Add credits to your organization so the team can keep using MCPJam
-            models when your shared credits run low.
+            Credits cover model usage in chat, playground, and agents. Buying
+            credits doesn't change your plan limits.
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-4">
@@ -101,7 +167,7 @@ export function CreditTopupDialog({
             </div>
           ) : (
             <div className="grid grid-cols-3 gap-2" role="radiogroup">
-              {presets.map((preset) => {
+              {presets.map((preset, packageIndex) => {
                 const isSelected = preset.packageId === selectedPackageId;
                 const creditsAmount = preset.displayCredits.replace(
                   /\s*credits\s*$/i,
@@ -113,7 +179,7 @@ export function CreditTopupDialog({
                     type="button"
                     role="radio"
                     aria-checked={isSelected}
-                    onClick={() => setSelectedPackageId(preset.packageId)}
+                    onClick={() => handlePackageSelection(preset, packageIndex)}
                     className={cn(
                       "flex flex-col items-center justify-center rounded-md border px-3 py-3 text-sm font-medium transition-colors",
                       isSelected
@@ -128,6 +194,11 @@ export function CreditTopupDialog({
                     <span className="text-xs text-muted-foreground">
                       credits
                     </span>
+                    {/* Price per tile: without it the three options can't be
+                        compared without selecting each one. */}
+                    <span className="mt-1 text-xs text-foreground">
+                      {preset.displayPrice}
+                    </span>
                   </button>
                 );
               })}
@@ -138,7 +209,7 @@ export function CreditTopupDialog({
           <Button
             type="button"
             variant="outline"
-            onClick={() => onOpenChange(false)}
+            onClick={() => handleDismiss("cancel")}
             disabled={isStartingCheckout}
           >
             Cancel
