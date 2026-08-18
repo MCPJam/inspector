@@ -1206,6 +1206,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             cspConnectDomains: {
               fetch: false,
               xhr: false,
+              websocket: false,
             },
             cspResourceDomains: {
               script: false,
