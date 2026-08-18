@@ -75,6 +75,7 @@ import {
   cloneAndCheckout,
   killCheckSandbox,
   provisionCheckSandbox,
+  redactCloneCredential,
   type CheckSandbox,
   type SpawnIdentity,
   type StartedServer,
@@ -170,6 +171,17 @@ export type ResolveAndStartArgs = {
   repoFullName: string;
   prNumber: number;
   headSha: string;
+  /**
+   * The clone credential for a PRIVATE repository, minted by the worker between
+   * `/plan/begin` and the first provision. Absent for a public one, which is
+   * cloned anonymously exactly as before.
+   *
+   * It lives on the ARGS and not on the recipe or the plan types on purpose:
+   * every candidate re-clones into a fresh box, so this is a property of the
+   * CHECKOUT, and widening a recipe or a plan candidate to carry a secret would
+   * put it on types that are logged, digested and sent to the backend.
+   */
+  cloneToken?: string;
 };
 
 function provenanceOf(recipe: ResolvedRecipe): RecipeProvenance {
@@ -297,6 +309,7 @@ export async function resolveAndStart(
         repoFullName: args.repoFullName,
         prNumber: args.prNumber,
         headSha: args.headSha,
+        ...(args.cloneToken ? { cloneToken: args.cloneToken } : {}),
       });
     } catch (error) {
       await plan.attempt({
@@ -305,7 +318,11 @@ export async function resolveAndStart(
         ok: false,
         failureKind: "clone_failed",
         durationMs: deps.now() - cloneStartedAt,
-        detailsClamped: errorDetail(error),
+        // The one attempt detail that can carry a credential. `sandbox.ts`
+        // already redacts at the boundary it owns; this is the second, at the
+        // boundary where the text leaves the process for the corpus, because a
+        // detail that reaches the backend is a detail nobody can un-store.
+        detailsClamped: redactedErrorDetail(error, args.cloneToken),
       });
       throw new CheckStoppedByPlan("clone_failed");
     }
@@ -564,6 +581,41 @@ function recipeOf(planned: PlannedCandidate): ResolvedRecipe {
     ownershipProof: planned.ownershipProof,
     evidence: planned.evidence ?? [],
   };
+}
+
+/**
+ * `errorDetail`, with any clone credential removed BEFORE the 500-character
+ * bound is applied.
+ *
+ * The ordering is the same one `sandbox.ts` makes for `errorMessage`, for the
+ * same reason: a slice that lands mid-token leaves half a token in the corpus,
+ * and a halved token no longer matches the literal the replacement is looking
+ * for. So this redacts the UNCLAMPED text and clamps last — which is why it
+ * cannot simply wrap `errorDetail`.
+ *
+ * Separate from `errorDetail` rather than folded into it so the redaction is
+ * visible at the call site that needs it: the clone is the only phase whose
+ * failure text can have touched a secret.
+ */
+function redactedErrorDetail(
+  error: unknown,
+  cloneToken?: string
+): string | undefined {
+  // Mirrors `errorDetail`'s branches and its BOUNDS exactly — `detailsMarkdown`
+  // arrives already clamped and fenced from `sandbox.ts` and is not re-bounded,
+  // while a bare message is. What differs is only the ORDER: redact, then clamp.
+  if (error instanceof CheckStepError && error.detailsMarkdown !== undefined) {
+    return (
+      redactCloneCredential(error.detailsMarkdown, cloneToken) || undefined
+    );
+  }
+  if (error instanceof Error) {
+    return (
+      redactCloneCredential(error.message, cloneToken).slice(0, 500) ||
+      undefined
+    );
+  }
+  return undefined;
 }
 
 function errorDetail(error: unknown): string | undefined {

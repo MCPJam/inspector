@@ -166,11 +166,15 @@ function fakeSession(options?: {
   return { session, attempts, completions };
 }
 
+type CloneCall = Parameters<ResolveAndStartDeps["cloneAndCheckout"]>[1];
+
 type Fakes = {
   deps: Partial<ResolveAndStartDeps> & { plan: CheckPlanSession };
   events: string[];
   boxes: CheckSandbox[];
   attempts: RecordedAttempt[];
+  /** What `cloneAndCheckout` was asked for, per box. */
+  clones: CloneCall[];
 };
 
 /**
@@ -190,6 +194,7 @@ function fakes(options: {
 }): Fakes {
   const events: string[] = [];
   const boxes: CheckSandbox[] = [];
+  const clones: CloneCall[] = [];
   let provisioned = 0;
   const scripted = options.session ?? fakeSession();
 
@@ -208,7 +213,8 @@ function fakes(options: {
       events.push(`provision:${box.sandboxId}`);
       return box;
     },
-    cloneAndCheckout: async (sandbox) => {
+    cloneAndCheckout: async (sandbox, cloneArgs) => {
+      clones.push(cloneArgs);
       options.clone?.(boxes.length);
       events.push(`clone:${sandbox.sandboxId}`);
     },
@@ -237,7 +243,7 @@ function fakes(options: {
     now: () => 0,
   };
 
-  return { deps, events, boxes, attempts: scripted.attempts };
+  return { deps, events, boxes, attempts: scripted.attempts, clones };
 }
 
 async function stopOf(promise: Promise<unknown>): Promise<CheckStoppedByPlan> {
@@ -927,5 +933,116 @@ describe("judgeListeners", () => {
   it("says 'unknown' — never ok — when no process could be attributed", () => {
     const verdict = judgeListeners({ processes: [] }, spawn);
     expect(verdict.status).toBe("unknown");
+  });
+});
+
+describe("resolveAndStart — the private-repository clone credential", () => {
+  const TOKEN = "ghs_privateRepoToken1234567890";
+
+  it("threads the token to EVERY clone, and to nothing else", async () => {
+    // A fresh box per candidate means a fresh clone per candidate, so the
+    // credential is needed on each one — a token threaded only to the first
+    // would work right up until the second candidate, where it would look like
+    // the repository disappeared.
+    const session = fakeSession({
+      candidates: [planned("c1", { start: "node a.js" }), planned("c2")],
+      actions: { "build:fail": { action: "try_next_candidate" } },
+    });
+    const f = fakes({
+      ladder: { kind: "candidates", candidates: [recipe()] },
+      session,
+      attempt: (built) => {
+        if (built.start === "node a.js") failing("build_failed")();
+      },
+    });
+
+    await resolveAndStart({ ...ARGS, cloneToken: TOKEN }, f.deps);
+
+    expect(f.clones.length).toBeGreaterThan(1);
+    for (const clone of f.clones) {
+      expect(clone.cloneToken).toBe(TOKEN);
+      expect(clone.headSha).toBe(ARGS.headSha);
+    }
+    // It travels on the CHECKOUT args and nowhere else. Recipes and planned
+    // candidates are logged, digested and sent to the backend; a secret on one
+    // of those types is a secret in the corpus.
+    const localCandidates = JSON.stringify(f.attempts);
+    expect(localCandidates).not.toContain(TOKEN);
+  });
+
+  it("asks for no credential at all when the repository is public", async () => {
+    const f = fakes({
+      ladder: { kind: "candidates", candidates: [recipe()] },
+    });
+    await resolveAndStart(ARGS, f.deps);
+    expect(f.clones).toHaveLength(1);
+    expect(f.clones[0].cloneToken).toBeUndefined();
+    expect(f.clones[0]).not.toHaveProperty("cloneToken");
+  });
+
+  it("redacts the credential out of a clone failure before it reaches the backend", async () => {
+    // `detailsClamped` is stored in the corpus. A secret that reaches it is a
+    // secret nobody can un-store, so this is the second redaction boundary —
+    // `sandbox.ts` owns the first, and neither is allowed to be the only one.
+    const basic = Buffer.from(`x-access-token:${TOKEN}`, "utf8").toString(
+      "base64"
+    );
+    const session = fakeSession();
+    const f = fakes({
+      session,
+      clone: () => {
+        throw new CheckStepError(
+          "infra_error",
+          `sandbox command failed: git -c 'http.extraheader=AUTHORIZATION: basic ${basic}' clone --depth 50 (token ${TOKEN})`
+        );
+      },
+    });
+
+    const stop = await stopOf(
+      resolveAndStart({ ...ARGS, cloneToken: TOKEN }, f.deps)
+    );
+    expect(stop.reason).toBe("clone_failed");
+
+    const cloneAttempt = f.attempts.find(
+      (attempt) => attempt.phase === "clone" && !attempt.ok
+    );
+    expect(cloneAttempt?.failureKind).toBe("clone_failed");
+    for (const form of [TOKEN, basic, `AUTHORIZATION: basic ${basic}`]) {
+      expect(cloneAttempt?.detailsClamped ?? "").not.toContain(form);
+    }
+    // Redacted, not dropped: the failure is still legible.
+    expect(cloneAttempt?.detailsClamped).toContain("sandbox command failed");
+    expect(cloneAttempt?.detailsClamped).toContain("[redacted]");
+    // And nothing leaked through the whole recorded attempt log either.
+    expect(JSON.stringify(f.attempts)).not.toContain(TOKEN);
+  });
+
+  it("redacts before the 500-character bound, so no slice can halve the token", async () => {
+    // Clamping after redacting is safe; redacting after clamping is not. A
+    // token straddling the boundary would be cut in half, and half a token no
+    // longer matches the literal the replacement looks for — so it would survive
+    // into the corpus as a fragment nobody can search for later.
+    const session = fakeSession();
+    const f = fakes({
+      session,
+      clone: () => {
+        // A plain Error, which is the branch `errorDetail` bounds at 500. The
+        // padding puts the token at offsets 488-518, straddling the cut: redact
+        // first and the whole literal goes, clamp first and its first 12
+        // characters survive into the corpus as an unsearchable fragment.
+        throw new Error(`${"padding ".repeat(61)}${TOKEN} trailing`);
+      },
+    });
+
+    await stopOf(resolveAndStart({ ...ARGS, cloneToken: TOKEN }, f.deps));
+
+    const detail =
+      f.attempts.find((attempt) => attempt.phase === "clone" && !attempt.ok)
+        ?.detailsClamped ?? "";
+    expect(detail.length).toBeLessThanOrEqual(500);
+    expect(detail).not.toContain(TOKEN);
+    // No FRAGMENT of it either — the whole literal was replaced before the cut.
+    expect(detail).not.toContain(TOKEN.slice(0, 12));
+    expect(detail).toContain("[redacted]");
   });
 });
