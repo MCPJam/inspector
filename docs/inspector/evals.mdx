@@ -244,7 +244,19 @@ Test cases written by a CI report carry a **CI** chip next to their name in the 
 
 ### Suite deletion
 
-The delete button in the suite switcher is hidden for any suite that is CI-active — either created by the SDK or one that CI has reported into. This protects CI run history; the next CI report would recreate the suite anyway.
+The delete button in the suite switcher is shown per row based on your permissions:
+
+- **Project admins** can delete any suite.
+- **Other members** can delete suites they created, but not suites created by someone else.
+
+The delete button is hidden for any suite that is CI-active — either created by the SDK or one that CI has reported into — regardless of permissions. This protects CI run history; the next CI report would recreate the suite anyway.
+
+### Run deletion
+
+The batch delete button in the runs list is shown when you can delete at least one run. It disables while the selection includes a run started by someone else, with a tooltip explaining why. To delete a mixed selection, deselect the runs you do not own (or ask a project admin to delete them).
+
+- **Project admins** can delete any run.
+- **Other members** can delete runs they started, but not runs started by someone else.
 
 ## Reading results
 
