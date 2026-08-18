@@ -29,11 +29,11 @@ import {
   UNLABELED_OUTCOME,
   type UsageFilterChip,
   type UsageFilterState,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 import {
   useTopicMap,
   type TopicMapScope,
-} from "@/hooks/useChatboxTopicMap";
+} from "@/hooks/useScenarioTopicMap";
 import type { ClusterRunState, InsightsScope } from "@/hooks/useUsageInsights";
 import { cn } from "@/lib/utils";
 
@@ -615,7 +615,7 @@ export function TopicMapPanel({
     if (scopeProp.kind === "swarm") {
       return { kind: "swarm", projectId: scopeProp.projectId };
     }
-    return { kind: "chatbox", chatboxId: scopeProp.chatboxId };
+    return { kind: "scenario", scenarioId: scopeProp.scenarioId };
   }, [scopeProp]);
 
   const journeyRunIdSet = useMemo(

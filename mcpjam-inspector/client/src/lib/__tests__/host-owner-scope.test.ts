@@ -4,7 +4,7 @@
  * The rule is one-sided on purpose and easy to over-apply: `user_testing`
  * clients are private backing and must never be offered, while `journeys`
  * clients are standalone clients the Clients surface is *meant* to show
- * (they are hidden from the chatbox surface instead, by a different rule).
+ * (they are hidden from the scenario surface instead, by a different rule).
  * Broadening this predicate to "any product-owned host" would silently empty
  * the Swarms client list, so both halves are locked here.
  */
@@ -23,7 +23,7 @@ describe("isPrivateScenarioBackingHost", () => {
   it.each<[string, HostOwnerScope]>([
     ["a journeys client (standalone, but a real client)", { type: "journeys" }],
     ["a suite-created client", { type: "suite", testSuiteId: "ts1" }],
-    ["a chatbox-created client", { type: "chatbox", chatboxId: "cb1" }],
+    ["a scenario-created client", { type: "scenario", scenarioId: "cb1" }],
     ["an explicitly untagged client", null],
   ])("keeps %s", (_label, ownerScope) => {
     expect(isPrivateScenarioBackingHost(ownerScope)).toBe(false);

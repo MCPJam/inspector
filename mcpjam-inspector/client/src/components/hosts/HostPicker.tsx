@@ -30,7 +30,7 @@ export function orderHostsByPriority(
 
 export type HostPickerLocation =
   | "chat_tab"
-  | "chatbox_builder"
+  | "scenario_builder"
   | "eval_runner"
   | "project_settings"
   | "project_environments";
