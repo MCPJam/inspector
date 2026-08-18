@@ -36,13 +36,28 @@ export default function LoadingScreen({ message }: LoadingScreenProps) {
           draggable={false}
           className="h-16 w-16"
         />
+        {/*
+          BB-106: announce the loading state to assistive tech. The spinner is
+          decorative (aria-hidden); screen readers read the status line (or an
+          sr-only "Loading" fallback) out of this polite live region.
+        */}
         <div
-          className="animate-spin rounded-full h-12 w-12 border-4 border-gray-200 border-t-primary mx-auto"
-          style={{ animationDelay: animationDelayRef.current }}
-        ></div>
-        {message ? (
-          <p className="text-sm text-muted-foreground">{message}</p>
-        ) : null}
+          className="flex flex-col items-center gap-6"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <div
+            aria-hidden="true"
+            className="animate-spin rounded-full h-12 w-12 border-4 border-gray-200 border-t-primary mx-auto"
+            style={{ animationDelay: animationDelayRef.current }}
+          />
+          {message ? (
+            <p className="text-sm text-muted-foreground">{message}</p>
+          ) : (
+            <span className="sr-only">Loading</span>
+          )}
+        </div>
       </div>
     </div>
   );
