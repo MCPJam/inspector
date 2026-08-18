@@ -402,6 +402,14 @@ export async function resolveAndStart(
           start: candidate.start,
           port: candidate.port,
           mcpPath: candidate.mcpPath,
+          // Only a DECLARED (or operator-override) recipe carries one, and only
+          // when it is non-empty. The key is omitted rather than sent as
+          // `undefined` or `{}`: the backend refuses `env` on a cacheable rung,
+          // so an empty map riding along on a detected candidate would be a 400
+          // on a candidate that was otherwise fine.
+          ...(candidate.env && Object.keys(candidate.env).length > 0
+            ? { env: candidate.env }
+            : {}),
         },
         rung: candidate.rung,
         evidence: candidate.evidence,
@@ -577,6 +585,12 @@ function recipeOf(planned: PlannedCandidate): ResolvedRecipe {
     start: planned.recipe.start,
     port: planned.recipe.port,
     mcpPath: planned.recipe.mcpPath,
+    // The PLAN's environment, not the one we proposed — the backend owns the
+    // plan, and a candidate it issued must execute exactly as issued. Copied
+    // conditionally so an env-free plan candidate stays env-free rather than
+    // acquiring an `env: undefined` that later code would have to know to
+    // ignore.
+    ...(planned.recipe.env ? { env: planned.recipe.env } : {}),
     rung: planned.rung,
     ownershipProof: planned.ownershipProof,
     evidence: planned.evidence ?? [],

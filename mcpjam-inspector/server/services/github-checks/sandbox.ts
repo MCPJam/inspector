@@ -409,6 +409,28 @@ export async function provisionCheckSandbox(args: {
 type RunResult = { exitCode: number; stdout: string; stderr: string };
 
 /**
+ * `{ envs }` when there is an environment to pass, and NOTHING otherwise.
+ *
+ * The empty case is the interesting one. Spreading the result of this into a
+ * command's options leaves an env-free command byte-identical to what this
+ * module has always sent — no `envs: undefined`, no `envs: {}` — so the
+ * overwhelmingly common no-environment path cannot be changed by the existence
+ * of the environment channel, and a diff of the option objects stays a diff
+ * about something real.
+ *
+ * This is the ONLY way a recipe's environment reaches a command. It is never
+ * written into a command STRING: the values come from a PR checkout, every
+ * diagnostic in this module quotes commands into check output, and an `export
+ * FOO=…` would additionally put author bytes inside a `bash -lc` quoting
+ * boundary that is already nested two deep.
+ */
+function envsOption(env: Record<string, string> | undefined): {
+  envs?: Record<string, string>;
+} {
+  return env && Object.keys(env).length > 0 ? { envs: env } : {};
+}
+
+/**
  * Foreground command, normalized. E2B throws on a non-zero exit; every caller
  * here wants the exit code and the streams, so translate the throw back into a
  * result and let the caller decide what a failure MEANS.
@@ -445,6 +467,15 @@ async function runForeground(
      * not a secret one.
      */
     secret?: string;
+    /**
+     * The recipe's declared environment, for the one command that runs the PR's
+     * own code (the build). SEPARATE CONCERN FROM `secret`, in both directions:
+     * these are non-secret literals from a committed file and are never
+     * redacted, and the clone credential is never one of them — it rides a
+     * command-line git header precisely so it does not become an environment
+     * variable in a box where PR code runs.
+     */
+    envs?: Record<string, string>;
   }
 ): Promise<RunResult> {
   const startedAt = Date.now();
@@ -452,6 +483,7 @@ async function runForeground(
     const result = (await sandbox.commands.run(command, {
       cwd: opts.cwd,
       timeoutMs: opts.timeoutMs,
+      ...envsOption(opts.envs),
     })) as Partial<RunResult> | undefined;
     return {
       exitCode: result?.exitCode ?? 0,
@@ -723,6 +755,11 @@ export async function buildAndStart(
         cwd: CHECKOUT_DIR,
         timeoutMs: options?.buildTimeoutMs ?? BUILD_TIMEOUT_MS,
         timeoutOutcome: "build_failed",
+        // The build gets the declared environment too, not just the start: a
+        // build step that reads its configuration (a codegen flag, a fixture
+        // mode) would otherwise produce a tree the start command's environment
+        // no longer matches.
+        ...envsOption(recipe.env),
       }
     );
   } catch (error) {
@@ -768,6 +805,12 @@ export async function buildAndStart(
         // forwards the value to connect-rpc, which treats <= 0 as an
         // already-expired deadline and would abort the spawn instantly.)
         timeoutMs: CHECK_SANDBOX_TIMEOUT_MS,
+        // The server's own configuration, handed to E2B beside the command
+        // rather than written into it. `startCommandScript` is unchanged and
+        // stays unchanged: the recipe's `start` runs in a nested `bash -lc`
+        // under a watchdog, and an environment assignment threaded through that
+        // would have to survive two quoting boundaries to arrive intact.
+        ...envsOption(recipe.env),
       }
     );
   } catch (error) {
