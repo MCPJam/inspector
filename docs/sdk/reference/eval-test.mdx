@@ -54,6 +54,20 @@ new EvalTest(options: EvalTestConfig)
   `mintCaseId()` inline: an id regenerated on every run is not an identity.
   Constructing an `EvalTest` without an `id` throws, and the error carries a
   freshly minted id to paste.
+
+  **Migrating from `externalCaseId`:** If your test already declares
+  `externalCaseId`, reuse that value verbatim as `id` — do not mint a new one.
+  The hosted history for that case is keyed on `externalCaseId`, so setting
+  `id` to the same value keeps the history intact. Setting `id` to a different
+  value is a hard error at ingest.
+
+  ```typescript
+  // Before
+  new EvalTest({ externalCaseId: "case_123", name: "refunds a duplicate charge", ... })
+
+  // After — reuse the existing externalCaseId as id
+  new EvalTest({ id: "case_123", externalCaseId: "case_123", name: "refunds a duplicate charge", ... })
+  ```
 </Warning>
 
 <Warning>
