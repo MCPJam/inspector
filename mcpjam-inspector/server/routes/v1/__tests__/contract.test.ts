@@ -75,8 +75,8 @@ describe("internal-code -> public-code mapping", () => {
     "XAA_CONNECTION_NOT_CONFIGURED",
     "TASK_NOT_FOUND",
     "TASKS_UNSUPPORTED",
-    "CHATBOX_ACCESS_DENIED",
-    "CHATBOX_ACCESS_STALE",
+    "SCENARIO_ACCESS_DENIED",
+    "SCENARIO_ACCESS_STALE",
   ];
 
   it("has no UNDECIDED internal code silently collapsing to INTERNAL_ERROR", () => {

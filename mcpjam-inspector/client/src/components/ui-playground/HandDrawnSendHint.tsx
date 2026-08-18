@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { getChatboxHostFamily } from "@/lib/chatbox-client-style";
+import { getScenarioHostFamily } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 import arrow8Svg from "./arrow-8.svg?raw";
 
@@ -36,7 +36,7 @@ export function HandDrawnSendHint({
   hostStyle,
   theme = "light",
 }: HandDrawnSendHintProps) {
-  const hostFamily = getChatboxHostFamily(hostStyle);
+  const hostFamily = getScenarioHostFamily(hostStyle);
   const inkColor =
     hostFamily === "chatgpt"
       ? theme === "dark"

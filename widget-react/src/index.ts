@@ -59,7 +59,7 @@ export type {
   OpenAiAppsCapabilities,
   // environment data types
   ThemeMode,
-  ChatboxHostStyle,
+  ScenarioHostStyle,
   DeviceCapabilities,
   DeviceType,
   SafeAreaInsets,

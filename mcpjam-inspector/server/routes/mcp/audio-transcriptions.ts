@@ -33,7 +33,7 @@ interface TranscriptionRequestBody {
   model?: unknown;
   projectId?: unknown;
   selectedServerIds?: unknown;
-  chatboxId?: unknown;
+  scenarioId?: unknown;
   accessVersion?: unknown;
   input_audio?: {
     data?: unknown;
@@ -102,7 +102,7 @@ function validateRequest(body: TranscriptionRequestBody):
         model: string;
         projectId?: string;
         selectedServerIds?: string[];
-        chatboxId?: string;
+        scenarioId?: string;
         accessVersion?: number;
         inputAudio: { data: string; format: string };
         language?: string;
@@ -128,9 +128,9 @@ function validateRequest(body: TranscriptionRequestBody):
         )
       )
     : undefined;
-  const chatboxId =
-    typeof body.chatboxId === "string" && body.chatboxId.trim().length > 0
-      ? body.chatboxId.trim()
+  const scenarioId =
+    typeof body.scenarioId === "string" && body.scenarioId.trim().length > 0
+      ? body.scenarioId.trim()
       : undefined;
   const accessVersion =
     typeof body.accessVersion === "number" &&
@@ -196,7 +196,7 @@ function validateRequest(body: TranscriptionRequestBody):
       ...(selectedServerIds && selectedServerIds.length > 0
         ? { selectedServerIds }
         : {}),
-      ...(chatboxId ? { chatboxId } : {}),
+      ...(scenarioId ? { scenarioId } : {}),
       ...(accessVersion !== undefined ? { accessVersion } : {}),
       inputAudio: { data, format },
       ...(language ? { language } : {}),
@@ -292,7 +292,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
     model,
     projectId,
     selectedServerIds,
-    chatboxId,
+    scenarioId,
     accessVersion,
     inputAudio,
     language,
@@ -346,7 +346,7 @@ audioTranscriptions.post("/transcriptions", async (c) => {
       ...(selectedServerIds && selectedServerIds.length > 0
         ? { selectedServerIds }
         : {}),
-      ...(chatboxId ? { chatboxId } : {}),
+      ...(scenarioId ? { scenarioId } : {}),
       ...(accessVersion !== undefined ? { accessVersion } : {}),
       ...(audioDurationSeconds !== undefined ? { audioDurationSeconds } : {}),
     };

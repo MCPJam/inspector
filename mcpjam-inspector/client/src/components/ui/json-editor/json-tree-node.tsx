@@ -72,7 +72,12 @@ function useProgressiveChildren<T>(items: T[], isExpanded: boolean): T[] {
 
 interface CopyableValueProps {
   children: React.ReactNode;
-  value: string;
+  /**
+   * A thunk defers serializing until the copy is clicked. Object and array
+   * nodes pass one because serializing a deeply nested subtree on every render
+   * overflows the stack (INSPECTOR-CLIENT-232).
+   */
+  value: string | (() => string);
   onCopy?: (value: string) => void;
   /**
    * Keep the copy button visible even when the value isn't hovered. Used on
@@ -94,10 +99,19 @@ const CopyableValue = memo(function CopyableValue({
   const handleCopy = useCallback(
     async (e: React.MouseEvent) => {
       e.stopPropagation();
-      const success = await copyToClipboard(value);
+      let text: string;
+      try {
+        text = typeof value === "function" ? value() : value;
+      } catch (error) {
+        // Serializing can still fail on a value too deep for JSON.stringify;
+        // skip the copy rather than reject out of the click handler.
+        console.error("Failed to serialize value for copy", error);
+        return;
+      }
+      const success = await copyToClipboard(text);
       if (success) {
         setCopied(true);
-        onCopy?.(value);
+        onCopy?.(text);
         setTimeout(() => setCopied(false), 1500);
       }
     },
@@ -170,6 +184,10 @@ function JsonArrayNode({
 
   // Use progressive rendering for large arrays
   const visibleItems = useProgressiveChildren(value, !collapsed);
+  const getCopyValue = useCallback(
+    () => JSON.stringify(value, null, 2),
+    [value],
+  );
 
   const renderKeyPrefix = () => {
     if (keyName === undefined) return null;
@@ -214,11 +232,7 @@ function JsonArrayNode({
           <ChevronRight className="h-3 w-3" />
         </button>
         {renderKeyPrefix()}
-        <CopyableValue
-          value={JSON.stringify(value, null, 2)}
-          onCopy={onCopy}
-          alwaysVisible
-        >
+        <CopyableValue value={getCopyValue} onCopy={onCopy} alwaysVisible>
           <span className="json-punctuation">[</span>
           <span className="text-muted-foreground text-xs px-1">
             {value.length} {value.length === 1 ? "item" : "items"}
@@ -241,11 +255,7 @@ function JsonArrayNode({
           <ChevronRight className="h-3 w-3" />
         </button>
         {renderKeyPrefix()}
-        <CopyableValue
-          value={JSON.stringify(value, null, 2)}
-          onCopy={onCopy}
-          alwaysVisible
-        >
+        <CopyableValue value={getCopyValue} onCopy={onCopy} alwaysVisible>
           <span className="json-punctuation">[</span>
         </CopyableValue>
       </div>
@@ -300,6 +310,10 @@ function JsonObjectNode({
 
   // Use progressive rendering for large objects
   const visibleEntries = useProgressiveChildren(entries, !collapsed);
+  const getCopyValue = useCallback(
+    () => JSON.stringify(value, null, 2),
+    [value],
+  );
 
   const renderKeyPrefix = () => {
     if (keyName === undefined) return null;
@@ -344,11 +358,7 @@ function JsonObjectNode({
           <ChevronRight className="h-3 w-3" />
         </button>
         {renderKeyPrefix()}
-        <CopyableValue
-          value={JSON.stringify(value, null, 2)}
-          onCopy={onCopy}
-          alwaysVisible
-        >
+        <CopyableValue value={getCopyValue} onCopy={onCopy} alwaysVisible>
           <span className="json-punctuation">{"{"}</span>
           <span className="text-muted-foreground text-xs px-1">
             {entries.length} {entries.length === 1 ? "key" : "keys"}
@@ -371,11 +381,7 @@ function JsonObjectNode({
           <ChevronRight className="h-3 w-3" />
         </button>
         {renderKeyPrefix()}
-        <CopyableValue
-          value={JSON.stringify(value, null, 2)}
-          onCopy={onCopy}
-          alwaysVisible
-        >
+        <CopyableValue value={getCopyValue} onCopy={onCopy} alwaysVisible>
           <span className="json-punctuation">{"{"}</span>
         </CopyableValue>
       </div>

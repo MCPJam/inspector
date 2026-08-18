@@ -18,7 +18,7 @@ If your host isn't in the list yet — or if Microsoft, Anthropic, OpenAI, etc. 
 
 A host preset has two pieces:
 
-1. **Host style** — branding, label, chatbox chrome, font CSS, and the capability **surface** the host supports (which MCP Apps and OpenAI Apps SDK features it implements). Defined in `client/src/lib/client-styles/built-ins.ts`.
+1. **Host style** — branding, label, scenario chrome, font CSS, and the capability **surface** the host supports (which MCP Apps and OpenAI Apps SDK features it implements). Defined in `client/src/lib/client-styles/built-ins.ts`.
 2. **Catalog host** — the backend-owned host row used for creation, compare, caniuse, and "update to latest". It includes label/provenance facts plus the full `HostConfigInputV2` template: `clientCapabilities`, `hostContext`, `mcpProfile`, image policy, sandbox policy, model defaults, and other host fields. Defined in `mcpjam-backend/convex/marketHostCatalog/templates.ts` and `mcpjam-backend/convex/marketHostCatalog/seed.ts`.
 
 The backend catalog is canonical at runtime. The SDK carries a generated fallback snapshot for CLI/offline/dev paths; do not hand-edit SDK fallback data when changing host facts.
@@ -79,7 +79,7 @@ Inventing values silently misrepresents the host. A widget that works in MCPJam-
       chatUi: {
         label: "YourHost",
         shortLabel: "YourHost-style host",
-        pickerDescription: "YourHost chatbox chrome",
+        pickerDescription: "YourHost scenario chrome",
         logoSrc: yourHostLogo,
         family: "yourhost",
         resolveChatBackground: (theme) => YOURHOST_CHAT_BACKGROUND[theme],

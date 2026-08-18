@@ -82,8 +82,8 @@ describe("v1 catalog read proxies", () => {
       "https://convex-http.example.com/v1/chat-sessions?projectId=p1&status=archived&limit=10&before=123",
     ],
     [
-      "/api/v1/projects/p1/chatboxes",
-      "https://convex-http.example.com/v1/chatboxes?projectId=p1",
+      "/api/v1/projects/p1/scenarios",
+      "https://convex-http.example.com/v1/scenarios?projectId=p1",
     ],
     [
       // Project-NESTED, and every search param forwarded verbatim — `cursor`
@@ -278,37 +278,37 @@ describe("v1 catalog read proxies", () => {
     expect(((await res.json()) as { code?: string }).code).toBe("TIMEOUT");
   });
 
-  it("returns the chatbox detail when the path projectId matches", async () => {
+  it("returns the scenario detail when the path projectId matches", async () => {
     const detail = {
       id: "cbx_1",
       projectId: "p1",
-      name: "Support Chatbox",
+      name: "Support Scenario",
       modelId: "gpt-4o-mini",
       servers: [{ id: "srv_1", name: "server-a", url: null, useOAuth: false }],
     };
     fetchMock.mockResolvedValue(jsonResponse(detail));
-    const res = await request(makeApp(), "/api/v1/projects/p1/chatboxes/cbx_1");
+    const res = await request(makeApp(), "/api/v1/projects/p1/scenarios/cbx_1");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual(detail);
     expect(String((fetchMock.mock.calls[0] as [URL])[0])).toBe(
-      "https://convex-http.example.com/v1/chatbox?chatboxId=cbx_1"
+      "https://convex-http.example.com/v1/scenario?scenarioId=cbx_1"
     );
   });
 
-  it("answers NOT_FOUND when the chatbox lives in a different project", async () => {
+  it("answers NOT_FOUND when the scenario lives in a different project", async () => {
     fetchMock.mockResolvedValue(
-      jsonResponse({ id: "cbx_1", projectId: "p2", name: "Support Chatbox" })
+      jsonResponse({ id: "cbx_1", projectId: "p2", name: "Support Scenario" })
     );
-    const res = await request(makeApp(), "/api/v1/projects/p1/chatboxes/cbx_1");
+    const res = await request(makeApp(), "/api/v1/projects/p1/scenarios/cbx_1");
     expect(res.status).toBe(404);
     expect(((await res.json()) as { code?: string }).code).toBe("NOT_FOUND");
   });
 
-  it("passes a chatbox upstream error through with its status", async () => {
+  it("passes a scenario upstream error through with its status", async () => {
     fetchMock.mockResolvedValue(
       jsonResponse({ code: "VALIDATION_ERROR", message: "bad id" }, 400)
     );
-    const res = await request(makeApp(), "/api/v1/projects/p1/chatboxes/bad");
+    const res = await request(makeApp(), "/api/v1/projects/p1/scenarios/bad");
     expect(res.status).toBe(400);
     expect(((await res.json()) as { code?: string }).code).toBe(
       "VALIDATION_ERROR"
