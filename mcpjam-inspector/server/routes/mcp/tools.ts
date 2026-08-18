@@ -136,7 +136,7 @@ tools.post("/list", async (c) => {
       }
     }
 
-    // Only bail out for truly unknown ids (e.g. stale chatbox refs) so we
+    // Only bail out for truly unknown ids (e.g. stale scenario refs) so we
     // don't 500 the metadata fetch. Registered-but-still-connecting ids fall
     // through to the SDK path, which awaits the in-flight connectPromise and
     // returns the real tools.

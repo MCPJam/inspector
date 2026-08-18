@@ -99,10 +99,10 @@ const PAIRS: Readonly<Record<string, string>> = {
   SandboxImageBuildStarted: "PlatformImageBuildStarted",
   ComputerAttached: "PlatformComputerAttached",
   ComputerReset: "PlatformComputerReset",
-  ChatboxLink: "PlatformChatboxLink",
-  ChatboxServer: "PlatformChatboxServer",
-  Chatbox: "PlatformChatbox",
-  ChatboxDetail: "PlatformChatboxDetail",
+  ScenarioLink: "PlatformScenarioLink",
+  ScenarioServer: "PlatformScenarioServer",
+  Scenario: "PlatformScenario",
+  ScenarioDetail: "PlatformScenarioDetail",
   TunnelGrant: "PlatformTunnelGrant",
   TunnelClosed: "PlatformTunnelClosed",
 
@@ -336,8 +336,8 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
   visit(source);
 
   // Flatten `extends`. Without this every inherited field reads as "documented
-  // in the spec, absent from the SDK" — `PlatformChatboxDetail extends
-  // PlatformChatbox` alone produced twelve such phantoms, which is exactly the
+  // in the spec, absent from the SDK" — `PlatformScenarioDetail extends
+  // PlatformScenario` alone produced twelve such phantoms, which is exactly the
   // noise that gets a ratchet switched off.
   //
   // A child's own declaration WINS over an inherited one: that is what

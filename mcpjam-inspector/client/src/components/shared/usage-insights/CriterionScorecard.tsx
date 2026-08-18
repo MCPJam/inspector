@@ -5,7 +5,7 @@ import {
   type CriterionVerdict,
   type UsageFilterChip,
   type UsageFilterState,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 import type { CriterionFacet } from "@/hooks/useUsageInsights";
 import {
   formatCriterion,
