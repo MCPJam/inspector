@@ -35,13 +35,13 @@ import {
   diagnoseServerOperation,
   getProjectServerConnectionStatusOperation,
   cancelEvalRunOperation,
-  getChatboxOperation,
+  getScenarioOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
-  listChatboxesOperation,
+  listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
   listEvalRunIterationsOperation,
@@ -123,11 +123,11 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
-  listChatboxesOperation,
-  getChatboxOperation,
+  listScenariosOperation,
+  getScenarioOperation,
   listChatSessionsOperation,
   // Advertised with its reach NARROWED rather than excluded: see
-  // `WORKSPACE_INPUT_CLAMPS` — chatbox (visitor) sessions stay unsearchable
+  // `WORKSPACE_INPUT_CLAMPS` — scenario (visitor) sessions stay unsearchable
   // here, matching the line the user-testing exclusions below already draw.
   searchSessionsOperation,
 
@@ -353,7 +353,7 @@ export function isMcpjamToolId(id: string): boolean {
 
 // Operations that open an ephemeral connection to a user's saved MCP server
 // inherit the host's requireToolApproval. Pure platform API reads (project,
-// eval, chatbox) never need approval.
+// eval, scenario) never need approval.
 const CONNECTION_OPENING_IDS = new Set([
   diagnoseServerOperation.name,
   listServerToolsOperation.name,
@@ -414,14 +414,14 @@ type WorkspaceInputClamp = {
   ) => Record<string, unknown> | { error: string };
 };
 
-/** The sourceTypes in-app chat may search. `chatbox` is the omission. */
+/** The sourceTypes in-app chat may search. `scenario` is the omission. */
 const WORKSPACE_SEARCHABLE_SOURCE_TYPES = ["direct", "eval", "swarm"] as const;
 
 export const WORKSPACE_INPUT_CLAMPS: Readonly<
   Record<string, WorkspaceInputClamp>
 > = {
   /**
-   * Keep user-testing (`chatbox`) transcripts out of in-app chat search.
+   * Keep user-testing (`scenario`) transcripts out of in-app chat search.
    *
    * Those are real visitors' conversations with the product, and this surface
    * already draws that line for the listings (`list_user_testing_sessions` and
@@ -436,23 +436,23 @@ export const WORKSPACE_INPUT_CLAMPS: Readonly<
    */
   search_sessions: {
     descriptionNote:
-      " In this chat, user-testing (chatbox) sessions are not searchable — those are real visitors' conversations. Searches direct, eval, and swarm sessions.",
+      " In this chat, user-testing (scenario) sessions are not searchable — those are real visitors' conversations. Searches direct, eval, and swarm sessions.",
     transform: (input) => {
       const requested = input.sourceTypes;
       if (
         Array.isArray(requested) &&
-        requested.some((value) => value === "chatbox")
+        requested.some((value) => value === "scenario")
       ) {
         return {
           error:
-            "User-testing (chatbox) sessions cannot be searched from chat — those are real visitors' conversations. Search direct, eval, or swarm sessions instead, or use the User Testing tab.",
+            "User-testing (scenario) sessions cannot be searched from chat — those are real visitors' conversations. Search direct, eval, or swarm sessions instead, or use the User Testing tab.",
         };
       }
       // Injected when ABSENT and when EMPTY. `[]` is the dangerous spelling:
       // the zod schema's `.min(1)` rejects it, but `execute()` can be called
       // raw with no schema in the way, and an empty array serializes to no
       // filter at all — which would widen the search to every source,
-      // chatbox included. Treating `[]` exactly like omission closes that.
+      // scenario included. Treating `[]` exactly like omission closes that.
       if (!Array.isArray(requested) || requested.length === 0) {
         return {
           ...input,

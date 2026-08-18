@@ -22,7 +22,7 @@ export interface RevokeApiKeyDialogProps {
 }
 
 /**
- * Type-the-name-to-confirm pattern — mirrors `ChatboxDeleteConfirmDialog`.
+ * Type-the-name-to-confirm pattern — mirrors `ScenarioDeleteConfirmDialog`.
  * Revocation is immediate: once confirmed, any client still holding the
  * key value gets 401 within seconds.
  */

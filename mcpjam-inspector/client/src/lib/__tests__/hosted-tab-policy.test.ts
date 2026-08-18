@@ -32,12 +32,12 @@ describe("hosted-tab-policy", () => {
     expect(isHostedSidebarTabAllowed("ci-evals")).toBe(true);
   });
 
-  it("keeps chatboxes visible in hosted navigation", () => {
-    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("chatboxes");
-    expect(HOSTED_HASH_ALLOWED_TABS).toContain("chatboxes");
-    expect(isHostedSidebarTabAllowed("chatboxes")).toBe(true);
-    expect(isHostedHashTabAllowed("chatboxes")).toBe(true);
-    expect(isHostedHashTabBlocked("chatboxes")).toBe(false);
+  it("keeps scenarios visible in hosted navigation", () => {
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("scenarios");
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("scenarios");
+    expect(isHostedSidebarTabAllowed("scenarios")).toBe(true);
+    expect(isHostedHashTabAllowed("scenarios")).toBe(true);
+    expect(isHostedHashTabBlocked("scenarios")).toBe(false);
   });
 
   it("allows profile and organizations hashes in hosted mode", () => {

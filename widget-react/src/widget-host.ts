@@ -66,8 +66,8 @@ export interface OpenAiAppsCapabilities {
 /** usePreferencesStore theme mode. */
 export type ThemeMode = "light" | "dark";
 
-/** Host-style id (the inspector's `ChatboxHostStyle`). */
-export type ChatboxHostStyle = string;
+/** Host-style id (the inspector's `ScenarioHostStyle`). */
+export type ScenarioHostStyle = string;
 
 export interface DeviceCapabilities {
   hover: boolean;
@@ -153,12 +153,12 @@ export interface ResolvedHostStyle {
 
 /**
  * Which surface the widget is mounted on. Collapses the inspector's
- * `useIsChatboxSurface` / `useWidgetSurface` signals into one descriptor.
+ * `useIsScenarioSurface` / `useWidgetSurface` signals into one descriptor.
  */
 export type WidgetSurfaceKind =
   | "chat"
   | "playground"
-  | "chatbox"
+  | "scenario"
   | "standalone";
 
 /** Per-surface identity + routing the renderer reads ambiently. */
@@ -456,9 +456,9 @@ export interface WidgetHostProfileSandbox {
  */
 export interface WidgetHostEnvironmentInputs {
   themeMode: ThemeMode;
-  sharedHostStyle: ChatboxHostStyle;
-  chatboxHostStyle: ChatboxHostStyle | null;
-  chatboxHostTheme: "light" | "dark" | null;
+  sharedHostStyle: ScenarioHostStyle;
+  scenarioHostStyle: ScenarioHostStyle | null;
+  scenarioHostTheme: "light" | "dark" | null;
   hostCapabilitiesOverride: Record<string, unknown> | undefined;
   /**
    * Stable hash of the active MCP profile. The profile object is bound in the
@@ -494,10 +494,10 @@ export interface WidgetHostEnvironmentInputs {
 // renderer's recompute reactivity.
 export interface WidgetHostResolvers {
   resolveEffectiveCompatRuntime: (args: {
-    hostStyle: ChatboxHostStyle | string | null | undefined;
+    hostStyle: ScenarioHostStyle | string | null | undefined;
   }) => EffectiveCompatRuntime;
   resolveEffectiveMcpAppsCapabilities: (args: {
-    hostStyle: ChatboxHostStyle | string | null | undefined;
+    hostStyle: ScenarioHostStyle | string | null | undefined;
   }) => ResolvedMcpAppsCapabilities;
   resolveEffectiveHostCapabilities: (args: {
     hostStyle: string | null | undefined;

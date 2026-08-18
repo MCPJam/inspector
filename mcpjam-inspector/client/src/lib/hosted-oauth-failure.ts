@@ -28,13 +28,27 @@ const METADATA_FAILURE =
   /HTTP (\d{3}) trying to load (?:OAuth|OpenID provider) metadata from (\S+?)(?:\s+\(([^)]*)\))?\s*$/i;
 
 /**
+ * The `invalid_grant` family, in every spelling that reaches a client: the
+ * RFC 6749 code itself, the hyphen/space variants a hand-written server emits,
+ * and the `InvalidGrantError` class name a Convex action throws.
+ *
+ * Exported because {@link import("./oauth/mcp-oauth").formatOAuthCallbackError}
+ * classifies the same family on the callback path. One pattern, so extending
+ * either classifier cannot leave the other behind.
+ */
+export const INVALID_GRANT_PATTERN =
+  /invalid[_\s-]?grant|InvalidGrantError/i;
+
+/**
  * The token endpoint answered, and the answer was "no". The invalid_client
  * family belongs here: a registration the server has disowned can never
  * refresh, and re-running authorize (which re-registers) is the fix, same as
  * for a dead refresh token.
  */
-const DECLINED =
-  /invalid[_\s-]?grant|InvalidGrantError|refresh[_\s-]?token[_\s-]?not[_\s-]?found|token is not active|expired (?:access\/)?refresh token|invalid[_\s-]?client|InvalidClientError|unknown client|client authentication failed/i;
+const DECLINED = new RegExp(
+  `${INVALID_GRANT_PATTERN.source}|refresh[_\\s-]?token[_\\s-]?not[_\\s-]?found|token is not active|expired (?:access\\/)?refresh token|invalid[_\\s-]?client|InvalidClientError|unknown client|client authentication failed`,
+  "i"
+);
 
 /**
  * What the backend recorded off the authorization server's failing response.
