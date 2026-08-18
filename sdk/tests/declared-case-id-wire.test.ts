@@ -1,0 +1,443 @@
+/**
+ * The declared case id ON THE WIRE.
+ *
+ * W0.1a made `EvalTestConfig.id` required but changed no payload byte; this is
+ * the step that puts it in the upload. The load-bearing assertions here are
+ * therefore made against the SERIALIZED request body, not against the in-memory
+ * result objects — "the field reaches the backend" is the claim, and a mapper
+ * that builds it correctly into an object nobody sends proves nothing.
+ */
+const sentryMocks = vi.hoisted(() => ({
+  addBreadcrumb: vi.fn().mockResolvedValue(undefined),
+  captureEvalReportingFailure: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock("../src/sentry", () => ({
+  addBreadcrumb: sentryMocks.addBreadcrumb,
+  captureEvalReportingFailure: sentryMocks.captureEvalReportingFailure,
+}));
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { EvalSuite } from "../src/EvalSuite";
+import { EvalTest } from "../src/EvalTest";
+import { PromptResult } from "../src/PromptResult";
+import { evalTestFromPlatformCase } from "../src/corpus";
+import {
+  iterationsToEvalResultInputs,
+  promptsToEvalResult,
+} from "../src/eval-result-mapping";
+import {
+  reportEvalResults,
+  reportEvalResultsSafely,
+} from "../src/report-eval-results";
+import { EvalReportingError } from "../src/errors";
+import type { EvalResultInput } from "../src/eval-reporting-types";
+import type { HostRunner } from "../src/HostRunner";
+import type { PlatformEvalCase } from "../src/platform/types";
+
+const BASE_URL = "https://backend.test";
+
+function mockPromptResult(prompt: string): PromptResult {
+  return PromptResult.from({
+    prompt,
+    messages: [
+      { role: "user", content: prompt },
+      { role: "assistant", content: "ok" },
+    ],
+    text: "ok",
+    toolCalls: [],
+    usage: { inputTokens: 5, outputTokens: 5, totalTokens: 10 },
+    latency: { e2eMs: 10, llmMs: 8, mcpMs: 2 },
+  });
+}
+
+/** Minimal executor: no `getHostSnapshot`, so no capability probe fires. */
+function mockAgent(): HostRunner {
+  const create = (): HostRunner => {
+    let history: PromptResult[] = [];
+    return {
+      run: async (message: string) => {
+        const result = mockPromptResult(message);
+        history.push(result);
+        return result;
+      },
+      resetPromptHistory: () => {
+        history = [];
+      },
+      getPromptHistory: () => [...history],
+      withOptions: () => create(),
+    } as unknown as HostRunner;
+  };
+  return create();
+}
+
+function okResponse(): any {
+  return {
+    ok: true,
+    status: 200,
+    statusText: "OK",
+    json: async () => ({
+      ok: true,
+      suiteId: "suite_1",
+      runId: "run_1",
+      status: "completed",
+      result: "passed",
+      summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+    }),
+  };
+}
+
+/** The results array exactly as it was serialized onto the request body. */
+function uploadedResults(fetchMock: ReturnType<typeof vi.fn>): any[] {
+  const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+  return body.results;
+}
+
+async function runSuiteAndCapture(suite: EvalSuite): Promise<any[]> {
+  const fetchMock = vi.fn().mockResolvedValue(okResponse());
+  global.fetch = fetchMock as any;
+  await suite.run(mockAgent(), {
+    iterations: 1,
+    mcpjam: { apiKey: "sk_test_key", baseUrl: BASE_URL },
+  });
+  expect(fetchMock).toHaveBeenCalled();
+  return uploadedResults(fetchMock);
+}
+
+describe("declared case id on the upload", () => {
+  const originalFetch = global.fetch;
+  const originalBaseUrl = process.env.MCPJAM_BASE_URL;
+  const originalApiKey = process.env.MCPJAM_API_KEY;
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalBaseUrl === undefined) delete process.env.MCPJAM_BASE_URL;
+    else process.env.MCPJAM_BASE_URL = originalBaseUrl;
+    if (originalApiKey === undefined) delete process.env.MCPJAM_API_KEY;
+    else process.env.MCPJAM_API_KEY = originalApiKey;
+    sentryMocks.addBreadcrumb.mockClear();
+    sentryMocks.captureEvalReportingFailure.mockClear();
+    vi.restoreAllMocks();
+  });
+
+  it("serializes `caseId` from the config onto every result", async () => {
+    const suite = new EvalSuite({ name: "wire" });
+    suite.add(
+      new EvalTest({
+        id: "c_refund_flow",
+        name: "refund flow",
+        test: async (executor) => {
+          await executor.run("ask for a refund");
+          return true;
+        },
+      })
+    );
+
+    const results = await runSuiteAndCapture(suite);
+
+    expect(results).toHaveLength(1);
+    expect(results[0].caseId).toBe("c_refund_flow");
+    // The whole point of the field: the id survives a rename of the display
+    // name, which the title does not.
+    expect(results[0].caseTitle).toBe("refund flow");
+  });
+
+  it("emits caseId === externalCaseId for a hosted corpus case", () => {
+    // `loadCorpus` satisfies the equality rule by construction — it declares
+    // the hosted case's own id in BOTH fields. Verified rather than assumed,
+    // because a drift here throws at construction for every corpus user.
+    const platformCase: PlatformEvalCase = {
+      id: "case_hosted_1",
+      title: "Refund flow",
+      steps: [{ id: "s1", kind: "prompt", prompt: "Ask for a refund" }],
+      iterations: 1,
+      isNegative: false,
+      models: [{ provider: "openai", model: "gpt-4o" } as never],
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const test = evalTestFromPlatformCase(platformCase);
+    const config = test.getConfig();
+
+    expect(config.id).toBe("case_hosted_1");
+    expect(config.externalCaseId).toBe("case_hosted_1");
+
+    const [result] = iterationsToEvalResultInputs(
+      config.name ?? "",
+      [
+        {
+          passed: true,
+          prompts: [mockPromptResult("Ask for a refund")],
+          latencies: [{ e2eMs: 10, llmMs: 8, mcpMs: 2 }],
+          tokens: { input: 5, output: 5, total: 10 },
+        } as never,
+      ],
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { caseId: config.id, externalCaseId: config.externalCaseId }
+    );
+    expect(result.caseId).toBe("case_hosted_1");
+    expect(result.externalCaseId).toBe("case_hosted_1");
+  });
+
+  it("adds caseId and changes nothing else about a legacy payload", async () => {
+    // Diffed, not eyeballed: the same iteration is mapped twice, once with a
+    // declared identity and once with none, and the two payloads must differ
+    // in exactly one key.
+    const iterations = [
+      {
+        passed: true,
+        prompts: [mockPromptResult("hello")],
+        latencies: [{ e2eMs: 10, llmMs: 8, mcpMs: 2 }],
+        tokens: { input: 5, output: 5, total: 10 },
+        retryCount: 0,
+      } as never,
+    ];
+    const mapArgs = [
+      "legacy case",
+      iterations,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    ] as const;
+
+    const legacy = JSON.parse(
+      JSON.stringify(iterationsToEvalResultInputs(...mapArgs))
+    );
+    const declared = JSON.parse(
+      JSON.stringify(
+        iterationsToEvalResultInputs(...mapArgs, { caseId: "c_legacy" })
+      )
+    );
+
+    expect(declared).toHaveLength(1);
+    expect(declared[0].caseId).toBe("c_legacy");
+    const { caseId: _dropped, ...withoutCaseId } = declared[0];
+    expect(withoutCaseId).toEqual(legacy[0]);
+
+    // And on the wire, a config with no `externalCaseId` gains `caseId` and
+    // no other key.
+    const suite = new EvalSuite({ name: "legacy" });
+    suite.add(
+      new EvalTest({
+        id: "c_legacy",
+        name: "legacy case",
+        test: async (executor) => {
+          await executor.run("hello");
+          return true;
+        },
+      })
+    );
+    const [uploaded] = await runSuiteAndCapture(suite);
+    expect(uploaded.caseId).toBe("c_legacy");
+    // `externalIterationId` is stamped on by the reporter, not the mapper.
+    const {
+      caseId: _uploadedId,
+      externalIterationId,
+      ...uploadedMapped
+    } = uploaded;
+    expect(typeof externalIterationId).toBe("string");
+    expect(Object.keys(uploadedMapped).sort()).toEqual(
+      Object.keys(legacy[0]).sort()
+    );
+  });
+
+  it("keeps per-test identity when no test declares an externalCaseId", async () => {
+    // `caseIdentityByTest` used to be sparse — populated only for tests that
+    // set one of the three optional identity fields — and a required `id`
+    // makes it dense. Every reader keys it by test NAME, so the change is
+    // safe; this is the guard that says so.
+    const suite = new EvalSuite({ name: "dense" });
+    suite.add(
+      new EvalTest({
+        id: "c_first",
+        name: "first",
+        test: async (executor) => {
+          await executor.run("one");
+          return true;
+        },
+      })
+    );
+    suite.add(
+      new EvalTest({
+        id: "c_second",
+        name: "second",
+        test: async (executor) => {
+          await executor.run("two");
+          return false;
+        },
+      })
+    );
+
+    const results = await runSuiteAndCapture(suite);
+
+    expect(
+      results.map((result) => [result.caseTitle, result.caseId, result.passed])
+    ).toEqual([
+      ["first", "c_first", true],
+      ["second", "c_second", false],
+    ]);
+    for (const result of results) {
+      expect(result.externalCaseId).toBeUndefined();
+    }
+  });
+
+  it("forwards caseId through the low-level prompt mappers", () => {
+    const prompt = mockPromptResult("hello");
+
+    const withId = promptsToEvalResult([prompt], {
+      caseTitle: "case",
+      passed: true,
+      caseId: "c_prompts",
+    });
+    expect(withId.caseId).toBe("c_prompts");
+
+    const withoutId = promptsToEvalResult([prompt], {
+      caseTitle: "case",
+      passed: true,
+    });
+    expect(withoutId.caseId).toBeUndefined();
+    expect(JSON.stringify(withoutId)).not.toContain("caseId");
+
+    const single = prompt.toEvalResult({
+      caseTitle: "case",
+      caseId: "c_single",
+    });
+    expect(single.caseId).toBe("c_single");
+    expect(prompt.toEvalResult({ caseTitle: "case" }).caseId).toBeUndefined();
+    expect(
+      JSON.stringify(prompt.toEvalResult({ caseTitle: "case" }))
+    ).not.toContain("caseId");
+  });
+});
+
+describe("a reporting backend that does not understand caseId", () => {
+  const originalFetch = global.fetch;
+  const originalBaseUrl = process.env.MCPJAM_BASE_URL;
+
+  // What a Convex validator predating W0.1b hands back. Strict argument
+  // validation refuses the WHOLE upload rather than stripping the field, so
+  // this is a rejection with nothing filed — not a partial write.
+  const ARGUMENT_VALIDATION_ERROR =
+    "ArgumentValidationError: Object contains extra field `caseId` that is " +
+    'not in the validator.\n\nObject: {caseTitle: "refund flow"}\n' +
+    "Validator: v.object({caseTitle: v.string()})";
+
+  function rejectingFetch(status: number) {
+    return vi.fn().mockResolvedValue({
+      ok: false,
+      status,
+      statusText: "Internal Server Error",
+      json: async () => ({ ok: false, error: ARGUMENT_VALIDATION_ERROR }),
+    });
+  }
+
+  const input = {
+    apiKey: "sk_test_key",
+    baseUrl: BASE_URL,
+    suiteName: "compat",
+    results: [
+      { caseTitle: "refund flow", passed: true, caseId: "c_refund" },
+    ] as EvalResultInput[],
+  };
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalBaseUrl === undefined) delete process.env.MCPJAM_BASE_URL;
+    else process.env.MCPJAM_BASE_URL = originalBaseUrl;
+    sentryMocks.addBreadcrumb.mockClear();
+    sentryMocks.captureEvalReportingFailure.mockClear();
+    vi.restoreAllMocks();
+  });
+
+  it("surfaces an actionable upgrade error, not a validator dump", async () => {
+    global.fetch = rejectingFetch(500) as any;
+
+    const error = await reportEvalResults(input).then(
+      () => null,
+      (thrown) => thrown
+    );
+
+    expect(error).toBeInstanceOf(EvalReportingError);
+    expect((error as EvalReportingError).isReportingBackendIncompatible).toBe(
+      true
+    );
+    const message = (error as Error).message;
+    expect(message).toContain("older than this SDK requires");
+    // Names the field, what was lost, and where the fix lives.
+    expect(message).toContain("caseId");
+    expect(message).toContain("no results were filed");
+    expect(message).toContain("baseUrl");
+    // A reporting failure, said in those words — never a verdict on the run.
+    expect(message).toContain("not an eval verdict");
+    // The backend's own words survive: they name the endpoint and the field.
+    expect(message).toContain("ArgumentValidationError");
+  });
+
+  it("does not retry a rejection no retry can fix", async () => {
+    // 500 is normally retried three times with backoff. A strict validator
+    // will refuse the identical payload every time, so the retries only delay
+    // the message the author needs to read.
+    const fetchMock = rejectingFetch(500);
+    global.fetch = fetchMock as any;
+
+    await expect(reportEvalResults(input)).rejects.toThrow(
+      /older than this SDK requires/
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays a warning and a null result through the safe entry point", async () => {
+    global.fetch = rejectingFetch(500) as any;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(reportEvalResultsSafely(input)).resolves.toBeNull();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const warning = warn.mock.calls[0][0] as string;
+    expect(warning).toContain("eval reporting failed");
+    expect(warning).toContain("older than this SDK requires");
+    // The run's own verdicts are untouched — nothing here reports a failure.
+    expect(input.results[0].passed).toBe(true);
+  });
+
+  it("still throws from the safe entry point under strict", async () => {
+    global.fetch = rejectingFetch(500) as any;
+
+    await expect(
+      reportEvalResultsSafely({ ...input, strict: true })
+    ).rejects.toThrow(/older than this SDK requires/);
+  });
+
+  it("leaves a backend that DOES understand caseId to speak for itself", async () => {
+    // An invalid-id or conflicting-identity rejection is a content error the
+    // author must read as written; rewriting it as "upgrade your backend"
+    // would send them to fix the wrong thing.
+    const conflict =
+      'Conflicting case identity for "refund flow": caseId "c_a" and ' +
+      'externalCaseId "c_b" are two different claims about which case this is.';
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      json: async () => ({ ok: false, error: conflict }),
+    }) as any;
+
+    const error = await reportEvalResults(input).then(
+      () => null,
+      (thrown) => thrown
+    );
+
+    expect((error as EvalReportingError).isReportingBackendIncompatible).toBe(
+      false
+    );
+    expect((error as Error).message).toBe(conflict);
+  });
+});

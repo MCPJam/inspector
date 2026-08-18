@@ -380,6 +380,7 @@ export function promptsToEvalResult(
     errorDetails: overrides.errorDetails,
     trace,
     externalIterationId: overrides.externalIterationId,
+    caseId: overrides.caseId,
     externalCaseId: overrides.externalCaseId,
     metadata: overrides.metadata,
     isNegativeTest: overrides.isNegativeTest,
@@ -742,6 +743,8 @@ function syntheticStepsForCase(
  * backend reads them to join a local run to a hosted case's history.
  */
 export type EvalCaseIdentity = {
+  /** The case's DECLARED identity — `EvalTestConfig.id`. */
+  caseId?: string;
   externalCaseId?: string;
   isNegativeTest?: boolean;
   expectedOutput?: string;
@@ -787,10 +790,14 @@ export function iterationsToEvalResultInputs(
       durationMs: durationMs > 0 ? durationMs : undefined,
       expectedToolCalls,
       actualToolCalls,
-      // Hosted↔local identity and semantics. These are the SAME wire fields
-      // the backend already hashes into caseKey and renders on the run page,
-      // so a materialized hosted case joins its own history instead of
-      // appearing as a new scenario.
+      // Hosted↔local identity and semantics, on the wire. `caseId` is the
+      // DECLARED identity the backend resolves by first (and adopts onto a
+      // case that resolved by content hash); `externalCaseId` is the older
+      // join key it hashes into caseKey. Either way a materialized hosted case
+      // joins its own history instead of appearing as a new scenario.
+      ...(caseIdentity?.caseId !== undefined
+        ? { caseId: caseIdentity.caseId }
+        : {}),
       ...(caseIdentity?.externalCaseId !== undefined
         ? { externalCaseId: caseIdentity.externalCaseId }
         : {}),
@@ -880,6 +887,7 @@ export function suiteTestResultsToEvalResultInputs(
         durationMs: durationMs > 0 ? durationMs : undefined,
         expectedToolCalls,
         actualToolCalls,
+        ...(identity?.caseId !== undefined ? { caseId: identity.caseId } : {}),
         ...(identity?.externalCaseId !== undefined
           ? { externalCaseId: identity.externalCaseId }
           : {}),

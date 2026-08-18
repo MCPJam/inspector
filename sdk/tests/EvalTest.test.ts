@@ -125,6 +125,78 @@ describe("EvalTest", () => {
         ).toThrow(/invalid `id`/);
       });
 
+      it("refuses two disagreeing identity claims, naming the migration", () => {
+        // `id` and `externalCaseId` both ride the wire now, so a differing
+        // pair is a hard error rather than a silent precedence — the same
+        // rule the backend applies at ingest, applied a run earlier.
+        let message = "";
+        try {
+          new EvalTest({
+            id: "c_minted",
+            externalCaseId: "legacy_case_7",
+            name: "two-identities",
+            test: async () => true,
+          });
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error);
+        }
+        expect(message).toContain("declares two different identities");
+        expect(message).toContain('id "c_minted"');
+        expect(message).toContain('externalCaseId "legacy_case_7"');
+        // The migration rule, stated as the fix: id := externalCaseId.
+        expect(message).toContain("external:legacy_case_7");
+        expect(message).toContain('id: "legacy_case_7"');
+        // And why shipping it anyway is not an option.
+        expect(message).toContain("rejected at ingest");
+      });
+
+      it("accepts the migrated pair, and an empty externalCaseId", () => {
+        expect(
+          () =>
+            new EvalTest({
+              id: "legacy_case_7",
+              externalCaseId: "legacy_case_7",
+              name: "migrated",
+              test: async () => true,
+            })
+        ).not.toThrow();
+        // `""` is absent, not a second claim — `getCaseKey` and the backend's
+        // equality rule both read it as "no external id".
+        expect(
+          () =>
+            new EvalTest({
+              id: "c_minted",
+              externalCaseId: "",
+              name: "empty-external",
+              test: async () => true,
+            })
+        ).not.toThrow();
+      });
+
+      it("tells a non-conforming externalCaseId to rename, not to migrate", () => {
+        // The one behavior break in this step. W0.1a suggested a freshly
+        // MINTED id for these configs (`suggestedCaseId` only reuses an
+        // `externalCaseId` that can BE an id), so the pair it produced now
+        // throws — and no `id` can equal a value outside the charset, so the
+        // fix cannot be `id := externalCaseId`.
+        let message = "";
+        try {
+          new EvalTest({
+            id: "c_minted",
+            externalCaseId: "refund flow/1",
+            name: "unmintable-external",
+            test: async () => true,
+          });
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error);
+        }
+        expect(message).toContain("declares two different identities");
+        expect(message).toContain("cannot itself be an id");
+        expect(message).toContain("Rename the external id");
+        // Never the migration that the very next construction would reject.
+        expect(message).not.toContain('id: "refund flow/1"');
+      });
+
       it("accepts ids the platform already issues", () => {
         for (const id of [
           "jd7fk3m2q9x5p1v8s4t6w0y2z",
