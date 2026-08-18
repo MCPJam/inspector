@@ -142,6 +142,31 @@ describe("declared case id on the upload", () => {
     expect(results[0].caseTitle).toBe("refund flow");
   });
 
+  it("serializes `caseId` from a standalone EvalTest run too", async () => {
+    // `EvalTest.run()` with reporting enabled uploads through its OWN identity
+    // object, not the suite's. A renamed standalone test would keep forking its
+    // history if only the suite path carried the id.
+    const fetchMock = vi.fn().mockResolvedValue(okResponse());
+    global.fetch = fetchMock as any;
+
+    const test = new EvalTest({
+      id: "c_standalone",
+      name: "standalone case",
+      test: async (executor) => {
+        await executor.run("go");
+        return true;
+      },
+    });
+    await test.run(mockAgent(), {
+      iterations: 1,
+      mcpjam: { apiKey: "sk_test_key", baseUrl: BASE_URL },
+    });
+
+    const [result] = uploadedResults(fetchMock);
+    expect(result.caseId).toBe("c_standalone");
+    expect(result.caseTitle).toBe("standalone case");
+  });
+
   it("emits caseId === externalCaseId for a hosted corpus case", () => {
     // `loadCorpus` satisfies the equality rule by construction — it declares
     // the hosted case's own id in BOTH fields. Verified rather than assumed,
@@ -414,6 +439,37 @@ describe("a reporting backend that does not understand caseId", () => {
     await expect(
       reportEvalResultsSafely({ ...input, strict: true })
     ).rejects.toThrow(/older than this SDK requires/);
+  });
+
+  it("does not claim incompatibility when a DIFFERENT field was rejected", async () => {
+    // The validator refuses `metadata` and echoes the rejected object back —
+    // and that echo contains `caseId`. Answering this with "upgrade your
+    // backend, it does not know caseId" would send the author to fix a field
+    // the backend accepted, and would suppress a retry this may deserve.
+    const otherField =
+      "ArgumentValidationError: Object contains extra field `metadata` that " +
+      'is not in the validator.\n\nObject: {caseTitle: "refund flow", ' +
+      'caseId: "c_refund", metadata: {run: 1}}\n' +
+      "Validator: v.object({caseTitle: v.string(), caseId: v.optional(v.string())})";
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      json: async () => ({ ok: false, error: otherField }),
+    }) as any;
+
+    const error = await reportEvalResults(input).then(
+      () => null,
+      (thrown) => thrown
+    );
+
+    expect((error as EvalReportingError).isReportingBackendIncompatible).toBe(
+      false
+    );
+    expect((error as Error).message).toBe(otherField);
+    expect((error as Error).message).not.toContain(
+      "older than this SDK requires"
+    );
   });
 
   it("leaves a backend that DOES understand caseId to speak for itself", async () => {

@@ -344,6 +344,13 @@ const REQUIRED_BACKEND_FIELDS = ["caseId"] as const;
 const INCOMPATIBLE_BACKEND_PREFIX =
   "This reporting backend is older than this SDK requires";
 
+/** Phrasings that come BEFORE the field: "extra field `caseId`". */
+const UNKNOWN_FIELD_BEFORE =
+  "(?:extra|unknown|unexpected|unrecognized|additional)\\s+(?:field|argument|propert\\w*|key)|no such (?:field|argument)";
+/** Phrasings that come AFTER it: "`caseId` is not allowed". */
+const UNKNOWN_FIELD_AFTER =
+  "(?:is\\s+)?not\\s+(?:in the validator|allowed|permitted|a\\s+(?:valid|known|recognized)\\s+(?:field|argument|propert\\w*))";
+
 /**
  * An "I do not know this field" rejection, as opposed to "this field's value is
  * wrong".
@@ -356,20 +363,38 @@ const INCOMPATIBLE_BACKEND_PREFIX =
  * about the payload and everything about the destination.
  *
  * Phrasings are matched loosely because they are not ours to pin down. Convex
- * says "Object contains extra field `caseId` that is not in the validator";
- * a caller-supplied `baseUrl` reimplementing the ingest contract will say
- * something else. Requiring the field name AND an unknown-field phrasing keeps
- * the loose half from swallowing value errors.
+ * says "Object contains extra field `caseId` that is not in the validator"; a
+ * caller-supplied `baseUrl` reimplementing the ingest contract will say
+ * something else.
+ *
+ * The field name must be ADJACENT to the phrasing, not merely present in the
+ * message. A validator that refuses some other unknown field echoes the whole
+ * rejected object back, and that echo contains `caseId` — so "mentions caseId
+ * somewhere AND complains about an unknown field" matches a rejection that has
+ * nothing to do with declared ids, and would answer it with upgrade advice for
+ * the wrong field while suppressing the retry it might deserve. Adjacency is
+ * what separates the sentence from the payload dump that follows it.
  */
-const UNKNOWN_FIELD_PHRASING =
-  /(?:extra|unknown|unexpected|unrecognized|additional)\s+(?:field|argument|propert|key)|not in the validator|is not allowed|no such (?:field|argument)/i;
+function rejectsFieldAsUnknown(message: string, field: string): boolean {
+  // Only quoting and punctuation may sit between the phrase and the name —
+  // "extra field `caseId`", never "extra field `metadata` … {caseId: …}".
+  const phraseThenField = new RegExp(
+    `(?:${UNKNOWN_FIELD_BEFORE})[\\s:='"\`]{0,4}${field}\\b`,
+    "i"
+  );
+  // The mirror image, bounded to one line so it cannot reach into the dump.
+  const fieldThenPhrase = new RegExp(
+    `\\b${field}["'\`]?[^\\n]{0,24}?(?:${UNKNOWN_FIELD_AFTER})`,
+    "i"
+  );
+  return phraseThenField.test(message) || fieldThenPhrase.test(message);
+}
 
 function isUnknownFieldRejection(rawMessage: string): boolean {
   if (rawMessage.startsWith(INCOMPATIBLE_BACKEND_PREFIX)) return false;
-  if (!REQUIRED_BACKEND_FIELDS.some((field) => rawMessage.includes(field))) {
-    return false;
-  }
-  return UNKNOWN_FIELD_PHRASING.test(rawMessage);
+  return REQUIRED_BACKEND_FIELDS.some((field) =>
+    rejectsFieldAsUnknown(rawMessage, field)
+  );
 }
 
 /**

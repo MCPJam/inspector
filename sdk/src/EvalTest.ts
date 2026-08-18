@@ -1104,6 +1104,12 @@ export class EvalTest {
       this.config.matchOptions,
       this.lastEvaluationConfig ?? undefined,
       {
+        // The standalone-run twin of `EvalSuite`'s identity object. A test run
+        // directly with reporting enabled uploads through HERE, not through the
+        // suite, so leaving `caseId` off this one would mean a renamed
+        // standalone test still forks its hosted history — the exact bug the
+        // declared id exists to retire, surviving on the path nobody looked at.
+        caseId: this.config.id,
         ...(this.config.externalCaseId !== undefined
           ? { externalCaseId: this.config.externalCaseId }
           : {}),
