@@ -30,7 +30,7 @@ import {
 import { Label } from "@mcpjam/design-system/label";
 import { Loader2 } from "lucide-react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { McpjamAgentComposer } from "@/components/mcpjam-agent/McpjamAgentComposer";
+import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { SwarmTargetComposer } from "@/components/swarms/swarm-target-composer";
 import {
   resolveSwarmJourneyPayload,
@@ -125,6 +125,10 @@ const CREATE_STEPS = [
 // content, so users hit a disabled button with no idea the box was empty.
 const DESCRIBE_PLACEHOLDER =
   "e.g. Finance ops reconciling payouts, and devs wiring up subscription billing.";
+
+/** Ties the Describe label to its field; the label's wording changes with the
+ *  persona count, so the association has to be by id rather than by text. */
+const DESCRIBE_FIELD_ID = "new-swarm-describe";
 
 /** Concurrent launches. Bounded so a 60-journey launch doesn't open 60
  * simultaneous requests, while still finishing in seconds. */
@@ -1782,7 +1786,7 @@ export function NewSwarmCreateFlow({
 
               <section className="flex min-h-0 min-w-0 flex-col gap-3">
                 <div className="shrink-0 space-y-1">
-                  <Label>
+                  <Label htmlFor={DESCRIBE_FIELD_ID}>
                     {personaList.length > 0
                       ? "Or describe new ones"
                       : "Describe your users"}
@@ -1791,19 +1795,32 @@ export function NewSwarmCreateFlow({
                     We’ll propose personas and goals for you to confirm.
                   </p>
                 </div>
-                <McpjamAgentComposer
-                  value={draft}
-                  onChange={setDraft}
-                  onSubmit={handleContinue}
-                  placeholder={DESCRIBE_PLACEHOLDER}
-                  minRows={personaList.length > 0 ? 8 : 3}
-                  maxRows={personaList.length > 0 ? 16 : 8}
+                {/* A plain field, NOT the Agent chat composer. That composer
+                    ships a Send button and swallows Enter to submit — on a step
+                    that advances through Continue, Enter belongs to the text. */}
+                <div
                   className={
                     personaList.length > 0
-                      ? "flex h-72 min-h-0 flex-col [&_textarea]:min-h-0 [&_textarea]:flex-1"
+                      ? "flex h-72 min-h-0 flex-col"
                       : undefined
                   }
-                />
+                >
+                  <TextareaAutosize
+                    id={DESCRIBE_FIELD_ID}
+                    value={draft}
+                    onChange={(event) => setDraft(event.target.value)}
+                    placeholder={DESCRIBE_PLACEHOLDER}
+                    minRows={personaList.length > 0 ? 8 : 3}
+                    maxRows={personaList.length > 0 ? 16 : 8}
+                    // `resize-none`: the grip fights the autosize, which rewrites
+                    // the height on the next keystroke. Every other textarea in
+                    // the app drops it for the same reason.
+                    className={cn(
+                      "resize-none",
+                      personaList.length > 0 && "min-h-0 flex-1",
+                    )}
+                  />
+                </div>
               </section>
             </div>
 
