@@ -84,6 +84,9 @@ function planned(
       start: full.start,
       port: full.port,
       mcpPath: full.mcpPath,
+      // Only when the caller asked for one: an env-free plan candidate is the
+      // ordinary case, and it must arrive with no `env` key at all.
+      ...(full.env ? { env: full.env } : {}),
     },
     rung: full.rung,
     evidence: full.evidence,
@@ -1044,5 +1047,146 @@ describe("resolveAndStart — the private-repository clone credential", () => {
     // No FRAGMENT of it either — the whole literal was replaced before the cut.
     expect(detail).not.toContain(TOKEN.slice(0, 12));
     expect(detail).toContain("[redacted]");
+  });
+});
+
+describe("resolveAndStart — the declared environment travels with the recipe", () => {
+  // The channel runs repo -> parser -> plan -> backend -> plan -> execution, and
+  // this file owns the two hops in the middle. What must not happen at either
+  // is the environment being dropped: a server started without the
+  // configuration its author declared fails its probe and reports
+  // `server_unhealthy` against a pull request that did nothing wrong.
+  const ENV = { LOG_LEVEL: "debug", FIXTURE_MODE: "strict" };
+
+  it("reports a declared candidate's env to the backend", async () => {
+    let seen: any = null;
+    const session = fakeSession({ onCandidates: (input) => (seen = input) });
+    const f = fakes({
+      ladder: {
+        kind: "authoritative",
+        recipe: recipe({
+          rung: "declared",
+          ownershipProof: "verified",
+          evidence: ["mcpjam.yaml at repo root (version 1)"],
+          env: ENV,
+        }),
+      },
+      session,
+    });
+
+    await resolveAndStart(ARGS, f.deps);
+    expect(seen.localCandidates).toEqual([
+      {
+        recipe: {
+          build: "npm ci",
+          start: "npm start",
+          port: 3001,
+          mcpPath: "/mcp",
+          env: ENV,
+        },
+        rung: "declared",
+        evidence: ["mcpjam.yaml at repo root (version 1)"],
+        ownershipProof: "verified",
+      },
+    ]);
+  });
+
+  it("sends NO env key for a detected candidate, or an empty one", async () => {
+    // Detection never proposes an environment, and the backend REJECTS `env` on
+    // a cacheable rung — so an `env: undefined` or an `env: {}` riding along on
+    // a detected candidate is not a harmless extra key, it is a 400 on a
+    // candidate that would otherwise have run.
+    let seen: any = null;
+    const session = fakeSession({ onCandidates: (input) => (seen = input) });
+    const f = fakes({
+      ladder: {
+        kind: "candidates",
+        candidates: [
+          recipe({ start: "node detected.js" }),
+          // Defensive: even if something upstream hands over an empty map, it is
+          // absence and must be reported as absence.
+          recipe({ start: "node empty-env.js", env: {} }),
+        ],
+      },
+      session,
+    });
+
+    await resolveAndStart(ARGS, f.deps);
+    for (const candidate of seen.localCandidates) {
+      expect("env" in candidate.recipe).toBe(false);
+    }
+  });
+
+  it("hands the plan's env to buildAndStart, unchanged", async () => {
+    // The backend owns the plan: whatever env it issues is the one that runs,
+    // including one the Inspector never proposed.
+    const built: Array<Record<string, string> | undefined> = [];
+    const session = fakeSession({
+      candidates: [
+        planned("c1", {
+          start: "node planned.js",
+          rung: "declared",
+          env: { FROM_PLAN: "yes" },
+        }),
+      ],
+    });
+    const f = fakes({
+      // The local candidate carries NO environment, so what runs can only have
+      // come from the plan.
+      ladder: { kind: "candidates", candidates: [recipe()] },
+      session,
+    });
+    const inner = f.deps.buildAndStart!;
+    f.deps.buildAndStart = async (sandbox, recipeToRun) => {
+      built.push(recipeToRun.env);
+      return inner(sandbox, recipeToRun);
+    };
+
+    const result = await resolveAndStart(ARGS, f.deps);
+    expect(built).toEqual([{ FROM_PLAN: "yes" }]);
+    expect(result.recipe.env).toEqual({ FROM_PLAN: "yes" });
+  });
+
+  it("leaves no env key on an env-free planned candidate", async () => {
+    const built: Array<Record<string, unknown>> = [];
+    const f = fakes({ ladder: { kind: "candidates", candidates: [recipe()] } });
+    const inner = f.deps.buildAndStart!;
+    f.deps.buildAndStart = async (sandbox, recipeToRun) => {
+      built.push(recipeToRun as unknown as Record<string, unknown>);
+      return inner(sandbox, recipeToRun);
+    };
+
+    await resolveAndStart(ARGS, f.deps);
+    expect(built).toHaveLength(1);
+    expect("env" in built[0]).toBe(false);
+  });
+});
+
+describe("resolveAndStart — an empty environment is an absent one, everywhere", () => {
+  // `{}` is truthy, so "copy it when it is there" and "copy it when there is
+  // something in it" are different rules, and only the second one holds the
+  // contract. The backend cannot issue an empty map today — its candidates come
+  // from the env-free cache or from the local candidates we already normalize —
+  // so this is the boundary staying honest ahead of the case rather than after
+  // it.
+  it("drops a backend-planned `env: {}` instead of carrying it forward", async () => {
+    const built: Array<Record<string, unknown>> = [];
+    const session = fakeSession({
+      candidates: [planned("c1", { env: {} })],
+    });
+    const f = fakes({
+      ladder: { kind: "candidates", candidates: [recipe()] },
+      session,
+    });
+    const inner = f.deps.buildAndStart!;
+    f.deps.buildAndStart = async (sandbox, recipeToRun) => {
+      built.push(recipeToRun as unknown as Record<string, unknown>);
+      return inner(sandbox, recipeToRun);
+    };
+
+    const result = await resolveAndStart(ARGS, f.deps);
+    expect(built).toHaveLength(1);
+    expect("env" in built[0]).toBe(false);
+    expect("env" in result.recipe).toBe(false);
   });
 });

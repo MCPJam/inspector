@@ -2453,3 +2453,172 @@ describe("recipes", () => {
     expect(resolveCheckRecipe("mcpjam/mcp-check-fixture")).toBeNull();
   });
 });
+
+describe("buildAndStart — the recipe's declared environment", () => {
+  // WHERE THE ENVIRONMENT GOES, AND WHERE IT MUST NOT.
+  //
+  // It goes into E2B's `envs` COMMAND OPTION on exactly two commands: the build
+  // and the start. It never becomes shell text. An `export FOO=…` prepended to
+  // a command string would put author-controlled bytes inside a script that is
+  // already carrying a `bash -lc` quoting boundary, and every diagnostic this
+  // module produces quotes commands — so a value in a command string is a value
+  // in a check summary, a log line, and an SDK transport error.
+  //
+  // Everything else the box runs — clone, fetch, sha verification, `/proc`
+  // inspection, the log tail — is OUR plumbing, not the PR's server, and gets
+  // nothing.
+  const ENV = { LOG_LEVEL: "debug", FIXTURE_MODE: "strict" };
+  const ENV_RECIPE = { ...RECIPE, env: ENV };
+
+  const isBuild = (call: Call) => call.command.includes("npm run build");
+  const isStart = (call: Call) => Boolean(call.opts?.background);
+
+  it("passes the SAME map to the build and the start, in `envs`", async () => {
+    const box = fakeSandbox();
+    await buildAndStart(box.sandbox, ENV_RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    });
+
+    const build = box.calls.find(isBuild);
+    const start = box.calls.find(isStart);
+    expect(build?.opts?.envs).toEqual(ENV);
+    expect(start?.opts?.envs).toEqual(ENV);
+  });
+
+  it("keeps every value OUT of the command strings", async () => {
+    // Values chosen to be visible if they were ever interpolated, and to break
+    // the script if they were interpolated unquoted.
+    const hostile = {
+      LOG_LEVEL: "SENTINEL-$(touch /tmp/pwned)",
+      QUOTED: `it's "quoted"; rm -rf /`,
+    };
+    const box = fakeSandbox();
+    await buildAndStart(
+      box.sandbox,
+      { ...RECIPE, env: hostile },
+      {
+        fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+      }
+    );
+
+    for (const call of box.calls) {
+      expect(call.command).not.toContain("SENTINEL");
+      expect(call.command).not.toContain("pwned");
+      expect(call.command).not.toContain("LOG_LEVEL");
+      expect(call.command).not.toContain("export ");
+    }
+  });
+
+  it("leaves the build and start command strings byte-identical to the no-env run", async () => {
+    // The no-env path is the overwhelming majority of checks. The environment
+    // channel must be invisible to it — and to the commands themselves even when
+    // an environment IS present, since the whole point is that it travels beside
+    // the command rather than inside it.
+    const fetchImpl = () =>
+      vi.fn(async () => okInitialize()) as unknown as typeof fetch;
+    const plain = fakeSandbox();
+    await buildAndStart(plain.sandbox, RECIPE, { fetchImpl: fetchImpl() });
+    const withEnv = fakeSandbox();
+    await buildAndStart(withEnv.sandbox, ENV_RECIPE, {
+      fetchImpl: fetchImpl(),
+    });
+
+    expect(withEnv.calls.map((call) => call.command)).toEqual(
+      plain.calls.map((call) => call.command)
+    );
+  });
+
+  it("omits `envs` ENTIRELY when the recipe has none", async () => {
+    // Not `envs: undefined` and not `envs: {}` — the key is absent, so the
+    // options object is the one this module has always sent.
+    const box = fakeSandbox();
+    await buildAndStart(box.sandbox, RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    });
+
+    for (const call of box.calls) {
+      expect(Object.keys(call.opts ?? {})).not.toContain("envs");
+    }
+    expect(box.calls.find(isBuild)?.opts).toEqual({
+      cwd: "/home/user/repo",
+      timeoutMs: 10 * 60_000,
+    });
+  });
+
+  it("omits `envs` for an empty map, which is the same as no map", async () => {
+    const box = fakeSandbox();
+    await buildAndStart(
+      box.sandbox,
+      { ...RECIPE, env: {} },
+      {
+        fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+      }
+    );
+
+    for (const call of box.calls) {
+      expect(Object.keys(call.opts ?? {})).not.toContain("envs");
+    }
+  });
+
+  it("gives the environment to NOTHING except the build and the start", async () => {
+    // The `/proc` read for the spawn's process group, and the log tail fetched
+    // for a health failure, both run through this module. Neither is the PR's
+    // server, and handing them the recipe's environment would put it into
+    // commands whose output is quoted into a check summary.
+    const box = fakeSandbox({
+      // Force the unhealthy path so the log tail is fetched too.
+      stdout: { "tail -c": "server said nothing useful" },
+    });
+    await buildAndStart(box.sandbox, ENV_RECIPE, {
+      fetchImpl: vi.fn(
+        async () => new Response("nope", { status: 500 })
+      ) as unknown as typeof fetch,
+      healthTimeoutMs: 1,
+      healthIntervalMs: 1,
+    }).catch(() => {});
+
+    const others = box.calls.filter((call) => !isBuild(call) && !isStart(call));
+    // The `/proc` read and the log tail, at least — if this ever drops to zero
+    // the assertion below has stopped testing anything.
+    expect(others.length).toBeGreaterThan(0);
+    for (const call of others) {
+      expect(call.opts?.envs).toBeUndefined();
+    }
+  });
+
+  it("gives the clone NOTHING, with or without a credential", async () => {
+    // `cloneAndCheckout` runs before any recipe is executed and takes no recipe
+    // at all — asserted here so a future signature change that threads one in
+    // has to come past this test. The clone credential goes the other way: it
+    // rides a command-line `-c` header and is never an environment variable.
+    const headSha = "d".repeat(40);
+    for (const cloneToken of [undefined, "ghs_privateRepoToken1234567890"]) {
+      const box = fakeSandbox({ stdout: { "rev-parse HEAD": `${headSha}\n` } });
+      await cloneAndCheckout(box.sandbox, {
+        repoFullName: "mcpjam/private-fixture",
+        prNumber: 7,
+        headSha,
+        cloneToken,
+      });
+      for (const call of box.calls) {
+        expect(call.opts?.envs).toBeUndefined();
+      }
+    }
+  });
+
+  it("still attributes a failing build to the PR when an environment is present", async () => {
+    // The environment must not change what a failure MEANS: a non-zero build is
+    // still the pull request's, with its log tail attached.
+    const box = fakeSandbox({
+      exitCodes: { "npm run build": 1 },
+      stdout: { "tail -c": "boom" },
+    });
+
+    const error = await buildAndStart(box.sandbox, ENV_RECIPE, {
+      fetchImpl: vi.fn(async () => okInitialize()) as unknown as typeof fetch,
+    }).catch((e) => e as CheckStepError);
+
+    expect((error as CheckStepError).outcome).toBe("build_failed");
+    expect((error as CheckStepError).detailsMarkdown).toContain("boom");
+  });
+});
