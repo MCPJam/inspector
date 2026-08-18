@@ -210,8 +210,21 @@ function UpgradeReturnFlowBoundary() {
   const strippedRef = useRef(false);
 
   useEffect(() => {
-    // Nothing to check against yet; the ticket keeps waiting.
-    if (!userId || armedForRef.current === userId) return;
+    if (!userId) {
+      // Signed out. Drop the in-memory flow rather than leaving it armed for
+      // whoever signs in next: it would otherwise stay subscribed to the
+      // previous buyer's org, and React runs child effects before parent ones,
+      // so a confirmation could fire on the very commit that swaps identity —
+      // before this effect got the chance to disarm it.
+      //
+      // The ticket in storage is deliberately untouched: a token refresh looks
+      // exactly like this, and the same user coming back re-arms from it. A
+      // different user retires it on the next arm.
+      armedForRef.current = null;
+      setUpgradeReturn(null);
+      return;
+    }
+    if (armedForRef.current === userId) return;
     armedForRef.current = userId;
     // Retires the ticket itself when it belongs to someone else, so an
     // identity switch inside this tab both disarms and cleans up.

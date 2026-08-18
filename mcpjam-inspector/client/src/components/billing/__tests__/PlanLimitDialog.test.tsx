@@ -598,6 +598,43 @@ describe("PlanLimitDialog", () => {
       );
     });
 
+    it("disarms a pending confirmation when the buyer signs out mid-flight", async () => {
+      // The tab stays mounted across the sign-out, so the flow has to be torn
+      // down here — not left pointing at the previous buyer's org for whoever
+      // signs in next.
+      billingState.plan = "free";
+      arriveFromCheckout(
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+      );
+      const view = render(<PlanLimitDialog />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      authState.userId = null;
+      view.rerender(<PlanLimitDialog />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      // Someone else signs in, and the org they share is already paid.
+      authState.userId = "user-2";
+      billingState.plan = "team";
+      view.rerender(<PlanLimitDialog />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "plan_limit_upgrade_returned",
+        expect.anything()
+      );
+      expect(window.sessionStorage.getItem("mcpjam.upgradeReturnToken")).toBe(
+        null
+      );
+    });
+
     it("keeps waiting through a sign-out blip and confirms for the same user", async () => {
       // A token refresh briefly drops the identity. That is not a new user, so
       // the pending confirmation must survive it.
