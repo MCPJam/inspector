@@ -630,7 +630,7 @@ export function hostDeclaresElicitation(
  * Two independent gates, both required:
  *
  * 1. **Capability, from the right authority.** When the execution context is
- *    server-resolved — a chatbox, or a Project Environment — the resolved host
+ *    server-resolved — a scenario, or a Project Environment — the resolved host
  *    wins. A share-link visitor controls the request body, so reading
  *    capabilities from it would let anyone switch elicitation on for a host
  *    whose owner has it off; and an environment's whole point is that the
@@ -653,11 +653,11 @@ export function hostDeclaresElicitation(
  */
 export function resolveElicitationGate(args: {
   /**
-   * True when the execution context was resolved server-side (chatbox or
+   * True when the execution context was resolved server-side (scenario or
    * Project Environment) and its host config is therefore authoritative.
    */
   hostAuthoritative: boolean;
-  /** `clientCapabilities` from the chatbox/host runtime-config (authoritative). */
+  /** `clientCapabilities` from the scenario/host runtime-config (authoritative). */
   hostClientCapabilities: unknown;
   /** `clientCapabilities` from the request body (owner-supplied on direct turns). */
   bodyClientCapabilities: unknown;

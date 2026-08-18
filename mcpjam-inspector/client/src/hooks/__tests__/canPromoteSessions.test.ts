@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { canPromoteSessions } from "../useProjects";
 
 // Promoting a session into an eval test case is member-gated on the backend
-// (`PROMOTION_POLICIES` — chatbox and swarm both require project 'member').
+// (`PROMOTION_POLICIES` — scenario and swarm both require project 'member').
 // This is the pure decision the affordance keys off.
 //
 // The gate matters most on User Testing, which — unlike Swarms — is
