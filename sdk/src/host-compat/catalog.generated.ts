@@ -769,7 +769,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               sendFollowUpMessage: true,
               setWidgetState: true,
               requestDisplayMode: "all",
-              notifyIntrinsicHeight: false,
+              notifyIntrinsicHeight: true,
               openExternal: true,
               setOpenInAppUrl: true,
               requestModal: true,
