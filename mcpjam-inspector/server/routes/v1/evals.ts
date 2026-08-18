@@ -281,11 +281,11 @@ function publicInlineTestToRunTest(
 
 // Public shape: the web RunEvalsRequestSchema minus hosted-app plumbing the
 // public surface must not accept (`convexAuthToken` comes from the bearer;
-// chatbox/access/storage fields are hosted-client concerns) and minus the
+// scenario/access/storage fields are hosted-client concerns) and minus the
 // internal-contract `tests` (replaced by the public `steps`-based shape).
 const createEvalRunSchema = RunEvalsRequestSchema.omit({
   convexAuthToken: true,
-  chatboxId: true,
+  scenarioId: true,
   accessVersion: true,
   storageServerIds: true,
   tests: true,

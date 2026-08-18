@@ -1,5 +1,5 @@
 import type { HostThemeMode } from "@/lib/client-styles";
-import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
+import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
 import { getHostLogoSrc, UNKNOWN_HOST_LOGO } from "@/lib/host-ui-metadata";
 
 export { UNKNOWN_HOST_LOGO };

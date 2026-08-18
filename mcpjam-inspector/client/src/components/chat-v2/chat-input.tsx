@@ -76,9 +76,9 @@ import { MCPPromptResultCard } from "@/components/chat-v2/chat-input/prompts/mcp
 import type { SkillResult } from "@/components/chat-v2/chat-input/skills/skill-types";
 import { SkillResultCard } from "@/components/chat-v2/chat-input/skills/skill-result-card";
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
   Popover,
@@ -87,9 +87,9 @@ import {
 } from "@mcpjam/design-system/popover";
 import { ClientStylePillSelector } from "@/components/shared/ClientStylePillSelector";
 import {
-  getChatboxHostFamily,
-  type ChatboxHostStyle,
-} from "@/lib/chatbox-client-style";
+  getScenarioHostFamily,
+  type ScenarioHostStyle,
+} from "@/lib/scenario-client-style";
 import { useCreditBalance } from "@/hooks/useCreditBalance";
 import { authFetch } from "@/lib/session-token";
 
@@ -139,7 +139,7 @@ type TranscriptionAbortState = {
 type VoiceInputBackendContext = {
   projectId?: string | null;
   selectedServerIds?: string[];
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 };
 
@@ -318,9 +318,9 @@ interface ChatInputProps {
   /** Main chat: show the Claude/ChatGPT host-style selector in the "+" menu. */
   showHostStyleSelector?: boolean;
   /** Current host style for the selector UI. */
-  hostStyle?: ChatboxHostStyle;
+  hostStyle?: ScenarioHostStyle;
   /** Shared host-style setter. */
-  onHostStyleChange?: (hostStyle: ChatboxHostStyle) => void;
+  onHostStyleChange?: (hostStyle: ScenarioHostStyle) => void;
   /** Onboarding: pulse the send button with glow animation */
   pulseSubmit?: boolean;
   /** Move the textarea caret to the end when this trigger changes */
@@ -348,13 +348,13 @@ interface ChatInputProps {
   voiceInputContext?: VoiceInputBackendContext;
   /** WorkOS/guest bearer used by local inspector routes to resolve provider keys. */
   voiceInputAuthHeaders?: Record<string, string>;
-  /** Hosted chatbox: optional servers not yet connected (Add server popover). */
-  chatboxAttachableServers?: Array<{
+  /** Hosted scenario: optional servers not yet connected (Add server popover). */
+  scenarioAttachableServers?: Array<{
     serverId: string;
     serverName: string;
     useOAuth: boolean;
   }>;
-  onAttachChatboxServer?: (serverId: string) => void;
+  onAttachScenarioServer?: (serverId: string) => void;
   /**
    * Opens the org's model providers page from the model picker's "Your
    * providers" footer. Passed only when the viewer may open org settings.
@@ -440,8 +440,8 @@ export function ChatInput({
   onAddServer,
   voiceInputContext,
   voiceInputAuthHeaders,
-  chatboxAttachableServers,
-  onAttachChatboxServer,
+  scenarioAttachableServers,
+  onAttachScenarioServer,
   onManageOrgProviders,
   environmentServers,
   onEnvironmentServerToggle,
@@ -486,11 +486,11 @@ export function ChatInput({
         : undefined,
     [clientSelector?.cloudProjectId, skillsEnabled]
   );
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
   const globalThemeMode = usePreferencesStore((s) => s.themeMode);
-  const resolvedThemeMode = chatboxHostTheme ?? globalThemeMode;
-  const isDarkChatboxTheme = resolvedThemeMode === "dark";
+  const resolvedThemeMode = scenarioHostTheme ?? globalThemeMode;
+  const isDarkScenarioTheme = resolvedThemeMode === "dark";
   const formRef = useRef<HTMLFormElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -555,7 +555,7 @@ export function ChatInput({
   };
   const [addServerModalOpen, setAddServerModalOpen] = useState(false);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
-  const selectorHostStyle = hostStyle ?? chatboxHostStyle;
+  const selectorHostStyle = hostStyle ?? scenarioHostStyle;
   const hasServerRows = Boolean(
     allServerConfigs &&
       onDisconnectServer &&
@@ -861,8 +861,8 @@ export function ChatInput({
             voiceInputContext.selectedServerIds.length > 0
               ? { selectedServerIds: voiceInputContext.selectedServerIds }
               : {}),
-            ...(voiceInputContext?.chatboxId
-              ? { chatboxId: voiceInputContext.chatboxId }
+            ...(voiceInputContext?.scenarioId
+              ? { scenarioId: voiceInputContext.scenarioId }
               : {}),
             ...(voiceInputContext?.accessVersion !== undefined
               ? { accessVersion: voiceInputContext.accessVersion }
@@ -929,7 +929,7 @@ export function ChatInput({
     [
       voiceInputAuthHeaders,
       voiceInputContext?.accessVersion,
-      voiceInputContext?.chatboxId,
+      voiceInputContext?.scenarioId,
       voiceInputContext?.projectId,
       voiceInputContext?.selectedServerIds,
     ]
@@ -1313,40 +1313,40 @@ export function ChatInput({
     );
   };
 
-  const chatboxHostFamily = getChatboxHostFamily(chatboxHostStyle);
+  const scenarioHostFamily = getScenarioHostFamily(scenarioHostStyle);
   const composerClasses =
-    chatboxHostFamily === "chatgpt"
+    scenarioHostFamily === "chatgpt"
       ? cn(
-          "chatbox-host-composer rounded-[1.75rem]",
-          isDarkChatboxTheme
+          "scenario-host-composer rounded-[1.75rem]",
+          isDarkScenarioTheme
             ? "border border-white/10 bg-[#303030] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_24px_rgba(130,130,130,0.14)]"
             : "border border-neutral-200/90 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04),0_4px_22px_rgba(100,100,100,0.08)]"
         )
-      : chatboxHostFamily === "claude"
+      : scenarioHostFamily === "claude"
       ? cn(
-          "chatbox-host-composer rounded-[1.35rem]",
-          isDarkChatboxTheme
+          "scenario-host-composer rounded-[1.35rem]",
+          isDarkScenarioTheme
             ? "border-[#4b463d] bg-[#30302E] shadow-[0_1px_2px_rgba(0,0,0,0.28),0_4px_22px_rgba(120,120,120,0.12)]"
             : "border border-[#DFDFDB] bg-white shadow-[0_1px_2px_rgba(0,0,0,0.05),0_4px_20px_rgba(110,110,110,0.08)]"
         )
       : "rounded-3xl border border-border/40 bg-muted/70";
   const activeSubmitButtonClasses =
-    chatboxHostFamily === "chatgpt"
-      ? isDarkChatboxTheme
+    scenarioHostFamily === "chatgpt"
+      ? isDarkScenarioTheme
         ? "bg-[#f4f4f4] text-[#1f1f1f] hover:bg-[#e8e8e8]"
         : "bg-[#1f1f1f] text-white hover:bg-[#303030]"
-      : chatboxHostFamily === "claude"
-      ? isDarkChatboxTheme
+      : scenarioHostFamily === "claude"
+      ? isDarkScenarioTheme
         ? "bg-[#d07b53] text-[#fff7f0] hover:bg-[#c06f49]"
         : "bg-[#e27d47] text-white hover:bg-[#d16f3d]"
       : "bg-primary text-primary-foreground hover:bg-primary/90";
   const inactiveSubmitButtonClasses =
-    chatboxHostFamily === "chatgpt"
-      ? isDarkChatboxTheme
+    scenarioHostFamily === "chatgpt"
+      ? isDarkScenarioTheme
         ? "bg-[#3a3a3a] text-[#8a8a8a] cursor-not-allowed"
         : "bg-[#e7e7e7] text-[#9b9b9b] cursor-not-allowed"
-      : chatboxHostFamily === "claude"
-      ? isDarkChatboxTheme
+      : scenarioHostFamily === "claude"
+      ? isDarkScenarioTheme
         ? "bg-[#45413b] text-[#8d857a] cursor-not-allowed"
         : "bg-[#ebe5dc] text-[#b6ada0] cursor-not-allowed"
       : "bg-muted text-muted-foreground cursor-not-allowed";
@@ -1424,9 +1424,9 @@ export function ChatInput({
           />
 
           {minimalMode &&
-          chatboxAttachableServers &&
-          chatboxAttachableServers.length > 0 &&
-          onAttachChatboxServer ? (
+          scenarioAttachableServers &&
+          scenarioAttachableServers.length > 0 &&
+          onAttachScenarioServer ? (
             <div className="flex flex-wrap items-center gap-2 px-4 pb-1 pt-0.5">
               <Popover>
                 <PopoverTrigger asChild>
@@ -1447,12 +1447,12 @@ export function ChatInput({
                     Connect an optional server. You may be asked to authorize.
                   </p>
                   <div className="max-h-48 overflow-y-auto">
-                    {chatboxAttachableServers.map((s) => (
+                    {scenarioAttachableServers.map((s) => (
                       <button
                         key={s.serverId}
                         type="button"
                         className="flex w-full items-center justify-between rounded-md px-2 py-2 text-left text-sm hover:bg-muted/80"
-                        onClick={() => onAttachChatboxServer(s.serverId)}
+                        onClick={() => onAttachScenarioServer(s.serverId)}
                       >
                         <span className="truncate font-medium">
                           {s.serverName}

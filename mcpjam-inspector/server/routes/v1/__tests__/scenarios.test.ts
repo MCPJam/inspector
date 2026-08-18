@@ -69,7 +69,7 @@ function call(method: "PUT" | "DELETE", body?: unknown) {
 }
 
 const published = (overrides: Record<string, unknown> = {}) => ({
-  chatboxId: "cb_1",
+  scenarioId: "cb_1",
   environmentId: ENV,
   name: "Checkout",
   mode: "anyone_with_link",
@@ -136,7 +136,7 @@ describe("mounted behind the v1 router", () => {
     );
     expect(res.status).toBe(201);
     expect(mutationMock).toHaveBeenCalledWith(
-      "chatboxes:publishEnvironmentChatbox",
+      "scenarios:publishEnvironmentScenario",
       { environmentId: ENV }
     );
   });
@@ -157,7 +157,7 @@ describe("PUT .../scenario", () => {
     });
     expect(body.link).toContain("https://");
     // The internal table name never reaches the wire.
-    expect(body).not.toHaveProperty("chatboxId");
+    expect(body).not.toHaveProperty("scenarioId");
   });
 
   it("returns 200 and created:false when the environment was ALREADY published", async () => {
@@ -186,7 +186,7 @@ describe("PUT .../scenario", () => {
     });
     expect(res.status).toBe(201);
     expect(mutationMock).toHaveBeenCalledWith(
-      "chatboxes:publishEnvironmentChatbox",
+      "scenarios:publishEnvironmentScenario",
       {
         environmentId: ENV,
         name: "Beta run",
@@ -287,7 +287,7 @@ describe("PUT .../scenario", () => {
     mutationMock.mockRejectedValue(
       convexError(
         "FORBIDDEN",
-        "Publishing an environment chatbox requires project admin (shared execution config)."
+        "Publishing an environment scenario requires project admin (shared execution config)."
       )
     );
     expect((await call("PUT")).status).toBe(403);
@@ -303,7 +303,7 @@ describe("PUT .../scenario", () => {
 
 describe("DELETE .../scenario", () => {
   it("unpublishes and reports the removed id", async () => {
-    mutationMock.mockResolvedValue({ deleted: true, chatboxId: "cb_1" });
+    mutationMock.mockResolvedValue({ deleted: true, scenarioId: "cb_1" });
 
     const res = await call("DELETE");
     expect(res.status).toBe(200);

@@ -22,7 +22,7 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
  * Switching hosts counts as a different scope, so the user can recover
  * from a transient failure by switching hosts; otherwise the per-card
  * connect toggle in the Servers tab is the manual retry path, matching
- * the existing chatbox behavior.
+ * the existing scenario behavior.
  */
 const attemptedByProject = new Map<string, Set<string>>();
 

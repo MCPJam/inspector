@@ -23,10 +23,10 @@ import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bott
 import { LoadingIndicatorContent } from "@/components/chat-v2/shared/loading-indicator-content";
 import { UserMessageBubble } from "@/components/chat-v2/thread/user-message-bubble";
 import {
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
+import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useMcpjamAgentSession } from "@/hooks/use-mcpjam-agent-session";
 import {
@@ -200,7 +200,7 @@ export function McpjamAgentThread({
     ? "w-full mb-4 px-3"
     : "mx-auto w-full max-w-4xl mb-6 px-4";
   const themeMode = usePreferencesStore((state) => state.themeMode);
-  const shellStyle = getChatboxShellStyle("mcpjam", themeMode);
+  const shellStyle = getScenarioShellStyle("mcpjam", themeMode);
 
   const composer = (
     <McpjamAgentComposer
@@ -315,11 +315,11 @@ export function McpjamAgentThread({
 
   return (
     <MarkdownLinkBaseProvider base="https://docs.mcpjam.com" trustLinks>
-      <ChatboxHostStyleProvider value="mcpjam">
-        <ChatboxHostThemeProvider value={themeMode}>
+      <ScenarioHostStyleProvider value="mcpjam">
+        <ScenarioHostThemeProvider value={themeMode}>
         <div
           className={cn(
-            "chatbox-host-shell flex flex-col gap-4 min-h-0",
+            "scenario-host-shell flex flex-col gap-4 min-h-0",
             fillsParent
               ? "h-full"
               : "min-h-[36rem] rounded-2xl border border-border/70 bg-card/30 p-4 shadow-sm",
@@ -342,8 +342,8 @@ export function McpjamAgentThread({
             </p>
           )}
         </div>
-        </ChatboxHostThemeProvider>
-      </ChatboxHostStyleProvider>
+        </ScenarioHostThemeProvider>
+      </ScenarioHostStyleProvider>
     </MarkdownLinkBaseProvider>
   );
 }

@@ -46,6 +46,7 @@ describe("Asana MCP Evals", () => {
   describe("Test workspace tools", () => {
     test("list-workspaces accuracy > 80%", async () => {
       const test = new EvalTest({
+        id: "c_list_workspaces",
         name: "list-workspaces",
         test: async (runner: HostRunner) => {
           const runResult = await runner.run("Show me all my Asana workspaces");
@@ -67,6 +68,7 @@ describe("Asana MCP Evals", () => {
   describe("Test asana_get_user", () => {
     test("asana_get_user accuracy > 80%", async () => {
       const test = new EvalTest({
+        id: "c_asana_get_user",
         name: "asana-get-user",
         test: async (runner: HostRunner) => {
           const runResult = await runner.run("Who am I in Asana?");
@@ -88,6 +90,7 @@ describe("Asana MCP Evals", () => {
   describe("Test get_workspace_users", () => {
     test("get_workspace_users accuracy > 80%", async () => {
       const test = new EvalTest({
+        id: "c_get_workspace_users",
         name: "get_workspace_users",
         test: async (runner: HostRunner) => {
           const runResult = await runner.run("Can you get me the users in my workspace?");
@@ -110,6 +113,7 @@ describe("Asana MCP Evals", () => {
   describe("Multi-turn tests", () => {
     test("identify who I am in Asana, then list projects in my workspace", async () => {
       const test = new EvalTest({
+        id: "c_user_projects_tasks_flow",
         name: "user-projects-tasks-flow",
         test: async (runner: HostRunner) => {
           // Turn 1: Get current user info
