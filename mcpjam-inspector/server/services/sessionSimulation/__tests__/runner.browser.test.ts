@@ -9,7 +9,7 @@
  * and failure classification. This is the core the swarm runner executes every
  * attempt through, so these are swarm-critical guarantees.
  *
- * Drives the core directly (the chatbox batch loop that used to wrap it is
+ * Drives the core directly (the scenario batch loop that used to wrap it is
  * gone). Two side-persistence paths are exercised here: the widget-snapshot
  * capture the surface injects via `onTurnPersisted`, and the browser-artifact
  * outbox the core drives itself (`browserArtifacts`) — the latter because its
@@ -228,7 +228,9 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_URL", "https://convex.cloud");
   runAssistantTurnMock.mockReset();
   resolveSyntheticModelSourceMock.mockReset();
-  persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
+  persistChatSessionToConvexMock
+    .mockReset()
+    .mockResolvedValue({ outcome: "saved", version: 1 });
   captureMcpAppWidgetSnapshotsMock.mockReset().mockResolvedValue([]);
   prepareChatV2Mock.mockReset().mockResolvedValue({
     allTools: { search: { description: "noop" } },
@@ -330,9 +332,9 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
           computer: { kind: "personal", workdir: "/workspace" },
           requireToolApproval: true,
         },
-        // A hosted-chatbox surface: bash is still resolved there. Swarm
+        // A hosted-scenario surface: bash is still resolved there. Swarm
         // sessions are the ones that fail closed — see the test below.
-        persist: { sourceType: "chatbox", origin: "chatbox" },
+        persist: { sourceType: "scenario", origin: "scenario" },
       }) as never
     );
 

@@ -11,7 +11,7 @@ import prompts from "./prompts.js";
 import chatV2 from "./chat-v2.js";
 import mcpjamAgent from "./mcpjam-agent.js";
 import audioTranscriptions from "../mcp/audio-transcriptions.js";
-import chatboxes from "./chatboxes.js";
+import scenarios from "./scenarios.js";
 import swarmRuns from "./swarm-runs.js";
 import swarmGenerate from "./swarm-generate.js";
 import { harnessMcp } from "./harness-mcp.js";
@@ -44,7 +44,7 @@ web.use("/tools/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/resources/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/tasks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/prompts/*", bearerAuthMiddleware, guestRateLimitMiddleware);
-web.use("/chatboxes/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/scenarios/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Swarm (journey-execution) launch route — member-gated. The runner-control
 // API it fronts is LAUNCHER-gated + project-member-gated server-side.
 web.use("/swarm/*", bearerAuthMiddleware, guestRateLimitMiddleware);
@@ -103,7 +103,7 @@ web.route("/tools", tools);
 web.route("/resources", resources);
 web.route("/tasks", tasksWeb);
 web.route("/prompts", prompts);
-web.route("/chatboxes", chatboxes);
+web.route("/scenarios", scenarios);
 web.route("/swarm", swarmRuns);
 web.route("/swarm", swarmGenerate);
 web.route("/evals", evals);

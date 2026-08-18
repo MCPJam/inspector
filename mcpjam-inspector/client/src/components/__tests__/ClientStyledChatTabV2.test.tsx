@@ -7,8 +7,8 @@ import { HOST_STYLE_KEY } from "@/stores/preferences/preferences-store";
 const mockChatTabV2 = vi.hoisted(() => vi.fn());
 
 vi.mock("../ChatTabV2", async () => {
-  const { useChatboxHostStyle, useChatboxHostTheme } =
-    await import("@/contexts/chatbox-client-style-context");
+  const { useScenarioHostStyle, useScenarioHostTheme } =
+    await import("@/contexts/scenario-client-style-context");
 
   return {
     ChatTabV2: (props: {
@@ -17,8 +17,8 @@ vi.mock("../ChatTabV2", async () => {
       onHostStyleChange?: (hostStyle: "claude" | "chatgpt") => void;
     }) => {
       mockChatTabV2(props);
-      const hostStyle = useChatboxHostStyle();
-      const hostTheme = useChatboxHostTheme();
+      const hostStyle = useScenarioHostStyle();
+      const hostTheme = useScenarioHostTheme();
 
       return (
         <div
@@ -90,7 +90,7 @@ describe("ClientStyledChatTabV2", () => {
 
     const shell = screen.getByTestId("wrapped-chat-tab").parentElement;
     expect(shell).toHaveAttribute("data-host-style", "claude");
-    expect(shell?.className).toContain("chatbox-host-shell");
+    expect(shell?.className).toContain("scenario-host-shell");
     expect(shell?.className).toContain("dark");
     expect(shell?.getAttribute("style")).toContain("--background");
   });

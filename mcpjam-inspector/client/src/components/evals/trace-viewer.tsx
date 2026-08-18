@@ -189,7 +189,7 @@ interface TraceViewerProps {
    * Host style fallback used when an inner scope is installed but no
    * `activeHost` is provided. Like `activeHost`, passing `undefined`
    * (the default) means "don't install an inner scope" — DO NOT read
-   * the surrounding `ChatboxHostStyleProvider` here, because that
+   * the surrounding `ScenarioHostStyleProvider` here, because that
    * ambient style would synthesize template-seed caps that shadow
    * outer scope's user-edited caps.
    */
@@ -367,7 +367,7 @@ export function TraceViewer({
   // `hostStyle` falls back to `DEFAULT_TRACE_HOST_STYLE_FALLBACK` only
   // when the inner scope IS being installed (caller passed activeHost
   // but no explicit hostStyle); we don't reach into the ambient
-  // ChatboxHostStyleProvider here, because that ambient style may not
+  // ScenarioHostStyleProvider here, because that ambient style may not
   // line up with the explicit `activeHost`.
   const shouldInstallTraceScope =
     activeHost !== undefined || hostStyle !== undefined;

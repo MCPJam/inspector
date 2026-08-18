@@ -6,6 +6,7 @@ import {
   formatPremiumnessGateKey,
   getBillingErrorMessage,
   getDisplayPriceCentsForPlan,
+  getEvalIterationLimitFromError,
   getPremiumnessGateForTab,
   getRequiredBillingFeatureForTab,
   isGateAccessDenied,
@@ -47,10 +48,10 @@ function premiumness(
 }
 
 describe("BILLING_FEATURE_BY_TAB", () => {
-  it("maps the chatboxes tab to the chatboxes premiumness feature", () => {
-    expect(BILLING_FEATURE_BY_TAB.chatboxes).toBe("chatboxes");
-    expect(getRequiredBillingFeatureForTab("chatboxes")).toBe("chatboxes");
-    expect(getPremiumnessGateForTab("chatboxes")).toBe("chatboxes");
+  it("maps the scenarios tab to the scenarios premiumness feature", () => {
+    expect(BILLING_FEATURE_BY_TAB.scenarios).toBe("scenarios");
+    expect(getRequiredBillingFeatureForTab("scenarios")).toBe("scenarios");
+    expect(getPremiumnessGateForTab("scenarios")).toBe("scenarios");
   });
 });
 
@@ -107,6 +108,27 @@ describe("getBillingErrorMessage", () => {
     expect(message).toMatch(
       /^This organization has reached its eval iteration limit \(25\)\. Resets /
     );
+    // The 402 payload doesn't say who is reading, and this toast reaches
+    // members too. No next step beats naming one they can't take.
+    expect(message).not.toMatch(/Upgrade to continue now/);
+    expect(message).not.toMatch(/Ask an organization owner/);
+  });
+
+  it("keeps the eval reset message role-neutral for either reader", () => {
+    // A capped-until-reset message names no next step for anyone: the owner
+    // doesn't need one, and the member can't act on the one we'd give them.
+    for (const canManageBilling of [true, false]) {
+      const message = formatBillingLimitReachedMessage(
+        "maxEvalIterationsPerMonth",
+        25,
+        canManageBilling,
+        { resetsAt: Date.UTC(2026, 5, 2), windowKind: "day" }
+      );
+
+      expect(message).toMatch(/Resets /);
+      expect(message).not.toMatch(/Upgrade to continue now/);
+      expect(message).not.toMatch(/Ask an organization owner/);
+    }
   });
 
   it("ignores invalid eval reset timestamps", () => {
@@ -219,12 +241,12 @@ describe("getBillingErrorMessage", () => {
     }
   });
 
-  it("formats backend limit payloads for project chatboxes", () => {
+  it("formats backend limit payloads for project scenarios", () => {
     const message = getBillingErrorMessage(
       new Error(
         JSON.stringify({
           code: "billing_limit_reached",
-          limit: "maxChatboxesPerProject",
+          limit: "maxScenariosPerProject",
           allowedValue: 5,
         })
       ),
@@ -311,7 +333,7 @@ describe("getBillingErrorMessage", () => {
       new Error(
         JSON.stringify({
           code: "billing_feature_not_included",
-          feature: "chatboxes",
+          feature: "scenarios",
           plan: "free",
           upgradePlan: "team",
         })
@@ -329,7 +351,7 @@ describe("getBillingErrorMessage", () => {
       new Error(
         JSON.stringify({
           code: "billing_feature_not_included",
-          feature: "chatboxes",
+          feature: "scenarios",
           plan: "free",
           upgradePlan: "team",
         })
@@ -423,7 +445,7 @@ describe("isGateAccessDenied", () => {
     ).toBe(true);
   });
 
-  it("allows chatboxes for enterprise when the gate decision grants access", () => {
+  it("allows scenarios for enterprise when the gate decision grants access", () => {
     expect(
       isGateAccessDenied(
         premiumness({
@@ -431,7 +453,7 @@ describe("isGateAccessDenied", () => {
           effectivePlan: "enterprise",
           gates: [
             {
-              gateKey: "chatboxes",
+              gateKey: "scenarios",
               kind: "feature",
               scope: "organization",
               canAccess: true,
@@ -441,7 +463,7 @@ describe("isGateAccessDenied", () => {
             },
           ],
         }),
-        "chatboxes"
+        "scenarios"
       )
     ).toBe(false);
   });
@@ -517,14 +539,14 @@ describe("formatPremiumnessGateKey", () => {
     // and reads as an identifier — which is the whole failure this map exists
     // to prevent, so catch it as a set rather than one case at a time.
     const gateKeys: PremiumnessGateKey[] = [
-      "chatboxes",
+      "scenarios",
       "evals",
       "cicd",
       "auditLog",
       "maxMembers",
       "maxProjects",
       "maxServersPerProject",
-      "maxChatboxesPerProject",
+      "maxScenariosPerProject",
       "maxEvalRunsPerMonth",
       "maxEvalIterationsPerMonth",
       "insightsPerDay",
@@ -534,5 +556,68 @@ describe("formatPremiumnessGateKey", () => {
     for (const key of gateKeys) {
       expect(formatPremiumnessGateKey(key), key).not.toBe(key);
     }
+  });
+});
+
+describe("getEvalIterationLimitFromError", () => {
+  const evalLimitError = (extra: Record<string, unknown>) =>
+    new ConvexError({
+      code: "billing_limit_reached",
+      limit: "maxEvalIterationsPerMonth",
+      allowedValue: 25,
+      currentValue: 25,
+      ...extra,
+    } as never);
+
+  it("takes the window the backend sent, on either plan", () => {
+    expect(
+      getEvalIterationLimitFromError(
+        evalLimitError({ plan: "free", windowKind: "day" })
+      )?.windowKind
+    ).toBe("day");
+    expect(
+      getEvalIterationLimitFromError(
+        evalLimitError({ plan: "team", windowKind: "month" })
+      )?.windowKind
+    ).toBe("month");
+  });
+
+  it("falls back to the plan when the payload omits the window", () => {
+    // One limit NAME, two windows — daily on Free, monthly per seat on Team —
+    // and the wall prints the word ("out of eval iterations today" vs "this
+    // month"). A constant would be wrong for one of the two plans every time,
+    // and wrong toward "month" is the costlier direction: it sells a wait that
+    // ends at the next UTC roll as a month-long block.
+    expect(
+      getEvalIterationLimitFromError(evalLimitError({ plan: "free" }))
+        ?.windowKind
+    ).toBe("day");
+    expect(
+      getEvalIterationLimitFromError(evalLimitError({ plan: "team" }))
+        ?.windowKind
+    ).toBe("month");
+  });
+
+  it("keeps the narrower claim when neither window nor plan is known", () => {
+    expect(getEvalIterationLimitFromError(evalLimitError({}))?.windowKind).toBe(
+      "day"
+    );
+    expect(
+      getEvalIterationLimitFromError(evalLimitError({ windowKind: "week" }))
+        ?.windowKind
+    ).toBe("day");
+  });
+
+  it("ignores errors that are not this cap", () => {
+    expect(
+      getEvalIterationLimitFromError(
+        new ConvexError({
+          code: "billing_limit_reached",
+          limit: "insightsPerDay",
+          allowedValue: 25,
+        } as never)
+      )
+    ).toBeNull();
+    expect(getEvalIterationLimitFromError(new Error("boom"))).toBeNull();
   });
 });

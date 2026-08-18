@@ -1,5 +1,7 @@
 import type { Command } from "commander";
 import {
+  getScenarioOperation,
+  listScenariosOperation,
   PlatformApiError,
   publishScenarioOperation,
   unpublishScenarioOperation,
@@ -12,8 +14,12 @@ import { getGlobalOptions } from "../lib/server-config.js";
  * `mcpjam scenarios` — user testing.
  *
  * A scenario is a project environment published for people outside the project
- * to talk to through a share link. This group supersedes `mcpjam chatboxes`,
- * which is the same product under its older name and is deprecated.
+ * to talk to through a share link.
+ *
+ * The read commands (`list`, `get`) used to live in `commands/chat.ts` under
+ * the surface's older name. They are here now: two groups cannot both register
+ * `scenarios`, and splitting reads from writes across two files was only ever
+ * an artifact of the old name.
  *
  * BETA. Publishing is behind a per-organization flag; when it is off for yours
  * the server says so plainly. UNPUBLISHING is deliberately not gated — taking
@@ -84,6 +90,67 @@ export function registerScenariosCommands(program: Command): void {
     "invited_only",
     "anyone_with_link",
   ] as const;
+
+  addPlatformOptions(
+    scenarios
+      .command("list")
+      .description("List the scenarios published from a project")
+      .option(
+        "--project <id-or-name>",
+        "Project name or ID (defaults to the most recently updated project)"
+      )
+  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+    const globalOptions = getGlobalOptions(command);
+    const result = await runPlatformCommand(
+      options,
+      globalOptions.timeout,
+      ({ client, signal }) =>
+        listScenariosOperation.execute(
+          {
+            ...(options.project === undefined
+              ? {}
+              : { project: options.project }),
+          },
+          { client, signal }
+        )
+    );
+    writeResult(result, globalOptions.format);
+  });
+
+  addPlatformOptions(
+    scenarios
+      .command("get")
+      .description(
+        "Show one scenario: access mode, attached servers, share link"
+      )
+      .requiredOption("--scenario <id-or-name>", "Scenario name or ID")
+      .option(
+        "--project <id-or-name>",
+        "Project name or ID (defaults to the most recently updated project)"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & { scenario: string; project?: string },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          getScenarioOperation.execute(
+            {
+              scenario: options.scenario,
+              ...(options.project === undefined
+                ? {}
+                : { project: options.project }),
+            },
+            { client, signal }
+          )
+      );
+      writeResult(result, globalOptions.format);
+    }
+  );
 
   addPlatformOptions(
     scenarios

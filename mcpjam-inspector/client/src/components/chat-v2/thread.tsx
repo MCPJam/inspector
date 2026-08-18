@@ -7,9 +7,9 @@ import {
 } from "react";
 import { cn } from "@/lib/utils";
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
 import { UIMessage } from "@ai-sdk/react";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { TranscriptThreadProps } from "./thread/transcript-thread";
@@ -22,9 +22,9 @@ import { FullscreenChatOverlay } from "@/components/chat-v2/fullscreen-chat-over
 import { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render-overrides";
 import { useResolvedHostStyleForIndicator } from "@/components/chat-v2/shared/loading-indicator-content";
 import {
-  getChatboxChatBackground,
-  getChatboxHostFamily,
-} from "@/lib/chatbox-client-style";
+  getScenarioChatBackground,
+  getScenarioHostFamily,
+} from "@/lib/scenario-client-style";
 import { type ReasoningDisplayMode } from "./thread/parts/reasoning-part";
 import { TranscriptThread } from "./thread/transcript-thread";
 import {
@@ -305,13 +305,13 @@ export function Thread({
     !fullscreenChatSendBlocked &&
     fullscreenChatInput.trim().length > 0;
 
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
   const hasBrandIndicator =
     useResolvedHostStyleForIndicator(model.provider) !== null;
   const isChatgptDark =
-    getChatboxHostFamily(chatboxHostStyle) === "chatgpt" &&
-    chatboxHostTheme === "dark";
+    getScenarioHostFamily(scenarioHostStyle) === "chatgpt" &&
+    scenarioHostTheme === "dark";
   const lastRenderableMessage = useMemo(
     () => getLastRenderableConversationMessage(messages),
     [messages]
@@ -332,7 +332,7 @@ export function Thread({
   // Cursor #1f1f1f. Leaves the `isChatgptDark` gating unchanged so we
   // don't paint a background where one wasn't painted before.
   const chatgptFamilyDarkBackground = isChatgptDark
-    ? getChatboxChatBackground(chatboxHostStyle, "dark")
+    ? getScenarioChatBackground(scenarioHostStyle, "dark")
     : undefined;
 
   return (

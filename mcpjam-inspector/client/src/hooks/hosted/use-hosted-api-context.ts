@@ -24,9 +24,9 @@ interface UseApiContextOptions {
   clientConfigSyncPending?: boolean;
   getAccessToken: () => Promise<string | undefined | null>;
   oauthTokensByServerId?: Record<string, string>;
-  // Resolved chatbox identity (post-redeem) — drives chatbox-aware request
+  // Resolved scenario identity (post-redeem) — drives scenario-aware request
   // shaping inside the API context.
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   isAuthenticated?: boolean;
   hasSession?: boolean;
@@ -47,7 +47,7 @@ export function useApiContext({
   clientConfigSyncPending,
   getAccessToken,
   oauthTokensByServerId,
-  chatboxId,
+  scenarioId,
   accessVersion,
   isAuthenticated,
   hasSession,
@@ -77,7 +77,7 @@ export function useApiContext({
       clientConfigSyncPending,
       getAccessToken,
       oauthTokensByServerId,
-      chatboxId,
+      scenarioId,
       accessVersion,
       isAuthenticated,
       hasSession,
@@ -101,7 +101,7 @@ export function useApiContext({
     clientConfigSyncPending,
     getAccessToken,
     oauthTokensByServerId,
-    chatboxId,
+    scenarioId,
     accessVersion,
     isAuthenticated,
     hasSession,

@@ -185,8 +185,8 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     expect(opts.approvalMode).toBe("auto-deny");
     expect(opts.streamSink).toBe("none");
     expect(opts.persistMode).toBe("caller");
-    expect(opts.sourceType).toBe("chatbox");
-    expect(opts.origin).toBe("chatbox");
+    expect(opts.sourceType).toBe("scenario");
+    expect(opts.origin).toBe("scenario");
     expect(opts.authContext).toEqual({
       kind: "user_bearer",
       token: "Bearer abc",
@@ -292,7 +292,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     // CONTRACT (finding 3): the swarm runner passes `persist.sourceType` =
     // "swarm" into drainAssistantTurn. That must reach the hosted engine's
     // sourceType so hosted usage rows are attributed to the journey surface —
-    // NOT hardcoded to "chatbox" like the session-simulation surface.
+    // NOT hardcoded to "scenario" like the session-simulation surface.
     const calls: unknown[] = [];
     runAssistantTurnMock.mockImplementation(buildHostedEngineStub(calls));
     resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
@@ -312,7 +312,7 @@ describe("drainAssistantTurn — model-aware dispatch", () => {
     // The default-endpoint hosted path is still used; the journey attribution
     // rides `rt.runtime.extraBodyFields` (asserted at the wire level in the
     // local-usage test below).
-    expect(opts.origin).toBe("chatbox");
+    expect(opts.origin).toBe("scenario");
   });
 
   it("posts the local-BYOK usage writeback with sourceType:\"swarm\" for the swarm surface", async () => {
