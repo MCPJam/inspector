@@ -60,8 +60,8 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("chatgpt")?.capabilities).toMatchObject({
       serverResources: true,
       logging: true,
-      downloadFile: false,
     });
+    expect(profileFor("chatgpt")?.capabilities?.downloadFile).toBeUndefined();
   });
 
   it("carries each host's advertised protocol versions (or none)", () => {
