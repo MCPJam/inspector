@@ -950,7 +950,10 @@ export function SwarmsTab({
             await updateJourney({ journeyRefId, ...patch } as any);
           }}
           launchJourney={launchJourney}
-          onCancel={() => navigate(routePaths.swarms)}
+          onCancel={() => {
+            toast.success("Swarm cancelled");
+            navigate(routePaths.swarms);
+          }}
           onDone={(runLabels) => {
             // Labels are component state and `/swarms/new` → `/swarms` swaps
             // sibling routes without remounting this component, so they
