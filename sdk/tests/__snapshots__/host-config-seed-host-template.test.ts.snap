@@ -146,6 +146,20 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "compatRuntime": {
           "openaiApps": true,
         },
+        "mcpAppsOverrides": {
+          "cspConnectDomains": {
+            "fetch": false,
+            "websocket": true,
+            "xhr": false,
+          },
+          "cspResourceDomains": {
+            "font": false,
+            "image": false,
+            "media": false,
+            "script": false,
+            "stylesheet": false,
+          },
+        },
         "sandbox": {
           "csp": {
             "cspDirectives": {
@@ -185,7 +199,6 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         },
         "supportedProtocolVersions": [
           "2025-11-25",
-          "2026-07-28",
         ],
       },
       "mcpProtocolVersion": "auto",
@@ -265,6 +278,20 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "compatRuntime": {
           "openaiApps": true,
         },
+        "mcpAppsOverrides": {
+          "cspConnectDomains": {
+            "fetch": false,
+            "websocket": true,
+            "xhr": false,
+          },
+          "cspResourceDomains": {
+            "font": false,
+            "image": false,
+            "media": false,
+            "script": false,
+            "stylesheet": false,
+          },
+        },
         "sandbox": {
           "csp": {
             "cspDirectives": {
@@ -304,7 +331,6 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         },
         "supportedProtocolVersions": [
           "2025-11-25",
-          "2026-07-28",
         ],
       },
       "mcpProtocolVersion": "auto",
@@ -611,6 +637,42 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostStyle": "claude",
     "mcpProfile": {
       "apps": {
+        "mcpAppsOverrides": {
+          "availableDisplayModes": [
+            "inline",
+            "fullscreen",
+          ],
+          "cspBaseUriDomains": false,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspFrameDomains": false,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
+          "downloadFile": true,
+          "hostContextChanged": true,
+          "logging": true,
+          "message": true,
+          "openLinks": true,
+          "requestTeardown": false,
+          "resourceCacheTtl": true,
+          "resourcePrefersBorder": true,
+          "resourceTeardown": true,
+          "sandboxPermissions": true,
+          "serverResources": true,
+          "serverTools": true,
+          "toolInfo": true,
+          "toolInputPartial": true,
+          "updateModelContext": true,
+          "widgetDisplayModeRequests": "accept",
+        },
         "sandbox": {
           "allowFeatures": {
             "fullscreen": "*",
@@ -690,6 +752,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "supportedProtocolVersions": [
           "2025-11-25",
         ],
+      },
+      "mcpProtocolVersion": "auto",
+      "mrtrModes": {
+        "elicitation": false,
+        "requestState": false,
       },
       "profileVersion": 1,
     },
@@ -908,6 +975,42 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostStyle": "claude",
     "mcpProfile": {
       "apps": {
+        "mcpAppsOverrides": {
+          "availableDisplayModes": [
+            "inline",
+            "fullscreen",
+          ],
+          "cspBaseUriDomains": false,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspFrameDomains": false,
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
+          "downloadFile": true,
+          "hostContextChanged": true,
+          "logging": true,
+          "message": true,
+          "openLinks": true,
+          "requestTeardown": false,
+          "resourceCacheTtl": true,
+          "resourcePrefersBorder": true,
+          "resourceTeardown": true,
+          "sandboxPermissions": true,
+          "serverResources": true,
+          "serverTools": true,
+          "toolInfo": true,
+          "toolInputPartial": true,
+          "updateModelContext": true,
+          "widgetDisplayModeRequests": "accept",
+        },
         "sandbox": {
           "allowFeatures": {
             "fullscreen": "*",
@@ -987,6 +1090,11 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "supportedProtocolVersions": [
           "2025-11-25",
         ],
+      },
+      "mcpProtocolVersion": "auto",
+      "mrtrModes": {
+        "elicitation": false,
+        "requestState": false,
       },
       "profileVersion": 1,
     },
@@ -1436,6 +1544,20 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostStyle": "cursor",
     "mcpProfile": {
       "apps": {
+        "mcpAppsOverrides": {
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
+        },
         "sandbox": {
           "csp": {
             "mode": "declared",
@@ -1450,7 +1572,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Cursor",
-            "version": "3.4.20",
+            "version": "3.14.27",
           },
         },
       },
@@ -1527,6 +1649,20 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "hostStyle": "cursor",
     "mcpProfile": {
       "apps": {
+        "mcpAppsOverrides": {
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspResourceDomains": {
+            "font": true,
+            "image": true,
+            "media": true,
+            "script": true,
+            "stylesheet": true,
+          },
+        },
         "sandbox": {
           "csp": {
             "mode": "declared",
@@ -1541,7 +1677,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "uiInitialize": {
           "hostInfo": {
             "name": "Cursor",
-            "version": "3.4.20",
+            "version": "3.14.27",
           },
         },
       },
@@ -1741,14 +1877,25 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "pip",
           ],
           "cspBaseUriDomains": false,
+          "cspConnectDomains": {
+            "fetch": false,
+            "xhr": false,
+          },
           "cspFrameDomains": false,
+          "cspResourceDomains": {
+            "font": false,
+            "image": false,
+            "media": false,
+            "script": false,
+            "stylesheet": false,
+          },
           "downloadFile": false,
           "hostContextChanged": false,
           "logging": false,
           "message": false,
           "openLinks": true,
           "requestTeardown": false,
-          "resourcePrefersBorder": false,
+          "resourcePrefersBorder": true,
           "resourceTeardown": false,
           "sandboxPermissions": false,
           "serverResources": false,
@@ -1979,14 +2126,25 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "pip",
           ],
           "cspBaseUriDomains": false,
+          "cspConnectDomains": {
+            "fetch": false,
+            "xhr": false,
+          },
           "cspFrameDomains": false,
+          "cspResourceDomains": {
+            "font": false,
+            "image": false,
+            "media": false,
+            "script": false,
+            "stylesheet": false,
+          },
           "downloadFile": false,
           "hostContextChanged": false,
           "logging": false,
           "message": false,
           "openLinks": true,
           "requestTeardown": false,
-          "resourcePrefersBorder": false,
+          "resourcePrefersBorder": true,
           "resourceTeardown": false,
           "sandboxPermissions": false,
           "serverResources": false,

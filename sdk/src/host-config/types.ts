@@ -390,6 +390,19 @@ export type McpAppsCapabilities = {
   sandboxPermissions?: boolean;
   cspFrameDomains?: boolean;
   cspBaseUriDomains?: boolean;
+  cspConnectDomains?: {
+    fetch?: boolean;
+    xhr?: boolean;
+    websocket?: boolean;
+  };
+  cspResourceDomains?: {
+    script?: boolean;
+    stylesheet?: boolean;
+    image?: boolean;
+    font?: boolean;
+    media?: boolean;
+  };
+  resourceCacheTtl?: boolean;
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;

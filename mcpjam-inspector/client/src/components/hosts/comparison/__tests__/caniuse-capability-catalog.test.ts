@@ -12,21 +12,39 @@ import { hostConfigField } from "@/lib/host-config-field-schema";
 describe("caniuse capability catalog", () => {
   it("includes stable public capability slugs", () => {
     expect(getCaniuseCapabilityBySlug("sampling")?.field.id).toBe(
-      "capabilities.sampling",
+      "capabilities.sampling"
     );
     expect(getCaniuseCapabilityBySlug("elicitation")?.field.id).toBe(
-      "capabilities.elicitation",
+      "capabilities.elicitation"
     );
     expect(getCaniuseCapabilityBySlug("roots")?.field.id).toBe(
-      "capabilities.roots",
+      "capabilities.roots"
     );
     expect(
-      getCaniuseCapabilityBySlug("mcp-apps-available-display-modes")?.field.id,
+      getCaniuseCapabilityBySlug("mcp-apps-available-display-modes")?.field.id
     ).toBe("appsCap.availableDisplayModes");
     expect(
       getCaniuseCapabilityForField(hostConfigField("capabilities.elicitation"))
-        ?.slug,
+        ?.slug
     ).toBe("elicitation");
+  });
+
+  it("includes every CSP subtype as its own capability row", () => {
+    const ids = PUBLIC_CAN_I_USE_FIELDS.map((field) => field.id);
+    expect(ids).toEqual(
+      expect.arrayContaining([
+        "appsCap.cspConnectDomains.fetch",
+        "appsCap.cspConnectDomains.xhr",
+        "appsCap.cspConnectDomains.websocket",
+        "appsCap.cspResourceDomains.script",
+        "appsCap.cspResourceDomains.stylesheet",
+        "appsCap.cspResourceDomains.image",
+        "appsCap.cspResourceDomains.font",
+        "appsCap.cspResourceDomains.media",
+        "appsCap.cspFrameDomains",
+        "appsCap.cspBaseUriDomains",
+      ])
+    );
   });
 
   it("excludes config-only fields from public capability pages", () => {
@@ -43,10 +61,10 @@ describe("caniuse capability catalog", () => {
     const slugs = CANIUSE_CAPABILITIES.map((capability) => capability.slug);
     expect(new Set(slugs).size).toBe(slugs.length);
     expect(slugs.every((slug) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug))).toBe(
-      true,
+      true
     );
     expect(buildCaniuseCapabilityPath("sampling")).toBe(
-      "/capabilities/sampling",
+      "/capabilities/sampling"
     );
   });
 

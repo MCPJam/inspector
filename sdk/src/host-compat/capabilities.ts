@@ -19,6 +19,8 @@ function frozen(matrix: McpAppsCapabilities): McpAppsCapabilities {
   if (Array.isArray(matrix.availableDisplayModes)) {
     Object.freeze(matrix.availableDisplayModes);
   }
+  if (matrix.cspConnectDomains) Object.freeze(matrix.cspConnectDomains);
+  if (matrix.cspResourceDomains) Object.freeze(matrix.cspResourceDomains);
   return Object.freeze(matrix);
 }
 
@@ -45,10 +47,36 @@ export const MCP_APPS_FULL: McpAppsCapabilities = frozen({
   widgetDisplayModeRequests: "accept",
 });
 
-/** ChatGPT — full surface minus downloadFile. */
+/** Claude web — full bridge surface with probe-captured CSP behavior. */
+export const MCP_APPS_CLAUDE: McpAppsCapabilities = frozen({
+  ...MCP_APPS_FULL,
+  availableDisplayModes: ["inline", "fullscreen"],
+  cspFrameDomains: false,
+  cspBaseUriDomains: false,
+  cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+  cspResourceDomains: {
+    script: true,
+    stylesheet: true,
+    image: true,
+    font: true,
+    media: true,
+  },
+  requestTeardown: false,
+});
+
+/** ChatGPT — full bridge surface with probe-captured CSP behavior. */
 export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
+  cspConnectDomains: { fetch: false, xhr: false, websocket: true },
+  cspResourceDomains: {
+    script: false,
+    stylesheet: false,
+    image: false,
+    font: false,
+    media: false,
+  },
   downloadFile: false,
+  requestTeardown: false,
 });
 
 /** Mistral Le Chat — Apps-side `ui/initialize` evidence (no pip / download / teardown). */
@@ -65,11 +93,21 @@ export const MCP_APPS_MISTRAL: McpAppsCapabilities = frozen({
   requestTeardown: false,
 });
 
-/** Cursor 3.4.17 probe — full minus updateModelContext + message. */
+/** Cursor 3.14.27 probe — full minus updateModelContext + message. */
 export const MCP_APPS_CURSOR: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
+  availableDisplayModes: ["inline"],
   updateModelContext: false,
   message: false,
+  cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+  cspResourceDomains: {
+    script: true,
+    stylesheet: true,
+    image: true,
+    font: true,
+    media: true,
+  },
+  downloadFile: false,
 });
 
 /** Goose Desktop 1.38.0 capture — only openLinks (+ toolInfo) advertised. */
@@ -89,7 +127,15 @@ export const MCP_APPS_GOOSE: McpAppsCapabilities = frozen({
   sandboxPermissions: false,
   cspFrameDomains: false,
   cspBaseUriDomains: false,
-  resourcePrefersBorder: false,
+  cspConnectDomains: { fetch: false, xhr: false },
+  cspResourceDomains: {
+    script: false,
+    stylesheet: false,
+    image: false,
+    font: false,
+    media: false,
+  },
+  resourcePrefersBorder: true,
   downloadFile: false,
   requestTeardown: false,
   widgetDisplayModeRequests: "accept",
