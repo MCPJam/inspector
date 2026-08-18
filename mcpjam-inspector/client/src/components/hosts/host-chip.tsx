@@ -1,5 +1,5 @@
 import { cn } from "@/lib/utils";
-import { resolveHostLogoByDisplayName } from "@/lib/chatbox-client-style";
+import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
 
 const hostChipLogoClass = {
   default: "size-3.5",

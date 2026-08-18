@@ -103,7 +103,7 @@ export interface PinnedHostExecutionSpec {
   /**
    * Pinned MCP client capabilities advertised on INITIALIZE, captured at
    * run-create time. Passed into `createAuthorizedManager` so the run negotiates
-   * with the SAME capabilities the host declared (mirrors the chatbox path's
+   * with the SAME capabilities the host declared (mirrors the scenario path's
    * `clientCapabilities`), not whatever the current live config would send.
    */
   clientCapabilities?: Record<string, unknown>;
@@ -801,7 +801,7 @@ export async function finalizePendingAttempts(
 
 /**
  * Platform-billed swarm persona driver: produce the next simulated USER message
- * from the run's immutable snapshot. The swarm sibling of the chatbox
+ * from the run's immutable snapshot. The swarm sibling of the scenario
  * `/session-simulation/persona-next-turn`.
  */
 export async function swarmPersonaNextTurn(

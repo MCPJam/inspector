@@ -55,10 +55,10 @@ vi.mock("react-router", () => ({
 }));
 
 // The detail pane links back to a published scenario, reading the shared
-// chatbox list. Unpublished here — the link's own behavior is covered in the
+// scenario list. Unpublished here — the link's own behavior is covered in the
 // User Testing suites.
-vi.mock("@/hooks/useChatboxes", () => ({
-  useEnvironmentChatbox: () => ({ chatbox: null, isLoading: false }),
+vi.mock("@/hooks/useScenarios", () => ({
+  useEnvironmentScenario: () => ({ scenario: null, isLoading: false }),
 }));
 
 import { ProjectEnvironmentsRoute } from "../ProjectEnvironmentsRoute";

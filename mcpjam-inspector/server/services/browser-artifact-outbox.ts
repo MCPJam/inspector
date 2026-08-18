@@ -31,7 +31,7 @@
  * as a video-only write when every batch already landed per-turn.
  *
  * Surface-neutral: the caller supplies the Convex identity and, for a hosted
- * chatbox, its access pair. A swarm run passes neither, and the mutation
+ * scenario, its access pair. A swarm run passes neither, and the mutation
  * authorizes the session owner (the run launcher) instead.
  */
 
@@ -97,13 +97,13 @@ export function createBrowserArtifactOutbox(args: {
   chatSessionId: string;
   /** Convex bearer for the uploads + the mutation. */
   convexAuthToken: string;
-  /** Hosted-chatbox auth pair. Omitted ⇒ the direct-session (owner) branch. */
-  chatboxId?: string;
+  /** Hosted-scenario auth pair. Omitted ⇒ the direct-session (owner) branch. */
+  scenarioId?: string;
   accessVersion?: number;
   /** Log prefix so each surface stays greppable. */
   logScope: string;
 }): BrowserArtifactOutbox {
-  const { chatSessionId, convexAuthToken, chatboxId, accessVersion, logScope } =
+  const { chatSessionId, convexAuthToken, scenarioId, accessVersion, logScope } =
     args;
 
   // Both keyed by promptIndex so repeat takes for the same turn merge instead of
@@ -310,7 +310,7 @@ export function createBrowserArtifactOutbox(args: {
       await serializePending(convexClient);
 
       const auth = {
-        ...(chatboxId !== undefined ? { chatboxId } : {}),
+        ...(scenarioId !== undefined ? { scenarioId } : {}),
         ...(accessVersion !== undefined ? { accessVersion } : {}),
         chatSessionId,
       };

@@ -177,9 +177,9 @@ export function parseXaaPolicyValue(
  * BACKEND-PROJECTED host config's `mcpProfile`.
  *
  * Sibling of {@link xaaPolicyFromMcpProfile}, and for the same reason: on a
- * chatbox turn the published host wins and a share-link client cannot override
+ * scenario turn the published host wins and a share-link client cannot override
  * it, so the value must come from the stored config rather than the request
- * body. Without this a chatbox configured with `toolParamHeaderMirroring:
+ * body. Without this a scenario configured with `toolParamHeaderMirroring:
  * "omit"` would still mirror — the body carries no pins for those turns.
  *
  * Returns `false` only for an explicit `"omit"`; every other value (including
@@ -293,7 +293,7 @@ export function applyHostConformanceKnobs<
 
 /**
  * Server-authoritative policy read from a BACKEND-PROJECTED host config's
- * `mcpProfile` (chatbox turns, host-bound turns, swarm snapshots, eval host
+ * `mcpProfile` (scenario turns, host-bound turns, swarm snapshots, eval host
  * configs). Three-state: off → undefined, on → the policy, invalid →
  * explicit 409 configuration error (never treated as off).
  */

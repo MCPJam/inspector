@@ -36,6 +36,11 @@ import type {
   ScoreResult,
   ScorerContextV1,
 } from "./contract/types.js";
+import {
+  CASE_ID_PREFIX,
+  mintCaseId,
+  opaqueIdSchema,
+} from "./contract/identity.js";
 import { runScorers, scoresPassed } from "./scorers/run.js";
 import { Semaphore } from "./scorers/concurrency.js";
 import type { Scorer } from "./scorers/types.js";
@@ -75,6 +80,78 @@ function assertLocallyEvaluablePredicates(
 }
 
 /**
+ * An id to SUGGEST in the missing-`id` error.
+ *
+ * **A config that already carries `externalCaseId` is suggested THAT value**,
+ * not a fresh mint. `externalCaseId` is the hosted join key: the backend keys
+ * such a case as `external:<id>`, and the declared id is required to agree with
+ * it (a `caseId` that differs from `externalCaseId` is a hard error at ingest,
+ * because two identity claims on one result is not something to pick a winner
+ * between). So `id := externalCaseId` is THE migration rule for existing
+ * external-id users — it lands the declared id in the same join the case
+ * already lives under, and its hosted history continues. Suggesting a fresh
+ * mint here would walk people straight into that conflict error.
+ *
+ * Minting is still the suggestion when there is no `externalCaseId`, and
+ * minting can fail in a runtime with no CSPRNG — an error about a missing id
+ * must never be replaced by a secondary error about generating an example.
+ */
+function suggestedCaseId(config: EvalTestConfig): string {
+  // Already normalized by the constructor, so what is suggested is exactly
+  // what goes on the wire and exactly what the hosted key is derived from —
+  // there is no second spelling for the suggestion to disagree with.
+  const external = config.externalCaseId;
+  // Suggested only when it can BE an id at all: `externalCaseId` was never
+  // charset-bound, and suggesting a value the very next line rejects is worse
+  // than suggesting a fresh one.
+  if (external && opaqueIdSchema.safeParse(external).success) {
+    return external;
+  }
+  try {
+    return mintCaseId();
+  } catch {
+    return `${CASE_ID_PREFIX}<paste a unique id here>`;
+  }
+}
+
+/**
+ * A case's identity must be DECLARED, and it must be usable in a URL, a file
+ * path and a CLI argument.
+ *
+ * Deliberately NOT derived from `name` when absent: deriving it would recreate
+ * exactly the bug the field exists to retire — rename the test, fork its
+ * history — while looking like it worked. Failing at construction says what is
+ * wrong once, at the line that is wrong, with the fix in the message.
+ */
+function assertDeclaredCaseId(config: EvalTestConfig): void {
+  const label = config.name ? `"${config.name}"` : "(unnamed)";
+  if (config.id === undefined || config.id === null || config.id === "") {
+    const suggestion = suggestedCaseId(config);
+    const reusesExternal = suggestion === config.externalCaseId;
+    throw new Error(
+      `EvalTest ${label} has no \`id\`. A case's identity is declared, not ` +
+        `derived from its name — otherwise renaming the test forks its hosted ` +
+        `history. ` +
+        (reusesExternal
+          ? `This test already declares \`externalCaseId\`, which is the key its ` +
+            `hosted history is joined on, so reuse it verbatim: `
+          : `Mint one once and commit it: `) +
+        `id: "${suggestion}"`
+    );
+  }
+  const parsed = opaqueIdSchema.safeParse(config.id);
+  if (!parsed.success) {
+    throw new Error(
+      `EvalTest ${label} has an invalid \`id\` (${JSON.stringify(
+        config.id
+      )}): ` +
+        `${parsed.error.issues.map((issue) => issue.message).join("; ")}. ` +
+        `Ids travel in URLs, file paths and CLI arguments.`
+    );
+  }
+}
+
+/**
  * Configuration for an EvalTest
  *
  * All tests use the multi-turn pattern with a test function that receives a
@@ -82,6 +159,21 @@ function assertLocallyEvaluablePredicates(
  * executor that mirrors the interface).
  */
 export interface EvalTestConfig {
+  /**
+   * This case's DECLARED identity. Required.
+   *
+   * Identity is declared, never derived. It used to be the `name`, which meant
+   * renaming a test forked its hosted history — the bug this field retires.
+   * Mint one ONCE with `mintCaseId()` from `@mcpjam/sdk/contract` and commit
+   * the literal beside the test; an id regenerated on every run is not an
+   * identity. Any URL-safe string of 1..128 characters is accepted (see
+   * `opaqueIdSchema`) — our `c_` prefix is a grep convenience, not a rule.
+   *
+   * Distinct from {@link EvalTestConfig.externalCaseId}, which is the hosted
+   * JOIN key with live wire semantics. Nothing on the wire changes because of
+   * this field yet; the upload payload is byte-identical to before.
+   */
+  id: string;
   name: string;
   test: (executor: HostExecutor) => boolean | Promise<boolean>;
   expectedToolCalls?: EvalExpectedToolCall[];
@@ -105,6 +197,22 @@ export interface EvalTestConfig {
    * (`convex/sdkEvals.ts`), which is what joins a local run to the hosted
    * case's history on the run page. Identity rides HERE, never on `name`:
    * display names collide and get renamed.
+   *
+   * Kept alongside the new required {@link EvalTestConfig.id}: this one has
+   * live wire semantics that a deployed backend depends on, while `id` is the
+   * declared identity the contract now requires. Converging the two is a
+   * backend change that happens after the mirroring backend work ships.
+   *
+   * **NORMALIZED at construction**: surrounding whitespace is trimmed, and a
+   * whitespace-only value is dropped as though it were absent. The value you
+   * read back from `getConfig()` and the value uploaded are therefore the
+   * trimmed one. This is not a wire change so much as the removal of a second
+   * spelling: the hosted key has always been derived from
+   * `externalCaseId.trim()`, so the trimmed form was already the identity —
+   * it just used to travel beside a padded copy of itself, which also showed
+   * up in the `[id]` suffix `@mcpjam/vitest` appends to a test name. An
+   * unpadded value, which is every value anybody actually writes, is
+   * byte-identical to before.
    */
   externalCaseId?: string;
   /**
@@ -336,6 +444,7 @@ function wrapAgentWithAbortSignal(
  * @example
  * ```ts
  * const test = new EvalTest({
+ *   id: "c_addition",
  *   name: "addition",
  *   test: async (executor) => {
  *     const result = await executor.run("Add 2+3");
@@ -355,6 +464,26 @@ export class EvalTest {
     if (!config.test) {
       throw new Error("Invalid config: must provide 'test' function");
     }
+    // Normalize `externalCaseId` ONCE, here, so exactly one value is in play
+    // for the rest of this object's life. The hosted key is derived from the
+    // trimmed value (`external:` + `externalCaseId.trim()`), so a padded
+    // config carried two spellings of one identity: the padded one on the
+    // wire and in the `[id]` grep suffix, the trimmed one as the actual join
+    // key. Whitespace-only is dropped rather than kept, matching the backend,
+    // which treats an empty trimmed value as no external id at all.
+    if (config.externalCaseId !== undefined) {
+      const trimmed = config.externalCaseId.trim();
+      if (trimmed !== config.externalCaseId) {
+        const rest = { ...config };
+        if (trimmed) {
+          rest.externalCaseId = trimmed;
+        } else {
+          delete rest.externalCaseId;
+        }
+        config = rest;
+      }
+    }
+    assertDeclaredCaseId(config);
     assertValidMatchOptions(config.matchOptions ?? {});
     assertLocallyEvaluablePredicates(config.predicates);
     // A negative case asserts "no tool was called", so `evaluateToolCalls`
@@ -805,7 +934,9 @@ export class EvalTest {
   private async scoreIteration(params: {
     promptResults: PromptResult[];
     tokens: { input: number; output: number; total: number };
-    legacy: { kind: "returned"; passed: boolean } | { kind: "threw"; error: unknown };
+    legacy:
+      | { kind: "returned"; passed: boolean }
+      | { kind: "threw"; error: unknown };
     evaluationConfig: EvaluationConfigSnapshot;
     options: EvalTestRunOptions;
     skipNonDeterministic?: string;
@@ -815,7 +946,10 @@ export class EvalTest {
     toolMatch: EvalToolCallMatchResult | undefined;
     passed: boolean;
   }> {
-    const context = this.buildScorerContext(params.promptResults, params.tokens);
+    const context = this.buildScorerContext(
+      params.promptResults,
+      params.tokens
+    );
     const definitions = params.evaluationConfig.definitions;
     const byId = new Map(
       definitions.map((definition) => [definition.scorerId, definition])
@@ -834,7 +968,9 @@ export class EvalTest {
     const scores: ScoreResult[] = [];
 
     // 1. test()
-    const legacyDefinition = definitionFor(legacyTestScoreDefinition().scorerId);
+    const legacyDefinition = definitionFor(
+      legacyTestScoreDefinition().scorerId
+    );
     scores.push(
       params.legacy.kind === "returned"
         ? fromLegacyTestOutcome(legacyDefinition, params.legacy.passed)
@@ -1118,6 +1254,16 @@ export class EvalTest {
    */
   getName(): string {
     return this.config.name;
+  }
+
+  /**
+   * This case's declared identity.
+   *
+   * Read this — never `getName()` — when joining a case to anything that
+   * outlives one run.
+   */
+  getId(): string {
+    return this.config.id;
   }
 
   /**
