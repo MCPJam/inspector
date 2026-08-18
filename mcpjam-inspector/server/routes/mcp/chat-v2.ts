@@ -12,7 +12,7 @@ import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { getProductionGuestAuthHeader } from "../../utils/guest-auth.js";
 import { logger } from "../../utils/logger";
-import { fetchChatboxRuntimeConfig } from "../../utils/chatbox-runtime-config";
+import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config";
 import { fetchHostRuntimeConfig } from "../../utils/host-runtime-config.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
 import {
@@ -40,6 +40,8 @@ import {
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
   stampSenderUserIdsOnSessionMessages,
+  writePersistReceipt,
+  type PersistChatOutcome,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
@@ -478,7 +480,9 @@ function streamDirectChatWithLiveTrace(options: {
     usage?: LiveChatTraceUsage;
     finishReason?: string;
     turnTrace: PersistedTurnTrace;
-  }) => Promise<void> | void;
+  }) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
+  /** Session this stream persists to; required to attribute a persist receipt. */
+  chatSessionId?: string;
   scopeStepUpResume?: MrtrEngineResume;
   shouldPauseAfterStep?: () => boolean;
   suspendedToolCallId?: () => string | undefined;
@@ -488,11 +492,19 @@ function streamDirectChatWithLiveTrace(options: {
     abortSignal,
     onStreamWriterReady,
     onPersist,
+    chatSessionId: receiptChatSessionId,
     scopeStepUpResume,
     shouldPauseAfterStep,
     suspendedToolCallId,
     ...turnOptions
   } = options;
+  // `runDirectChatTurn` awaits `onPersist` but discards its return value, so
+  // the outcome reaches this scope through a closure rather than the callback
+  // chain — cheaper than widening the engine's signature for every headless
+  // caller that will never emit a receipt.
+  let persistReceipt:
+    | { outcome: PersistChatOutcome; turnId: string }
+    | undefined;
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
   // `execute` once the helper is configured.
@@ -542,7 +554,14 @@ function streamDirectChatWithLiveTrace(options: {
         // back in so llm/step spans carry it.
         provider,
         abortSignal,
-        onPersist,
+        onPersist: onPersist
+          ? async (event) => {
+              const outcome = await onPersist(event);
+              if (outcome) {
+                persistReceipt = { outcome, turnId: event.turnTrace.turnId };
+              }
+            }
+          : undefined,
         shouldPauseAfterStep,
         suspendedToolCallId,
         onPersistError: (error) => {
@@ -598,6 +617,16 @@ function streamDirectChatWithLiveTrace(options: {
       } finally {
         handle.cleanup();
       }
+
+      // The persist has settled by here: it runs inside `streamText`'s
+      // `onFinish`, which gates the UI-message stream this loop just drained.
+      // The outer stream stays open until `execute` returns.
+      if (persistReceipt && receiptChatSessionId) {
+        writePersistReceipt(writer, persistReceipt.outcome, {
+          chatSessionId: receiptChatSessionId,
+          turnId: persistReceipt.turnId,
+        });
+      }
     },
   });
 
@@ -610,11 +639,11 @@ chatV2.post("/", async (c) => {
   try {
     const body = (await readRequestJson(c)) as ChatV2Request & {
       // Phase F: when the local inspector serves an owner-preview of a
-      // chatbox (the share-link surface running in /mcp), the client
-      // passes the resolved chatbox identity so persistence reads
-      // `sourceType: "chatbox"` + the right surface telemetry instead
+      // scenario (the share-link surface running in /mcp), the client
+      // passes the resolved scenario identity so persistence reads
+      // `sourceType: "scenario"` + the right surface telemetry instead
       // of being filed as a direct chat.
-      chatboxId?: string;
+      scenarioId?: string;
       accessVersion?: number;
       surface?: "preview" | "share_link";
       // Saved host being previewed (Playground over /mcp). See web/chat-v2.ts.
@@ -654,7 +683,7 @@ chatV2.post("/", async (c) => {
       selectedServerIds: bodySelectedServerIds,
       requireToolApproval: bodyRequireToolApproval,
       respectToolVisibility: bodyRespectToolVisibility,
-      chatboxId: bodyChatboxId,
+      scenarioId: bodyScenarioId,
       accessVersion: bodyAccessVersion,
       surface: bodySurface,
       hostId: bodyHostId,
@@ -674,42 +703,42 @@ chatV2.post("/", async (c) => {
         400
       );
     }
-    const isChatboxSession = Boolean(bodyChatboxId);
-    const chatSessionSourceType: "chatbox" | "direct" = isChatboxSession
-      ? "chatbox"
+    const isScenarioSession = Boolean(bodyScenarioId);
+    const chatSessionSourceType: "scenario" | "direct" = isScenarioSession
+      ? "scenario"
       : "direct";
-    // Mirrors the sourceType branch — chatbox surface stays "chatbox", the
-    // non-chatbox case is the inspector playground over MCP. The docs agent
+    // Mirrors the sourceType branch — scenario surface stays "scenario", the
+    // non-scenario case is the inspector playground over MCP. The docs agent
     // has its own route (web/mcpjam-agent.ts) and never lands here.
-    const chatSessionOrigin: "chatbox" | "playground" = isChatboxSession
-      ? "chatbox"
+    const chatSessionOrigin: "scenario" | "playground" = isScenarioSession
+      ? "scenario"
       : "playground";
     const chatSessionSurface: "preview" | "share_link" | undefined =
-      isChatboxSession ? bodySurface ?? "preview" : undefined;
+      isScenarioSession ? bodySurface ?? "preview" : undefined;
 
-    // Chatbox-bound turns re-resolve execution config from Convex so the
+    // Scenario-bound turns re-resolve execution config from Convex so the
     // host's hostConfigs row is the source of truth (model / prompt /
     // temperature / requireToolApproval). Mirrors the web/chat-v2 path.
     // FAIL CLOSED on fetch failure — same rationale as the host-bound branch
     // below: the fetched config is the only source of `harness`/`computer`
     // and of every host-wins protection, so falling back to body values
-    // would silently downgrade a harness chatbox to the emulated engine and
+    // would silently downgrade a harness scenario to the emulated engine and
     // reopen the tampered-body window.
     //
     // PR 4c of the engine consolidation (`~/mcpjam-docs/unification.md`):
-    // the field-by-field merge between body and `fetchChatboxRuntimeConfig`
+    // the field-by-field merge between body and `fetchScenarioRuntimeConfig`
     // was duplicated across `mcp/chat-v2.ts` and `web/chat-v2.ts` and
     // drifted from eval's separate hostConfig resolver. Routed through the
     // shared `resolveExecutionContext` so a single helper owns the merge,
-    // the precedence (`host-wins` for chatbox security model — body
+    // the precedence (`host-wins` for scenario security model — body
     // values are warned-and-overwritten), and the drift surfacing. Pure
     // refactor: resolved values for the existing fields are byte-identical
     // to the inline code below by construction (snapshot tests in
     // `host-execution-context.test.ts` lock the contract).
     let resolvedModelOverride: typeof model | null = null;
     let hostRuntimeConfig: Record<string, unknown> | null = null;
-    if (isChatboxSession && bodyChatboxId) {
-      // Chatbox config resolution must NEVER be skipped: the fetched config is
+    if (isScenarioSession && bodyScenarioId) {
+      // Scenario config resolution must NEVER be skipped: the fetched config is
       // the only source of host-owned harness/computer/executionScope and of
       // every host-wins protection. A bearer-less request is NOT a hard stop on
       // this route (the MCPJam-model path lazily mints a guest bearer below),
@@ -727,21 +756,21 @@ chatV2.post("/", async (c) => {
         return c.json(
           {
             error:
-              "Couldn't authenticate this chatbox turn to load its settings — sign in (or retry) to continue.",
+              "Couldn't authenticate this scenario turn to load its settings — sign in (or retry) to continue.",
           },
           401
         );
       }
       {
-        const runtime = await fetchChatboxRuntimeConfig({
-          chatboxId: bodyChatboxId,
+        const runtime = await fetchScenarioRuntimeConfig({
+          scenarioId: bodyScenarioId,
           bearer,
           // Opt this turn into backend version enforcement — see
           // web/chat-v2.ts for the rationale.
           accessVersion: bodyAccessVersion,
         });
         if (runtime.ok) {
-          // Cast the typed `ChatboxRuntimeConfig` to a plain record so
+          // Cast the typed `ScenarioRuntimeConfig` to a plain record so
           // `resolveExecutionContext` can read it — the type narrowing
           // re-enters via the resolver's per-field typeof checks.
           hostRuntimeConfig = runtime.config as unknown as Record<
@@ -752,26 +781,26 @@ chatV2.post("/", async (c) => {
           logger.warn(
             "[mcp/chat-v2] runtime-config fetch failed; failing closed",
             {
-              chatboxId: bodyChatboxId,
+              scenarioId: bodyScenarioId,
               status: runtime.status,
               error: runtime.error,
             }
           );
-          const failClosedMessage = `Couldn't load this chatbox's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
+          const failClosedMessage = `Couldn't load this scenario's settings, so the turn was stopped to avoid running with the wrong configuration. ${runtime.error}`;
           // This route hand-rolls its error envelope (no WebRouteError), so
           // the access code rides as a top-level `code` — which is exactly
           // where the client's `readRouteError` looks. Only the access
           // verdicts carry one; every other status keeps the pre-existing
           // shape.
-          if (runtime.code === "CHATBOX_ACCESS_STALE") {
+          if (runtime.code === "SCENARIO_ACCESS_STALE") {
             return c.json(
-              { error: failClosedMessage, code: "CHATBOX_ACCESS_STALE" },
+              { error: failClosedMessage, code: "SCENARIO_ACCESS_STALE" },
               409
             );
           }
           if (runtime.status === 403) {
             return c.json(
-              { error: failClosedMessage, code: "CHATBOX_ACCESS_DENIED" },
+              { error: failClosedMessage, code: "SCENARIO_ACCESS_DENIED" },
               403
             );
           }
@@ -783,7 +812,7 @@ chatV2.post("/", async (c) => {
           );
         }
       }
-    } else if (!isChatboxSession && bodyHostId) {
+    } else if (!isScenarioSession && bodyHostId) {
       // Host-bound direct session (Playground). FAIL CLOSED on fetch failure —
       // see web/chat-v2.ts for the rationale (a harness host must never quietly
       // fall back to the emulated engine).
@@ -821,12 +850,13 @@ chatV2.post("/", async (c) => {
         progressiveToolDiscovery: body.progressiveToolDiscovery,
         modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
-        hostStyle: body.hostStyle ?? (!isChatboxSession ? "claude" : undefined),
+        hostStyle:
+          body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
         builtInToolIds: body.builtInToolIds,
       },
-      // Chatbox: published host wins. Host preview: owner's body tweaks win,
+      // Scenario: published host wins. Host preview: owner's body tweaks win,
       // harness/computer stay host-only (not overridable). See web/chat-v2.ts.
-      precedence: isChatboxSession ? "host-wins" : "override-wins",
+      precedence: isScenarioSession ? "host-wins" : "override-wins",
     });
     // Preserve the per-field warnings the inline code emitted — the
     // resolver returns drift as data so the call site can keep its
@@ -836,7 +866,7 @@ chatV2.post("/", async (c) => {
         logger.warn(
           "[mcp/chat-v2] client requireToolApproval differs from host; using host value",
           {
-            chatboxId: bodyChatboxId,
+            scenarioId: bodyScenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
           }
@@ -845,7 +875,7 @@ chatV2.post("/", async (c) => {
         logger.warn(
           "[mcp/chat-v2] client progressiveToolDiscovery differs from host; using host value",
           {
-            chatboxId: bodyChatboxId,
+            scenarioId: bodyScenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
           }
@@ -854,7 +884,7 @@ chatV2.post("/", async (c) => {
         logger.warn(
           "[mcp/chat-v2] client respectToolVisibility differs from host; using host value",
           {
-            chatboxId: bodyChatboxId,
+            scenarioId: bodyScenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
           }
@@ -866,7 +896,7 @@ chatV2.post("/", async (c) => {
         logger.warn(
           `[mcp/chat-v2] client ${entry.field} differs from host; using host value`,
           {
-            chatboxId: bodyChatboxId,
+            scenarioId: bodyScenarioId,
             body: entry.overrideValue,
             host: entry.hostValue,
           }
@@ -881,7 +911,7 @@ chatV2.post("/", async (c) => {
     // selections with vendor-prefixed ids) would otherwise inherit the
     // body's provider and route to the wrong runtime.
     if (
-      isChatboxSession &&
+      isScenarioSession &&
       hostRuntimeConfig &&
       model &&
       resolvedExecution.modelId &&
@@ -893,13 +923,13 @@ chatV2.post("/", async (c) => {
         projectId: typeof body.projectId === "string" ? body.projectId : null,
         auth: {
           authHeader: c.req.header("authorization") ?? undefined,
-          chatboxId: bodyChatboxId,
+          scenarioId: bodyScenarioId,
         },
       });
       logger.warn(
         "[mcp/chat-v2] client model differs from host; using host model",
         {
-          chatboxId: bodyChatboxId,
+          scenarioId: bodyScenarioId,
           body: model.id,
           host: hostModelId,
           provider: hostModel.provider,
@@ -1092,11 +1122,11 @@ chatV2.post("/", async (c) => {
     // guest check IS the boundary (see isGuestChatRequest).
     const requestIsGuest = isGuestChatRequest(requestAuthHeader);
     const localPrefEligible =
-      enginePref === "local" && !requestIsGuest && !isChatboxSession;
+      enginePref === "local" && !requestIsGuest && !isScenarioSession;
     if (enginePref === "local" && !localPrefEligible) {
       logger.debug(
         "[mcp/chat-v2] computerEngine=local ignored for an ineligible request",
-        { isChatboxSession, isGuest: requestIsGuest }
+        { isScenarioSession, isGuest: requestIsGuest }
       );
     }
     const localConsentValid = localPrefEligible
@@ -1111,15 +1141,15 @@ chatV2.post("/", async (c) => {
       ...(localPrefEligible
         ? { preference: "local" as const }
         : enginePref === "cloud"
-          ? { preference: "cloud" as const }
-          : {}),
+        ? { preference: "cloud" as const }
+        : {}),
       localConsentValid,
     });
 
     const builtInTools = resolveHostTools(
       {
         builtInToolIds: resolvedExecution.builtInToolIds,
-        // Computer comes from the server-resolved runtime config (chatbox OR
+        // Computer comes from the server-resolved runtime config (scenario OR
         // host-by-id), never the request body.
         computer: hostRuntimeConfig
           ? (hostRuntimeConfig as { computer?: unknown }).computer
@@ -1161,8 +1191,7 @@ chatV2.post("/", async (c) => {
       // The environment context describes the pinned E2B image — the WRONG
       // machine when this turn's bash runs on the user's own computer.
       hasBashTool:
-        computerEngine !== "local" &&
-        Boolean(builtInTools?.[BASH_TOOL_NAME]),
+        computerEngine !== "local" && Boolean(builtInTools?.[BASH_TOOL_NAME]),
       bearer: builtInAuthHeader,
       projectId:
         typeof body.projectId === "string" ? body.projectId : undefined,
@@ -1178,7 +1207,7 @@ chatV2.post("/", async (c) => {
     const harnessComputerWorkdir =
       typeof computerWorkdir === "string" ? computerWorkdir : undefined;
 
-    // Host-only, exactly as in the hosted route: a chatbox session's body must
+    // Host-only, exactly as in the hosted route: a scenario session's body must
     // not be able to opt into tasks the host disabled. `tasksPolicy` never
     // enters the override path, so `override-wins` above cannot reach it.
     //
@@ -1230,7 +1259,7 @@ chatV2.post("/", async (c) => {
         ...(tasksSeam ? { tasks: tasksSeam } : {}),
         ...(builtInTools ? { builtInTools } : {}),
         // Body for direct chat (project default), host-re-resolved for
-        // chatbox-bound sessions. undefined → auto policy.
+        // scenario-bound sessions. undefined → auto policy.
         ...(resolvedProgressiveToolDiscovery !== undefined
           ? {
               progressiveToolDiscovery: {
@@ -1446,7 +1475,7 @@ chatV2.post("/", async (c) => {
               // path persists via onConversationComplete and doesn't read these.
               ...(chatSessionId ? { chatSessionId } : {}),
               sourceType: chatSessionSourceType,
-              ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+              ...(bodyScenarioId ? { scenarioId: bodyScenarioId } : {}),
             }
           : {}),
         // Server-executed built-ins forwarded separately so the harness path
@@ -1463,17 +1492,18 @@ chatV2.post("/", async (c) => {
         abortSignal: inboundAbortSignalMcp,
         onConversationComplete: chatSessionId
           ? async (fullHistory, turnTrace, harnessSessionCommit) => {
-              await persistChatSessionToConvex({
+              // Returned so the engine can stream the turn's persist receipt.
+              return await persistChatSessionToConvex({
                 chatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
                 sourceType: chatSessionSourceType,
                 origin: chatSessionOrigin,
-                ...(!isChatboxSession && body.rewind
+                ...(!isScenarioSession && body.rewind
                   ? { rewind: body.rewind }
                   : {}),
                 ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
-                ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+                ...(bodyScenarioId ? { scenarioId: bodyScenarioId } : {}),
                 authHeader,
                 sessionMessages: stampSenderUserIdsOnSessionMessages(
                   fullHistory,
@@ -1487,7 +1517,7 @@ chatV2.post("/", async (c) => {
                 // (matches the web route). Absent on non-harness turns.
                 ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
                 ...(body.projectId ? { projectId: body.projectId } : {}),
-                ...(isChatboxSession
+                ...(isScenarioSession
                   ? {}
                   : {
                       directVisibility: body.directVisibility,
@@ -1555,7 +1585,7 @@ chatV2.post("/", async (c) => {
               modelId,
               {
                 authHeader: requestAuthHeader,
-                chatboxId: bodyChatboxId,
+                scenarioId: bodyScenarioId,
                 accessVersion: bodyAccessVersion,
                 serverIds: hostConfigServerIds,
               }
@@ -1566,18 +1596,19 @@ chatV2.post("/", async (c) => {
             fullHistory: ModelMessage[],
             turnTrace: PersistedTurnTrace
           ) => {
-            await persistChatSessionToConvex({
+            // Returned so the rail can stream the turn's persist receipt.
+            return await persistChatSessionToConvex({
               chatSessionId,
               modelId,
               modelSource:
                 runtime.runtimeLocation === "local" ? "local_byok" : "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,
-              ...(!isChatboxSession && body.rewind
+              ...(!isScenarioSession && body.rewind
                 ? { rewind: body.rewind }
                 : {}),
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
-              ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+              ...(bodyScenarioId ? { scenarioId: bodyScenarioId } : {}),
               authHeader: requestAuthHeader,
               sessionMessages: stampSenderUserIdsOnSessionMessages(
                 fullHistory,
@@ -1587,7 +1618,7 @@ chatV2.post("/", async (c) => {
               startedAt: sessionStartedAt,
               lastActivityAt: Date.now(),
               projectId: body.projectId,
-              ...(isChatboxSession
+              ...(isScenarioSession
                 ? {}
                 : {
                     directVisibility: body.directVisibility,
@@ -1626,7 +1657,7 @@ chatV2.post("/", async (c) => {
           progressivePlan,
           discoveryState,
           authHeader: requestAuthHeader,
-          chatboxId: bodyChatboxId,
+          scenarioId: bodyScenarioId,
           accessVersion: bodyAccessVersion,
           selectedServers,
           serverIds: hostConfigServerIds,
@@ -1740,6 +1771,7 @@ chatV2.post("/", async (c) => {
     return streamDirectChatWithLiveTrace({
       llmModel,
       modelId: String(modelDefinition.id),
+      ...(chatSessionId ? { chatSessionId } : {}),
       // Server-side model definitions always carry a concrete provider (the
       // widened `string` branch on ModelDefinition.provider is a client
       // catalog concern), so narrowing back to ModelProvider here is safe.
@@ -1773,17 +1805,18 @@ chatV2.post("/", async (c) => {
             turnTrace,
           }) => {
             const persistedUsage = toPersistedUsage(usage);
-            await persistChatSessionToConvex({
+            // Returned so the rail can stream the turn's persist receipt.
+            return await persistChatSessionToConvex({
               chatSessionId,
               modelId: String(modelDefinition.id),
               modelSource: "byok",
               sourceType: chatSessionSourceType,
               origin: chatSessionOrigin,
-              ...(!isChatboxSession && body.rewind
+              ...(!isScenarioSession && body.rewind
                 ? { rewind: body.rewind }
                 : {}),
               ...(chatSessionSurface ? { surface: chatSessionSurface } : {}),
-              ...(bodyChatboxId ? { chatboxId: bodyChatboxId } : {}),
+              ...(bodyScenarioId ? { scenarioId: bodyScenarioId } : {}),
               messages: stampSenderUserIdsOnSessionMessages(
                 modelMessages as ModelMessage[],
                 messages,
@@ -1800,7 +1833,7 @@ chatV2.post("/", async (c) => {
               startedAt: streamStartedAt,
               lastActivityAt: Date.now(),
               ...(body.projectId ? { projectId: body.projectId } : {}),
-              ...(isChatboxSession
+              ...(isScenarioSession
                 ? {}
                 : {
                     directVisibility: body.directVisibility,
@@ -1833,7 +1866,7 @@ chatV2.post("/", async (c) => {
     const { origin } = reportRouteFailureForResponse(
       "[mcp/chat-v2] failed to process chat request",
       error,
-      { source: "mcp.chat-v2.request", hop: "mcpjam_internal" },
+      { source: "mcp.chat-v2.request", hop: "mcpjam_internal" }
     );
     // Also a HEADER, not just the body. By the time the failure reaches the
     // client's reporter the Response is gone — the AI SDK throws
@@ -1842,11 +1875,9 @@ chatV2.post("/", async (c) => {
     // alongside the status in `ChatResponseMeta`, which is what stops the
     // client's "our route answered 5xx, so it's ours" fallback from
     // overwriting a failure we just attributed to the user's server.
-    return c.json(
-      { error: "Unexpected error", origin },
-      500,
-      { "x-mcpjam-error-origin": origin },
-    );
+    return c.json({ error: "Unexpected error", origin }, 500, {
+      "x-mcpjam-error-origin": origin,
+    });
   }
 });
 

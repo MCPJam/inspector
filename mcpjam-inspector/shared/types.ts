@@ -240,14 +240,38 @@ export const isMCPJamGuestAllowedModel = (
   );
 };
 
-export const isGPT5Model = (modelId: string | Model): boolean => {
+/**
+ * Anthropic ids that reject the sampling parameters: Fable 5, Opus 5, Opus
+ * 4.8/4.7 and Sonnet 5 answer a `temperature` with a 400 rather than ignoring
+ * it, so sending one fails the whole request. Matched by prefix as well as
+ * exactly, so a dated snapshot ("claude-opus-5-20260401") resolves like the
+ * alias it pins.
+ */
+const MODEL_IDS_REJECTING_TEMPERATURE = [
+  "claude-fable-5",
+  "claude-opus-5",
+  "claude-opus-4-8",
+  "claude-opus-4-7",
+  "claude-sonnet-5",
+];
+
+export const modelSupportsTemperature = (modelId: string | Model): boolean => {
   const id = String(modelId);
-  // Only disable temperature for OpenAI GPT-5 models (not MCPJam provided ones)
-  // MCPJam provided models like "openai/gpt-5" still support temperature
+  // MCPJam-provided models proxy through the backend, which owns the request
+  // body it sends upstream — "openai/gpt-5" still takes a temperature here.
+  // Only own-provider (BYOK) ids are ours to strip.
   if (isMCPJamProvidedModel(id)) {
+    return true;
+  }
+  if (id.includes("gpt-5")) {
     return false;
   }
-  return id.includes("gpt-5");
+  // Own-provider ids can still carry a provider segment (an OpenRouter-style
+  // "anthropic/claude-opus-5"); the family lives in the last one.
+  const bareId = id.slice(id.lastIndexOf("/") + 1);
+  return !MODEL_IDS_REJECTING_TEMPERATURE.some(
+    (rejected) => bareId === rejected || bareId.startsWith(`${rejected}-`)
+  );
 };
 
 export interface ModelDefinition {
@@ -279,14 +303,14 @@ export interface ModelDefinition {
 
 export enum Model {
   CLAUDE_FABLE_5 = "claude-fable-5",
+  CLAUDE_OPUS_5 = "claude-opus-5",
   CLAUDE_SONNET_5 = "claude-sonnet-5",
-  CLAUDE_OPUS_4_1 = "claude-opus-4-1",
-  CLAUDE_OPUS_4_0 = "claude-opus-4-0",
+  CLAUDE_OPUS_4_8 = "claude-opus-4-8",
+  CLAUDE_OPUS_4_7 = "claude-opus-4-7",
+  CLAUDE_OPUS_4_6 = "claude-opus-4-6",
+  CLAUDE_SONNET_4_6 = "claude-sonnet-4-6",
   CLAUDE_SONNET_4_5 = "claude-sonnet-4-5",
-  CLAUDE_SONNET_4_0 = "claude-sonnet-4-0",
-  CLAUDE_3_7_SONNET_LATEST = "claude-3-7-sonnet-latest",
   CLAUDE_HAIKU_4_5 = "claude-haiku-4-5",
-  CLAUDE_3_5_HAIKU_LATEST = "claude-3-5-haiku-latest",
   GPT_4_1 = "gpt-4.1",
   GPT_4_1_MINI = "gpt-4.1-mini",
   GPT_4_1_NANO = "gpt-4.1-nano",
@@ -351,16 +375,40 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 1000000,
   },
   {
-    id: Model.CLAUDE_OPUS_4_1,
-    name: "Claude Opus 4.1",
+    id: Model.CLAUDE_OPUS_5,
+    name: "Claude Opus 5",
     provider: "anthropic",
-    contextLength: 200000,
+    contextLength: 1000000,
   },
   {
-    id: Model.CLAUDE_OPUS_4_0,
-    name: "Claude Opus 4",
+    id: Model.CLAUDE_SONNET_5,
+    name: "Claude Sonnet 5",
     provider: "anthropic",
-    contextLength: 200000,
+    contextLength: 1000000,
+  },
+  {
+    id: Model.CLAUDE_OPUS_4_8,
+    name: "Claude Opus 4.8",
+    provider: "anthropic",
+    contextLength: 1000000,
+  },
+  {
+    id: Model.CLAUDE_OPUS_4_7,
+    name: "Claude Opus 4.7",
+    provider: "anthropic",
+    contextLength: 1000000,
+  },
+  {
+    id: Model.CLAUDE_OPUS_4_6,
+    name: "Claude Opus 4.6",
+    provider: "anthropic",
+    contextLength: 1000000,
+  },
+  {
+    id: Model.CLAUDE_SONNET_4_6,
+    name: "Claude Sonnet 4.6",
+    provider: "anthropic",
+    contextLength: 1000000,
   },
   {
     id: Model.CLAUDE_SONNET_4_5,
@@ -369,26 +417,8 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     contextLength: 200000,
   },
   {
-    id: Model.CLAUDE_SONNET_4_0,
-    name: "Claude Sonnet 4",
-    provider: "anthropic",
-    contextLength: 200000,
-  },
-  {
     id: Model.CLAUDE_HAIKU_4_5,
     name: "Claude Haiku 4.5",
-    provider: "anthropic",
-    contextLength: 200000,
-  },
-  {
-    id: Model.CLAUDE_3_7_SONNET_LATEST,
-    name: "Claude Sonnet 3.7",
-    provider: "anthropic",
-    contextLength: 200000,
-  },
-  {
-    id: Model.CLAUDE_3_5_HAIKU_LATEST,
-    name: "Claude Haiku 3.5",
     provider: "anthropic",
     contextLength: 200000,
   },

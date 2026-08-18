@@ -13,9 +13,9 @@ import { ModelDefinition } from "@/shared/types";
 import { type DisplayMode } from "@/stores/ui-playground-store";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
 import {
   groupAssistantPartsIntoSteps,
   isHiddenInternalMessage,
@@ -466,20 +466,20 @@ function MessageViewImpl({
   recorder,
 }: MessageViewProps) {
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
   const assistantAvatar = getAssistantAvatarDescriptor({
     model,
-    themeMode: chatboxHostTheme ?? themeMode,
-    chatboxHostStyle,
+    themeMode: scenarioHostTheme ?? themeMode,
+    scenarioHostStyle,
   });
-  const shouldRenderMistralAssistantAvatar = chatboxHostStyle === "mistral";
+  const shouldRenderMistralAssistantAvatar = scenarioHostStyle === "mistral";
   const shouldRenderAssistantAvatar =
-    chatboxHostStyle === null || shouldRenderMistralAssistantAvatar;
+    scenarioHostStyle === null || shouldRenderMistralAssistantAvatar;
   // Copilot mimics show their own "Copilot + mascot" row above the
   // message content (faithful to real M365 Copilot's avatar/name header).
   // Other host styles keep the inspector's existing layout.
-  const shouldRenderCopilotHeader = chatboxHostStyle === "copilot";
+  const shouldRenderCopilotHeader = scenarioHostStyle === "copilot";
   if (isHiddenInternalMessage(message)) return null;
   const role = message.role;
   if (role !== "user" && role !== "assistant") return null;

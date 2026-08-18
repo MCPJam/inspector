@@ -12,7 +12,7 @@
  */
 // Type-only imports — one declaration of each backend contract, not two.
 import type { SessionCriteria, SessionGoalScore } from "@/lib/swarm-api";
-import type { SessionReadiness } from "@/components/chatboxes/session-readiness";
+import type { SessionReadiness } from "@/components/scenarios/session-readiness";
 
 // ── Convex query names (string-keyed reads) ─────────────────────────────────
 export const SESSIONS_FEED_QUERIES = {
@@ -34,13 +34,13 @@ export const SESSIONS_FEED_QUERIES = {
 
 // ── DTOs ────────────────────────────────────────────────────────────────────
 
-export type SessionFeedSourceType = "direct" | "chatbox" | "eval" | "swarm";
+export type SessionFeedSourceType = "direct" | "scenario" | "eval" | "swarm";
 
 /**
  * A session's parent run — a DISCRIMINATED UNION on `kind`. The backend may
  * add kinds; treat an unknown `kind` as "no chip", never as an error.
  * `label: null` means the parent row is gone (deleted suite / journey /
- * chatbox) — the ids remain so the reference can still be named.
+ * scenario) — the ids remain so the reference can still be named.
  */
 export type SessionFeedParentRef =
   | {
@@ -58,8 +58,8 @@ export type SessionFeedParentRef =
       label: string | null;
     }
   | {
-      kind: "chatbox";
-      chatboxId: string;
+      kind: "scenario";
+      scenarioId: string;
       label: string | null;
     };
 
@@ -107,7 +107,7 @@ export interface SessionFeedItem {
 export const SESSION_SOURCE_TYPE_LABELS: Record<SessionFeedSourceType, string> =
   {
     direct: "Playground",
-    chatbox: "User Testing",
+    scenario: "User Testing",
     eval: "Eval",
     swarm: "Swarm",
   };
@@ -127,7 +127,7 @@ export function sessionParentChipLabel(
       return ref.suiteRunId === null ? "Quick Run" : "Eval run";
     case "journeyRun":
       return "Swarm run";
-    case "chatbox":
+    case "scenario":
       return "Scenario";
     default:
       // Future parent kinds render nothing rather than a wrong guess.
