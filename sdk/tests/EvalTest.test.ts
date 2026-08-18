@@ -125,6 +125,40 @@ describe("EvalTest", () => {
         ).toThrow(/invalid `id`/);
       });
 
+      it("gives a non-conforming externalCaseId the WHOLE migration at once", () => {
+        // A pre-6 config with an `externalCaseId` that cannot be an id and no
+        // `id` at all. Suggesting a bare mint here would prescribe a change
+        // that fails on the very next construction — the minted id beside the
+        // unchanged external id is exactly the pair `assertSingleCaseIdentity`
+        // rejects — so this error has to state both halves.
+        let message = "";
+        try {
+          new EvalTest({
+            externalCaseId: "refund flow/1",
+            name: "pre-6 config",
+            test: async () => true,
+          } as unknown as ConstructorParameters<typeof EvalTest>[0]);
+        } catch (error) {
+          message = error instanceof Error ? error.message : String(error);
+        }
+        expect(message).toContain("has no `id`");
+        expect(message).toContain("cannot itself be an id");
+        expect(message).toContain("BOTH fields");
+
+        // And the fix it prescribes must actually construct.
+        const suggested = message.match(/id: "([^"]+)"/)?.[1];
+        expect(suggested).toMatch(/^c_[A-Za-z0-9_-]+$/);
+        expect(
+          () =>
+            new EvalTest({
+              id: suggested!,
+              externalCaseId: suggested!,
+              name: "pre-6 config",
+              test: async () => true,
+            })
+        ).not.toThrow();
+      });
+
       it("refuses two disagreeing identity claims, naming the migration", () => {
         // `id` and `externalCaseId` both ride the wire now, so a differing
         // pair is a hard error rather than a silent precedence — the same

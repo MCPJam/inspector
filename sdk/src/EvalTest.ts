@@ -115,6 +115,49 @@ function suggestedCaseId(config: EvalTestConfig): string {
 }
 
 /**
+ * The fix sentence for a config with no `id`. Three situations, three fixes —
+ * and getting this wrong is not cosmetic.
+ *
+ * A pre-6 config carrying an `externalCaseId` that CANNOT be an id used to be
+ * told "mint one and commit it", which is a complete instruction only until
+ * `assertSingleCaseIdentity` exists. Followed verbatim it produces a minted id
+ * beside an unchanged external id — a differing pair — so the very next run
+ * throws again, and the whole migration is only revealed one error at a time.
+ * An error that prescribes a change which cannot construct is worse than one
+ * that says nothing, so that case states BOTH halves at once.
+ */
+function missingCaseIdFix(
+  external: string | undefined,
+  suggestion: string
+): string {
+  if (external === undefined) {
+    return `Mint one once and commit it: id: "${suggestion}"`;
+  }
+  if (external === suggestion) {
+    return (
+      `This test already declares \`externalCaseId\`, which is the key its ` +
+      `hosted history is joined on, so reuse it verbatim: id: "${suggestion}"`
+    );
+  }
+  // `suggestedCaseId` only reuses an `externalCaseId` that can BE an id, so
+  // reaching here means it cannot — and `id := externalCaseId`, the migration
+  // every other external-id user gets, is simply unavailable.
+  return (
+    `Its \`externalCaseId\` (${JSON.stringify(
+      external
+    )}) cannot itself be an ` +
+    `id — ids are 1-128 characters of letters, digits, '-' and '_' — so no id ` +
+    `can agree with it, and a differing pair is refused here and at ingest. ` +
+    `Rename the external id to a conforming value and declare that same value ` +
+    `in BOTH fields: id: "${suggestion}", externalCaseId: "${suggestion}". An ` +
+    `external id that was never charset-valid has no hosted history for the ` +
+    `rename to strand.`
+  );
+}
+
+/**
+ * A case's identity must be DECLARED, and it must be usable in a URL, a file
+ * path and a CLI argument./**
  * A case's identity must be DECLARED, and it must be usable in a URL, a file
  * path and a CLI argument.
  *
@@ -127,16 +170,14 @@ function assertDeclaredCaseId(config: EvalTestConfig): void {
   const label = config.name ? `"${config.name}"` : "(unnamed)";
   if (config.id === undefined || config.id === null || config.id === "") {
     const suggestion = suggestedCaseId(config);
-    const reusesExternal = suggestion === config.externalCaseId;
+    // `""` is absent here for the same reason it is in `assertSingleCaseIdentity`.
+    const external =
+      config.externalCaseId === "" ? undefined : config.externalCaseId;
     throw new Error(
       `EvalTest ${label} has no \`id\`. A case's identity is declared, not ` +
         `derived from its name — otherwise renaming the test forks its hosted ` +
         `history. ` +
-        (reusesExternal
-          ? `This test already declares \`externalCaseId\`, which is the key its ` +
-            `hosted history is joined on, so reuse it verbatim: `
-          : `Mint one once and commit it: `) +
-        `id: "${suggestion}"`
+        missingCaseIdFix(external, suggestion)
     );
   }
   const parsed = opaqueIdSchema.safeParse(config.id);
