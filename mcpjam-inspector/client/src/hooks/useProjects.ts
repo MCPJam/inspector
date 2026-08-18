@@ -254,7 +254,7 @@ export function canViewSwarms(
 }
 
 // Promoting a session into an eval test case is MEMBER-gated server-side
-// (`PROMOTION_POLICIES` — chatbox and swarm rows both require project
+// (`PROMOTION_POLICIES` — scenario and swarm rows both require project
 // 'member'). Mirror it so a guest never sees an affordance that would throw.
 //
 // Deliberately a separate export from `canViewSwarms` despite the identical

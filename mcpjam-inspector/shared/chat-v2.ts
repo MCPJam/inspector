@@ -26,7 +26,7 @@ export interface ChatV2Request {
    * pointer, ids only; the server re-resolves the authoritative configuration.
    *
    * Mutually exclusive with the legacy top-level `hostId` and with the
-   * access-bearing `chatboxId` — the hosted ingress REJECTS those combinations
+   * access-bearing `scenarioId` — the hosted ingress REJECTS those combinations
    * rather than picking a winner (`shared/execution-target.ts`). Absent ⇒ the
    * legacy behavior is unchanged.
    */
@@ -88,7 +88,7 @@ export interface ChatV2Request {
   requireToolApproval?: boolean;
   /**
    * HostConfig v2 built-in tool ids (e.g. `["web_search"]`) the client wants
-   * advertised this turn. For chatbox-bound requests the server re-resolves
+   * advertised this turn. For scenario-bound requests the server re-resolves
    * from the host's pinned config (host wins); for playground/direct chat the
    * body value is used as-is. Billing authorization happens server-side in
    * Convex (bearer + projectId), so a tampered body can't bill a project the
@@ -107,7 +107,7 @@ export interface ChatV2Request {
    * SEP-1865 visibility filter switch (see HostConfigInputV2.respectToolVisibility).
    * Optional — `undefined` means "use the spec default" (filter app-only
    * tools). The server re-resolves from the persisted host config when
-   * the request is chatbox-bound, so the host value wins.
+   * the request is scenario-bound, so the host value wins.
    */
   respectToolVisibility?: boolean;
   /** Host-level MCP tool-result content/resource visibility policy. */

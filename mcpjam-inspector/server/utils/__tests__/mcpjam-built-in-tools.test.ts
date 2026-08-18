@@ -154,8 +154,8 @@ describe("workspace tool catalog", () => {
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
-      "list_chatboxes",
-      "get_chatbox",
+      "list_scenarios",
+      "get_scenario",
       "list_chat_sessions",
       "search_sessions",
       // Swarms: reads and the REVERSIBLE half of authoring. Launching,
@@ -321,7 +321,7 @@ describe("workspace input clamps", () => {
     // Defense in depth. The zod schema's `.min(1)` rejects `[]`, but
     // `execute()` can be called raw with no schema in the way — and `[]`
     // serializes to no filter at all, silently widening the search to every
-    // source including chatbox. This is the case that must not regress.
+    // source including scenario. This is the case that must not regress.
     const { builtTool, calls } = searchTool();
 
     await execTool(builtTool, { query: "refund", sourceTypes: [] });
@@ -351,14 +351,14 @@ describe("workspace input clamps", () => {
     expect(sourceTypeParam(sessionsCall.path)).toBe("eval");
   });
 
-  it("REFUSES an explicit chatbox request instead of silently narrowing it", async () => {
+  it("REFUSES an explicit scenario request instead of silently narrowing it", async () => {
     // Narrowing would answer a question the caller did not ask; the model
     // should be told why and pick something else.
     const { builtTool, calls } = searchTool();
 
     const result = (await execTool(builtTool, {
       query: "refund",
-      sourceTypes: ["direct", "chatbox"],
+      sourceTypes: ["direct", "scenario"],
     })) as { error?: string };
 
     expect(result.error).toContain("visitors");
@@ -371,7 +371,7 @@ describe("workspace input clamps", () => {
     const description = (builtTool as { description?: string }).description!;
     // The ambient-project note still leads; the clamp note follows it.
     expect(description).toContain("current chat's project");
-    expect(description).toContain("chatbox");
+    expect(description).toContain("scenario");
   });
 
   it("clamps only operations this surface actually advertises", () => {
