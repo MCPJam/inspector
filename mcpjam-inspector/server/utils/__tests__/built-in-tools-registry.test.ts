@@ -174,8 +174,8 @@ describe("resolveHostTools — local engine actor coercion (structural)", () => 
     expect(bash?.description).toMatch(/user's own machine/);
   });
 
-  it("downgrades local for a chatbox session", () => {
-    const bash = bashTool({ isChatboxSession: true });
+  it("downgrades local for a scenario session", () => {
+    const bash = bashTool({ isScenarioSession: true });
     expect(bash?.needsApproval).toBe(false);
     expect(bash?.description).not.toMatch(/user's own machine/);
   });
@@ -241,7 +241,7 @@ describe("resolveHostTools — bash in Journey (swarm) sessions", () => {
   });
 
   it("leaves evals and hosted chat unaffected", () => {
-    for (const surface of [{}, { isChatboxSession: true }]) {
+    for (const surface of [{}, { isScenarioSession: true }]) {
       const tools = resolveHostTools(
         { builtInToolIds: [BASH_TOOL_NAME], computer },
         { ...ctx, ...surface }
@@ -371,10 +371,10 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
-  it("does not advertise any workspace id in chatbox sessions", () => {
+  it("does not advertise any workspace id in scenario sessions", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
-      { ...ctx, isChatboxSession: true, mcpjamPlatformClient: stubClient }
+      { ...ctx, isScenarioSession: true, mcpjamPlatformClient: stubClient }
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });

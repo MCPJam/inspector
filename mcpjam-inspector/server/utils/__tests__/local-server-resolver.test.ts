@@ -1406,7 +1406,7 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       "srv-stdio",
       {
         accessScope: "chat_v2",
-        chatboxId: "chatbox-1",
+        scenarioId: "scenario-1",
         accessVersion: 7,
       }
     );
@@ -1420,7 +1420,7 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       projectId: "proj-1",
       serverId: "srv-stdio",
       accessScope: "chat_v2",
-      chatboxId: "chatbox-1",
+      scenarioId: "scenario-1",
       accessVersion: 7,
     });
   });

@@ -14,7 +14,7 @@ const FEATURE_DESCRIPTIONS: Partial<Record<BillingFeatureName, string>> = {
   evals:
     "Create test suites, run them in the playground, and inspect traces to validate your MCP servers.",
   cicd: "Wire eval runs into your CI/CD pipeline so regressions are caught before they ship.",
-  chatboxes:
+  scenarios:
     "Share a hosted chat link for each client, manage access, and review sessions and feedback.",
 };
 

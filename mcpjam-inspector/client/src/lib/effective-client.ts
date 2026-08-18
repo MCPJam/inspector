@@ -26,7 +26,7 @@ import { resolveServerConnectionSettings } from "./client-connection-resolve";
 /**
  * Resolve the effective host for a surface.
  *
- * Precedence: an explicitly-selected host (top-bar picker, chatbox host
+ * Precedence: an explicitly-selected host (top-bar picker, scenario host
  * field, eval suite host field) → the project default host (always present
  * after provisioning).
  *

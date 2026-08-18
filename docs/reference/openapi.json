@@ -66,8 +66,8 @@
       "description": "Bring-your-own OAuth: import externally obtained tokens for a server."
     },
     {
-      "name": "Chatboxes",
-      "description": "Read-only access to the chatboxes published from a project: listing, settings, attached servers, and share links."
+      "name": "Scenarios",
+      "description": "Read-only access to the scenarios published from a project: listing, settings, attached servers, and share links."
     },
     {
       "name": "Catalog",
@@ -3486,7 +3486,7 @@
             "name": "sourceType",
             "in": "query",
             "required": false,
-            "description": "Comma-separated surfaces to include: `direct`, `chatbox`, `eval`, `swarm`. Omit for all. An unknown value is a 400 rather than a silent widening.",
+            "description": "Comma-separated surfaces to include: `direct`, `scenario`, `eval`, `swarm`. Omit for all. An unknown value is a 400 rather than a silent widening.",
             "schema": {
               "type": "string"
             }
@@ -3645,14 +3645,14 @@
         }
       }
     },
-    "/projects/{projectId}/chatboxes": {
+    "/projects/{projectId}/scenarios": {
       "get": {
-        "operationId": "listChatboxes",
+        "operationId": "listScenarios",
         "tags": [
-          "Chatboxes"
+          "Scenarios"
         ],
-        "summary": "List a project's chatboxes",
-        "description": "The chatboxes published from this project \u2014 name, access mode, attached servers, and share link. Read-only.",
+        "summary": "List a project's scenarios",
+        "description": "The scenarios published from this project \u2014 name, access mode, attached servers, and share link. Read-only.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -3660,11 +3660,11 @@
         ],
         "responses": {
           "200": {
-            "description": "The project's chatboxes.",
+            "description": "The project's scenarios.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChatboxPage"
+                  "$ref": "#/components/schemas/ScenarioPage"
                 }
               }
             }
@@ -3693,29 +3693,29 @@
         }
       }
     },
-    "/projects/{projectId}/chatboxes/{chatboxId}": {
+    "/projects/{projectId}/scenarios/{scenarioId}": {
       "get": {
-        "operationId": "getChatbox",
+        "operationId": "getScenario",
         "tags": [
-          "Chatboxes"
+          "Scenarios"
         ],
-        "summary": "Get a chatbox",
-        "description": "One chatbox's full read-only settings: model, system prompt, tool-approval policy, attached servers, and share link. A chatbox that exists but belongs to a different project reads as `404 NOT_FOUND`.",
+        "summary": "Get a scenario",
+        "description": "One scenario's full read-only settings: model, system prompt, tool-approval policy, attached servers, and share link. A scenario that exists but belongs to a different project reads as `404 NOT_FOUND`.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/chatboxId"
+            "$ref": "#/components/parameters/scenarioId"
           }
         ],
         "responses": {
           "200": {
-            "description": "The chatbox settings.",
+            "description": "The scenario settings.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChatboxDetail"
+                  "$ref": "#/components/schemas/ScenarioDetail"
                 }
               }
             }
@@ -3751,7 +3751,7 @@
           "Tunnels"
         ],
         "summary": "Create (or revive) a relay tunnel for a named project server",
-        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and chatboxes can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP \u2014 the backend otherwise stores only a hash of the secret \u2014 mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests \u2014 this is what `mcpjam tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
+        "description": "Registers a server record named `name` if missing, mints a relay tunnel grant for it, and **persists the tunnel bearer URL (including the plaintext `?k=` secret) onto the server record's `url`** so evals and scenarios can target the tunnel like any remote server. The plaintext persistence is a deliberate trade-off of the current tunnel MVP \u2014 the backend otherwise stores only a hash of the secret \u2014 mitigated by rotation: **every call rotates the secret, revokes the previous grant at the edge (disconnecting any live tunnel session for the server), and updates the stored URL**, so re-calling this route is also the rotation/recovery path.\n\nThe caller hosts the tunnel itself: connect a WebSocket to `relayWsUrl` (subprotocol `mcpjam-tunnel.v1`, `Authorization: Bearer <connectToken>`) and serve the relayed requests \u2014 this is what `mcpjam tunnel` does. When the host disconnects, the server record stays and calls to the public URL fail fast at the edge.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -8246,11 +8246,11 @@
           "type": "string"
         }
       },
-      "chatboxId": {
-        "name": "chatboxId",
+      "scenarioId": {
+        "name": "scenarioId",
         "in": "path",
         "required": true,
-        "description": "Chatbox ID, as returned by the project's chatbox list.",
+        "description": "Scenario ID, as returned by the project's scenario list.",
         "schema": {
           "type": "string"
         }
@@ -11513,7 +11513,7 @@
             "enum": [
               "evalRun",
               "journeyRun",
-              "chatbox"
+              "scenario"
             ]
           },
           "label": {
@@ -11540,7 +11540,7 @@
             "type": "string",
             "nullable": true
           },
-          "chatboxId": {
+          "scenarioId": {
             "type": "string"
           }
         }
@@ -11583,7 +11583,7 @@
             "type": "string",
             "enum": [
               "direct",
-              "chatbox",
+              "scenario",
               "eval",
               "swarm"
             ]
@@ -11761,9 +11761,9 @@
           }
         }
       },
-      "ChatboxLink": {
+      "ScenarioLink": {
         "type": "object",
-        "description": "Share link for the chatbox. The URL embeds the access token; visible to any caller who can read the chatbox (the same audience that sees it in the hosted UI).",
+        "description": "Share link for the scenario. The URL embeds the access token; visible to any caller who can read the scenario (the same audience that sees it in the hosted UI).",
         "required": [
           "path",
           "url"
@@ -11779,9 +11779,9 @@
           }
         }
       },
-      "ChatboxServer": {
+      "ScenarioServer": {
         "type": "object",
-        "description": "A server attached to the chatbox. Chatboxes attach HTTP servers only, so `url` is the server's endpoint.",
+        "description": "A server attached to the scenario. Scenarios attach HTTP servers only, so `url` is the server's endpoint.",
         "required": [
           "id",
           "name",
@@ -11806,9 +11806,9 @@
           }
         }
       },
-      "Chatbox": {
+      "Scenario": {
         "type": "object",
-        "description": "Summary of a published chatbox, as returned by the list endpoint.",
+        "description": "Summary of a published scenario, as returned by the list endpoint.",
         "required": [
           "id",
           "name",
@@ -11839,7 +11839,7 @@
               "string",
               "null"
             ],
-            "description": "Who can use the chatbox.",
+            "description": "Who can use the scenario.",
             "enum": [
               "project_members",
               "invited_only",
@@ -11852,14 +11852,14 @@
               "string",
               "null"
             ],
-            "description": "Chat surface style the chatbox renders (e.g. `claude`, `chatgpt`)."
+            "description": "Chat surface style the scenario renders (e.g. `claude`, `chatgpt`)."
           },
           "hostId": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The named host the chatbox publishes (hosts and chatboxes are 1:1)."
+            "description": "The named host the scenario publishes (hosts and scenarios are 1:1)."
           },
           "hostName": {
             "type": [
@@ -11879,7 +11879,7 @@
           "link": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ChatboxLink"
+                "$ref": "#/components/schemas/ScenarioLink"
               },
               {
                 "type": "null"
@@ -11902,9 +11902,9 @@
           }
         }
       },
-      "ChatboxDetail": {
+      "ScenarioDetail": {
         "type": "object",
-        "description": "A chatbox's full read-only settings: the summary fields plus the host execution config and resolved servers.",
+        "description": "A scenario's full read-only settings: the summary fields plus the host execution config and resolved servers.",
         "required": [
           "id",
           "name",
@@ -11937,7 +11937,7 @@
               "string",
               "null"
             ],
-            "description": "Who can use the chatbox.",
+            "description": "Who can use the scenario.",
             "enum": [
               "project_members",
               "invited_only",
@@ -11950,14 +11950,14 @@
               "string",
               "null"
             ],
-            "description": "Chat surface style the chatbox renders (e.g. `claude`, `chatgpt`)."
+            "description": "Chat surface style the scenario renders (e.g. `claude`, `chatgpt`)."
           },
           "hostId": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The named host the chatbox publishes (hosts and chatboxes are 1:1)."
+            "description": "The named host the scenario publishes (hosts and scenarios are 1:1)."
           },
           "hostName": {
             "type": [
@@ -11977,7 +11977,7 @@
           "link": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/ChatboxLink"
+                "$ref": "#/components/schemas/ScenarioLink"
               },
               {
                 "type": "null"
@@ -12003,7 +12003,7 @@
               "string",
               "null"
             ],
-            "description": "Model the chatbox chats with."
+            "description": "Model the scenario chats with."
           },
           "systemPrompt": {
             "type": [
@@ -12023,12 +12023,12 @@
           "servers": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/ChatboxServer"
+              "$ref": "#/components/schemas/ScenarioServer"
             }
           }
         }
       },
-      "ChatboxPage": {
+      "ScenarioPage": {
         "type": "object",
         "required": [
           "items"
@@ -12037,7 +12037,7 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Chatbox"
+              "$ref": "#/components/schemas/Scenario"
             }
           }
         }

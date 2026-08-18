@@ -32,7 +32,7 @@ describe('buildCreatedResourceBlocks', () => {
     // nothing anywhere reporting a problem.
     const blocks = buildCreatedResourceBlocks([
       { type: 'eval_run', id: 'run_1', url: 'https://x/run' },
-      { type: 'chatbox', id: 'cb_1', name: 'Support bot', url: 'https://x/cb' },
+      { type: 'scenario', id: 'cb_1', name: 'Support bot', url: 'https://x/cb' },
     ]);
     assert.strictEqual(blocks.length, 2);
     assert.ok(blocks[0].text.text.includes('https://x/run'));

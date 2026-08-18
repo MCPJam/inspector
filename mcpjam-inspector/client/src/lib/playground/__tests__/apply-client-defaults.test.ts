@@ -105,7 +105,7 @@ describe("applyHostConfigToPlayground", () => {
       openLinks: {},
     });
     // chatUiOverride is snapshotted into preferences so the playground's
-    // ChatboxChatUiOverrideProvider picks up the host's custom palette /
+    // ScenarioChatUiOverrideProvider picks up the host's custom palette /
     // logo / indicator without per-surface wiring.
     expect(setChatUiOverride).toHaveBeenCalledWith({
       palette: { accent: "#ff00aa" },
