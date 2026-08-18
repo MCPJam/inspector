@@ -19,13 +19,13 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { MultiModelPlaygroundCard } from "../multi-model-playground-card";
 import {
-  ChatboxHostCapabilitiesOverrideProvider,
-  useChatboxHostCapabilitiesOverride,
-} from "@/contexts/chatbox-client-capabilities-override-context";
+  ScenarioHostCapabilitiesOverrideProvider,
+  useScenarioHostCapabilitiesOverride,
+} from "@/contexts/scenario-client-capabilities-override-context";
 import {
-  ChatboxChatUiOverrideProvider,
-  useChatboxChatUiOverride,
-} from "@/contexts/chatbox-client-style-context";
+  ScenarioChatUiOverrideProvider,
+  useScenarioChatUiOverride,
+} from "@/contexts/scenario-client-style-context";
 import {
   ActiveMcpProfileProvider,
   useActiveMcpProfile,
@@ -96,8 +96,8 @@ vi.mock("@/hooks/use-chat-session", () => ({
 // provider tree above all of them.
 vi.mock("@/components/chat-v2/thread", () => ({
   Thread: () => {
-    const hostCapsOverride = useChatboxHostCapabilitiesOverride();
-    const chatUiOverride = useChatboxChatUiOverride();
+    const hostCapsOverride = useScenarioHostCapabilitiesOverride();
+    const chatUiOverride = useScenarioChatUiOverride();
     const mcpProfile = useActiveMcpProfile();
     const resolver = useActiveHostCapsResolver();
     // Resolver is a function; we can't serialize it. Probe it by
@@ -195,9 +195,9 @@ describe("MultiModelPlaygroundCard provider shadowing (chat branch)", () => {
     };
 
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={tabRootValue}>
+      <ScenarioHostCapabilitiesOverrideProvider value={tabRootValue}>
         <MultiModelPlaygroundCard {...baseProps} hostSnapshot={hostSnapshot} />
-      </ChatboxHostCapabilitiesOverrideProvider>,
+      </ScenarioHostCapabilitiesOverrideProvider>,
     );
 
     expect(screen.getByTestId("thread-host-caps-override").textContent).toBe(
@@ -222,9 +222,9 @@ describe("MultiModelPlaygroundCard provider shadowing (chat branch)", () => {
     };
 
     render(
-      <ChatboxChatUiOverrideProvider value={tabRootChatUi}>
+      <ScenarioChatUiOverrideProvider value={tabRootChatUi}>
         <MultiModelPlaygroundCard {...baseProps} hostSnapshot={hostSnapshot} />
-      </ChatboxChatUiOverrideProvider>,
+      </ScenarioChatUiOverrideProvider>,
     );
 
     expect(screen.getByTestId("thread-chat-ui-override").textContent).toBe(
@@ -237,9 +237,9 @@ describe("MultiModelPlaygroundCard provider shadowing (chat branch)", () => {
     const tabRootValue = { foo: "tab-root" };
 
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={tabRootValue}>
+      <ScenarioHostCapabilitiesOverrideProvider value={tabRootValue}>
         <MultiModelPlaygroundCard {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>,
+      </ScenarioHostCapabilitiesOverrideProvider>,
     );
 
     expect(screen.getByTestId("thread-host-caps-override").textContent).toBe(

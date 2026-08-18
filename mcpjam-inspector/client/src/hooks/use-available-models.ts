@@ -18,7 +18,7 @@ import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
  * locally-detected Ollama, and guest locks — the same
  * `composeAvailableModels` pipeline the Playground chat runs.
  *
- * The Playground itself doesn't call this hook (chatbox embeds resolve a
+ * The Playground itself doesn't call this hook (scenario embeds resolve a
  * host-provided project context first; see ChatTabV2 → useChatSession), but
  * it composes the identical pipeline, so pickers fed by either path offer
  * the same list.

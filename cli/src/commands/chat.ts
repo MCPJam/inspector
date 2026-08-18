@@ -1,18 +1,14 @@
 /**
- * Read-only views of the conversational surfaces: published chatboxes and the
- * chat sessions they (and the in-app Playground) produced.
+ * Read-only views of the chat sessions that published scenarios and the in-app
+ * Playground produced. Reads only.
  *
- * These operations shipped in the SDK and the MCP catalog but had no CLI
- * binding, which made them unreachable from a script — you could ask an agent
- * about your chatboxes but not `grep` them in CI. Reads only: publishing,
- * rotating a share link and managing members stay in the app, where the
- * confirmation flows live.
+ * The scenario reads that used to live here moved to `commands/scenarios.ts`:
+ * after the rename both files registered a top-level `scenarios` command, and
+ * that group owns all four operations now.
  */
 import type { Command } from "commander";
 import {
-  getChatboxOperation,
   listChatSessionsOperation,
-  listChatboxesOperation,
   PlatformApiError,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -107,49 +103,6 @@ async function executeOp<TInput, TOutput>(
 }
 
 export function registerChatCommands(program: Command): void {
-  const chatboxes = program
-    .command("chatboxes")
-    .description("Inspect the chatboxes published from a hosted project");
-
-  addPlatformOptions(
-    chatboxes
-      .command("list")
-      .description("List the chatboxes published from a project")
-      .option(
-        "--project <id-or-name>",
-        "Project name or ID (defaults to the most recently updated project)",
-      ),
-  ).action(async (options: PlatformOptions & { project?: string }, command) => {
-    const input = validateOpInput(listChatboxesOperation, {
-      ...(options.project === undefined ? {} : { project: options.project }),
-    });
-    await executeOp(listChatboxesOperation, input, options, command);
-  });
-
-  addPlatformOptions(
-    chatboxes
-      .command("get")
-      .description(
-        "Show one chatbox: access mode, attached servers, share link",
-      )
-      .requiredOption("--chatbox <id-or-name>", "Chatbox name or ID")
-      .option(
-        "--project <id-or-name>",
-        "Project name or ID (defaults to the most recently updated project)",
-      ),
-  ).action(
-    async (
-      options: PlatformOptions & { chatbox: string; project?: string },
-      command,
-    ) => {
-      const input = validateOpInput(getChatboxOperation, {
-        chatbox: options.chatbox,
-        ...(options.project === undefined ? {} : { project: options.project }),
-      });
-      await executeOp(getChatboxOperation, input, options, command);
-    },
-  );
-
   const sessions = program
     .command("chat-sessions")
     .description("Inspect saved chat sessions");
