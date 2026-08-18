@@ -414,8 +414,14 @@ export function SwarmRunDetail({
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         {tab === "insights" ? (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-8 py-4">
-            <div className="min-h-0 flex-1 overflow-hidden">
+          // Scroll the whole Insights tab instead of locking it to the
+          // viewport: with the Findings rail above it, the Session-flow Sankey
+          // was crushed into a sliver on shorter windows, and its many themes
+          // could only be reached by dragging a cramped inner scroll. The
+          // workbench renders its body at natural height (bodyLayout="scroll")
+          // and this container owns the one scrollbar.
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-4">
+            <div className="min-h-full">
               {projectId && wave.runs[0]?.swarmRunGroupId ? (
                 <RunInsightsProvider
                   surface={{
@@ -454,6 +460,7 @@ export function SwarmRunDetail({
                       ) : null
                     }
                     autoBackfillTopicMap
+                    bodyLayout="scroll"
                     emptyState={
                       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                         No sessions in this swarm run yet.
@@ -494,6 +501,7 @@ export function SwarmRunDetail({
                     ) : null
                   }
                   autoBackfillTopicMap
+                  bodyLayout="scroll"
                   emptyState={
                     <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                       {projectId

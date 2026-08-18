@@ -90,6 +90,21 @@ interface InsightsWorkbenchProps {
   onEmptyChange?: (empty: boolean) => void;
   className?: string;
   /**
+   * How the body fills its space.
+   *
+   * `"fill"` (default) is the locked, viewport-filling layout: the whole
+   * workbench is `h-full` and every region clips, so the Sankey/topic map fit
+   * the pane and scroll internally. User Testing mounts the workbench inside an
+   * `absolute inset-0` box and relies on this.
+   *
+   * `"scroll"` lets the body grow to its natural height and the OWNING
+   * container scroll — the Sankey renders at full content height (no internal
+   * scroll), so on a swarm with many themes the whole diagram is reachable by
+   * scrolling the page instead of dragging a cramped inner window. The owner
+   * must make its container scrollable (`overflow-y-auto`).
+   */
+  bodyLayout?: "fill" | "scroll";
+  /**
    * Prefix for every `data-testid` this renders, so each surface keeps the
    * ids its own suites already assert (`swarm-insights-*`, `scenario-insights-*`).
    */
@@ -108,9 +123,16 @@ interface InsightsWorkbenchProps {
  */
 function InsightsFindings({
   testId,
+  maxHeightClass,
   children,
 }: {
   testId: string;
+  /**
+   * The rail's height cap. In the fill layout it is a share of the viewport
+   * (`max-h-[42%]`); in the scroll layout the viewport is not the bound, so it
+   * is a fixed height the rail scrolls within while the page scrolls past it.
+   */
+  maxHeightClass: string;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(true);
@@ -120,7 +142,8 @@ function InsightsFindings({
       open={open}
       onOpenChange={setOpen}
       className={cn(
-        "group/findings flex max-h-[42%] min-h-0 shrink-0 flex-col gap-1 overflow-hidden",
+        "group/findings flex min-h-0 shrink-0 flex-col gap-1 overflow-hidden",
+        maxHeightClass,
         "[&:not(:has([data-slot=findings-body]>*))]:hidden",
       )}
       data-testid={testId}
@@ -195,8 +218,10 @@ export function InsightsWorkbench({
   emptyState,
   onEmptyChange,
   className,
+  bodyLayout = "fill",
   testIdPrefix,
 }: InsightsWorkbenchProps) {
+  const fillBody = bodyLayout === "fill";
   const flow = useInsightsFlowController({
     cohortKey,
     ...(augmentFilter ? { augmentFilter } : {}),
@@ -393,8 +418,13 @@ export function InsightsWorkbench({
     ) : null;
 
   const sankeyBlock = (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="min-h-0 flex-1 overflow-hidden">
+    <div
+      className={cn(
+        "flex flex-col",
+        fillBody && "h-full min-h-0 overflow-hidden",
+      )}
+    >
+      <div className={fillBody ? "min-h-0 flex-1 overflow-hidden" : undefined}>
         <SessionFlowSankey
           breakdown={breakdown}
           selection={flow.flowSelection}
@@ -404,7 +434,7 @@ export function InsightsWorkbench({
           rebuildBusy={rebuildBusy}
           onApplyTuning={handleApplyTuning}
           showLinkThreshold
-          fillHeight
+          fillHeight={fillBody}
           headerActions={viewChrome}
         />
       </div>
@@ -423,9 +453,13 @@ export function InsightsWorkbench({
   const mapFilter = removeChipsByKeys(flow.filter, flow.flowOwnedKeys);
 
   const clustersBlock = (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className={cn("flex flex-col", fillBody && "h-full min-h-0")}>
       {chipRow}
-      <div className="min-h-0 flex-1">
+      {/* The topic map is a canvas that measures its container: it needs a
+          definite height. `flex-1` supplies one in the fill layout; in the
+          scroll layout the column has no bounded height, so pin a tall,
+          comfortable viewport for it and let the page scroll to the map. */}
+      <div className={fillBody ? "min-h-0 flex-1" : "h-[36rem]"}>
         <TopicMapPanel
           scope={scope}
           {...(journeyRunIds ? { journeyRunIds } : {})}
@@ -449,7 +483,8 @@ export function InsightsWorkbench({
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 flex-col gap-2 overflow-hidden",
+        "flex flex-col gap-2",
+        fillBody && "h-full min-h-0 overflow-hidden",
         className,
       )}
       data-testid={`${testIdPrefix}-panel`}
@@ -460,7 +495,10 @@ export function InsightsWorkbench({
         </div>
       ) : null}
       {hasScorecard || recommendationsSlot ? (
-        <InsightsFindings testId={`${testIdPrefix}-findings`}>
+        <InsightsFindings
+          testId={`${testIdPrefix}-findings`}
+          maxHeightClass={fillBody ? "max-h-[42%]" : "max-h-[26rem]"}
+        >
           {hasScorecard ? (
             <div
               data-testid={`${testIdPrefix}-scorecard`}
@@ -477,8 +515,18 @@ export function InsightsWorkbench({
           {recommendationsSlot}
         </InsightsFindings>
       ) : null}
-      <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div
+        className={cn(
+          "relative flex",
+          fillBody ? "min-h-0 flex-1 overflow-hidden" : "min-h-0",
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-w-0 flex-1 flex-col",
+            fillBody && "overflow-hidden",
+          )}
+        >
           {flow.view === "clusters" ? clustersBlock : sankeyBlock}
         </div>
         {flow.view === "flow" ? (
