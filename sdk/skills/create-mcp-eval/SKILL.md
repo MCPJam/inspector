@@ -274,10 +274,18 @@ result.toEvalResult({
 
 ### EvalTest — Single Eval with Iterations
 
+`id` is REQUIRED and is the case's identity; `name` is display text. Write a
+stable, descriptive literal (`c_<slug>` reads well) and never change it
+afterwards — hosted history joins on `id`, so editing it orphans the case's past
+runs, while renaming `name` is free. Do not generate it from the name at runtime,
+and do not call `mintCaseId()` inline: an id that changes per run is not an
+identity.
+
 ```typescript
 import { EvalTest } from "@mcpjam/sdk";
 
 const test = new EvalTest({
+  id: "c_get_user_tool_selection",
   name: "get-user-tool-selection",
   test: async (runner) => {
     const r = await runner.run("Get my user profile");
@@ -308,6 +316,7 @@ import { EvalSuite, EvalTest } from "@mcpjam/sdk";
 const suite = new EvalSuite({ name: "my-server-evals" });
 
 suite.add(new EvalTest({
+  id: "c_get_user",
   name: "get-user",
   test: async (a) => {
     const r = await a.run("Get my user profile");
@@ -316,6 +325,7 @@ suite.add(new EvalTest({
 }));
 
 suite.add(new EvalTest({
+  id: "c_list_projects",
   name: "list-projects",
   test: async (a) => {
     const r = await a.run("List all projects");
@@ -563,6 +573,7 @@ describe("Deterministic", () => {
       })
     );
     const test = new EvalTest({
+      id: "c_mock_test",
       name: "mock-test",
       test: async (a) => (await a.run("test")).hasToolCall("get_user"),
     });
@@ -735,6 +746,7 @@ describe("{server_name} evals – deterministic", () => {
     );
 
     const test = new EvalTest({
+      id: "c_det_mock_tool_selection",
       name: "det-mock-tool-selection",
       test: async (a) => {
         const r = await a.run("test prompt");
@@ -825,6 +837,7 @@ describe("{server_name} evals – deterministic", () => {
 
   // it("EvalTest: {tool_name} accuracy", async () => {
   //   const test = new EvalTest({
+  //     id: "c_tool_name_accuracy",
   //     name: "{tool_name}-accuracy",
   //     test: async (a) => {
   //       const r = await a.run(PROMPTS.{TOOL_KEY});
@@ -851,8 +864,8 @@ describe("{server_name} evals – deterministic", () => {
 
   // it("EvalSuite: all tools", async () => {
   //   const suite = new EvalSuite({ name: "{server_name}-suite" });
-  //   suite.add(new EvalTest({ name: "{tool_1}", test: async (a) => { ... } }));
-  //   suite.add(new EvalTest({ name: "{tool_2}", test: async (a) => { ... } }));
+  //   suite.add(new EvalTest({ id: "c_{tool_1}", name: "{tool_1}", test: async (a) => { ... } }));
+  //   suite.add(new EvalTest({ id: "c_{tool_2}", name: "{tool_2}", test: async (a) => { ... } }));
   //   const result = await suite.run(runner, { iterations: 5, timeoutMs: 60_000 });
   //   expect(suite.accuracy()).toBeGreaterThanOrEqual(0.7);
   // }, 120_000);

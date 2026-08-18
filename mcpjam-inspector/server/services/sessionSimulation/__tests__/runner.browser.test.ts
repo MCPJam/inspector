@@ -228,7 +228,9 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_URL", "https://convex.cloud");
   runAssistantTurnMock.mockReset();
   resolveSyntheticModelSourceMock.mockReset();
-  persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
+  persistChatSessionToConvexMock
+    .mockReset()
+    .mockResolvedValue({ outcome: "saved", version: 1 });
   captureMcpAppWidgetSnapshotsMock.mockReset().mockResolvedValue([]);
   prepareChatV2Mock.mockReset().mockResolvedValue({
     allTools: { search: { description: "noop" } },

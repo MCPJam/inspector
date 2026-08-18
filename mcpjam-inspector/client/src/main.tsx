@@ -38,6 +38,7 @@ import {
   readCallbackParams,
   readPendingAuthorization,
 } from "./lib/server-connection-handoff";
+import { PlanLimitDialogPreview } from "./components/billing/PlanLimitDialogPreview";
 import {
   getInitialThemeMode,
   getInitialThemePreset,
@@ -230,6 +231,24 @@ if (isInIframe) {
       >
         <ServerConnectionHandoff />
       </AuthKitProvider>
+    </StrictMode>
+  );
+} else if (
+  import.meta.env.DEV &&
+  window.location.pathname.startsWith("/__preview/plan-limit")
+) {
+  // Dev-only design harness for the free-plan limit wall. Mounted here, ahead
+  // of AuthKit and Convex, because the states worth reviewing (member who
+  // can't upgrade, org already at its Team ceiling) can't be produced on
+  // demand against a real backend. Renders the real component and the real
+  // stylesheet with dummy data. The DEV guard keeps it out of production
+  // bundles entirely.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  const root = createRoot(document.getElementById("root")!);
+  root.render(
+    <StrictMode>
+      <PlanLimitDialogPreview />
     </StrictMode>
   );
 } else if (isDebugOAuthCallbackPath(window.location.pathname)) {
