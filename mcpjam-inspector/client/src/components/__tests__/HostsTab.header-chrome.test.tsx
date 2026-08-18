@@ -15,8 +15,15 @@ vi.mock("react-router", () => ({
 // it reads auth straight from Convex — which throws without a provider
 // ancestor. This assertion is about the wrapper's own classes, so stub the
 // hook rather than standing up a Convex tree around it.
+// `useQuery`/`useMutation` are reached because the header's client selector
+// renders its `CreateHostDialog` (which reads the project's servers) once the
+// host list resolves — including when it resolves empty, which is this test's
+// fixture. A factory mock replaces the module wholesale, so every export the
+// subtree touches has to be listed here.
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
+  useQuery: () => undefined,
+  useMutation: () => vi.fn(),
 }));
 
 vi.mock("@/hooks/use-previewed-client-id", () => ({
@@ -61,7 +68,7 @@ vi.mock("@/lib/host-compat/use-host-catalog", () => ({
 
 vi.mock("@/stores/preferences/preferences-provider", () => ({
   usePreferencesStore: vi.fn((selector: (state: any) => unknown) =>
-    selector({ themeMode: "dark" }),
+    selector({ themeMode: "dark" })
   ),
 }));
 
@@ -76,7 +83,7 @@ vi.mock("framer-motion", () => {
   const makeMotion = (Tag: "div" | "span") =>
     React.forwardRef<HTMLElement, Record<string, unknown>>(function Motion(
       props,
-      ref,
+      ref
     ) {
       const {
         initial: _initial,
@@ -111,7 +118,7 @@ describe("HostsTab", () => {
         selectedHostId={null}
         onSelectHost={vi.fn()}
         serversTabElement={<div data-testid="servers-stub" />}
-      />,
+      />
     );
 
     const chrome = screen.getByTestId("hosts-tab-header-chrome");
@@ -122,7 +129,7 @@ describe("HostsTab", () => {
       "border-border/40",
       "px-4",
       "py-2.5",
-      "md:px-8",
+      "md:px-8"
     );
   });
 });

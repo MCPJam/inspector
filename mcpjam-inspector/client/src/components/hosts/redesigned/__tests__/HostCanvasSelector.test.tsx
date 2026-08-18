@@ -212,7 +212,9 @@ describe("HostCanvasSelector", () => {
     // Same fallback path as a null id: the pill falls back to displaying the
     // first host, but the caller's own state still points at the dead id
     // until this persists the host actually on screen.
-    render(<HostCanvasSelector projectId="proj-1" activeHostId="deleted-host" />);
+    render(
+      <HostCanvasSelector projectId="proj-1" activeHostId="deleted-host" />
+    );
 
     expect(mockSetPreviewedHostId).toHaveBeenCalledWith("host-a");
   });
@@ -222,5 +224,40 @@ describe("HostCanvasSelector", () => {
     render(<HostCanvasSelector projectId="proj-1" activeHostId={null} />);
 
     expect(mockSetPreviewedHostId).not.toHaveBeenCalled();
+  });
+
+  it("shows the skeleton only while loading, not when the project has no clients", () => {
+    mockUseHostList.mockReturnValue({ hosts: [], isLoading: true });
+    const { rerender } = render(
+      <HostCanvasSelector projectId="proj-1" activeHostId={null} />
+    );
+
+    expect(screen.queryByTestId("host-canvas-selector")).toBeNull();
+
+    mockUseHostList.mockReturnValue({ hosts: [], isLoading: false });
+    rerender(<HostCanvasSelector projectId="proj-1" activeHostId={null} />);
+
+    expect(screen.getByTestId("host-canvas-selector")).toBeTruthy();
+  });
+
+  it("still offers Add client when the project has no clients at all", async () => {
+    // The surfaces this mounts on lost the global HostOverlayBar, which is
+    // what seeds a default client for an empty project — so an empty list
+    // must leave a working way to create one rather than a dead skeleton.
+    mockUseHostList.mockReturnValue({ hosts: [], isLoading: false });
+    const user = userEvent.setup();
+    render(<HostCanvasSelector projectId="proj-1" activeHostId={null} />);
+
+    await user.click(screen.getByTestId("host-canvas-add"));
+
+    expect(screen.getByTestId("create-host-dialog")).toBeTruthy();
+  });
+
+  it("hides the switcher pill when there is no client to switch between", () => {
+    mockUseHostList.mockReturnValue({ hosts: [], isLoading: false });
+    render(<HostCanvasSelector projectId="proj-1" activeHostId={null} />);
+
+    expect(screen.queryByTestId("host-canvas-current")).toBeNull();
+    expect(screen.getByTestId("host-canvas-quick-add")).toBeTruthy();
   });
 });
