@@ -55,6 +55,16 @@ compatibility error naming the required upgrade — flagged as
 reported as an eval verdict. `reportEvalResultsSafely` keeps its existing
 strict/non-strict behavior.
 
+`RunToEvalResultsOptions`, `IterationToEvalResultOptions` and
+`SuiteRunToEvalResultsOptions` gain an optional `caseId` (and `caseIdByTest` for
+the suite variant, mirroring `expectedToolCallsByTest`). These converters
+receive a `casePrefix` rather than an `EvalTest`, so they cannot know the
+declared identity — it is offered and never defaulted. Note that
+`runToEvalResults` synthesizes `caseTitle` per iteration, so supplying one id
+across a run groups its iterations as a single hosted case instead of one case
+per iteration; that is the caller's choice to make. Passing nothing produces the
+same payload as before, byte for byte.
+
 The low-level mappers stay permissive: `promptsToEvalResult` and
 `PromptResult.toEvalResult` forward whatever `caseId` the caller passes and do
 not enforce the equality rule themselves. The construction-time check covers the

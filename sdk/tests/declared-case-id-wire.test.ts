@@ -25,6 +25,8 @@ import { evalTestFromPlatformCase } from "../src/corpus";
 import {
   iterationsToEvalResultInputs,
   promptsToEvalResult,
+  runToEvalResults,
+  suiteRunToEvalResults,
 } from "../src/eval-result-mapping";
 import {
   reportEvalResults,
@@ -312,6 +314,75 @@ describe("declared case id on the upload", () => {
     for (const result of results) {
       expect(result.externalCaseId).toBeUndefined();
     }
+  });
+
+  it("forwards caseId through the run-conversion helpers when asked", () => {
+    // These helpers carry no identity of their own — they receive a
+    // `casePrefix`, not an `EvalTest` — so `caseId` is offered and never
+    // defaulted. A caller who wants a run's iterations joined to one declared
+    // case can now say so; one who says nothing gets exactly what they got
+    // before.
+    const iteration = {
+      passed: true,
+      prompts: [mockPromptResult("hello")],
+      latencies: [{ e2eMs: 10, llmMs: 8, mcpMs: 2 }],
+      tokens: { input: 5, output: 5, total: 10 },
+      retryCount: 0,
+    } as never;
+    const run = { iterationDetails: [iteration, iteration] } as never;
+
+    const declared = runToEvalResults(run, {
+      casePrefix: "run",
+      caseId: "c_run",
+    });
+    expect(declared.map((result) => result.caseId)).toEqual(["c_run", "c_run"]);
+    // `caseTitle` is still synthesized per iteration — supplying an id groups
+    // them, it does not rename them.
+    expect(declared.map((result) => result.caseTitle)).toEqual([
+      "run-iter-1",
+      "run-iter-2",
+    ]);
+
+    const suite = suiteRunToEvalResults(
+      new Map([
+        ["first", run],
+        ["second", run],
+      ]),
+      { casePrefix: "s", caseIdByTest: { first: "c_first" } }
+    );
+    expect(suite.map((result) => result.caseId)).toEqual([
+      "c_first",
+      "c_first",
+      undefined,
+      undefined,
+    ]);
+  });
+
+  it("leaves the run-conversion payload byte-identical when no caseId is given", () => {
+    // The additive guarantee, diffed rather than asserted by eye: a caller who
+    // passes nothing must get the pre-change payload back, key for key.
+    const iteration = {
+      passed: true,
+      prompts: [mockPromptResult("hello")],
+      latencies: [{ e2eMs: 10, llmMs: 8, mcpMs: 2 }],
+      tokens: { input: 5, output: 5, total: 10 },
+      retryCount: 0,
+    } as never;
+    const run = { iterationDetails: [iteration] } as never;
+
+    const bare = JSON.parse(
+      JSON.stringify(runToEvalResults(run, { casePrefix: "run" }))
+    );
+    const declared = JSON.parse(
+      JSON.stringify(
+        runToEvalResults(run, { casePrefix: "run", caseId: "c_run" })
+      )
+    );
+
+    expect(bare[0].caseId).toBeUndefined();
+    expect("caseId" in bare[0]).toBe(false);
+    const { caseId: _dropped, ...withoutCaseId } = declared[0];
+    expect(withoutCaseId).toEqual(bare[0]);
   });
 
   it("forwards caseId through the low-level prompt mappers", () => {

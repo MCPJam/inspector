@@ -497,6 +497,18 @@ export interface IterationToEvalResultOptions {
   promptSelector?: "first" | "last";
   /** @see MCPJamReportingConfig.failOnToolError */
   failOnToolError?: boolean;
+  /**
+   * The case's DECLARED identity (`EvalTestConfig.id`), forwarded when given.
+   *
+   * Optional and never defaulted, because this converter cannot know it: it
+   * receives a `casePrefix`, not an `EvalTest`. Passing it is what lets a
+   * reporter built on these helpers join a renamed test to its hosted history
+   * — but note that `caseTitle` here is synthesized PER ITERATION, so one id
+   * across a run's iterations groups them as one case rather than one case per
+   * iteration. That is a deliberate choice for the caller to make, which is why
+   * nothing here supplies it on their behalf.
+   */
+  caseId?: string;
 }
 
 /**
@@ -555,6 +567,7 @@ export function iterationToEvalResult(
 
   return {
     caseTitle: options.caseTitle,
+    ...(options.caseId !== undefined ? { caseId: options.caseId } : {}),
     query: selectedPrompt?.getPrompt(),
     passed,
     durationMs: durationMs > 0 ? durationMs : undefined,
@@ -587,6 +600,8 @@ export interface RunToEvalResultsOptions {
   expectedToolCalls?: EvalExpectedToolCall[];
   promptSelector?: "first" | "last";
   failOnToolError?: boolean;
+  /** @see IterationToEvalResultOptions.caseId */
+  caseId?: string;
 }
 
 /**
@@ -604,6 +619,7 @@ export function runToEvalResults(
       expectedToolCalls: options.expectedToolCalls,
       promptSelector: options.promptSelector,
       failOnToolError: options.failOnToolError,
+      caseId: options.caseId,
     })
   );
 }
@@ -618,6 +634,13 @@ export interface SuiteRunToEvalResultsOptions {
   expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>;
   promptSelector?: "first" | "last";
   failOnToolError?: boolean;
+  /**
+   * Declared case ids, keyed by test name — the same shape as
+   * `expectedToolCallsByTest`, because one id cannot describe a whole suite.
+   *
+   * @see IterationToEvalResultOptions.caseId
+   */
+  caseIdByTest?: Record<string, string>;
 }
 
 /**
@@ -639,6 +662,7 @@ export function suiteRunToEvalResults(
       expectedToolCalls,
       promptSelector: options.promptSelector,
       failOnToolError: options.failOnToolError,
+      caseId: options.caseIdByTest?.[testName],
     });
     results.push(...testResults);
   }
