@@ -248,7 +248,16 @@ function UpgradeReturnFlowBoundary() {
     if (hasUpgradeReturnParams()) stripUpgradeReturnParams();
   }, []);
 
-  if (!upgradeReturn) return null;
+  // Decided during render, not in the effect above. The effect is passive —
+  // it commits a render late — and React runs child effects before parent
+  // ones, so on the single commit where identity drops and a paid billing
+  // update arrive together, the flow's own settle effect would fire the
+  // confirmation before the disarm landed. Gating here means the child is
+  // simply not rendered on that commit, so it has no effect left to run. The
+  // effect above stays for the storage bookkeeping.
+  const activeReturn =
+    userId && upgradeReturn?.userId === userId ? upgradeReturn : null;
+  if (!activeReturn) return null;
 
   // The org id rides in from a URL, so the billing query can reject it — a
   // deleted org, or membership revoked between checkout and return. Convex
@@ -256,7 +265,7 @@ function UpgradeReturnFlowBoundary() {
   // so without a boundary one bad marker replaces the entire app.
   return (
     <ErrorBoundary name="upgrade-return-flow" fallback={null}>
-      <UpgradeReturnFlow upgradeReturn={upgradeReturn} />
+      <UpgradeReturnFlow upgradeReturn={activeReturn} />
     </ErrorBoundary>
   );
 }

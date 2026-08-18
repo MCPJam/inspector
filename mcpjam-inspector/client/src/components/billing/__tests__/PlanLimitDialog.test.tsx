@@ -635,6 +635,34 @@ describe("PlanLimitDialog", () => {
       );
     });
 
+    it("does not confirm when sign-out and the paid update land together", async () => {
+      // The tightest window: identity drops and billing turns paid on the SAME
+      // commit. A passive disarm loses this race — child effects run before
+      // parent ones — so the gate has to be synchronous.
+      billingState.plan = "free";
+      arriveFromCheckout(
+        "/evals?upgrade=return&upgrade_org=org-1&upgrade_from=evals"
+      );
+      const view = render(<PlanLimitDialog />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(toastSuccess).not.toHaveBeenCalled();
+
+      authState.userId = null;
+      billingState.plan = "team";
+      view.rerender(<PlanLimitDialog />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(toastSuccess).not.toHaveBeenCalled();
+      expect(trackMock).not.toHaveBeenCalledWith(
+        "plan_limit_upgrade_returned",
+        expect.anything()
+      );
+    });
+
     it("keeps waiting through a sign-out blip and confirms for the same user", async () => {
       // A token refresh briefly drops the identity. That is not a new user, so
       // the pending confirmation must survive it.
