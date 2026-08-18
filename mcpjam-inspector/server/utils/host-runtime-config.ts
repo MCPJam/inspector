@@ -103,10 +103,27 @@ export async function fetchHostRuntimeConfig(args: {
       error: "Host runtime-config endpoint is not configured",
     };
   }
-  const trimmedBearer = args.bearer.trim();
-  const authorization = /^Bearer\s/i.test(trimmedBearer)
-    ? trimmedBearer
-    : `Bearer ${trimmedBearer}`;
+  // Normalize to the TOKEN, then re-prefix, so `Bearer ` (header present,
+  // token empty) is recognized as blank rather than sent on as the
+  // double-prefixed `Bearer Bearer`.
+  const bearerToken = args.bearer.trim().replace(/^Bearer\s*/i, "").trim();
+  // A BLANK bearer never reaches the network. `Bearer ` with nothing after it
+  // is a MALFORMED header, and Convex's `getUserIdentity()` throws on it
+  // instead of returning null — so the backend route's catch-all answers 500,
+  // both chat-v2 routes collapse a >=500 to 502, and the client attributes any
+  // 5xx from our own route to MCPJam. An unauthenticated local Playground turn
+  // on a host-bound conversation (`/api/mcp/chat-v2` reads the header as `""`)
+  // therefore paged us with "Invalid authentication header" instead of telling
+  // the user to sign in. Fail closed as 401, the way the scenario branch of
+  // `mcp/chat-v2.ts` already does before it fetches.
+  if (!bearerToken) {
+    return {
+      ok: false,
+      status: 401,
+      error: "Not signed in — sign in (or retry) to run this host.",
+    };
+  }
+  const authorization = `Bearer ${bearerToken}`;
 
   let response: Response;
   try {
