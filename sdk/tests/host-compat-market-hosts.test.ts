@@ -73,6 +73,7 @@ describe("buildMarketHostProfiles", () => {
     ]);
     expect(profileFor("claude")?.supportedProtocolVersions).toEqual([
       "2025-11-25",
+      "2026-07-28",
     ]);
     // MCPJam is the one template that deliberately advertises nothing: it is
     // the inspector itself rather than an emulated third-party client, so it

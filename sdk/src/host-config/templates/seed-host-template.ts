@@ -587,7 +587,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
           // Base MCP protocol: clientInfo sent to MCP servers during
           // `initialize`. Matches what real claude.ai publishes.
           clientInfo: { name: "claude-ai", version: "0.1.0" },

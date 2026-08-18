@@ -689,6 +689,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         },
         "supportedProtocolVersions": [
           "2025-11-25",
+          "2026-07-28",
         ],
       },
       "profileVersion": 1,
@@ -986,6 +987,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         },
         "supportedProtocolVersions": [
           "2025-11-25",
+          "2026-07-28",
         ],
       },
       "profileVersion": 1,
