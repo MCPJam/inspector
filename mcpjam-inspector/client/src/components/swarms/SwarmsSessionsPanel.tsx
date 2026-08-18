@@ -1,7 +1,7 @@
 /**
  * Flat Sessions browser for Swarms — list + detail over project `chatSessions`
  * with `sourceType: "swarm"`. Defaults to all personas; the top-bar persona
- * picker narrows to `listSessionsByPersona`. Mirrors the Chatboxes Sessions layout.
+ * picker narrows to `listSessionsByPersona`. Mirrors the Scenarios Sessions layout.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePaginatedQuery } from "convex/react";
@@ -38,7 +38,7 @@ import {
 
 type SessionsGroupBy = "session" | "run" | "goal";
 import { buildSwarmSessionPath } from "@/lib/app-navigation";
-import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { getShareableAppOrigin } from "@/lib/scenario-session";
 
 /**
  * How many extra pages the deep-link walk may pull looking for its target.

@@ -17,7 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { ModelDefinition, isGPT5Model } from "@/shared/types";
+import { ModelDefinition, modelSupportsTemperature } from "@/shared/types";
 
 interface SystemPromptSelectorProps {
   systemPrompt: string;
@@ -84,11 +84,11 @@ export function SystemPromptSelector({
     multiModelEnabled && selectedModels && selectedModels.length > 0
       ? selectedModels
       : [currentModel];
-  const someSelectedModelsAreGpt5 = effectiveSelectedModels.some((model) =>
-    isGPT5Model(model.id),
+  const someSelectedModelsIgnoreTemperature = effectiveSelectedModels.some(
+    (model) => !modelSupportsTemperature(model.id),
   );
-  const allSelectedModelsAreGpt5 = effectiveSelectedModels.every((model) =>
-    isGPT5Model(model.id),
+  const allSelectedModelsIgnoreTemperature = effectiveSelectedModels.every(
+    (model) => !modelSupportsTemperature(model.id),
   );
 
   const handleOpenChange = (open: boolean) => {
@@ -186,16 +186,16 @@ export function SystemPromptSelector({
               max={2}
               step={0.1}
               className="w-full"
-              disabled={allSelectedModelsAreGpt5}
+              disabled={allSelectedModelsIgnoreTemperature}
             />
-            {allSelectedModelsAreGpt5 ? (
+            {allSelectedModelsIgnoreTemperature ? (
               <p className="text-xs text-muted-foreground">
-                Temperature is not supported for GPT-5 models
+                Temperature is not supported for the selected models
               </p>
-            ) : someSelectedModelsAreGpt5 ? (
+            ) : someSelectedModelsIgnoreTemperature ? (
               <p className="text-xs text-muted-foreground">
-                GPT-5 models ignore temperature. The setting still applies to
-                the other selected models.
+                Some selected models do not support temperature. The setting
+                still applies to the others.
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">

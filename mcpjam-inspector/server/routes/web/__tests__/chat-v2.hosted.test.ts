@@ -5,7 +5,7 @@ const {
   prepareChatV2Mock,
   handleMCPJamFreeChatModelMock,
   fetchHostRuntimeConfigMock,
-  fetchChatboxRuntimeConfigMock,
+  fetchScenarioRuntimeConfigMock,
   persistChatSessionToConvexMock,
   disconnectAllServersMock,
   managerListToolsMock,
@@ -22,7 +22,7 @@ const {
   prepareChatV2Mock: vi.fn(),
   handleMCPJamFreeChatModelMock: vi.fn(),
   fetchHostRuntimeConfigMock: vi.fn(),
-  fetchChatboxRuntimeConfigMock: vi.fn(),
+  fetchScenarioRuntimeConfigMock: vi.fn(),
   persistChatSessionToConvexMock: vi.fn(),
   disconnectAllServersMock: vi.fn(),
   managerListToolsMock: vi.fn(),
@@ -129,15 +129,15 @@ vi.mock("../../../utils/host-runtime-config.js", () => ({
   fetchHostRuntimeConfig: fetchHostRuntimeConfigMock,
 }));
 
-vi.mock("../../../utils/chatbox-runtime-config.js", async () => {
+vi.mock("../../../utils/scenario-runtime-config.js", async () => {
   const actual = await vi.importActual<
-    typeof import("../../../utils/chatbox-runtime-config.js")
-  >("../../../utils/chatbox-runtime-config.js");
-  // Keep `readChatboxEnvironment` REAL (the route parses the environment
-  // payload through it on every chatbox turn); mock only the network fetch.
+    typeof import("../../../utils/scenario-runtime-config.js")
+  >("../../../utils/scenario-runtime-config.js");
+  // Keep `readScenarioEnvironment` REAL (the route parses the environment
+  // payload through it on every scenario turn); mock only the network fetch.
   return {
     ...actual,
-    fetchChatboxRuntimeConfig: fetchChatboxRuntimeConfigMock,
+    fetchScenarioRuntimeConfig: fetchScenarioRuntimeConfigMock,
   };
 });
 
@@ -180,10 +180,10 @@ describe("web routes — chat-v2 hosted mode", () => {
       ok: true,
       config: { selectedServerIds: ["server-1"] },
     });
-    // Default: chatbox runtime-config resolves (empty = host has no
-    // overrides). Chatbox turns now FAIL CLOSED on a failed fetch, so the
+    // Default: scenario runtime-config resolves (empty = host has no
+    // overrides). Scenario turns now FAIL CLOSED on a failed fetch, so the
     // happy-path tests must resolve it rather than lean on the old fallback.
-    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: true,
       config: {},
     });
@@ -255,7 +255,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     }
   });
 
-  it("persists chatbox preview chats with internal surface", async () => {
+  it("persists scenario preview chats with internal surface", async () => {
     const { app, token } = createWebTestApp();
 
     const response = await postJson(
@@ -264,7 +264,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 1,
         surface: "preview",
         chatSessionId: "chat-session-1",
@@ -289,20 +289,20 @@ describe("web routes — chat-v2 hosted mode", () => {
       expect.objectContaining({
         chatSessionId: "chat-session-1",
         projectId: "project-1",
-        sourceType: "chatbox",
-        chatboxId: "cbx_1",
+        sourceType: "scenario",
+        scenarioId: "cbx_1",
         surface: "preview",
         modelId: "openai/gpt-5-mini",
         modelSource: "mcpjam",
       })
     );
     // Non-direct flows must NOT send hostConfig — backend skips with
-    // missing_field, which is the desired behavior for chatbox/serverShare.
+    // missing_field, which is the desired behavior for scenario/serverShare.
     const persistArgs = persistChatSessionToConvexMock.mock.calls[0][0];
     expect(persistArgs.hostConfig).toBeUndefined();
   });
 
-  it("ignores a client uiTools snapshot on direct AND chatbox turns (agent-route-only, never rejected)", async () => {
+  it("ignores a client uiTools snapshot on direct AND scenario turns (agent-route-only, never rejected)", async () => {
     const { app, token } = createWebTestApp();
     // Non-empty/stale snapshot a cached pre-cutover client may still send.
     const uiTools = [
@@ -328,14 +328,14 @@ describe("web routes — chat-v2 hosted mode", () => {
     let prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
     expect(prepareArgs.uiTools).toBeUndefined();
 
-    // Chatbox-bound turn: same silent-ignore treatment.
-    const chatbox = await postJson(
+    // Scenario-bound turn: same silent-ignore treatment.
+    const scenario = await postJson(
       app,
       "/api/web/chat-v2",
-      { ...baseBody, chatboxId: "cbx_1", accessVersion: 1, surface: "preview" },
+      { ...baseBody, scenarioId: "cbx_1", accessVersion: 1, surface: "preview" },
       token
     );
-    expect(chatbox.status).toBe(200);
+    expect(scenario.status).toBe(200);
     expect(validateUiToolEntriesMock).not.toHaveBeenCalled();
     prepareArgs = prepareChatV2Mock.mock.calls.at(-1)![0];
     expect(prepareArgs.uiTools).toBeUndefined();
@@ -464,9 +464,9 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
-  it("FAILS CLOSED when the chatbox runtime-config fetch fails — never runs the engine", async () => {
+  it("FAILS CLOSED when the scenario runtime-config fetch fails — never runs the engine", async () => {
     const { app, token } = createWebTestApp();
-    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: false,
       status: 502,
       error: "backend unreachable",
@@ -478,7 +478,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-fail",
         messages: [{ role: "user", content: "preview request" }],
@@ -489,7 +489,7 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     // The fetched config is the only source of harness/computer and of the
     // host-wins protections; falling back to body values would silently
-    // downgrade a harness chatbox and reopen the tampered-body window.
+    // downgrade a harness scenario and reopen the tampered-body window.
     // Pin the full status/code/message mapping so it can't regress silently:
     // upstream 5xx maps to 502 with the INTERNAL_ERROR envelope + the
     // upstream error surfaced in the message.
@@ -499,17 +499,17 @@ describe("web routes — chat-v2 hosted mode", () => {
       message?: string;
     };
     expect(body.code).toBe("INTERNAL_ERROR");
-    expect(body.message).toContain("Couldn't load this chatbox's settings");
+    expect(body.message).toContain("Couldn't load this scenario's settings");
     expect(body.message).toContain("backend unreachable");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
-  it("tags a 403 chatbox runtime-config refusal as CHATBOX_ACCESS_DENIED", async () => {
+  it("tags a 403 scenario runtime-config refusal as SCENARIO_ACCESS_DENIED", async () => {
     const { app, token } = createWebTestApp();
-    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: false,
       status: 403,
-      error: "Chatbox not found or access denied",
+      error: "Scenario not found or access denied",
     });
 
     const response = await postJson(
@@ -518,7 +518,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-denied",
         messages: [{ role: "user", content: "preview request" }],
@@ -535,8 +535,8 @@ describe("web routes — chat-v2 hosted mode", () => {
       code?: string;
       message?: string;
     };
-    expect(body.code).toBe("CHATBOX_ACCESS_DENIED");
-    expect(body.message).toContain("Couldn't load this chatbox's settings");
+    expect(body.code).toBe("SCENARIO_ACCESS_DENIED");
+    expect(body.message).toContain("Couldn't load this scenario's settings");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
@@ -549,7 +549,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 7,
         chatSessionId: "chat-cb-version",
         messages: [{ role: "user", content: "hi" }],
@@ -558,18 +558,18 @@ describe("web routes — chat-v2 hosted mode", () => {
       token
     );
 
-    expect(fetchChatboxRuntimeConfigMock).toHaveBeenCalledWith(
-      expect.objectContaining({ chatboxId: "cbx_1", accessVersion: 7 })
+    expect(fetchScenarioRuntimeConfigMock).toHaveBeenCalledWith(
+      expect.objectContaining({ scenarioId: "cbx_1", accessVersion: 7 })
     );
   });
 
-  it("surfaces a stale-version refusal as 409 CHATBOX_ACCESS_STALE", async () => {
+  it("surfaces a stale-version refusal as 409 SCENARIO_ACCESS_STALE", async () => {
     const { app, token } = createWebTestApp();
-    fetchChatboxRuntimeConfigMock.mockResolvedValue({
+    fetchScenarioRuntimeConfigMock.mockResolvedValue({
       ok: false,
       status: 409,
-      code: "CHATBOX_ACCESS_STALE",
-      error: "Chatbox access version is stale; re-redeem.",
+      code: "SCENARIO_ACCESS_STALE",
+      error: "Scenario access version is stale; re-redeem.",
     });
 
     const response = await postJson(
@@ -578,7 +578,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 1,
         chatSessionId: "chat-cb-stale",
         messages: [{ role: "user", content: "hi" }],
@@ -591,11 +591,11 @@ describe("web routes — chat-v2 hosted mode", () => {
     // replays the turn without the tester seeing anything.
     expect(response.status).toBe(409);
     const body = (await response.json()) as { code?: string };
-    expect(body.code).toBe("CHATBOX_ACCESS_STALE");
+    expect(body.code).toBe("SCENARIO_ACCESS_STALE");
     expect(handleMCPJamFreeChatModelMock).not.toHaveBeenCalled();
   });
 
-  it("a chatbox session ignores a stray hostId (chatbox path wins)", async () => {
+  it("a scenario session ignores a stray hostId (scenario path wins)", async () => {
     const { app, token } = createWebTestApp();
 
     await postJson(
@@ -604,7 +604,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_1",
+        scenarioId: "cbx_1",
         accessVersion: 1,
         hostId: "host-1",
         chatSessionId: "chat-cb-1",
@@ -617,7 +617,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(fetchHostRuntimeConfigMock).not.toHaveBeenCalled();
   });
 
-  it("passes shared chatbox link context into the hosted model handler", async () => {
+  it("passes shared scenario link context into the hosted model handler", async () => {
     const { app, token } = createWebTestApp();
 
     const response = await postJson(
@@ -626,7 +626,7 @@ describe("web routes — chat-v2 hosted mode", () => {
       {
         projectId: "project-1",
         selectedServerIds: ["server-1"],
-        chatboxId: "cbx_shared",
+        scenarioId: "cbx_shared",
         accessVersion: 2,
         surface: "share_link",
         chatSessionId: "chat-session-shared",
@@ -643,7 +643,7 @@ describe("web routes — chat-v2 hosted mode", () => {
     expect(response.status).toBe(200);
     expect(handleMCPJamFreeChatModelMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        chatboxId: "cbx_shared",
+        scenarioId: "cbx_shared",
         accessVersion: 2,
         projectId: "project-1",
       })
@@ -672,7 +672,7 @@ describe("web routes — chat-v2 hosted mode", () => {
 
     expect(response.status).toBe(200);
     expect(global.fetch).toHaveBeenCalledTimes(1);
-    // Membership chat (no share/chatbox token) sends no accessScope — the
+    // Membership chat (no share/scenario token) sends no accessScope — the
     // backend authorizes via project ownership for both guest and authed
     // users uniformly. accessScope is only set when a token is in play.
     expect(global.fetch).toHaveBeenCalledWith(

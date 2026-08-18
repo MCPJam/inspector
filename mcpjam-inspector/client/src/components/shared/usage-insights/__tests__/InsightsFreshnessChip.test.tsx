@@ -28,7 +28,7 @@ beforeEach(() => {
   state.signals = undefined;
 });
 
-const SCOPE = { kind: "chatbox" as const, chatboxId: "cb-1" };
+const SCOPE = { kind: "scenario" as const, scenarioId: "cb-1" };
 
 function run(overrides: Partial<ClusterRunState>): ClusterRunState {
   return {

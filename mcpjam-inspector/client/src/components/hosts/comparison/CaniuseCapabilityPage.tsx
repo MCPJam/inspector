@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { ChevronLeft } from "lucide-react";
-import { getChatboxHostLogo } from "@/lib/chatbox-client-style";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -156,7 +156,7 @@ export function CaniuseCapabilityPage({
               subject.config
             );
             const label = getCaniuseSupportLabel(level);
-            const logoSrc = getChatboxHostLogo(
+            const logoSrc = getScenarioHostLogo(
               subject.hostStyle,
               subject.config.chatUiOverride,
               themeMode

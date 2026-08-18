@@ -83,7 +83,7 @@ export function useHostedOAuthRequirements(
           } catch (error) {
             // The first attempts routinely lose a race with bootstrap: the
             // request builder throws BootstrapNotReadyError until the API
-            // context carries this chatbox's project and server ids. Retrying
+            // context carries this scenario's project and server ids. Retrying
             // is what keeps a real OAuth server from being classified as
             // no-auth purely because the probe fired one tick too early.
             if (attempt === PROBE_ATTEMPTS - 1) {

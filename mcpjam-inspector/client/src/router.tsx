@@ -5,7 +5,7 @@ import App, {
   GithubChecksSettingsRoute,
   IntegrationsSettingsRoute,
   ChatAliasRoute,
-  ChatboxesRoute,
+  ScenariosRoute,
   ConformanceRoute,
   CaniuseCapabilityRoute,
   EnvironmentsRoute,
@@ -120,22 +120,22 @@ const ROUTE_ELEMENTS: Record<
   // (Insights | Sessions); `/user-testing/:scenarioId/edit` setup/share.
   // Same element: the route param is what selects the view, so a deep-linked
   // scenario survives the auth-gate remounts a cold boot puts it through.
-  "user-testing": { element: <ChatboxesRoute /> },
+  "user-testing": { element: <ScenariosRoute /> },
   // Static segment, so it outranks `:scenarioId` in React Router's matcher.
-  "user-testing/new": { element: <ChatboxesRoute /> },
-  "user-testing/:scenarioId/edit": { element: <ChatboxesRoute /> },
-  "user-testing/:scenarioId": { element: <ChatboxesRoute /> },
+  "user-testing/new": { element: <ScenariosRoute /> },
+  "user-testing/:scenarioId/edit": { element: <ScenariosRoute /> },
+  "user-testing/:scenarioId": { element: <ScenariosRoute /> },
   // Old bookmarks and every session link copied before the rename. Search and
-  // hash come along: `/chatboxes?host=X&session=Y` has to land on that
+  // hash come along: `/scenarios?host=X&session=Y` has to land on that
   // scenario's session, not just on the list.
-  chatboxes: {
+  scenarios: {
     loader: ({ request }: { request: Request }) => {
       const url = new URL(request.url);
       return redirect(`${routePaths.userTesting}${url.search}${url.hash}`);
     },
   },
   // `/swarms` — project-scoped Persona → Journey → Run surface (`SwarmsTab`)
-  // with Journeys + Sessions views. Same billing feature as chatboxes.
+  // with Journeys + Sessions views. Same billing feature as scenarios.
   // `/swarms/:swarmId` — one Swarm Run (wave) detail; same surface element.
   swarms: { element: <SwarmsRoute /> },
   // Static segment, so it outranks `:swarmId`.

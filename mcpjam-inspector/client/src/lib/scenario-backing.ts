@@ -2,7 +2,7 @@
  * What deleting (or unpublishing, or rebinding) a scenario did to the setup
  * behind it — and how to say so.
  *
- * A scenario is a chatbox pointing at an environment. Two kinds of environment
+ * A scenario is a scenario pointing at an environment. Two kinds of environment
  * can be behind that pointer, and they retire differently:
  *
  *   - The PRIVATE backing minted by the User Testing create flow: a nameless

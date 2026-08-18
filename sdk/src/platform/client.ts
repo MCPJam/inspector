@@ -1,7 +1,7 @@
 import { PlatformApiError } from "./errors.js";
 import type {
-  PlatformChatbox,
-  PlatformChatboxDetail,
+  PlatformScenarioSummary,
+  PlatformScenarioDetail,
   PlatformChatSession,
   PlatformDoctorReport,
   PlatformEvalIteration,
@@ -430,27 +430,27 @@ export class PlatformApiClient {
     );
   }
 
-  listChatboxes(
+  listScenarios(
     params: { projectId: string },
     options?: RequestOptions,
-  ): Promise<PlatformPage<PlatformChatbox>> {
+  ): Promise<PlatformPage<PlatformScenarioSummary>> {
     return this.request(
       "GET",
-      `/projects/${encodeURIComponent(params.projectId)}/chatboxes`,
+      `/projects/${encodeURIComponent(params.projectId)}/scenarios`,
       {},
       options,
     );
   }
 
-  getChatbox(
-    params: { projectId: string; chatboxId: string },
+  getScenario(
+    params: { projectId: string; scenarioId: string },
     options?: RequestOptions,
-  ): Promise<PlatformChatboxDetail> {
+  ): Promise<PlatformScenarioDetail> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
         params.projectId,
-      )}/chatboxes/${encodeURIComponent(params.chatboxId)}`,
+      )}/scenarios/${encodeURIComponent(params.scenarioId)}`,
       {},
       options,
     );

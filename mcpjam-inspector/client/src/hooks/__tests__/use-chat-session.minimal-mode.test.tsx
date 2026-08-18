@@ -586,7 +586,7 @@ describe("useChatSession minimal mode parity", () => {
         selectedServers,
         minimalMode: true,
         hostedContext: {
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
         executionConfig: {
@@ -1187,7 +1187,7 @@ describe("useChatSession minimal mode parity", () => {
   // BACK2-628. `setSelectedModel` already refuses to write when a surface
   // pins its model; `setSelectedModelIds` writes the same global lead key
   // (via `saveSelectedModelId`) and used not to. The sanitize effect in
-  // ChatTabV2 calls it on mount, so opening a hosted chatbox / share link
+  // ChatTabV2 calls it on mount, so opening a hosted scenario / share link
   // overwrote the model the user had selected in their own chats. The
   // `isSelectedModelResolved` gate cannot catch this route — it short-circuits
   // to true whenever `initialModelId` is set.
