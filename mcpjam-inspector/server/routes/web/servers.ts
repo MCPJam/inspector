@@ -104,7 +104,7 @@ servers.post("/check-oauth", async (c) =>
       body.serverId,
       {
         accessScope: body.accessScope,
-        chatboxId: body.chatboxId,
+        scenarioId: body.scenarioId,
         accessVersion: body.accessVersion,
       }
     );
@@ -186,7 +186,7 @@ export async function runHostedDoctor(
     body.serverId,
     {
       accessScope: body.accessScope,
-      chatboxId: body.chatboxId,
+      scenarioId: body.scenarioId,
       accessVersion: body.accessVersion,
     }
   );

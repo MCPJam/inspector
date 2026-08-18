@@ -456,7 +456,7 @@ export function TasksTab({
       let serverTaskIds = new Set<string>();
 
       // Folds a `/list` response's registry attachment in. An ABSENT
-      // `registryTasks` is "no recovery source this tick" (local mode, chatbox
+      // `registryTasks` is "no recovery source this tick" (local mode, scenario
       // scope, registry off/unreachable): it leaves whatever we already
       // recovered untouched AND leaves the recovery read armed, so the next
       // tick retries — only a PRESENT array (possibly `[]`, a verified empty

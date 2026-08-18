@@ -1,13 +1,13 @@
 import type { ComponentProps } from "react";
 import { ChatTabV2 } from "./ChatTabV2";
 import {
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
+import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
@@ -41,12 +41,12 @@ export function ClientStyledChatTabV2({
   const hostCapabilitiesOverride =
     activeHost?.hostCapabilitiesOverride ?? prefHostCapabilitiesOverride;
   const activeMcpProfile = activeHost?.mcpProfile;
-  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
+  const shellStyle = getScenarioShellStyle(hostStyle, themeMode);
 
   return (
-    <ChatboxHostStyleProvider value={hostStyle}>
-      <ChatboxHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
-        <ChatboxHostThemeProvider value={themeMode}>
+    <ScenarioHostStyleProvider value={hostStyle}>
+      <ScenarioHostCapabilitiesOverrideProvider value={hostCapabilitiesOverride}>
+        <ScenarioHostThemeProvider value={themeMode}>
           <ActiveMcpProfileProvider value={activeMcpProfile}>
             <ActiveHostCapsResolverScope
               activeHost={activeHost}
@@ -54,7 +54,7 @@ export function ClientStyledChatTabV2({
             >
               <div
                 className={cn(
-                  "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
+                  "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
                   themeMode === "dark" && "dark"
                 )}
                 data-host-style={hostStyle}
@@ -75,8 +75,8 @@ export function ClientStyledChatTabV2({
               </div>
             </ActiveHostCapsResolverScope>
           </ActiveMcpProfileProvider>
-        </ChatboxHostThemeProvider>
-      </ChatboxHostCapabilitiesOverrideProvider>
-    </ChatboxHostStyleProvider>
+        </ScenarioHostThemeProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
+    </ScenarioHostStyleProvider>
   );
 }

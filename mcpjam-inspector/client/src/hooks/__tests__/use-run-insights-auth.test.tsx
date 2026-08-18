@@ -26,18 +26,18 @@ vi.mock("convex/react", () => ({
 }));
 
 const SCOPE_A: RunInsightsScope = {
-  kind: "chatbox",
-  chatboxId: "cb-1",
+  kind: "scenario",
+  scenarioId: "cb-1",
   groupId: "g-1",
 };
 const SCOPE_B: RunInsightsScope = {
-  kind: "chatbox",
-  chatboxId: "cb-2",
+  kind: "scenario",
+  scenarioId: "cb-2",
   groupId: "g-2",
 };
 const SCOPE_C: RunInsightsScope = {
-  kind: "chatbox",
-  chatboxId: "cb-3",
+  kind: "scenario",
+  scenarioId: "cb-3",
   groupId: "g-3",
 };
 

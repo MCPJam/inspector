@@ -150,6 +150,10 @@ export function suiteOf(EvalSuite, EvalTest, cases) {
   const suite = new EvalSuite({ name: "packaging suite" });
   for (const entry of cases) {
     suite.add(new EvalTest({
+      // \`id\` is the case's declared identity and is required by @mcpjam/sdk.
+      // Passed through from the scenario so the packaged tarball is exercised
+      // against the same shape a consumer writes.
+      id: entry.id,
       name: entry.name,
       ...(entry.externalCaseId ? { externalCaseId: entry.externalCaseId } : {}),
       test: async (executor) => {
@@ -177,7 +181,7 @@ import { describeEvalSuite } from "@mcpjam/vitest";
 import { StubExecutor, suiteOf } from "./support.mjs";
 
 describeEvalSuite("packaged suite", suiteOf(EvalSuite, EvalTest, [
-  { name: "a case that passes", externalCaseId: "case_green", passes: true },
+  { id: "c_green", name: "a case that passes", externalCaseId: "case_green", passes: true },
 ]), {
   executor: new StubExecutor(),
   run: { iterations: 1, mcpjam: { enabled: false } },
@@ -196,7 +200,7 @@ import { describeEvalSuite } from "@mcpjam/vitest";
 import { StubExecutor, suiteOf } from "./support.mjs";
 
 describeEvalSuite("packaged suite", suiteOf(EvalSuite, EvalTest, [
-  { name: "a case that fails", externalCaseId: "case_red", passes: false },
+  { id: "c_red", name: "a case that fails", externalCaseId: "case_red", passes: false },
 ]), {
   executor: new StubExecutor(),
   run: { iterations: 1, mcpjam: { enabled: false } },
@@ -221,7 +225,7 @@ import { describeEvalSuite } from "@mcpjam/vitest";
 import { StubExecutor, suiteOf } from "./support.mjs";
 
 describeEvalSuite("packaged suite", suiteOf(EvalSuite, EvalTest, [
-  { name: "a case that passes", externalCaseId: "case_green", passes: true },
+  { id: "c_green", name: "a case that passes", externalCaseId: "case_green", passes: true },
 ]), {
   executor: new StubExecutor(),
   run: { iterations: 1, mcpjam: { enabled: false } },

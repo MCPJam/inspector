@@ -14,7 +14,7 @@ import {
   type ThemeRef,
   type UsageFilterChip,
   type UsageFilterState,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 import {
   useInsightsFlowController,
   useInsightsRebuild,
@@ -91,7 +91,7 @@ interface InsightsWorkbenchProps {
   className?: string;
   /**
    * Prefix for every `data-testid` this renders, so each surface keeps the
-   * ids its own suites already assert (`swarm-insights-*`, `chatbox-insights-*`).
+   * ids its own suites already assert (`swarm-insights-*`, `scenario-insights-*`).
    */
   testIdPrefix: string;
 }

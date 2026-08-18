@@ -440,6 +440,10 @@ export function evalTestFromPlatformCase(
   }
 
   const config: EvalTestConfig = {
+    // The hosted case's own id IS this case's declared identity — a
+    // materialized case was already id-bearing in spirit, and minting a fresh
+    // one here would give the same case two identities.
+    id: evalCase.id,
     name: options.name ?? evalCase.title,
     test: async (executor: HostExecutor) => {
       for (const prompt of prompts) {

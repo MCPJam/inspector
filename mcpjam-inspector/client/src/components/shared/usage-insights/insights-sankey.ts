@@ -3,7 +3,7 @@ import type {
   InsightsSankeyNode,
   SankeyStage,
 } from "@/hooks/useUsageInsights";
-import type { InsightsSelection } from "@/hooks/chatbox-usage-filters";
+import type { InsightsSelection } from "@/hooks/scenario-usage-filters";
 
 /** Mirrors `SANKEY_UNLABELED` / `SANKEY_OTHER` in the backend's `breakdowns.ts`. */
 export const SANKEY_UNLABELED = "__unlabeled__";
@@ -135,7 +135,7 @@ const PAD = 10;
  *
  * Recharts' `Sankey` recomputes its own node order and offers no way to keep a
  * stage's themes in the volume order the server sorted them into, which is the
- * one ordering that means the same thing across chatboxes. The geometry is four
+ * one ordering that means the same thing across scenarios. The geometry is four
  * fixed columns and stacked ribbons — small enough to own, and owning it is
  * what makes the columns predictable.
  */

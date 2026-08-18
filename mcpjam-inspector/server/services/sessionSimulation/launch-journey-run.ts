@@ -553,7 +553,7 @@ export async function launchJourneyRun(
           undefined,
           // Pinned MCP client capabilities from the snapshot — negotiate
           // INITIALIZE with the SAME capabilities the host declared at
-          // run-create time (mirrors the chatbox path), not the current
+          // run-create time (mirrors the scenario path), not the current
           // live config's.
           host.clientCapabilities,
           {

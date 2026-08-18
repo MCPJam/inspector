@@ -6,7 +6,7 @@
  * behind a load balancer, so the answer would land on an arbitrary replica and
  * still have to cross to the one holding the tool call. Writing straight to the
  * rendezvous table removes that hop entirely — the browser already holds a live
- * authenticated Convex client (signed-in users, guests, and chatbox visitors
+ * authenticated Convex client (signed-in users, guests, and scenario visitors
  * alike, via `unified-convex-auth`).
  *
  * Authorization is NOT taken from this payload: the mutation re-derives the
