@@ -63,11 +63,8 @@ describe("buildMarketHostProfiles", () => {
       toolInputPartial: true,
       toolCancelled: true,
       downloadFile: false,
+      resourceTeardown: true,
     });
-    // resourceTeardown is the single surface the probe found missing.
-    expect(
-      profileFor("chatgpt")?.capabilities?.resourceTeardown
-    ).toBeUndefined();
   });
 
   it("carries each host's advertised protocol versions (or none)", () => {

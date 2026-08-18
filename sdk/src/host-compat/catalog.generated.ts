@@ -805,6 +805,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             toolInputPartial: true,
             toolCancelled: true,
             hostContextChanged: true,
+            resourceTeardown: true,
             toolInfo: true,
             openLinks: true,
             serverTools: true,
