@@ -6,14 +6,14 @@
  * caller's PERSONAL computer via reserve→sandbox-info, this binds directly to a
  * KNOWN sandbox id (mcpjam-backend `evalSandboxes.provisionEvalSandbox` for an
  * eval iteration, `journeySandboxes.provisionJourneySandbox` for a swarm
- * attempt, `chatboxSandboxes.provisionChatboxSandbox` for a chatbox
+ * attempt, `scenarioSandboxes.provisionScenarioSandbox` for a scenario
  * conversation). The personal computer stays banned from all three: it is
  * mutable per-user state that a reproducible run can't reproduce, and — the
  * reason swarm bash was suppressed outright in #3595 — every session would
  * otherwise SHARE one box, so one session's writes leak into the next.
  *
  * LIFETIME IS PART OF THE CONTRACT, not a comment. Eval and swarm boxes die
- * with their unit of work; a chatbox box survives between the turns of one
+ * with their unit of work; a scenario box survives between the turns of one
  * conversation. `opts.lifetime` picks which of those the tool DESCRIPTION
  * states, because a model that believes its files vanish behaves differently
  * from one that knows they persist.
@@ -76,8 +76,8 @@ export interface SandboxBashToolOptions {
    *
    *  - `run`          — one eval iteration / one swarm attempt. Destroyed when
    *                     the unit of work ends. The default, and the only
-   *                     lifetime that existed before chatbox sandboxes.
-   *  - `conversation` — a chatbox conversation. The box SURVIVES between turns
+   *                     lifetime that existed before scenario sandboxes.
+   *  - `conversation` — a scenario conversation. The box SURVIVES between turns
    *                     and is reclaimed only after a long idle gap.
    *
    * Not cosmetic. A model told its filesystem is destroyed after every run will

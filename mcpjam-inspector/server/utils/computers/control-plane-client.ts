@@ -5,7 +5,7 @@
  * exec/PTY connections); Convex owns the durable rows. This module wraps the
  * backend's `/computers/*` HTTP routes (mcpjam-backend
  * `convex/computersDataPlane.ts`), reached via `CONVEX_HTTP_URL` like
- * `chatbox-runtime-config.ts` does:
+ * `scenario-runtime-config.ts` does:
  *
  *   reserve           user-bearer auth — reserve/wake/poll the acting user's
  *                     computer (idempotent; each poll also counts as activity)
@@ -264,27 +264,27 @@ export async function provisionJourneySandbox(args: {
 }
 
 /**
- * A one-time, user-visible fact about a chatbox conversation's sandbox —
+ * A one-time, user-visible fact about a scenario conversation's sandbox —
  * the BACKEND-mintable subset of `SandboxNoticeReason`. Inspector-minted
  * reasons (`sandbox_unavailable`) are deliberately NOT members: there is no
  * backend notice row behind them, so they must never enter the ack protocol.
  */
-export type ChatboxSandboxNotice = "sandbox_reset" | "stale_image";
+export type ScenarioSandboxNotice = "sandbox_reset" | "stale_image";
 
-const CHATBOX_SANDBOX_NOTICES: ReadonlySet<string> = new Set([
+const SCENARIO_SANDBOX_NOTICES: ReadonlySet<string> = new Set([
   "sandbox_reset",
   "stale_image",
 ]);
 
-export function isChatboxSandboxNotice(
+export function isScenarioSandboxNotice(
   value: unknown
-): value is ChatboxSandboxNotice {
-  return typeof value === "string" && CHATBOX_SANDBOX_NOTICES.has(value);
+): value is ScenarioSandboxNotice {
+  return typeof value === "string" && SCENARIO_SANDBOX_NOTICES.has(value);
 }
 
 /**
  * The notice peek/ack protocol version this build speaks (mcpjam-backend
- * `chatboxSandboxes.CHATBOX_SANDBOX_NOTICE_ACK_VERSION`).
+ * `scenarioSandboxes.SCENARIO_SANDBOX_NOTICE_ACK_VERSION`).
  *
  * Declaring it switches the backend from "consume at provision" to "return
  * pending, wait for an ack". It is a CLIENT flag on purpose: an unacked notice
@@ -293,9 +293,9 @@ export function isChatboxSandboxNotice(
  * A backend that predates the protocol ignores the field and consumes as
  * before, which its `noticeAckPending: false` reports back.
  */
-export const CHATBOX_SANDBOX_NOTICE_ACK_VERSION = 1;
+export const SCENARIO_SANDBOX_NOTICE_ACK_VERSION = 1;
 
-export interface ChatboxSandbox {
+export interface ScenarioSandbox {
   sandboxId: string;
   sandboxRowId: string;
   /** Working directory the environment's host configured (backend-resolved). */
@@ -305,10 +305,10 @@ export interface ChatboxSandbox {
    *
    * Whether they are already consumed depends on {@link noticeAckPending}.
    */
-  notices?: ChatboxSandboxNotice[];
+  notices?: ScenarioSandboxNotice[];
   /**
    * TRUE ⇒ these notices are still PENDING server-side and this caller MUST
-   * {@link ackChatboxSandboxNotices} once they are on the wire, or they will be
+   * {@link ackScenarioSandboxNotices} once they are on the wire, or they will be
    * re-delivered on the next turn.
    *
    * FALSE/absent ⇒ already consumed by the provision call — either the legacy
@@ -318,11 +318,11 @@ export interface ChatboxSandbox {
 }
 
 /**
- * Provision (or re-obtain) the ephemeral sandbox for ONE chatbox conversation —
+ * Provision (or re-obtain) the ephemeral sandbox for ONE scenario conversation —
  * user-bearer auth, the acting member's token.
  *
- * The body carries only `(chatboxId, chatSessionId)`. The control plane resolves
- * the image from the environment the chatbox points at, LIVE, on every call, so
+ * The body carries only `(scenarioId, chatSessionId)`. The control plane resolves
+ * the image from the environment the scenario points at, LIVE, on every call, so
  * this can never boot an arbitrary template — the caller does not know, and
  * cannot supply, an image identifier.
  *
@@ -336,21 +336,21 @@ export interface ChatboxSandbox {
  *         this conversation right now; retrying cannot help. Run WITHOUT bash.
  *   503 — at capacity, or a sibling call is still booting. Retryable.
  */
-export async function provisionChatboxSandbox(args: {
+export async function provisionScenarioSandbox(args: {
   bearer: string;
-  chatboxId: string;
+  scenarioId: string;
   chatSessionId: string;
   signal?: AbortSignal;
-}): Promise<ControlPlaneResult<ChatboxSandbox>> {
-  return postJson<ChatboxSandbox>(
-    "/chatboxes/sandbox/provision",
+}): Promise<ControlPlaneResult<ScenarioSandbox>> {
+  return postJson<ScenarioSandbox>(
+    "/scenarios/sandbox/provision",
     bearerHeader(args.bearer),
     {
-      chatboxId: args.chatboxId,
+      scenarioId: args.scenarioId,
       chatSessionId: args.chatSessionId,
       // Opt into peek/ack delivery. Without this the backend consumes the
       // notice here, before any SSE writer exists to carry it.
-      noticeAckVersion: CHATBOX_SANDBOX_NOTICE_ACK_VERSION,
+      noticeAckVersion: SCENARIO_SANDBOX_NOTICE_ACK_VERSION,
     },
     args.signal
   );
@@ -369,22 +369,22 @@ export async function provisionChatboxSandbox(args: {
  *
  * Idempotent at the backend: a duplicate ack consumes nothing.
  */
-export async function ackChatboxSandboxNotices(args: {
+export async function ackScenarioSandboxNotices(args: {
   bearer: string;
   sandboxRowId: string;
-  notices: ChatboxSandboxNotice[];
+  notices: ScenarioSandboxNotice[];
   signal?: AbortSignal;
 }): Promise<void> {
   if (args.notices.length === 0) return;
   const result = await postJson(
-    "/chatboxes/sandbox/notices/ack",
+    "/scenarios/sandbox/notices/ack",
     bearerHeader(args.bearer),
     { sandboxRowId: args.sandboxRowId, notices: args.notices },
     args.signal
   );
   if (!result.ok) {
     // Best-effort by design: re-delivery is the failure mode, not loss.
-    logger.warn("[computers] failed to ack chatbox sandbox notices", {
+    logger.warn("[computers] failed to ack scenario sandbox notices", {
       sandboxRowId: args.sandboxRowId,
       status: result.status,
       error: result.error,
