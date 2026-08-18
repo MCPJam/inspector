@@ -8,7 +8,7 @@ icon: "user-cog"
 Open the **Connect** tab in the left sidebar to manage Clients (labelled **Servers** in some builds). The page name "Clients" refers to the configuration object, not the sidebar label.
 </Note>
 
-A **Client** is a named, reusable configuration that defines how MCPJam connects to and talks to your MCP servers when you test them in the Playground, Chatboxes, and Evals. It bundles everything that would normally be scattered across one-off settings — model, system prompt, attached servers, protocol-level knobs, and MCP App sandbox controls — behind a single picker.
+A **Client** is a named, reusable configuration that defines how MCPJam connects to and talks to your MCP servers when you test them in the Playground, Scenarios, and Evals. It bundles everything that would normally be scattered across one-off settings — model, system prompt, attached servers, protocol-level knobs, and MCP App sandbox controls — behind a single picker.
 
 Real MCP hosts (Claude Desktop, ChatGPT, Cursor, your own product) each advertise slightly different capabilities and apply different sandbox policies to MCP Apps. Clients let you reproduce those environments in MCPJam so you can verify your server behaves correctly *before* shipping to a specific host.
 
@@ -118,7 +118,7 @@ The header client bar hides itself while the canvas is open to avoid duplicating
 Once saved, a Client shows up in the picker at the top of every consumer:
 
 - **Chat** — Drives the model, system prompt, attached servers, and connection settings for the conversation.
-- **Chatboxes** — Same as Chat, but persisted as a saved chatbox configuration.
+- **Scenarios** — Same as Chat, but persisted as a saved scenario configuration.
 - **Evals** — Every test run inside an Eval uses the selected Client, so results are reproducible across teammates.
 - **Swarms** — Journeys in the Swarms surface can target any project client, including standalone ones.
 
@@ -126,9 +126,9 @@ Switching the active Client in any of these views swaps the entire configuration
 
 ### Standalone clients (Swarms-managed)
 
-Some clients are **standalone** — they are owned by the Swarms surface and have no Chatbox or publish surface. If you select a standalone client in the Chatboxes tab, the tab shows a **"Managed by Swarms"** notice instead of a chatbox. The client picker stays visible so you can switch to a publishable client.
+Some clients are **standalone** — they are owned by the Swarms surface and have no Scenario or publish surface. If you select a standalone client in the Scenarios tab, the tab shows a **"Managed by Swarms"** notice instead of a scenario. The client picker stays visible so you can switch to a publishable client.
 
-Standalone clients do not appear as options in the Chatboxes client picker dropdown. If you need a client for both Chatboxes and Swarms journeys, create a regular client from the Connect tab instead of from Swarms → Clients.
+Standalone clients do not appear as options in the Scenarios client picker dropdown. If you need a client for both Scenarios and Swarms journeys, create a regular client from the Connect tab instead of from Swarms → Clients.
 
 ## Server attachments
 
@@ -148,11 +148,11 @@ When you create an eval suite, you can pick a server attachment in the **Servers
 3. Enter a name (e.g. `Production servers`) and check the servers to include.
 4. Click **Create**. The new attachment is selected immediately.
 
-### Chatboxes
+### Scenarios
 
-The **Servers** section on the chatbox Publish tab shows which project servers the chatbox connects to. Click **Edit servers** to open the attachment editor and update the selection.
+The **Servers** section on the scenario Publish tab shows which project servers the scenario connects to. Click **Edit servers** to open the attachment editor and update the selection.
 
-- If no servers are picked, the chatbox displays an amber warning. Chat sessions started from that chatbox will have no tools until at least one server is selected.
+- If no servers are picked, the scenario displays an amber warning. Chat sessions started from that scenario will have no tools until at least one server is selected.
 - The server pick is sticky — editing the client's model or system prompt does not change it.
 
 ## Managing Clients
@@ -160,7 +160,7 @@ The **Servers** section on the chatbox Publish tab shows which project servers t
 From the Clients index page:
 
 - **Duplicate** — Copy a Client when you want a small variant (e.g. `Claude Desktop — strict CSP`) without rebuilding from scratch.
-- **Delete** — Removes the Client. The inspector blocks deletion if any chatbox or eval still depends on it; resolve those first, or use force delete if you're sure.
+- **Delete** — Removes the Client. The inspector blocks deletion if any scenario or eval still depends on it; resolve those first, or use force delete if you're sure.
 
 <Tip>
   Keep one Client per host you intend to ship to. Duplicate it to make scoped

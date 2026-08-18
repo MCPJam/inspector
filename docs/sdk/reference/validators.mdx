@@ -391,6 +391,7 @@ describe("Calculator", () => {
 import { EvalTest, matchToolCallsSubset } from "@mcpjam/sdk";
 
 const test = new EvalTest({
+  id: "c_multi_step",
   name: "multi-step",
   test: async (agent) => {
     const result = await agent.run("Add 2+3, then multiply by 4");

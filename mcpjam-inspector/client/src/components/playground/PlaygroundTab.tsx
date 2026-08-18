@@ -6,15 +6,15 @@ import {
   usePlaygroundState,
 } from "@/components/ui-playground/hooks/use-playground-state";
 import {
-  ChatboxChatUiOverrideProvider,
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+  ScenarioChatUiOverrideProvider,
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
+import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
 import LoadingScreen from "@/components/LoadingScreen";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useHost } from "@/hooks/useClients";
@@ -160,7 +160,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
     prefHostCapabilitiesOverride;
   const chatUiOverride =
     effectiveHostConfig?.chatUiOverride ?? prefChatUiOverride;
-  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
+  const shellStyle = getScenarioShellStyle(hostStyle, themeMode);
 
   // Auto-connect the effective host's REQUIRED servers once per session.
   // Preview mode wins; otherwise fall back to the project default host so
@@ -254,15 +254,15 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
           activeHost={effectiveHostConfig}
           hostStyle={hostStyle}
         >
-          <ChatboxHostStyleProvider value={hostStyle}>
-            <ChatboxHostCapabilitiesOverrideProvider
+          <ScenarioHostStyleProvider value={hostStyle}>
+            <ScenarioHostCapabilitiesOverrideProvider
               value={hostCapabilitiesOverride}
             >
-              <ChatboxChatUiOverrideProvider value={chatUiOverride}>
-                <ChatboxHostThemeProvider value={themeMode}>
+              <ScenarioChatUiOverrideProvider value={chatUiOverride}>
+                <ScenarioHostThemeProvider value={themeMode}>
                   <div
                     className={cn(
-                      "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
+                      "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
                       themeMode === "dark" && "dark"
                     )}
                     data-host-style={hostStyle}
@@ -389,10 +389,10 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
                       )}
                     </ResizablePanelGroup>
                   </div>
-                </ChatboxHostThemeProvider>
-              </ChatboxChatUiOverrideProvider>
-            </ChatboxHostCapabilitiesOverrideProvider>
-          </ChatboxHostStyleProvider>
+                </ScenarioHostThemeProvider>
+              </ScenarioChatUiOverrideProvider>
+            </ScenarioHostCapabilitiesOverrideProvider>
+          </ScenarioHostStyleProvider>
         </ActiveHostCapsResolverScope>
       </ActiveMcpProfileProvider>
     </PlaygroundStateProvider>

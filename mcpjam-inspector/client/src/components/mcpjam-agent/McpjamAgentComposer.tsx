@@ -2,7 +2,7 @@
  * McpjamAgentComposer — shared input shell for MCPJam Agent surfaces.
  *
  * Used by `McpjamAgentHero` (home greeting) and `McpjamAgentThread`
- * (follow-up composer). When rendered inside a `ChatboxHostStyleProvider`
+ * (follow-up composer). When rendered inside a `ScenarioHostStyleProvider`
  * (thread/sidebar), it picks up the same composer skin as the playground
  * `ChatInput`. On the home hero (no host context), it uses the orange
  * invite ring to prompt the first message.
@@ -19,12 +19,12 @@ import { Button } from "@mcpjam/design-system/button";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { cn } from "@/lib/utils";
 import {
-  useChatboxHostStyle,
-  useChatboxHostTheme,
-} from "@/contexts/chatbox-client-style-context";
+  useScenarioHostStyle,
+  useScenarioHostTheme,
+} from "@/contexts/scenario-client-style-context";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
-import { getChatboxComposerAppearance } from "@/lib/chatbox-composer-appearance";
-import { getChatboxHostFamily } from "@/lib/chatbox-client-style";
+import { getScenarioComposerAppearance } from "@/lib/scenario-composer-appearance";
+import { getScenarioHostFamily } from "@/lib/scenario-client-style";
 
 export interface McpjamAgentComposerProps {
   value: string;
@@ -62,22 +62,22 @@ export function McpjamAgentComposer({
   footerControls,
 }: McpjamAgentComposerProps) {
   const [focused, setFocused] = useState(false);
-  const chatboxHostStyle = useChatboxHostStyle();
-  const chatboxHostTheme = useChatboxHostTheme();
+  const scenarioHostStyle = useScenarioHostStyle();
+  const scenarioHostTheme = useScenarioHostTheme();
   const globalThemeMode = usePreferencesStore((state) => state.themeMode);
-  const isChatboxMode = chatboxHostStyle != null;
+  const isScenarioMode = scenarioHostStyle != null;
   const isDark =
-    (chatboxHostTheme ?? globalThemeMode) === "dark";
-  const hostFamily = getChatboxHostFamily(chatboxHostStyle);
-  const chatboxAppearance = getChatboxComposerAppearance(hostFamily, isDark);
+    (scenarioHostTheme ?? globalThemeMode) === "dark";
+  const hostFamily = getScenarioHostFamily(scenarioHostStyle);
+  const scenarioAppearance = getScenarioComposerAppearance(hostFamily, isDark);
 
   const canSubmit = value.trim().length > 0 && ready && !isStreaming;
-  const showInvite = !isChatboxMode && ready && value.length === 0 && !isStreaming;
+  const showInvite = !isScenarioMode && ready && value.length === 0 && !isStreaming;
   const showHint =
-    !ready || (!isChatboxMode && ready && focused && value.length === 0);
+    !ready || (!isScenarioMode && ready && focused && value.length === 0);
 
-  const resolvedMinRows = minRows ?? (isChatboxMode ? 2 : 3);
-  const resolvedMaxRows = maxRows ?? (isChatboxMode ? 4 : 8);
+  const resolvedMinRows = minRows ?? (isScenarioMode ? 2 : 3);
+  const resolvedMaxRows = maxRows ?? (isScenarioMode ? 4 : 8);
 
   const onFormSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -102,10 +102,10 @@ export function McpjamAgentComposer({
     ? loadingMessage
     : "Enter to send · Shift+Enter for newline";
 
-  const shellClasses = isChatboxMode
+  const shellClasses = isScenarioMode
     ? cn(
         "relative flex w-full cursor-text flex-col px-2 pt-2 pb-2",
-        chatboxAppearance.shellClasses,
+        scenarioAppearance.shellClasses,
       )
     : cn(
         "relative cursor-text rounded-2xl border bg-card/60 shadow-sm transition-[border-color,box-shadow,background-color]",
@@ -121,7 +121,7 @@ export function McpjamAgentComposer({
             ),
       );
 
-  const textareaClasses = isChatboxMode
+  const textareaClasses = isScenarioMode
     ? cn(
         "min-h-[64px] w-full resize-none overflow-y-auto overscroll-contain border-none bg-transparent dark:bg-transparent px-4",
         "pt-2 pb-3 text-base text-foreground placeholder:text-muted-foreground/70",
@@ -130,7 +130,7 @@ export function McpjamAgentComposer({
       )
     : "min-h-[5.5rem] resize-none rounded-none border-0 bg-transparent px-4 py-3 text-[15px] leading-[1.625] caret-foreground shadow-none outline-none focus-visible:border-0 focus-visible:ring-0 md:text-[15px]";
 
-  const footerClasses = isChatboxMode
+  const footerClasses = isScenarioMode
     ? "flex items-center justify-end gap-2 px-2 min-w-0"
     : "flex items-center justify-between gap-3 px-4 py-3";
 
@@ -163,13 +163,13 @@ export function McpjamAgentComposer({
           <div
             className={cn(
               "flex shrink-0 items-center gap-2",
-              isChatboxMode && "mr-auto",
+              isScenarioMode && "mr-auto",
             )}
           >
             {footerControls}
           </div>
         ) : null}
-        {!isChatboxMode ? (
+        {!isScenarioMode ? (
           <span
             className={cn(
               "text-[11px] leading-none text-muted-foreground/70 transition-opacity",
@@ -187,7 +187,7 @@ export function McpjamAgentComposer({
           <Button
             type="button"
             size="icon"
-            variant={isChatboxMode ? "secondary" : "outline"}
+            variant={isScenarioMode ? "secondary" : "outline"}
             onClick={onStop}
             disabled={!onStop}
             aria-label="Stop generating"
@@ -206,15 +206,15 @@ export function McpjamAgentComposer({
             aria-label="Send"
             className={cn(
               "shrink-0 rounded-full transition-colors shadow-none",
-              isChatboxMode ? "size-[34px]" : "size-8 self-center",
-              isChatboxMode
+              isScenarioMode ? "size-[34px]" : "size-8 self-center",
+              isScenarioMode
                 ? canSubmit
-                  ? chatboxAppearance.activeSubmitButtonClasses
-                  : chatboxAppearance.inactiveSubmitButtonClasses
+                  ? scenarioAppearance.activeSubmitButtonClasses
+                  : scenarioAppearance.inactiveSubmitButtonClasses
                 : undefined,
             )}
           >
-            <ArrowUp className={isChatboxMode ? "size-4" : "size-4"} aria-hidden />
+            <ArrowUp className={isScenarioMode ? "size-4" : "size-4"} aria-hidden />
           </Button>
         )}
       </div>

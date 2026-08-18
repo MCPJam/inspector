@@ -10,7 +10,7 @@ import type {
   ClusterRunState,
   InsightsScope,
 } from "@/hooks/useUsageInsights";
-import { CHATBOX_INSIGHTS_QUERIES } from "@/lib/chatbox-insights-api";
+import { SCENARIO_INSIGHTS_QUERIES } from "@/lib/scenario-insights-api";
 
 /**
  * "Built 2h ago" — when the analysis behind this view last finished, and
@@ -47,9 +47,9 @@ export function InsightsFreshnessChip({
   // equivalent (a wave's runs are terminal, so its analysis cannot fall
   // behind live traffic). Guarded so the query is only issued where it exists.
   const signals = useQuery(
-    CHATBOX_INSIGHTS_QUERIES.getWindowSignals as any,
-    (scope.kind === "chatbox"
-      ? { chatboxId: scope.chatboxId }
+    SCENARIO_INSIGHTS_QUERIES.getWindowSignals as any,
+    (scope.kind === "scenario"
+      ? { scenarioId: scope.scenarioId }
       : "skip") as any,
   ) as { dataStale?: boolean } | null | undefined;
 
