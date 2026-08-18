@@ -155,7 +155,7 @@ export function applyHostConfigToPlayground(
   setters.setHostCapabilitiesOverride(config.hostCapabilitiesOverride);
 
   // Same shape as hostCapabilitiesOverride: undefined means "preset wins"
-  // (see ChatboxChatUiOverrideContext). Snapshotting here lets the
+  // (see ScenarioChatUiOverrideContext). Snapshotting here lets the
   // playground show the host's custom logo / palette / indicator without
   // a separate provider per surface.
   setters.setChatUiOverride(config.chatUiOverride);

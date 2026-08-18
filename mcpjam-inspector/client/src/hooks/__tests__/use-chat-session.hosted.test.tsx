@@ -184,7 +184,7 @@ vi.mock("@/lib/apis/web/context", () => ({
       serverNames,
       oauthTokens,
       accessScope,
-      chatboxId,
+      scenarioId,
       accessVersion,
     }: {
       projectId: string;
@@ -192,7 +192,7 @@ vi.mock("@/lib/apis/web/context", () => ({
       serverNames: string[];
       oauthTokens?: Record<string, string>;
       accessScope?: string;
-      chatboxId?: string;
+      scenarioId?: string;
       accessVersion?: number;
     }) => ({
       projectId,
@@ -200,8 +200,8 @@ vi.mock("@/lib/apis/web/context", () => ({
       serverNames,
       ...(oauthTokens ? { oauthTokens } : {}),
       ...(accessScope ? { accessScope } : {}),
-      ...(chatboxId ? { chatboxId } : {}),
-      ...(chatboxId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
+      ...(scenarioId ? { scenarioId } : {}),
+      ...(scenarioId && Number.isFinite(accessVersion) ? { accessVersion } : {}),
     })
   ),
   getApiContextRevision: vi.fn(() => 0),
@@ -388,7 +388,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
       })
@@ -401,21 +401,21 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      chatboxId: "cbx_test",
+      scenarioId: "cbx_test",
       accessVersion: 1,
       accessScope: "chat_v2",
     });
     unmount();
   });
 
-  it("includes chatboxId and accessVersion in the hosted transport body", async () => {
+  it("includes scenarioId and accessVersion in the hosted transport body", async () => {
     const { result, unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
           oauthTokens: {
             "server-id-1": "browser-token",
@@ -431,7 +431,7 @@ describe("useChatSession hosted mode", () => {
       chatSessionId: "chat-session-id",
       selectedServerIds: ["server-id-1"],
       selectedServerNames: ["server-1"],
-      chatboxId: "cbx_test",
+      scenarioId: "cbx_test",
       accessVersion: 1,
       accessScope: "chat_v2",
     });
@@ -439,23 +439,23 @@ describe("useChatSession hosted mode", () => {
     unmount();
   });
 
-  it("includes chatbox surface in the hosted transport body", async () => {
+  it("includes scenario surface in the hosted transport body", async () => {
     const { unmount } = renderHook(() =>
       useChatSession({
         selectedServers: ["server-1"],
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
-          chatboxSurface: "preview",
+          scenarioSurface: "preview",
         },
       })
     );
 
     const body = lastTransportOptions.body();
     expect(body).toMatchObject({
-      chatboxId: "cbx_test",
+      scenarioId: "cbx_test",
       accessVersion: 1,
       surface: "preview",
     });
@@ -489,21 +489,21 @@ describe("useChatSession hosted mode", () => {
       expect(lastTransportOptions.body()).not.toHaveProperty("uiTools");
       direct.unmount();
 
-      // Chatbox session (published/share-link or owner preview): same —
+      // Scenario session (published/share-link or owner preview): same —
       // the field is absent entirely, not sent as an empty list.
-      const chatbox = renderHook(() =>
+      const scenario = renderHook(() =>
         useChatSession({
           selectedServers: ["server-1"],
           hostedContext: {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
-            chatboxId: "cbx_test",
+            scenarioId: "cbx_test",
             accessVersion: 1,
           },
         })
       );
       expect(lastTransportOptions.body()).not.toHaveProperty("uiTools");
-      chatbox.unmount();
+      scenario.unmount();
     } finally {
       unregister();
     }
@@ -600,7 +600,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: string;
           selectedServerIds: string[];
-          chatboxId: string;
+          scenarioId: string;
           accessVersion: number;
         };
       }) =>
@@ -614,7 +614,7 @@ describe("useChatSession hosted mode", () => {
           hostedContext: {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
-            chatboxId: "cbx_1",
+            scenarioId: "cbx_1",
             accessVersion: 1,
           },
         },
@@ -634,7 +634,7 @@ describe("useChatSession hosted mode", () => {
       hostedContext: {
         projectId: "project-2",
         selectedServerIds: ["server-id-2"],
-        chatboxId: "cbx_2",
+        scenarioId: "cbx_2",
         accessVersion: 1,
       },
     });
@@ -1004,7 +1004,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
       })
@@ -1042,7 +1042,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
       })
@@ -1068,7 +1068,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
       })
@@ -1279,7 +1279,7 @@ describe("useChatSession hosted mode", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: ["server-id-1"],
-          chatboxId: "cbx_test",
+          scenarioId: "cbx_test",
           accessVersion: 1,
         },
       })
@@ -1520,7 +1520,7 @@ describe("useChatSession — environment execution target", () => {
     unmount();
   });
 
-  describe("chatbox access recovery", () => {
+  describe("scenario access recovery", () => {
     const TURN_URL = "/api/web/chat-v2";
 
     function turnInit(accessVersion: number) {
@@ -1528,7 +1528,7 @@ describe("useChatSession — environment execution target", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          chatboxId: "cbx_recover",
+          scenarioId: "cbx_recover",
           accessVersion,
           messages: [{ role: "user", content: "hi" }],
         }),
@@ -1542,7 +1542,7 @@ describe("useChatSession — environment execution target", () => {
       });
     }
 
-    function renderChatbox(
+    function renderScenario(
       hostedOverrides: Record<string, unknown>
     ) {
       return renderHook(() =>
@@ -1551,7 +1551,7 @@ describe("useChatSession — environment execution target", () => {
           hostedContext: {
             projectId: "project-1",
             selectedServerIds: ["server-id-1"],
-            chatboxId: "cbx_recover",
+            scenarioId: "cbx_recover",
             accessVersion: 1,
             requiresWebChatApi: true,
             ...hostedOverrides,
@@ -1573,13 +1573,13 @@ describe("useChatSession — environment execution target", () => {
         .fn()
         .mockResolvedValue({ ok: true, accessVersion: 12 });
       const onAccessRevoked = vi.fn();
-      const { unmount } = renderChatbox({
+      const { unmount } = renderScenario({
         refreshAccessSession,
         onAccessRevoked,
       });
 
       mockState.authFetch
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_STALE", 409))
+        .mockResolvedValueOnce(accessErrorResponse("SCENARIO_ACCESS_STALE", 409))
         .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
       const response = await chatFetch()(TURN_URL, turnInit(1));
@@ -1591,7 +1591,7 @@ describe("useChatSession — environment execution target", () => {
       // The replay is byte-identical except for the field that went stale.
       const replayInit = mockState.authFetch.mock.calls[1][1] as RequestInit;
       expect(JSON.parse(replayInit.body as string)).toEqual({
-        chatboxId: "cbx_recover",
+        scenarioId: "cbx_recover",
         accessVersion: 12,
         messages: [{ role: "user", content: "hi" }],
       });
@@ -1603,10 +1603,10 @@ describe("useChatSession — environment execution target", () => {
       const refreshAccessSession = vi
         .fn()
         .mockResolvedValue({ ok: true, accessVersion: 3 });
-      const { unmount } = renderChatbox({ refreshAccessSession });
+      const { unmount } = renderScenario({ refreshAccessSession });
 
       mockState.authFetch
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_DENIED", 403))
+        .mockResolvedValueOnce(accessErrorResponse("SCENARIO_ACCESS_DENIED", 403))
         .mockResolvedValueOnce(new Response(null, { status: 200 }));
 
       const response = await chatFetch()(TURN_URL, turnInit(1));
@@ -1621,14 +1621,14 @@ describe("useChatSession — environment execution target", () => {
         .fn()
         .mockResolvedValue({ ok: true, accessVersion: 2 });
       const onAccessRevoked = vi.fn();
-      const { unmount } = renderChatbox({
+      const { unmount } = renderScenario({
         refreshAccessSession,
         onAccessRevoked,
       });
 
       mockState.authFetch
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_STALE", 409))
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_STALE", 409));
+        .mockResolvedValueOnce(accessErrorResponse("SCENARIO_ACCESS_STALE", 409))
+        .mockResolvedValueOnce(accessErrorResponse("SCENARIO_ACCESS_STALE", 409));
 
       const response = await chatFetch()(TURN_URL, turnInit(1));
 
@@ -1645,37 +1645,37 @@ describe("useChatSession — environment execution target", () => {
         .fn()
         .mockResolvedValue({ ok: true, accessVersion: 2 });
       const onAccessRevoked = vi.fn();
-      const { unmount } = renderChatbox({
+      const { unmount } = renderScenario({
         refreshAccessSession,
         onAccessRevoked,
       });
 
       mockState.authFetch
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_DENIED", 403))
-        .mockResolvedValueOnce(accessErrorResponse("CHATBOX_ACCESS_DENIED", 403));
+        .mockResolvedValueOnce(accessErrorResponse("SCENARIO_ACCESS_DENIED", 403))
+        .mockResolvedValueOnce(accessErrorResponse("SCENARIO_ACCESS_DENIED", 403));
 
       await chatFetch()(TURN_URL, turnInit(1));
 
       expect(onAccessRevoked).toHaveBeenCalledTimes(1);
       expect(onAccessRevoked).toHaveBeenCalledWith(
-        expect.objectContaining({ status: 403, code: "CHATBOX_ACCESS_DENIED" })
+        expect.objectContaining({ status: 403, code: "SCENARIO_ACCESS_DENIED" })
       );
       unmount();
     });
 
     it("revokes when the recovery redeem is itself definitively refused", async () => {
-      const error = { status: 403, code: "CHATBOX_MEMBERS_ONLY", message: "no" };
+      const error = { status: 403, code: "SCENARIO_MEMBERS_ONLY", message: "no" };
       const refreshAccessSession = vi
         .fn()
         .mockResolvedValue({ ok: false, reason: "denied", error });
       const onAccessRevoked = vi.fn();
-      const { unmount } = renderChatbox({
+      const { unmount } = renderScenario({
         refreshAccessSession,
         onAccessRevoked,
       });
 
       mockState.authFetch.mockResolvedValue(
-        accessErrorResponse("CHATBOX_ACCESS_DENIED", 403)
+        accessErrorResponse("SCENARIO_ACCESS_DENIED", 403)
       );
 
       const response = await chatFetch()(TURN_URL, turnInit(1));
@@ -1692,13 +1692,13 @@ describe("useChatSession — environment execution target", () => {
         .fn()
         .mockResolvedValue({ ok: false, reason: "transient" });
       const onAccessRevoked = vi.fn();
-      const { unmount } = renderChatbox({
+      const { unmount } = renderScenario({
         refreshAccessSession,
         onAccessRevoked,
       });
 
       mockState.authFetch.mockResolvedValue(
-        accessErrorResponse("CHATBOX_ACCESS_STALE", 409)
+        accessErrorResponse("SCENARIO_ACCESS_STALE", 409)
       );
 
       const response = await chatFetch()(TURN_URL, turnInit(1));
@@ -1710,7 +1710,7 @@ describe("useChatSession — environment execution target", () => {
       unmount();
     });
 
-    it("skips classification entirely on a non-chatbox turn", async () => {
+    it("skips classification entirely on a non-scenario turn", async () => {
       const refreshAccessSession = vi.fn();
       const { unmount } = renderHook(() =>
         useChatSession({
@@ -1725,7 +1725,7 @@ describe("useChatSession — environment execution target", () => {
       );
 
       mockState.authFetch.mockResolvedValue(
-        accessErrorResponse("CHATBOX_ACCESS_STALE", 409)
+        accessErrorResponse("SCENARIO_ACCESS_STALE", 409)
       );
 
       await chatFetch()(TURN_URL, turnInit(1));

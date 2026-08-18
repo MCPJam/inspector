@@ -53,14 +53,14 @@ import {
   usePlaygroundState,
 } from "@/components/ui-playground/hooks/use-playground-state";
 import {
-  ChatboxChatUiOverrideProvider,
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+  ScenarioChatUiOverrideProvider,
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
+import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { ActiveHostCapsResolverScope } from "@/contexts/active-host-client-capabilities-context";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import { cn } from "@/lib/utils";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { useSharedAppState } from "@/state/app-state-context";
@@ -168,7 +168,7 @@ export function EvalLiveChatPanel({
   // widget runtime scope is derived from preferences (mirrors how the old
   // TraceViewer preview installed its own scope). Threading the case's host so
   // caps match the suite Run exactly is a follow-up.
-  const shellStyle = getChatboxShellStyle(hostStyle, themeMode);
+  const shellStyle = getScenarioShellStyle(hostStyle, themeMode);
 
   // Bind the surface to the case's servers (single-server mode falls back to the
   // first). Empty → PlaygroundMain still shows the composer (no server gate).
@@ -192,15 +192,15 @@ export function EvalLiveChatPanel({
     <PlaygroundStateProvider value={state}>
       <ActiveMcpProfileProvider value={undefined}>
         <ActiveHostCapsResolverScope activeHost={null} hostStyle={hostStyle}>
-          <ChatboxHostStyleProvider value={hostStyle}>
-            <ChatboxHostCapabilitiesOverrideProvider
+          <ScenarioHostStyleProvider value={hostStyle}>
+            <ScenarioHostCapabilitiesOverrideProvider
               value={hostCapabilitiesOverride}
             >
-              <ChatboxChatUiOverrideProvider value={chatUiOverride}>
-                <ChatboxHostThemeProvider value={themeMode}>
+              <ScenarioChatUiOverrideProvider value={chatUiOverride}>
+                <ScenarioHostThemeProvider value={themeMode}>
                   <div
                     className={cn(
-                      "chatbox-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
+                      "scenario-host-shell app-theme-scope flex h-full min-h-0 flex-1 flex-col overflow-hidden",
                       themeMode === "dark" && "dark",
                     )}
                     data-host-style={hostStyle}
@@ -235,10 +235,10 @@ export function EvalLiveChatPanel({
                       onEvalChatHandoffConsumed={onEvalChatHandoffConsumed}
                     />
                   </div>
-                </ChatboxHostThemeProvider>
-              </ChatboxChatUiOverrideProvider>
-            </ChatboxHostCapabilitiesOverrideProvider>
-          </ChatboxHostStyleProvider>
+                </ScenarioHostThemeProvider>
+              </ScenarioChatUiOverrideProvider>
+            </ScenarioHostCapabilitiesOverrideProvider>
+          </ScenarioHostStyleProvider>
         </ActiveHostCapsResolverScope>
       </ActiveMcpProfileProvider>
     </PlaygroundStateProvider>

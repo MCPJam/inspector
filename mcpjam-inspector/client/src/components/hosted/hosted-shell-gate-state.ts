@@ -5,7 +5,7 @@ interface ResolveHostedShellGateStateOptions {
   hostedMode: boolean;
   nonProdLockdown: boolean;
   /**
-   * The app is mounted as the Chatboxes/User Testing Preview embed
+   * The app is mounted as the Scenarios/User Testing Preview embed
    * (`isEmbeddedPreview()`), i.e. the author's own same-origin frame inside a
    * dashboard that already cleared this gate.
    *

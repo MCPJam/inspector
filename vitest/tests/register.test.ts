@@ -27,6 +27,7 @@ function passingSuite(): EvalSuite {
   const suite = new EvalSuite({ name: "registered suite" });
   suite.add(
     new EvalTest({
+      id: "c_register_first",
       name: "answers the first prompt",
       externalCaseId: "case_first",
       test: async (executor) => {
@@ -37,6 +38,7 @@ function passingSuite(): EvalSuite {
   );
   suite.add(
     new EvalTest({
+      id: "c_register_second",
       name: "answers the second prompt",
       test: async (executor) => {
         await executor.run("again");
@@ -62,6 +64,7 @@ describeEvalSuite("a hosted-style eval suite", passingSuite(), {
 // policy rather than accepting the option and dropping it.
 testEval(
   new EvalTest({
+    id: "c_register_standalone",
     name: "a standalone eval",
     test: async (executor) => {
       await executor.run("hello");
