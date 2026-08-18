@@ -108,19 +108,33 @@ export async function createWorkosKeyBinding(args: {
  * Remove the org binding for a revoked WorkOS key. The backend delete is
  * idempotent (200 whether or not a row existed); the caller treats a thrown
  * error as best-effort and does not fail the user-facing revoke.
+ *
+ * `actorUserId` names who is revoking, and is an MCPJam `Id<'users'>` — NOT
+ * the WorkOS `sub`. The backend rejects the wrong one with a 400 rather than
+ * recording a meaningless actor, so resolve the user first
+ * (`resolveUserByExternalId`) and omit the argument if that lookup comes back
+ * empty. Omitting it is a supported state, not a failure: the backend then
+ * records the revocation as unattributed instead of inventing an actor.
  */
 export async function removeWorkosKeyBinding(
-  workosApiKeyId: string
+  workosApiKeyId: string,
+  actorUserId?: string
 ): Promise<void> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
-  const url = `${convexUrl}${BINDINGS_PATH}?workosApiKeyId=${encodeURIComponent(
-    workosApiKeyId
-  )}`;
+  const params = new URLSearchParams({ workosApiKeyId });
+  if (actorUserId) params.set("actorUserId", actorUserId);
+  const url = `${convexUrl}${BINDINGS_PATH}?${params.toString()}`;
   const response = await fetch(url, {
     method: "DELETE",
     headers: { "x-inspector-service-token": serviceToken },
   });
   if (!response.ok) {
-    throw new Error(`Binding remove failed (${response.status})`);
+    // Carry the status: a 403 here means the backend refused the revoke
+    // because the actor did not mint the key, which is a different event from
+    // an unreachable backend and the caller logs it as one.
+    throw new WorkosKeyBindingError(
+      response.status,
+      `Binding remove failed (${response.status})`
+    );
   }
 }
