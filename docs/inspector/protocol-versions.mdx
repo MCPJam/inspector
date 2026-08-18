@@ -34,9 +34,9 @@ Use the host default when you want every server in a Client to speak the same ve
 | **2025-03-26**            | `2025-03-26`       | HTTP, STDIO, SSE                                | Test against the March 2025 stable revision.                                                                                                |
 | **Host default** _(per-server only)_ | —     | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
 
-**Automatic** stores no pin — the absence of a pin is the meaning, not a hidden default. Picking any other option stores that exact version literal and narrows the `initialize` handshake's accept-list to that single revision.
+**Automatic** is stored as the selection policy `"auto"` — it is not a wire literal and is never sent to the server. At connect time the SDK negotiates the era with the server rather than announcing a specific version up front. Picking any other option stores that exact version literal and pins the connection to that single revision.
 
-When Automatic falls back to the legacy `initialize` handshake, it uses the MCP SDK's complete built-in supported-version list. Persisted per-client accept-lists are ignored in Automatic mode so reconnecting cannot accidentally narrow negotiation; choose an explicit version when you want a strict protocol pin.
+When Automatic falls back to the legacy `initialize` handshake, it respects the client's **Supported protocol versions** list (if set). The SDK negotiates only within that list and rejects a server that counter-offers a version outside it. If no list is set, the SDK's built-in defaults apply. Choose an explicit version pin when you want strict, list-independent control.
 
 **Latest** is derived, not hardcoded: it always labels the newest version in the SDK's known-version list. Every other known revision is shown as a bare date.
 
