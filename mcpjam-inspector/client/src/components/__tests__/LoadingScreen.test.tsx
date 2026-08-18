@@ -42,6 +42,14 @@ describe("LoadingScreen", () => {
     expect(screen.getByText("Loading")).toBeInTheDocument();
   });
 
+  it("treats a null message like no message (defensive against untyped JS callers)", () => {
+    // `message` is typed string | undefined, but a plain-JS caller could still
+    // pass null at runtime; it must fall back to the accessible "Loading" label.
+    render(<LoadingScreen message={null as unknown as string} />);
+
+    expect(screen.getByText("Loading")).toBeInTheDocument();
+  });
+
   it("marks the decorative spinner as hidden from assistive tech", () => {
     const { container } = render(<LoadingScreen message="Working" />);
 
