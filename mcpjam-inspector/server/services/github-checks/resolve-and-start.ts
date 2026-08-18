@@ -407,9 +407,7 @@ export async function resolveAndStart(
           // `undefined` or `{}`: the backend refuses `env` on a cacheable rung,
           // so an empty map riding along on a detected candidate would be a 400
           // on a candidate that was otherwise fine.
-          ...(candidate.env && Object.keys(candidate.env).length > 0
-            ? { env: candidate.env }
-            : {}),
+          ...envField(candidate.env),
         },
         rung: candidate.rung,
         evidence: candidate.evidence,
@@ -579,6 +577,27 @@ export async function resolveAndStart(
   }
 }
 
+/**
+ * `{ env }` when there is an environment, and NOTHING otherwise.
+ *
+ * ONE rule for both directions this module carries an environment across — the
+ * candidates we report to the plan, and the candidate the plan hands back. They
+ * had the rule written out twice and it drifted immediately: `{}` is truthy, so
+ * "copy it when it is there" quietly admits the empty map that "copy it when
+ * there is something in it" rejects.
+ *
+ * The distinction is not cosmetic on the outbound side. An empty map is still a
+ * VALUE, and the backend refuses `env` on a cacheable rung — so an empty one
+ * riding along on a detected candidate is a 400 on a candidate that was
+ * otherwise fine. Inbound it is a shape the rest of the pipeline should never
+ * have to recognise as a second spelling of absence.
+ */
+function envField(env: Record<string, string> | undefined): {
+  env?: Record<string, string>;
+} {
+  return env && Object.keys(env).length > 0 ? { env } : {};
+}
+
 function recipeOf(planned: PlannedCandidate): ResolvedRecipe {
   return {
     build: planned.recipe.build,
@@ -586,11 +605,10 @@ function recipeOf(planned: PlannedCandidate): ResolvedRecipe {
     port: planned.recipe.port,
     mcpPath: planned.recipe.mcpPath,
     // The PLAN's environment, not the one we proposed — the backend owns the
-    // plan, and a candidate it issued must execute exactly as issued. Copied
-    // conditionally so an env-free plan candidate stays env-free rather than
-    // acquiring an `env: undefined` that later code would have to know to
-    // ignore.
-    ...(planned.recipe.env ? { env: planned.recipe.env } : {}),
+    // plan, and a candidate it issued must execute exactly as issued. Through
+    // `envField` so an env-free plan candidate stays env-free rather than
+    // acquiring a key later code would have to know to ignore.
+    ...envField(planned.recipe.env),
     rung: planned.rung,
     ownershipProof: planned.ownershipProof,
     evidence: planned.evidence ?? [],

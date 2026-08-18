@@ -1161,3 +1161,32 @@ describe("resolveAndStart — the declared environment travels with the recipe",
     expect("env" in built[0]).toBe(false);
   });
 });
+
+describe("resolveAndStart — an empty environment is an absent one, everywhere", () => {
+  // `{}` is truthy, so "copy it when it is there" and "copy it when there is
+  // something in it" are different rules, and only the second one holds the
+  // contract. The backend cannot issue an empty map today — its candidates come
+  // from the env-free cache or from the local candidates we already normalize —
+  // so this is the boundary staying honest ahead of the case rather than after
+  // it.
+  it("drops a backend-planned `env: {}` instead of carrying it forward", async () => {
+    const built: Array<Record<string, unknown>> = [];
+    const session = fakeSession({
+      candidates: [planned("c1", { env: {} })],
+    });
+    const f = fakes({
+      ladder: { kind: "candidates", candidates: [recipe()] },
+      session,
+    });
+    const inner = f.deps.buildAndStart!;
+    f.deps.buildAndStart = async (sandbox, recipeToRun) => {
+      built.push(recipeToRun as unknown as Record<string, unknown>);
+      return inner(sandbox, recipeToRun);
+    };
+
+    const result = await resolveAndStart(ARGS, f.deps);
+    expect(built).toHaveLength(1);
+    expect("env" in built[0]).toBe(false);
+    expect("env" in result.recipe).toBe(false);
+  });
+});
