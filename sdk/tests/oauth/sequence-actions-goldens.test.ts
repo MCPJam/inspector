@@ -121,3 +121,120 @@ describe.each(CASES)(
     });
   },
 );
+
+// 2025-03-26 intentionally has no resource-metadata details in this action,
+// so it never parses the displayed URL and cannot hit this rendering crash.
+// Derived from ALL_VERSIONS rather than listed, so a new era is covered the
+// moment it is added rather than silently skipping this regression.
+describe.each(ALL_VERSIONS.filter((version) => version !== "2025-03-26"))(
+  "sequence actions (%s / invalid resource metadata URL)",
+  (protocolVersion) => {
+    it.each<[unknown, string]>([
+      [
+        "/.well-known/oauth-protected-resource",
+        "/.well-known/oauth-protected-resource (not an absolute URL)",
+      ],
+      ["", '"" (not an absolute URL)'],
+      [null, "null (not an absolute URL)"],
+      [
+        { href: "/.well-known/oauth-protected-resource" },
+        '{"href":"/.well-known/oauth-protected-resource"} (not an absolute URL)',
+      ],
+    ])("annotates malformed value %j without crashing", (value, displayed) => {
+      let actions: ReturnType<typeof buildOAuthSequenceActions> = [];
+      expect(() => {
+        actions = buildOAuthSequenceActions({
+          protocolVersion,
+          registrationStrategy: "dcr",
+          flowState: {
+            ...EMPTY_OAUTH_FLOW_STATE,
+            resourceMetadataUrl: value,
+          } as OAuthFlowState,
+        });
+      }).not.toThrow();
+
+      expect(
+        actions.find((action) => action.id === "request_resource_metadata")
+          ?.details
+      ).toEqual([{ label: "GET", value: displayed }]);
+    });
+  }
+);
+
+// The authorization-server metadata step renders on EVERY era, including
+// 2025-03-26 — it is outside the protected-resource preamble — so its
+// endpoints have a wider blast radius than the resource-metadata URL above.
+// RFC 8414 requires absolute endpoints, but the machines validate only that
+// the fields are present, so a relative one reaches the diagram unchecked.
+describe.each(ALL_VERSIONS)(
+  "sequence actions (%s / relative authorization server endpoints)",
+  (protocolVersion) => {
+    it.each<[unknown, unknown, string, string]>([
+      [
+        "/token",
+        "/authorize",
+        "/token (not an absolute URL)",
+        "/authorize (not an absolute URL)",
+      ],
+      [
+        "",
+        "/authorize",
+        '"" (not an absolute URL)',
+        "/authorize (not an absolute URL)",
+      ],
+      [
+        null,
+        "/authorize",
+        "null (not an absolute URL)",
+        "/authorize (not an absolute URL)",
+      ],
+      [
+        "/token",
+        "",
+        "/token (not an absolute URL)",
+        '"" (not an absolute URL)',
+      ],
+      [
+        "/token",
+        null,
+        "/token (not an absolute URL)",
+        "null (not an absolute URL)",
+      ],
+      [
+        { href: "/token" },
+        ["/authorize"],
+        '{"href":"/token"} (not an absolute URL)',
+        '["/authorize"] (not an absolute URL)',
+      ],
+    ])(
+      "annotates malformed token %j and authorization %j without crashing",
+      (tokenEndpoint, authorizationEndpoint, displayedToken, displayedAuth) => {
+        let actions: ReturnType<typeof buildOAuthSequenceActions> = [];
+        expect(() => {
+          actions = buildOAuthSequenceActions({
+            protocolVersion,
+            registrationStrategy: "dcr",
+            flowState: {
+              ...EMPTY_OAUTH_FLOW_STATE,
+              authorizationServerMetadata: {
+                issuer: "https://auth-server.example.com",
+                authorization_endpoint: authorizationEndpoint,
+                token_endpoint: tokenEndpoint,
+                response_types_supported: ["code"],
+              },
+            } as OAuthFlowState,
+          });
+        }).not.toThrow();
+
+        expect(
+          actions.find(
+            (action) => action.id === "received_authorization_server_metadata"
+          )?.details
+        ).toEqual([
+          { label: "Token", value: displayedToken },
+          { label: "Auth", value: displayedAuth },
+        ]);
+      }
+    );
+  }
+);

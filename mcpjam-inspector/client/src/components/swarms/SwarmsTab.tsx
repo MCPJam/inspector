@@ -1,7 +1,7 @@
 /**
  * Project-scoped Swarms surface (redesign): Persona → Journey → Run.
  *
- * Replaces the old host-anchored `ChatboxesTab product="swarm"`. Personas and
+ * Replaces the old host-anchored `ScenariosTab product="swarm"`. Personas and
  * journeys live at the project level; a journey targets one-or-more hosts and,
  * when run, fans out one single-host session per (host × sessionsPerTarget).
  *
@@ -106,7 +106,7 @@ import {
   swarmsCreatePath,
   useAppNavigate,
 } from "@/lib/app-navigation";
-import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
 import { SwarmRunDetail } from "@/components/swarms/swarm-run-detail";

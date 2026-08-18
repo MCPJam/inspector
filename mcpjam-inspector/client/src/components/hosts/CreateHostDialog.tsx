@@ -40,8 +40,8 @@ interface CreateHostDialogProps {
   initialTemplateId?: string;
   /**
    * Product ownership for the new host. `'journeys'` mints a STANDALONE
-   * (chatbox-less) host owned by the Swarms surface. Absent → legacy behavior
-   * (a chatbox / publish surface is minted). Every existing mount omits it.
+   * (scenario-less) host owned by the Swarms surface. Absent → legacy behavior
+   * (a scenario / publish surface is minted). Every existing mount omits it.
    */
   owner?: "journeys";
 }
@@ -161,7 +161,7 @@ export function CreateHostDialog({
         name: trimmed,
         input: { ...seed, serverIds: [] },
         // Standalone (Swarms-owned) host when requested; omitted → legacy
-        // chatbox-minting path.
+        // scenario-minting path.
         ...(owner ? { owner } : {}),
       });
       toast.success(`Client "${trimmed}" created`);

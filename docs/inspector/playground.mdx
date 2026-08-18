@@ -356,7 +356,7 @@ Prompts are MCP prompt templates exposed by your servers via `prompts/list`. Typ
 
 ## Workspace tools
 
-When you are signed in as a project member, the Playground gives the model a set of built-in tools for interacting with the MCP servers saved in your project. These tools are not available to guests or in shared chatbox sessions.
+When you are signed in as a project member, the Playground gives the model a set of built-in tools for interacting with the MCP servers saved in your project. These tools are not available to guests or in shared scenario sessions.
 
 | Tool | What it does |
 |---|---|
@@ -374,7 +374,7 @@ Servers are identified by name or ID as saved in the project. Stdio servers are 
 When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, and `read_server_resource` (the operations that open a live connection) so you can approve or deny each one. Read-only listing tools (`list_project_servers`, `list_server_tools`, `list_server_prompts`, `list_server_resources`) never require approval.
 
 <Note>
-  These tools are only available when you are signed in as a project member. They are not shown to guests or in chatbox sessions.
+  These tools are only available when you are signed in as a project member. They are not shown to guests or in scenario sessions.
 </Note>
 
 ## Elicitation

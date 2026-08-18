@@ -16,7 +16,7 @@ export async function runByMode<T>(options: {
   /**
    * Session-scoped override: run the hosted branch even on local builds.
    * Set by surfaces whose servers are Convex-resolved on every platform
-   * (the published chatbox runtime) — the local /api/mcp branch can't
+   * (the published scenario runtime) — the local /api/mcp branch can't
    * connect those servers. See `useWebManagedServers`.
    */
   forceHosted?: boolean;

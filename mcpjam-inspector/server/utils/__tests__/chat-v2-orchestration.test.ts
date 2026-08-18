@@ -10,7 +10,7 @@ vi.mock("@/shared/types", async () => {
   );
   return {
     ...actual,
-    isGPT5Model: vi.fn().mockReturnValue(false),
+    modelSupportsTemperature: vi.fn().mockReturnValue(true),
   };
 });
 

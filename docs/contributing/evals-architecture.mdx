@@ -68,7 +68,7 @@ This module is the **one source of truth**. The MCPJam backend imports the canon
   - `extractHostExecutionPolicy` / `buildHostIterationMetadata` from `@mcpjam/sdk/host-config/internal` (Stage 3) — was previously `server/services/evals/host-execution-policy.ts`; the local file is now deleted.
   - `resolveOpenAiCompatForHostConfig` from `@mcpjam/sdk/host-config/internal` (Stage 3) — was previously the local `compat-runtime.ts`; only the Convex-bound `loadSuiteHostConfig` remains in the inspector.
   - `filterAppOnlyTools` from `@mcpjam/sdk/host-config/internal` (Stage 3) — same predicate the chat-v2 path uses, no fork.
-- **Inbound (frontend → backend).** The eval results API persists per-iteration `hostConfigId` rows that reference the same `hostConfigs` table the chatbox/playground writes.
+- **Inbound (frontend → backend).** The eval results API persists per-iteration `hostConfigId` rows that reference the same `hostConfigs` table the scenario/playground writes.
 
 The Playground's chat-v2 path consumes the same module — playground and evals are two surfaces over the same configuration vocabulary; see [playground-architecture.mdx](./playground-architecture#hostconfig-consolidation) for the live-path side of the same picture.
 
