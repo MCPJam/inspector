@@ -55,6 +55,12 @@ new EvalTest(options: EvalTestConfig)
   Constructing an `EvalTest` without an `id` throws, and the error carries a
   freshly minted id to paste.
 
+  **New in 6.0: `id` is sent on upload.** From 6.0, the declared `id` rides the
+  wire on every result upload. This means a renamed test keeps its hosted history
+  instead of forking it — the platform resolves by `id` first and adopts it onto
+  the existing case record. Upgrading to 6.0 is required to get this behavior;
+  earlier SDK versions sent no `id` and history was keyed on a content hash.
+
   **Migrating from `externalCaseId`:** If your test already declares
   `externalCaseId`, reuse that value verbatim as `id` — do not mint a new one.
   The hosted history for that case is keyed on `externalCaseId`, so setting
