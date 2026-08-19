@@ -8,6 +8,8 @@ import type {
   PlatformEvalRun,
   PlatformEvalRunInsightsRequested,
   PlatformEvalRunJudgeRequested,
+  PlatformEvalCheckRepos,
+  PlatformEvalCheckRepoConnected,
   PlatformEvalRunCreated,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
@@ -1037,6 +1039,58 @@ export class PlatformApiClient {
           ...(params.threshold !== undefined
             ? { threshold: params.threshold }
             : {}),
+        },
+      },
+      options,
+    );
+  }
+
+  /**
+   * The repositories in an organization whose pull requests run an eval suite,
+   * plus what the MCPJam GitHub App can reach.
+   */
+  listEvalCheckRepos(
+    params: { organizationId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalCheckRepos> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId,
+      )}/eval-check-repos`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Connect a repository so its pull requests run one eval suite.
+   *
+   * `outagePolicy` is required rather than defaulted: it decides what a check
+   * reports when MCPJam cannot conclude, and a surface that picks silently is
+   * the one that produces repositories nobody chose a policy for.
+   */
+  connectEvalCheckRepo(
+    params: {
+      organizationId: string;
+      projectId: string;
+      suiteId: string;
+      repo: string;
+      outagePolicy: "fail_open" | "fail_closed";
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalCheckRepoConnected> {
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(
+        params.organizationId,
+      )}/eval-check-repos`,
+      {
+        body: {
+          projectId: params.projectId,
+          suiteId: params.suiteId,
+          repo: params.repo,
+          outagePolicy: params.outagePolicy,
         },
       },
       options,

@@ -144,6 +144,9 @@ const PLAIN_TOOLS = [
   "get_eval_run_steps",
   "cancel_eval_run",
   "request_eval_run_judge",
+  // GitHub Checks: agent-oriented payloads, no widget view.
+  "list_eval_check_repos",
+  "connect_eval_check_repo",
   "list_chat_sessions",
   "search_sessions",
   // Swarms + user testing. No widget views yet: these are agent-oriented
@@ -318,6 +321,8 @@ describe("platform tool registration", () => {
       "get_eval_run_steps",
       "cancel_eval_run",
       "request_eval_run_judge",
+      "list_eval_check_repos",
+      "connect_eval_check_repo",
       "list_project_environments",
       "get_project_environment",
       "resolve_project_environment",
@@ -435,6 +440,10 @@ describe("platform tool registration", () => {
       // Grading SPENDS but writes only an advisory result onto the run — the
       // deterministic verdict stays authoritative, so nothing is destroyed.
       "request_eval_run_judge",
+      // Additive: it creates a repository connection. Its hazard is REACH (a
+      // shared repository, everyone's pull requests), not destruction — the
+      // annotation says write, and the gated tier is what warns.
+      "connect_eval_check_repo",
       "create_project_server",
       "update_project_server",
       // Project create/update: both are cheap, both are metadata-only (the

@@ -2552,6 +2552,96 @@
         }
       }
     },
+    "/organizations/{organizationId}/eval-check-repos": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/organizationId"
+        }
+      ],
+      "get": {
+        "operationId": "listEvalCheckRepos",
+        "tags": [
+          "Evals"
+        ],
+        "summary": "List GitHub Checks repositories",
+        "description": "The repositories in this organization whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach (the choices a connect has).\n\n`available: false` means GitHub Checks is not enabled for this organization at all \u2014 connecting a repository will not help. `connectable: null` means the App could not be asked (GitHub unavailable, or no installation), which is different from an empty list meaning it reaches nothing; the already-connected list needs no GitHub call and is returned either way.",
+        "responses": {
+          "200": {
+            "description": "Connected and connectable repositories.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCheckRepos"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "connectEvalCheckRepo",
+        "tags": [
+          "Evals"
+        ],
+        "summary": "Run an eval suite on a repository's pull requests",
+        "description": "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. **Affects everyone who opens a pull request on that repository**, and with `outagePolicy: fail_closed` it can block their merges.\n\nThe repository is verified against the organization's GitHub App installation before it is stored. A repository that does not exist and one the App cannot see answer identically, on purpose: answering differently would make this an oracle for private repository names.\n\nDeliberately narrow: retargeting a repository at a different suite, pausing it, and disconnecting are repo-level decisions and live in the app's Settings \u2192 Integrations, where every connected repository is visible at once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalCheckRepoConnectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Connected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCheckRepoConnected"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects": {
       "get": {
         "operationId": "listProjects",
@@ -8377,6 +8467,15 @@
       }
     },
     "parameters": {
+      "organizationId": {
+        "name": "organizationId",
+        "in": "path",
+        "required": true,
+        "description": "ID of the organization, from `GET /organizations`.",
+        "schema": {
+          "type": "string"
+        }
+      },
       "projectId": {
         "name": "projectId",
         "in": "path",
@@ -12062,6 +12161,179 @@
             "items": {
               "$ref": "#/components/schemas/EvalSuite"
             }
+          }
+        }
+      },
+      "EvalCheckRepo": {
+        "type": "object",
+        "description": "A repository whose pull requests run an eval suite.",
+        "required": [
+          "id",
+          "repo",
+          "enabled",
+          "suiteId",
+          "projectId",
+          "outagePolicy",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string",
+            "description": "`owner/repo`, canonicalized by the platform."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "suiteId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The eval suite this repository's pull requests run."
+          },
+          "projectId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outagePolicy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "fail_open",
+              "fail_closed",
+              null
+            ],
+            "description": "What the check reports when MCPJam cannot conclude. `null` is a REAL state \u2014 nobody chose a policy, because the repository was connected before the choice existed. The effective behaviour is `fail_open`, but reporting `fail_open` would say someone picked it."
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "EvalCheckRepos": {
+        "type": "object",
+        "required": [
+          "organizationId",
+          "available",
+          "items",
+          "connectable"
+        ],
+        "properties": {
+          "organizationId": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "Whether GitHub Checks is available for this organization at all. `false` and \"available, nothing connected\" are different situations, and only one of them is fixed by connecting a repository."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalCheckRepo"
+            },
+            "description": "The repositories already connected."
+          },
+          "connectable": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "required": [
+                "repo"
+              ],
+              "properties": {
+                "repo": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The repositories the MCPJam GitHub App can reach \u2014 the choices a connect has. `null` means the question could not be ASKED (GitHub was unavailable, or there is no installation), which is different from an empty list meaning the App reaches nothing."
+          }
+        }
+      },
+      "EvalCheckRepoConnectRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "projectId",
+          "suiteId",
+          "repo",
+          "outagePolicy"
+        ],
+        "properties": {
+          "projectId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string",
+            "description": "The eval suite this repository's pull requests will run."
+          },
+          "repo": {
+            "type": "string",
+            "description": "`owner/repo`. Canonicalized and VERIFIED against the App's installation before it is stored."
+          },
+          "outagePolicy": {
+            "type": "string",
+            "enum": [
+              "fail_open",
+              "fail_closed"
+            ],
+            "description": "REQUIRED here, though the platform leaves it optional for a deploy window: a surface that defaults it is the one that quietly produces repositories nobody chose a policy for."
+          }
+        }
+      },
+      "EvalCheckRepoConnected": {
+        "type": "object",
+        "required": [
+          "id",
+          "organizationId",
+          "projectId",
+          "suiteId",
+          "repo",
+          "outagePolicy"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "organizationId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "outagePolicy": {
+            "type": "string",
+            "enum": [
+              "fail_open",
+              "fail_closed"
+            ]
           }
         }
       },

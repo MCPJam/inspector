@@ -1024,6 +1024,39 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--judge-model <id>` | No | Judge model ID |
 | `--judge-threshold <0-1>` | No | Judge pass threshold, 0–1 (a case passes when its score is at or above it) |
 
+### `eval checks list`
+
+List the repositories whose pull requests run an eval suite, plus the
+repositories the MCPJam GitHub App can reach.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | No | Project name or ID — only used to pick the organization (defaults to the most recently updated project) |
+
+`available: false` means GitHub Checks is not enabled for the organization at
+all, so connecting a repository will not help. `connectable: null` means the
+App could not be asked (GitHub unavailable, or no installation) — different
+from an empty list, which would mean it reaches nothing.
+
+### `eval checks connect`
+
+Run this suite on every pull request to a repository. **Affects everyone who
+opens a pull request on that repository**, and with `fail-closed` it can block
+their merges.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--repo <owner/repo>` | Yes | Repository to connect. Must be one `eval checks list` reports as connectable |
+| `--outage-policy <fail-open\|fail-closed>` | Yes | What the check reports when MCPJam cannot conclude |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+`--outage-policy` has no default on purpose: it decides what happens to other
+people's pull requests during an MCPJam outage, and it is not editable from
+this command afterwards. Retargeting a repository at a different suite, pausing
+it, and disconnecting all live in the app's Settings → Integrations, where every
+connected repository is visible at once.
+
 ### `eval delete`
 
 Permanently delete an eval suite (and its cases and runs).

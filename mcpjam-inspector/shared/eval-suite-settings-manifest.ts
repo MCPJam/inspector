@@ -89,8 +89,12 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   {
     key: "githubChecks",
     label: "GitHub Checks",
-    excluded:
-      "ORG-scoped, not suite-scoped: connecting a repository configures the organization's GitHub App installation, and the suite row only picks which repo this suite answers for. It needs its own route family and operations rather than a field on update_eval_suite; until those land it stays app-only.",
+    // ORG-scoped, not suite-scoped: connecting a repository configures the
+    // organization's GitHub App installation, and the suite only decides which
+    // suite that repository answers for. So it has its own route family and its
+    // own operations rather than a field on `update_eval_suite`. The op named
+    // here is the WRITE this row performs; `list_eval_check_repos` is its read.
+    op: "connect_eval_check_repo",
   },
   {
     key: "llmAsJudge",

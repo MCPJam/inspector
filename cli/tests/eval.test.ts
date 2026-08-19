@@ -154,6 +154,50 @@ async function startEvalFixture(): Promise<{
       res.end(JSON.stringify({ items: PROJECTS }));
       return;
     }
+    if (
+      url.pathname === "/api/v1/organizations/org-1/eval-check-repos" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          organizationId: "org-1",
+          available: true,
+          items: [
+            {
+              id: "cfg-1",
+              repo: "acme/widgets",
+              enabled: true,
+              suiteId: "suite-1",
+              projectId: "proj-alpha",
+              outagePolicy: null,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+          connectable: [{ repo: "acme/widgets" }],
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname === "/api/v1/organizations/org-1/eval-check-repos" &&
+      req.method === "POST"
+    ) {
+      const body = raw ? JSON.parse(raw) : {};
+      createBodies.push(body);
+      res.statusCode = 201;
+      res.end(
+        JSON.stringify({
+          id: "cfg-2",
+          organizationId: "org-1",
+          projectId: body.projectId,
+          suiteId: body.suiteId,
+          repo: body.repo,
+          outagePolicy: body.outagePolicy,
+        }),
+      );
+      return;
+    }
     if (url.pathname === "/api/v1/projects/proj-alpha/servers") {
       res.end(JSON.stringify({ items: SERVERS }));
       return;
@@ -1417,6 +1461,128 @@ test("eval update --computer-image sends the selector, off sends null", async ()
       environment?: Record<string, unknown>;
     };
     assert.deepEqual(patchBody.environment, { computerEnvironment: null });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval checks list reports connected and connectable repositories", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(fixture.baseUrl, "checks", "list", "--project", "proj-alpha"),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.checks.available, true);
+    assert.equal(payload.checks.items[0].repo, "acme/widgets");
+    // An unchosen policy stays null rather than being reported as fail_open.
+    assert.equal(payload.checks.items[0].outagePolicy, null);
+    assert.deepEqual(payload.checks.connectable, [{ repo: "acme/widgets" }]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval checks connect maps the hyphenated policy onto the wire spelling", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "checks",
+            "connect",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--repo",
+            "acme/widgets",
+            "--outage-policy",
+            "fail-closed",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.createBodies.at(-1), {
+      projectId: "proj-alpha",
+      suiteId: "suite-1",
+      repo: "acme/widgets",
+      outagePolicy: "fail_closed",
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval checks connect refuses an unknown outage policy before any write", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "checks",
+          "connect",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--repo",
+          "acme/widgets",
+          "--outage-policy",
+          "maybe",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--outage-policy must be/);
+    // It reaches a shared repository — a bad flag must not get that far.
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval checks connect requires an outage policy at all", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "checks",
+          "connect",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--repo",
+          "acme/widgets",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.equal(fixture.createBodies.length, 0);
   } finally {
     await fixture.close();
   }

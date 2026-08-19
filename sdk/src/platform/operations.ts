@@ -40,6 +40,8 @@ import type {
   PlatformEvalStepResult,
   PlatformEvalRun,
   PlatformEvalRunJudgeRequested,
+  PlatformEvalCheckRepos,
+  PlatformEvalCheckRepoConnected,
   PlatformRunCompare,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
@@ -2846,6 +2848,143 @@ export const requestEvalRunJudgeOperation: PlatformOperation<
       { signal },
     );
     return { project: toSelectedProjectInfo(project), judge };
+  },
+};
+
+/**
+ * The organization a GitHub Checks connection belongs to.
+ *
+ * `PlatformProject.organizationId` is nullable — a personal project belongs to
+ * no organization — and GitHub Checks is an organization's App installation.
+ * Refused with the reason rather than sent as an empty string, which would
+ * reach the platform as an unparseable id and come back as a flat not-found.
+ */
+function checkRepoOrganizationOrThrow(project: PlatformProject): string {
+  const organizationId = project.organizationId;
+  if (!organizationId) {
+    throw operationInputError(
+      `Project "${project.name}" does not belong to an organization, and GitHub Checks is configured per organization. Move the suite to a project in an organization, or connect the repository from the app.`,
+    );
+  }
+  return organizationId;
+}
+
+// ── GitHub Checks: run a suite on every pull request ──────────────────────
+//
+// Two operations rather than fields on `update_eval_suite`, because the
+// resource is ORG-scoped: a connection binds the organization's GitHub App
+// installation to a repository, and the suite is only which suite that
+// repository answers for.
+//
+// Deliberately NARROW, mirroring the suite-side section in the app: connect,
+// and see what is connected. Pausing, retargeting and disconnecting are
+// repo-level decisions that want every repository visible at once — offering
+// them here would let a caller retarget a repository away from the suite it is
+// standing on.
+
+const listEvalCheckReposInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Project name or ID. Only used to select the ORGANIZATION whose connected repositories are listed.",
+    ),
+});
+export type ListEvalCheckReposInput = z.infer<typeof listEvalCheckReposInput>;
+
+export type ListEvalCheckReposResult = {
+  project: SelectedProjectInfo;
+  checks: PlatformEvalCheckRepos;
+};
+
+export const listEvalCheckReposOperation: PlatformOperation<
+  ListEvalCheckReposInput,
+  ListEvalCheckReposResult
+> = {
+  name: "list_eval_check_repos",
+  title: "List MCPJam GitHub Checks repositories",
+  description:
+    "List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the App could not be asked, which is different from it reaching nothing.",
+  readOnly: true,
+  inputSchema: listEvalCheckReposInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const checks = await client.listEvalCheckRepos(
+      { organizationId: checkRepoOrganizationOrThrow(project) },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), checks };
+  },
+};
+
+const connectEvalCheckRepoInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  repo: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Repository as owner/repo. Must be one list_eval_check_repos reports as connectable — the MCPJam GitHub App has to be installed on it.",
+    ),
+  outagePolicy: z
+    .enum(["fail_open", "fail_closed"])
+    .describe(
+      "What the pull-request check reports when MCPJam cannot conclude: fail_open passes it, fail_closed fails it. Required — ask the user which they want rather than choosing for them; fail_closed blocks merges during an MCPJam outage, fail_open lets an unverified change through.",
+    ),
+});
+export type ConnectEvalCheckRepoInput = z.infer<
+  typeof connectEvalCheckRepoInput
+>;
+
+export type ConnectEvalCheckRepoResult = {
+  project: SelectedProjectInfo;
+  check: PlatformEvalCheckRepoConnected;
+};
+
+export const connectEvalCheckRepoOperation: PlatformOperation<
+  ConnectEvalCheckRepoInput,
+  ConnectEvalCheckRepoResult
+> = {
+  name: "connect_eval_check_repo",
+  title: "Run an MCPJam eval suite on a repository's pull requests",
+  description:
+    "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.",
+  readOnly: false,
+  // Not `spend`: it costs an eval run per pull request, but the hazard a
+  // surface needs to warn about here is REACH — it changes what happens in a
+  // shared repository for everyone who opens a PR against it.
+  risk: "exposure",
+  inputSchema: connectEvalCheckRepoInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const check = await client.connectEvalCheckRepo(
+      {
+        organizationId: checkRepoOrganizationOrThrow(project),
+        projectId: project.id,
+        suiteId: suite.id,
+        repo: input.repo,
+        outagePolicy: input.outagePolicy,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), check };
   },
 };
 
@@ -7477,6 +7616,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   getEvalRunStepsOperation,
   createTunnelOperation,
   closeTunnelOperation,

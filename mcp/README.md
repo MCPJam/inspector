@@ -69,6 +69,8 @@ so results respect the caller's project access.
 | `get_eval_run_steps` | Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). | — |
 | `cancel_eval_run` | Cancel an in-flight eval run. | — |
 | `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
+| `list_eval_check_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
+| `connect_eval_check_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |

@@ -18,6 +18,8 @@ import {
   getEvalIterationTraceOperation,
   getEvalRunOperation,
   requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   listEvalCasesOperation,
@@ -1450,6 +1452,78 @@ export function registerEvalCommands(program: Command): void {
   );
 
   const PROJECT_OPT = "Project name or ID (defaults to most recently updated)";
+
+  // ── GitHub Checks: run this suite on every pull request ────────────
+  // A subgroup, not two flat commands: `checks` is a different resource from
+  // the suite it points at, and flattening it would put `eval connect` next to
+  // `eval run` as if they were the same kind of verb.
+  const checks = evals
+    .command("checks")
+    .description("Run an eval suite on a repository's pull requests");
+
+  addPlatformOptions(
+    checks
+      .command("list")
+      .description(
+        "List the repositories running an eval suite on their pull requests"
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+  ).action(
+    async (options: PlatformOptions & { project?: string }, command) => {
+      await executeOp(
+        listEvalCheckReposOperation,
+        { project: options.project },
+        options,
+        command
+      );
+    }
+  );
+
+  addPlatformOptions(
+    checks
+      .command("connect")
+      .description(
+        "Run this suite on every pull request to a repository (affects everyone who opens one)"
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .requiredOption("--repo <owner/repo>", "Repository to connect")
+      .requiredOption(
+        "--outage-policy <fail-open|fail-closed>",
+        "What the check reports when MCPJam cannot conclude"
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        suite: string;
+        repo: string;
+        outagePolicy: string;
+      },
+      command
+    ) => {
+      // Hyphens on the flag, underscores on the wire: the flag reads like every
+      // other CLI value, and the API keeps the platform's own spelling.
+      const policy = {
+        "fail-open": "fail_open",
+        "fail-closed": "fail_closed",
+        fail_open: "fail_open",
+        fail_closed: "fail_closed",
+      }[options.outagePolicy];
+      if (!policy) {
+        throw usageError(
+          '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.'
+        );
+      }
+      const input = validateOpInput(connectEvalCheckRepoOperation, {
+        project: options.project,
+        suite: options.suite,
+        repo: options.repo,
+        outagePolicy: policy,
+      });
+      await executeOp(connectEvalCheckRepoOperation, input, options, command);
+    }
+  );
 
   // ── Eval run iterations + traces ───────────────────────────────────
   addPlatformOptions(

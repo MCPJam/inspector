@@ -1842,6 +1842,58 @@ export interface PlatformInsightsEnvelope {
   };
 }
 
+/**
+ * A repository whose pull requests run an eval suite.
+ *
+ * `outagePolicy: null` is a REAL state, not a missing value: it means nobody
+ * chose a policy for this repository (it was connected before the choice
+ * existed). The effective behaviour is `fail_open`, but reporting `fail_open`
+ * would say someone picked it.
+ */
+export interface PlatformEvalCheckRepo {
+  id: string;
+  /** `owner/repo`, canonicalized by the platform. */
+  repo: string;
+  enabled: boolean;
+  /** The eval suite this repository's pull requests run. */
+  suiteId: string | null;
+  projectId: string | null;
+  outagePolicy: "fail_open" | "fail_closed" | null;
+  createdAt: number | null;
+  updatedAt: number | null;
+}
+
+/** What `GET /organizations/{id}/eval-check-repos` answers. */
+export interface PlatformEvalCheckRepos {
+  organizationId: string;
+  /**
+   * Whether GitHub Checks is available for this organization at all. FALSE and
+   * "available, nothing connected" are different situations, and only one of
+   * them is fixed by connecting a repository — so it travels rather than being
+   * flattened into an empty list.
+   */
+  available: boolean;
+  /** The repositories already connected. */
+  items: PlatformEvalCheckRepo[];
+  /**
+   * The repositories the MCPJam GitHub App can reach — the choices a connect
+   * has. `null` means the question could not be ASKED (GitHub was unavailable,
+   * or the organization has no installation), which is different from an empty
+   * list meaning the App reaches nothing.
+   */
+  connectable: Array<{ repo: string }> | null;
+}
+
+/** `201` response of `POST /organizations/{id}/eval-check-repos`. */
+export interface PlatformEvalCheckRepoConnected {
+  id: string;
+  organizationId: string;
+  projectId: string;
+  suiteId: string;
+  repo: string;
+  outagePolicy: "fail_open" | "fail_closed";
+}
+
 /** Receipt for an eval-run insights (serverQuality) request. 202. */
 export interface PlatformEvalRunInsightsRequested {
   runId: string;
