@@ -21,6 +21,13 @@ interface SuiteSwitcherProps {
   onSelectSuite: (suiteId: string) => void;
   onCreateSuite: () => void;
   onDeleteSuite?: (suite: EvalSuite) => void;
+  /**
+   * Per ROW, because the answer differs per row: deleting a suite takes the
+   * project manage tier OR authorship of that particular suite. Omitted means
+   * every listed suite may be deleted — the local/playground case, where there
+   * is no membership to rank.
+   */
+  canDeleteSuite?: (suite: EvalSuite) => boolean;
 }
 
 /**
@@ -33,6 +40,7 @@ export function SuiteSwitcher({
   onSelectSuite,
   onCreateSuite,
   onDeleteSuite,
+  canDeleteSuite,
 }: SuiteSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -165,6 +173,7 @@ export function SuiteSwitcher({
                       is CI's record, and the next report would recreate the
                       suite anyway. */}
                   {onDeleteSuite &&
+                  (canDeleteSuite?.(entry.suite) ?? true) &&
                   entry.suite.source !== "sdk" &&
                   entry.suite.lastSdkRunAt == null ? (
                     <button
