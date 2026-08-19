@@ -20,6 +20,11 @@ const {
   mockConnectRepo,
   mockConnectVerifiedRepo,
   mockListInstallationRepos,
+  mockBindings,
+  mockStartInstallation,
+  mockStartDirectClaim,
+  mockUnbindInstallation,
+  mockRedirectToGithub,
   mockOrgsLoading,
   mockAuthLoading,
 } = vi.hoisted(() => ({
@@ -36,10 +41,35 @@ const {
   // window. It is handed to the component so that reaching for it is a
   // recorded call rather than a crash — "never called" is the assertion.
   mockConnectRepo: vi.fn(async () => ({ configId: "cfg-legacy" })),
-  mockConnectVerifiedRepo: vi.fn(async () => ({ configId: "cfg-new" })),
-  mockListInstallationRepos: vi.fn(async () => [
-    { fullName: "mcpjam/other-repo" },
-  ]),
+  // Typed loosely on purpose. These stand in for Convex actions whose real
+  // arguments are hand-mirrored strings, and pinning a narrow inferred shape
+  // here would make every fixture that adds one optional field a type error in
+  // a file whose job is to vary those fixtures.
+  mockConnectVerifiedRepo: vi.fn(async (_args?: Record<string, unknown>) => ({
+    configId: "cfg-new",
+  })),
+  mockListInstallationRepos: vi.fn(
+    async (): Promise<unknown[]> => [
+      {
+        repositoryId: 2,
+        fullName: "mcpjam/other-repo",
+        installationRef: "bind-1",
+        accountLogin: "mcpjam",
+      },
+    ]
+  ),
+  mockBindings: { value: undefined as unknown[] | undefined },
+  mockStartInstallation: vi.fn(async () => ({
+    installUrl: "https://github.com/apps/mcpjam/installations/new?state=abc",
+  })),
+  mockStartDirectClaim: vi.fn(async () => ({
+    authorizeUrl: "https://github.com/login/oauth/authorize?client_id=x",
+  })),
+  mockUnbindInstallation: vi.fn(async () => ({ changed: true })),
+  // `window.location.assign` is the one thing jsdom will not let a test observe
+  // cleanly, so the redirect lives behind a named export and this stands in for
+  // it. "Where did we send them" is the assertion.
+  mockRedirectToGithub: vi.fn(),
   mockOrgsLoading: { value: false },
   mockAuthLoading: { value: false },
 }));
@@ -51,6 +81,7 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     isEnabled: mockAvailability.value?.state === "enabled",
     repos: mockRepos.value,
     suites: mockSuites.value,
+    bindings: mockBindings.value,
     connectRepo: mockConnectRepo,
     connectVerifiedRepo: mockConnectVerifiedRepo,
     setRepoEnabled: mockSetRepoEnabled,
@@ -58,7 +89,14 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     setRepoOutagePolicy: mockSetRepoOutagePolicy,
     disconnectRepo: mockDisconnectRepo,
     listInstallationRepos: mockListInstallationRepos,
+    startInstallation: mockStartInstallation,
+    startDirectClaim: mockStartDirectClaim,
+    unbindInstallation: mockUnbindInstallation,
   }),
+}));
+
+vi.mock("@/lib/github-external-redirect", () => ({
+  redirectToGithub: mockRedirectToGithub,
 }));
 
 vi.mock("@/lib/toast", () => ({
@@ -91,9 +129,63 @@ const ROW = {
   organizationId: "org-1",
   projectId: "proj-1",
   suiteId: "suite-1",
+  // Backend-DERIVED. The page never computes this, and in particular never
+  // infers it from a missing visibility badge.
+  connectionStatus: "verified" as const,
   createdAt: 1,
   updatedAt: 1,
 };
+
+/**
+ * One entry from the installation listing.
+ *
+ * `repositoryId` is required and is what the picker is keyed on — two accounts
+ * can each have a `widgets`, so a name is not a selector. Ids are derived from
+ * the name so a fixture never has to invent one, and stay stable across a test.
+ */
+let nextRepositoryId = 1000;
+const repositoryIds = new Map<string, number>();
+function repo(
+  fullName: string,
+  overrides: {
+    private?: boolean;
+    installationRef?: string | null;
+    accountLogin?: string;
+  } = {}
+) {
+  const key = fullName.trim().toLowerCase();
+  if (!repositoryIds.has(key)) repositoryIds.set(key, (nextRepositoryId += 1));
+  return {
+    repositoryId: repositoryIds.get(key) as number,
+    fullName,
+    ...(overrides.installationRef === null
+      ? {}
+      : { installationRef: overrides.installationRef ?? "bind-1" }),
+    ...(overrides.accountLogin !== undefined
+      ? { accountLogin: overrides.accountLogin }
+      : { accountLogin: "mcpjam" }),
+    ...(overrides.private !== undefined ? { private: overrides.private } : {}),
+  };
+}
+
+/** One connected GitHub account. */
+function binding(
+  accountLogin: string,
+  overrides: {
+    installationRef?: string;
+    status?: "active" | "suspended" | "removed" | "unbound";
+    accountType?: "Organization" | "User";
+  } = {}
+) {
+  return {
+    installationRef: overrides.installationRef ?? `bind-${accountLogin}`,
+    accountLogin,
+    accountType: overrides.accountType ?? ("Organization" as const),
+    status: overrides.status ?? ("active" as const),
+    boundAt: 1,
+    statusChangedAt: 1,
+  };
+}
 
 /** A row connected before the outage policy existed: nothing was stored. */
 const UNSET_POLICY_ROW = ROW;
@@ -157,6 +249,7 @@ describe("GithubChecksRoute availability gate", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockBindings.value = [binding("mcpjam")];
     vi.clearAllMocks();
   });
 
@@ -328,9 +421,10 @@ describe("GithubChecksRoute connect flow", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([
-      { fullName: "mcpjam/other-repo", private: false },
+      repo("mcpjam/other-repo", { private: false }),
     ]);
     mockConnectVerifiedRepo.mockReset();
     mockConnectVerifiedRepo.mockResolvedValue({ configId: "cfg-new" });
@@ -359,8 +453,8 @@ describe("GithubChecksRoute connect flow", () => {
     // visibility badge from one comparison and slips past the already-connected
     // filter beside it becomes an offer the submit is refused for.
     mockListInstallationRepos.mockResolvedValue([
-      { fullName: " MCPJam/MCP-Check-Fixture ", private: true },
-      { fullName: "mcpjam/other-repo", private: false },
+      repo(" MCPJam/MCP-Check-Fixture ", { private: true }),
+      repo("mcpjam/other-repo", { private: false }),
     ]);
     const user = userEvent.setup();
     renderRoute();
@@ -404,9 +498,16 @@ describe("GithubChecksRoute connect flow", () => {
       projectId: "proj-1",
       suiteId: "suite-1",
       outagePolicy: "fail_closed",
+      // Taken STRAIGHT OFF the picked listing entry. The reference says which
+      // installation the repository was enumerated through and the id says
+      // which repository it is; the server re-verifies both, and neither is
+      // reassembled here from a name.
+      installationRef: "bind-1",
+      repositoryId: repositoryIds.get("mcpjam/other-repo"),
     });
-    // The unverified mutation still exists on the backend. Calling it would
-    // write a config row for a repository nobody proved the App can reach.
+    // The unverified mutation is GONE from the backend. Calling it would now
+    // fail outright, and before it was removed it wrote config rows for
+    // repositories nobody proved the App could reach.
     expect(mockConnectRepo).not.toHaveBeenCalled();
   });
 
@@ -533,6 +634,7 @@ describe("GithubChecksRoute row outage policy", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([]);
     mockSetRepoOutagePolicy.mockReset();
@@ -667,6 +769,7 @@ describe("GithubChecksRoute repository visibility", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockBindings.value = [binding("mcpjam")];
     mockRepos.value = [ROW];
     mockListInstallationRepos.mockReset();
   });
@@ -679,8 +782,8 @@ describe("GithubChecksRoute repository visibility", () => {
     // GitHub answers with its own casing, and the row stores the canonical
     // lowercase form. Both sides are normalized so the join survives that.
     mockListInstallationRepos.mockResolvedValue([
-      { fullName: "MCPJam/MCP-Check-Fixture", private: true },
-      { fullName: " mcpjam/Public-Fixture ", private: false },
+      repo("MCPJam/MCP-Check-Fixture", { private: true }),
+      repo(" mcpjam/Public-Fixture ", { private: false }),
     ]);
     renderRoute();
 
@@ -691,11 +794,11 @@ describe("GithubChecksRoute repository visibility", () => {
   it.each([
     [
       "GitHub omitted the flag",
-      [{ fullName: "mcpjam/mcp-check-fixture" }] as unknown[],
+      [repo("mcpjam/mcp-check-fixture")] as unknown[],
     ],
     [
       "the row is not in the installation listing",
-      [{ fullName: "mcpjam/other-repo", private: false }] as unknown[],
+      [repo("mcpjam/other-repo", { private: false })] as unknown[],
     ],
     ["the listing is empty", [] as unknown[]],
   ])("asserts no visibility when %s", async (_case, listing) => {
@@ -749,6 +852,7 @@ describe("GithubChecksRoute organization switching", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockConnectVerifiedRepo.mockReset();
     mockConnectVerifiedRepo.mockResolvedValue({ configId: "cfg-new" });
@@ -765,7 +869,7 @@ describe("GithubChecksRoute organization switching", () => {
           })
       )
       .mockResolvedValue([
-        { fullName: "mcpjam/mcp-check-fixture", private: false },
+        repo("mcpjam/mcp-check-fixture", { private: false }),
       ]);
 
     const { rerender } = render(routeTree("org-1"));
@@ -777,7 +881,7 @@ describe("GithubChecksRoute organization switching", () => {
 
     // org-1's answer, arriving late and disagreeing.
     await act(async () => {
-      resolveStale?.([{ fullName: "mcpjam/mcp-check-fixture", private: true }]);
+      resolveStale?.([repo("mcpjam/mcp-check-fixture", { private: true })]);
     });
 
     expect(screen.getByText("Public")).toBeInTheDocument();
@@ -787,7 +891,7 @@ describe("GithubChecksRoute organization switching", () => {
   it("drops a connect that completes after the organization changed", async () => {
     mockRepos.value = [];
     mockListInstallationRepos.mockResolvedValue([
-      { fullName: "mcpjam/other-repo", private: false },
+      repo("mcpjam/other-repo", { private: false }),
     ]);
     let resolveStaleConnect: ((result: unknown) => void) | undefined;
     mockConnectVerifiedRepo.mockImplementationOnce(
@@ -825,5 +929,314 @@ describe("GithubChecksRoute organization switching", () => {
     expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
       "Fail open"
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GITHUB ACCOUNTS — the org ↔ installation binding surface
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Three properties this section has to hold, all of which are about NOT saying
+// something:
+//
+//   1. No raw GitHub installation id is ever rendered. `installationRef` is an
+//      opaque row id and is the only handle the page has.
+//   2. A refusal is shown exactly as the backend worded it. The backend refuses
+//      flatly on purpose — telling "already connected to another workspace"
+//      apart from "that installation does not exist" would answer questions
+//      about other people's accounts — so the page must not embellish.
+//   3. Disconnecting asks first, and the confirmation says the LIMIT of the
+//      consequence as well as the consequence.
+
+describe("GithubChecksRoute installations", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [];
+    mockSuites.value = [];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockBindings.value = [];
+    mockListInstallationRepos.mockReset();
+    mockListInstallationRepos.mockResolvedValue([]);
+    mockStartInstallation.mockReset();
+    mockStartInstallation.mockResolvedValue({
+      installUrl: "https://github.com/apps/mcpjam/installations/new?state=abc",
+    });
+    mockStartDirectClaim.mockReset();
+    mockStartDirectClaim.mockResolvedValue({
+      authorizeUrl: "https://github.com/login/oauth/authorize?client_id=x",
+    });
+    mockUnbindInstallation.mockReset();
+    mockUnbindInstallation.mockResolvedValue({ changed: true });
+    mockRedirectToGithub.mockReset();
+  });
+
+  it("offers both an install and a claim, and explains why claiming needs GitHub", async () => {
+    renderRoute();
+    expect(
+      await screen.findByRole("button", { name: /Install on a GitHub account/ })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Claim an existing installation/ })
+    ).toBeInTheDocument();
+    // The whole reason the claim path needs an OAuth leg, in one sentence: the
+    // App JWT can read every installation it has, so installing is not proof
+    // that an installation is yours to connect here.
+    expect(
+      screen.getByText(/is not on its own proof that it is yours to connect/i)
+    ).toBeInTheDocument();
+  });
+
+  it("sends the admin to the server-built install URL", async () => {
+    const user = userEvent.setup();
+    renderRoute();
+    await user.click(
+      await screen.findByRole("button", { name: /Install on a GitHub account/ })
+    );
+
+    await waitFor(() => expect(mockStartInstallation).toHaveBeenCalledTimes(1));
+    // The URL carries a one-time state the BACKEND minted and hashed. The page
+    // only follows it.
+    expect(mockRedirectToGithub).toHaveBeenCalledWith(
+      "https://github.com/apps/mcpjam/installations/new?state=abc"
+    );
+  });
+
+  it("sends the admin to the OAuth URL for a claim", async () => {
+    const user = userEvent.setup();
+    renderRoute();
+    await user.click(
+      await screen.findByRole("button", {
+        name: /Claim an existing installation/,
+      })
+    );
+
+    await waitFor(() => expect(mockStartDirectClaim).toHaveBeenCalledTimes(1));
+    expect(mockRedirectToGithub).toHaveBeenCalledWith(
+      "https://github.com/login/oauth/authorize?client_id=x"
+    );
+  });
+
+  it("shows the backend's conflict wording verbatim, naming no other workspace", async () => {
+    const conflict = Object.assign(new Error("Server Error"), {
+      data: "That GitHub installation is already connected to a workspace. This is not a problem with your repositories — ask whoever set it up to disconnect it first, or install the app on a different account.",
+    });
+    mockStartInstallation.mockRejectedValue(conflict);
+    const user = userEvent.setup();
+    renderRoute();
+
+    await user.click(
+      await screen.findByRole("button", { name: /Install on a GitHub account/ })
+    );
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+
+    const shown = String(
+      (toast.error as ReturnType<typeof vi.fn>).mock.calls[0][0]
+    );
+    expect(shown).toMatch(/already connected to a workspace/i);
+    // Non-disclosure survives the trip through the UI.
+    expect(shown).not.toMatch(/organization|workspace named|org-/i);
+  });
+
+  it.each([
+    ["active", /Repositories on this account can run checks/i],
+    ["suspended", /Suspended on GitHub/i],
+    ["removed", /uninstalled from this account/i],
+  ] as const)("renders the %s binding state", async (status, copy) => {
+    mockBindings.value = [binding("acme", { status })];
+    renderRoute();
+    expect(await screen.findByText("acme")).toBeInTheDocument();
+    expect(screen.getByText(copy)).toBeInTheDocument();
+  });
+
+  it("never renders a raw GitHub installation id", async () => {
+    mockBindings.value = [binding("acme")];
+    const { container } = renderRoute();
+    await screen.findByText("acme");
+    // The opaque ref is all the page has, and even that is not user-facing.
+    expect(container.textContent).not.toMatch(/\b\d{6,}\b/);
+  });
+
+  it("asks before disconnecting, and says what is KEPT as well as what stops", async () => {
+    mockBindings.value = [binding("acme")];
+    const user = userEvent.setup();
+    renderRoute();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Disconnect acme" })
+    );
+    expect(
+      await screen.findByText(/Checks on its repositories stop immediately/i)
+    ).toBeInTheDocument();
+    // The limit matters as much as the consequence: reconnecting is not a
+    // rebuild, and copy that implied otherwise would stop admins acting.
+    expect(
+      screen.getByText(/suite and policy settings are kept/i)
+    ).toBeInTheDocument();
+    // Nothing has happened yet.
+    expect(mockUnbindInstallation).not.toHaveBeenCalled();
+  });
+
+  it("disconnects with the opaque ref once confirmed", async () => {
+    mockBindings.value = [binding("acme", { installationRef: "bind-xyz" })];
+    const user = userEvent.setup();
+    renderRoute();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Disconnect acme" })
+    );
+    await user.click(await screen.findByRole("button", { name: "Disconnect" }));
+
+    await waitFor(() =>
+      expect(mockUnbindInstallation).toHaveBeenCalledWith({
+        installationRef: "bind-xyz",
+      })
+    );
+  });
+
+  it("does not disconnect when the confirmation is dismissed", async () => {
+    mockBindings.value = [binding("acme")];
+    const user = userEvent.setup();
+    renderRoute();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Disconnect acme" })
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Keep it connected" })
+    );
+
+    expect(mockUnbindInstallation).not.toHaveBeenCalled();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONNECTION STATUS, AND THE PICKER'S IDENTITY
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("GithubChecksRoute connection status", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockSuites.value = [
+      { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
+    ];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockBindings.value = [binding("mcpjam")];
+    mockListInstallationRepos.mockReset();
+    mockListInstallationRepos.mockResolvedValue([]);
+  });
+
+  it("renders no badge at all for a verified row", async () => {
+    mockRepos.value = [ROW];
+    renderRoute();
+    await screen.findByText("mcpjam/mcp-check-fixture");
+    // A badge saying "fine" on every healthy row makes the rows that need
+    // attention harder to find.
+    expect(screen.queryByText("Reconnect required")).not.toBeInTheDocument();
+    expect(screen.queryByText("App inactive")).not.toBeInTheDocument();
+    expect(screen.queryByText("No access")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    ["legacy_unverified", "Reconnect required", /Reconnect it to keep checks/i],
+    ["installation_inactive", "App inactive", /not active on this account/i],
+    ["repository_access_removed", "No access", /no longer has access/i],
+  ] as const)("renders %s", async (status, label, explainer) => {
+    mockRepos.value = [{ ...ROW, connectionStatus: status }];
+    renderRoute();
+    expect(await screen.findByText(label)).toBeInTheDocument();
+    expect(screen.getByText(explainer)).toBeInTheDocument();
+    // Every one of these says what it is NOT, because the natural reading of a
+    // stopped check is "my code did something" and none of these is that.
+    expect(
+      screen.getByText(
+        /not a problem with your pull requests|nothing is wrong/i
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("does NOT infer a status from a missing visibility badge", async () => {
+    // GitHub omitting `private` means "we do not know", not "something is
+    // wrong". Conflating them would put a warning on a healthy repository.
+    mockRepos.value = [ROW];
+    mockListInstallationRepos.mockResolvedValue([
+      repo("mcpjam/mcp-check-fixture"),
+    ]);
+    renderRoute();
+    await screen.findByText("mcpjam/mcp-check-fixture");
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    expect(screen.queryByText("Private")).not.toBeInTheDocument();
+    expect(screen.queryByText("Public")).not.toBeInTheDocument();
+    expect(screen.queryByText("Reconnect required")).not.toBeInTheDocument();
+  });
+
+  it("labels the account only when it disambiguates", async () => {
+    mockRepos.value = [];
+    mockListInstallationRepos.mockResolvedValue([
+      repo("acme/widgets", { accountLogin: "acme", installationRef: "b1" }),
+      repo("globex/widgets", { accountLogin: "globex", installationRef: "b2" }),
+    ]);
+    const user = userEvent.setup();
+    renderRoute();
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await user.click(screen.getByLabelText("Repository"));
+    expect(
+      await screen.findByRole("option", { name: "acme/widgets · acme" })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("option", { name: "globex/widgets · globex" })
+    ).toBeInTheDocument();
+  });
+
+  it("omits the account label when there is only one", async () => {
+    mockRepos.value = [];
+    mockListInstallationRepos.mockResolvedValue([
+      repo("acme/widgets", { accountLogin: "acme" }),
+      repo("acme/gadgets", { accountLogin: "acme" }),
+    ]);
+    const user = userEvent.setup();
+    renderRoute();
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await user.click(screen.getByLabelText("Repository"));
+    // One repeated label on every row is a column of noise.
+    expect(
+      await screen.findByRole("option", { name: "acme/widgets" })
+    ).toBeInTheDocument();
+  });
+
+  it("sends no installationRef when the listing carried none", async () => {
+    // The compatibility window: the backend is still falling back to its pinned
+    // installation for an org with no binding, and omitting the reference is
+    // what keeps that connect path reachable.
+    mockRepos.value = [];
+    mockConnectVerifiedRepo.mockReset();
+    mockConnectVerifiedRepo.mockResolvedValue({ configId: "cfg-pinned" });
+    mockListInstallationRepos.mockResolvedValue([
+      repo("mcpjam/pinned-repo", { installationRef: null, accountLogin: "" }),
+    ]);
+    const user = userEvent.setup();
+    renderRoute();
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await chooseOption(user, "Repository", "mcpjam/pinned-repo");
+    await chooseOption(user, "Suite", "Fixture suite");
+    await chooseOption(user, "Outage policy", "Fail closed");
+    await user.click(connectButton());
+
+    await waitFor(() =>
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+    );
+    const sent = mockConnectVerifiedRepo.mock.calls[0]?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(sent).not.toHaveProperty("installationRef");
+    expect(sent.repositoryId).toBe(repositoryIds.get("mcpjam/pinned-repo"));
   });
 });

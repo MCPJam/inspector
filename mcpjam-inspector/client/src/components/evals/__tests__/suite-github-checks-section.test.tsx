@@ -19,11 +19,31 @@ const {
   // window. Handed to the component so that reaching for it is a recorded
   // call rather than a crash — "never called" is the assertion.
   mockConnectRepo: vi.fn(async () => ({ configId: "cfg-legacy" })),
-  mockConnectVerifiedRepo: vi.fn(async () => ({ configId: "cfg-new" })),
-  mockListInstallationRepos: vi.fn(async () => [
-    { fullName: "mcpjam/inspector" },
-    { fullName: "mcpjam/backend" },
-  ]),
+  // Loosely typed for the same reason as the settings-route suite: these stand
+  // in for Convex actions whose arguments are hand-mirrored, and a narrow
+  // inferred shape would fight every fixture variation below.
+  mockConnectVerifiedRepo: vi.fn(async (_args?: Record<string, unknown>) => ({
+    configId: "cfg-new",
+  })),
+  // `repositoryId` is REQUIRED by the contract and is what the picker is keyed
+  // on: two connected accounts can each have a `widgets`, so a name is not a
+  // selector. `installationRef` says which installation the entry came from.
+  mockListInstallationRepos: vi.fn(
+    async (): Promise<unknown[]> => [
+      {
+        repositoryId: 101,
+        fullName: "mcpjam/inspector",
+        installationRef: "bind-1",
+        accountLogin: "mcpjam",
+      },
+      {
+        repositoryId: 102,
+        fullName: "mcpjam/backend",
+        installationRef: "bind-1",
+        accountLogin: "mcpjam",
+      },
+    ]
+  ),
   mockNavigate: vi.fn(),
   mockToast: { error: vi.fn(), success: vi.fn() },
 }));
@@ -183,6 +203,11 @@ describe("SuiteGithubChecksSection", () => {
       projectId: "proj-1",
       suiteId: "suite-1",
       outagePolicy: "fail_open",
+      // Straight off the picked listing entry, both of them. The server
+      // re-verifies which installation this was listed through and which
+      // repository it actually is; neither is reassembled here from a name.
+      installationRef: "bind-1",
+      repositoryId: 101,
     });
     expect(mockConnectRepo).not.toHaveBeenCalled();
     expect(mockToast.success).toHaveBeenCalledWith("Repository connected.");
@@ -262,5 +287,83 @@ describe("SuiteGithubChecksSection", () => {
     for (const forbidden of [/merges proceed/i, /merges are blocked/i]) {
       expect(page).not.toMatch(forbidden);
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE PICKER SELECTS BY REPOSITORY ID
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Two accounts can each have a repository with the same short name, and the
+// connect is keyed on GitHub's numeric id. Selecting by name would make the
+// account label decorative and let one pick resolve to the other repository.
+
+describe("SuiteGithubChecksSection repository identity", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockConnectVerifiedRepo.mockResolvedValue({ configId: "cfg-new" });
+  });
+
+  it("distinguishes same-named repositories from different accounts", async () => {
+    mockListInstallationRepos.mockResolvedValue([
+      {
+        repositoryId: 201,
+        fullName: "acme/widgets",
+        installationRef: "bind-acme",
+        accountLogin: "acme",
+      },
+      {
+        repositoryId: 202,
+        fullName: "globex/widgets",
+        installationRef: "bind-globex",
+        accountLogin: "globex",
+      },
+    ]);
+    const user = userEvent.setup();
+    renderSection({ repos: [] });
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    // With more than one account in play the label earns its place.
+    await chooseOption(user, "Repository", "globex/widgets · globex");
+    await chooseOption(user, "Outage policy", "Fail closed");
+    await user.click(screen.getByRole("button", { name: /Connect/ }));
+
+    await waitFor(() =>
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+    );
+    expect(mockConnectVerifiedRepo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        repoFullName: "globex/widgets",
+        installationRef: "bind-globex",
+        repositoryId: 202,
+      })
+    );
+  });
+
+  it("omits installationRef when the listing carried none", async () => {
+    // The compatibility window: an organization with no binding is still listed
+    // through the backend's pinned installation, and omitting the reference is
+    // what keeps that connect path reachable.
+    mockListInstallationRepos.mockResolvedValue([
+      { repositoryId: 301, fullName: "mcpjam/pinned" },
+    ]);
+    const user = userEvent.setup();
+    renderSection({ repos: [] });
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await chooseOption(user, "Repository", "mcpjam/pinned");
+    await chooseOption(user, "Outage policy", "Fail open");
+    await user.click(screen.getByRole("button", { name: /Connect/ }));
+
+    await waitFor(() =>
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+    );
+    const sent = mockConnectVerifiedRepo.mock.calls[0]?.[0] as Record<
+      string,
+      unknown
+    >;
+    expect(sent).not.toHaveProperty("installationRef");
+    expect(sent.repositoryId).toBe(301);
   });
 });

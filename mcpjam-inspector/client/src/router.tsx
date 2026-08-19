@@ -3,6 +3,7 @@ import { RouteErrorScreen } from "./components/RouteErrorScreen";
 import App, {
   ApiKeysSettingsRoute,
   GithubChecksSettingsRoute,
+  GithubInstallCallbackSettingsRoute,
   IntegrationsSettingsRoute,
   ChatAliasRoute,
   ScenariosRoute,
@@ -155,6 +156,14 @@ const ROUTE_ELEMENTS: Record<
   "settings/api-keys": { element: <ApiKeysSettingsRoute /> },
   "settings/integrations": { element: <IntegrationsSettingsRoute /> },
   "settings/integrations/github": { element: <GithubChecksSettingsRoute /> },
+  // Where GitHub sends the browser back — BOTH the App's setup URL and its
+  // OAuth callback point here, and the page tells them apart by which query
+  // parameters arrived. One path because GitHub App settings take one of
+  // each, and because a second route would be a second place to keep the
+  // "pass everything through verbatim" rule.
+  "settings/integrations/github/callback": {
+    element: <GithubInstallCallbackSettingsRoute />,
+  },
   // Legacy: the page moved under Integrations. Kept as a redirect because the
   // path shipped in docs and in the backend runbook, so links to it exist
   // outside this app. A loader redirect (not an element) so it resolves before
