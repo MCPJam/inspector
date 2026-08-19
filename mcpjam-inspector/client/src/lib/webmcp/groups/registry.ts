@@ -1,6 +1,7 @@
 /**
- * Registry-screen tools: install/connect, disconnect, and star servers from
- * the public registry catalog.
+ * Registry-screen tools: search the mirrored Claude connectors directory, and
+ * install/connect, disconnect, and star servers from either catalog on the
+ * screen — MCPJam's curated registry or that directory.
  *
  * The first mount-scoped group (the Connect-screen tools are "global"-kind
  * and self-navigate; these do not): `RegistryTab` owns the command handlers
@@ -20,7 +21,7 @@ import { asOptionalString, errorResult, fromActionResult } from "./shared";
 const SERVER_NAME_PROPERTY = {
   type: "string",
   description:
-    "Registry server as shown on its card: display name (e.g. 'Asana') or registry name (e.g. 'com.asana.mcp').",
+    "Server as shown on its card: display name (e.g. 'Asana'), curated registry name (e.g. 'com.asana.mcp'), or a Claude-directory entry's catalog name.",
 } as const;
 
 const VARIANT_PROPERTY = {
@@ -31,7 +32,7 @@ const VARIANT_PROPERTY = {
 } as const;
 
 function readVariant(
-  value: unknown,
+  value: unknown
 ): { ok: true; variant?: "text" | "app" } | { ok: false } {
   if (value === undefined) return { ok: true };
   if (value === "text" || value === "app") return { ok: true, variant: value };
@@ -43,7 +44,7 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
     {
       name: "ui_connect_registry_server",
       description:
-        "Install a server from the public MCP registry's catalog into the current project and start connecting it. Registry catalog entries only — to connect a server ALREADY added to the project, use ui_connect_server instead. Connection finishes in the background; observe progress with ui_snapshot_app. If the server requires OAuth, this reports 'authorization_required' without starting the flow — relay that and let the user click Connect on the card to authorize on screen.",
+        "Install a server from either catalog on this screen — the curated registry, or the Claude directory below it — into the current project and start connecting it. Catalog entries only: for a server ALREADY in the project use ui_connect_server. It finishes in the background; watch ui_snapshot_app. Some entries are reported, not started: 'authorization_required' (it would redirect the browser) and 'endpoint_choice_required' (the URL is the user's to pick). Relay those; the user clicks Connect on the card.",
       inputSchema: {
         type: "object",
         properties: {
@@ -70,7 +71,9 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
         }
         const variant = readVariant(args.variant);
         if (!variant.ok) {
-          return errorResult(`'variant' must be "text" or "app" when provided.`);
+          return errorResult(
+            `'variant' must be "text" or "app" when provided.`
+          );
         }
         const response = await dispatchInspectorCommand({
           type: "connectRegistryServer",
@@ -111,7 +114,9 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
         }
         const variant = readVariant(args.variant);
         if (!variant.ok) {
-          return errorResult(`'variant' must be "text" or "app" when provided.`);
+          return errorResult(
+            `'variant' must be "text" or "app" when provided.`
+          );
         }
         const response = await dispatchInspectorCommand({
           type: "disconnectRegistryServer",
@@ -158,6 +163,55 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
         const response = await dispatchInspectorCommand({
           type: "toggleRegistryStar",
           payload: { serverName, starred: args.starred },
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_search_registry_directory",
+      description:
+        "Search the Claude connectors directory beneath the curated catalog — ~2,000 mirrored entries, far more than the page lists at once. Matches names, descriptions and tool names, so 'invoice' and 'create_issue' work as well as 'Linear'. Omit 'query' to browse instead. This types into the screen's own search box, so results are what the user sees; they arrive shortly after — read them from ui_snapshot_app's `directory` block, then install one with ui_connect_registry_server.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "What to search for. Omit or leave empty to browse the directory.",
+          },
+          tier: {
+            type: "string",
+            enum: ["all", "anthropic", "partner", "community"],
+            description:
+              "Restrict to one verification tier. 'all' clears the filter.",
+          },
+        },
+        required: [],
+        additionalProperties: false,
+      },
+      readOnly: true,
+      // Drives a search box and nothing else: no install, no connection, no
+      // write of any kind, and running it twice leaves the same state.
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      execute: async (args) => {
+        const query = asOptionalString(args.query);
+        const tier = asOptionalString(args.tier);
+        if (args.tier !== undefined && !tier) {
+          return errorResult(
+            "'tier' must be a non-empty string when provided."
+          );
+        }
+        const response = await dispatchInspectorCommand({
+          type: "searchRegistryDirectory",
+          payload: {
+            ...(query ? { query } : {}),
+            ...(tier ? { tier } : {}),
+          },
         });
         return fromActionResult(commandResponseToActionResult(response));
       },
