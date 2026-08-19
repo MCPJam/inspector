@@ -10052,6 +10052,13 @@
                 ],
                 "description": "Minimum pass rate for the suite to count as passing."
               },
+              "minimumIterations": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Suite-level floor on per-case iterations, 1\u201310: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor \u2014 the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
+              },
               "matchOptions": {
                 "type": [
                   "object",

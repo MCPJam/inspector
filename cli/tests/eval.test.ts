@@ -1260,3 +1260,103 @@ test("eval status summarizes the judges that graded, and stays silent about the 
     await fixture.close();
   }
 });
+
+test("eval update --min-iterations off sends an explicit null", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--min-iterations",
+            "off",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { minimumIterations?: number | null };
+    };
+    // NOT undefined: `undefined` means "leave alone" the whole way down, so a
+    // dropped null would make "off" a no-op that still reports success.
+    assert.ok("minimumIterations" in (patchBody.settings ?? {}));
+    assert.equal(patchBody.settings?.minimumIterations, null);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update --min-iterations sends the number", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--min-iterations",
+            "3",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { minimumIterations?: number | null };
+    };
+    assert.equal(patchBody.settings?.minimumIterations, 3);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update rejects an out-of-range --min-iterations before any write", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    for (const value of ["0", "11", "2.5"]) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--min-iterations",
+            value,
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      );
+      assert.notEqual(run.result.exitCode, 0);
+      assert.match(
+        run.stderr,
+        /--min-iterations must be a whole number from 1 to 10/,
+      );
+    }
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});

@@ -1360,6 +1360,11 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
         typeof suite.defaultPassCriteria?.minimumPassRate === "number"
           ? suite.defaultPassCriteria.minimumPassRate
           : null,
+      // `null` = no floor, which is the suite's real state rather than a
+      // stand-in for 1: a floor of 1 and no floor at all produce the same
+      // runs today, but only one of them is something the user chose.
+      minimumIterations:
+        typeof suite.minIterations === "number" ? suite.minIterations : null,
       matchOptions: toPublicMatchOptions(suite.defaultMatchOptions),
       checks: Array.isArray(suite.defaultPredicates)
         ? suite.defaultPredicates
@@ -1642,6 +1647,13 @@ const updateSuiteSchema = z.object({
   settings: z
     .object({
       minimumAccuracy: z.number().min(0).max(100).optional(),
+      // Suite-level FLOOR on per-case iterations: every case runs at least
+      // this many times (`max(case.iterations, minimumIterations)`). `null`
+      // clears it — the platform's `minIterations` has exactly that contract,
+      // so the public field does not invent a second way to say "no floor".
+      minimumIterations: z
+        .union([z.number().int().min(1).max(10), z.null()])
+        .optional(),
       matchOptions: publicMatchOptionsSchema.nullable().optional(),
       checks: z.array(publicCheckSchema).nullable().optional(),
       judge: z
@@ -2991,6 +3003,11 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     const s = body.settings;
     if (s.minimumAccuracy !== undefined)
       updateArgs.defaultPassCriteria = { minimumPassRate: s.minimumAccuracy };
+    // Forwarded verbatim, `null` INCLUDED: the platform reads null as "clear"
+    // and `undefined` as "leave alone", so collapsing null to undefined here
+    // would turn every attempt to remove the floor into a silent no-op.
+    if (s.minimumIterations !== undefined)
+      updateArgs.minIterations = s.minimumIterations;
     // PATCH is merge semantics: updateTestSuite replaces these objects
     // wholesale, so a partial public field (e.g. only matchOptions.arguments,
     // or only judge.model) must be layered onto the suite's CURRENT values —

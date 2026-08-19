@@ -427,6 +427,26 @@ function buildSuiteUpdateInput(
   const settings = { ...(input.settings ?? {}) };
   if (options.minAccuracy !== undefined)
     settings.minimumAccuracy = Number(options.minAccuracy);
+  if (options.minIterations !== undefined) {
+    if (options.minIterations === "off") {
+      // NULL, not undefined. `undefined` is "leave this alone" all the way
+      // down the stack, so writing it here would make `--min-iterations off`
+      // a no-op that reports success.
+      settings.minimumIterations = null;
+    } else {
+      const iterations = Number(options.minIterations);
+      if (
+        !Number.isInteger(iterations) ||
+        iterations < 1 ||
+        iterations > 10
+      ) {
+        throw usageError(
+          '--min-iterations must be a whole number from 1 to 10, or "off".'
+        );
+      }
+      settings.minimumIterations = iterations;
+    }
+  }
   const mo = { ...(settings.matchOptions ?? {}) };
   if (options.toolCallOrder !== undefined)
     mo.toolCallOrder = options.toolCallOrder;
@@ -1934,6 +1954,10 @@ export function registerEvalCommands(program: Command): void {
       .option("--system-prompt <text>", "Execution system prompt")
       .option("--temperature <n>", "Execution temperature")
       .option("--min-accuracy <pct>", "Minimum accuracy, 0–100")
+      .option(
+        "--min-iterations <1-10|off>",
+        "Floor on per-case iterations; off removes the floor"
+      )
       .option("--tool-call-order <any|in-order|exact>", "Tool call order")
       .option("--arguments <ignore|partial|exact>", "Argument matching")
       .option("--extra-tool-calls <unlimited|N>", "Allowed extra tool calls")

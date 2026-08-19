@@ -1015,6 +1015,7 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--system-prompt <text>` | No | Execution system prompt |
 | `--temperature <n>` | No | Execution temperature |
 | `--min-accuracy <pct>` | No | Minimum accuracy, 0–100 |
+| `--min-iterations <1-10\|off>` | No | Floor on per-case iterations — every case runs at least this many times. `off` removes the floor |
 | `--tool-call-order <any\|in-order\|exact>` | No | Tool call order |
 | `--arguments <ignore\|partial\|exact>` | No | Argument matching |
 | `--extra-tool-calls <unlimited\|N>` | No | Allowed extra tool calls |

@@ -427,6 +427,13 @@ export interface PlatformExpectedToolCall {
 export interface PlatformEvalSuiteSettings {
   /** Minimum pass rate as a percentage, 0–100. */
   minimumAccuracy: number | null;
+  /**
+   * Suite-level FLOOR on per-case iterations, 1–10: every case runs at least
+   * this many times (`max(case.iterations, minimumIterations)`). `null` means
+   * no floor — the suite's real state, not a stand-in for 1. Absent on older
+   * API deployments.
+   */
+  minimumIterations?: number | null;
   matchOptions: PublicMatchOptions | null;
   checks: PublicCheck[];
   /**

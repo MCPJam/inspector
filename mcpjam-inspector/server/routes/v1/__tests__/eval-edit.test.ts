@@ -331,6 +331,75 @@ describe("v1 eval-edit routes", () => {
     });
   });
 
+  it("PATCH minimumIterations sets the floor, and null clears it", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { minimumIterations: 3 } }
+    );
+    expect(res.status).toBe(200);
+    expect(
+      convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestSuite"
+      )![1].minIterations
+    ).toBe(3);
+
+    vi.clearAllMocks();
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name)
+    );
+    convexMutationMock.mockImplementation((name: string) =>
+      defaultMutationImpl(name)
+    );
+
+    // `null` must arrive as null, not collapse to undefined — the platform
+    // reads undefined as "leave alone", so a dropped null is a clear that
+    // reports success and changes nothing.
+    const cleared = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { minimumIterations: null } }
+    );
+    expect(cleared.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args).toHaveProperty("minIterations");
+    expect(args.minIterations).toBeNull();
+  });
+
+  it("PATCH rejects a minimumIterations outside 1–10", async () => {
+    for (const value of [0, 11, 2.5]) {
+      vi.clearAllMocks();
+      convexQueryMock.mockImplementation((name: string) =>
+        defaultQueryImpl(name)
+      );
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { minimumIterations: value } }
+      );
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it("GET reports minimumIterations, null when the suite has no floor", async () => {
+    const unset = await request(
+      "GET",
+      "/api/v1/projects/p1/eval-suites/suite_1"
+    );
+    expect(((await unset.json()) as any).settings.minimumIterations).toBeNull();
+
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({ ...SUITE_DOC, minIterations: 4 })
+        : defaultQueryImpl(name)
+    );
+    const set = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    expect(((await set.json()) as any).settings.minimumIterations).toBe(4);
+  });
+
   it("PATCH round-trips judge autoRun and threshold", async () => {
     // `autoRun` is the flag the grader gates on — a suite can be `enabled`
     // forever and never grade a run without it, which is exactly the gap the

@@ -1824,6 +1824,12 @@ const updateEvalSuiteInput = z.object({
   settings: z
     .object({
       minimumAccuracy: z.number().min(0).max(100).optional(),
+      minimumIterations: z
+        .union([z.number().int().min(1).max(10), z.null()])
+        .optional()
+        .describe(
+          "Floor on per-case iterations, 1–10: every case runs at least this many times. null removes the floor.",
+        ),
       // Nullable to CLEAR suite defaults (vs omit to leave untouched).
       matchOptions: publicMatchOptionsSchema.nullable().optional(),
       checks: z.array(publicCheckSchema).nullable().optional(),
@@ -1862,7 +1868,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available). Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, and LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available). Only the fields you pass change.",
   readOnly: false,
   inputSchema: updateEvalSuiteInput,
   async execute(input, { client, signal }) {
