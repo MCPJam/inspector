@@ -303,21 +303,24 @@ void _styleVariableCoverage;
 function readStyleVariable(
   cfg: HostConfigDtoV2,
   key: McpUiStyleVariableKey
-): boolean {
+): string | undefined {
   const styles = (cfg.hostContext as { styles?: unknown } | undefined)?.styles;
   const variables = (styles as { variables?: unknown } | undefined)?.variables;
-  if (variables === null || typeof variables !== "object") return false;
-  return typeof (variables as Record<string, unknown>)[key] === "string";
+  if (variables === null || typeof variables !== "object") return undefined;
+  const value = (variables as Record<string, unknown>)[key];
+  return typeof value === "string" ? value : undefined;
 }
 
 /**
- * Apps · Styles — one row per spec variable, chipped on presence.
+ * Apps · Styles — one row per spec variable, showing the value each host sends.
  *
- * Presence rather than value: the matrix renders a support chip for
- * boolean-shaped rows and plain text for everything else, and a raw
- * `light-dark(rgba(...))` cannot be a chip. What a widget author needs from a
- * comparison is "can I rely on this variable existing here?", which is exactly
- * what presence answers; the values themselves stay in the host config.
+ * These are probed values, so the row shows them: `light-dark(rgba(255, 255,
+ * 255, 1), ...)` against `#fff` is the comparison a widget author is here to
+ * make, and collapsing it to a yes/no chip would discard the finding. A host
+ * that sends nothing reads as an em dash, so presence stays legible either way.
+ *
+ * The trade is that value rows are not support-shaped: no chip, and no
+ * participation in the coverage percentage or the support filters.
  */
 const APPS_STYLE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
   MCP_UI_STYLE_VARIABLE_KEYS.map((key) => ({
@@ -326,8 +329,8 @@ const APPS_STYLE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
     subsection: "Styles",
     label: key,
     path: `hostContext.styles.variables.${key}`,
-    description: `Whether the host sends ${key} to widgets.`,
-    kind: { kind: "boolean" },
+    description: `Value the host sends widgets for ${key}.`,
+    kind: { kind: "string" },
     read: (cfg) => readStyleVariable(cfg, key),
   }));
 

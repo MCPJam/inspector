@@ -81,11 +81,23 @@ const PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS = new Set([
   "clientInfo.version",
 ]);
 
+/**
+ * Style variables are plain-value rows too, but there are 76 of them and they
+ * arrive as a generated block, so they match by prefix rather than bloating the
+ * id set above. Each shows the actual value the host sends — the point of the
+ * subsection — which is why they are not support-shaped.
+ */
+const PUBLIC_CAN_I_USE_PLAIN_FIELD_PREFIXES = ["styles."];
+
 export function isPublicCaniuseCapabilityField(
   field: HostConfigFieldDef,
 ): boolean {
   if (PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS.has(field.id)) return false;
-  return isSupportField(field) || PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS.has(field.id);
+  if (isSupportField(field)) return true;
+  if (PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS.has(field.id)) return true;
+  return PUBLIC_CAN_I_USE_PLAIN_FIELD_PREFIXES.some((prefix) =>
+    field.id.startsWith(prefix),
+  );
 }
 
 export const PUBLIC_CAN_I_USE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
