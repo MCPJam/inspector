@@ -243,7 +243,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
-      verifiedAt: 1786492800000,
+      verifiedAt: 1786665600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -447,12 +447,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
-        mrtrModes: {
-          requestState: false,
-          elicitation: false,
-        },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "claude-ai",
             version: "0.1.0",
@@ -546,7 +542,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               font: true,
               media: true,
             },
-            resourceCacheTtl: true,
             resourcePrefersBorder: true,
             downloadFile: true,
             requestTeardown: false,
@@ -659,7 +654,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
-      verifiedAt: 1785974400000,
+      verifiedAt: 1786665600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -743,13 +738,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
-        toolCallCancellation: false,
-        mrtrModes: {
-          requestState: true,
-          elicitation: false,
-        },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          supportedProtocolVersions: ["2025-11-25"],
           clientInfo: {
             name: "openai-mcp",
             version: "1.0.0",
@@ -764,21 +754,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
           compatRuntime: {
             openaiApps: true,
-            openaiAppsOverrides: {
-              callTool: true,
-              sendFollowUpMessage: true,
-              setWidgetState: true,
-              requestDisplayMode: "all",
-              notifyIntrinsicHeight: true,
-              openExternal: true,
-              setOpenInAppUrl: true,
-              requestModal: true,
-              uploadFile: true,
-              selectFiles: true,
-              getFileDownloadUrl: true,
-              requestCheckout: true,
-              requestClose: true,
-            },
           },
           sandbox: {
             csp: {
@@ -828,18 +803,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               font: false,
               media: false,
             },
-            resourceCacheTtl: true,
             resourcePrefersBorder: true,
             downloadFile: false,
-            containerSizing: {
-              defaultWidth: 670,
-              defaultHeight: 398,
-              width: "grows",
-              height: "grows",
-              testedUpToWidth: 10000,
-              testedUpToHeight: 10000,
-              limitObserved: false,
-            },
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
           },
@@ -1011,7 +976,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26"],
-      verifiedAt: 1786579200000,
+      verifiedAt: 1786665600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1464,7 +1429,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1786579200000,
+      verifiedAt: 1786665600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,

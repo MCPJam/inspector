@@ -10,7 +10,7 @@ import {
 } from "./support-level";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
-export const CANIUSE_LAST_VERIFIED_DATE = "2026-07-07";
+export const CANIUSE_LAST_VERIFIED_DATE = "2026-08-14";
 
 export const PUBLIC_CAN_I_USE_INLINE_PRESET_IDS = [
   "preset:claude",

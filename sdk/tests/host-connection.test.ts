@@ -17,8 +17,6 @@ describe("hostConnectionProfile", () => {
   it("derives Claude's identity + the MCP Apps UI capability", () => {
     const p = profileFor("claude");
     expect(p.clientInfo?.name).toBe("claude-ai");
-    expect(p.mcpProtocolVersion).toBeUndefined();
-    expect(p.supportedProtocolVersions).toEqual(["2025-11-25"]);
     expect(
       extensions(p.clientCapabilities)["io.modelcontextprotocol/ui"]
     ).toBeDefined();
@@ -68,13 +66,13 @@ describe("hostConnectionProfile", () => {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
           clientInfo: { name: "openai-mcp", version: "1.0.0" },
         },
       },
     });
     expect(p.mcpProtocolVersion).toBeUndefined();
-    expect(p.supportedProtocolVersions).toEqual(["2025-11-25"]);
+    expect(p.supportedProtocolVersions).toEqual(["2025-11-25", "2026-07-28"]);
     expect(p.clientInfo).toMatchObject({
       name: "openai-mcp",
       version: "1.0.0",

@@ -116,7 +116,7 @@ describe("Host — public surface", () => {
     const host = new Host({ style: "chatgpt", model: "openai/gpt-5" });
     host.mcp.protocolVersion = "auto";
     host.mcp.initialize = {
-      supportedProtocolVersions: ["2025-11-25"],
+      supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
       clientInfo: { name: "openai-mcp", version: "1.0.0" },
     };
 
@@ -124,7 +124,7 @@ describe("Host — public surface", () => {
     expect(json.mcp).toMatchObject({
       protocolVersion: "auto",
       initialize: {
-        supportedProtocolVersions: ["2025-11-25"],
+        supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
         clientInfo: { name: "openai-mcp", version: "1.0.0" },
       },
     });

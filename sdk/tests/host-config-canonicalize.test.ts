@@ -466,14 +466,14 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
     expect(c.mcpProfile?.initialize).toBeUndefined();
   });
 
-  it("preserves automatic selection with a legacy-only initialize envelope", () => {
+  it("preserves automatic dual-era selection in the existing initialize envelope", () => {
     const c = canonicalizeHostConfigV2(
       base({
         mcpProfile: {
           profileVersion: 1,
           mcpProtocolVersion: "auto",
           initialize: {
-            supportedProtocolVersions: ["2025-11-25"],
+            supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
             clientInfo: { name: "openai-mcp", version: "1.0.0" },
           },
         },
@@ -482,7 +482,7 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
     expect(c.mcpProfile).toMatchObject({
       mcpProtocolVersion: "auto",
       initialize: {
-        supportedProtocolVersions: ["2025-11-25"],
+        supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
         clientInfo: { name: "openai-mcp", version: "1.0.0" },
       },
     });
@@ -502,7 +502,10 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
     ).toThrow(/ConflictingProtocolVersionPin/);
   });
 
-  it("keeps a modern pin separate from the legacy initialize accept-list", () => {
+  it("keeps an unadvertised 2026 pin — it never runs initialize", () => {
+    // A host saved this way predates the dual-era work. It must keep saving
+    // (editing an unrelated field would otherwise be rejected); the UI warns
+    // when a client is not verified for the selected revision.
     const c = canonicalizeHostConfigV2(
       base({
         mcpProfile: {

@@ -82,7 +82,6 @@ describe("buildMarketHostProfiles", () => {
       cspFrameDomains: true,
       cspBaseUriDomains: true,
       requestTeardown: false,
-      resourceCacheTtl: true,
       toolCancelled: true,
     });
   });

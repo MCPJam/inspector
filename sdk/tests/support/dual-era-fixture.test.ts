@@ -33,9 +33,7 @@ async function connectFixture(mode?: "auto" | { pin: "2026-07-28" }) {
     mode === undefined
       ? undefined
       : {
-          // Legacy initialize list; modern 2026 support is discovered
-          // independently through server/discover.
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
           versionNegotiation: { mode },
         }
   );

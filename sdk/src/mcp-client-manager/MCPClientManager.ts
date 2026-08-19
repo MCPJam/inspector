@@ -2340,12 +2340,16 @@ export class MCPClientManager {
       const wantsStateless =
         resolvedProtocolVersion !== undefined &&
         isStatelessProtocolVersion(resolvedProtocolVersion);
-      // Resolve negotiation independently from the legacy initialize list.
-      // Upstream keeps modern server/discover candidates in a separate list,
-      // so Auto can discover 2026 without leaking it into initialize.
+      // Resolve negotiation before the legacy initialize accept-list so Auto
+      // has one source of truth. An unpinned connection probes the modern era
+      // first and, on a legacy signal, must fall back with the upstream SDK's
+      // complete built-in supported-version list. Forwarding a persisted
+      // per-server or manager-default list here can make the first connection
+      // succeed but a later reconnect reject the server's valid counter-offer.
       const versionNegotiation = resolveVersionNegotiation(
         resolvedProtocolVersion
       );
+      const wantsAutoNegotiation = versionNegotiation?.mode === "auto";
       // Stateful `mcpProtocolVersion` pin (e.g. `"2025-11-25"`) propagates
       // into the legacy `Client`'s `supportedProtocolVersions` accept-list
       // so `initialize.params.protocolVersion` actually goes out as the
@@ -2353,14 +2357,15 @@ export class MCPClientManager {
       // explicit `supportedProtocolVersions` (per-server or default) still
       // wins for an explicit pin — pinning at one layer while overriding the
       // other would be ambiguous and the override is the more specific signal.
-      // Automatic mode honors this list only for its legacy fallback. Modern
-      // candidates remain owned by upstream's separate discovery list.
-      const resolvedSupportedProtocolVersions =
-        config.supportedProtocolVersions ??
-        this.defaultSupportedProtocolVersions ??
-        (!wantsStateless && resolvedProtocolVersion !== undefined
-          ? [resolvedProtocolVersion]
-          : undefined);
+      // Auto deliberately ignores both lists so its legacy fallback negotiates
+      // against every version supported by the upstream SDK.
+      const resolvedSupportedProtocolVersions = wantsAutoNegotiation
+        ? undefined
+        : config.supportedProtocolVersions ??
+          this.defaultSupportedProtocolVersions ??
+          (!wantsStateless && resolvedProtocolVersion !== undefined
+            ? [resolvedProtocolVersion]
+            : undefined);
       // Send the version that was actually PINNED, not whatever happens to
       // sit at index 0 of the accept-list.
       //
@@ -2379,7 +2384,7 @@ export class MCPClientManager {
       //
       // A pin absent from the list is left alone: it would put a version on
       // the wire the client never claimed to speak. `canonicalizeMcpProfile`
-      // rejects that combination for concrete host pins anyway, so this only
+      // rejects that combination for stateful host pins anyway, so this only
       // guards hand-built configs.
       const supportedProtocolVersions =
         !wantsStateless &&

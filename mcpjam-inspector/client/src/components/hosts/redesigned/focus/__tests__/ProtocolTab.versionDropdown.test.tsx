@@ -31,7 +31,7 @@ vi.mock("sonner", () => ({
   toast: { warning: vi.fn() },
 }));
 
-import { legacyProtocolSupportWarning, ProtocolTab } from "../ProtocolTab";
+import { ProtocolTab } from "../ProtocolTab";
 
 function Harness({ initial }: { initial: HostConfigInputV2 }) {
   const [draft, setDraft] = useState(initial);
@@ -174,33 +174,33 @@ describe("ProtocolTab protocol-version dropdown", () => {
 });
 
 /**
- * Catalog-backed clients use their complete cross-era support list. Custom
- * clients fall back to the nested legacy initialize list.
+ * The backend (`canonicalizeMcpProfile`) refuses to store a concrete pin that
+ * is absent from `initialize.supportedProtocolVersions` —
+ * `ConflictingProtocolVersionPin`. Preset-backed clients carry that list, so
+ * offering the full set on them produced choices that failed at Save with an
+ * opaque "Server Error". Offer only what saves.
  */
 describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
   beforeEach(() => {
     vi.mocked(toast.warning).mockClear();
   });
 
-  it("warns for an old client row with no stored support list", () => {
-    expect(
-      legacyProtocolSupportWarning("chatgpt", undefined, "2025-03-26")
-    ).toBe("ChatGPT is not verified to support 2025-03-26.");
-  });
-
-  it("offers Claude 2026 from the catalog while initialize stays 2025-only", async () => {
+  it("warns, but still switches, for an old client not verified for the chosen version", async () => {
     const user = userEvent.setup();
-    render(
-      <Harness initial={withAdvertised(["2025-11-25"], undefined, "claude")} />
-    );
+    const initial = emptyHostConfigInputV2({
+      hostStyle: "chatgpt",
+    } as Partial<HostConfigInputV2>);
+    render(<Harness initial={initial} />);
 
     await user.click(
       screen.getByRole("combobox", { name: "MCP protocol version" })
     );
-    expect(
-      (await screen.findAllByRole("option")).map((o) => o.textContent)
-    ).toEqual(["Automatic", "Latest (2026-07-28)", "2025-11-25"]);
-    expect(screen.getByTestId("advertised")).toHaveTextContent("2025-11-25");
+    await user.click(screen.getByRole("option", { name: "2025-03-26" }));
+
+    expect(toast.warning).toHaveBeenCalledWith(
+      "ChatGPT is not verified to support 2025-03-26."
+    );
+    expect(screen.getByTestId("pin")).toHaveTextContent("2025-03-26");
   });
 
   it("does not warn for an updated client that advertises its supported versions", async () => {
@@ -217,11 +217,13 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
 
   function withAdvertised(
     supportedProtocolVersions: string[],
-    mcpProtocolVersion?: string,
-    hostStyle = "custom-client"
+    mcpProtocolVersion?: string
   ): HostConfigInputV2 {
     return emptyHostConfigInputV2({
-      hostStyle,
+      // Cursor's catalog row lists only 2025-11-25, so the advertised list is
+      // the only thing constraining the dropdown here. A client whose catalog
+      // row spans both eras (Claude) would widen it on purpose.
+      hostStyle: "cursor",
       mcpProfile: {
         profileVersion: 1,
         initialize: { supportedProtocolVersions },
@@ -335,20 +337,20 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     ).toContain("2025-03-26");
   });
 
-  it("explains the verified restriction", () => {
+  it("explains the restriction and where to lift it", () => {
     render(<Harness initial={withAdvertised(["2025-11-25"])} />);
 
     // A short dropdown with no explanation reads as a broken control — the
     // list doing the filtering is invisible unless the JSON editor is open.
     expect(
-      screen.getByText(/This client is verified for 2025-11-25/)
+      screen.getByText(/This client advertises 2025-11-25/)
     ).toBeInTheDocument();
   });
 
   it("says nothing when the advertised list removes nothing", () => {
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
-    expect(screen.queryByText(/This client is verified for/)).toBeNull();
+    expect(screen.queryByText(/This client advertises/)).toBeNull();
   });
 
   it("warns about an unadvertised stored pin even when the option count is full", () => {
@@ -365,10 +367,10 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
       />
     );
 
-    expect(screen.queryByText(/This client is verified for/)).toBeNull();
+    expect(screen.queryByText(/This client advertises/)).toBeNull();
     expect(
       screen.getByText(
-        /Pinned to 2025-03-26, which is absent from the legacy initialize list/
+        /Pinned to 2025-03-26, which this client does not advertise/
       )
     ).toBeInTheDocument();
   });
@@ -378,12 +380,12 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
 
     expect(
       screen.getByText(
-        /Pinned to 2025-03-26, which is absent from the legacy initialize list/
+        /Pinned to 2025-03-26, which this client does not advertise/
       )
     ).toBeInTheDocument();
   });
 
-  it("does not warn on an accepted legacy pin and treats modern separately", () => {
+  it("does not warn on an advertised or stateless pin", () => {
     // Advertised pin: fine.
     const { unmount } = render(
       <Harness initial={withAdvertised(["2025-11-25"], "2025-11-25")} />
@@ -391,11 +393,17 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     expect(screen.queryByText(/does not advertise/)).toBeNull();
     unmount();
 
-    // A modern pin is not a legacy initialize conflict.
-    render(<Harness initial={withAdvertised(["2025-11-25"], "2026-07-28")} />);
-    expect(
-      screen.getByText(/not verified for this client/)
-    ).toBeInTheDocument();
-    expect(screen.queryByText(/Saving will fail/)).toBeNull();
+    // A stateless pin skips `initialize`, so it never has to appear in that
+    // accept-list — both canonicalizers save this shape. Warning here would
+    // promise a failure that never comes.
+    const second = render(
+      <Harness initial={withAdvertised(["2025-11-25"], "2026-07-28")} />
+    );
+    expect(screen.queryByText(/does not advertise/)).toBeNull();
+    second.unmount();
+
+    // A stateful pin outside the list still throws at Save, so it still warns.
+    render(<Harness initial={withAdvertised(["2025-11-25"], "2025-06-18")} />);
+    expect(screen.getByText(/does not advertise/)).toBeInTheDocument();
   });
 });
