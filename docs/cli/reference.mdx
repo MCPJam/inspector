@@ -625,6 +625,33 @@ Fails with `CONFLICT` if another live environment took the name while this one w
 | `--expected-revision <n>` | Yes | The revision you last read (use `environments list --include-archived`) |
 | `--project <id-or-name>` | No | Project name or ID |
 
+### `environments ensure-adhoc`
+
+Get or create an **unnamed** environment for a composed stack. Deduplicated by content: the same stack always returns the same environment, with `created: false` on the second call. Ad-hoc environments do not appear in `environments list` — they exist so a one-off combination can be run and reproduced without adding a name to the project's list.
+
+Requires project membership, not admin (pinning plugin versions still requires admin).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--host <id-or-name>` | Yes | Host the stack runs as — the client whose configuration a run is stamped with |
+| `--server-group <id>` | No | Standalone server group to pin (omit to use the host's own servers) |
+| `--model <id>` | No | Model to run instead of the host's pinned one |
+| `--computer <id-or-name>` | No | Project-shared sandbox image to pin, so runs boot a fresh computer from it |
+| `--skill <id...>` | No | Project-shared skill IDs to pin |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `environments name`
+
+Promote an ad-hoc environment to a named one **in place** — the same id every existing run already points at, so history stays attached. Fails with `CONFLICT` if the environment already has a name.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--environment <id>` | Yes | The ad-hoc environment to promote, by ID (an unnamed environment has no name to select it by) |
+| `--name <name>` | Yes | Display name for the promoted environment |
+| `--expected-revision <n>` | Yes | The revision you last read |
+| `--description <text>` | No | Optional description |
+| `--project <id-or-name>` | No | Project name or ID |
+
 ### What can be pinned
 
 Both pin fields are narrower than they look:

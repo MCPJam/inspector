@@ -33,11 +33,16 @@ catalog appends a COSTS MONEY cue to their descriptions, and the in-app agent
 marks their approvals spend-severity.
 
 Agent proposals for a fan-out are FROZEN at mint time: `allAttached` is
-resolved to an explicit id list and dropped, so attaching a fourth environment
-between the proposal and the click cannot widen an approved 3-run spend to 4.
-The approval line says how many paid runs a click starts, and a grouped launch
-links to the group rather than to one of its runs — linking the first run would
-hide a sibling's failure.
+resolved to an explicit id list and dropped, and environment/host NAMES are
+resolved to ids — so neither attaching a fourth environment nor moving a name
+between the proposal and the click changes what an approval runs. The freeze is
+best-effort by design: when the platform cannot be reached to resolve the set,
+the proposal is still offered with its selectors unresolved, because failing to
+narrow is a worse outcome than the behaviour that came before it. The approval
+line says how many paid runs a click starts (and, for a composed target, that
+the suite's environment list changes), and a grouped launch links to the group
+rather than to one of its runs — linking the first run would hide a sibling's
+failure.
 
 New knobs on both run operations: `iterations`, `cases`, `matchOptions` (public
 vocabulary), `excludeSkills`, `notes`, `minPassRate`, `idempotencyKey`, and
