@@ -694,12 +694,15 @@ function canonicalizeMcpProfile(
 
   const out: HostConfigMcpProfileV1 = { profileVersion: 1 };
 
-  // Host-default pinned MCP protocol version. Absent → SDK chooses at resolve
-  // time; we drop the field when absent so pre-feature rows hash identically.
+  // Host-default protocol selection. `auto` is a storage-only policy; concrete
+  // values are wire pins. Absent stays accepted for legacy rows.
   if (input.mcpProtocolVersion !== undefined) {
-    if (!isKnownProtocolVersion(input.mcpProtocolVersion)) {
+    if (
+      input.mcpProtocolVersion !== "auto" &&
+      !isKnownProtocolVersion(input.mcpProtocolVersion)
+    ) {
       throw new Error(
-        `hostConfigV2: mcpProfile.mcpProtocolVersion must be one of ${MCP_PROTOCOL_VERSIONS.join(
+        `hostConfigV2: mcpProfile.mcpProtocolVersion must be "auto" or one of ${MCP_PROTOCOL_VERSIONS.join(
           ", "
         )} (got "${String(input.mcpProtocolVersion)}")`
       );
@@ -817,17 +820,19 @@ function canonicalizeMcpProfile(
     }
   }
 
-  // Cross-field rule (Option A): when `mcpProtocolVersion` pins a stateful
-  // (pre-2026) version, the legacy `initialize` handshake runs and must
-  // advertise that exact version. Derive when caller didn't set one; throw if
-  // they set both AND the pin isn't in the list. Stateless versions skip
-  // initialize entirely, so leave `supportedProtocolVersions` alone there.
+  // A stateful pin must be one of the client's declared supported versions,
+  // and a missing list is derived from it because initialize needs one. A
+  // stateless pin skips initialize entirely, so it is exempt from the
+  // accept-list check (see the guard below) — legacy rows carry that shape.
   if (
     out.mcpProtocolVersion !== undefined &&
-    !isStatelessProtocolVersion(out.mcpProtocolVersion)
+    out.mcpProtocolVersion !== "auto"
   ) {
     const advertised = out.initialize?.supportedProtocolVersions;
-    if (advertised === undefined) {
+    if (
+      advertised === undefined &&
+      !isStatelessProtocolVersion(out.mcpProtocolVersion)
+    ) {
       const initBase = out.initialize ?? {};
       const initWithDerived: NonNullable<HostConfigMcpProfileV1["initialize"]> =
         {
@@ -841,7 +846,15 @@ function canonicalizeMcpProfile(
         )[k];
       }
       out.initialize = sortedInit;
-    } else if (!advertised.includes(out.mcpProtocolVersion)) {
+    } else if (
+      advertised !== undefined &&
+      // A stateless pin never runs `initialize`, so it has no business being
+      // in that legacy accept-list. Hosts saved this way predate the dual-era
+      // work and must keep saving; the UI already warns when a client is not
+      // verified for the selected revision.
+      !isStatelessProtocolVersion(out.mcpProtocolVersion) &&
+      !advertised.includes(out.mcpProtocolVersion)
+    ) {
       throw new Error(
         `hostConfigV2: ConflictingProtocolVersionPin — mcpProtocolVersion "${
           out.mcpProtocolVersion
