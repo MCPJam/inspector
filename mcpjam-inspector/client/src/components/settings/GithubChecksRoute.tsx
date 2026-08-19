@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Navigate } from "react-router";
 import { useConvexAuth } from "convex/react";
 import { ChevronLeft, Github, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useAppNavigate } from "@/lib/app-navigation";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Switch } from "@mcpjam/design-system/switch";
 import {
@@ -14,11 +15,16 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
+import {
+  OutagePolicyExplainer,
+  OutagePolicySelectItems,
+} from "./github-checks-outage-policy";
 import { SettingsSection } from "../setting/SettingsSection";
 import { SettingsPageShell } from "./SettingsPageShell";
+import { githubChecksWriteErrorMessage } from "@/lib/github-checks-errors";
 import {
-  GITHUB_CHECKS_UNAVAILABLE_MESSAGE,
   useGithubChecksSettings,
+  type GithubCheckOutagePolicy,
   type GithubCheckRepoConfigRow,
   type InstallationRepo,
   type SuiteOption,
@@ -62,6 +68,24 @@ function RepoCheckState({ enabled }: { enabled: boolean }) {
   );
 }
 
+/**
+ * Live GitHub visibility, or nothing.
+ *
+ * `undefined` is UNKNOWN, and it arrives four ways: GitHub omitted the flag,
+ * the repository is not in the current installation listing, the listing has
+ * not loaded yet, or the listing failed. None of those is evidence that a
+ * repository is public, so none of them renders a badge. Guessing wrong here
+ * labels somebody's private repository as public on their own settings page.
+ */
+function RepoVisibilityBadge({ isPrivate }: { isPrivate?: boolean }) {
+  if (isPrivate === undefined) return null;
+  return (
+    <Badge variant="outline" className="shrink-0">
+      {isPrivate ? "Private" : "Public"}
+    </Badge>
+  );
+}
+
 export function GithubChecksRoute({
   activeOrganizationId,
 }: GithubChecksRouteProps = {}) {
@@ -70,9 +94,10 @@ export function GithubChecksRoute({
     availability,
     repos,
     suites,
-    connectRepo,
+    connectVerifiedRepo,
     setRepoEnabled,
     setRepoSuite,
+    setRepoOutagePolicy,
     disconnectRepo,
     listInstallationRepos,
   } = useGithubChecksSettings(activeOrganizationId);
@@ -106,8 +131,29 @@ export function GithubChecksRoute({
   const [pendingToggles, setPendingToggles] = useState<ReadonlySet<string>>(
     () => new Set()
   );
+  // Policy writes are tracked SEPARATELY from `pendingToggles`: they are
+  // different writes on the same row, and one set would have a policy change
+  // disable the enable switch (and vice versa) for no reason the user can see.
+  const [pendingPolicies, setPendingPolicies] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
   const [pickerRepo, setPickerRepo] = useState<string>("");
   const [pickerSuite, setPickerSuite] = useState<string>("");
+  // `""` is "not chosen", and it is the only initial value this may have. A
+  // preselected policy would record a decision the administrator never made —
+  // the exact thing the unstamped legacy rows below exist to warn about.
+  const [pickerPolicy, setPickerPolicy] = useState<
+    GithubCheckOutagePolicy | ""
+  >("");
+
+  // The organization a completion belongs to. `activeOrganizationId` is a prop
+  // and this component stays mounted across a switch, so an in-flight connect
+  // resolves against whatever org is active WHEN IT LANDS — which is not
+  // necessarily the one it was submitted for.
+  const organizationIdRef = useRef(activeOrganizationId);
+  useEffect(() => {
+    organizationIdRef.current = activeOrganizationId;
+  }, [activeOrganizationId]);
 
   /**
    * A write refused as unavailable means the surface flipped off underneath
@@ -115,24 +161,20 @@ export function GithubChecksRoute({
    * response — the next render redirects if it is genuinely off now.
    */
   const handleWriteError = useCallback((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("not currently available")) {
-      toast.error(GITHUB_CHECKS_UNAVAILABLE_MESSAGE);
-      return;
-    }
-    toast.error(message);
+    toast.error(githubChecksWriteErrorMessage(error));
   }, []);
 
   useEffect(() => {
     // Switching orgs must not let the previous org's in-flight result land on
-    // the new one: `connectRepo` sends the CURRENT org id, so a stale selection
-    // would be submitted against an org that repo does not belong to. Reset the
-    // picker and ignore any completion after cleanup.
+    // the new one: `connectVerifiedRepo` sends the CURRENT org id, so a stale
+    // selection would be submitted against an org that repo does not belong to.
+    // Reset the picker and ignore any completion after cleanup.
     let cancelled = false;
     setInstallationRepos(null);
     setInstallationReposFailed(false);
     setPickerRepo("");
     setPickerSuite("");
+    setPickerPolicy("");
 
     if (availability?.state !== "enabled") {
       return () => {
@@ -153,7 +195,16 @@ export function GithubChecksRoute({
     return () => {
       cancelled = true;
     };
-  }, [availability?.state, listInstallationRepos, handleWriteError]);
+    // `activeOrganizationId` is listed even though nothing in the body reads it
+    // directly: the org IS what this effect resets for, and depending only on
+    // the callback's identity would tie the reset to a memoization detail of
+    // the hook rather than to the switch itself.
+  }, [
+    activeOrganizationId,
+    availability?.state,
+    listInstallationRepos,
+    handleWriteError,
+  ]);
 
   // Without an active organization the availability query never runs, so
   // treating that as "still loading" would leave the page blank forever. But
@@ -180,24 +231,41 @@ export function GithubChecksRoute({
 
   const handleConnect = async () => {
     const suite = suiteById(pickerSuite);
-    if (!pickerRepo || !suite?.projectId) {
-      toast.error("Pick a repository and a suite first.");
+    // The same three-way rule the button enforces, enforced again here. The
+    // disabled attribute is a hint to a person; this is the invariant, and the
+    // policy half of it is why: a connect that quietly omitted `outagePolicy`
+    // would store a row nobody chose a policy for — the legacy state this whole
+    // screen exists to stop creating.
+    if (!pickerRepo || !suite?.projectId || !pickerPolicy) {
+      toast.error("Pick a repository, a suite, and an outage policy first.");
       return;
     }
+    // Which org this submission belongs to. Compared against the ref after the
+    // await, because the user can switch orgs while GitHub is being asked.
+    const submittedForOrganization = activeOrganizationId;
     setConnecting(true);
     try {
       // The project is DERIVED from the suite, never picked separately: the
       // backend requires them to agree, so offering two controls would only
       // create a way to get it wrong.
-      await connectRepo({
+      await connectVerifiedRepo({
         repoFullName: pickerRepo,
         projectId: suite.projectId,
         suiteId: suite._id,
+        outagePolicy: pickerPolicy,
       });
+      // A completion for the PREVIOUS org lands on a page that is now showing a
+      // different one. Clearing selections there would wipe a fresh choice, and
+      // the success toast would credit the wrong organization.
+      if (organizationIdRef.current !== submittedForOrganization) return;
       setPickerRepo("");
       setPickerSuite("");
+      setPickerPolicy("");
       toast.success("Repository connected.");
     } catch (error) {
+      // Same rule for the failure: an error about an org the user has already
+      // left is noise they cannot act on.
+      if (organizationIdRef.current !== submittedForOrganization) return;
       handleWriteError(error);
     } finally {
       setConnecting(false);
@@ -241,6 +309,30 @@ export function GithubChecksRoute({
     }
   };
 
+  const handlePolicyChange = async (
+    row: GithubCheckRepoConfigRow,
+    outagePolicy: GithubCheckOutagePolicy
+  ) => {
+    // Same reason as the enable toggle: the select stays bound to the server
+    // snapshot until the list refreshes, so a second change made before the
+    // first settles would be sent against a row state that is already moving.
+    if (pendingPolicies.has(row._id)) return;
+    setPendingPolicies((current) => new Set(current).add(row._id));
+    try {
+      // `{ changed: false }` is a successful no-op — the stored policy already
+      // said this. Nothing to announce; only a throw is worth a toast.
+      await setRepoOutagePolicy({ configId: row._id, outagePolicy });
+    } catch (error) {
+      handleWriteError(error);
+    } finally {
+      setPendingPolicies((current) => {
+        const next = new Set(current);
+        next.delete(row._id);
+        return next;
+      });
+    }
+  };
+
   const handleDisconnect = async (row: GithubCheckRepoConfigRow) => {
     try {
       await disconnectRepo({ configId: row._id });
@@ -249,12 +341,27 @@ export function GithubChecksRoute({
     }
   };
 
-  // Both sides lowercased. The backend stores the canonical lowercase form, so
-  // today only the candidate strictly needs it — but relying on that means a
-  // contract change silently reintroduces duplicate offers, and normalizing
-  // both is free.
+  // ONE normalization for every repository-name comparison on this page, on
+  // both sides of every join. The backend stores the canonical lowercase form,
+  // so today only the candidate strictly needs it — but two spellings of "the
+  // same repository" is exactly how a padded listing entry earns a visibility
+  // badge from one comparison while slipping past the already-connected filter
+  // beside it, landing in the picker as an offer the submit then refuses.
+  const normalizeRepoName = (fullName: string) => fullName.trim().toLowerCase();
+
+  // Live visibility. Only an explicit boolean is recorded: a repository GitHub
+  // returned without `private`, one that is not in this listing at all, and a
+  // listing that has not loaded or has failed all fall through to `undefined`,
+  // which renders no badge.
+  const visibilityByRepo = new Map<string, boolean>();
+  for (const repo of installationRepos ?? []) {
+    if (typeof repo.private === "boolean") {
+      visibilityByRepo.set(normalizeRepoName(repo.fullName), repo.private);
+    }
+  }
+
   const alreadyConnected = new Set(
-    rows.map((row) => row.repoFullName.toLowerCase())
+    rows.map((row) => normalizeRepoName(row.repoFullName))
   );
   // Offer nothing until the connected list has actually loaded. `rows` is `[]`
   // while `repos` is undefined, so filtering then would advertise repositories
@@ -263,7 +370,7 @@ export function GithubChecksRoute({
     repos === undefined
       ? []
       : (installationRepos ?? []).filter(
-          (repo) => !alreadyConnected.has(repo.fullName.toLowerCase())
+          (repo) => !alreadyConnected.has(normalizeRepoName(repo.fullName))
         );
 
   return (
@@ -334,10 +441,27 @@ export function GithubChecksRoute({
                   <Github className="size-4 text-primary" aria-hidden />
                 </div>
                 <div className="flex flex-col min-w-0">
-                  <span className="text-sm font-medium truncate">
-                    {row.repoFullName}
-                  </span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm font-medium truncate">
+                      {row.repoFullName}
+                    </span>
+                    <RepoVisibilityBadge
+                      isPrivate={visibilityByRepo.get(
+                        normalizeRepoName(row.repoFullName)
+                      )}
+                    />
+                  </div>
                   <RepoCheckState enabled={row.enabled} />
+                  {row.outagePolicy === undefined ? (
+                    /* Not the same statement as "fail open": the backend does
+                       behave that way for an unstamped row, but nobody chose
+                       it, and saying so is what lets an administrator tell the
+                       two apart. */
+                    <span className="text-xs text-muted-foreground">
+                      No outage policy chosen — effectively fails open, so the
+                      check reports neutral during an MCPJam outage or pause.
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
@@ -358,6 +482,31 @@ export function GithubChecksRoute({
                         {suite.name}
                       </SelectItem>
                     ))}
+                  </SelectContent>
+                </Select>
+
+                {/* `?? ""` shows the placeholder rather than a value. Binding
+                    this to `fail_open` for an unstamped row would render the
+                    administrator's screen as though they had already chosen
+                    the default — a claim the stored row does not make. */}
+                <Select
+                  value={row.outagePolicy ?? ""}
+                  disabled={pendingPolicies.has(row._id)}
+                  onValueChange={(value) =>
+                    void handlePolicyChange(
+                      row,
+                      value as GithubCheckOutagePolicy
+                    )
+                  }
+                >
+                  <SelectTrigger
+                    className="w-44"
+                    aria-label={`Outage policy for ${row.repoFullName}`}
+                  >
+                    <SelectValue placeholder="Policy not chosen" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <OutagePolicySelectItems />
                   </SelectContent>
                 </Select>
 
@@ -410,13 +559,31 @@ export function GithubChecksRoute({
             </SelectContent>
           </Select>
 
+          <Select
+            value={pickerPolicy}
+            onValueChange={(value) =>
+              setPickerPolicy(value as GithubCheckOutagePolicy)
+            }
+          >
+            <SelectTrigger className="w-52" aria-label="Outage policy">
+              <SelectValue placeholder="Select an outage policy" />
+            </SelectTrigger>
+            <SelectContent>
+              <OutagePolicySelectItems />
+            </SelectContent>
+          </Select>
+
           <Button
             onClick={() => void handleConnect()}
-            disabled={connecting || !pickerRepo || !pickerSuite}
+            disabled={
+              connecting || !pickerRepo || !pickerSuite || !pickerPolicy
+            }
           >
             <Plus className="mr-2 size-4" aria-hidden /> Connect
           </Button>
         </div>
+
+        <OutagePolicyExplainer className="space-y-1 px-4 pb-3 text-xs text-muted-foreground" />
 
         {installationReposFailed ? (
           <div className="px-4 pb-4 text-sm text-muted-foreground">
