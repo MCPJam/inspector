@@ -429,6 +429,13 @@ export interface PlatformEvalStep {
  */
 export interface PlatformEvalCase {
   id: string;
+  /**
+   * The case's effective DECLARED id — what it answers to in a suite file, an
+   * import, or a CLI argument. Absent on cases authored before declared
+   * identity existed. Distinct from `id`, which is the platform row id the
+   * per-case routes take as their path parameter.
+   */
+  declaredId?: string;
   title: string;
   /** Ordered test steps that define the case. */
   steps: PlatformEvalStep[];
@@ -443,6 +450,58 @@ export interface PlatformEvalCase {
   checks?: PublicCheckOverride;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/** A note about a batch write that changes nothing about what was written. */
+export interface PlatformEvalCaseWarning {
+  /** Stable machine-readable code (e.g. `DUPLICATE_POLICY_COERCED`). */
+  code: string;
+  message: string;
+}
+
+/** One case a batch create authored. */
+export interface PlatformEvalCaseBatchCreated {
+  /** Position in the `cases` array that was sent. */
+  index: number;
+  /** Platform id — what the per-case routes take as their path parameter. */
+  id: string;
+  /** The effective declared id. On a replay this is the STORED case's. */
+  declaredId?: string;
+  title: string;
+  /** True when an idempotent retry landed on an already-authored case. */
+  replayed: boolean;
+  warnings?: PlatformEvalCaseWarning[];
+}
+
+/** One case a batch create refused. Its siblings may still have committed. */
+export interface PlatformEvalCaseBatchFailed {
+  index: number;
+  title?: string;
+  declaredId?: string;
+  /** Stable machine-readable code (e.g. `DUPLICATE_CASE_ID`). */
+  code: string;
+  message: string;
+}
+
+/**
+ * The result of authoring several cases at once.
+ *
+ * Per-case failures are reported here rather than raised: a batch is a partial
+ * outcome by design, and the cases in `created` were really written.
+ */
+export interface PlatformEvalCaseBatchResult {
+  created: PlatformEvalCaseBatchCreated[];
+  failed: PlatformEvalCaseBatchFailed[];
+  /**
+   * What duplicate policy actually applied. An unrecognized value coerces to
+   * `block` and says so here — never silently.
+   */
+  duplicatePolicy: {
+    requestedPolicy?: string;
+    effectivePolicy: string;
+    coerced: boolean;
+  };
+  warnings?: PlatformEvalCaseWarning[];
 }
 
 // ── Run comparison ───────────────────────────────────────────────────────────

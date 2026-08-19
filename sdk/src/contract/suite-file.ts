@@ -78,6 +78,16 @@ export const EVAL_SUITE_SCHEMA_ID =
  * them.
  */
 export const MAX_SUITE_FILE_CASES = 500;
+/**
+ * Max cases the hosted batch-create surface accepts in ONE call.
+ *
+ * The other half of the note above, kept beside it so the two numbers are read
+ * together and neither drifts toward the other. Mirrored by
+ * `MAX_TEST_CASES_PER_BATCH` in the platform's own batch mutation, which is
+ * where the limit is enforced; this copy is what lets a client CHUNK to the
+ * limit instead of discovering it from a rejected call.
+ */
+export const MAX_BATCH_CREATE_CASES = 100;
 /** Max characters in a suite name or a case title. */
 export const MAX_SUITE_FILE_TITLE_CHARS = 200;
 /** Max transcript predicates attached to one case. */
