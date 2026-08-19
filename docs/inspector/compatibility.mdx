@@ -29,6 +29,10 @@ Verdicts are derived from static connect-time data (tools list + `_meta` bags + 
 
 Above the per-host rows, a **Conformance gate** shows whether the server passes the MCP protocol conformance checks. A server that fails conformance may work on some hosts but is likely to behave inconsistently. Fix conformance issues first — they affect every host.
 
+### Protocol versions row
+
+The **Compare** matrix includes a **Protocol versions** row for each host. It shows the full list of MCP protocol eras the host's catalog entry advertises — for example, `2025-11-25, 2026-07-28` for Claude and ChatGPT. The value is read from the catalog's supported list rather than the preset's `initialize` handshake list, so it reports what each client actually speaks rather than what it happens to advertise during `initialize`. The row renders as a plain value, not a support chip — "which eras" is not a yes/no question.
+
 ### Findings
 
 Expand a host row to see the full findings list, split into two lanes:
