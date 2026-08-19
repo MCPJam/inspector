@@ -2341,6 +2341,58 @@ export interface PlatformUserTestingInsightsRequested {
  * dead end on every surface that is not a browser: the caller is told to
  * re-send with a `serverId` and has no way to discover which ids exist.
  */
+/**
+ * One lane of a readiness grade, as the run row carries it.
+ *
+ * Coverage travels beside the status because a lane with no violations and
+ * nothing evaluated is not a pass, and the numbers are what say so.
+ */
+export interface PlatformClaudeReadinessLane {
+  lane: string;
+  status: "ready" | "not-ready" | "incomplete";
+  evaluated: number;
+  notEvaluated: number;
+  notApplicable: number;
+  /** Named inputs that would let this lane be graded, e.g. `submissionProfile`. */
+  missingInputs: string[];
+}
+
+/**
+ * A Claude directory-readiness run.
+ *
+ * `status` is the RUN's lifecycle (queued, executing, finished); `overallStatus`
+ * is the GRADE, and is absent until a run finishes. Keeping them apart is what
+ * lets a caller tell "still running" from "ran, and the answer is incomplete".
+ */
+export interface PlatformClaudeReadinessRun {
+  id: string;
+  serverUrl: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  overallStatus?: "ready" | "not-ready" | "incomplete";
+  lanes: PlatformClaudeReadinessLane[];
+  authMode?: "headless" | "interactive" | "provided-token";
+  capabilities: string[];
+  intrusive: boolean;
+  attemptCount: number;
+  terminalReason?: string;
+  errorMessage?: string;
+  /** The date the graded policy corpus was pinned at. */
+  policySnapshotDate?: string;
+  engineVersion?: string;
+  /** Whether the full report blob is available for this run. */
+  hasReport: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** The acknowledgement for a run that was just requested. */
+export interface PlatformClaudeReadinessRunRequest {
+  id: string;
+  status: "pending";
+  /** True when an idempotency key matched a run that already existed. */
+  reused: boolean;
+}
+
 export interface PlatformServerConnectionCandidate {
   id: string;
   name: string;

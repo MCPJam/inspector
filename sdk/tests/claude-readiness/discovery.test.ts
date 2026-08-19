@@ -738,3 +738,77 @@ describe("a body that fails to read is still a server that answered", () => {
     expect(evidence.prm?.reachedServer).toBe(true);
   });
 });
+
+describe("a cancelled run stops dialling the target", () => {
+  // The point is the TARGET, not our bookkeeping. A run that keeps probing
+  // after the person who started it pressed cancel is traffic nobody asked
+  // for and nobody will read.
+  it("issues nothing once the signal is already aborted", async () => {
+    const { origin, hits } = await start((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    const evidence = await traceConnectorRedirects({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+      signal: controller.signal,
+    });
+
+    expect(hits).toEqual([]);
+    expect(evidence.redirectChain).toEqual([]);
+  });
+
+  it("stops walking a redirect chain mid-way", async () => {
+    // Aborted after the first hop COMPLETED: the trace returns what it has
+    // rather than following the rest, and the endpoint checks read a short
+    // chain the same way they read any other partial evidence.
+    const controller = new AbortController();
+    const { origin, hits } = await start((_req, res) => {
+      res.writeHead(302, { location: "/next" });
+      res.end();
+    });
+    // Aborting from the client side, once the hop is recorded, so the test
+    // turns on the loop's own check rather than on a server-side race.
+    const fetchFn: typeof fetch = async (input, init) => {
+      const response = await fetch(input as never, init as never);
+      controller.abort();
+      return response;
+    };
+
+    const evidence = await traceConnectorRedirects({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn,
+      signal: controller.signal,
+    });
+
+    expect(hits).toEqual(["HEAD /mcp"]);
+    expect(evidence.redirectChain).toHaveLength(1);
+  });
+
+  it("aborts a request in flight rather than waiting out its timeout", async () => {
+    // The per-request timeout is the ceiling, not the mechanism: a cancel that
+    // only stopped scheduling would still hold a socket open on somebody
+    // else's server for the rest of the budget.
+    const controller = new AbortController();
+    const { origin } = await start((_req, res) => {
+      // Never answers. The abort below is the only thing that ends this.
+      setTimeout(() => controller.abort(), 10).unref?.();
+      void res;
+    });
+
+    const started = Date.now();
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+      // Far longer than the abort, so finishing fast proves the abort ended it.
+      timeoutMs: 30_000,
+      signal: controller.signal,
+    });
+
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(evidence.unauthenticated).toBeUndefined();
+  });
+});

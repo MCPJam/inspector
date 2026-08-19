@@ -173,6 +173,10 @@ import {
   type ProductionChecksWorkerHandle,
 } from "./services/production-checks-worker";
 import {
+  startClaudeReadinessWorker,
+  type ClaudeReadinessWorkerHandle,
+} from "./services/claude-readiness-worker";
+import {
   SERVER_PORT,
   CORS_ORIGINS,
   HOSTED_MODE,
@@ -852,6 +856,12 @@ if (isGithubChecksWorkerEnabled()) {
 const productionChecksWorker: ProductionChecksWorkerHandle =
   startProductionChecksWorker();
 
+// Claude directory readiness: claim-and-grade polling loop for runs enqueued
+// through the v1 API. Same self-gating as above — a deployment with no service
+// token is not an infrastructure peer and gets an inert handle.
+const claudeReadinessWorker: ClaudeReadinessWorkerHandle =
+  startClaudeReadinessWorker();
+
 const expectedParentPid = Number.parseInt(
   process.env.MCPJAM_INSPECTOR_PARENT_PID ?? "",
   10
@@ -909,6 +919,7 @@ async function shutdown() {
     await scheduledEvalsWorker?.stop();
     await githubChecksWorker?.stop();
     await productionChecksWorker.stop();
+    await claudeReadinessWorker.stop();
     // Abort active synthetic-session runs and write a terminal "failed"
     // status so the dialog/UI doesn't see a stuck "running" run. Bounded
     // by an internal timeout; the outer `forceExitTimer` still wins.

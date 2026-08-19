@@ -80,6 +80,22 @@ export interface ClaudeReadinessRunConfig {
 
   /** What the executing surface can do. Recorded so coverage is legible. */
   capabilities?: ClaudeRunnerCapability[];
+
+  /**
+   * Stops the run from issuing anything further.
+   *
+   * A hosted run holds a lease; when that lease is cancelled or swept, the
+   * point of stopping is the TARGET. A run that keeps probing after the person
+   * who started it pressed cancel is still dialling somebody else's server,
+   * and "we stopped waiting for the answer" is not the same as "we stopped
+   * asking".
+   *
+   * Aborting produces a graded result rather than a throw wherever the stage
+   * can report what it has: an aborted redirect trace is a short chain, an
+   * aborted connection is no tool listing. The checks already know how to say
+   * "not evaluated", which is the honest answer for a run that was stopped.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -257,11 +273,17 @@ export async function runClaudeReadiness(
     fetchFn: config.fetchFn,
     timeoutMs: config.timeoutMs,
     headers: config.customHeaders,
+    signal: config.signal,
   };
 
   const endpoint = await traceConnectorRedirects(discoveryOptions);
   const auth = await discoverClaudeAuthEvidence(discoveryOptions);
-  const connection = await gatherFromConnection(config);
+  // Checked BETWEEN stages as well as inside them: opening an MCP connection
+  // is the most expensive thing this run does to a third party, and a run that
+  // was cancelled during discovery has no business starting one.
+  const connection = config.signal?.aborted
+    ? { appTools: [], appResources: [], connected: false, unreadResourceUris: [] }
+    : await gatherFromConnection(config);
 
   const authMode: ClaudeReadinessAuthMode = config.accessToken
     ? "provided-token"

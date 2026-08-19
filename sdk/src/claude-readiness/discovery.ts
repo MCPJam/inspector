@@ -43,6 +43,47 @@ export interface ClaudeDiscoveryOptions {
   maxRedirects?: number;
   /** Headers the connector needs, e.g. a static credential under test. */
   headers?: Record<string, string>;
+  /**
+   * Stops the run from issuing anything further.
+   *
+   * The point is the TARGET, not our bookkeeping: a cancelled run that keeps
+   * probing is still dialling somebody else's server after the person who
+   * started it asked it to stop, and "we stopped waiting for the answer" is
+   * not the same as "we stopped asking".
+   */
+  signal?: AbortSignal;
+}
+
+/**
+ * One controller that fires on the caller's abort or on the timeout.
+ *
+ * `AbortSignal.any` is not available on every runtime this SDK ships to, so
+ * the composition is explicit — and the listener is removed on the way out,
+ * because a long-lived run signal accumulating one listener per request is a
+ * leak that only shows up under load.
+ */
+function requestAbort(
+  options: ClaudeDiscoveryOptions,
+  timeoutMessage: string,
+): { signal: AbortSignal; release: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(timeoutMessage)),
+    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  );
+  const external = options.signal;
+  const forward = () => controller.abort(external?.reason);
+  if (external) {
+    if (external.aborted) forward();
+    else external.addEventListener("abort", forward, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    release: () => {
+      clearTimeout(timer);
+      external?.removeEventListener("abort", forward);
+    },
+  };
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -220,11 +261,7 @@ async function fetchJson(
   fetchOptions: FetchJsonOptions = {},
 ): Promise<FetchedJson> {
   const { init, credentials = "caller" } = fetchOptions;
-  const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(new Error("readiness discovery timed out")),
-    options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-  );
+  const abort = requestAbort(options, "readiness discovery timed out");
   // Hoisted so the catch below can tell "the request never got an answer" from
   // "the answer arrived and reading its body failed". Only the first is a
   // status of 0, and `reachedServer` is decided on exactly that difference.
@@ -237,7 +274,7 @@ async function fetchJson(
         ...(credentials === "caller" ? callerHeadersFor(url, options) : {}),
         ...init?.headers,
       },
-      signal: controller.signal,
+      signal: abort.signal,
     });
     // REFUSE BEFORE READING when the server tells us the size. `await
     // response.text()` materializes the whole body first, so a cap applied
@@ -298,7 +335,7 @@ async function fetchJson(
       error: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    clearTimeout(timer);
+    abort.release();
   }
 }
 
@@ -317,11 +354,11 @@ export async function traceConnectorRedirects(
   let current = options.enteredUrl;
 
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(
-      () => controller.abort(new Error("readiness redirect trace timed out")),
-      options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-    );
+    // A cancelled run stops walking the chain rather than finishing it.
+    if (options.signal?.aborted) {
+      return { enteredUrl: options.enteredUrl, redirectChain: chain };
+    }
+    const abort = requestAbort(options, "readiness redirect trace timed out");
     let response: Response;
     try {
       response = await options.fetchFn(current, {
@@ -332,7 +369,7 @@ export async function traceConnectorRedirects(
         // caller's credential onto it would let any target collect it by
         // answering `302 Location: https://attacker.example/`.
         headers: callerHeadersFor(current, options),
-        signal: controller.signal,
+        signal: abort.signal,
       });
     } catch {
       // A refused or unreachable hop ends the trace. It is not itself a
@@ -340,7 +377,7 @@ export async function traceConnectorRedirects(
       // reporting a partial chain is better than reporting none.
       return { enteredUrl: options.enteredUrl, redirectChain: chain };
     } finally {
-      clearTimeout(timer);
+      abort.release();
     }
 
     const location = response.headers.get("location") ?? undefined;
