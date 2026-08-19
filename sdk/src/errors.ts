@@ -19,6 +19,7 @@ export type EvalReportingErrorOptions = SdkErrorOptions & {
   endpoint?: string;
   attemptCount?: number;
   isBillingLimitReached?: boolean;
+  isReportingBackendIncompatible?: boolean;
 };
 
 export class EvalReportingError extends SdkError {
@@ -26,6 +27,16 @@ export class EvalReportingError extends SdkError {
   public readonly endpoint?: string;
   public readonly attemptCount?: number;
   public readonly isBillingLimitReached: boolean;
+  /**
+   * The destination refused the report because it does not understand a field
+   * this SDK sends — a reporting backend older than the SDK's minimum contract.
+   *
+   * Flagged separately from every other rejection because the fix is different
+   * in kind: nothing about the run or the payload is wrong, so retrying, editing
+   * the suite, or reading it as a failed eval are all the wrong move. The only
+   * fix is upgrading the destination (or pointing `baseUrl` at one that is).
+   */
+  public readonly isReportingBackendIncompatible: boolean;
 
   constructor(message: string, options: EvalReportingErrorOptions = {}) {
     super(message, "EVAL_REPORTING_ERROR", options);
@@ -34,5 +45,7 @@ export class EvalReportingError extends SdkError {
     this.endpoint = options.endpoint;
     this.attemptCount = options.attemptCount;
     this.isBillingLimitReached = options.isBillingLimitReached ?? false;
+    this.isReportingBackendIncompatible =
+      options.isReportingBackendIncompatible ?? false;
   }
 }

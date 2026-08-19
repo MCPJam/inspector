@@ -8,6 +8,7 @@ import {
 } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
+import { mintCaseId } from "@mcpjam/sdk/contract";
 import {
   Circle,
   Code2,
@@ -1657,6 +1658,10 @@ export function TestTemplateEditor({
       const newTestCaseId = await createTestCaseMutation({
         suiteId,
         models: currentTestCase?.models ?? [],
+        // Mint the case's DECLARED identity here — callers mint, the platform
+        // validates. It lands in `declaredCaseId`; the row's storage `caseKey`
+        // stays the platform's own random `ui_*` value and is untouched.
+        caseId: mintCaseId(),
         ...savePayload,
       });
       track("eval_test_case_created", {
