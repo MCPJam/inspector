@@ -248,6 +248,16 @@ describe("agent op registry", () => {
     expect(describeRun({ suite: "smoke", allAttached: true })).toBe(
       "Run eval suite smoke against every attached target — one paid run each"
     );
+    // COMPOSE is the one target that also EDITS the suite, so approving it
+    // authorises a persistent change. A line that said only "Run eval suite
+    // smoke" would get that change approved without mentioning it.
+    const composed = describeRun({
+      suite: "smoke",
+      compose: { host: "Claude Code" },
+    });
+    expect(composed).toContain("composed");
+    expect(composed).toContain("Claude Code");
+    expect(composed).toContain("attached to the suite");
   });
 
   it("marks both eval-run proposals as SPEND", () => {

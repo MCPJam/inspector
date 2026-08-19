@@ -1291,6 +1291,36 @@ async function resolveSuiteEnvironmentTargets(
   return resolved;
 }
 
+/**
+ * Display names for a suite's attached environment ids.
+ *
+ * BEST EFFORT on purpose: these names are read by people, never matched on, so
+ * a listing that fails or omits a row costs a nicer message and nothing else.
+ * Failing the launch over it would trade a real run for a cosmetic lookup.
+ */
+async function environmentNamesFor(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  environmentIds: string[],
+  signal: AbortSignal | undefined,
+): Promise<Map<string, string>> {
+  if (environmentIds.length === 0) return new Map();
+  try {
+    const page = await client.listEnvironments(
+      { projectId: project.id },
+      { signal },
+    );
+    const wanted = new Set(environmentIds);
+    return new Map(
+      page.items
+        .filter((environment) => wanted.has(environment.id) && environment.name)
+        .map((environment) => [environment.id, environment.name]),
+    );
+  } catch {
+    return new Map();
+  }
+}
+
 /** Host selectors → attached hosts, by id or unique name. Same rationale as
  *  the environment resolver above: validated here so a fan-out cannot spend on
  *  its first targets and then discover a bad one. */
@@ -1425,18 +1455,35 @@ async function createEvalRunOrReportCompose<T>(
   try {
     return await launch();
   } catch (error) {
+    const note = `(The composed environment ${composed.report.environment.id} was ${
+      composed.report.environment.created ? "created" : "reused"
+    } and ${
+      composed.report.attachment.attached
+        ? "attached to the suite"
+        : "was already attached"
+    }; retrying is safe — it will reuse both.)`;
     if (error instanceof PlatformApiError) {
-      throw new PlatformApiError(
-        `${error.message} (The composed environment ${composed.report.environment.id} was ${
-          composed.report.environment.created ? "created" : "reused"
-        } and ${
-          composed.report.attachment.attached
-            ? "attached to the suite"
-            : "was already attached"
-        }; retrying is safe — it will reuse both.)`,
-        error.code,
-        { status: error.status, details: error.details },
-      );
+      throw new PlatformApiError(`${error.message} ${note}`, error.code, {
+        status: error.status,
+        // STRUCTURED as well as prose: a human reads the sentence, and an
+        // agent surface deciding whether to warn about a suite edit needs a
+        // field. `retryAfter`/`endpoint` ride along because dropping them
+        // would turn a rate-limit into an un-retryable one on this path only.
+        details: { ...(error.details ?? {}), composed: composed.report },
+        ...(error.retryAfter !== undefined
+          ? { retryAfter: error.retryAfter }
+          : {}),
+        ...(error.endpoint !== undefined ? { endpoint: error.endpoint } : {}),
+      });
+    }
+    // A non-API failure (the connection dropped, the request was aborted)
+    // persisted the SAME two writes, so it owes the caller the same report.
+    // Annotated IN PLACE rather than rewrapped: an abort must stay an abort —
+    // callers match on `name`/`instanceof` to tell "I cancelled this" from "it
+    // broke", and a wrapper would make every such check miss.
+    if (error instanceof Error) {
+      error.message = `${error.message} ${note}`;
+      Object.assign(error, { composed: composed.report });
     }
     throw error;
   }
@@ -1459,7 +1506,18 @@ async function createEvalRunGroupOrExplain(
   try {
     return await client.createEvalRunGroup({ projectId, body }, { signal });
   } catch (error) {
-    if (error instanceof PlatformApiError && error.status === 404) {
+    // A ROUTE MISS specifically, not every 404. The route itself 404s for real
+    // reasons — the suite was deleted between resolving it and launching, or
+    // project access was revoked — and telling that caller to wait for a server
+    // upgrade that already happened sends them to fix the wrong thing. Only a
+    // missing route answers without the v1 error envelope, which is exactly
+    // what the generic fallback message below means.
+    if (
+      error instanceof PlatformApiError &&
+      error.status === 404 &&
+      error.details === undefined &&
+      /^Request to .* failed \(404\)$/.test(error.message)
+    ) {
       throw new PlatformApiError(
         "This MCPJam server is too old for grouped eval-run launches. Run the targets one at a time (name a single environment or host per call) until it is upgraded.",
         "NOT_FOUND",
@@ -1829,6 +1887,24 @@ export const runEvalSuiteOperation: PlatformOperation<
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
 
+    // No client-side server default: the platform derives the suite's saved
+    // selection when serverIds is omitted — the exact set the run snapshot
+    // references, which a project-wide guess here could miss.
+    const overrideServers = input.servers
+      ? await resolveRunServers(client, project, input.servers, signal)
+      : undefined;
+
+    // Case selectors resolve BEFORE compose, because compose WRITES. Every
+    // read that can reject the request has to happen while rejecting is still
+    // free: a mistyped case name after an ad-hoc environment had been created
+    // and attached would leave the suite edited for a run that never started,
+    // and the error would say nothing about it.
+    const caseIds = input.cases
+      ? (await resolveCases(client, project, suite, input.cases, signal)).map(
+          (testCase) => testCase.id,
+        )
+      : undefined;
+
     // COMPOSE runs before anything else target-shaped, because it PRODUCES the
     // target: the stack becomes an ad-hoc environment, the environment is
     // appended to the suite, and the launch then takes the ordinary pinned-
@@ -1841,13 +1917,6 @@ export const runEvalSuiteOperation: PlatformOperation<
           input.compose,
           signal,
         )
-      : undefined;
-
-    // No client-side server default: the platform derives the suite's saved
-    // selection when serverIds is omitted — the exact set the run snapshot
-    // references, which a project-wide guess here could miss.
-    const overrideServers = input.servers
-      ? await resolveRunServers(client, project, input.servers, signal)
       : undefined;
 
     // The suite DETAIL carries both attachment axes in attach order, so the
@@ -1877,11 +1946,18 @@ export const runEvalSuiteOperation: PlatformOperation<
       detail,
       input.host ? [input.host] : (input.hosts ?? []),
     );
-    const caseIds = input.cases
-      ? (await resolveCases(client, project, suite, input.cases, signal)).map(
-          (testCase) => testCase.id,
-        )
-      : undefined;
+
+    // Attached environments arrive as bare IDS — the suite detail carries no
+    // names — and every place they surface is one a person reads: the
+    // TARGET_REQUIRED refusal listing what is pickable, and a fan-out receipt
+    // naming which target failed. One listing buys names for both; an id that
+    // no longer resolves degrades to itself rather than failing the run.
+    const attachedEnvironmentNames = await environmentNamesFor(
+      client,
+      project,
+      detail?.environmentIds ?? [],
+      signal,
+    );
 
     // A composed stack IS the target — it produced an environment, so there is
     // nothing left to select between and the attachment axes do not apply.
@@ -1893,6 +1969,9 @@ export const runEvalSuiteOperation: PlatformOperation<
       : computeRunTargets({
           attachedEnvironments: (detail?.environmentIds ?? []).map((id) => ({
             id,
+            ...(attachedEnvironmentNames.get(id)
+              ? { name: attachedEnvironmentNames.get(id)! }
+              : {}),
           })),
           attachedHosts: (detail?.hosts ?? []).map((host) => ({
             id: host.id,
@@ -2013,6 +2092,20 @@ export const runEvalSuiteOperation: PlatformOperation<
         return {
           status: "failed",
           ...(host ? { host } : {}),
+          // A failed target still has to say WHICH target it was. A started
+          // entry carries the pinned environment the platform echoes back;
+          // a failed one never launched, so there is no pinned revision to
+          // report — but the id and the name the caller selected by are both
+          // in hand, and without them the receipt reads "something failed".
+          ...(entry.target.environmentId
+            ? {
+                environment: {
+                  id: entry.target.environmentId,
+                  name: entry.target.name ?? nameById.get(id) ?? null,
+                  revision: null,
+                },
+              }
+            : {}),
           error: entry.error,
         };
       }

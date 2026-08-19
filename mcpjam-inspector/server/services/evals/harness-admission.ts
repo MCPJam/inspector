@@ -30,7 +30,10 @@
  */
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
-import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import {
+  checkHarnessRuntimeAvailable,
+  type HarnessUnavailableKind,
+} from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
 
 /**
@@ -138,10 +141,11 @@ export function checkEvalHarnessStaticAdmission(args: {
   /**
    * The environment's pinned computer image, when the caller knows it.
    *
-   * OMITTED means "not resolved here", NOT "absent": the batch route's dry run
-   * validates targets before any environment resolution, so it must not refuse
-   * a run over a pin it never looked up. An explicit `null` is a resolved
-   * absence and does refuse.
+   * OMITTED means "not resolved here", NOT "absent", so a caller that never
+   * looked cannot refuse a run over a fact it does not hold. An explicit
+   * `null` is a RESOLVED absence and does refuse — which is what both callers
+   * pass today: the batch route resolves each target's environment during its
+   * dry run, and the prepare path reads the run's frozen environment.
    */
   pinnedComputerImageId?: string | null;
 }): EvalHarnessAdmission {
@@ -182,7 +186,7 @@ export function checkEvalHarnessStaticAdmission(args: {
     // With no host-pinned model, a model-eligibility refusal is about the
     // empty probe id and not about anything the caller configured. Suppress it
     // here; the full check re-runs the same gate with real case models.
-    if (!hostModelId && isModelReason(availability.reason)) {
+    if (!hostModelId && isModelKind(availability.kind)) {
       return staticVerdict(harness, args.pinnedComputerImageId);
     }
     return { ok: false, harness, reason: availability.reason };
@@ -243,11 +247,18 @@ export function checkEvalHarnessAdmission(args: {
 
   // Deduplicate by resolved model so a 40-case suite on one model makes one
   // decision, and so the ineligible-case list below stays about CASES.
-  const ineligible: Array<{ title: string; reason: string }> = [];
-  const verdictByModel = new Map<string, string | undefined>();
+  const ineligible: Array<{
+    title: string;
+    reason: string;
+    kind: HarnessUnavailableKind;
+  }> = [];
+  const verdictByModel = new Map<
+    string,
+    { reason: string; kind: HarnessUnavailableKind } | undefined
+  >();
   for (const test of modelCases) {
     const key = `${test.provider ?? ""}::${test.model}`;
-    let reason = verdictByModel.get(key);
+    let verdict = verdictByModel.get(key);
     if (!verdictByModel.has(key)) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: harness,
@@ -259,13 +270,15 @@ export function checkEvalHarnessAdmission(args: {
         },
         xaaEnterprisePolicyOn,
       });
-      reason = availability.ok ? undefined : availability.reason;
-      verdictByModel.set(key, reason);
+      verdict = availability.ok
+        ? undefined
+        : { reason: availability.reason, kind: availability.kind };
+      verdictByModel.set(key, verdict);
     }
-    if (reason) {
+    if (verdict) {
       ineligible.push({
         title: test.title?.trim() || "(untitled case)",
-        reason,
+        ...verdict,
       });
     }
   }
@@ -274,7 +287,7 @@ export function checkEvalHarnessAdmission(args: {
     // Non-model refusals (approval, MCP support, broker delivery, enterprise
     // policy) are properties of the HOST and identical for every case — report
     // one of them plainly rather than repeating it per case.
-    const hostLevel = ineligible.find((entry) => !isModelReason(entry.reason));
+    const hostLevel = ineligible.find((entry) => !isModelKind(entry.kind));
     if (hostLevel) {
       return { ok: false, harness, reason: hostLevel.reason };
     }
@@ -326,14 +339,17 @@ export function executionEngineLabel(
   return harness ? `harness:${harness}` : "emulated";
 }
 
-/** Whether a refusal came from one of the gate's two MODEL rules — the only
- *  ones that depend on which model was probed. Matched on the shared gate's
- *  own wording; both of its model refusals name a model and nothing else does. */
-function isModelReason(reason: string): boolean {
-  return (
-    reason.includes("only runs MCPJam-provided models") ||
-    reason.includes("can't run this host's model")
-  );
+/**
+ * Whether a refusal came from one of the gate's two MODEL rules — the only ones
+ * whose answer depends on WHICH model was probed, and therefore the only ones
+ * the static half must defer when it has no real model to probe with.
+ *
+ * Read off the gate's structured `kind`, never its wording: this used to match
+ * the reason text, which made rephrasing a user-facing sentence silently change
+ * which runs are admitted.
+ */
+function isModelKind(kind: HarnessUnavailableKind): boolean {
+  return kind === "model-not-hosted" || kind === "model-unsupported";
 }
 
 /**

@@ -323,6 +323,42 @@ describe("run_eval_suite compose", () => {
     expect(
       bodyOf(fetchMock, /\/eval-suites\/suite-1\/environments$/),
     ).toBeDefined();
+    // STRUCTURED as well as prose, so a surface deciding whether to warn about
+    // the suite edit reads a field instead of parsing a sentence.
+    expect((error as PlatformApiError).details?.composed).toEqual({
+      environment: {
+        id: ADHOC_ENVIRONMENT.id,
+        name: null,
+        adhoc: true,
+        created: true,
+      },
+      attachment: { attached: true },
+    });
+  });
+
+  it("does not compose at all when a CASE selector is wrong", async () => {
+    // Compose writes; resolving cases only reads. Composing first meant a
+    // mistyped case name left an environment created and attached to the
+    // suite, for a run that never started, with an error that said nothing
+    // about it. Every read that can reject the request happens while
+    // rejecting is still free.
+    const { client, fetchMock } = makeClient();
+    const error = await runEvalSuiteOperation
+      .execute(
+        {
+          suite: "Smoke",
+          compose: { host: "Claude Code" },
+          cases: ["no such case"],
+        },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+    expect(
+      bodyOf(fetchMock, /\/eval-suites\/suite-1\/environments$/),
+    ).toBeUndefined();
+    expect(bodyOf(fetchMock, /\/eval-runs$/)).toBeUndefined();
   });
 
   it("rejects compose alongside any target selector, spending nothing", async () => {

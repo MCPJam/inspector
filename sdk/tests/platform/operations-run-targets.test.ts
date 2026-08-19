@@ -94,6 +94,8 @@ interface Fixture {
   groupFailures?: Record<string, { code: string; message: string }>;
   /** Model a server with no grouped-launch endpoint. */
   noRunGroupEndpoint?: boolean;
+  /** Model the LIVE route answering 404 for a real reason (suite deleted). */
+  groupSuiteMissing?: boolean;
 }
 
 function makeClient(fixture: Fixture = {}) {
@@ -131,8 +133,18 @@ function makeClient(fixture: Fixture = {}) {
     }
     if (/\/eval-run-groups$/.test(path) && method === "POST") {
       if (fixture.noRunGroupEndpoint) {
+        // A REAL route miss: the framework answers before any handler, so
+        // there is no v1 error envelope — which is the only thing that
+        // distinguishes it from the live route's own 404s.
+        return new Response("404 Not Found", { status: 404 });
+      }
+      if (fixture.groupSuiteMissing) {
         return Response.json(
-          { code: "NOT_FOUND", message: "No route" },
+          {
+            code: "NOT_FOUND",
+            message: "Eval suite not found",
+            details: { reason: "SUITE_NOT_FOUND" },
+          },
           { status: 404 },
         );
       }
@@ -343,6 +355,22 @@ describe("run_eval_suite target selection", () => {
     expect(bodiesTo(fetchMock, "/eval-run-groups")).toHaveLength(0);
   });
 
+  it("names the ENVIRONMENTS to choose between, not just their ids", async () => {
+    // The suite detail carries attached environment ids and no names, so a
+    // refusal built from it alone reads "env-stg, env-prod" — which is not
+    // what the caller knows them as, and not what they would type back.
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg", "env-prod"] }),
+    });
+    const error = await runEvalSuiteOperation
+      .execute({ suite: "Smoke" }, { client })
+      .catch((caught: unknown) => caught);
+    const message = (error as PlatformApiError).message;
+    expect(message).toContain("TARGET_REQUIRED");
+    expect(message).toContain('"Staging" (env-stg)');
+    expect(message).toContain('"Prod" (env-prod)');
+  });
+
   it("fans out through ONE batch request on allAttached, in attach order", async () => {
     const { client, fetchMock } = makeClient({
       detail: suiteDetail({
@@ -528,6 +556,13 @@ describe("run_eval_suite target selection", () => {
       { suite: "Smoke", environment: "Staging", environments: ["Prod"] },
       { suite: "Smoke", host: "Claude", hosts: ["ChatGPT"] },
       { suite: "Smoke", host: "Claude", servers: ["echo"] },
+      // The PLURAL environment field too, not just the singular one. Without
+      // this guard the combination fell through to the attachment check, which
+      // — having skipped the suite read because servers were overridden —
+      // reported "this suite has no environments at all" about a suite that
+      // has them, and told the caller to attach one they already had.
+      { suite: "Smoke", environments: ["Staging"], servers: ["echo"] },
+      { suite: "Smoke", environment: "Staging", servers: ["echo"] },
     ]) {
       const error = await runEvalSuiteOperation
         .execute(input, { client })
@@ -535,6 +570,24 @@ describe("run_eval_suite target selection", () => {
       expect(error).toBeInstanceOf(PlatformApiError);
       expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
     }
+  });
+
+  it("says SERVERS-OR-ENVIRONMENTS when both are sent, not 'nothing is attached'", async () => {
+    const { client, fetchMock } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg"] }),
+    });
+    const error = await runEvalSuiteOperation
+      .execute(
+        { suite: "Smoke", environments: ["Staging"], servers: ["echo"] },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).message).toContain(
+      "closed server set",
+    );
+    expect((error as PlatformApiError).message).not.toContain("Attach it");
+    expect(bodiesTo(fetchMock, "/eval-runs")).toHaveLength(0);
+    expect(bodiesTo(fetchMock, "/eval-run-groups")).toHaveLength(0);
   });
 
   it("returns a PARTIAL receipt rather than throwing away the siblings that started", async () => {
@@ -563,6 +616,36 @@ describe("run_eval_suite target selection", () => {
     });
     // Mirrors describe the first STARTED run, not the first entry.
     expect(result.runId).toBe("run-1");
+  });
+
+  it("NAMES the environment that failed, not just that something did", async () => {
+    // A receipt whose failed entry carries no target is unactionable: the CLI
+    // renders it as "Failed: target", and the caller cannot tell which of
+    // several environments to retry. A failed target never launched, so there
+    // is no pinned revision to report — but the id and the name the caller
+    // selected by are both known here.
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg", "env-prod"] }),
+      groupFailures: {
+        "env-prod": {
+          code: "ENVIRONMENT_REVISION_CONFLICT",
+          message: "revision moved",
+        },
+      },
+    });
+    const result = await runEvalSuiteOperation.execute(
+      { suite: "Smoke", allAttached: true },
+      { client },
+    );
+    expect(result.outcome).toBe("partial");
+    expect(result.targets[1]).toEqual({
+      status: "failed",
+      environment: { id: "env-prod", name: "Prod", revision: null },
+      error: {
+        code: "ENVIRONMENT_REVISION_CONFLICT",
+        message: "revision moved",
+      },
+    });
   });
 
   it("RESOLVES with outcome failed when every target failed — it does not throw", async () => {
@@ -609,6 +692,27 @@ describe("run_eval_suite target selection", () => {
       .catch((caught: unknown) => caught);
     expect((error as PlatformApiError).message).toContain("too old");
     expect((error as PlatformApiError).message).toContain("one at a time");
+  });
+
+  it("does NOT blame the server version for a real 404 from a live route", async () => {
+    // The route 404s for reasons that have nothing to do with its existence —
+    // the suite was deleted between resolving it and launching, or access was
+    // revoked. Telling that caller to wait for an upgrade that already
+    // happened sends them to fix the wrong thing.
+    const { client } = makeClient({
+      detail: suiteDetail({
+        hosts: [
+          { id: "host-claude", name: "Claude" },
+          { id: "host-chatgpt", name: "ChatGPT" },
+        ],
+      }),
+      groupSuiteMissing: true,
+    });
+    const error = await runEvalSuiteOperation
+      .execute({ suite: "Smoke", allAttached: true }, { client })
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).message).toBe("Eval suite not found");
+    expect((error as PlatformApiError).message).not.toContain("too old");
   });
 });
 

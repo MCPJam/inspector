@@ -93,7 +93,7 @@ import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { loadInsightsEnvelope } from "./insights-envelope-load.js";
-import { synthesizeServerBody } from "./adapter.js";
+import { readJsonObjectBody, synthesizeServerBody } from "./adapter.js";
 import {
   getCanonicalModelId,
   hostedModelDefinitionsFromSnapshot,
@@ -2630,6 +2630,12 @@ const evalRunGroupTargetSchema = z.union([
   z.object({ namedHostId: z.string().min(1) }).strict(),
 ]);
 
+// STRICT, and the body is read without the path params merged in so it can be.
+// The published spec says `additionalProperties: false` here; a non-strict
+// schema would make that a lie in the one direction that costs a caller
+// something — `refreshSnapshot` (valid on the single-run route, and a PERSISTED
+// suite mutation there) would be accepted, dropped, and reported as success,
+// leaving the caller believing a snapshot refreshed that never did.
 const createEvalRunGroupSchema = z.object({
   suiteId: z.string().min(1),
   targets: z
@@ -2683,15 +2689,13 @@ function deriveRunGroupId(
 evals.post("/projects/:projectId/eval-run-groups", async (c) => {
   const projectId = c.req.param("projectId");
   const headerIdempotencyKey = readIdempotencyKey(c);
-  // `synthesizeServerBody` merges the PATH params over the JSON body for the
-  // web schemas that expect them. This route reads `projectId` off the path
-  // directly and has no `serverId` at all, so both are dropped again here —
-  // otherwise the schema's `.strict()` would reject every request over two
-  // keys the caller never sent.
-  const { projectId: _pathProjectId, serverId: _pathServerId, ...jsonBody } =
-    await synthesizeServerBody(c);
+  // Read WITHOUT the path params merged in, so the strict schema above sees
+  // only the caller's fields and an unsupported knob is refused rather than
+  // silently dropped. `projectId` comes from the path either way — merging it
+  // in and destructuring it back out would only give `.strict()` two keys the
+  // caller never sent.
   const body = parseWithSchema(createEvalRunGroupSchema, {
-    ...jsonBody,
+    ...(await readJsonObjectBody(c)),
     // Same precedence as the single-run route: the header is the
     // transport-level channel unattended clients control, and a body key could
     // be shaped by model output.
@@ -2810,20 +2814,30 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       requestedServerIds: [],
       requestedServerNames: undefined,
     });
+    // The host config THIS target executes under. An environment pins its own
+    // host, so an environment target must be judged on that host's config —
+    // reading the suite's instead would gate the wrong thing in both
+    // directions: a harness-hosted environment would slip the dry run (and
+    // fail at prepare, after its siblings had already started, which is the
+    // exact sequencing this dry run exists to prevent), and a legacy suite
+    // config carrying a harness would refuse a group of environments that
+    // never referenced it.
     const hostConfig = await loadSuiteHostConfig(
       createConvexReadClient(convexAuthToken),
       body.suiteId,
-      // An environment target resolves its OWN host, so judge THAT host's
-      // config — falling through to the suite default would admit an
-      // environment pinned to a harness this server cannot drive, and refuse
-      // one whose environment host is fine because the suite default is not.
-      // `ResolvedEnvironmentForLaunch.hostId` is the same host the run row
-      // will freeze, so the dry run and the launch judge one configuration.
+      // `ResolvedEnvironmentForLaunch.hostId` is the same host the run row will
+      // freeze, so the dry run and the launch judge one configuration.
       target.namedHostId ?? servers.environmentLaunch?.hostId,
     );
     const admission = checkEvalHarnessStaticAdmission({
       hostConfig,
       serverIds: servers.serverIds,
+      // RESOLVED, not omitted: the dry run above already resolved this
+      // target's environment, so the pin is a fact we hold. `null` is the
+      // honest answer for a target with no environment at all — there is
+      // nowhere for a pin to live — and a harness needs one either way.
+      pinnedComputerImageId:
+        servers.environmentLaunch?.computerEnvironmentId ?? null,
     });
     if (!admission.ok) {
       throw new WebRouteError(
@@ -2921,6 +2935,11 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         // `runStatus`, not a second `status`: the entry's own `status` is the
         // started/failed discriminant, and two fields with one name is how a
         // reader ends up branching on the wrong one.
+        //
+        // Always `running`, matching the single-run route: an idempotent
+        // replay returns the ORIGINAL run, which may have finished, and the
+        // prepare layer does not report which happened. Poll the run for its
+        // real state — this field says a run exists, not how it is doing.
         runStatus: "running",
         servers: launched.servers,
         environment: launched.environment,
@@ -3936,9 +3955,11 @@ evals.post(
   async (c) => {
     const projectId = c.req.param("projectId");
     const suiteId = c.req.param("suiteId");
+    // Strict over the caller's own body (no synthesized path params), matching
+    // the `additionalProperties: false` the spec publishes for it.
     const body = parseWithSchema(
-      z.object({ environmentId: z.string().min(1) }),
-      await synthesizeServerBody(c)
+      z.object({ environmentId: z.string().min(1) }).strict(),
+      await readJsonObjectBody(c)
     );
     const token = await getConvexBearerForRequest(c);
     // Scope check first: Convex enforces membership, and this makes a valid id

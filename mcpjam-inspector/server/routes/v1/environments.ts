@@ -28,9 +28,14 @@
  *     explicit `null` CLEARS it. Empty arrays are rejected by the backend on
  *     purpose ("clear the selection instead"), so `[]` is a 400, not a clear.
  *
- * Reads require project membership; every write requires project ADMIN, since
- * an environment is shared mutable execution config. An `sk_` key acts as the
- * user it is bound to, so a non-admin's key gets 403 on writes.
+ * Reads require project membership. EDITING an existing environment (patch,
+ * archive, restore) requires project ADMIN, since that changes execution config
+ * other people's suites already run. CREATING one does not: `create`,
+ * `ensure-adhoc`, and `name` are member-gated, because every surface a member
+ * composes a setup from is member-reachable and an admin gate would fail them
+ * at launch after the work was done. Pinning plugin versions escalates to ADMIN
+ * on both create paths. An `sk_` key acts as the user it is bound to, so a
+ * non-admin's key gets 403 on the admin writes.
  */
 import { Hono } from "hono";
 import type { Context } from "hono";
@@ -40,6 +45,7 @@ import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
+import { readJsonObjectBody } from "./adapter.js";
 
 const environments = new Hono();
 
@@ -326,37 +332,6 @@ function translateConvexError(
     // block is their role rather than a bad id reveals nothing new.
     adminFailureIsForbidden: true,
   });
-}
-
-/**
- * Parse the body as a JSON object (or `{}` when empty). Unlike
- * `synthesizeServerBody`, it does NOT merge path params in, so a strict schema
- * sees only the caller's fields and rejects unknown keys. `projectId` and
- * `environmentId` always come from the path, never the body.
- */
-async function readJsonObjectBody(
-  c: Context
-): Promise<Record<string, unknown>> {
-  const text = await c.req.text();
-  if (!text || !text.trim()) return {};
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Invalid JSON body"
-    );
-  }
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Request body must be a JSON object"
-    );
-  }
-  return parsed as Record<string, unknown>;
 }
 
 async function readEnvironment(

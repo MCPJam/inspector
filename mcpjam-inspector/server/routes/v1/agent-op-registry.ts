@@ -281,6 +281,18 @@ function evalRunResource(
  */
 function describeEvalSuiteRun(input: Record<string, unknown>): string {
   const suite = named(input, "suite") ?? "(unnamed)";
+  // COMPOSE is the one target that also EDITS the suite: it creates an ad-hoc
+  // environment and appends it to the suite's attachments. An approver reading
+  // "Run eval suite smoke" would authorise a persistent change nobody
+  // mentioned, so the line says it.
+  const compose = input.compose;
+  if (compose && typeof compose === "object") {
+    const host = named(compose as Record<string, unknown>, "host");
+    return (
+      `Run eval suite ${suite} on a composed setup${host ? ` (${host})` : ""}` +
+      " — one paid run, and the composed environment is attached to the suite"
+    );
+  }
   const targets = [
     ...readStringList(input, "environments"),
     ...readStringList(input, "hosts"),
@@ -363,17 +375,33 @@ async function freezeEvalRunTargets(
   if (namedEnvironments.length > 0) {
     // Same reason as hosts, one axis over: an environment name is a pointer,
     // and the row it points at can be renamed or replaced between the proposal
-    // and the click. Unresolvable selectors pass through untouched so the
-    // operation reports the miss with its own message.
-    const environments = await client.listEnvironments({ projectId });
-    const byName = new Map(
-      environments.items.map((environment) => [
-        environment.name.toLocaleLowerCase(),
-        environment.id,
-      ]),
-    );
+    // and the click. Narrowed to the suite's ATTACHED environments, so a name
+    // that matches some other environment in the project cannot be frozen into
+    // a target the suite could not have run anyway. Ids pass through untouched,
+    // and an unresolvable selector is left as-is for the operation to reject
+    // with its own (better) message.
+    const attached = new Set(detail.environmentIds ?? []);
+    let byName = new Map<string, string>();
+    try {
+      const environments = await client.listEnvironments({ projectId });
+      byName = new Map(
+        environments.items
+          .filter((environment) => attached.has(environment.id))
+          .map((environment) => [
+            (environment.name ?? "").toLocaleLowerCase(),
+            environment.id,
+          ]),
+      );
+    } catch {
+      // Same posture as the suite lookup above: freezing is a narrowing, and a
+      // platform that cannot answer must not cost the caller the proposal. The
+      // operation still resolves and validates these selectors on the click.
+    }
     next.environments = namedEnvironments.map(
-      (selector) => byName.get(selector.toLocaleLowerCase()) ?? selector,
+      (selector) =>
+        (attached.has(selector) ? selector : undefined) ??
+        byName.get(selector.toLocaleLowerCase()) ??
+        selector,
     );
   }
   return next;
@@ -758,8 +786,10 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Run it",
       kind: "start",
       // Every eval run consumes credits, and a fan-out consumes them N times.
-      // Read off the operation's own `risk` facet rather than restated, so a
-      // re-classification cannot leave this copy behind.
+      // Stated here rather than derived from the operation's `risk` facet:
+      // severity is not a function of risk (`external` has no risk value, and
+      // the schedule entry below decides per argument), so the two are
+      // deliberately separate fields that happen to agree here.
       confirmSeverity: "spend",
       resource: evalRunResource,
       target: evalSuiteTarget,
