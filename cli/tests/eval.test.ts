@@ -769,6 +769,110 @@ test("eval run rejects --environment together with --server before any request",
   }
 });
 
+test("eval update --judge on writes enabled AND autoRun together", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--judge",
+            "on",
+            "--judge-threshold",
+            "0.8",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { judge?: Record<string, unknown> };
+    };
+    // `enabled` alone is a no-op — it already defaults on, and the grader
+    // gates on `autoRun`. One flag, both fields, matching the app's switch.
+    assert.deepEqual(patchBody.settings?.judge, {
+      enabled: true,
+      autoRun: true,
+      threshold: 0.8,
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update --judge off turns autoRun off with it", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--judge",
+            "off",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { judge?: Record<string, unknown> };
+    };
+    assert.deepEqual(patchBody.settings?.judge, {
+      enabled: false,
+      autoRun: false,
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update rejects an out-of-range --judge-threshold before any write", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--judge-threshold",
+          "80",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--judge-threshold must be a number between 0 and 1/);
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval environments set PATCHes the resolved ids in the given order", async () => {
   const fixture = await startEvalFixture();
   try {

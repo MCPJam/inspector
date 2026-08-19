@@ -391,9 +391,21 @@ function buildSuiteUpdateInput(
     if (options.judge !== "on" && options.judge !== "off") {
       throw usageError('--judge must be "on" or "off".');
     }
+    // ONE switch, matching the app's LLM-as-Judge toggle, which binds to
+    // `enabled && autoRun`. Writing `enabled` alone changes nothing a user
+    // can observe: it already defaults on, and the grader gates on `autoRun`.
+    // "Turn the judge on" means "grade my runs", so both flip together.
     judge.enabled = options.judge === "on";
+    judge.autoRun = options.judge === "on";
   }
   if (options.judgeModel !== undefined) judge.model = options.judgeModel;
+  if (options.judgeThreshold !== undefined) {
+    const threshold = Number(options.judgeThreshold);
+    if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+      throw usageError("--judge-threshold must be a number between 0 and 1.");
+    }
+    judge.threshold = threshold;
+  }
   if (Object.keys(judge).length > 0) settings.judge = judge;
   if (Object.keys(settings).length > 0) input.settings = settings;
 
@@ -1823,8 +1835,12 @@ export function registerEvalCommands(program: Command): void {
       .option("--tool-call-order <any|in-order|exact>", "Tool call order")
       .option("--arguments <ignore|partial|exact>", "Argument matching")
       .option("--extra-tool-calls <unlimited|N>", "Allowed extra tool calls")
-      .option("--judge <on|off>", "Enable/disable LLM-as-judge grading")
+      .option(
+        "--judge <on|off>",
+        "Turn LLM-as-judge grading on/off (grades every run as it completes)"
+      )
       .option("--judge-model <id>", "Judge model id")
+      .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1")
   ).action(async (options: PlatformOptions & Record<string, any>, command) => {
     const input = validateOpInput(
       updateEvalSuiteOperation,

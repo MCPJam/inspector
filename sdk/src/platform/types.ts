@@ -349,7 +349,29 @@ export interface PlatformEvalSuiteSettings {
   minimumAccuracy: number | null;
   matchOptions: PublicMatchOptions | null;
   checks: PublicCheck[];
-  judge: { enabled: boolean; model: string | null };
+  /**
+   * LLM-as-judge configuration, RESOLVED — every field is layered over the
+   * platform defaults, so this is what a run on this suite would actually
+   * grade with.
+   *
+   * `model` stays nullable: older API deployments report the suite's raw
+   * `judgeModel`, which is `null` for a suite that never picked one.
+   */
+  judge: {
+    /** Judge is available on the suite. Does NOT by itself grade anything. */
+    enabled: boolean;
+    model: string | null;
+    /**
+     * The flag that makes grading HAPPEN — fires the judge as each run
+     * completes. Absent on older API deployments.
+     */
+    autoRun?: boolean;
+    /**
+     * Advisory pass threshold (`passed = score >= threshold`), in [0, 1].
+     * Absent on older API deployments.
+     */
+    threshold?: number;
+  };
 }
 
 export interface PlatformEvalSuiteHost {

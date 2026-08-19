@@ -269,9 +269,13 @@ describe("v1 eval-edit routes", () => {
     // internal "superset" surfaces as public "in-order".
     expect(body.settings.matchOptions.toolCallOrder).toBe("in-order");
     expect(body.settings.matchOptions.arguments).toBe("exact");
+    // Fully resolved: the suite's own `enabled`/`judgeModel` where set, the
+    // platform defaults (GOAL_COMPLETION_DEFAULTS) for the rest.
     expect(body.settings.judge).toEqual({
       enabled: true,
       model: "openai/gpt-5-mini",
+      autoRun: false,
+      threshold: 0.7,
     });
     expect(body.executionConfig).toEqual({
       model: "anthropic/claude-haiku-4.5",
@@ -324,6 +328,86 @@ describe("v1 eval-edit routes", () => {
     // Merge preserves the suite's existing judgeModel while flipping enabled.
     expect(args.judgeConfig).toEqual({
       goalCompletion: { enabled: false, judgeModel: "openai/gpt-5-mini" },
+    });
+  });
+
+  it("PATCH round-trips judge autoRun and threshold", async () => {
+    // `autoRun` is the flag the grader gates on — a suite can be `enabled`
+    // forever and never grade a run without it, which is exactly the gap the
+    // API had while it accepted only `enabled` + `model`.
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { judge: { autoRun: true, threshold: 0.85 } } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.judgeConfig).toEqual({
+      goalCompletion: {
+        enabled: true,
+        judgeModel: "openai/gpt-5-mini",
+        autoRun: true,
+        threshold: 0.85,
+      },
+    });
+  });
+
+  it("PATCH judge.model alone preserves an already-set autoRun", async () => {
+    // The merge reads the suite's CURRENT goalCompletion, so a caller editing
+    // one judge field cannot silently switch grading back off.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "openai/gpt-5-mini",
+                autoRun: true,
+                threshold: 0.9,
+              },
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { judge: { model: "openai/gpt-5" } } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.judgeConfig).toEqual({
+      goalCompletion: {
+        enabled: true,
+        judgeModel: "openai/gpt-5",
+        autoRun: true,
+        threshold: 0.9,
+      },
+    });
+  });
+
+  it("GET reports resolved judge defaults for a suite with no judgeConfig", async () => {
+    // A suite that never touched the judge reports what a run WOULD grade
+    // with, not a half-resolved `enabled: true` beside `model: null` — a
+    // combination that never exists at run time.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({ ...SUITE_DOC, judgeConfig: undefined })
+        : defaultQueryImpl(name)
+    );
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.settings.judge).toEqual({
+      enabled: true,
+      model: "openai/gpt-5.4-mini",
+      autoRun: false,
+      threshold: 0.7,
     });
   });
 

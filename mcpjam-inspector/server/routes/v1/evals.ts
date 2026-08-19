@@ -98,6 +98,7 @@ import {
   SUPPORTED_MODELS,
 } from "@/shared/types";
 import { classifyModelIdProvider } from "@/shared/model-provider";
+import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 
 // BYOK statics + the hosted snapshot — hosted display rows were removed from
@@ -1285,10 +1286,22 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
       checks: Array.isArray(suite.defaultPredicates)
         ? suite.defaultPredicates
         : [],
-      // GOAL_COMPLETION_DEFAULTS.enabled is true; readers treat absent as on.
+      // FULLY RESOLVED, every field layered over GOAL_COMPLETION_DEFAULTS —
+      // the same resolution the backend's `resolveGoalCompletionConfig`
+      // performs before grading. Reporting a raw field next to a resolved one
+      // (the old `enabled: true` beside `model: null`) described a suite state
+      // that never exists at run time, and left a caller unable to echo back
+      // what its own PATCH will grade with.
       judge: {
-        enabled: goal?.enabled !== false,
-        model: goal?.judgeModel ?? null,
+        enabled: goal?.enabled ?? GOAL_COMPLETION_DEFAULTS.enabled,
+        model: goal?.judgeModel ?? GOAL_COMPLETION_DEFAULTS.judgeModel,
+        // `autoRun` is the flag that makes grading HAPPEN; `enabled` alone only
+        // makes the judge available to a manual request.
+        autoRun: goal?.autoRun ?? GOAL_COMPLETION_DEFAULTS.autoRun,
+        threshold:
+          typeof goal?.threshold === "number"
+            ? goal.threshold
+            : GOAL_COMPLETION_DEFAULTS.threshold,
       },
     },
     schedule: {
@@ -1557,6 +1570,10 @@ const updateSuiteSchema = z.object({
         .object({
           enabled: z.boolean().optional(),
           model: z.string().min(1).optional(),
+          // The flag the grader actually gates on. Without it a suite can be
+          // `enabled` forever and never grade a run.
+          autoRun: z.boolean().optional(),
+          threshold: z.number().min(0).max(1).optional(),
         })
         .optional(),
     })
@@ -2826,6 +2843,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         goalCompletion.enabled = s.judge.enabled;
       if (s.judge.model !== undefined)
         goalCompletion.judgeModel = s.judge.model;
+      if (s.judge.autoRun !== undefined)
+        goalCompletion.autoRun = s.judge.autoRun;
+      if (s.judge.threshold !== undefined)
+        goalCompletion.threshold = s.judge.threshold;
       updateArgs.judgeConfig = { goalCompletion };
     }
   }

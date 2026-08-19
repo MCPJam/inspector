@@ -1772,7 +1772,7 @@ export const getEvalSuiteOperation: PlatformOperation<
   name: "get_eval_suite",
   title: "Get MCPJam eval suite",
   description:
-    "Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge, schedule.",
+    "Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule.",
   readOnly: true,
   inputSchema: getEvalSuiteInput,
   async execute(input, { client, signal }) {
@@ -1828,8 +1828,25 @@ const updateEvalSuiteInput = z.object({
       checks: z.array(publicCheckSchema).nullable().optional(),
       judge: z
         .object({
-          enabled: z.boolean().optional(),
+          enabled: z
+            .boolean()
+            .optional()
+            .describe(
+              "Make the judge available on this suite. On its own this grades nothing — set autoRun (or request grading on a finished run) to make grading happen.",
+            ),
           model: z.string().trim().min(1).optional(),
+          autoRun: z
+            .boolean()
+            .optional()
+            .describe(
+              "Grade every run automatically as it completes. This is the flag that makes LLM-as-judge grading happen; it SPENDS on each run.",
+            ),
+          threshold: z
+            .number()
+            .min(0)
+            .max(1)
+            .optional()
+            .describe("Advisory pass threshold, 0–1 (passed = score >= threshold)."),
         })
         .optional(),
     })
@@ -1844,7 +1861,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge. Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available). Only the fields you pass change.",
   readOnly: false,
   inputSchema: updateEvalSuiteInput,
   async execute(input, { client, signal }) {
