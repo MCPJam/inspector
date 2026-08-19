@@ -41,6 +41,7 @@ import { SessionsPanel } from "./components/sessions/SessionsPanel";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
+import { GithubInstallCallbackRoute } from "./components/settings/GithubInstallCallbackRoute";
 import { IntegrationsRoute } from "./components/settings/IntegrationsRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
@@ -2101,6 +2102,37 @@ export function GithubChecksSettingsRoute() {
       fallback={<Navigate to="/settings" replace />}
     >
       <GithubChecksRoute activeOrganizationId={activeOrganizationId} />
+    </ErrorBoundary>
+  );
+}
+
+/**
+ * `/settings/integrations/github/callback` — GitHub's return path, both legs.
+ *
+ * Same `ErrorBoundary` doctrine as the settings page: this page's actions THROW
+ * when the backend cannot answer (not deployed yet, or the caller is not a
+ * member), and without a boundary that unmounts the whole app. It redirects to
+ * `/settings` for the same reason too — a gated surface that cannot confirm it
+ * is available is not available.
+ *
+ * No `activeOrganizationId` is passed, and none is needed: the browser arrives
+ * back from GitHub carrying only query parameters, and which organization the
+ * binding belongs to is recovered server-side from the link session. A page
+ * that read it from app state could disagree with the session and would then be
+ * asserting an organization nobody proved anything about.
+ */
+export function GithubInstallCallbackSettingsRoute() {
+  return (
+    <ErrorBoundary
+      onError={(error) =>
+        console.error(
+          "[settings/integrations/github/callback] unavailable:",
+          error
+        )
+      }
+      fallback={<Navigate to="/settings" replace />}
+    >
+      <GithubInstallCallbackRoute />
     </ErrorBoundary>
   );
 }

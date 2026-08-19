@@ -154,6 +154,50 @@ async function startEvalFixture(): Promise<{
       res.end(JSON.stringify({ items: PROJECTS }));
       return;
     }
+    if (
+      url.pathname === "/api/v1/organizations/org-1/eval-check-repos" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          organizationId: "org-1",
+          available: true,
+          items: [
+            {
+              id: "cfg-1",
+              repo: "acme/widgets",
+              enabled: true,
+              suiteId: "suite-1",
+              projectId: "proj-alpha",
+              outagePolicy: null,
+              createdAt: 1,
+              updatedAt: 2,
+            },
+          ],
+          connectable: [{ repo: "acme/widgets" }],
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname === "/api/v1/organizations/org-1/eval-check-repos" &&
+      req.method === "POST"
+    ) {
+      const body = raw ? JSON.parse(raw) : {};
+      createBodies.push(body);
+      res.statusCode = 201;
+      res.end(
+        JSON.stringify({
+          id: "cfg-2",
+          organizationId: "org-1",
+          projectId: body.projectId,
+          suiteId: body.suiteId,
+          repo: body.repo,
+          outagePolicy: body.outagePolicy,
+        }),
+      );
+      return;
+    }
     if (url.pathname === "/api/v1/projects/proj-alpha/servers") {
       res.end(JSON.stringify({ items: SERVERS }));
       return;
@@ -283,6 +327,57 @@ async function startEvalFixture(): Promise<{
           notes: null,
           createdAt: 1,
           completedAt: 2,
+          judges: {
+            goalCompletion: {
+              status: "completed",
+              errorCode: null,
+              summary: "Both answers hit the goal.",
+              generatedAt: 9,
+              modelUsed: "openai/gpt-5.4-mini",
+              threshold: 0.7,
+              cases: [
+                {
+                  caseKey: "a",
+                  score: 0.9,
+                  passed: true,
+                  reason: "ok",
+                  rubricHits: [],
+                },
+                {
+                  caseKey: "b",
+                  score: 0.4,
+                  passed: false,
+                  reason: "missed",
+                  rubricHits: [],
+                },
+              ],
+            },
+            // Never requested — the CLI must print nothing for it.
+            groundedness: {
+              status: null,
+              errorCode: null,
+              summary: null,
+              generatedAt: null,
+              modelUsed: null,
+              threshold: null,
+              cases: [],
+            },
+          },
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1/judge" &&
+      req.method === "POST"
+    ) {
+      createBodies.push(raw ? JSON.parse(raw) : {});
+      res.statusCode = 202;
+      res.end(
+        JSON.stringify({
+          runId: "run-1",
+          projectId: "proj-alpha",
+          status: "pending",
         }),
       );
       return;
@@ -769,6 +864,152 @@ test("eval run rejects --environment together with --server before any request",
   }
 });
 
+test("eval update --judge on writes enabled AND autoRun together", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--judge",
+            "on",
+            "--judge-threshold",
+            "0.8",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { judge?: Record<string, unknown> };
+    };
+    // `enabled` alone is a no-op — it already defaults on, and the grader
+    // gates on `autoRun`. One flag, both fields, matching the app's switch.
+    assert.deepEqual(patchBody.settings?.judge, {
+      enabled: true,
+      autoRun: true,
+      threshold: 0.8,
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update --judge off turns autoRun off with it", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--judge",
+            "off",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { judge?: Record<string, unknown> };
+    };
+    assert.deepEqual(patchBody.settings?.judge, {
+      enabled: false,
+      autoRun: false,
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update rejects an unusable --judge-threshold before any write", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    // "" and "   " are the interesting ones: `Number("")` is 0, a perfectly
+    // valid threshold, so a blank flag would otherwise pass the range check
+    // and silently set "every case passes" (`passed = score >= 0`).
+    for (const value of ["80", "", "   ", "abc", "-0.1"]) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--judge-threshold",
+            value,
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      );
+
+      assert.notEqual(run.result.exitCode, 0, `accepted ${JSON.stringify(value)}`);
+      assert.match(
+        run.stderr,
+        /--judge-threshold must be a number between 0 and 1/,
+      );
+    }
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update still accepts an explicit --judge-threshold 0", async () => {
+  // Rejecting blank must not reject a threshold someone deliberately set to 0.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--judge-threshold",
+            "0",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { judge?: Record<string, unknown> };
+    };
+    assert.equal(patchBody.settings?.judge?.threshold, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval environments set PATCHes the resolved ids in the given order", async () => {
   const fixture = await startEvalFixture();
   try {
@@ -963,6 +1204,458 @@ test("--format json output stays byte-identical — no View line", async () => {
       assert.doesNotThrow(() => JSON.parse(run.stdout));
       assert.ok(!run.stdout.includes("View:"));
     }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval judge POSTs the per-run override and echoes the pending receipt", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "judge",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--force",
+            "--enable",
+            "--judge-model",
+            "openai/gpt-5",
+            "--judge-threshold",
+            "0.8",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.createBodies.at(-1), {
+      force: true,
+      enable: true,
+      model: "openai/gpt-5",
+      threshold: 0.8,
+    });
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.judge.status, "pending");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval judge sends an empty body when no override was asked for", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "judge",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    // An empty body means "grade with the suite's config" — sending
+    // `enable: false` or a null model would state something the caller did not.
+    assert.deepEqual(fixture.createBodies.at(-1), {});
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval judge rejects an out-of-range --judge-threshold before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "judge",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--judge-threshold",
+          "1.5",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--judge-threshold must be a number between 0 and 1/);
+    // It SPENDS — a bad flag must not reach the wire.
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval judge rejects a blank --judge-threshold before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    for (const value of ["", "   "]) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "judge",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--judge-threshold",
+            value,
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      );
+      assert.notEqual(run.result.exitCode, 0, `accepted ${JSON.stringify(value)}`);
+      assert.match(
+        run.stderr,
+        /--judge-threshold must be a number between 0 and 1/,
+      );
+    }
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval status summarizes the judges that graded, and stays silent about the rest", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "status",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const lines = run.stdout.trimEnd().split("\n");
+    assert.equal(
+      lines.at(-2),
+      "Judge goal completion: 1/2 passed at threshold 0.7 — openai/gpt-5.4-mini",
+    );
+    // groundedness was never requested, so it gets no SUMMARY line — listing
+    // it would turn a status read into a catalog of judges the platform could
+    // have run. (It is still in the JSON payload above, which is the point:
+    // the envelope is complete, the summary is only what happened.)
+    assert.ok(!run.stdout.includes("Judge groundedness"));
+    // The View link stays the closing line.
+    assert.match(lines.at(-1) ?? "", /^View: /);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update --min-iterations off sends an explicit null", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--min-iterations",
+            "off",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { minimumIterations?: number | null };
+    };
+    // NOT undefined: `undefined` means "leave alone" the whole way down, so a
+    // dropped null would make "off" a no-op that still reports success.
+    assert.ok("minimumIterations" in (patchBody.settings ?? {}));
+    assert.equal(patchBody.settings?.minimumIterations, null);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update --min-iterations sends the number", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--min-iterations",
+            "3",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const patchBody = fixture.createBodies.at(-1) as {
+      settings?: { minimumIterations?: number | null };
+    };
+    assert.equal(patchBody.settings?.minimumIterations, 3);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update rejects an out-of-range --min-iterations before any write", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    for (const value of ["0", "11", "2.5"]) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--min-iterations",
+            value,
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      );
+      assert.notEqual(run.result.exitCode, 0);
+      assert.match(
+        run.stderr,
+        /--min-iterations must be a whole number from 1 to 10/,
+      );
+    }
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update --computer-image sends the selector, off sends null", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const set = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--computer-image",
+            "Playwright",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(set.result.exitCode, 0);
+    let patchBody = fixture.createBodies.at(-1) as {
+      environment?: Record<string, unknown>;
+    };
+    // The server resolves name-or-id; the CLI forwards the selector as typed
+    // and does NOT restate servers, which is what preserves them.
+    assert.deepEqual(patchBody.environment, {
+      computerEnvironment: "Playwright",
+    });
+
+    const cleared = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--computer-image",
+            "off",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(cleared.result.exitCode, 0);
+    patchBody = fixture.createBodies.at(-1) as {
+      environment?: Record<string, unknown>;
+    };
+    assert.deepEqual(patchBody.environment, { computerEnvironment: null });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval checks list reports connected and connectable repositories", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(fixture.baseUrl, "checks", "list", "--project", "proj-alpha"),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.checks.available, true);
+    assert.equal(payload.checks.items[0].repo, "acme/widgets");
+    // An unchosen policy stays null rather than being reported as fail_open.
+    assert.equal(payload.checks.items[0].outagePolicy, null);
+    assert.deepEqual(payload.checks.connectable, [{ repo: "acme/widgets" }]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval checks connect maps the hyphenated policy onto the wire spelling", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "checks",
+            "connect",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--repo",
+            "acme/widgets",
+            "--outage-policy",
+            "fail-closed",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.createBodies.at(-1), {
+      projectId: "proj-alpha",
+      suiteId: "suite-1",
+      repo: "acme/widgets",
+      outagePolicy: "fail_closed",
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval checks connect refuses an unknown outage policy before any write", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "checks",
+          "connect",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--repo",
+          "acme/widgets",
+          "--outage-policy",
+          "maybe",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--outage-policy must be/);
+    // It reaches a shared repository — a bad flag must not get that far.
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval checks connect requires an outage policy at all", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "checks",
+          "connect",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--repo",
+          "acme/widgets",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.equal(fixture.createBodies.length, 0);
   } finally {
     await fixture.close();
   }

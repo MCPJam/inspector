@@ -33,6 +33,8 @@
     "verify": "npm run typecheck && npm run test && npm run build:inspector",
     "docs:sync-tokens": "node scripts/sync-docs-tokens.mjs",
     "docs:check-tokens": "node scripts/sync-docs-tokens.mjs --check",
+    "claude-policy:sync": "node scripts/sync-claude-policy-manifest.mjs",
+    "claude-policy:check": "node scripts/sync-claude-policy-manifest.mjs --check",
     "release:status": "changeset status",
     "release:version": "changeset version",
     "release:publish": "changeset publish"

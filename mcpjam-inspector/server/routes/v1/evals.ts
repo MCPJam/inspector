@@ -34,8 +34,18 @@ import { HOSTED_MODE } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   deriveItemIdempotencyKey,
+  deriveOperationIdempotencyKey,
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
+import { opaqueIdSchema } from "@mcpjam/sdk/contract";
+import {
+  createEvalCasesInBatches,
+  partialResultOf,
+  withMintedCaseIds,
+  MAX_CASES_PER_BATCH,
+  type CaseBatchFailedEntry,
+  type EvalCaseBatchItem,
+} from "../shared/eval-case-batch.js";
 import {
   RunEvalsRequestSchema,
   prepareEvalRun,
@@ -88,6 +98,7 @@ import {
   SUPPORTED_MODELS,
 } from "@/shared/types";
 import { classifyModelIdProvider } from "@/shared/model-provider";
+import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 
 // BYOK statics + the hosted snapshot — hosted display rows were removed from
@@ -949,6 +960,84 @@ function toRunEnvironmentDto(run: RunDoc) {
   };
 }
 
+/**
+ * One advisory judge's persisted result, projected onto the public model.
+ *
+ * `goalCompletion` is one of SEVERAL judges on the run row — `groundedness`
+ * sits beside it under the same four-fields-per-judge pattern — so the DTO
+ * carries a `judges` envelope rather than a bare `judge` field, and a third
+ * judge is a key here rather than a reshaped response.
+ *
+ * `status: null` means the judge was NEVER requested for this run, which is a
+ * different answer from "requested and produced nothing". A `pending` or
+ * `failed` judge carries no cases: `cases` is `[]` and `status` carries the
+ * meaning, so a caller never has to distinguish "graded nothing" from "has not
+ * graded yet" by the emptiness of a list.
+ *
+ * `caseKey` keeps its persisted name. It is the stable AUTHORED-case identity,
+ * not a Convex row id; calling it `caseId` at this boundary would invite
+ * callers to join it against the case ids the case routes take.
+ */
+function toRunJudgeDto(
+  status: unknown,
+  errorCode: unknown,
+  result: Record<string, any> | undefined,
+  toCase: (row: Record<string, any>) => Record<string, unknown>,
+) {
+  const terminal = status === "completed";
+  return {
+    status:
+      status === "pending" || status === "completed" || status === "failed"
+        ? status
+        : null,
+    errorCode: typeof errorCode === "string" ? errorCode : null,
+    summary: typeof result?.summary === "string" ? result.summary : null,
+    generatedAt:
+      typeof result?.generatedAt === "number" ? result.generatedAt : null,
+    modelUsed: typeof result?.modelUsed === "string" ? result.modelUsed : null,
+    threshold: typeof result?.threshold === "number" ? result.threshold : null,
+    cases:
+      terminal && Array.isArray(result?.cases) ? result.cases.map(toCase) : [],
+  };
+}
+
+/** Advisory graders on a run, keyed by judge. See `toRunJudgeDto`. */
+function toRunJudgesDto(run: RunDoc) {
+  return {
+    goalCompletion: toRunJudgeDto(
+      run.goalCompletionStatus,
+      run.goalCompletionErrorCode,
+      run.goalCompletion,
+      (row) => ({
+        caseKey: String(row.caseKey ?? ""),
+        score: typeof row.score === "number" ? row.score : null,
+        passed: row.passed === true,
+        reason: typeof row.reason === "string" ? row.reason : null,
+        rubricHits: Array.isArray(row.rubricHits)
+          ? row.rubricHits.map(String)
+          : [],
+      }),
+    ),
+    groundedness: toRunJudgeDto(
+      run.groundednessStatus,
+      run.groundednessErrorCode,
+      run.groundedness,
+      // Groundedness grades whether an answer is SUPPORTED by its trajectory,
+      // so its per-case evidence is `unsupportedClaims`, not `rubricHits`.
+      // Projected off the persisted fields rather than forced into one shape.
+      (row) => ({
+        caseKey: String(row.caseKey ?? ""),
+        score: typeof row.score === "number" ? row.score : null,
+        passed: row.passed === true,
+        reason: typeof row.reason === "string" ? row.reason : null,
+        unsupportedClaims: Array.isArray(row.unsupportedClaims)
+          ? row.unsupportedClaims.map(String)
+          : [],
+      }),
+    ),
+  };
+}
+
 function toRunDto(run: RunDoc) {
   return {
     id: String(run._id),
@@ -1188,6 +1277,17 @@ function internalCaseToSteps(testCase: CaseDoc): TestStep[] {
 function toCaseDto(testCase: CaseDoc) {
   return {
     id: String(testCase._id),
+    // The EFFECTIVE declared identity — what the case answers to in a suite
+    // file, an import, or a CLI argument — so a caller can read back the id it
+    // authored (and see which id won when a retry replayed onto a stored row).
+    //
+    // Deliberately not folded into `id`. That field is the platform row id
+    // every case route takes as its path parameter and every selector resolves
+    // against; giving one name two meanings would break each of them. Absent on
+    // cases authored before declared identity existed.
+    ...(typeof testCase.declaredCaseId === "string"
+      ? { declaredId: testCase.declaredCaseId }
+      : {}),
     title: testCase.title ?? "",
     steps: internalCaseToSteps(testCase),
     ...(testCase.expectedOutput !== undefined
@@ -1222,7 +1322,11 @@ function toCaseDto(testCase: CaseDoc) {
 
 type SuiteDoc = Record<string, any>;
 
-function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
+function toSuiteDetailDto(
+  suite: SuiteDoc,
+  execConfig: any,
+  resolved: { computerEnvironmentName?: string | null } = {},
+) {
   const goal = suite.judgeConfig?.goalCompletion;
   return {
     id: String(suite._id),
@@ -1233,6 +1337,16 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
       servers: Array.isArray(suite.environment?.servers)
         ? suite.environment.servers.map(String)
         : [],
+      // The sandbox image this suite's eval runs boot from. `null` = the
+      // provider's default base image. The NAME rides along beside the id so a
+      // caller can echo back what it set without a second lookup — it is what
+      // the picker shows and what a person recognizes.
+      computerEnvironment: suite.environment?.computerEnvironmentId
+        ? {
+            id: String(suite.environment.computerEnvironmentId),
+            name: resolved.computerEnvironmentName ?? null,
+          }
+        : null,
     },
     executionConfig: execConfig
       ? {
@@ -1260,14 +1374,31 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
         typeof suite.defaultPassCriteria?.minimumPassRate === "number"
           ? suite.defaultPassCriteria.minimumPassRate
           : null,
+      // `null` = no floor, which is the suite's real state rather than a
+      // stand-in for 1: a floor of 1 and no floor at all produce the same
+      // runs today, but only one of them is something the user chose.
+      minimumIterations:
+        typeof suite.minIterations === "number" ? suite.minIterations : null,
       matchOptions: toPublicMatchOptions(suite.defaultMatchOptions),
       checks: Array.isArray(suite.defaultPredicates)
         ? suite.defaultPredicates
         : [],
-      // GOAL_COMPLETION_DEFAULTS.enabled is true; readers treat absent as on.
+      // FULLY RESOLVED, every field layered over GOAL_COMPLETION_DEFAULTS —
+      // the same resolution the backend's `resolveGoalCompletionConfig`
+      // performs before grading. Reporting a raw field next to a resolved one
+      // (the old `enabled: true` beside `model: null`) described a suite state
+      // that never exists at run time, and left a caller unable to echo back
+      // what its own PATCH will grade with.
       judge: {
-        enabled: goal?.enabled !== false,
-        model: goal?.judgeModel ?? null,
+        enabled: goal?.enabled ?? GOAL_COMPLETION_DEFAULTS.enabled,
+        model: goal?.judgeModel ?? GOAL_COMPLETION_DEFAULTS.judgeModel,
+        // `autoRun` is the flag that makes grading HAPPEN; `enabled` alone only
+        // makes the judge available to a manual request.
+        autoRun: goal?.autoRun ?? GOAL_COMPLETION_DEFAULTS.autoRun,
+        threshold:
+          typeof goal?.threshold === "number"
+            ? goal.threshold
+            : GOAL_COMPLETION_DEFAULTS.threshold,
       },
     },
     schedule: {
@@ -1448,15 +1579,71 @@ const publicCaseBodyShape = {
     .optional(),
 } as const;
 
-const createCaseSchema = z.object(publicCaseBodyShape);
+const createCaseSchema = z.object({
+  ...publicCaseBodyShape,
+  /**
+   * The case's DECLARED identity. Callers mint it (`mintCaseId` from
+   * `@mcpjam/sdk/contract`) so the id a suite file commits is the id the
+   * platform stores; when omitted, this first-party server mints one rather
+   * than leaving the case without an identity.
+   *
+   * Create only. It is absent from `updateCaseSchema` on purpose: a case's
+   * identity is not one of the fields a PATCH may edit, and accepting it there
+   * would make "change this case" and "point this id at a different case" the
+   * same request.
+   */
+  id: opaqueIdSchema.optional(),
+});
 const updateCaseSchema = z.object(publicCaseBodyShape);
 
-const updateSuiteSchema = z.object({
+/**
+ * A case inside a `POST …/cases/batch` body. Same shape as a single create —
+ * the batch surface is the single surface repeated, not a second contract.
+ */
+const batchCaseSchema = createCaseSchema;
+
+const createCasesBatchSchema = z.object({
+  cases: z
+    .array(batchCaseSchema)
+    .min(1, "cases must contain at least one case.")
+    .max(
+      MAX_CASES_PER_BATCH,
+      `cases accepts at most ${MAX_CASES_PER_BATCH} entries per call; split larger writes into chunks.`,
+    ),
+  /**
+   * `block` (default) refuses a case whose definition already exists in the
+   * suite. Left as a plain string so an unrecognized value COERCES to `block`
+   * and reports the coercion, exactly as the platform does — validating it to
+   * an enum here would turn a typo into a rejected batch and hide the
+   * platform's own audit field.
+   */
+  duplicatePolicy: z.string().optional(),
+  overrideReason: z.string().optional(),
+});
+
+/**
+ * Exported for the settings-parity test
+ * (`__tests__/eval-suite-settings-parity.test.ts`), which asserts that every
+ * settings-sheet row the shared manifest marks `api:` is genuinely accepted
+ * here. Nothing else should import it — the route is the only writer.
+ */
+export const updateSuiteSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
   // The LEGACY server bag (kept as rollback/compat data). Unrelated to
   // `environmentIds` below, which is the project-environment attachment list.
-  environment: z.object({ servers: z.array(z.string().min(1)) }).optional(),
+  environment: z
+    .object({
+      // Optional so a caller can set the computer image WITHOUT restating the
+      // server list. Omitting it preserves the suite's current servers (and
+      // their bindings) rather than clearing them.
+      servers: z.array(z.string().min(1)).optional(),
+      // Sandbox-image name or id; `null` clears the pin (runs fall back to the
+      // provider's default base image). Enumerate the choices with
+      // `list_sandbox_images`.
+      computerEnvironment: z.union([z.string().min(1), z.null()]).optional(),
+    })
+    .optional(),
   // Project-environment attachments, in attach order: a non-empty array
   // sets/replaces, `null` clears (reverts the suite to legacy config), and `[]`
   // is rejected rather than silently treated as a clear — mirroring the
@@ -1491,17 +1678,52 @@ const updateSuiteSchema = z.object({
   settings: z
     .object({
       minimumAccuracy: z.number().min(0).max(100).optional(),
+      // Suite-level FLOOR on per-case iterations: every case runs at least
+      // this many times (`max(case.iterations, minimumIterations)`). `null`
+      // clears it — the platform's `minIterations` has exactly that contract,
+      // so the public field does not invent a second way to say "no floor".
+      minimumIterations: z
+        .union([z.number().int().min(1).max(10), z.null()])
+        .optional(),
       matchOptions: publicMatchOptionsSchema.nullable().optional(),
       checks: z.array(publicCheckSchema).nullable().optional(),
       judge: z
         .object({
           enabled: z.boolean().optional(),
           model: z.string().min(1).optional(),
+          // The flag the grader actually gates on. Without it a suite can be
+          // `enabled` forever and never grade a run.
+          autoRun: z.boolean().optional(),
+          threshold: z.number().min(0).max(1).optional(),
         })
         .optional(),
     })
     .optional(),
 });
+
+/**
+ * Body for `POST …/eval-runs/:runId/judge`. STRICT: this endpoint spends, so an
+ * unknown or mistyped key is a 400 rather than a silently-ignored field that
+ * bills anyway.
+ *
+ * `enable` is the per-RUN answer to "grade this?", not a suite edit. Grading
+ * resolves from the run's config snapshot, pinned when the run was created, so
+ * a run recorded while the judge was off cannot be rescued by turning the judge
+ * on for the suite — `enable: true` is what grades it, and it touches nothing
+ * beyond this run. Requires a platform new enough to accept the field; older
+ * deployments refuse the override rather than grading with the judge off.
+ */
+const requestRunJudgeSchema = z
+  .object({
+    /** Re-grade a run that already has a result. */
+    force: z.boolean().optional(),
+    enable: z.boolean().optional(),
+    /** Judge model for THIS run only. */
+    model: z.string().min(1).optional(),
+    /** Pass threshold for THIS run only, 0–1. */
+    threshold: z.number().min(0).max(1).optional(),
+  })
+  .strict();
 
 const scheduleSchema = z.object({
   enabled: z.boolean(),
@@ -1579,6 +1801,11 @@ function buildCaseMutationArgs(
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   let isModelFreeStepsCase = false;
+  // The public field is `id` (what a caller reads back on the case DTO); the
+  // storage argument is `caseId`, which lands in `declaredCaseId`. It is never
+  // the `caseKey` — that stays the platform's own random `ui_*` storage key.
+  // Only create carries one; `updateCaseSchema` has no `id` to forward.
+  if ("id" in body && body.id !== undefined) args.caseId = body.id;
   if (body.title !== undefined) args.title = body.title;
   if (body.iterations !== undefined) args.runs = body.iterations;
   if (body.isNegative !== undefined) args.isNegativeTest = body.isNegative;
@@ -1656,6 +1883,63 @@ function buildCaseMutationArgs(
 }
 
 /**
+ * Assert a case body can be CREATED, and hand back its narrowed title.
+ *
+ * `steps` is optional on the shared case shape so PATCH can be a partial
+ * update, but a create must carry the steps-first contract — otherwise the case
+ * is persisted with no executable steps. Shared by the single and batch routes
+ * so the two cannot disagree about what "creatable" means; `label` names the
+ * offending case when one call carries many.
+ */
+function assertCreatableCase(
+  body: { title?: string; steps?: unknown },
+  label = "",
+): string {
+  if (!body.title) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `${label}title is required.`,
+    );
+  }
+  if (!Array.isArray(body.steps) || body.steps.length === 0) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `${label}steps is required and must be a non-empty array when creating a case.`,
+    );
+  }
+  return body.title;
+}
+
+/**
+ * Turn one batch item's failure into the v1 error a single-case caller expects.
+ *
+ * The batch mutation reports per-item problems as data rather than throwing, so
+ * a caller that authored exactly one case would otherwise get a 201 carrying a
+ * failure. Identity and duplicate collisions are 409 (the request was
+ * well-formed; the suite is not in a state that accepts it); everything else is
+ * the caller's payload, so 400.
+ */
+function caseBatchFailureToWebError(
+  entry: CaseBatchFailedEntry,
+): WebRouteError {
+  const conflict =
+    entry.code === "DUPLICATE_CASE_ID" ||
+    entry.code === "DUPLICATE_IDEMPOTENCY_KEY" ||
+    entry.code === "IDEMPOTENCY_CONFLICT" ||
+    entry.code === "DUPLICATE_CONTENT";
+  return new WebRouteError(
+    conflict ? 409 : 400,
+    conflict ? ErrorCode.CONFLICT : ErrorCode.VALIDATION_ERROR,
+    entry.message,
+    // The stable code is what a program branches on; the message is prose and
+    // may be reworded.
+    { reason: entry.code },
+  );
+}
+
+/**
  * Map an error thrown by a Convex suite/case write mutation onto a v1 error.
  * Convex surfaces validation failures as plain Errors; the common cases (not
  * found / unauthorized, and the suite/case invariant guards like "Positive
@@ -1679,6 +1963,71 @@ function translateConvexWriteError(error: unknown): WebRouteError {
  * project's host catalog; per-host server names resolve against the suite's
  * own environment bindings (no live connection, no extra catalog query).
  */
+/**
+ * Resolve a sandbox-image selector (name or id) to the `computerEnvironments`
+ * row a suite's eval runs boot from.
+ *
+ * Name-or-id, matching every other selector on this surface — an agent that
+ * just read `list_sandbox_images` has the name in hand, and making it round
+ * trip for an id would be the only place we ask that. Ambiguous names are a
+ * 400 rather than a silent first-match: two images called "playwright" is a
+ * situation only the caller can resolve.
+ *
+ * Returns the row so callers can report the resolved NAME back — a caller must
+ * be able to echo what it just set without a second read.
+ */
+async function resolveComputerEnvironment(
+  readClient: ReturnType<typeof createConvexReadClient>,
+  projectId: string,
+  selector: string,
+): Promise<{ id: string; name: string }> {
+  const trimmed = selector.trim();
+  let rows: any[] | null | undefined;
+  try {
+    rows = await readClient.query(
+      "computerEnvironments:listEnvironments" as any,
+      { projectId },
+    );
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  const list = rows ?? [];
+  const byId = list.find((row: any) => String(row.environmentId) === trimmed);
+  if (byId) {
+    return { id: String(byId.environmentId), name: String(byId.name ?? "") };
+  }
+  const matches = list.filter(
+    (row: any) =>
+      String(row.name ?? "").toLocaleLowerCase() === trimmed.toLocaleLowerCase(),
+  );
+  if (matches.length > 1) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Computer image name "${trimmed}" is ambiguous; use the image id.`,
+    );
+  }
+  if (matches.length === 0) {
+    // Enumerate the real choices: a typo is then one round trip to fix rather
+    // than a bare not-found, and the picker's contents are not otherwise
+    // visible from a shell.
+    const available = list
+      .map((row: any) => `${row.name} (id: ${row.environmentId})`)
+      .join(", ");
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      `Computer image "${trimmed}" was not found in this project.${
+        available ? ` Available: ${available}.` : ""
+      }`,
+    );
+  }
+  return {
+    id: String(matches[0].environmentId),
+    name: String(matches[0].name ?? ""),
+  };
+}
+
 async function resolveHostAttachments(
   convexClient: ReturnType<typeof createConvexClients>["convexClient"],
   projectId: string,
@@ -2111,6 +2460,10 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   return v1Resource(c, {
     ...toRunDto(run!),
     ...(insights ? { insights } : {}),
+    // DETAIL only, like `insights` — a suite's run list stays compact. Always
+    // present, so a caller can read `judges.goalCompletion.status` without
+    // first proving the field exists; `null` there means never requested.
+    judges: toRunJudgesDto(run!),
   });
 });
 
@@ -2262,6 +2615,67 @@ evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
     });
   } catch (error) {
     throw translateConvexError(error, { resource: "Eval run insights" });
+  }
+  return v1Resource(c, { runId, projectId, status: "pending" }, 202);
+});
+
+// POST /v1/projects/:projectId/eval-runs/:runId/judge
+// Request (or with force, re-request) LLM-as-judge grading of a finished run.
+// SPENDS the org's model budget; 202 receipt, then poll the run detail's
+// `judges.goalCompletion` rather than re-requesting. Same Convex mutation the
+// in-app "Run judge" button uses, so role/limit/billing checks are identical.
+evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let run: RunDoc | null;
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  // Like the insights endpoint: this SPENDS, so the body is VALIDATED rather
+  // than coerced. A bodyless POST is the common case and stays valid; anything
+  // else must parse and typecheck, because `{"force":"false"}` is a truthy
+  // string and charging for a regeneration nobody asked for is the failure.
+  const raw = await c.req.text();
+  let body: unknown = {};
+  if (raw.length > 0) {
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Request body must be valid JSON.",
+      );
+    }
+  }
+  const parsed = parseWithSchema(requestRunJudgeSchema, body);
+
+  // The per-run override envelope. Sent ONLY when the caller asked for one:
+  // `requestGoalCompletion` clears any previously persisted override when the
+  // arg is absent, which is the semantic we want — re-grading without
+  // re-stating an override returns to suite-config grading on its own.
+  const override: Record<string, unknown> = {};
+  if (parsed.enable !== undefined) override.enabled = parsed.enable;
+  if (parsed.model !== undefined) override.judgeModel = parsed.model;
+  if (parsed.threshold !== undefined) override.threshold = parsed.threshold;
+
+  try {
+    await convex.mutation("goalCompletion:requestGoalCompletion" as any, {
+      suiteRunId: runId,
+      ...(parsed.force === true ? { force: true } : {}),
+      ...(Object.keys(override).length > 0 ? { runOverride: override } : {}),
+    });
+  } catch (error) {
+    throw translateConvexError(error, { resource: "Eval run judge" });
   }
   return v1Resource(c, { runId, projectId, status: "pending" }, 202);
 });
@@ -2537,7 +2951,25 @@ async function readSuiteDetail(
   } catch {
     execConfig = null;
   }
-  return toSuiteDetailDto(suite!, execConfig);
+  // The suite row stores the computer-image PIN as an id only. Resolve the
+  // name beside it so a caller can echo back what it set — that is what the
+  // picker shows and what a person recognizes. Best-effort: a failed lookup
+  // (a deleted image, a caller who can read the suite but not the image list)
+  // reports the id with a null name rather than failing the whole read.
+  let computerEnvironmentName: string | null = null;
+  const pinnedImageId = suite!.environment?.computerEnvironmentId;
+  if (pinnedImageId) {
+    try {
+      const image: any = await convex.query(
+        "computerEnvironments:getEnvironment" as any,
+        { environmentId: String(pinnedImageId) },
+      );
+      if (typeof image?.name === "string") computerEnvironmentName = image.name;
+    } catch {
+      computerEnvironmentName = null;
+    }
+  }
+  return toSuiteDetailDto(suite!, execConfig, { computerEnvironmentName });
 }
 
 /** Default execution models for a new case: the suite's configured model. */
@@ -2678,13 +3110,51 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.description !== undefined) updateArgs.description = body.description;
   if (body.environment !== undefined) {
-    updateArgs.environment = { servers: body.environment.servers };
-    updateArgs.refreshHostConfigFromEnvironment = true;
+    // `updateTestSuite` REPLACES the environment envelope wholesale, so this
+    // has to be a merge over the suite's current one. Sending `{ servers }`
+    // alone — which is what this did — silently dropped the server bindings
+    // and the computer-image pin on any edit that touched servers. The suite
+    // settings sheet spreads the current environment for exactly this reason.
+    const current = suite!.environment ?? {};
+    const environment: Record<string, unknown> = {
+      servers: body.environment.servers ?? current.servers ?? [],
+      ...(current.serverBindings
+        ? { serverBindings: current.serverBindings }
+        : {}),
+    };
+    if (body.environment.computerEnvironment === undefined) {
+      // Untouched: carry the existing pin through the rebuild.
+      if (current.computerEnvironmentId) {
+        environment.computerEnvironmentId = current.computerEnvironmentId;
+      }
+    } else if (body.environment.computerEnvironment !== null) {
+      // Resolved BEFORE the write so an unknown image is a clean 404 rather
+      // than a rejected mutation with the rest of the PATCH already applied.
+      const image = await resolveComputerEnvironment(
+        readClient,
+        projectId,
+        body.environment.computerEnvironment,
+      );
+      environment.computerEnvironmentId = image.id;
+    }
+    // `null` falls through with the key absent, which is how the platform
+    // spells "no pin" — the environment validator has no null for it.
+    updateArgs.environment = environment;
+    // Only a server-list change needs the host config refreshed; a pin edit
+    // does not touch which servers a host sees.
+    if (body.environment.servers !== undefined) {
+      updateArgs.refreshHostConfigFromEnvironment = true;
+    }
   }
   if (body.settings) {
     const s = body.settings;
     if (s.minimumAccuracy !== undefined)
       updateArgs.defaultPassCriteria = { minimumPassRate: s.minimumAccuracy };
+    // Forwarded verbatim, `null` INCLUDED: the platform reads null as "clear"
+    // and `undefined` as "leave alone", so collapsing null to undefined here
+    // would turn every attempt to remove the floor into a silent no-op.
+    if (s.minimumIterations !== undefined)
+      updateArgs.minIterations = s.minimumIterations;
     // PATCH is merge semantics: updateTestSuite replaces these objects
     // wholesale, so a partial public field (e.g. only matchOptions.arguments,
     // or only judge.model) must be layered onto the suite's CURRENT values —
@@ -2704,6 +3174,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         goalCompletion.enabled = s.judge.enabled;
       if (s.judge.model !== undefined)
         goalCompletion.judgeModel = s.judge.model;
+      if (s.judge.autoRun !== undefined)
+        goalCompletion.autoRun = s.judge.autoRun;
+      if (s.judge.threshold !== undefined)
+        goalCompletion.threshold = s.judge.threshold;
       updateArgs.judgeConfig = { goalCompletion };
     }
   }
@@ -2963,23 +3437,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = c.req.param("suiteId");
   const body = parseWithSchema(createCaseSchema, await synthesizeServerBody(c));
-  if (!body.title) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "title is required.",
-    );
-  }
-  // `steps` is optional on the shared case shape so PATCH can be a partial
-  // update, but a CREATE must carry the steps-first contract — otherwise the
-  // case is persisted with no executable steps.
-  if (!Array.isArray(body.steps) || body.steps.length === 0) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "steps is required and must be a non-empty array when creating a case.",
-    );
-  }
+  const title = assertCreatableCase(body);
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
   let suite: SuiteDoc | null;
@@ -3001,24 +3459,180 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
       : [];
   const args = buildCaseMutationArgs(body, { forCreate: true, defaultModels });
   const { convexClient } = createConvexClients(token);
-  let caseId: string;
+  // A single create is a batch of one, deliberately: it is the same contract,
+  // so it gets the same default duplicate policy, the same warnings, the same
+  // override audit and the same identity handling. Two routes into two
+  // mutations is how the single and bulk paths would drift.
+  const [item] = withMintedCaseIds<EvalCaseBatchItem>([
+    { ...args, title, changeSource: "manual" },
+  ]);
+  let result: Awaited<ReturnType<typeof createEvalCasesInBatches>>;
   try {
-    caseId = await convexClient.mutation("testSuites:createTestCase" as any, {
+    result = await createEvalCasesInBatches(convexClient, {
       suiteId,
-      changeSource: "manual",
-      ...args,
+      cases: [item],
     });
   } catch (error) {
     throw translateConvexWriteError(error);
+  }
+  const failure = result.failed[0];
+  if (failure) throw caseBatchFailureToWebError(failure);
+  const committed = result.committed[0];
+  if (!committed) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Case create returned neither a committed case nor a failure.",
+    );
   }
   const created = await loadCaseInScope(
     createConvexReadClient(token),
     projectId,
     suiteId,
-    String(caseId),
+    String(committed.testCaseId),
   );
   return v1Resource(c, toCaseDto(created), 201);
 });
+
+// POST /v1/projects/:projectId/eval-suites/:suiteId/cases/batch
+//
+// The bulk authoring surface: an agent converting a repo's test files, or an
+// import, writes its cases in one call per chunk instead of one call per case.
+// It is the SINGLE create repeated — same case body, same identity rules, same
+// duplicate policy — so nothing here may grow a second meaning for a field the
+// single route already defines.
+evals.post(
+  "/projects/:projectId/eval-suites/:suiteId/cases/batch",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const suiteId = c.req.param("suiteId");
+    const body = parseWithSchema(
+      createCasesBatchSchema,
+      await synthesizeServerBody(c),
+    );
+
+    // Every case is checked before the suite is even loaded: a batch with one
+    // unusable body is a caller mistake about the whole request, and reporting
+    // it after 99 siblings were authored would leave the caller reconciling a
+    // partial write it cannot retry cleanly.
+    const titles = body.cases.map((testCase, index) =>
+      assertCreatableCase(testCase, `cases[${index}]: `),
+    );
+
+    const token = await getConvexBearerForRequest(c);
+    const readClient = createConvexReadClient(token);
+    let suite: SuiteDoc | null;
+    try {
+      suite = await readClient.query("testSuites:getTestSuite" as any, {
+        suiteId,
+      });
+    } catch (error) {
+      if (isConvexNotVisibleError(error)) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "Eval suite not found",
+        );
+      }
+      throw error;
+    }
+    requireProjectMatch(suite, projectId, "Eval suite");
+
+    // Resolved at most ONCE for the whole batch, and only when some case
+    // actually needs it — the single route's per-call lookup would otherwise
+    // become 100 identical queries.
+    const defaultModels = body.cases.some((tc) => tc.models === undefined)
+      ? await defaultCaseModels(readClient, suiteId)
+      : [];
+
+    // A retry of an interrupted import must land on the same rows rather than
+    // authoring the suite's cases twice. Discriminate by the caller's declared
+    // id when there is one — it is stable across retries by construction — and
+    // by position otherwise, which a verbatim retry also reproduces. Position
+    // is an idempotency discriminator only; it never becomes an identity.
+    const turnKey = readIdempotencyKey(c);
+    const operationKey = turnKey
+      ? deriveOperationIdempotencyKey(turnKey, "create_eval_cases", {
+          projectId,
+          suiteId,
+        })
+      : undefined;
+
+    const items = withMintedCaseIds<EvalCaseBatchItem>(
+      body.cases.map((testCase, index) => {
+        const args = buildCaseMutationArgs(testCase, {
+          forCreate: true,
+          defaultModels,
+        });
+        return {
+          ...args,
+          title: titles[index],
+          changeSource: "manual",
+          ...(operationKey
+            ? {
+                idempotencyKey: deriveItemIdempotencyKey(
+                  operationKey,
+                  testCase.id ? `id:${testCase.id}` : `index:${index}`,
+                ),
+              }
+            : {}),
+        };
+      }),
+    );
+
+    const { convexClient } = createConvexClients(token);
+    let result: Awaited<ReturnType<typeof createEvalCasesInBatches>>;
+    try {
+      result = await createEvalCasesInBatches(convexClient, {
+        suiteId,
+        cases: items,
+        ...(body.duplicatePolicy
+          ? { duplicatePolicy: body.duplicatePolicy }
+          : {}),
+        ...(body.overrideReason
+          ? { overrideReason: body.overrideReason }
+          : {}),
+      });
+    } catch (error) {
+      throw translateConvexWriteError(error);
+    }
+
+    // Committed entries are summaries, not full case DTOs. Reading back 100
+    // cases to echo bodies the caller just sent is 100 queries for data it
+    // already has; `id` is what it cannot know without asking, and `index` is
+    // what lets it line each result up against its own list.
+    return v1Resource(
+      c,
+      {
+        created: result.committed.map((entry) => ({
+          index: entry.index,
+          id: String(entry.testCaseId),
+          ...(entry.caseId ? { declaredId: entry.caseId } : {}),
+          title: entry.title,
+          // True when an idempotent retry landed on a case the first attempt
+          // had already authored — nothing new was written.
+          replayed: entry.replayed,
+          ...(entry.warnings?.length ? { warnings: entry.warnings } : {}),
+        })),
+        // Per-item failures are DATA, not an error response: the siblings that
+        // committed really did commit, and a 4xx for the whole call would tell
+        // the caller to retry writes that already landed.
+        failed: result.failed.map((entry) => ({
+          index: entry.index,
+          ...(entry.title ? { title: entry.title } : {}),
+          ...(entry.caseId ? { declaredId: entry.caseId } : {}),
+          code: entry.code,
+          message: entry.message,
+        })),
+        // The policy audit: an unrecognized value coerces to `block`, and the
+        // coercion is reported here rather than silently applied.
+        duplicatePolicy: result.duplicatePolicy,
+        ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+      },
+      201,
+    );
+  },
+);
 
 // PATCH /v1/projects/:projectId/eval-suites/:suiteId/cases/:caseId
 evals.patch(
@@ -3327,12 +3941,20 @@ evals.post(
       }
     }
 
-    // Persist each generated draft as a case under the suite.
+    // Persist the generated drafts as cases under the suite.
     const created: ReturnType<typeof toCaseDto>[] = [];
     const createdCaseIds: string[] = [];
     const skipped: Array<{ title: string; error: string }> = [];
     let normal = 0;
     let negative = 0;
+    // Built first, written once. Generation writes through the SAME batch
+    // mutation as every other authoring path — there is no private route for
+    // generated cases — so a 20-case generation is one write, not twenty.
+    const pendingDrafts: Array<{
+      item: EvalCaseBatchItem;
+      title: string;
+      isNegative: boolean;
+    }> = [];
     for (const [draftIndex, draft] of drafts.entries()) {
       // The legacy negative-only path emits only negative cases; otherwise the
       // plan-driven generator flags each draft. Negative cases must carry NO
@@ -3388,8 +4010,7 @@ evals.post(
         : normalizedSteps;
       const steps =
         draftSteps.length > 0 ? draftSteps : promptTurnsToSteps(promptTurns);
-      const args: Record<string, unknown> = {
-        suiteId,
+      const item: EvalCaseBatchItem = {
         title: draft.title,
         steps,
         query: typeof draft.query === "string" ? draft.query : "",
@@ -3414,25 +4035,104 @@ evals.post(
             }
           : {}),
       };
+      pendingDrafts.push({
+        item,
+        title: String(draft.title ?? ""),
+        isNegative: isNeg,
+      });
+    }
+
+    if (pendingDrafts.length > 0) {
+      // Minted HERE rather than in Convex: callers mint, the platform
+      // validates. A generated case is authored by this server, so this is the
+      // caller.
+      const cases = withMintedCaseIds(pendingDrafts.map((d) => d.item));
+      let result: Awaited<ReturnType<typeof createEvalCasesInBatches>>;
+      let rejection: string | undefined;
       try {
-        const caseId = await convexClient.mutation(
-          "testSuites:createTestCase" as any,
-          args,
-        );
-        const doc = await createConvexReadClient(token).query(
-          "testSuites:getTestCase" as any,
-          { testCaseId: caseId },
-        );
-        created.push(toCaseDto(doc));
-        createdCaseIds.push(String(caseId));
-        if (isNeg) negative += 1;
-        else normal += 1;
+        result = await createEvalCasesInBatches(convexClient, {
+          suiteId,
+          cases,
+        });
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        // A whole-call rejection is one condition, not N. But a rejection can
+        // still arrive after an earlier chunk committed, and those cases are
+        // persisted — reporting them as skipped would understate what the
+        // caller was billed for and invite a duplicate retry.
+        rejection = error instanceof Error ? error.message : String(error);
+        result = partialResultOf(error);
+        logger.warn("v1.eval.generate: failed to persist the generated cases", {
+          error: rejection,
+          drafts: pendingDrafts.length,
+          committedBeforeRejection: result.committed.length,
+        });
+      }
+
+      // The platform addresses each result by the index of the item we sent.
+      // An index outside that range is a bug, not an outcome — but it must not
+      // throw AFTER the writes landed and take the whole report down with it.
+      const draftAt = (index: number) => {
+        const draft = pendingDrafts[index];
+        if (!draft) {
+          logger.warn(
+            "v1.eval.generate: result named a draft index we never sent",
+            { index, sent: pendingDrafts.length },
+          );
+        }
+        return draft;
+      };
+
+      const reported = new Set<number>();
+      for (const entry of result.failed) {
+        const draft = draftAt(entry.index);
+        if (!draft) continue;
+        reported.add(entry.index);
+        const reason = `${entry.code}: ${entry.message}`;
         logger.warn("v1.eval.generate: failed to persist a generated case", {
           error: reason,
         });
-        skipped.push({ title: String(draft.title ?? ""), error: reason });
+        skipped.push({ title: draft.title, error: reason });
+      }
+      const readClient = createConvexReadClient(token);
+      // Read the committed cases in one pass. Committed entries arrive in item
+      // order, and `Promise.all` preserves it, so `created` still follows the
+      // order the generator produced.
+      const docs = await Promise.all(
+        result.committed.map((entry) =>
+          readClient.query("testSuites:getTestCase" as any, {
+            // The EFFECTIVE id, not the one just minted. A keyed retry replays
+            // onto the case the first attempt authored, and reporting the fresh
+            // proposal would name a case that was never written.
+            testCaseId: entry.testCaseId,
+          }),
+        ),
+      );
+      result.committed.forEach((entry, position) => {
+        const draft = draftAt(entry.index);
+        if (!draft) return;
+        reported.add(entry.index);
+        created.push(toCaseDto(docs[position]));
+        createdCaseIds.push(String(entry.testCaseId));
+        if (draft.isNegative) negative += 1;
+        else normal += 1;
+      });
+      // Drafts the rejected call never reached.
+      if (rejection !== undefined) {
+        pendingDrafts.forEach((draft, index) => {
+          if (!reported.has(index)) {
+            skipped.push({ title: draft.title, error: rejection! });
+          }
+        });
+      }
+
+      const entryWarnings = result.committed.flatMap((entry) =>
+        (entry.warnings ?? []).map((w) => ({ title: entry.title, ...w })),
+      );
+      if (result.warnings.length > 0 || entryWarnings.length > 0) {
+        logger.info("v1.eval.generate: case create returned warnings", {
+          suiteId,
+          warnings: [...result.warnings, ...entryWarnings],
+        });
       }
     }
 

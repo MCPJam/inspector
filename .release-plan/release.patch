@@ -1,408 +1,377 @@
-diff --git a/.changeset/calm-pandas-display.md b/.changeset/calm-pandas-display.md
+diff --git a/.changeset/api-key-revoke-names-its-actor.md b/.changeset/api-key-revoke-names-its-actor.md
 deleted file mode 100644
-index 563f9d406..000000000
---- a/.changeset/calm-pandas-display.md
+index e8ba79fd3..000000000
+--- a/.changeset/api-key-revoke-names-its-actor.md
 +++ /dev/null
-@@ -1,6 +0,0 @@
-----
--"@mcpjam/sdk": patch
--"@mcpjam/inspector": patch
-----
--
--Keep OAuth diagnostics visible when a server advertises a metadata URL that is not absolute — the protected-resource URL or an authorization-server endpoint — and when it rejects an authorization code with `invalid_grant`. The sequence diagram now marks the unparsable value instead of crashing, and the token-exchange error keeps the authorization server's own explanation.
-diff --git a/.changeset/eval-suite-file-contract-inspector.md b/.changeset/eval-suite-file-contract-inspector.md
-deleted file mode 100644
-index e666dd1f5..000000000
---- a/.changeset/eval-suite-file-contract-inspector.md
-+++ /dev/null
-@@ -1,30 +0,0 @@
+@@ -1,24 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--`shared/steps`, `shared/scripted-steps` and `shared/probe-config` now re-export
--the canonical step union from `@mcpjam/sdk/contract` instead of defining it.
+-Name the revoking user when an API key's org binding is removed.
 -
--The union is part of the evaluation contract — it is what a suite file carries
--and what the hosted API accepts — and the SDK's new suite-file schema reuses it.
--The SDK cannot import this app (the dependency direction is shared → sdk), so
--leaving the definition here would have meant a hand-mirrored copy inside the SDK:
--a third sibling beside this file and the Convex validator, guaranteed to drift.
--The definition moved; these modules re-export it.
+-The binding delete used to arrive at the backend carrying nothing but the key
+-id, so the audit row it writes had to infer an actor — and the only identity
+-the row carries is the user who minted the key, which is not necessarily the
+-one revoking it. The revoke handler now resolves the caller's MCPJam user and
+-sends it as `actorUserId`. That is the Convex document id, not the WorkOS
+-`sub`; the backend validates it as such.
 -
--No consumer changes: all ~55 importers of `shared/steps` are untouched, the
--existing shared step tests pass unmodified, and a new test asserts referential
--identity (`sharedSteps.testStepSchema === contract.testStepSchema`) so a copy can
--never quietly replace the re-export. `WIDGET_ASSERTION_LABELS` deliberately
--stayed behind — display copy is not contract, and the SDK has no business
--shipping this app's wording.
+-An unresolvable caller sends nothing rather than failing: by that point the
+-WorkOS key is already destroyed, and the backend records the revocation as
+-explicitly unattributed instead of naming someone who may not have done it.
+-The session's existing ownership check remains the authorization — this is
+-attribution, and defense in depth on a route reachable with the service token
+-alone.
 -
--Also: exported SDK test files now emit the case's declared `id` (required by
--`@mcpjam/sdk` 5.0), using the dashboard case's own id so an exported code-first
--test joins back to the same hosted history rather than starting a new one. A
--case that has no id — a config test, an unsaved draft — gets a freshly MINTED
--id rather than one numbered by position: a positional id is order-dependent
--identity, so inserting a case above it would hand a different case that id on
--the next export and join each to the other's history. Validity is checked with
--the contract's `isOpaqueId` rather than a local regex, so the exporter cannot
--drift from the rule the SDK enforces at construction.
-diff --git a/.changeset/eval-suite-file-contract-vitest.md b/.changeset/eval-suite-file-contract-vitest.md
+-Minting also stops flattening one backend answer into a bad one: a key id
+-already bound to a different organization now surfaces as `409 CONFLICT`
+-instead of `502`. The backend refuses to re-point a live key into another org,
+-and that refusal is a conflict, not an unreachable service.
+diff --git a/.changeset/batch-eval-case-authoring.md b/.changeset/batch-eval-case-authoring.md
 deleted file mode 100644
-index 16372dd19..000000000
---- a/.changeset/eval-suite-file-contract-vitest.md
+index a03f44070..000000000
+--- a/.changeset/batch-eval-case-authoring.md
 +++ /dev/null
-@@ -1,28 +0,0 @@
-----
--"@mcpjam/vitest": minor
-----
--
--Track `@mcpjam/sdk` 5.0, and surface each case's declared id on the plan.
--
--`EvalCasePlan` gains an optional `caseId`, read from `EvalTestConfig.id`, so a CI
--reporter can key a case by its identity instead of by a title that gets renamed.
--Vitest titles are unchanged: the ` [caseId]` suffix is the handle people grep the
--hosted dashboard with and still rides `externalCaseId`, so moving the suffix onto
--the declared id would break those greps.
--
--The `@mcpjam/sdk` dependency range is left at `^4.3.0` in the repo on purpose and
--must NOT be hand-bumped to `^5.0.0`: the workspace sdk is still 4.x until this
--release train runs, and a range no local version satisfies makes npm stop linking
--the workspace copy and try to fetch an unpublished 5.x from the registry
--(`ETARGET` on `npm ci`). Changesets rewrites the range as part of `changeset
--version`, which is what `updateInternalDependencies` is configured for.
--
--`caseId` is read defensively rather than assumed. A consumer can end up with this
--package beside an older `@mcpjam/sdk` copy — a mismatched transitive range, a pnpm
--layout — where `id` does not exist yet; an absent `caseId` is a missing
--convenience, whereas a thrown `TypeError` would be a broken test run. Old
--`@mcpjam/sdk` 4.x therefore keeps working at runtime: the wrapper only calls
--`getAll` / `getName` / `getConfig` / `run` / `getFailureReport`, all of which
--exist in both majors. What such a consumer does NOT get is the compile-time
--requirement — their own `EvalTest` constructions are checked by their own SDK
--copy, so `id` only becomes mandatory once they upgrade it.
-diff --git a/.changeset/eval-suite-file-contract.md b/.changeset/eval-suite-file-contract.md
-deleted file mode 100644
-index 1a3f00a5a..000000000
---- a/.changeset/eval-suite-file-contract.md
-+++ /dev/null
-@@ -1,130 +0,0 @@
-----
--"@mcpjam/sdk": major
-----
--
--Canonical contract types for eval suites: a versioned suite-file schema, the
--step union's new home, declared case identity, and the Wave-0 chain vocabulary.
--
--## BREAKING: `EvalTestConfig.id` is now required
--
--A case's identity used to be its `name`. That meant renaming a test forked its
--hosted history — the dashboard started a fresh series and orphaned the old one —
--because the backend derives a case key from the case's content and title when no
--explicit identity is present. `id` separates the two: history joins on `id`, and
--`name` is free to change.
--
--```diff
-- const test = new EvalTest({
--+  id: "c_V1StGXR8Z5jdHi6Bmy",
--   name: "refunds a duplicate charge",
--   test: async (executor) => { … },
-- });
--```
--
--Mint one ONCE and commit the literal:
--
--```ts
--import { mintCaseId } from "@mcpjam/sdk/contract";
--console.log(mintCaseId()); // c_V1StGXR8Z5jdHi6Bmy — paste this in
--```
--
--Any URL-safe string of 1–128 characters (`A-Z a-z 0-9 _ -`) is accepted, so an id
--you already maintain — a hosted case id, a ticket number, a slug — works as-is;
--the `c_` prefix is a grep convenience, not a rule. Constructing an `EvalTest`
--without an `id` throws, and the error carries a freshly minted id to paste. The
--id is deliberately NOT derived from `name` when absent: deriving it would
--recreate the exact bug being retired while looking like it worked. Do not call
--`mintCaseId()` inline either — an id regenerated per run is not an identity.
--
--`EvalSuite.add` now also rejects duplicate ids. Duplicate names always collided
--visibly (the suite keys results by name); duplicate ids do not, and two cases
--sharing one silently merge into a single case's history.
--
--`externalCaseId` is unchanged and keeps its live wire semantics — it remains the
--hosted join key. **Nothing about the upload payload changes in this release**:
--`id` is threaded through types and constructors only, so published 4.x clients
--and every hosted surface behave exactly as before.
--
--## New: the eval suite file (`@mcpjam/sdk/contract`)
--
--`evalSuiteFileSchema` validates a whole suite as one declarative document:
--`schemaVersion`, `mode`, `reportingMode`, `suite`, `target`, `defaults`
--(model, repetitions, `passThreshold`, `validity`, `toolPolicy`, `captureLevel`),
--optional import `provenance`, and `cases[]` — each case carrying steps reused
--verbatim from the canonical step union, optional predicate `assertions`, per-case
--overrides, and an optional `import` record.
--
--Three properties are load-bearing:
--
--- **Reserved values are validation ERRORS, never accepted-and-ignored.** `mode:
--  "serverContract"`, `reportingMode: "restricted" | "summary"` and
--  `captureLevel: "metadataOnly" | "none"` name capabilities that do not exist
--  yet. A file asking for reduced capture and getting full capture would be a
--  privacy failure with a paper trail claiming otherwise, so each is a `z.literal`
--  whose error names the reserved value and the v1 stance — and the generated JSON
--  Schema emits `const`, rejecting them structurally too.
--- **No `.default()` anywhere.** An omitted field stays omitted, so a parsed file
--  round-trips byte-stably through canonical JSON and the diff of an unchanged
--  suite is empty. Default *semantics* are documented in JSDoc beside each field
--  (`validity.minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1) and applied by
--  a loader, not materialized here.
--- **Every object the file declares is `.strict()`.** An importer that invents or
--  mis-maps a suite-level field fails loudly instead of having it dropped on the
--  floor — and it matches Convex `v.object`, which rejects unknown fields. The
--  reused step and predicate schemas are the stated exception: they are the
--  shared authoring union, they strip unknown keys today, and making them strict
--  is a semantic change to a cross-repo mirrored schema rather than something a
--  new file format should do as a side effect.
--
--`schemaVersion` is `const "1"`: additive optional fields stay within `"1"`, a
--breaking revision becomes `"2"`, and a v1 validator handed a `"2"` file says the
--CLI/SDK needs upgrading rather than sending someone to edit a correct file.
--
--Shipped alongside: `eval-suite.schema.json` (draft 2020-12, `$id`
--`https://mcpjam.com/schemas/eval-suite/v1.json`) plus the same document exported
--as `evalSuiteFileJsonSchema` for consumers without a JSON import path. Both are
--generated from the zod source and a test byte-compares them against a fresh
--generation, so they can never be hand-edited into disagreement.
--
--The schema describes what is ACCEPTED (`io: "input"`), not what zod returns, so
--the two validators agree on which files they accept — including where both are
--permissive. The element locator's "at least one of role/text/css/testId" rule is
--a refinement that would not project, so the generator encodes it as an `anyOf`
--of `required`; leaving it out would let an editor green-light a `target: {}` the
--SDK then rejects, and tooling passing while the runtime fails is the worst
--direction for a divergence. What genuinely cannot be expressed in JSON Schema —
--unique case ids, unique step ids within a case, an `import` block requiring
--top-level `provenance`, and the serialized-size cap on tool-call arguments —
--stays zod-only, and the fixtures annotate every reject row with whether the JSON
--Schema must catch it too.
--
--## New: the step union's canonical home is now the SDK
--
--`TestStep` and everything defining it — the four step schemas
--(`prompt`/`toolCall`/`interact`/`assert`), the interact actions, the widget
--assertions, `elementLocatorSchema`, the text/wait/args/render-timeout caps and
--the narrowing helpers — now live in `@mcpjam/sdk/contract`. They previously lived
--in the inspector app, which the SDK cannot import, so a suite-file schema in the
--SDK would have needed a hand-mirrored second copy. There is still exactly one
--definition; the inspector re-exports it and a test asserts referential identity
--so a copy can never quietly replace the re-export.
--
--## New: the user-value chain vocabulary
--
--`USER_VALUE_STAGES`, `STAGE_STATES`, `FAILURE_CATEGORIES`, `ITERATION_STATUSES`
--and `IMPORT_MAPPING_STATUSES` as const arrays, derived types and zod enums.
--`USER_VALUE_STAGES` order is **normative** — "not reached" is derived from
--position in it, so sorting the array changes which stages a failure is reported
--to have blocked. Stage states are strings with no numeric encoding: `notReached`,
--`notMeasured` and `notApplicable` are three different reasons there is no
--verdict, and collapsing them is how "we never checked" gets rendered as "it
--passed". `ITERATION_STATUSES` extends the six statuses the backend persists with
--`setup_failed` (our environment broke, not the server's) and `skipped`
--(deliberately not run, unlike `cancelled`).
--
--## New: `@mcpjam/sdk/contract` identity helpers
--
--`opaqueIdSchema` (`^[A-Za-z0-9_-]{1,128}$` — URL, path and CLI safe), plus
--`mintCaseId()` / `mintSuiteId()` using `crypto.getRandomValues`. Validators never
--require our prefix: ids are opaque, and demanding `c_` would reject every id the
--platform has already issued.
-diff --git a/.changeset/great-donkeys-smile.md b/.changeset/great-donkeys-smile.md
-deleted file mode 100644
-index df16bfc9f..000000000
---- a/.changeset/great-donkeys-smile.md
-+++ /dev/null
-@@ -1,27 +0,0 @@
+@@ -1,85 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
+-"@mcpjam/inspector": minor
 ----
 -
--Add the versioned evaluation contract and make scoring the single verdict path.
+-Eval cases are authored in batches, and every case gets a declared identity.
 -
--`@mcpjam/sdk/contract` is a new browser-safe subpath carrying one shape for
--every eval surface: `ScoreDefinition` / `ResolvedScoreDefinition`,
--`ScoreResult`, and the hashed `EvaluationConfigSnapshot` that joins them.
--Hashing is pinned cross-runtime (RFC 8785-style canonical JSON + SHA-256 over
--resolved definitions) so the SDK, the CLI, the inspector client and the Convex
--backend all derive the same digest.
+-Every first-party authoring path used to loop the platform's per-case create
+-mutation: `authorEvalSuite` once per case, generation once per draft, the public
+-`POST …/cases` route once per call. An agent converting a repo's 40 test files
+-made 40 sequential round trips, each its own transaction, with no way to say
+-"these 40 cases" as one write. All of them now go through the platform's batch
+-mutation, which validates every case before writing any of them and reports the
+-outcome per case.
 -
--`EvalTest` now derives `passed` exclusively from gating scores. `test()`,
--`expectedToolCalls` and each predicate are projected into scores rather than
--being consulted separately, so scoring replaces the old verdict expression
--instead of joining it as another opinion. Verdicts are unchanged for existing
--tests: each source contributes one gating score of exactly the value it used to
--contribute, and `predicateResults` / `toolMatch` stay populated from the same
--single evaluation that feeds the scores.
+-## `create_eval_cases` / `POST …/cases/batch`
 -
--New: `predicateScorer`, `judgeScorer` and a `scorers` config field, with
--runner-enforced per-scorer timeouts and a concurrency cap. Judges are advisory
--by default; a gating scorer that errors or is skipped fails the iteration
--unless the author opts out. Scores ride on `metadata.scores` /
--`metadata.evaluationConfig`, and the run's `evaluationConfigHash` is sent on
--run start.
-diff --git a/.changeset/olive-jars-vitest.md b/.changeset/olive-jars-vitest.md
+-The bulk form of `create_eval_case`, taking up to 100 cases per call. Each entry
+-takes exactly the fields a single create takes, because it *is* the single
+-create repeated — not a second contract with its own spelling of a case.
+-
+-The response is a partial outcome by design, and says so rather than implying
+-it:
+-
+-```jsonc
+-{
+-  "created": [{ "index": 0, "id": "…", "declaredId": "c_…", "title": "lists files", "replayed": false }],
+-  "failed":  [{ "index": 1, "code": "DUPLICATE_CONTENT", "message": "…" }],
+-  "duplicatePolicy": { "requestedPolicy": "blcok", "effectivePolicy": "block", "coerced": true }
+-}
+-```
+-
+-Both arrays carry the `index` of the entry they describe, so a caller lines
+-results up against the list it sent. It is `201` even when `failed` is non-empty:
+-the cases in `created` really were written, and a `4xx` would tell the caller to
+-retry writes that already landed. `duplicatePolicy` defaults to `block`; `warn`
+-and `create_anyway` author a duplicate but require an `overrideReason`, which is
+-recorded on the case's revision. An unrecognized policy coerces to `block` and
+-reports the coercion — a typo should not look like a platform that refuses cases
+-for no reason.
+-
+-The 100-case cap is deliberately smaller than a suite file's 500-case limit. The
+-two answer different questions — a file is an authored artifact, a call is bound
+-by request size — so a maximal file uploads in several calls. Do not align them.
+-
+-## Cases carry a declared id
+-
+-`create_eval_case` and `POST …/cases` accept an optional `id`: the identity the
+-case answers to in a suite file, an import, or a CLI argument. Callers mint it
+-(`mintCaseId` from `@mcpjam/sdk/contract`); the platform validates the charset
+-and suite-scoped uniqueness and never derives one, because an id derived from a
+-case's content or position is the content-hash identity declared ids exist to
+-retire. Omitting it still works — this server mints one — so no existing caller
+-has to change.
+-
+-`POST …/cases` now writes through the same batch mutation with a single entry,
+-so the single and bulk paths cannot drift into two meanings of "author a case".
+-One consequence is worth knowing before you upgrade: that route now gets the
+-batch default `duplicatePolicy: block`, so creating a case whose definition
+-already exists in the suite returns `409 CONFLICT` instead of authoring a second
+-copy. To author one deliberately, send it through `…/cases/batch` with
+-`duplicatePolicy` and an `overrideReason` — the reason is what gets recorded.
+-The hosted editor is unaffected; it writes through the platform mutation
+-directly and keeps its existing behaviour.
+-
+-The declared id reads back as `declaredId` on the case, deliberately NOT folded
+-into `id`:
+-that field is the platform row id every case route takes as its path parameter
+-and every selector resolves against, and one name for two identities would break
+-each of them. A declared id is also never written into a case's storage key,
+-which stays the platform's own random `ui_*` value.
+-
+-## Generation reads both case shapes
+-
+-`generateTestCases` now accepts a versioned union from the backend: no
+-`shapeVersion` is today's case, and `shapeVersion: "wave0"` is the converged
+-shape where `steps[]` replaces `query`/`expectedToolCalls`/`promptTurns` and
+-`repetitions` replaces `runs`. A Wave-0 case still persists the same legacy
+-display columns, derived from its steps, so equivalent authored intent stores
+-equivalently whichever shape produced it.
+-
+-This lands before the backend emits the new shape on purpose. A consumer that
+-already reads both is what makes the producer's change non-breaking, and lets
+-either side roll back while both are deployed. The legacy branch is temporary
+-and marked for removal once the compatibility window closes.
+diff --git a/.changeset/chatgpt-dual-era-protocol.md b/.changeset/chatgpt-dual-era-protocol.md
 deleted file mode 100644
-index e4746d705..000000000
---- a/.changeset/olive-jars-vitest.md
+index f643cf0f8..000000000
+--- a/.changeset/chatgpt-dual-era-protocol.md
 +++ /dev/null
-@@ -1,33 +0,0 @@
-----
--"@mcpjam/vitest": minor
-----
--
--New package: run MCPJam eval suites inside vitest.
--
--`describeEvalSuite(name, suite, options)` registers one `it` per eval case,
--plus a final `it` for the gate policy when one is given. `suite.run()` is
--called ONCE in `beforeAll` — the suite uploads a single hosted run and
--computes one aggregate evaluation-config hash, so running it per test would
--produce N of each. Each test is an assertion over that one result, which is
--why the timeout that matters is `hookTimeoutMs` (default 300000) rather than
--any per-test one.
--
--Deliberately a wrapper, not a vitest Reporter. A reporter observes tests; it
--cannot decide what a test is. Evals want the opposite, so failures land on
--named tests in every vitest UI, watch mode and CI annotation that already
--exists — and a reporter has no seat for the gate, which is a verdict over the
--whole run rather than any one case.
--
--A case materialized from a hosted corpus is titled `name [caseId]`, from its
--explicit `externalCaseId` and never inferred from the test name, so a failing
--test greps back to the dashboard row it came from. `testEval` is the
--single-test seat; `planEvalSuite`, `runAndAssertCase` and `gateFailureMessage`
--are pure and exported so the naming and failure rules can be asserted
--directly.
--
--`vitest` is a peer dependency at `>=3.2.0 <4`, tested at 3.2.4. Vitest 4 is
--unvalidated and excluded from the range rather than assumed compatible. The
--built tarball is installed into a clean project and exercised by three child
--`vitest run` processes on every CI pass — proving a passing suite exits 0, a
--failing case exits non-zero naming the case, and a breached policy exits
--non-zero with the gate table, which a workspace-internal test cannot show.
-diff --git a/.changeset/proud-pumas-compare.md b/.changeset/proud-pumas-compare.md
-deleted file mode 100644
-index 232aaa4f4..000000000
---- a/.changeset/proud-pumas-compare.md
-+++ /dev/null
-@@ -1,65 +0,0 @@
+@@ -1,55 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
--"@mcpjam/cli": minor
+-"@mcpjam/inspector": minor
 ----
 -
--Add run-over-run comparison and comparative gates.
+-Claude and ChatGPT speak two protocol eras, and a host's protocol selection can
+-say "negotiate" instead of naming a revision.
 -
--`compareEvalRun` on the platform client fetches
--`GET /projects/{p}/eval-runs/{runId}/compare`: per-case status (`regressed`,
--`fixed`, `new_case`, `removed_case`, `changed`, `unchanged_passed`,
--`unchanged_failed`), per-scorer pass-rate and mean deltas from the
--evaluation contract, and whether the evaluation config changed. Omitting
--`baseRunId` compares against the nearest earlier completed run in the same
--suite; a run with no comparable predecessor throws a `PlatformApiError` with
--`details.reason: "BASELINE_NOT_FOUND"`, which is an incomplete comparison
--rather than a failing one.
+-Both catalog rows now list `["2025-11-25", "2026-07-28"]` as supported and are
+-marked `provenance: "probe"` — captured from the real clients rather than
+-assumed or read off a vendor page. The same capture corrected details that were
+-guessed before: ChatGPT and Claude do not honour `requestTeardown`, Claude's
+-available display modes are inline and fullscreen (no PiP), Cursor's are inline
+-only, and every MCP Apps row now carries explicit `cspConnectDomains` and
+-`cspResourceDomains` sets instead of leaving them unstated.
 -
--New `compare-stats` module: Wilson score intervals and Newcombe's
--hybrid-score interval for the difference between two pass rates, plus
--`assessPassRateRegression`. "The pass rate dropped 4 points" is not evidence
--of a regression at 10 iterations, so the verdict has three states —
--`insufficient_data` is not `no_regression`. The interval bounds are pinned
--against statsmodels, not against a second reading of the implementation.
--`detectFlakyCases` reports within-run instability, which is never gated.
+-## `mcpProtocolVersion: "auto"`
 -
--`GatePolicy` gains three comparative fields — `noDeterministicRegressions`,
--`maximumP95LatencyIncreaseMs` and `passRateRegression` — evaluated by the new
--`evaluateCompareGates`. Passing any of them to the single-run `evaluateGates`
--is now a usage error rather than a silent no-op. The statistical and latency
--gates are non-gateable unless the two runs cover the same population: same
--case set, same scenario configs, same evaluation config, and equal per-case
--iteration weighting. Deterministic per-case regressions still gate under a
--population change, since they join by case key.
+-`mcpProfile.mcpProtocolVersion` accepts `"auto"` alongside the concrete
+-revisions. It is a **stored selection policy, never a wire literal**: nothing
+-puts the string on a request. `resolveEffectiveMcpProtocolVersion` and
+-`hostConnectionProfile` both collapse it to `undefined`, which is exactly what
+-an unpinned host resolved to before, so connect behaviour is unchanged for
+-every existing row.
 -
--New `mcpjam eval compare` applies that policy to a hosted run and sets an
--exit code (0 pass, 1 regression, 2 usage, 3 incomplete), with
--`--reporter json-summary|junit-xml` and `--out` via the same structured
--report the server-diff reporter uses. It has no `--wait`: an unfinished run
--returns an incomplete comparison (exit 3) rather than being gated against a
--partial population.
+-The distinction it buys is between "this client negotiates, deliberately" and
+-"this field was never set". Legacy rows keep the absent field and keep saving;
+-the dual-era presets ship `"auto"` explicitly, so a client whose default is
+-negotiation says so in its own config instead of being inferred from a hole.
+-Absent still canonicalizes to absent, so pre-feature rows continue to hash
+-identically.
 -
--Also exported: `calculateLatencyStats` / `calculatePercentile` from the main
--entry, already used internally by the gate engine.
+-`ConflictingProtocolVersionPin` is now stated the way it actually behaves: a
+-stateful pin must appear in `initialize.supportedProtocolVersions` (and derives
+-that list when the caller sent none), while a stateless pin skips the
+-handshake entirely and is exempt from the accept-list check. Hosts saved with a
+-stateless pin outside their list predate this work and must keep saving.
 -
--Also adds the hosted-corpus core: `buildCorpus` / `loadCorpusFromLock`
--materialize hosted eval cases into local `EvalTest`s and record them in a
--lock whose content hash is a versioned semantic allowlist. A case a local run
--cannot execute (a widget step, a direct tool call) raises
--`HostedOnlyCaseError` naming the case and step. `unsupported: "skip"` records
--it under `skipped` and omits it from both the materialized cases and the lock —
--inspect `skipped` to detect an incomplete corpus.
--`EvalTestConfig` gains `externalCaseId`, `isNegativeTest` and
--`expectedOutput`, so a materialized case keeps hosted grading semantics and
--joins the hosted case's history on the run page.
+-## Inspector
 -
--New `mcpjam eval pull --suite <id-or-name>` writes that corpus to
--`mcpjam-evals.lock.json`, and `--frozen` verifies the lock against the hosted
--suite without writing — exit 1 when the corpus drifted, and drift alone. The
--lock is written through a sibling temp file and a rename, because a
--half-written lock does not look broken: it looks like a corpus that lost
--cases, and the next `--frozen` run would report drift nobody caused. Content
--drift and grading drift are reported as separate kinds, since "someone edited
--the case" and "someone changed how it is graded" have different fixes.
--Everything that means no comparison happened — no lock, an unreadable lock, a
--lock from another `lockVersion`, a failed fetch — is exit 3.
-diff --git a/.changeset/redact-eval-reporting-sinks.md b/.changeset/redact-eval-reporting-sinks.md
+-The Protocol tab's dropdown offers the union of the client's `initialize`
+-accept-list and the eras its catalog row advertises. The handshake list only
+-ever carries legacy revisions, so reading it alone made `2026-07-28`
+-unselectable on the very clients that speak it. A row with no accept-list is a
+-legacy row and stays fully editable — the catalog only widens an existing list,
+-never creates one. Selecting Automatic now writes `"auto"` rather than deleting
+-the field, and the JSON editor round-trips it.
+-
+-The unadvertised-pin warning fires for stateful pins only, matching the rule
+-above: warning on a stateless pin promised a Save failure that never came.
+-
+-Can-I-use gains a Protocol versions row. It reads the catalog's supported list
+-rather than the preset's handshake list, so the matrix reports what each client
+-speaks instead of what it happens to advertise during `initialize`. It renders
+-as a plain value, not a support chip — "which eras" is not a yes/no question.
+diff --git a/.changeset/electron-major-bump.md b/.changeset/electron-major-bump.md
 deleted file mode 100644
-index cc426c023..000000000
---- a/.changeset/redact-eval-reporting-sinks.md
+index 7d21df6bb..000000000
+--- a/.changeset/electron-major-bump.md
 +++ /dev/null
-@@ -1,32 +0,0 @@
+@@ -1,5 +0,0 @@
 ----
--"@mcpjam/sdk": patch
--"@mcpjam/cli": patch
+-"@mcpjam/inspector": patch
 ----
 -
--Keep eval credentials out of logs, error trackers, and exported report files.
--
--Eval replay configs carry live `accessToken` / `refreshToken` / `clientSecret`
--values, and they legitimately travel in the ingest request body — replay cannot
--authorize an MCP call without them. That is fine while the body is the only
--place they appear. It stops being fine the moment something quotes the request
--back.
--
--Two paths did. The backend's failure message was passed through
--`normalizeReportingErrorMessage` verbatim into `EvalReportingError`, which the
--SDK writes to stderr and sends to Sentry as the exception value — so a validator
--that echoes the rejected argument, which is exactly what Convex's
--`ArgumentValidationError` does, published live credentials to a log line and a
--third-party error tracker. Separately, `--out` and `--reporter` are two exports
--of the same run, and only the reporter half was redacted: `writeJsonArtifact`
--wrote whatever it was handed straight to disk, so the identical report left
--clean through one flag and in the clear through the other.
--
--Both are now redacted at the point the data becomes an artifact rather than at
--each sink, so a new caller inherits the guarantee instead of having to remember
--it. The request body is deliberately unchanged — redacting it would silently
--break replay while looking like hardening — and a canary-secret regression test
--asserts both directions: the planted credential must reach the request body, and
--must reach nothing else.
--
--Adds `redactTelemetryString`, a string-specialized `redactForTelemetry` for
--message-shaped sinks.
-diff --git a/.changeset/releases-2026-08-16.md b/.changeset/releases-2026-08-16.md
+-Update Electron 37.10.3 -> 43.4.0, clearing all 31 open Electron security advisories (7 high, 18 medium, 6 low). 43 is the current stable line; the minimum fix version (39.8.10) is already outside Electron's support window.
+diff --git a/.changeset/eval-role-matrix-capabilities.md b/.changeset/eval-role-matrix-capabilities.md
 deleted file mode 100644
-index 404d7f1d9..000000000
---- a/.changeset/releases-2026-08-16.md
+index 0fa430d97..000000000
+--- a/.changeset/eval-role-matrix-capabilities.md
 +++ /dev/null
-@@ -1,10 +0,0 @@
+@@ -1,36 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/inspector": minor
+----
+-
+-Publish the eval role-permission matrix as capabilities, and gate suite and
+-run deletion on it.
+-
+-`GET /v1/projects/:projectId/capabilities` gains six eval keys: `readEvals`,
+-`writeEvalSuites`, `launchEvalRun`, `deleteAnyEvalSuite`, `deleteAnyEvalRun`
+-and `exportEvalTraces`.
+-
+-They are NOT derived like the swarm keys beside them, and the difference is
+-the point. Swarm writes rank the organization role alone (`requireProjectRole`),
+-so a guest holding a project grant cannot author one. Eval writes resolve
+-project ACCESS, where the grant counts — so reporting org membership for both
+-would deny a grant-holding guest eval capabilities they actually hold. The
+-eval edit tier is satisfied by anyone whose access resolves, which is the same
+-condition under which this endpoint answers rather than 404s.
+-
+-`deleteAnyEvalSuite` and `deleteAnyEvalRun` carry "any" in the name on purpose.
+-Deleting someone else's suite takes the project admin tier, but the creator of
+-a suite may always delete it whatever their role — the escape hatch that lets
+-an interrupted import roll back the suite it just wrote. A key named
+-`deleteEvalSuite` reading `false` would tell an ordinary member they cannot
+-delete the suite they just made.
+-
+-The eval tab now applies that same rule instead of assuming it. Suite deletion
+-was pinned to `true` for every caller, which left the whole question to a
+-mutation the user reached by clicking Delete and watching it fail; run deletion
+-was pinned to member-management rights, which hid deletion of your own runs.
+-Both are now per-row — the manage tier, or authorship of that particular suite
+-or run — so the suite switcher offers delete on the rows a caller can act on
+-and not the others. Batch run deletion stays visible but disables while the
+-selection holds a run started by someone else, with the count in the tooltip,
+-rather than silently deleting the subset it is allowed to.
+diff --git a/.changeset/github-checks-outage-policy-ui.md b/.changeset/github-checks-outage-policy-ui.md
+deleted file mode 100644
+index d7e3d8f0c..000000000
+--- a/.changeset/github-checks-outage-policy-ui.md
++++ /dev/null
+@@ -1,42 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Ask for a GitHub check's outage policy when a repository is connected, and
+-connect through the server-verified action.
+-
+-Connecting now goes to `github/checkRepoConfigsNode:connectVerifiedRepo`, which
+-proves the pinned installation can actually reach the repository before any
+-config row is written and stamps the installation id server-side. Both connect
+-surfaces — Settings → Integrations → GitHub and the suite's own "run this on
+-every pull request" section — use it, so nothing in Inspector calls the
+-unverified `github/checkRepoConfigs:connectRepo` mutation any more and it can be
+-removed in the follow-up backend deploy. The client never names an installation
+-id: which installation can reach a repository is a server-side fact, and a
+-client that could name one is a client that could name the wrong one.
+-
+-The outage policy is now an explicit onboarding choice rather than an assumed
+-default. Neither value is preselected and Connect stays disabled until
+-repository, suite and policy are all chosen, because a preselected policy
+-records a decision nobody made. Both options are described before the choice:
+-fail open reports the check as neutral during an MCPJam outage or pause, fail
+-closed reports it as failed. Neither description promises a merge outcome —
+-MCPJam decides the check's conclusion, and whether a failed or neutral check
+-blocks merging is the repository's branch-protection setting, which MCPJam can
+-neither read nor set.
+-
+-Connected rows gain a policy control and keep the distinction visible. A row
+-connected before the policy existed shows "Policy not chosen" and says that it
+-effectively fails open, rather than rendering `fail_open` as though it had been
+-selected — those two rows behave identically today and are not the same thing.
+-Choosing a value on such a row records it. The control is disabled while its
+-write is in flight and a duplicate change is dropped until it settles, tracked
+-separately from the enable toggle so one control never freezes the other.
+-
+-Rows also show live repository visibility, joined case-insensitively to the
+-installation listing. Only an explicit `private` boolean produces a badge:
+-a repository GitHub returned without the flag, one absent from the current
+-listing, a listing still loading and a listing that failed all render no badge
+-at all, because none of them is evidence that a repository is public.
+-Visibility is never persisted — it can change under a connected repository at
+-any time — and a connected repository missing from the listing keeps its row.
+diff --git a/.changeset/github-checks-refusal-copy.md b/.changeset/github-checks-refusal-copy.md
+deleted file mode 100644
+index 804ac8aa2..000000000
+--- a/.changeset/github-checks-refusal-copy.md
++++ /dev/null
+@@ -1,21 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Show the GitHub Checks settings refusal the backend actually wrote, instead of
+-`Server Error`.
+-
+-Convex masks a plain thrown error as `Server Error` plus a request id before it
+-reaches a browser; only a `ConvexError` arrives intact, carrying its message as
+-a payload on `data`. Both connect surfaces read `error.message`, so every
+-carefully-worded refusal on this page — the repository is not reachable by the
+-App, GitHub is down right now, that repository is already connected, this
+-organization is at its limit — reached administrators as `Server Error`.
+-
+-Less visibly, the availability branch matched on the message text, so with a
+-masked message it never fired and the page could not substitute its own copy.
+-
+-Both surfaces now shape write errors through one helper that reads `data` first
+-and falls back to a de-prefixed `message`, which keeps plain throws from a dev
+-deployment readable. Requires the backend change that throws these refusals as
+-`ConvexError`s (mcpjam-backend #1028).
+diff --git a/.changeset/mcpjam-yaml-declared-env.md b/.changeset/mcpjam-yaml-declared-env.md
+deleted file mode 100644
+index 8631374d4..000000000
+--- a/.changeset/mcpjam-yaml-declared-env.md
++++ /dev/null
+@@ -1,52 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Let a repository declare a build/start environment in `mcpjam.yaml`, and inject
+-it into GitHub PR checks through E2B's `envs` command option.
+-
+-`checks.env` is a bounded map of `NAME: value` pairs — at most 20 entries, keys
+-of at most 64 characters matching `^[A-Z][A-Z0-9_]*$`, values of at most 1,024
+-characters. The bounds mirror the backend's, which already accepts and persists
+-the field. Anything outside them is **rejected, never truncated or coerced**: a
+-shortened value, or an unquoted `8080` silently read as `"8080"`, is a different
+-configuration from the one the author committed, and a check that started a
+-server with it would report a verdict about something nobody wrote. A value that
+-is not a string, a map that is a list or a scalar, and an unknown sibling key
+-under `checks:` all fail the file — which, at an authoritative rung, means the
+-check fails honestly rather than falling through to a heuristic guess. An empty
+-`env: {}` normalizes to no environment at all, so it has the same runtime
+-behaviour and the same wire shape as omitting the field.
+-
+-**These are non-secret configuration literals. Do not put credentials in
+-`mcpjam.yaml`.** The map comes out of a file committed to the repository —
+-readable by anyone who can read the repo — and it is persisted verbatim in
+-durable backend plan rows. Nothing redacts it and nothing expires it. It is for
+-the flags a server needs in order to boot, and for nothing that would matter if
+-it were printed in public. The GitHub-checks clone token is the counter-example
+-of how a secret is handled here: minted per check, carried on a single
+-command-line git header, redacted out of every observable failure, and never an
+-environment variable.
+-
+-Only an authoritative rung produces one. `mcpjam.yaml` is the only real producer
+-(the operator override table is empty on purpose), detection never invents an
+-environment, and the backend refuses `env` on a cacheable `detected` or
+-`agentic` recipe — so a cached recipe stays env-free. The Inspector reports the
+-declared map to the plan, and executes back whatever the plan issues: the
+-backend still owns candidate ordering and selection.
+-
+-Injection happens at exactly two commands, the build and the background start,
+-as E2B's `commands.run(..., { envs })` option. Nothing is ever written into a
+-command string — no `export`, no assignment, no shell interpolation — so the
+-build and start scripts stay byte-identical with and without an environment, and
+-author-controlled values never enter a `bash -lc` quoting boundary or the
+-command text that failure diagnostics quote into a check summary. Provisioning,
+-clone and fetch, checkout and sha verification, `/proc` listener inspection,
+-health probes, and the log tail all receive nothing. On a recipe with no
+-environment the `envs` key is omitted entirely rather than passed as `undefined`
+-or `{}`.
+-
+-Error messages name `checks.env` or `checks.env.<key>` and the limit that was
+-violated. Keys are echoed, because the author needs to see which one is wrong,
+-and are length-clamped through the same formatter every other echoed key uses.
+-Values are never echoed.
+diff --git a/.changeset/releases-2026-08-19.md b/.changeset/releases-2026-08-19.md
+deleted file mode 100644
+index 9ce4c51c4..000000000
+--- a/.changeset/releases-2026-08-19.md
++++ /dev/null
+@@ -1,13 +0,0 @@
 ----
 -"@mcpjam/inspector": minor
 -"@mcpjam/cli": minor
@@ -411,79 +380,50 @@ index 404d7f1d9..000000000
 -
 -Release the latest Inspector, CLI, and SDK updates.
 -
--- Add the versioned evaluation contract, comparison gates, corpus locking, and score reporting across all three surfaces.
--- Add unified session search, clearer API failures, and safer hosted launch guardrails.
-diff --git a/.changeset/silent-turn-loss-after-failed-detach.md b/.changeset/silent-turn-loss-after-failed-detach.md
+-- Model Claude and ChatGPT as dual-era clients — 2025-11-25 and 2026-07-28, probed rather than assumed — and let a host's protocol selection say "negotiate" instead of naming a revision.
+-- Author eval cases in batches with declared ids, so an agent converting a repo's test files writes them as one validated call instead of one round trip each.
+-- Publish the eval role-permission matrix as project capabilities, and gate suite and run deletion on it per row rather than pinning it for everyone.
+-- Make GitHub PR checks answerable: an explicit outage policy chosen at connect, a build/start environment declared in `mcpjam.yaml`, and the backend's actual refusal instead of `Server Error`.
+-- Name the user revoking an API key on the audit row, rather than inferring the one who minted it.
+diff --git a/.changeset/toast-theme-from-document.md b/.changeset/toast-theme-from-document.md
 deleted file mode 100644
-index fe9ea1d63..000000000
---- a/.changeset/silent-turn-loss-after-failed-detach.md
+index 47e5a9716..000000000
+--- a/.changeset/toast-theme-from-document.md
 +++ /dev/null
-@@ -1,18 +0,0 @@
+@@ -1,24 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Stop silently dropping every message after a failed detach.
+-Keep toast text readable for anyone running the app in light mode on a
+-dark-mode machine.
 -
--When `detachToLocalFork` cannot confirm its fork went live, the surface stays on
--the old chat session — with `resumedVersion` deliberately preserved — while its
--history selection is cleared. Every later send then carried a stale
--`expectedVersion`, the server returned a 409, and the resulting `conflict`
--receipt reached a post-stream branch that returned without doing anything. The
--turn was lost, no notice was shown, and the state repeated for every message
--until the page was reloaded.
+-The Toaster read its theme from `next-themes`, which nothing in the app
+-provides. With no provider `useTheme()` fell back to `"system"`, so Sonner
+-resolved the operating system's setting instead of the app's: on a dark-mode
+-machine viewing the light app it stamped `data-sonner-theme="dark"` and
+-coloured the toast description near-white on the white background our own
+-tokens supplied. The message was there and unreadable.
 -
--A `conflict` now routes to the detach handler even when the turn has no version
--baseline, so the user either moves to a fresh thread or is told the move failed.
--The rail refresh stays suppressed on that path, and no other receipt outcome
--changes behaviour.
-diff --git a/.changeset/stop-no-false-unsaved-toast.md b/.changeset/stop-no-false-unsaved-toast.md
-deleted file mode 100644
-index 63b5c34e8..000000000
---- a/.changeset/stop-no-false-unsaved-toast.md
-+++ /dev/null
-@@ -1,11 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
+-The theme now comes from the `.dark` class the design system already scopes its
+-dark tokens under, read through `useSyncExternalStore` with a `MutationObserver`
+-on the document element so a theme switch updates a visible toast. Server-side
+-and observer-less environments fall back to light rather than throwing.
 -
--Pressing Stop no longer claims the reply could not be saved.
--
--Pressing Stop during a turn on a resumed chat-history thread produced an error toast about ten seconds later: "This reply couldn't be saved to your chat history. It's still visible here." Nothing had gone wrong — the user had cancelled the turn on purpose — and it fired on every Stop, on both the chat tab and the playground.
--
--Three correct behaviors combined into a wrong one. The AI SDK has no distinct "aborted" status: on abort it sets `status: "ready"` and returns (`ai/dist/index.mjs`, in `makeRequest`'s catch — `if (isAbort || err.name === "AbortError") { this.setStatus({ status: "ready" }); return null; }`). The server deliberately does not persist an aborted turn — `onFinishEngine` in `server/utils/mcpjam-stream-handler.ts` gates the persist and the `data-persist-receipt` write on `runSucceeded && !aborted` — so no receipt is emitted and the session version never moves. And `useResumedThreadPersistence`, seeing a normal end-of-stream with no receipt, falls back to watching the session subscription for a version bump, which is exactly the deploy-skew case it was built for. The bump never came, the 10 s window expired, and the hook reported a dropped write.
--
--`useChatSession` now records whether the turn was aborted and exposes it as `consumeTurnAborted()`, alongside the existing `consumePersistReceipt()` and with the same consume-once semantics. It is sourced from the AI SDK's own `onFinish({ isAbort })` rather than from the Stop button, so an abort from any source counts and every finished turn overwrites a stopped predecessor. `useResumedThreadPersistence` checks it right after the send baseline is consumed and returns: no reconcile, no toast, no rail refresh and no read-marking, because an aborted turn wrote nothing for the rail to learn. Any receipt that raced the abort is consumed and discarded so it cannot be handed to the next turn.
-diff --git a/.changeset/user-testing-composer-without-environments.md b/.changeset/user-testing-composer-without-environments.md
-deleted file mode 100644
-index 3ce308d2e..000000000
---- a/.changeset/user-testing-composer-without-environments.md
-+++ /dev/null
-@@ -1,15 +0,0 @@
-----
--"@mcpjam/inspector": minor
-----
--
--Give User Testing one create flow, and let a scenario's setup be edited without Project Environments.
--
--Flag-off, `/user-testing/new` rendered a separate form that offered a single-select Server dropdown and wrote `serverIds: [serverId]`. A tester could reach exactly one MCP server, and nothing could change that afterwards: the scenario's backing client is tagged `owner: 'user_testing'`, which `isPrivateScenarioBackingHost` hides from every client list and picker, and the "Edit setup" affordance on the scenario page was gated on `project-environments-enabled`. A scenario created in that state was frozen at one server for the rest of its life.
--
--Nothing needed to be built for this. `EnvironmentComposer` gates only its saved-environment picker on the flag — the client pill and `ServerGroupPicker` render either way, which is what a flag-off project has always seen in the Swarms create flow. So `/user-testing/new` now uses that composer in both flag states: flag-off it asks for a client and an optional server group and resolves them to an ad-hoc environment, which reaches a whole server group instead of one server. The single-server form and its test are deleted rather than kept as a fallback.
--
--Composing needs the backend's `ensureAdhocEnvironments`, and that is not a new requirement flag-off. The deleted flow's only write was `hosts.createHost({owner: 'user_testing'})`, which has called `ensureOneAdhocEnvironment` internally since scenarios became environment-backed, and the client-callable mutation shipped before that. Any deployment that could serve the old flow can serve this one, which is why there is no legacy resolution path.
--
--"Edit setup" now appears for any environment-backed scenario, flag or no flag — the flag-off scenario is precisely the one that had no other way to change its servers. Promotion stays gated: "Save as environment" would name a row into a list the user has no page for.
--
--The scenario name now defaults to the picked client's name when a setup is composed, the way it defaults to the environment's label when one is picked. Without it a flag-off user picked a client and met a required field nothing filled — the deleted flow defaulted the name off the client template for the same reason.
+-The toast description is also pinned to `var(--foreground)` in CSS. Sonner
+-colours that one element from its own theme rather than from the variables it
+-is handed, which is what made it the single part of a toast that could come out
+-light-on-light — pinning it keeps the text readable even if the two themes drift
+-again.
 diff --git a/cli/package.json b/cli/package.json
-index e8d0f4034..bd40859a4 100644
+index 8cc48aaed..f31c7e503 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "3.23.0",
-+  "version": "3.24.0",
+-  "version": "3.25.0",
++  "version": "3.26.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -491,21 +431,21 @@ index e8d0f4034..bd40859a4 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^4.3.0",
-+    "@mcpjam/sdk": "^5.0.0",
+-    "@mcpjam/sdk": "^6.0.0",
++    "@mcpjam/sdk": "^6.1.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^12.1.0",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 434ff4545..9195d1eec 100644
+index 9332e9d56..d17d272c4 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.39.0",
-+  "version": "2.40.0",
+-  "version": "2.41.0",
++  "version": "2.42.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -513,24 +453,24 @@ index 434ff4545..9195d1eec 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^4.3.0",
-+    "@mcpjam/sdk": "^5.0.0",
+-    "@mcpjam/sdk": "^6.0.0",
++    "@mcpjam/sdk": "^6.1.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 64efddf8b..60143beb0 100644
+index 619a474be..cb81860db 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -61,9 +61,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "3.23.0",
-+      "version": "3.24.0",
+-      "version": "3.25.0",
++      "version": "3.26.0",
        "dependencies": {
--        "@mcpjam/sdk": "^4.3.0",
-+        "@mcpjam/sdk": "^5.0.0",
+-        "@mcpjam/sdk": "^6.0.0",
++        "@mcpjam/sdk": "^6.1.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^12.1.0",
          "posthog-node": "^5.24.10",
@@ -538,8 +478,8 @@ index 64efddf8b..60143beb0 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.39.0",
-+      "version": "2.40.0",
+-      "version": "2.41.0",
++      "version": "2.42.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -547,771 +487,29 @@ index 64efddf8b..60143beb0 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^4.3.0",
-+        "@mcpjam/sdk": "^5.0.0",
+-        "@mcpjam/sdk": "^6.0.0",
++        "@mcpjam/sdk": "^6.1.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -936,7 +936,7 @@
-       "version": "0.9.31",
-       "resolved": "https://registry.npmjs.org/@acemir/cssom/-/cssom-0.9.31.tgz",
-       "integrity": "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/@adobe/css-tools": {
-@@ -1738,7 +1738,7 @@
-       "version": "4.1.2",
-       "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-4.1.2.tgz",
-       "integrity": "sha512-NfBUvBaYgKIuq6E/RBLY1m0IohzNHAYyaJGuTK79Z23uNwmz2jl1mPsC5ZxCCxylinKhT1Amn5oNTlx1wN8cQg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@csstools/css-calc": "^3.0.0",
-@@ -1752,7 +1752,7 @@
-       "version": "11.3.5",
-       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
-       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BlueOak-1.0.0",
-       "engines": {
-         "node": "20 || >=22"
-@@ -1762,7 +1762,7 @@
-       "version": "6.8.1",
-       "resolved": "https://registry.npmjs.org/@asamuzakjp/dom-selector/-/dom-selector-6.8.1.tgz",
-       "integrity": "sha512-MvRz1nCqW0fsy8Qz4dnLIvhOlMzqDVBabZx6lH+YywFDdjXhMY37SmpV1XFX3JzG5GWHn63j6HX6QPr3lZXHvQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@asamuzakjp/nwsapi": "^2.3.9",
-@@ -1776,7 +1776,7 @@
-       "version": "11.3.5",
-       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
-       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BlueOak-1.0.0",
-       "engines": {
-         "node": "20 || >=22"
-@@ -1786,7 +1786,7 @@
-       "version": "2.3.9",
-       "resolved": "https://registry.npmjs.org/@asamuzakjp/nwsapi/-/nwsapi-2.3.9.tgz",
-       "integrity": "sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/@aws-crypto/crc32": {
-@@ -3127,7 +3127,7 @@
-       "version": "6.0.2",
-       "resolved": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-6.0.2.tgz",
-       "integrity": "sha512-LMGQLS9EuADloEFkcTBR3BwV/CGHV7zyDxVRtVDTwdI2Ca4it0CCVTT9wCkxSgokjE5Ho41hEPgb8OEUwoXr6Q==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3147,7 +3147,7 @@
-       "version": "3.2.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-3.2.0.tgz",
-       "integrity": "sha512-bR9e6o2BDB12jzN/gIbjHa5wLJ4UjD1CB9pM7ehlc0ddk6EBz+yYS1EV2MF55/HUxrHcB/hehAyt5vhsA3hx7w==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3171,7 +3171,7 @@
-       "version": "4.1.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-4.1.0.tgz",
-       "integrity": "sha512-U0KhLYmy2GVj6q4T3WaAe6NPuFYCPQoE3b0dRGxejWDgcPp8TP7S5rVdM5ZrFaqu4N67X8YaPBw14dQSYx3IyQ==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3199,7 +3199,7 @@
-       "version": "4.0.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-4.0.0.tgz",
-       "integrity": "sha512-+B87qS7fIG3L5h3qwJ/IFbjoVoOe/bpOdh9hAjXbvx0o8ImEmUsGXN0inFOnk2ChCFgqkkGFQ+TpM5rbhkKe4w==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3222,7 +3222,7 @@
-       "version": "1.1.3",
-       "resolved": "https://registry.npmjs.org/@csstools/css-syntax-patches-for-csstree/-/css-syntax-patches-for-csstree-1.1.3.tgz",
-       "integrity": "sha512-SH60bMfrRCJF3morcdk57WklujF4Jr/EsQUzqkarfHXEFcAR1gg7fS/chAE922Sehgzc1/+Tz5H3Ypa1HiEKrg==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3247,7 +3247,7 @@
-       "version": "4.0.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-4.0.0.tgz",
-       "integrity": "sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -5626,7 +5626,7 @@
-       "version": "1.15.0",
-       "resolved": "https://registry.npmjs.org/@exodus/bytes/-/bytes-1.15.0.tgz",
-       "integrity": "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
-@@ -7150,7 +7150,7 @@
-       "version": "0.3.11",
-       "resolved": "https://registry.npmjs.org/@jridgewell/source-map/-/source-map-0.3.11.tgz",
-       "integrity": "sha512-ZMp1V8ZFcPG5dIWnQLr3NSI1MiCU7UETdS/A0G8V/XWHvJv3ZsFqutJn1Y5RPmAPX6F3BiE397OqveU/9NCuIA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@jridgewell/gen-mapping": "^0.3.5",
-@@ -9388,7 +9388,7 @@
-       "version": "1.59.1",
-       "resolved": "https://registry.npmjs.org/@playwright/test/-/test-1.59.1.tgz",
-       "integrity": "sha512-PG6q63nQg5c9rIi4/Z5lR5IVF7yU5MqmKaPOe0HSc0O2cX1fPi96sUQu5j7eo4gKCkB2AnNGoWt7y4/Xx3Kcqg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "dependencies": {
-         "playwright": "1.59.1"
-@@ -14893,6 +14893,7 @@
-       "version": "19.2.14",
-       "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
-       "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "csstype": "^3.2.2"
-@@ -14902,7 +14903,7 @@
-       "version": "19.2.3",
-       "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz",
-       "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "peerDependencies": {
-         "@types/react": "^19.2.0"
-@@ -17558,7 +17559,7 @@
-       "version": "1.0.3",
-       "resolved": "https://registry.npmjs.org/bidi-js/-/bidi-js-1.0.3.tgz",
-       "integrity": "sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "require-from-string": "^2.0.2"
-@@ -17786,7 +17787,7 @@
-       "version": "1.1.2",
-       "resolved": "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz",
-       "integrity": "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/bundle-name": {
-@@ -18878,7 +18879,7 @@
-       "version": "3.2.1",
-       "resolved": "https://registry.npmjs.org/css-tree/-/css-tree-3.2.1.tgz",
-       "integrity": "sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "mdn-data": "2.27.1",
-@@ -18899,7 +18900,7 @@
-       "version": "5.3.7",
-       "resolved": "https://registry.npmjs.org/cssstyle/-/cssstyle-5.3.7.tgz",
-       "integrity": "sha512-7D2EPVltRrsTkhpQmksIu+LxeWAIEk6wRDMJ1qljlv+CKHJM+cJLlfhWIzNA44eAsHXSNe3+vO6DW1yCYx8SuQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@asamuzakjp/css-color": "^4.1.1",
-@@ -18915,7 +18916,7 @@
-       "version": "11.3.5",
-       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
-       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BlueOak-1.0.0",
-       "engines": {
-         "node": "20 || >=22"
-@@ -19486,7 +19487,7 @@
-       "version": "6.0.1",
-       "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-6.0.1.tgz",
-       "integrity": "sha512-euIQENZg6x8mj3fO6o9+fOW8MimUI4PpD/fZBhJfeioZVy9TUpM4UY7KjQNVZFlqwJ0UdzRDzkycB997HEq1BQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "whatwg-mimetype": "^5.0.0",
-@@ -19500,7 +19501,7 @@
-       "version": "5.0.0",
-       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-5.0.0.tgz",
-       "integrity": "sha512-sXcNcHOC51uPGF0P/D4NVtrkjSU2fNsm9iog4ZvZJsL3rjoDAzXZhkm2MWt1y+PUdggKAYVoMAIYcs78wJ51Cw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=20"
-@@ -19597,7 +19598,7 @@
-       "version": "10.6.0",
-       "resolved": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
-       "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/decimal.js-light": {
-@@ -21028,6 +21029,7 @@
-       "version": "0.1.13",
-       "resolved": "https://registry.npmjs.org/encoding/-/encoding-0.1.13.tgz",
-       "integrity": "sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==",
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "dependencies": {
-@@ -21038,6 +21040,7 @@
-       "version": "0.6.3",
-       "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
-       "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "dependencies": {
-@@ -23802,7 +23805,7 @@
-       "version": "6.0.0",
-       "resolved": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-6.0.0.tgz",
-       "integrity": "sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@exodus/bytes": "^1.6.0"
-@@ -23869,7 +23872,7 @@
-       "version": "7.0.2",
-       "resolved": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
-       "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "agent-base": "^7.1.0",
-@@ -23883,7 +23886,7 @@
-       "version": "7.1.4",
-       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
-       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">= 14"
-@@ -24695,7 +24698,7 @@
-       "version": "1.0.1",
-       "resolved": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
-       "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/is-promise": {
-@@ -26099,7 +26102,7 @@
-       "version": "27.4.0",
-       "resolved": "https://registry.npmjs.org/jsdom/-/jsdom-27.4.0.tgz",
-       "integrity": "sha512-mjzqwWRD9Y1J1KUi7W97Gja1bwOOM5Ug0EZ6UDK3xS7j7mndrkwozHtSblfomlzyB4NepioNt+B2sOSzczVgtQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@acemir/cssom": "^0.9.28",
-@@ -26139,7 +26142,7 @@
-       "version": "7.1.4",
-       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
-       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">= 14"
-@@ -26149,7 +26152,7 @@
-       "version": "7.0.6",
-       "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
-       "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "agent-base": "^7.1.2",
-@@ -26163,7 +26166,7 @@
-       "version": "8.20.0",
-       "resolved": "https://registry.npmjs.org/ws/-/ws-8.20.0.tgz",
-       "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=10.0.0"
-@@ -26557,7 +26560,7 @@
-       "version": "1.32.0",
-       "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
-       "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MPL-2.0",
-       "dependencies": {
-         "detect-libc": "^2.0.3"
-@@ -26590,12 +26593,12 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-         "android"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26611,12 +26614,12 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-         "darwin"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26632,12 +26635,12 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-         "darwin"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26653,12 +26656,12 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-         "freebsd"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26674,12 +26677,12 @@
-       "cpu": [
-         "arm"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-         "linux"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26695,12 +26698,12 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-         "linux"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26716,12 +26719,12 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-         "linux"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26737,12 +26740,12 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-         "linux"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26758,12 +26761,12 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-         "linux"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26779,12 +26782,12 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-         "win32"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -26800,12 +26803,12 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-         "win32"
-       ],
--      "peer": true,
-       "engines": {
-         "node": ">= 12.0.0"
-       },
-@@ -27773,7 +27776,7 @@
-       "version": "2.27.1",
-       "resolved": "https://registry.npmjs.org/mdn-data/-/mdn-data-2.27.1.tgz",
-       "integrity": "sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "CC0-1.0"
-     },
-     "node_modules/media-typer": {
-@@ -30583,7 +30586,7 @@
-       "version": "8.0.0",
-       "resolved": "https://registry.npmjs.org/parse5/-/parse5-8.0.0.tgz",
-       "integrity": "sha512-9m4m5GSgXjL4AjumKzq1Fgfp3Z8rsvjRNbnkVwfu2ImRqE5D0LnY2QfDen18FSY9C573YU5XxSapdHZTZ2WolA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "entities": "^6.0.0"
-@@ -31459,7 +31462,7 @@
-       "version": "2.3.1",
-       "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
-       "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=6"
-@@ -32882,7 +32885,7 @@
-       "version": "7.8.2",
-       "resolved": "https://registry.npmjs.org/rxjs/-/rxjs-7.8.2.tgz",
-       "integrity": "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "dependencies": {
-         "tslib": "^2.1.0"
-@@ -32973,7 +32976,7 @@
-       "version": "6.0.0",
-       "resolved": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
-       "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "ISC",
-       "dependencies": {
-         "xmlchars": "^2.2.0"
-@@ -33646,7 +33649,7 @@
-       "version": "0.6.1",
-       "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz",
-       "integrity": "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-3-Clause",
-       "engines": {
-         "node": ">=0.10.0"
-@@ -33665,7 +33668,7 @@
-       "version": "0.5.21",
-       "resolved": "https://registry.npmjs.org/source-map-support/-/source-map-support-0.5.21.tgz",
-       "integrity": "sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "buffer-from": "^1.0.0",
-@@ -34362,7 +34365,7 @@
-       "version": "3.2.4",
-       "resolved": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
-       "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/synckit": {
-@@ -34509,7 +34512,7 @@
-       "version": "5.46.1",
-       "resolved": "https://registry.npmjs.org/terser/-/terser-5.46.1.tgz",
-       "integrity": "sha512-vzCjQO/rgUuK9sf8VJZvjqiqiHFaZLnOiimmUuOKODxWL8mm/xua7viT7aqX7dgPY60otQjUotzFMmCB4VdmqQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-2-Clause",
-       "dependencies": {
-         "@jridgewell/source-map": "^0.3.3",
-@@ -34593,7 +34596,7 @@
-       "version": "2.20.3",
-       "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
-       "integrity": "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/test-exclude": {
-@@ -34851,7 +34854,7 @@
-       "version": "7.0.28",
-       "resolved": "https://registry.npmjs.org/tldts/-/tldts-7.0.28.tgz",
-       "integrity": "sha512-+Zg3vWhRUv8B1maGSTFdev9mjoo8Etn2Ayfs4cnjlD3CsGkxXX4QyW3j2WJ0wdjYcYmy7Lx2RDsZMhgCWafKIw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "tldts-core": "^7.0.28"
-@@ -34864,7 +34867,7 @@
-       "version": "7.0.28",
-       "resolved": "https://registry.npmjs.org/tldts-core/-/tldts-core-7.0.28.tgz",
-       "integrity": "sha512-7W5Efjhsc3chVdFhqtaU0KtK32J37Zcr9RKtID54nG+tIpcY79CQK/veYPODxtD/LJ4Lue66jvrQzIX2Z2/pUQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/tmp": {
-@@ -34968,7 +34971,7 @@
-       "version": "6.0.1",
-       "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.1.tgz",
-       "integrity": "sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-3-Clause",
-       "dependencies": {
-         "tldts": "^7.0.5"
-@@ -34981,7 +34984,7 @@
-       "version": "6.0.0",
-       "resolved": "https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz",
-       "integrity": "sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "punycode": "^2.3.1"
-@@ -35344,7 +35347,7 @@
-       "version": "4.21.0",
-       "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.21.0.tgz",
-       "integrity": "sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "esbuild": "~0.27.0",
-@@ -35527,7 +35530,7 @@
-       "version": "5.9.3",
-       "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
-       "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "bin": {
-         "tsc": "bin/tsc",
-@@ -36538,7 +36541,7 @@
-       "version": "5.0.0",
-       "resolved": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
-       "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "xml-name-validator": "^5.0.0"
-@@ -36614,7 +36617,7 @@
-       "version": "8.0.1",
-       "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-8.0.1.tgz",
-       "integrity": "sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-2-Clause",
-       "engines": {
-         "node": ">=20"
-@@ -36719,7 +36722,7 @@
-       "version": "4.0.0",
-       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
-       "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=18"
-@@ -36729,7 +36732,7 @@
-       "version": "15.1.0",
-       "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-15.1.0.tgz",
-       "integrity": "sha512-2ytDk0kiEj/yu90JOAp44PVPUkO9+jVhyf+SybKlRHSDlvOOZhdPIrr7xTH64l4WixO2cP+wQIcgujkGBPPz6g==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "tr46": "^6.0.0",
-@@ -37600,7 +37603,7 @@
-       "version": "5.0.0",
-       "resolved": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
-       "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "engines": {
-         "node": ">=18"
-@@ -37620,7 +37623,7 @@
-       "version": "2.2.0",
-       "resolved": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
-       "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/xpath": {
-@@ -37853,7 +37856,7 @@
+@@ -37852,7 +37852,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "4.3.0",
-+      "version": "5.0.0",
+-      "version": "6.0.0",
++      "version": "6.1.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
-@@ -38283,10 +38286,10 @@
-     },
-     "vitest": {
-       "name": "@mcpjam/vitest",
--      "version": "0.0.0",
-+      "version": "0.1.0",
-       "license": "MIT",
-       "dependencies": {
--        "@mcpjam/sdk": "^4.3.0"
-+        "@mcpjam/sdk": "^5.0.0"
-       },
-       "devDependencies": {
-         "tsup": "^8.3.5",
-@@ -38299,11 +38302,11 @@
-     },
-     "widget-react": {
-       "name": "@mcpjam/widget-react",
--      "version": "0.1.5",
-+      "version": "0.1.6",
-       "license": "MIT",
-       "dependencies": {
-         "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^4.0.0",
-+        "@mcpjam/sdk": "^5.0.0",
-         "@modelcontextprotocol/client": "2.0.0",
-         "@modelcontextprotocol/ext-apps": "^1.7.4",
-         "lucide-react": "^0.525.0",
 diff --git a/sdk/package.json b/sdk/package.json
-index 3f111c3c4..dadd090dc 100644
+index 7d2905b84..03de0494a 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "4.3.0",
-+  "version": "5.0.0",
+-  "version": "6.0.0",
++  "version": "6.1.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",
-diff --git a/vitest/package.json b/vitest/package.json
-index 25d4c9b04..3a56427ba 100644
---- a/vitest/package.json
-+++ b/vitest/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/vitest",
--  "version": "0.0.0",
-+  "version": "0.1.0",
-   "description": "Run MCPJam eval suites inside vitest: one test per eval case, plus a gate test that fails the build on a policy breach.",
-   "license": "MIT",
-   "type": "module",
-@@ -29,7 +29,7 @@
-     "vitest": ">=3.2.0 <4"
-   },
-   "dependencies": {
--    "@mcpjam/sdk": "^4.3.0"
-+    "@mcpjam/sdk": "^5.0.0"
-   },
-   "devDependencies": {
-     "tsup": "^8.3.5",
-diff --git a/widget-react/package.json b/widget-react/package.json
-index 037c35d9a..570033ecb 100644
---- a/widget-react/package.json
-+++ b/widget-react/package.json
-@@ -1,6 +1,6 @@
- {
-   "name": "@mcpjam/widget-react",
--  "version": "0.1.5",
-+  "version": "0.1.6",
-   "description": "Interactive MCP-Apps / OpenAI-Apps widget runtime (React) for MCPJam. Tier B: the renderer that satisfies @mcpjam/chat-ui's renderWidget seam.",
-   "license": "MIT",
-   "type": "module",
-@@ -34,7 +34,7 @@
-   },
-   "dependencies": {
-     "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^4.0.0",
-+    "@mcpjam/sdk": "^5.0.0",
-     "@modelcontextprotocol/client": "2.0.0",
-     "@modelcontextprotocol/ext-apps": "^1.7.4",
-     "lucide-react": "^0.525.0",
