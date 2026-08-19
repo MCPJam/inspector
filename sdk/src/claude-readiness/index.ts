@@ -52,6 +52,20 @@ export type {
 } from "./manifest.js";
 
 export {
+  canonicalResourceIndicator,
+  runClaudeAuthChecks,
+} from "./checks/auth.js";
+export type {
+  ClaudeAuthEvidence,
+  ClaudeAuthCheckOutput,
+  ClaudePrmDiscoveryStep,
+} from "./checks/auth.js";
+export { runClaudeOptionalFeatureChecks } from "./checks/optional-features.js";
+export type {
+  ClaudeOptionalFeatureEvidence,
+  ClaudeOptionalFeatureOutput,
+} from "./checks/optional-features.js";
+export {
   CLAUDE_SUBMISSION_PROFILE_INPUT,
   runClaudeSubmissionChecks,
 } from "./checks/submission.js";
