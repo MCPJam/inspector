@@ -50,6 +50,17 @@ export type GithubChecksAvailability =
   | { state: "enabled" | "disabled" }
   | undefined;
 
+/**
+ * What the check concludes when MCPJam cannot run the suite — an outage, or a
+ * paused row.
+ *
+ * `fail_open` concludes `neutral`, `fail_closed` concludes `failure`. MCPJam
+ * decides the CONCLUSION and nothing else: whether either one stops a merge is
+ * branch protection's answer, which lives in GitHub and which this app can
+ * neither read nor set. Copy on this surface must never promise a merge result.
+ */
+export type GithubCheckOutagePolicy = "fail_open" | "fail_closed";
+
 export type GithubCheckRepoConfigRow = {
   _id: string;
   repoFullName: string;
@@ -57,11 +68,27 @@ export type GithubCheckRepoConfigRow = {
   organizationId: string;
   projectId: string;
   suiteId: string;
+  /**
+   * Absent on rows connected before the policy existed. Absent is NOT
+   * `fail_open`: the backend treats it as fail-open at conclusion time, but
+   * nobody chose it, and the settings page says exactly that rather than
+   * rendering a choice that was never stored.
+   */
+  outagePolicy?: GithubCheckOutagePolicy;
   createdAt: number;
   updatedAt: number;
 };
 
-export type InstallationRepo = { fullName: string };
+export type InstallationRepo = {
+  fullName: string;
+  /**
+   * GitHub's live `private` flag. Optional because GitHub can omit it, and
+   * never persisted anywhere — visibility can change under a connected
+   * repository at any time. Absent means UNKNOWN, and the UI shows no badge
+   * rather than asserting "public".
+   */
+  private?: boolean;
+};
 
 export type SuiteOption = {
   _id: string;
@@ -74,9 +101,11 @@ const AVAILABILITY_QUERY =
 const LIST_QUERY = "github/checkRepoConfigs:listForOrganization";
 const SUITES_QUERY = "testSuites:getTestSuitesOverview";
 
-/** The one message the UI shows when the backend refuses on availability. */
-export const GITHUB_CHECKS_UNAVAILABLE_MESSAGE =
-  "GitHub Checks settings are not currently available.";
+// The availability message and the rest of this surface's error copy live in
+// `@/lib/github-checks-errors`, which has no React and no Convex client in it.
+// Both components that show these messages stub THIS module wholesale in their
+// tests, so a message defined here would be stubbed out in exactly the tests
+// that ought to be checking it.
 
 export function useGithubChecksAvailability(
   organizationId: string | null | undefined
@@ -128,14 +157,23 @@ export function useGithubChecksSettings(
     ?.map((entry) => entry.suite)
     .filter((suite): suite is SuiteOption => Boolean(suite?._id));
 
-  const connectRepoMutation = useMutation(
-    "github/checkRepoConfigs:connectRepo" as any
+  // The SERVER-VERIFIED connect, and the only connect path this app uses. It is
+  // an action rather than a mutation because proving the pinned installation can
+  // actually reach the repository takes a GitHub round trip, which a mutation
+  // cannot make — and it is the action that stamps the row's installation id.
+  // The unverified `checkRepoConfigs:connectRepo` mutation survives only for the
+  // two-deploy compatibility window and must not be called from here.
+  const connectVerifiedRepoAction = useAction(
+    "github/checkRepoConfigsNode:connectVerifiedRepo" as any
   );
   const setRepoEnabledMutation = useMutation(
     "github/checkRepoConfigs:setRepoEnabled" as any
   );
   const setRepoSuiteMutation = useMutation(
     "github/checkRepoConfigs:setRepoSuite" as any
+  );
+  const setRepoOutagePolicyMutation = useMutation(
+    "github/checkRepoConfigs:setRepoOutagePolicy" as any
   );
   const disconnectRepoMutation = useMutation(
     "github/checkRepoConfigs:disconnectRepo" as any
@@ -144,10 +182,23 @@ export function useGithubChecksSettings(
     "github/checkRepoConfigsNode:listInstallationRepos" as any
   );
 
-  const connectRepo = useCallback(
-    (args: { repoFullName: string; projectId: string; suiteId: string }) =>
-      connectRepoMutation({ organizationId, ...args } as any),
-    [connectRepoMutation, organizationId]
+  /**
+   * `outagePolicy` is REQUIRED here even though the backend accepts it as
+   * optional. Omitting it there means "no policy stored"; omitting it at
+   * onboarding would mean the administrator was never asked, which is the state
+   * this surface exists to stop producing.
+   */
+  const connectVerifiedRepo = useCallback(
+    (args: {
+      repoFullName: string;
+      projectId: string;
+      suiteId: string;
+      outagePolicy: GithubCheckOutagePolicy;
+    }) =>
+      connectVerifiedRepoAction({ organizationId, ...args } as any) as Promise<{
+        configId: string;
+      }>,
+    [connectVerifiedRepoAction, organizationId]
   );
 
   const setRepoEnabled = useCallback(
@@ -160,6 +211,17 @@ export function useGithubChecksSettings(
     (args: { configId: string; projectId: string; suiteId: string }) =>
       setRepoSuiteMutation({ organizationId, ...args } as any),
     [setRepoSuiteMutation, organizationId]
+  );
+
+  const setRepoOutagePolicy = useCallback(
+    (args: { configId: string; outagePolicy: GithubCheckOutagePolicy }) =>
+      setRepoOutagePolicyMutation({
+        organizationId,
+        ...args,
+      } as any) as Promise<{
+        changed: boolean;
+      }>,
+    [setRepoOutagePolicyMutation, organizationId]
   );
 
   const disconnectRepo = useCallback(
@@ -181,9 +243,10 @@ export function useGithubChecksSettings(
     isEnabled,
     repos,
     suites,
-    connectRepo,
+    connectVerifiedRepo,
     setRepoEnabled,
     setRepoSuite,
+    setRepoOutagePolicy,
     disconnectRepo,
     listInstallationRepos,
   };
