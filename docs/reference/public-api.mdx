@@ -522,6 +522,37 @@ The same surface is available as an [OpenAPI
 specification](https://raw.githubusercontent.com/MCPJam/inspector/main/docs/reference/openapi.json)
 for Postman, Swagger UI, or client generation.
 
+## Idempotent retries for eval runs
+
+`POST /eval-runs` spends credits, so a retry of a dropped response must not run the suite twice. Send a stable `Idempotency-Key` header on every launch:
+
+```bash
+curl -X POST \
+  "https://app.mcpjam.com/api/v1/projects/$PROJECT_ID/eval-runs" \
+  -H "Authorization: Bearer $MCPJAM_API_KEY" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: $STABLE_KEY_FOR_THIS_LAUNCH" \
+  -d '{ "suiteId": "..." }'
+```
+
+When the key matches an existing run, the response includes `deduped: true` and the run's real `status` — which may already be terminal if the run finished before the retry arrived. The suite is **not executed again** and no further credits are spent.
+
+```json
+{
+  "runId": "run_abc",
+  "suiteId": "suite_xyz",
+  "status": "completed",
+  "deduped": true
+}
+```
+
+On a fresh launch, `deduped` is absent and `status` is `running`.
+
+Two things to know:
+
+- **A replay of a non-terminal run still executes.** If the replayed run is still `running` or `pending`, the suite runs again. A run genuinely in flight and one abandoned mid-execution are indistinguishable at launch time, and refusing to execute would strand the second. Use the returned `status` to decide whether to poll or treat the run as already done.
+- **Omitting the key gets a fresh run every time.** There is no automatic deduplication without a key.
+
 ## Run evals from the API
 
 The shortest useful loop — create a run with one inline test, then poll:
