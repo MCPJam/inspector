@@ -960,6 +960,84 @@ function toRunEnvironmentDto(run: RunDoc) {
   };
 }
 
+/**
+ * One advisory judge's persisted result, projected onto the public model.
+ *
+ * `goalCompletion` is one of SEVERAL judges on the run row — `groundedness`
+ * sits beside it under the same four-fields-per-judge pattern — so the DTO
+ * carries a `judges` envelope rather than a bare `judge` field, and a third
+ * judge is a key here rather than a reshaped response.
+ *
+ * `status: null` means the judge was NEVER requested for this run, which is a
+ * different answer from "requested and produced nothing". A `pending` or
+ * `failed` judge carries no cases: `cases` is `[]` and `status` carries the
+ * meaning, so a caller never has to distinguish "graded nothing" from "has not
+ * graded yet" by the emptiness of a list.
+ *
+ * `caseKey` keeps its persisted name. It is the stable AUTHORED-case identity,
+ * not a Convex row id; calling it `caseId` at this boundary would invite
+ * callers to join it against the case ids the case routes take.
+ */
+function toRunJudgeDto(
+  status: unknown,
+  errorCode: unknown,
+  result: Record<string, any> | undefined,
+  toCase: (row: Record<string, any>) => Record<string, unknown>,
+) {
+  const terminal = status === "completed";
+  return {
+    status:
+      status === "pending" || status === "completed" || status === "failed"
+        ? status
+        : null,
+    errorCode: typeof errorCode === "string" ? errorCode : null,
+    summary: typeof result?.summary === "string" ? result.summary : null,
+    generatedAt:
+      typeof result?.generatedAt === "number" ? result.generatedAt : null,
+    modelUsed: typeof result?.modelUsed === "string" ? result.modelUsed : null,
+    threshold: typeof result?.threshold === "number" ? result.threshold : null,
+    cases:
+      terminal && Array.isArray(result?.cases) ? result.cases.map(toCase) : [],
+  };
+}
+
+/** Advisory graders on a run, keyed by judge. See `toRunJudgeDto`. */
+function toRunJudgesDto(run: RunDoc) {
+  return {
+    goalCompletion: toRunJudgeDto(
+      run.goalCompletionStatus,
+      run.goalCompletionErrorCode,
+      run.goalCompletion,
+      (row) => ({
+        caseKey: String(row.caseKey ?? ""),
+        score: typeof row.score === "number" ? row.score : null,
+        passed: row.passed === true,
+        reason: typeof row.reason === "string" ? row.reason : null,
+        rubricHits: Array.isArray(row.rubricHits)
+          ? row.rubricHits.map(String)
+          : [],
+      }),
+    ),
+    groundedness: toRunJudgeDto(
+      run.groundednessStatus,
+      run.groundednessErrorCode,
+      run.groundedness,
+      // Groundedness grades whether an answer is SUPPORTED by its trajectory,
+      // so its per-case evidence is `unsupportedClaims`, not `rubricHits`.
+      // Projected off the persisted fields rather than forced into one shape.
+      (row) => ({
+        caseKey: String(row.caseKey ?? ""),
+        score: typeof row.score === "number" ? row.score : null,
+        passed: row.passed === true,
+        reason: typeof row.reason === "string" ? row.reason : null,
+        unsupportedClaims: Array.isArray(row.unsupportedClaims)
+          ? row.unsupportedClaims.map(String)
+          : [],
+      }),
+    ),
+  };
+}
+
 function toRunDto(run: RunDoc) {
   return {
     id: String(run._id),
@@ -1579,6 +1657,30 @@ const updateSuiteSchema = z.object({
     })
     .optional(),
 });
+
+/**
+ * Body for `POST …/eval-runs/:runId/judge`. STRICT: this endpoint spends, so an
+ * unknown or mistyped key is a 400 rather than a silently-ignored field that
+ * bills anyway.
+ *
+ * `enable` is the per-RUN answer to "grade this?", not a suite edit. Grading
+ * resolves from the run's config snapshot, pinned when the run was created, so
+ * a run recorded while the judge was off cannot be rescued by turning the judge
+ * on for the suite — `enable: true` is what grades it, and it touches nothing
+ * beyond this run. Requires a platform new enough to accept the field; older
+ * deployments refuse the override rather than grading with the judge off.
+ */
+const requestRunJudgeSchema = z
+  .object({
+    /** Re-grade a run that already has a result. */
+    force: z.boolean().optional(),
+    enable: z.boolean().optional(),
+    /** Judge model for THIS run only. */
+    model: z.string().min(1).optional(),
+    /** Pass threshold for THIS run only, 0–1. */
+    threshold: z.number().min(0).max(1).optional(),
+  })
+  .strict();
 
 const scheduleSchema = z.object({
   enabled: z.boolean(),
@@ -2250,6 +2352,10 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   return v1Resource(c, {
     ...toRunDto(run!),
     ...(insights ? { insights } : {}),
+    // DETAIL only, like `insights` — a suite's run list stays compact. Always
+    // present, so a caller can read `judges.goalCompletion.status` without
+    // first proving the field exists; `null` there means never requested.
+    judges: toRunJudgesDto(run!),
   });
 });
 
@@ -2401,6 +2507,67 @@ evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
     });
   } catch (error) {
     throw translateConvexError(error, { resource: "Eval run insights" });
+  }
+  return v1Resource(c, { runId, projectId, status: "pending" }, 202);
+});
+
+// POST /v1/projects/:projectId/eval-runs/:runId/judge
+// Request (or with force, re-request) LLM-as-judge grading of a finished run.
+// SPENDS the org's model budget; 202 receipt, then poll the run detail's
+// `judges.goalCompletion` rather than re-requesting. Same Convex mutation the
+// in-app "Run judge" button uses, so role/limit/billing checks are identical.
+evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let run: RunDoc | null;
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  // Like the insights endpoint: this SPENDS, so the body is VALIDATED rather
+  // than coerced. A bodyless POST is the common case and stays valid; anything
+  // else must parse and typecheck, because `{"force":"false"}` is a truthy
+  // string and charging for a regeneration nobody asked for is the failure.
+  const raw = await c.req.text();
+  let body: unknown = {};
+  if (raw.length > 0) {
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Request body must be valid JSON.",
+      );
+    }
+  }
+  const parsed = parseWithSchema(requestRunJudgeSchema, body);
+
+  // The per-run override envelope. Sent ONLY when the caller asked for one:
+  // `requestGoalCompletion` clears any previously persisted override when the
+  // arg is absent, which is the semantic we want — re-grading without
+  // re-stating an override returns to suite-config grading on its own.
+  const override: Record<string, unknown> = {};
+  if (parsed.enable !== undefined) override.enabled = parsed.enable;
+  if (parsed.model !== undefined) override.judgeModel = parsed.model;
+  if (parsed.threshold !== undefined) override.threshold = parsed.threshold;
+
+  try {
+    await convex.mutation("goalCompletion:requestGoalCompletion" as any, {
+      suiteRunId: runId,
+      ...(parsed.force === true ? { force: true } : {}),
+      ...(Object.keys(override).length > 0 ? { runOverride: override } : {}),
+    });
+  } catch (error) {
+    throw translateConvexError(error, { resource: "Eval run judge" });
   }
   return v1Resource(c, { runId, projectId, status: "pending" }, 202);
 });

@@ -7,6 +7,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunInsightsRequested,
+  PlatformEvalRunJudgeRequested,
   PlatformEvalRunCreated,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
@@ -998,6 +999,46 @@ export class PlatformApiClient {
         params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
       { body: params.force ? { force: true } : {} },
+      options,
+    );
+  }
+
+  /**
+   * Request (or with `force`, re-request) LLM-as-judge grading of a finished
+   * run. SPENDS the org's model budget; poll `getEvalRun().judges` rather than
+   * re-requesting.
+   *
+   * `enable` grades a run whose config snapshot has the judge OFF. It is a
+   * per-run answer, not a suite edit — grading reads the snapshot pinned when
+   * the run was created, so turning the judge on for the suite does not reach
+   * an already-recorded run.
+   */
+  requestEvalRunJudge(
+    params: {
+      projectId: string;
+      runId: string;
+      force?: boolean;
+      enable?: boolean;
+      model?: string;
+      threshold?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunJudgeRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/judge`,
+      {
+        body: {
+          ...(params.force === true ? { force: true } : {}),
+          ...(params.enable !== undefined ? { enable: params.enable } : {}),
+          ...(params.model !== undefined ? { model: params.model } : {}),
+          ...(params.threshold !== undefined
+            ? { threshold: params.threshold }
+            : {}),
+        },
+      },
       options,
     );
   }

@@ -135,6 +135,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_eval_suite_runs: { command: "eval runs" },
   run_eval_suite: { command: "eval run" },
   cancel_eval_run: { command: "eval cancel" },
+  request_eval_run_judge: { command: "eval judge" },
   get_eval_run: { command: "eval status" },
   compare_eval_run: { command: "eval compare" },
   list_eval_run_iterations: { command: "eval iterations" },

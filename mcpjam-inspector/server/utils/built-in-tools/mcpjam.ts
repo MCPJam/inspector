@@ -35,6 +35,7 @@ import {
   diagnoseServerOperation,
   getProjectServerConnectionStatusOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
   getScenarioOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
@@ -123,6 +124,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
   listScenariosOperation,
   getScenarioOperation,
   listChatSessionsOperation,
@@ -371,6 +373,11 @@ const CONNECTION_OPENING_IDS = new Set([
 const APPROVAL_REQUIRED_IDS = new Set([
   ...CONNECTION_OPENING_IDS,
   cancelEvalRunOperation.name,
+  // SPENDS the organization's model budget, on a run the chat can name from
+  // a list. Advertised rather than excluded because reading grades is only
+  // useful if you can ask for them — but the spend is the user's to approve,
+  // so it sits here with `cancel_eval_run` rather than executing on request.
+  requestEvalRunJudgeOperation.name,
   createProjectServerOperation.name,
   updateProjectServerOperation.name,
   deleteProjectServerOperation.name,

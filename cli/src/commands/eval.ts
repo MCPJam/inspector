@@ -17,6 +17,7 @@ import {
   cancelEvalRunOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  requestEvalRunJudgeOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   listEvalCasesOperation,
@@ -170,6 +171,56 @@ function writeRunLink(
       suiteId
     )}/runs/${encodeURIComponent(runId)}${query}\n`
   );
+}
+
+/** Judge keys the CLI knows how to label, in the order it prints them. */
+const JUDGE_LABELS: ReadonlyArray<[string, string]> = [
+  ["goalCompletion", "goal completion"],
+  ["groundedness", "groundedness"],
+];
+
+/**
+ * One line per judge that has actually been asked to grade this run.
+ *
+ * Human format only — `--format json` output stays byte-identical, and the
+ * full `judges` envelope is in the JSON either way. A judge nobody requested
+ * prints NOTHING rather than a "not requested" line each: the absence is the
+ * answer, and enumerating every judge the platform could run would turn a
+ * status read into a catalog.
+ */
+function writeJudgeSummary(format: string, judges: unknown): void {
+  if (format !== "human" || !judges || typeof judges !== "object") return;
+  for (const [key, label] of JUDGE_LABELS) {
+    const judge = (judges as Record<string, any>)[key];
+    const status = judge?.status;
+    // null/absent = never requested.
+    if (!status) continue;
+    if (status !== "completed") {
+      const code =
+        typeof judge.errorCode === "string" ? ` (${judge.errorCode})` : "";
+      process.stdout.write(`Judge ${label}: ${status}${code}\n`);
+      continue;
+    }
+    const cases: any[] = Array.isArray(judge.cases) ? judge.cases : [];
+    if (cases.length === 0) {
+      // A completed judge with no cases graded nothing — its summary says why,
+      // and "0/0 passed" would bury that behind a number.
+      const why =
+        typeof judge.summary === "string" ? judge.summary : "nothing graded";
+      process.stdout.write(`Judge ${label}: ${why}\n`);
+      continue;
+    }
+    const passed = cases.filter((c) => c?.passed === true).length;
+    const at =
+      typeof judge.threshold === "number"
+        ? ` at threshold ${judge.threshold}`
+        : "";
+    const model =
+      typeof judge.modelUsed === "string" ? ` — ${judge.modelUsed}` : "";
+    process.stdout.write(
+      `Judge ${label}: ${passed}/${cases.length} passed${at}${model}\n`
+    );
+  }
 }
 
 async function runPlatformCommand<TOutput>(
@@ -1288,6 +1339,7 @@ export function registerEvalCommands(program: Command): void {
         }
       );
       writeResult(result, globalOptions.format);
+      writeJudgeSummary(globalOptions.format, (result.run as any).judges);
       writeRunLink(globalOptions.format, webOrigin, {
         projectId: result.project.id,
         suiteId: result.run.suiteId,
@@ -1315,6 +1367,56 @@ export function registerEvalCommands(program: Command): void {
         options,
         command
       );
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("judge")
+      .description(
+        "Grade a finished eval run with LLM as Judge (SPENDS your model budget)"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--force", "Re-grade a run that already has a judge result")
+      .option(
+        "--enable",
+        "Grade this run even though the judge was off when it ran"
+      )
+      .option("--judge-model <id>", "Judge model for this run only")
+      .option("--judge-threshold <0-1>", "Pass threshold for this run only")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        force?: boolean;
+        enable?: boolean;
+        judgeModel?: string;
+        judgeThreshold?: string;
+      },
+      command
+    ) => {
+      let threshold: number | undefined;
+      if (options.judgeThreshold !== undefined) {
+        threshold = Number(options.judgeThreshold);
+        if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+          throw usageError(
+            "--judge-threshold must be a number between 0 and 1."
+          );
+        }
+      }
+      const input = validateOpInput(requestEvalRunJudgeOperation, {
+        project: options.project,
+        runId: options.run,
+        ...(options.force ? { force: true } : {}),
+        ...(options.enable ? { enable: true } : {}),
+        ...(options.judgeModel !== undefined
+          ? { model: options.judgeModel }
+          : {}),
+        ...(threshold !== undefined ? { threshold } : {}),
+      });
+      await executeOp(requestEvalRunJudgeOperation, input, options, command);
     }
   );
 

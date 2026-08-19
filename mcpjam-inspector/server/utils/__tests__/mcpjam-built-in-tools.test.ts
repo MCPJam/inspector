@@ -154,6 +154,7 @@ describe("workspace tool catalog", () => {
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
+      "request_eval_run_judge",
       "list_scenarios",
       "get_scenario",
       "list_chat_sessions",

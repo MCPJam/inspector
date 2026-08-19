@@ -140,6 +140,7 @@ const PLAIN_TOOLS = [
   "compare_eval_run",
   "get_eval_run_steps",
   "cancel_eval_run",
+  "request_eval_run_judge",
   "list_chat_sessions",
   "search_sessions",
   // Swarms + user testing. No widget views yet: these are agent-oriented
@@ -313,6 +314,7 @@ describe("platform tool registration", () => {
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
+      "request_eval_run_judge",
       "list_project_environments",
       "get_project_environment",
       "resolve_project_environment",
@@ -425,6 +427,9 @@ describe("platform tool registration", () => {
       "create_eval_cases",
       "update_eval_case",
       "generate_eval_cases",
+      // Grading SPENDS but writes only an advisory result onto the run — the
+      // deterministic verdict stays authoritative, so nothing is destroyed.
+      "request_eval_run_judge",
       "create_project_server",
       "update_project_server",
       // Project create/update: both are cheap, both are metadata-only (the

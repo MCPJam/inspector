@@ -283,6 +283,57 @@ async function startEvalFixture(): Promise<{
           notes: null,
           createdAt: 1,
           completedAt: 2,
+          judges: {
+            goalCompletion: {
+              status: "completed",
+              errorCode: null,
+              summary: "Both answers hit the goal.",
+              generatedAt: 9,
+              modelUsed: "openai/gpt-5.4-mini",
+              threshold: 0.7,
+              cases: [
+                {
+                  caseKey: "a",
+                  score: 0.9,
+                  passed: true,
+                  reason: "ok",
+                  rubricHits: [],
+                },
+                {
+                  caseKey: "b",
+                  score: 0.4,
+                  passed: false,
+                  reason: "missed",
+                  rubricHits: [],
+                },
+              ],
+            },
+            // Never requested — the CLI must print nothing for it.
+            groundedness: {
+              status: null,
+              errorCode: null,
+              summary: null,
+              generatedAt: null,
+              modelUsed: null,
+              threshold: null,
+              cases: [],
+            },
+          },
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1/judge" &&
+      req.method === "POST"
+    ) {
+      createBodies.push(raw ? JSON.parse(raw) : {});
+      res.statusCode = 202;
+      res.end(
+        JSON.stringify({
+          runId: "run-1",
+          projectId: "proj-alpha",
+          status: "pending",
         }),
       );
       return;
@@ -1067,6 +1118,144 @@ test("--format json output stays byte-identical — no View line", async () => {
       assert.doesNotThrow(() => JSON.parse(run.stdout));
       assert.ok(!run.stdout.includes("View:"));
     }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval judge POSTs the per-run override and echoes the pending receipt", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "judge",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--force",
+            "--enable",
+            "--judge-model",
+            "openai/gpt-5",
+            "--judge-threshold",
+            "0.8",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.createBodies.at(-1), {
+      force: true,
+      enable: true,
+      model: "openai/gpt-5",
+      threshold: 0.8,
+    });
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.judge.status, "pending");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval judge sends an empty body when no override was asked for", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "judge",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    // An empty body means "grade with the suite's config" — sending
+    // `enable: false` or a null model would state something the caller did not.
+    assert.deepEqual(fixture.createBodies.at(-1), {});
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval judge rejects an out-of-range --judge-threshold before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "judge",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--judge-threshold",
+          "1.5",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--judge-threshold must be a number between 0 and 1/);
+    // It SPENDS — a bad flag must not reach the wire.
+    assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval status summarizes the judges that graded, and stays silent about the rest", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "status",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    const lines = run.stdout.trimEnd().split("\n");
+    assert.equal(
+      lines.at(-2),
+      "Judge goal completion: 1/2 passed at threshold 0.7 — openai/gpt-5.4-mini",
+    );
+    // groundedness was never requested, so it gets no SUMMARY line — listing
+    // it would turn a status read into a catalog of judges the platform could
+    // have run. (It is still in the JSON payload above, which is the point:
+    // the envelope is complete, the summary is only what happened.)
+    assert.ok(!run.stdout.includes("Judge groundedness"));
+    // The View link stays the closing line.
+    assert.match(lines.at(-1) ?? "", /^View: /);
   } finally {
     await fixture.close();
   }

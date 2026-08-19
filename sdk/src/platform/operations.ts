@@ -39,6 +39,7 @@ import type {
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
+  PlatformEvalRunJudgeRequested,
   PlatformRunCompare,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
@@ -2758,6 +2759,72 @@ export const cancelEvalRunOperation: PlatformOperation<
       { signal },
     );
     return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const requestEvalRunJudgeInput = evalRunScopedInput.extend({
+  force: z
+    .boolean()
+    .optional()
+    .describe("Re-grade a run that already has a judge result."),
+  enable: z
+    .boolean()
+    .optional()
+    .describe(
+      "Grade this run even though the judge was off when it ran. A per-RUN answer, not a suite edit: grading reads the config pinned when the run was created, so turning the judge on for the suite does not reach an already-recorded run.",
+    ),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Judge model for this run only; defaults to the suite's."),
+  threshold: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Pass threshold for this run only, 0–1."),
+});
+
+export type RequestEvalRunJudgeInput = z.infer<typeof requestEvalRunJudgeInput>;
+
+export type RequestEvalRunJudgeResult = {
+  project: SelectedProjectInfo;
+  judge: PlatformEvalRunJudgeRequested;
+};
+
+export const requestEvalRunJudgeOperation: PlatformOperation<
+  RequestEvalRunJudgeInput,
+  RequestEvalRunJudgeResult
+> = {
+  name: "request_eval_run_judge",
+  title: "Request MCPJam eval run grading",
+  description:
+    "Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget. Returns immediately with a pending receipt — read the results from get_eval_run's `judges.goalCompletion`, do not re-request. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: requestEvalRunJudgeInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const judge = await client.requestEvalRunJudge(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        ...(input.force !== undefined ? { force: input.force } : {}),
+        ...(input.enable !== undefined ? { enable: input.enable } : {}),
+        ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.threshold !== undefined
+          ? { threshold: input.threshold }
+          : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), judge };
   },
 };
 
@@ -7388,6 +7455,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
   getEvalRunStepsOperation,
   createTunnelOperation,
   closeTunnelOperation,

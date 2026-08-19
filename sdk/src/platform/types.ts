@@ -252,6 +252,86 @@ export interface PlatformEvalRun {
    * envelope existed — treat absence as `not_available`.
    */
   insights?: PlatformInsightsEnvelope;
+  /**
+   * Advisory LLM graders on this run, keyed by judge. Present on the DETAIL
+   * response only (lists stay compact) and absent on API deployments that
+   * predate the envelope.
+   */
+  judges?: PlatformEvalRunJudges;
+}
+
+/**
+ * The advisory graders that can run against a finished eval run. An envelope
+ * rather than a bare `judge` field because `goalCompletion` is one of several:
+ * `groundedness` sits beside it, and a future judge is a new key here rather
+ * than a reshaped response. A judge absent from this object is one this
+ * deployment does not have.
+ */
+export interface PlatformEvalRunJudges {
+  /** Grades each case's final answer against its expected output. */
+  goalCompletion?: PlatformEvalRunGoalCompletionJudge;
+  /** Grades whether each answer is SUPPORTED by its tool trajectory. */
+  groundedness?: PlatformEvalRunGroundednessJudge;
+}
+
+/**
+ * State every judge reports. Written as a base each judge EXTENDS rather than a
+ * generic: the per-judge `cases` differ in shape, and spelling each judge out
+ * keeps the wire schema checkable field by field.
+ */
+export interface PlatformEvalRunJudgeState {
+  /**
+   * `null` means the judge was NEVER requested for this run — a different
+   * answer from "requested and produced nothing". Poll rather than
+   * re-requesting while this is `"pending"`.
+   */
+  status: "pending" | "completed" | "failed" | null;
+  /** Machine-readable failure reason, set alongside `status: "failed"`. */
+  errorCode: string | null;
+  summary: string | null;
+  generatedAt: number | null;
+  modelUsed: string | null;
+  /** Pass threshold the results were scored against (`passed = score >= it`). */
+  threshold: number | null;
+}
+
+export interface PlatformEvalRunGoalCompletionJudge
+  extends PlatformEvalRunJudgeState {
+  /**
+   * Per-case grades. EMPTY unless `status` is `"completed"` — a pending or
+   * failed judge carries no cases, and `status` is what says which.
+   */
+  cases: PlatformEvalRunGoalCompletionCase[];
+}
+
+export interface PlatformEvalRunGroundednessJudge
+  extends PlatformEvalRunJudgeState {
+  /** Per-case grades. EMPTY unless `status` is `"completed"`. */
+  cases: PlatformEvalRunGroundednessCase[];
+}
+
+/** Shared per-case fields every judge reports. */
+export interface PlatformEvalRunJudgeCase {
+  /**
+   * The stable AUTHORED-case identity, as persisted. NOT a case row id — do
+   * not join it against the ids the per-case routes take.
+   */
+  caseKey: string;
+  score: number | null;
+  passed: boolean;
+  reason: string | null;
+}
+
+export interface PlatformEvalRunGoalCompletionCase
+  extends PlatformEvalRunJudgeCase {
+  /** Rubric criteria the answer satisfied. */
+  rubricHits: string[];
+}
+
+export interface PlatformEvalRunGroundednessCase
+  extends PlatformEvalRunJudgeCase {
+  /** Claims the tool trajectory does not support. */
+  unsupportedClaims: string[];
 }
 
 /**
@@ -1740,6 +1820,16 @@ export interface PlatformInsightsEnvelope {
 
 /** Receipt for an eval-run insights (serverQuality) request. 202. */
 export interface PlatformEvalRunInsightsRequested {
+  runId: string;
+  projectId: string;
+  status: "pending";
+}
+
+/**
+ * Receipt for an eval-run judge request. 202 — grading runs async. Poll the run
+ * detail's `judges.goalCompletion` rather than re-requesting.
+ */
+export interface PlatformEvalRunJudgeRequested {
   runId: string;
   projectId: string;
   status: "pending";

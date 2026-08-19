@@ -37,6 +37,7 @@
 import {
   callServerToolOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
   createEvalCaseOperation,
   createEvalCasesOperation,
   createEvalSuiteOperation,
@@ -620,6 +621,33 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Cancel the run",
       kind: "cancel",
     },
+  },
+  // GATED because it SPENDS. `kind: "generate"` matches the other
+  // request-an-analysis ops: nothing starts running that a person is waiting
+  // on, an advisory result is authored in the background.
+  {
+    operation: requestEvalRunJudgeOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const run = named(input, "runId") ?? "(unnamed)";
+        // `force` re-grades a run that already has a result — the same spend
+        // a second time. An approval button that said only "Grade run X"
+        // would hide the fact that X was already graded.
+        const again = input.force === true ? " again" : "";
+        // `enable` is the reason a run recorded with the judge off can be
+        // graded at all, and it is exactly the case where a reader would
+        // otherwise expect the click to do nothing.
+        const despite =
+          input.enable === true ? " (judge was off when it ran)" : "";
+        return `Grade run ${run}${again} with LLM as Judge${despite}`;
+      },
+      buttonLabel: "Grade it",
+      kind: "generate",
+    },
+    promptNotes: [
+      "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
+    ],
   },
 
   // ── GATED because the spend RECURS.

@@ -942,6 +942,31 @@ Get the status and summary of an eval run.
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--project <id-or-name>` | Yes | Project name or ID |
 
+The response carries a `judges` block with each advisory grader's state and
+per-case grades. `status: null` means that judge was never requested for the
+run — different from a judge that ran and graded nothing. In `--format human`,
+each judge that actually graded gets a one-line summary.
+
+### `eval judge`
+
+Grade a finished eval run with LLM as Judge. **Spends your organization's model
+budget.** Returns a pending receipt; read the grades from `eval status`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | Yes | Project name or ID |
+| `--force` | No | Re-grade a run that already has a judge result |
+| `--enable` | No | Grade this run even though the judge was off when it ran |
+| `--judge-model <id>` | No | Judge model for this run only |
+| `--judge-threshold <0-1>` | No | Pass threshold for this run only |
+
+A run's grading config is pinned when the run starts, so turning the judge on
+for the suite does not reach a run that was already recorded — `--enable` is
+what grades it, and it changes nothing beyond that run. Passing neither
+`--judge-model` nor `--judge-threshold` grades with the suite's own config,
+clearing any override a previous request left on the run.
+
 ### `eval iterations`
 
 List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency). Results are paginated.
