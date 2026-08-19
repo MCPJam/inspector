@@ -254,6 +254,35 @@ describe("platform tool registration", () => {
     }
   });
 
+  it("warns that a spend operation costs money, derived from its risk facet", () => {
+    // MCP has no "this costs money" annotation, so the honest place for it is
+    // the description every client renders. Derived from the operation's own
+    // `risk`, never a second name list here: that list would go stale the
+    // first time an operation is re-classified, silently and in the direction
+    // that drops the warning.
+    const { registrar, registrations } = fakeRegistrar();
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
+    const byName = new Map(
+      registrations.map((registration) => [registration.name, registration])
+    );
+    for (const operation of PLATFORM_CATALOG_OPERATIONS) {
+      const description = String(byName.get(operation.name)?.config.description);
+      expect(description.includes("COSTS MONEY")).toBe(
+        operation.risk === "spend"
+      );
+    }
+    // The two eval launches are the ones this exists for.
+    expect(String(byName.get("run_eval_suite")?.config.description)).toContain(
+      "COSTS MONEY"
+    );
+    expect(String(byName.get("list_eval_suites")?.config.description)).not.toContain(
+      "COSTS MONEY"
+    );
+  });
+
   it("registers show_servers with the MCP Apps UI resource", () => {
     const { registrar, registrations } = fakeRegistrar();
 

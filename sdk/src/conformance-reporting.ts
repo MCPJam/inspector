@@ -31,14 +31,49 @@ import type {
   MCPTasksConformanceResult,
   MCPTasksCheckResult,
 } from "./tasks-conformance/index.js";
+import {
+  isDispositiveClaudeFinding,
+  type ClaudeReadinessFinding,
+  type ClaudeReadinessResult,
+} from "./claude-readiness/types.js";
 
 export type ConformanceReportKind =
   | "protocol-conformance"
   | "oauth-conformance"
   | "apps-conformance"
-  | "tasks-conformance";
+  | "tasks-conformance"
+  // NOT a fifth conformance suite. Claude directory readiness grades a
+  // PUBLISHER'S POLICY, not the MCP specification, so it carries no
+  // `score` and is excluded from `pooledConformanceScore` by construction —
+  // the adapter below simply never sets the field. Consumers that switch on
+  // this union must treat it as an advisory-bearing report rather than a
+  // conformance verdict they can pool.
+  | "claude-directory-readiness";
 
 export type ConformanceReportCaseStatus = "passed" | "failed" | "skipped";
+
+/**
+ * A statement that is REPORTED but never graded.
+ *
+ * Heuristics, recommendations, capability badges and things a human has to
+ * look at all belong here. They exist because suppressing them would lose real
+ * signal, and they are kept out of `cases` because a CI job that fails on an
+ * LLM's opinion — or on a capability the server was never required to have —
+ * teaches its owners to ignore the job. JUnit renders these as `<properties>`,
+ * never as failed testcases.
+ */
+export interface ConformanceReportAdvisory {
+  id: string;
+  title: string;
+  /** Id of the {@link ConformanceReportGroup} this advisory was raised in. */
+  group: string;
+  /** What kind of statement it is, e.g. a finding class. */
+  kind: string;
+  /** The verdict, in the vocabulary of whatever produced it. */
+  status: string;
+  message?: string;
+  details?: unknown;
+}
 
 export interface ConformanceReportCase {
   id: string;
@@ -88,13 +123,22 @@ export interface ConformanceReport {
   score?: ConformanceScore;
   durationMs: number;
   groups: ConformanceReportGroup[];
+  /**
+   * Ungraded statements. Absent for the conformance suites, which have none;
+   * present for readiness, whose experience-insights lane is entirely
+   * advisory. Adding an OPTIONAL field keeps `schemaVersion` at 1 — an older
+   * consumer reading a readiness report ignores it and still gets a valid
+   * report, which is the property a version bump would otherwise be asserting.
+   */
+  advisories?: ConformanceReportAdvisory[];
 }
 
 type SupportedSingleConformanceResult =
   | MCPConformanceResult
   | OAuthConformanceResult
   | MCPAppsConformanceResult
-  | MCPTasksConformanceResult;
+  | MCPTasksConformanceResult
+  | ClaudeReadinessResult;
 
 type SupportedSuiteConformanceResult =
   | MCPConformanceSuiteResult
@@ -513,6 +557,156 @@ function createOAuthReport(
   };
 }
 
+/**
+ * Readiness is structurally unlike the suites: `lanes` and `findings` instead
+ * of `checks`, and a `status` that is a three-value readiness verdict rather
+ * than a pass/fail. Discriminating on `lanes` is enough — no suite has one.
+ */
+function isClaudeReadinessResult(
+  result: SupportedConformanceResult,
+): result is ClaudeReadinessResult {
+  return "lanes" in result && "findings" in result && "badges" in result;
+}
+
+/**
+ * Only findings that can DECIDE a lane become testcases; everything else is an
+ * advisory. A CI job that fails on a heuristic teaches its owners to ignore the
+ * job, and a capability badge is not a defect at all.
+ *
+ * The predicate itself is imported rather than restated, so the renderer and
+ * `decideLaneStatus` cannot drift into disagreeing about the same finding.
+ */
+const isDispositiveFinding = isDispositiveClaudeFinding;
+
+function readinessCaseStatus(
+  finding: ClaudeReadinessFinding,
+): ConformanceReportCaseStatus {
+  if (finding.status === "violated") return "failed";
+  if (finding.status === "satisfied") return "passed";
+  return "skipped";
+}
+
+function createClaudeReadinessReport(
+  result: ClaudeReadinessResult,
+): ConformanceReport {
+  const advisories: ConformanceReportAdvisory[] = [];
+  // `lanes` and `findings` are independent arrays on the result, so nothing in
+  // the type says every finding's lane appears in `lanes`. When it does not,
+  // an unconsumed finding — a VIOLATED requirement included — would vanish
+  // from the report with no counter and no error. Tracking what was consumed
+  // and sweeping the remainder into advisories keeps the report total.
+  const consumed = new Set<ClaudeReadinessFinding>();
+  const groups: ConformanceReportGroup[] = result.lanes.map((lane) => {
+    const laneFindings = result.findings.filter(
+      (finding) => finding.lane === lane.lane,
+    );
+    for (const finding of laneFindings) {
+      consumed.add(finding);
+      if (isDispositiveFinding(finding)) continue;
+      advisories.push({
+        id: finding.id,
+        title: finding.title,
+        group: lane.lane,
+        kind: finding.class,
+        status: finding.status,
+        message: finding.remediation ?? finding.notEvaluatedReason,
+        details: buildDetailPayload({
+          provenance: finding.provenance,
+          source: finding.source,
+          derivedFrom: finding.derivedFrom,
+          observed: finding.details,
+        }),
+      });
+    }
+    return {
+      id: lane.lane,
+      title: lane.lane,
+      target: result.context.target,
+      // A lane that could not be evaluated is not a passing lane; only
+      // `ready` is. This is the same rule `decideConformanceOutcome` applies
+      // to a suite that skipped half its checks.
+      passed: lane.status === "ready",
+      durationMs: 0,
+      summary: lane.summary,
+      cases: laneFindings.filter(isDispositiveFinding).map((finding) => ({
+        id: finding.id,
+        title: finding.title,
+        category: finding.class,
+        status: readinessCaseStatus(finding),
+        // A finding that was never evaluated left an obligation untested; a
+        // finding that could not apply left nothing unverified. The suites
+        // draw exactly this line and CI reads it.
+        skipReason:
+          finding.status === "not-evaluated"
+            ? ("could-not-run" as const)
+            : finding.status === "not-applicable"
+              ? ("not-applicable" as const)
+              : undefined,
+        durationMs: 0,
+        description: finding.remediation,
+        error:
+          finding.status === "violated"
+            ? (finding.remediation ?? "Requirement not satisfied")
+            : finding.status === "not-evaluated"
+              ? finding.notEvaluatedReason
+              : undefined,
+        details: buildDetailPayload({
+          provenance: finding.provenance,
+          intrusiveness: finding.intrusiveness,
+          source: finding.source,
+          requiresCapabilities: finding.requiresCapabilities,
+          derivedFrom: finding.derivedFrom,
+          observed: finding.details,
+        }),
+      })),
+    };
+  });
+
+  for (const finding of result.findings) {
+    if (consumed.has(finding)) continue;
+    // Orphaned: its lane was not reported. Rendered as an advisory rather than
+    // dropped, and tagged with the lane it CLAIMED, so the gap is visible in
+    // the output instead of being invisible in it.
+    advisories.push({
+      id: finding.id,
+      title: finding.title,
+      group: finding.lane,
+      kind: finding.class,
+      status: finding.status,
+      message:
+        finding.remediation ??
+        finding.notEvaluatedReason ??
+        `reported outside any lane in this result`,
+      details: buildDetailPayload({
+        provenance: finding.provenance,
+        source: finding.source,
+        orphanedLane: finding.lane,
+      }),
+    });
+  }
+
+  return {
+    schemaVersion: 1,
+    kind: "claude-directory-readiness",
+    name: "Claude Directory Readiness",
+    passed: result.status === "ready",
+    outcome:
+      result.status === "ready"
+        ? "passed"
+        : result.status === "not-ready"
+          ? "failed"
+          : "incomplete",
+    incompleteReason:
+      result.status === "incomplete" ? result.summary : undefined,
+    // DELIBERATELY NO `score`. Readiness grades Anthropic's policy, not the
+    // MCP spec, and pooling it with the four conformance suites would put a
+    // publisher's listing requirements into a protocol-conformance number.
+    durationMs: result.durationMs,
+    groups,
+    advisories,
+  };
+}
+
 export function toConformanceReport(
   result: MCPConformanceResult,
 ): ConformanceReport;
@@ -535,11 +729,20 @@ export function toConformanceReport(
   result: MCPTasksConformanceResult,
 ): ConformanceReport;
 export function toConformanceReport(
+  result: ClaudeReadinessResult,
+): ConformanceReport;
+export function toConformanceReport(
   result: SupportedConformanceResult,
 ): ConformanceReport;
 export function toConformanceReport(
   result: SupportedConformanceResult,
 ): ConformanceReport {
+  // First: readiness is not a suite, and every discriminator below is written
+  // for suite shapes.
+  if (isClaudeReadinessResult(result)) {
+    return createClaudeReadinessReport(result);
+  }
+
   if (isMcpSingleResult(result) || isMcpSuiteResult(result)) {
     return createProtocolReport(result);
   }
@@ -600,9 +803,34 @@ function renderConformanceTestCase(
   return `    <testcase name="${name}" classname="${escapedClassname}" time="${time}"/>`;
 }
 
+/**
+ * Advisories as `<properties>`, which is the only JUnit element that can carry
+ * "here is something you should know" without asserting a verdict.
+ *
+ * The alternative — a `<testcase>` with `<failure>` — would make every CI job
+ * that runs readiness go red on a heuristic, and the alternative after that is
+ * that everyone adds `|| true`. Property names are namespaced by advisory id
+ * so two lanes cannot collide.
+ */
+function renderAdvisoryProperties(
+  advisories: ConformanceReportAdvisory[],
+): string {
+  return advisories
+    .map((advisory) => {
+      const value = advisory.message
+        ? `${advisory.kind}/${advisory.status}: ${advisory.title} — ${advisory.message}`
+        : `${advisory.kind}/${advisory.status}: ${advisory.title}`;
+      return `      <property name="mcpjam.advisory.${escapeXml(
+        sanitizeToken(advisory.id),
+      )}" value="${escapeXml(value)}"/>`;
+    })
+    .join("\n");
+}
+
 function renderConformanceTestSuite(
   group: ConformanceReportGroup,
   score: ConformanceScore | undefined,
+  advisories: ConformanceReportAdvisory[] = [],
 ): string {
   const name = escapeXml(group.title);
   const tests = group.cases.length;
@@ -615,13 +843,22 @@ function renderConformanceTestSuite(
   // <testsuites> root — a root-level block is schema-invalid to Jenkins and
   // friends. The score is REPORT-level (pooled for suites), so every
   // testsuite carries the same values; the property names say so.
-  const properties = score
-    ? `    <properties>\n      <property name="mcpjam.conformance.score" value="${
+  const scoreProperties = score
+    ? `      <property name="mcpjam.conformance.score" value="${
         score.score === null ? "not-scored" : String(score.score)
       }"/>\n      <property name="mcpjam.conformance.summary" value="${escapeXml(
         describeConformanceScore(score),
-      )}"/>\n    </properties>\n`
+      )}"/>`
     : "";
+  const groupAdvisories = advisories.filter(
+    (advisory) => advisory.group === group.id,
+  );
+  const advisoryProperties = renderAdvisoryProperties(groupAdvisories);
+  const propertyLines = [scoreProperties, advisoryProperties].filter(Boolean);
+  const properties =
+    propertyLines.length > 0
+      ? `    <properties>\n${propertyLines.join("\n")}\n    </properties>\n`
+      : "";
 
   const cases = group.cases
     .map((entry) => renderConformanceTestCase(entry, classname))
@@ -651,9 +888,26 @@ export function renderConformanceReportJUnitXml(
   const time = (redactedReport.durationMs / 1000).toFixed(3);
   const name = escapeXml(redactedReport.name);
 
+  const advisories = redactedReport.advisories ?? [];
   const suites = redactedReport.groups
-    .map((group) => renderConformanceTestSuite(group, redactedReport.score))
+    .map((group) =>
+      renderConformanceTestSuite(group, redactedReport.score, advisories),
+    )
     .join("\n");
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${suites}\n</testsuites>\n`;
+  // An advisory whose `group` names no rendered testsuite would otherwise be
+  // filtered away in silence — present in the JSON report, absent from the
+  // JUnit output, with nothing saying so. It gets its own suite instead.
+  const renderedGroups = new Set(redactedReport.groups.map((group) => group.id));
+  const orphanedAdvisories = advisories.filter(
+    (advisory) => !renderedGroups.has(advisory.group),
+  );
+  const orphanSuite =
+    orphanedAdvisories.length > 0
+      ? `\n  <testsuite name="mcpjam.advisories" tests="0" failures="0" skipped="0" time="0.000">\n    <properties>\n${renderAdvisoryProperties(
+          orphanedAdvisories,
+        )}\n    </properties>\n  </testsuite>`
+      : "";
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${suites}${orphanSuite}\n</testsuites>\n`;
 }

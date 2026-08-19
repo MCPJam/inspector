@@ -22,6 +22,14 @@ export {
   type PlatformApiClientOptions,
 } from "./client.js";
 
+export {
+  computeRunTargets,
+  type ComputeRunTargetsInput,
+  type RunTarget,
+  type RunTargetHost,
+  type RunTargetPlan,
+} from "./suite-run-plans.js";
+
 export type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
@@ -64,6 +72,11 @@ export type {
   PlatformScoreContractScorer,
   PlatformScoreContractSide,
   PlatformEvalRunInsightsRequested,
+  PlatformAdhocEnvironment,
+  PlatformAdhocEnvironmentBody,
+  PlatformAdhocEnvironmentEnsured,
+  PlatformEnvironmentNameBody,
+  PlatformEvalSuiteEnvironmentAttached,
   PlatformEvalRunJudgeRequested,
   PlatformEvalCheckRepo,
   PlatformEvalCheckRepos,
@@ -76,6 +89,9 @@ export type {
   PlatformEvalRunGoalCompletionCase,
   PlatformEvalRunGroundednessCase,
   PlatformEvalRunCreated,
+  PlatformEvalRunGroupCreated,
+  PlatformEvalRunGroupEntry,
+  PlatformEvalRunGroupTarget,
   PlatformEvalRunEnvironment,
   PlatformEvalRunSummary,
   PlatformEvalSuite,
@@ -297,6 +313,8 @@ export {
   getEnvironmentOperation,
   resolveEnvironmentOperation,
   createEnvironmentOperation,
+  ensureAdhocEnvironmentOperation,
+  nameEnvironmentOperation,
   updateEnvironmentOperation,
   archiveEnvironmentOperation,
   restoreEnvironmentOperation,
@@ -475,6 +493,9 @@ export {
   type EnvironmentSelectorInput,
   type EnvironmentRevisionInput,
   type CreateEnvironmentInput,
+  type EnsureAdhocEnvironmentInput,
+  type EnsureAdhocEnvironmentResult,
+  type NameEnvironmentInput,
   type UpdateEnvironmentInput,
   type CreateImageInput,
   type ImageSelectorInput,

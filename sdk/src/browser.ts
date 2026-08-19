@@ -26,6 +26,89 @@ export {
   type McpModelVisibleToolResultPolicy,
   type McpLinkedResourceReader,
 } from "./mcp-client-manager/model-output.js";
+/**
+ * Claude directory readiness — the RENDERING surface only.
+ *
+ * Named rather than `export *`, and narrower than the readiness barrel, for
+ * two reasons. A wildcard would make any symbol added to
+ * `claude-readiness/index.ts` public browser API with no change to this file
+ * and no reviewer looking at it. And a client renders lanes, coverage and
+ * badges; it does not RUN checks, so the check runners and their evidence
+ * types have no business in a browser bundle even though they are pure enough
+ * to survive one.
+ */
+export {
+  CLAUDE_EVIDENCE_PROVENANCE,
+  CLAUDE_FINDING_CLASSES,
+  CLAUDE_INTRUSIVENESS_LEVELS,
+  CLAUDE_READINESS_ENGINE_VERSION,
+  CLAUDE_READINESS_LANES,
+  CLAUDE_REQUIRED_LANES,
+  CLAUDE_RUNNER_CAPABILITIES,
+  decideLaneStatus,
+  isDispositiveClaudeFinding,
+  rollUpLaneStatus,
+  summarizeLaneCoverage,
+} from "./claude-readiness/types.js";
+export type {
+  ClaudeCapabilityBadge,
+  ClaudeEvidenceProvenance,
+  ClaudeFindingClass,
+  ClaudeFindingStatus,
+  ClaudeIntrusiveness,
+  ClaudeLaneCoverage,
+  ClaudeLaneStatus,
+  ClaudeReadinessAuthMode,
+  ClaudeReadinessFinding,
+  ClaudeReadinessLane,
+  ClaudeReadinessLaneResult,
+  ClaudeReadinessResult,
+  ClaudeReadinessRunContext,
+  ClaudeRunnerCapability,
+} from "./claude-readiness/types.js";
+
+// The policy corpus, so a surface can say WHICH revision a grade was made
+// against — and whether the corpus was ever snapshotted at all.
+export {
+  CLAUDE_DOCS_BASE_URL,
+  CLAUDE_POLICY_MANIFEST,
+  CLAUDE_POLICY_PAGES,
+  CLAUDE_POLICY_SNAPSHOT_DATE,
+  claudePolicySource,
+  isPolicyCorpusVerified,
+} from "./claude-readiness/manifest.js";
+export type {
+  ClaudePolicyPage,
+  ClaudePolicySourceEntry,
+  ClaudePolicySourceRef,
+} from "./claude-readiness/manifest.js";
+
+// Claude's own constants, and the submission form's shape — a client
+// validating that form before it is submitted needs both.
+export {
+  CLAUDE_APP_CONTENT_DOMAIN_SUFFIX,
+  CLAUDE_APP_DESIGN_BUDGETS,
+  CLAUDE_APP_HTML_MIME,
+  CLAUDE_CALLBACK_URLS,
+  CLAUDE_HOST_PROFILE,
+  CLAUDE_LATENCY_BUDGETS,
+  CLAUDE_SUBMISSION_LIMITS,
+} from "./claude-readiness/profile.js";
+export {
+  CLAUDE_ATTESTATIONS,
+  CLAUDE_DATA_HANDLING_MODES,
+  CLAUDE_DECLARED_AUTH_MODES,
+  claudeSubmissionProfileSchema,
+  parseClaudeSubmissionProfile,
+} from "./claude-readiness/submission-profile.js";
+export type {
+  ClaudeAttestation,
+  ClaudeDataHandlingMode,
+  ClaudeDeclaredAuthMode,
+  ClaudeSubmissionProfile,
+  ClaudeSubmissionProfileParse,
+} from "./claude-readiness/submission-profile.js";
+
 export { redactForTelemetry } from "./telemetry-redaction.js";
 /**
  * @deprecated Renamed to `redactForTelemetry`. Kept as an alias so external
