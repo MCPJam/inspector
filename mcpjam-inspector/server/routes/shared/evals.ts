@@ -36,6 +36,12 @@ import {
   type TestCaseType,
 } from "@/shared/probe-config";
 import { deriveItemIdempotencyKey } from "../../utils/idempotency.js";
+import {
+  createEvalCasesInBatches,
+  partialResultOf,
+  withMintedCaseIds,
+  type EvalCaseBatchItem,
+} from "./eval-case-batch.js";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
@@ -1051,6 +1057,192 @@ function resolveAuthoringSteps(test: {
 }
 
 /**
+ * Project one entry of the upsert map onto a `createTestCases` batch item.
+ *
+ * `judgeRequirement` is deliberately absent. The map type declares it but
+ * nothing ever assigns it, so every create so far has sent `undefined` — which
+ * Convex drops — and the backend's case validators have no such field. The
+ * batch item validator is CLOSED, so forwarding the dead key would turn every
+ * case into a rejected item rather than a silent no-op.
+ */
+function toCaseBatchItem(
+  testCaseData: {
+    title: string;
+    query: string;
+    runs: number;
+    models: Array<{ model: string; provider: string }>;
+    expectedToolCalls: any[];
+    isNegativeTest?: boolean;
+    scenario?: string;
+    expectedOutput?: string;
+    steps?: TestStep[];
+    advancedConfig?: any;
+    matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
+    predicates?: import("@/shared/eval-matching").CasePredicates;
+  },
+  opts: { idempotencyKey?: string }
+): EvalCaseBatchItem {
+  return {
+    title: testCaseData.title,
+    query: testCaseData.query,
+    models: testCaseData.models,
+    runs: testCaseData.runs,
+    expectedToolCalls: sanitizeForConvexTransport(
+      testCaseData.expectedToolCalls
+    ),
+    isNegativeTest: testCaseData.isNegativeTest,
+    scenario: testCaseData.scenario,
+    expectedOutput: testCaseData.expectedOutput,
+    steps: sanitizeForConvexTransport(testCaseData.steps),
+    advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
+    matchOptions: testCaseData.matchOptions,
+    predicates: testCaseData.predicates,
+    ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+  };
+}
+
+/**
+ * One case's upsert outcome, held in its ORIGINAL position.
+ *
+ * Creates are now deferred to a batch that runs after the whole map has been
+ * walked, so appending outcomes as they happen would reorder the response —
+ * every updated case ahead of every created one. Callers render these lists to
+ * a human next to the tests they submitted, so the slot is kept and filled.
+ */
+type CaseUpsertOutcome =
+  | { kind: "committed"; id?: string; name: string }
+  | { kind: "failed"; id?: string; name: string; error: string };
+
+/**
+ * Author the deferred creates through `createTestCases` and fill their slots.
+ *
+ * A whole-call throw is turned back into one failure per pending case. The
+ * batch mutation rejects an entire call for a caller-level mistake — an
+ * unauthorized actor, a suite that vanished — and before batching, that same
+ * condition threw once per `createTestCase` and filed every case as failed.
+ * Preserving that is what keeps this function's partial-failure contract (and
+ * the empty-new-suite rollback below, which reads "nothing committed") true.
+ */
+async function commitPendingCaseCreates(args: {
+  convexClient: ReturnType<typeof createConvexClients>["convexClient"];
+  suiteId: string;
+  pending: Array<{ slot: number; title: string; item: EvalCaseBatchItem }>;
+  outcomes: Array<CaseUpsertOutcome | undefined>;
+}): Promise<void> {
+  const { convexClient, suiteId, pending, outcomes } = args;
+  if (pending.length === 0) return;
+
+  // Mint here rather than at the map walk: an id is only meaningful for a row
+  // that is actually being created, and an update keeps whatever identity the
+  // stored case already has.
+  const cases = withMintedCaseIds(pending.map((p) => p.item));
+
+  let result: Awaited<ReturnType<typeof createEvalCasesInBatches>>;
+  let rejection: string | undefined;
+  try {
+    result = await createEvalCasesInBatches(convexClient, { suiteId, cases });
+  } catch (error) {
+    // A rejection carries whatever earlier chunks committed. Those rows exist;
+    // reporting them as failures would send the caller into a retry that
+    // authors them twice.
+    result = partialResultOf(error);
+    rejection = error instanceof Error ? error.message : String(error);
+    logger.warn("[evals] Batch case create rejected the whole call", {
+      suiteId,
+      cases: pending.length,
+      committedBeforeRejection: result.committed.length,
+      error: rejection,
+    });
+  }
+
+  for (const entry of result.committed) {
+    const slotted = pending[entry.index];
+    if (!slotted) {
+      logger.warn("[evals] Batch result named a case index we never sent", {
+        suiteId,
+        index: entry.index,
+        sent: pending.length,
+      });
+      continue;
+    }
+    outcomes[slotted.slot] = {
+      kind: "committed",
+      id: String(entry.testCaseId),
+      name: slotted.title,
+    };
+  }
+  for (const entry of result.failed) {
+    const slotted = pending[entry.index];
+    if (!slotted) {
+      logger.warn("[evals] Batch result named a case index we never sent", {
+        suiteId,
+        index: entry.index,
+        sent: pending.length,
+      });
+      continue;
+    }
+    outcomes[slotted.slot] = {
+      kind: "failed",
+      name: slotted.title,
+      // The code is the stable half; the message is what a human reads.
+      error: `${entry.code}: ${entry.message}`,
+    };
+    logger.warn("[evals] Failed to create test case", {
+      suiteId,
+      title: slotted.title,
+      code: entry.code,
+      error: entry.message,
+    });
+  }
+
+  // Warnings are the audit half of the batch contract — a policy coercion, a
+  // replay that kept a different id. This surface renders `{id?, name}` and has
+  // nowhere to put them, so they are logged rather than dropped.
+  // Everything the rejected call never reached. Filled last so a case the
+  // partial result already accounted for keeps its real outcome.
+  if (rejection !== undefined) {
+    for (const { slot, title } of pending) {
+      if (outcomes[slot] === undefined) {
+        outcomes[slot] = { kind: "failed", name: title, error: rejection };
+      }
+    }
+  }
+
+  const entryWarnings = result.committed.flatMap((entry) =>
+    (entry.warnings ?? []).map((w) => ({ title: entry.title, ...w }))
+  );
+  if (result.warnings.length > 0 || entryWarnings.length > 0) {
+    logger.info("[evals] Batch case create returned warnings", {
+      suiteId,
+      warnings: [...result.warnings, ...entryWarnings],
+    });
+  }
+}
+
+/** Drain positional outcomes into the response's two flat lists, in order. */
+function flushCaseOutcomes(
+  outcomes: Array<CaseUpsertOutcome | undefined>,
+  committedCases: Array<{ id?: string; name: string }>,
+  failedCases: Array<{ id?: string; name: string; error: string }>
+): void {
+  for (const outcome of outcomes) {
+    if (!outcome) continue;
+    if (outcome.kind === "committed") {
+      committedCases.push({
+        ...(outcome.id ? { id: outcome.id } : {}),
+        name: outcome.name,
+      });
+    } else {
+      failedCases.push({
+        ...(outcome.id ? { id: outcome.id } : {}),
+        name: outcome.name,
+        error: outcome.error,
+      });
+    }
+  }
+}
+
+/**
  * Author phase of a suite run: persist the suite + its test cases (create or
  * upsert), WITHOUT creating a run record or executing anything. Extracted from
  * `prepareEvalRun` so the author-only public surface
@@ -1195,7 +1387,19 @@ export async function authorEvalSuite(args: {
         { suiteId: resolvedSuiteId }
       );
 
+      // Updates still go one at a time — `updateTestCase` is a different
+      // mutation with no batch form, and a rerun-time edit is not the bulk
+      // authoring path W0.3 exists for. Only the CREATES are deferred.
+      const outcomes: Array<CaseUpsertOutcome | undefined> = [];
+      const pendingCreates: Array<{
+        slot: number;
+        title: string;
+        item: EvalCaseBatchItem;
+      }> = [];
+
       for (const [caseDedupeKey, testCaseData] of testCaseMap.entries()) {
+        const slot = outcomes.length;
+        outcomes.push(undefined);
         const testCaseStepsKey = JSON.stringify(
           normalizeForComparison(testCaseData.steps || [])
         );
@@ -1302,47 +1506,31 @@ export async function authorEvalSuite(args: {
                 predicates: testCaseData.predicates,
               });
             }
-            committedCases.push({
+            outcomes[slot] = {
+              kind: "committed",
               id: String(existingTestCase._id),
               name: testCaseData.title,
-            });
+            };
           } else {
-            await convexClient.mutation("testSuites:createTestCase" as any, {
-              suiteId: resolvedSuiteId,
+            pendingCreates.push({
+              slot,
               title: testCaseData.title,
-              query: testCaseData.query,
-              models: testCaseData.models,
-              runs: testCaseData.runs,
-              expectedToolCalls: sanitizeForConvexTransport(
-                testCaseData.expectedToolCalls
-              ),
-              isNegativeTest: testCaseData.isNegativeTest,
-              scenario: testCaseData.scenario,
-              expectedOutput: testCaseData.expectedOutput,
-              steps: sanitizeForConvexTransport(testCaseData.steps),
-              judgeRequirement: testCaseData.judgeRequirement,
-              advancedConfig: sanitizeForConvexTransport(
-                testCaseData.advancedConfig
-              ),
-              matchOptions: testCaseData.matchOptions,
-              predicates: testCaseData.predicates,
-              ...(idempotencyKey
-                ? {
-                    idempotencyKey: deriveItemIdempotencyKey(
-                      idempotencyKey,
-                      caseDedupeKey
-                    ),
-                  }
-                : {}),
+              item: toCaseBatchItem(testCaseData, {
+                // Discriminated by the case's dedupe key, not its index: a
+                // retry whose case ORDER differs must still match.
+                idempotencyKey: idempotencyKey
+                  ? deriveItemIdempotencyKey(idempotencyKey, caseDedupeKey)
+                  : undefined,
+              }),
             });
-            committedCases.push({ name: testCaseData.title });
           }
         } catch (error) {
-          failedCases.push({
+          outcomes[slot] = {
+            kind: "failed",
             id: existingTestCase ? String(existingTestCase._id) : undefined,
             name: testCaseData.title,
             error: error instanceof Error ? error.message : String(error),
-          });
+          };
           logger.warn("[evals] Failed to upsert test case", {
             suiteId: resolvedSuiteId,
             title: testCaseData.title,
@@ -1350,6 +1538,14 @@ export async function authorEvalSuite(args: {
           });
         }
       }
+
+      await commitPendingCaseCreates({
+        convexClient,
+        suiteId: resolvedSuiteId,
+        pending: pendingCreates,
+        outcomes,
+      });
+      flushCaseOutcomes(outcomes, committedCases, failedCases);
     }
   } else {
     const createdSuite = await convexClient.mutation(
@@ -1370,49 +1566,31 @@ export async function authorEvalSuite(args: {
 
     resolvedSuiteId = createdSuite._id as string;
 
+    const outcomes: Array<CaseUpsertOutcome | undefined> = [];
+    const pendingCreates: Array<{
+      slot: number;
+      title: string;
+      item: EvalCaseBatchItem;
+    }> = [];
     for (const [caseDedupeKey, testCaseData] of testCaseMap.entries()) {
-      try {
-        await convexClient.mutation("testSuites:createTestCase" as any, {
-          suiteId: resolvedSuiteId,
-          title: testCaseData.title,
-          query: testCaseData.query,
-          models: testCaseData.models,
-          runs: testCaseData.runs,
-          expectedToolCalls: sanitizeForConvexTransport(
-            testCaseData.expectedToolCalls
-          ),
-          isNegativeTest: testCaseData.isNegativeTest,
-          scenario: testCaseData.scenario,
-          expectedOutput: testCaseData.expectedOutput,
-          steps: sanitizeForConvexTransport(testCaseData.steps),
-          judgeRequirement: testCaseData.judgeRequirement,
-          advancedConfig: sanitizeForConvexTransport(
-            testCaseData.advancedConfig
-          ),
-          matchOptions: testCaseData.matchOptions,
-          predicates: testCaseData.predicates,
-          ...(idempotencyKey
-            ? {
-                idempotencyKey: deriveItemIdempotencyKey(
-                  idempotencyKey,
-                  caseDedupeKey
-                ),
-              }
-            : {}),
-        });
-        committedCases.push({ name: testCaseData.title });
-      } catch (error) {
-        failedCases.push({
-          name: testCaseData.title,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        logger.warn("[evals] Failed to create test case", {
-          suiteId: resolvedSuiteId,
-          title: testCaseData.title,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      pendingCreates.push({
+        slot: outcomes.length,
+        title: testCaseData.title,
+        item: toCaseBatchItem(testCaseData, {
+          idempotencyKey: idempotencyKey
+            ? deriveItemIdempotencyKey(idempotencyKey, caseDedupeKey)
+            : undefined,
+        }),
+      });
+      outcomes.push(undefined);
     }
+    await commitPendingCaseCreates({
+      convexClient,
+      suiteId: resolvedSuiteId,
+      pending: pendingCreates,
+      outcomes,
+    });
+    flushCaseOutcomes(outcomes, committedCases, failedCases);
 
     // New-suite path only: if every case create failed, the freshly-made
     // suite has zero cases. Leaving it would orphan an empty suite and (on the
