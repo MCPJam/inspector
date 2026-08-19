@@ -665,10 +665,29 @@ export function ProtocolTab({
   // pin the backend would reject. MCPJam deliberately has no capability list;
   // ignore singleton lists persisted by the old canonicalizer so existing
   // rows remain able to switch revisions. See `visibleHostProtocolOptions`.
+  // The `initialize` accept-list only ever carries legacy revisions, so it
+  // cannot be the whole answer: a client that speaks a modern era advertises
+  // it on its catalog row and negotiates it outside the handshake. Offer the
+  // union so a 2026-capable client can actually be pinned to 2026.
+  const catalogProtocolVersions = buildHostCompatProfiles().find(
+    (item) => item.id === draft.hostStyle
+  )?.supportedProtocolVersions;
+  const initializeProtocolVersions =
+    draft.mcpProfile?.initialize?.supportedProtocolVersions;
+  // A row with no accept-list is a legacy one and stays fully editable, so
+  // the catalog only ever widens an existing list — never creates one.
   const advertisedProtocolVersions =
     draft.hostStyle === "mcpjam"
       ? undefined
-      : draft.mcpProfile?.initialize?.supportedProtocolVersions;
+      : initializeProtocolVersions === undefined ||
+          initializeProtocolVersions.length === 0
+        ? initializeProtocolVersions
+        : Array.from(
+            new Set([
+              ...initializeProtocolVersions,
+              ...(catalogProtocolVersions ?? []),
+            ])
+          );
   const protocolOptions = visibleHostProtocolOptions(
     advertisedProtocolVersions,
     selectedDropdownValue

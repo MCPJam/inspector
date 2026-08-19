@@ -220,7 +220,10 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     mcpProtocolVersion?: string
   ): HostConfigInputV2 {
     return emptyHostConfigInputV2({
-      hostStyle: "claude",
+      // Cursor's catalog row lists only 2025-11-25, so the advertised list is
+      // the only thing constraining the dropdown here. A client whose catalog
+      // row spans both eras (Claude) would widen it on purpose.
+      hostStyle: "cursor",
       mcpProfile: {
         profileVersion: 1,
         initialize: { supportedProtocolVersions },
