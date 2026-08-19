@@ -1098,7 +1098,9 @@ that refuse today include:
   not recognise;
 - a suite with no execution model, no minimum accuracy, no name, no selected
   servers, or no cases; a case with no steps; and a suite or case id that is not
-  an opaque id.
+  an opaque id;
+- a suite that serializes past the 1 MiB suite-file limit — the size is a
+  property of the suite, and this never truncates.
 
 Case identity is never freshly minted: a case exports under its declared id, or
 under its platform row id, or it refuses. Exporting the same suite twice

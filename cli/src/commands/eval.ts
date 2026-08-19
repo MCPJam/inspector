@@ -62,6 +62,7 @@ import {
   formatSuiteFileFindings,
   HostedOnlyCaseError,
   loadEvalSuiteFile,
+  MAX_SUITE_FILE_BYTES,
   serializeEvalSuiteFile,
   verifyCorpusLock,
   type FlakyCase,
@@ -80,6 +81,7 @@ import { writeFileAtomic } from "../lib/atomic-write.js";
 import {
   buildSuiteFileFromPlatform,
   defaultSuiteFilePath,
+  suiteFileTooLarge,
   type SuiteExportFinding,
 } from "../lib/eval-suite-export.js";
 import {
@@ -1416,11 +1418,25 @@ async function runEvalExport(
 
   const text = serializeEvalSuiteFile(built.file);
 
+  // Over the cap is a REFUSAL, not a bug. Nothing in the contract bounds a
+  // suite's total size — 500 cases and an unbounded `expectedOutput` are all
+  // legal — so a suite that serializes past the limit is a representability
+  // answer like any other, and reporting it through the round-trip assertion
+  // below would tell the author to file a CLI bug about their own suite.
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > MAX_SUITE_FILE_BYTES) {
+    writeExportRefusal(
+      [suiteFileTooLarge(bytes, MAX_SUITE_FILE_BYTES)],
+      globalOptions.format
+    );
+    return;
+  }
+
   // The round trip is asserted HERE, not only in tests. A serializer that
   // loses a field is a file that runs a different suite than the dashboard
   // does, and the bytes about to be written are the only thing that can prove
   // it did not happen for THIS suite.
-  const reloaded = loadEvalSuiteFile(text);
+  const reloaded = loadEvalSuiteFile(text, { byteLength: bytes });
   if (!reloaded.ok || !isDeepStrictEqual(reloaded.authored, built.file)) {
     throw operationalError(
       `The suite file written for "${built.file.suite.id}" does not read back ` +
@@ -1442,7 +1458,7 @@ async function runEvalExport(
       path: written,
       suite: { id: built.file.suite.id, name: built.file.suite.name },
       cases: built.file.cases.length,
-      bytes: Buffer.byteLength(text, "utf8"),
+      bytes,
     },
     globalOptions.format
   );

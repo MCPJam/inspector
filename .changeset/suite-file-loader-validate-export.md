@@ -40,9 +40,10 @@ unchanged suite round-trips with an empty diff.
 Failures are findings, never exceptions — a validator that throws cannot report
 more than the first thing it found. Each finding carries a stable machine code,
 a field path (as segments and as a rendered `cases[3].steps[0].id`), a message,
-and a source location when the YAML parser had one. They are sorted into
-document order rather than emitted in the validator's traversal order, so two
-runs over the same bytes produce byte-identical output.
+and — on a YAML syntax finding, which is the only kind the parser can place in
+the text — a source line and column. They are sorted into document order rather
+than emitted in the validator's traversal order, so two runs over the same bytes
+produce byte-identical output.
 
 Exported from `@mcpjam/sdk`, deliberately NOT from `@mcpjam/sdk/contract`: that
 subpath is dependency-light and browser-bundled on purpose, and routing the
@@ -75,12 +76,12 @@ a hosted suite can — host attachments, attached project environments, a pinned
 sandbox image, an execution system prompt or temperature, LLM-as-judge grading,
 non-default match options, an iterations floor that raises a case, a
 compare-across-models case, a scenario-bound case, `replace`/`extend` check
-overrides. Each of those emits an `UNSUPPORTED_SUITE_EXPORT` finding and **no
-file is written at all** — not a partial one, not one with a warning comment. A
-file that quietly dropped a host attachment still parses, still runs, and
-measures something other than what the dashboard measures while carrying the
-dashboard's suite id, so its results join the same history. There is no comment
-that fixes that.
+overrides, and a suite that serializes past the 1 MiB file limit. Each of those
+emits an `UNSUPPORTED_SUITE_EXPORT` finding and **no file is written at all** —
+not a partial one, not one with a warning comment. A file that quietly dropped a
+host attachment still parses, still runs, and measures something other than what
+the dashboard measures while carrying the dashboard's suite id, so its results
+join the same history. There is no comment that fixes that.
 
 Two of the shapes a suite file reuses are open on purpose (a tool call's
 `arguments`, and predicates), and an open zod object strips unknown keys rather

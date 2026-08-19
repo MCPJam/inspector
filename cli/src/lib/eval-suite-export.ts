@@ -78,6 +78,27 @@ function unsupported(
   };
 }
 
+/**
+ * The suite serialized, but the bytes are over the loader's cap.
+ *
+ * A refusal, not an internal error: the size is a property of the SUITE — 500
+ * cases with long prompts pass every construct check and still do not fit —
+ * so it belongs in the same envelope as every other "this suite does not fit
+ * the format" answer, rather than surfacing as the round-trip assertion's "this
+ * is a bug in the CLI, please report it".
+ */
+export function suiteFileTooLarge(
+  bytes: number,
+  limit: number
+): SuiteExportFinding {
+  return unsupported(
+    [],
+    `the suite serializes to ${bytes} bytes, over the ${limit}-byte limit a ` +
+      `suite file may be. Nothing was written. Split the suite into smaller ` +
+      `ones and export each — this never truncates.`
+  );
+}
+
 // ── percent → fraction ───────────────────────────────────────────────────────
 
 /**

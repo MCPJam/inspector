@@ -23,7 +23,14 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import test, { describe } from "node:test";
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -89,7 +96,15 @@ async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
 }
 
 async function withTempDir<T>(run: (dir: string) => Promise<T>): Promise<T> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-suite-file-"));
+  // `realpath`, because the commands under test resolve their output paths
+  // against `process.cwd()`. On macOS `os.tmpdir()` is `/var/folders/...`, a
+  // symlink to `/private/var/folders/...`, and `process.cwd()` reports the
+  // resolved form — so a path built from the UNRESOLVED `dir` and one the
+  // command resolved compare unequal here and equal on Linux. That is a test
+  // that only holds in CI, which is the one place a test cannot be debugged.
+  const dir = await realpath(
+    await mkdtemp(path.join(os.tmpdir(), "mcpjam-suite-file-"))
+  );
   const previous = process.cwd();
   try {
     process.chdir(dir);
@@ -1031,6 +1046,29 @@ describe("eval export", () => {
       } finally {
         await fixture.close();
       }
+    });
+  });
+
+  test("refuses a suite that serializes past the 1 MiB limit", async () => {
+    await withTempDir(async (dir) => {
+      // Nothing in the contract bounds a suite's total size: `expectedOutput`
+      // is an unbounded string and a suite may hold 500 cases. So this is a
+      // representable suite that does not fit a file, and the answer has to be
+      // a refusal rather than the round-trip check's "report a CLI bug".
+      const run = await runExport(
+        { cases: [{ expectedOutput: "x".repeat(1_100_000) }] },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 1);
+      const payload = JSON.parse(run.stdout);
+      assert.equal(payload.exported, false);
+      assert.equal(payload.path, null);
+      assert.equal(payload.findings.length, 1);
+      assert.equal(payload.findings[0].code, "UNSUPPORTED_SUITE_EXPORT");
+      assert.match(payload.findings[0].message, /over the 1048576-byte limit/);
+      assert.doesNotMatch(payload.findings[0].message, /bug in @mcpjam\/cli/);
+      assert.deepEqual(await readdir(dir), []);
     });
   });
 
