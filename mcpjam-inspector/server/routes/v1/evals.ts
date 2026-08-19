@@ -3547,6 +3547,68 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   return v1Resource(c, await readSuiteDetail(token, projectId, suiteId));
 });
 
+// POST /v1/projects/:projectId/eval-suites/:suiteId/environments
+//
+// APPEND one environment to the suite's attachments, if it is not already
+// there.
+//
+// Distinct from `PATCH /eval-suites/{id}` with `environmentIds`, which REPLACES
+// the whole list. An append built on the replace door is a read-modify-write
+// across two round trips, and a concurrent attach landing in between is
+// silently DETACHED. The compose-and-run path attaches on every launch, which
+// makes that race ordinary rather than theoretical, so the append happens
+// inside one backend transaction instead.
+//
+// Idempotent: attaching an already-attached environment reports
+// `attached: false` and changes nothing, which is what lets a retried launch
+// converge instead of erroring.
+evals.post(
+  "/projects/:projectId/eval-suites/:suiteId/environments",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const suiteId = c.req.param("suiteId");
+    const body = parseWithSchema(
+      z.object({ environmentId: z.string().min(1) }),
+      await synthesizeServerBody(c)
+    );
+    const token = await getConvexBearerForRequest(c);
+    // Scope check first: Convex enforces membership, and this makes a valid id
+    // from another of the caller's projects read as NOT_FOUND rather than
+    // leaking across the scope the path declares.
+    await readSuiteInProject(token, projectId, suiteId);
+
+    const { convexClient } = createConvexClients(token);
+    let result: { attached?: boolean; environmentIds?: unknown };
+    try {
+      result = (await convexClient.mutation(
+        "testSuites:attachEnvironment" as any,
+        { suiteId, environmentId: body.environmentId }
+      )) as { attached?: boolean; environmentIds?: unknown };
+    } catch (error) {
+      // Deploy skew: a backend without the atomic append. Named explicitly
+      // rather than surfaced as a 500, because the caller has a real (if
+      // racier) alternative in the replace door.
+      const message = error instanceof Error ? error.message : String(error);
+      if (/could not find public function/i.test(message)) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "This deployment cannot append a suite environment atomically yet. Set the full environment list instead (PATCH the suite with environmentIds).",
+          { reason: "ATTACH_UNAVAILABLE" }
+        );
+      }
+      throw translateConvexError(error, { resource: "Eval suite" });
+    }
+    return v1Resource(c, {
+      suiteId,
+      attached: result.attached === true,
+      environmentIds: Array.isArray(result.environmentIds)
+        ? result.environmentIds.map(String)
+        : [],
+    });
+  }
+);
+
 // DELETE /v1/projects/:projectId/eval-suites/:suiteId
 evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const projectId = c.req.param("projectId");

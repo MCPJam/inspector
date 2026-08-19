@@ -2764,6 +2764,67 @@
         }
       }
     },
+    "/projects/{projectId}/eval-suites/{suiteId}/environments": {
+      "post": {
+        "operationId": "attachEvalSuiteEnvironment",
+        "tags": [
+          "Eval suites"
+        ],
+        "summary": "Attach one environment to a suite (atomic append)",
+        "description": "APPEND one project environment to the suite's attachments, if it is not already there.\n\nDistinct from `PATCH /eval-suites/{suiteId}` with `environmentIds`, which REPLACES the whole list. An append built on the replace door is a read-modify-write across two round trips, and a concurrent attach landing in between is silently DETACHED. The compose-and-run path attaches on every launch, which makes that race ordinary rather than theoretical, so the append happens inside one transaction instead.\n\nIdempotent: attaching an already-attached environment reports `attached: false` and changes nothing, which is what lets a retried launch converge instead of erroring. Subject to the same cap, membership and schedule-pin rules as the replace door \u2014 growing a single-environment suite to two is exactly the edit that strands an enabled unpinned schedule.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalSuiteEnvironmentAttachRequest"
+              },
+              "example": {
+                "environmentId": "env_abc123"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The suite's attachments after the call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSuiteEnvironmentAttached"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-run-groups": {
       "post": {
         "operationId": "createEvalRunGroup",
@@ -4400,6 +4461,130 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/environments/ensure-adhoc": {
+      "post": {
+        "operationId": "ensureAdhocEnvironment",
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Get or create an unnamed environment for a composed stack",
+        "description": "GET-OR-CREATE an UNNAMED, content-addressed environment for a composed stack \u2014 a host plus an optional server group, model override, computer image and pinned skills.\n\nDistinct from `POST /environments`, which mints a NAMED row that lands in the project's environment list forever. A composed stack is a throwaway: the caller wants to run this exact combination, not to add a permanent entry someone else has to reason about.\n\nDeduplicated by a server-side fingerprint of the stack, so the same stack always returns the same environment. `created` says which happened \u2014 the status is `200` either way, because get-or-create cannot honestly answer `201` on the dedupe path.\n\nA deployment that predates ad-hoc environments answers `400` with `details.reason: \"ADHOC_UNAVAILABLE\"`.\n\nRequires project membership (admin only when the stack pins plugin versions). Promote one to a named environment with `POST /environments/{environmentId}/name`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdhocEnvironmentRequest"
+              },
+              "example": {
+                "hostId": "host_abc123",
+                "sandboxImageId": "img_def456"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The environment for this stack, created or reused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdhocEnvironmentEnsured"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/environments/{environmentId}/name": {
+      "post": {
+        "operationId": "nameEnvironment",
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Promote an unnamed environment",
+        "description": "Give an UNNAMED (ad-hoc) environment a name, promoting it IN PLACE \u2014 the same environment, now a permanent entry in the project's list, with the same id every existing run still points at.\n\nThe ONLY promotion path. `PATCH /environments/{environmentId}` renames an already-named environment and is admin-gated; this is member-gated and refuses a row that already has a name (`409`). The platform keeps them apart on purpose: routing promotion through the rename would either open it to members or leave ad-hoc rows unnameable.\n\nPromotion also drops the content fingerprint, because a named environment is mutable: keeping it would let a later identical composition deduplicate onto a row that has since been edited into something else.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/environmentId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentNameRequest"
+              },
+              "example": {
+                "expectedRevision": 1,
+                "name": "Claude Code smoke"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The promoted environment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectEnvironment"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -10317,6 +10502,42 @@
         },
         "additionalProperties": true
       },
+      "EvalSuiteEnvironmentAttachRequest": {
+        "type": "object",
+        "required": [
+          "environmentId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "environmentId": {
+            "type": "string"
+          }
+        }
+      },
+      "EvalSuiteEnvironmentAttached": {
+        "type": "object",
+        "required": [
+          "suiteId",
+          "attached",
+          "environmentIds"
+        ],
+        "properties": {
+          "suiteId": {
+            "type": "string"
+          },
+          "attached": {
+            "type": "boolean",
+            "description": "`false` when it was ALREADY attached \u2014 a no-op, not a failure, which is what lets a retried compose-and-run converge."
+          },
+          "environmentIds": {
+            "type": "array",
+            "description": "The suite's attachments after the call, in attach order.",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "EvalRunGroupCreateRequest": {
         "type": "object",
         "required": [
@@ -13665,6 +13886,155 @@
           },
           "readyAt": {
             "type": "number"
+          }
+        }
+      },
+      "AdhocEnvironment": {
+        "type": "object",
+        "description": "An UNNAMED, content-addressed environment: a composed client/model/computer/skills stack rather than a saved entry in the project's environment list. Its own shape rather than `ProjectEnvironment` with a nullable name, because that schema's `name` is required and every environment listing filters ad-hoc rows out precisely so that promise holds.",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "adhoc",
+          "hostId",
+          "revision",
+          "archived",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "null"
+            ],
+            "description": "Always `null` \u2014 an ad-hoc environment is unnamed by construction."
+          },
+          "adhoc": {
+            "type": "boolean",
+            "const": true,
+            "description": "Always `true`. Present so a reader never has to infer it from the null name."
+          },
+          "description": {
+            "type": "string"
+          },
+          "hostId": {
+            "type": "string"
+          },
+          "serverAttachmentId": {
+            "type": "string"
+          },
+          "modelId": {
+            "type": "string",
+            "description": "The stack's model override. Absent means it inherits the host's."
+          },
+          "skillSelection": {
+            "$ref": "#/components/schemas/EnvironmentSkillSelection"
+          },
+          "pluginVersionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sandboxImageId": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "description": "Pass back as `expectedRevision` when promoting it with a name."
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "archivedAt": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          }
+        }
+      },
+      "AdhocEnvironmentEnsured": {
+        "type": "object",
+        "required": [
+          "environment",
+          "created"
+        ],
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/AdhocEnvironment"
+          },
+          "created": {
+            "type": "boolean",
+            "description": "`false` when the same stack had already been composed. The only way to tell a first compose from a repeat \u2014 the status line cannot, because get-or-create answers `200` either way."
+          }
+        }
+      },
+      "AdhocEnvironmentRequest": {
+        "type": "object",
+        "description": "A composed stack: the same execution axes a named environment carries, minus the name.",
+        "required": [
+          "hostId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "hostId": {
+            "type": "string",
+            "description": "The host the stack runs as."
+          },
+          "serverAttachmentId": {
+            "type": "string",
+            "description": "Standalone server group to pin. Omit to use the host's own servers."
+          },
+          "modelId": {
+            "type": "string",
+            "description": "Model to run instead of the host's pinned one. Stored verbatim."
+          },
+          "skillSelection": {
+            "$ref": "#/components/schemas/EnvironmentSkillSelection"
+          },
+          "pluginVersionIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "Pinning plugin versions requires project ADMIN; the rest of a stack needs only membership."
+          },
+          "sandboxImageId": {
+            "type": "string",
+            "description": "Project-shared sandbox image to pin, so runs boot a fresh computer from it."
+          }
+        }
+      },
+      "EnvironmentNameRequest": {
+        "type": "object",
+        "required": [
+          "expectedRevision",
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "type": "integer",
+            "description": "The revision you last read. Stale \u21d2 `409`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Must be unique among the project's live environments."
+          },
+          "description": {
+            "type": "string"
           }
         }
       },

@@ -843,6 +843,11 @@ Start an asynchronous eval run of an existing suite. Responds immediately with a
 | `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
 | `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
+| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Appends** the composed environment to the suite. |
+| `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
+| `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
+| `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
+| `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 
 #### Which target runs
 
@@ -979,6 +984,31 @@ Start an eval run of an existing suite (asynchronous).
 | `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
 | `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
+| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Appends** the composed environment to the suite. |
+| `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
+| `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
+| `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
+| `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
+
+#### Composing a target instead of naming one
+
+`--compose-host <id-or-name>` builds an execution stack for this run instead of
+naming a saved environment, refined by `--compose-computer`, `--compose-model`,
+`--compose-server-group` and `--compose-skill`. The stack becomes an unnamed,
+content-addressed environment (the same one `environments ensure-adhoc`
+produces), so composing the same stack twice reuses one environment.
+
+<Warning>
+  **This edits the suite.** The composed environment is appended to the suite's
+  environment list — deliberately, because an environment the suite does not
+  list is one nobody can re-run from the app afterwards. The result reports both
+  writes (`composed.environment.created`, `composed.attachment.attached`) even
+  when the launch itself fails, so you always know what changed.
+</Warning>
+
+Any `--compose-*` flag alongside `--environment`, `--host`, `--server` or
+`--all-targets` is a usage error: compose builds the stack the run uses, so
+naming a target alongside it describes two different runs.
 
 #### Which target runs
 
@@ -1188,6 +1218,7 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--server <id-or-name...>` | No | Override the suite's saved servers for this run |
 | `--environment <id-or-name>` | No | Project environment to run against (must be attached to the suite) |
 | `--host <id-or-name>` | No | Attached host to run against, so the run is stamped with that host's config |
+| `--compose-host <id-or-name>` | No | Compose a stack to run instead (see [`eval run`](#eval-run)); appends the composed environment to the suite |
 | `--iterations <n>` | No | Run the case this many times (1-10) |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 

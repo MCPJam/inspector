@@ -12,6 +12,7 @@ const {
   createAuthorizedManagerMock,
   convexQueryMock,
   convexActionMock,
+  convexMutationMock,
   validateApiKeyMock,
   resolveUserByExternalIdMock,
   lookupWorkosKeyBindingMock,
@@ -27,6 +28,7 @@ const {
     createAuthorizedManagerMock: vi.fn(),
     convexQueryMock: vi.fn(),
     convexActionMock: vi.fn(),
+    convexMutationMock: vi.fn(),
     validateApiKeyMock: vi.fn(),
     resolveUserByExternalIdMock: vi.fn(),
     lookupWorkosKeyBindingMock: vi.fn(),
@@ -77,6 +79,7 @@ vi.mock("convex/browser", () => ({
     setAuth: vi.fn(),
     query: convexQueryMock,
     action: convexActionMock,
+    mutation: convexMutationMock,
   })),
 }));
 
@@ -1859,6 +1862,88 @@ describe("v1 write routes", () => {
       // …and metered as N independent launches, not one group.
       expect((await post()).status).toBe(429);
       await drain(releaseGates, disconnectAllServers, 2);
+    });
+  });
+
+  describe("POST /eval-suites/:suiteId/environments", () => {
+    it("appends atomically and reports the resulting attachment list", async () => {
+      // NOT a read-modify-write on the replace door: that would silently
+      // detach an environment someone else attached in between, and the
+      // compose-and-run path attaches on every launch.
+      mockConvexQueries();
+      convexMutationMock.mockResolvedValue({
+        attached: true,
+        environmentIds: ["env_a", "env_b"],
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/environments",
+        { environmentId: "env_b" }
+      );
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({
+        suiteId: "suite_1",
+        attached: true,
+        environmentIds: ["env_a", "env_b"],
+      });
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "testSuites:attachEnvironment",
+        { suiteId: "suite_1", environmentId: "env_b" }
+      );
+    });
+
+    it("reports an already-attached environment as a no-op, not a failure", async () => {
+      // What lets a retried compose-and-run converge.
+      mockConvexQueries();
+      convexMutationMock.mockResolvedValue({
+        attached: false,
+        environmentIds: ["env_a"],
+      });
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/environments",
+        { environmentId: "env_a" }
+      );
+      expect(res.status).toBe(200);
+      expect(((await res.json()) as any).attached).toBe(false);
+    });
+
+    it("404s a suite from another project before touching the backend", async () => {
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => ({
+          ...SUITE_DOC,
+          projectId: "other",
+        }),
+      });
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/environments",
+        { environmentId: "env_b" }
+      );
+      expect(res.status).toBe(404);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("names the alternative when the backend has no atomic append yet", async () => {
+      mockConvexQueries();
+      convexMutationMock.mockRejectedValue(
+        new Error("Could not find public function for 'testSuites'")
+      );
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/environments",
+        { environmentId: "env_b" }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.details.reason).toBe("ATTACH_UNAVAILABLE");
+      expect(body.message).toContain("environmentIds");
     });
   });
 

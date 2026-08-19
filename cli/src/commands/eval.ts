@@ -169,6 +169,67 @@ function selectorField(
     : { [plural]: values };
 }
 
+/**
+ * The `--compose-*` flags as the op's `compose` object, or nothing at all.
+ *
+ * `--compose-host` is what MAKES it a composed run — the other axes only
+ * refine a stack that already has a host — so a `--compose-computer` with no
+ * host is a usage error rather than a silently ignored flag. Combining any of
+ * them with `--environment`/`--host`/`--all-targets` is rejected by the op,
+ * which owns that rule for every surface.
+ */
+function composeField(options: {
+  composeHost?: string;
+  composeComputer?: string;
+  composeModel?: string;
+  composeServerGroup?: string;
+  composeSkill?: string[];
+}): {
+  compose?: {
+    host: string;
+    serverGroup?: string;
+    model?: string;
+    computer?: string;
+    skills?: { mode: "explicit"; skillIds: string[] };
+  };
+} {
+  const refinements =
+    options.composeComputer !== undefined ||
+    options.composeModel !== undefined ||
+    options.composeServerGroup !== undefined ||
+    (options.composeSkill?.length ?? 0) > 0;
+  if (!options.composeHost) {
+    if (refinements) {
+      throw usageError(
+        "--compose-* flags need --compose-host: the host is what the composed stack runs as, and the others only refine it."
+      );
+    }
+    return {};
+  }
+  return {
+    compose: {
+      host: options.composeHost,
+      ...(options.composeServerGroup !== undefined
+        ? { serverGroup: options.composeServerGroup }
+        : {}),
+      ...(options.composeModel !== undefined
+        ? { model: options.composeModel }
+        : {}),
+      ...(options.composeComputer !== undefined
+        ? { computer: options.composeComputer }
+        : {}),
+      ...(options.composeSkill?.length
+        ? {
+            skills: {
+              mode: "explicit" as const,
+              skillIds: options.composeSkill,
+            },
+          }
+        : {}),
+    },
+  };
+}
+
 /** `--iterations 3` → 3, and anything else → a usage error rather than NaN. */
 function parseIntOption(raw: string, flag: string): number {
   const parsed = Number(raw);
@@ -1367,9 +1428,34 @@ export function registerEvalCommands(program: Command): void {
         "--idempotency-key <key>",
         "Retry-safety key: repeating the call returns the run it already started"
       )
+      .option(
+        "--compose-host <id-or-name>",
+        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+      )
+      .option(
+        "--compose-computer <id-or-name>",
+        "Sandbox image to pin on the composed stack"
+      )
+      .option(
+        "--compose-model <id>",
+        "Model to run on the composed stack, instead of the host's"
+      )
+      .option(
+        "--compose-server-group <id>",
+        "Standalone server group to pin on the composed stack"
+      )
+      .option(
+        "--compose-skill <id...>",
+        "Project-shared skill IDs to pin on the composed stack"
+      )
   ).action(
     async (
       options: PlatformOptions & {
+        composeHost?: string;
+        composeComputer?: string;
+        composeModel?: string;
+        composeServerGroup?: string;
+        composeSkill?: string[];
         project?: string;
         suite: string;
         server?: string[];
@@ -1421,6 +1507,7 @@ export function registerEvalCommands(program: Command): void {
               ...(options.idempotencyKey
                 ? { idempotencyKey: options.idempotencyKey }
                 : {}),
+              ...composeField(options),
             },
             { client: context.client, signal: context.signal }
           );
@@ -2230,9 +2317,34 @@ export function registerEvalCommands(program: Command): void {
         "--idempotency-key <key>",
         "Retry-safety key: repeating the call returns the run it already started"
       )
+      .option(
+        "--compose-host <id-or-name>",
+        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+      )
+      .option(
+        "--compose-computer <id-or-name>",
+        "Sandbox image to pin on the composed stack"
+      )
+      .option(
+        "--compose-model <id>",
+        "Model to run on the composed stack, instead of the host's"
+      )
+      .option(
+        "--compose-server-group <id>",
+        "Standalone server group to pin on the composed stack"
+      )
+      .option(
+        "--compose-skill <id...>",
+        "Project-shared skill IDs to pin on the composed stack"
+      )
   ).action(
     async (
       options: PlatformOptions & {
+        composeHost?: string;
+        composeComputer?: string;
+        composeModel?: string;
+        composeServerGroup?: string;
+        composeSkill?: string[];
         project?: string;
         suite: string;
         case: string;
@@ -2259,6 +2371,7 @@ export function registerEvalCommands(program: Command): void {
           ...(options.idempotencyKey
             ? { idempotencyKey: options.idempotencyKey }
             : {}),
+          ...composeField(options),
         },
         options,
         command

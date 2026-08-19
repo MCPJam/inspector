@@ -834,6 +834,86 @@ export interface PlatformEnvironment {
   updatedAt: number;
 }
 
+/**
+ * An UNNAMED, content-addressed environment: a composed client/model/computer/
+ * skills stack, not a saved entry in the project's environment list.
+ *
+ * Its own type rather than `PlatformEnvironment` with a nullable name, because
+ * `PlatformEnvironment.name` is a required string and every listing filters
+ * ad-hoc rows out precisely so that promise holds. Widening it would break
+ * readers who trusted it, for a row they never asked to see.
+ */
+export interface PlatformAdhocEnvironment {
+  id: string;
+  projectId: string;
+  /** Always `null` — an ad-hoc environment is unnamed by construction. */
+  name: null;
+  /** Always `true`. Present so a reader never has to infer it from the null. */
+  adhoc: true;
+  description?: string;
+  hostId: string;
+  serverAttachmentId?: string;
+  /** See `PlatformEnvironment.modelId` — absent means "inherit the host's". */
+  modelId?: string;
+  skillSelection?: PlatformEnvironmentSkillSelection;
+  pluginVersionIds?: string[];
+  sandboxImageId?: string;
+  /** Pass back as `expectedRevision` when promoting it with a name. */
+  revision: number;
+  archived: boolean;
+  archivedAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * The result of ensuring a composed stack exists.
+ *
+ * `created` distinguishes "this call minted the row" from "the same stack was
+ * already ensured", which is the only way a caller can tell a first compose
+ * from a repeat — the status line cannot, because get-or-create answers 200
+ * either way.
+ */
+export interface PlatformAdhocEnvironmentEnsured {
+  environment: PlatformAdhocEnvironment;
+  created: boolean;
+}
+
+/**
+ * The composed stack itself: the same execution axes a named environment
+ * carries, minus the name. Content-addressed server-side, so the same stack
+ * always resolves to the same environment.
+ */
+export interface PlatformAdhocEnvironmentBody {
+  hostId: string;
+  serverAttachmentId?: string;
+  modelId?: string;
+  skillSelection?: PlatformEnvironmentSkillSelection;
+  pluginVersionIds?: string[];
+  sandboxImageId?: string;
+}
+
+/**
+ * The outcome of appending one environment to a suite's attachments.
+ *
+ * `attached: false` means it was ALREADY there — a no-op, not a failure, which
+ * is what lets a retried compose-and-run converge.
+ */
+export interface PlatformEvalSuiteEnvironmentAttached {
+  suiteId: string;
+  attached: boolean;
+  /** The suite's attachments after the call, in attach order. */
+  environmentIds: string[];
+}
+
+/** Promote an ad-hoc environment to a named one, in place. */
+export interface PlatformEnvironmentNameBody {
+  /** The revision you last read. Stale ⇒ 409 CONFLICT. */
+  expectedRevision: number;
+  name: string;
+  description?: string;
+}
+
 export interface PlatformEnvironmentCreateBody {
   name: string;
   description?: string;

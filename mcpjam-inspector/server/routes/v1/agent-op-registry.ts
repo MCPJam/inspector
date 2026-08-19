@@ -42,7 +42,9 @@ import {
   createEvalSuiteOperation,
   diagnoseServerOperation,
   generateEvalCasesOperation,
+  ensureAdhocEnvironmentOperation,
   getEnvironmentOperation,
+  nameEnvironmentOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
@@ -704,6 +706,14 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
 
   // ── WRITE — persists, but spends nothing. Every one is picked up by the
   // derived idempotency set below and echoed in the response envelope.
+  {
+    operation: ensureAdhocEnvironmentOperation,
+    tier: "direct",
+    promptNotes: [
+      "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
+    ],
+  },
+  { operation: nameEnvironmentOperation, tier: "direct" },
   { operation: createEvalSuiteOperation, tier: "direct" },
   { operation: createEvalCaseOperation, tier: "direct" },
   { operation: createEvalCasesOperation, tier: "direct" },

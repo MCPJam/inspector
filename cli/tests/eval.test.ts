@@ -155,12 +155,16 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
   createBodies: unknown[];
   runBodies: unknown[];
   groupBodies: unknown[];
+  composeBodies: unknown[];
+  attachBodies: unknown[];
   close: () => Promise<void>;
 }> {
   const authHeaders: string[] = [];
   const createBodies: unknown[] = [];
   const runBodies: unknown[] = [];
   const groupBodies: unknown[] = [];
+  const composeBodies: unknown[] = [];
+  const attachBodies: unknown[] = [];
   const server: Server = createServer(async (req, res) => {
     let raw = "";
     for await (const chunk of req) {
@@ -180,6 +184,59 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     }
     if (url.pathname === "/api/v1/projects/proj-alpha/environments") {
       res.end(JSON.stringify({ items: ENVIRONMENTS }));
+      return;
+    }
+    if (url.pathname === "/api/v1/projects/proj-alpha/hosts") {
+      res.end(
+        JSON.stringify({
+          items: [{ id: "host-claude", name: "Claude Code" }],
+        }),
+      );
+      return;
+    }
+    if (url.pathname === "/api/v1/projects/proj-alpha/images") {
+      res.end(
+        JSON.stringify({ items: [{ id: "img-default", name: "default" }] }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/environments/ensure-adhoc" &&
+      req.method === "POST"
+    ) {
+      composeBodies.push(raw ? JSON.parse(raw) : {});
+      res.end(
+        JSON.stringify({
+          environment: {
+            id: "env-adhoc",
+            projectId: "proj-alpha",
+            name: null,
+            adhoc: true,
+            hostId: "host-claude",
+            revision: 1,
+            archived: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          created: true,
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-suites/suite-1/environments" &&
+      req.method === "POST"
+    ) {
+      attachBodies.push(raw ? JSON.parse(raw) : {});
+      res.end(
+        JSON.stringify({
+          suiteId: "suite-1",
+          attached: true,
+          environmentIds: ["env-adhoc"],
+        }),
+      );
       return;
     }
     if (
@@ -414,6 +471,8 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     createBodies,
     runBodies,
     groupBodies,
+    composeBodies,
+    attachBodies,
     close: () =>
       new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
@@ -1406,6 +1465,122 @@ test("eval cases run forwards --host, --iterations and --idempotency-key", async
       iterationOverride: 2,
       idempotencyKey: "key-2",
     });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-* ensures a stack, attaches it, and pins the run", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-computer",
+            "default",
+            "--compose-model",
+            "anthropic/claude-haiku-4.5",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    // Selectors resolve to ids before the platform sees them.
+    assert.deepEqual(fixture.composeBodies.at(-1), {
+      hostId: "host-claude",
+      sandboxImageId: "img-default",
+      modelId: "anthropic/claude-haiku-4.5",
+    });
+    // The composed environment is APPENDED to the suite — the deliberate,
+    // documented side effect that makes the run reproducible from the app.
+    assert.deepEqual(fixture.attachBodies.at(-1), {
+      environmentId: "env-adhoc",
+    });
+    // …and the launch takes the ordinary environment path.
+    assert.deepEqual(fixture.runBodies.at(-1), {
+      suiteId: "suite-1",
+      environmentId: "env-adhoc",
+    });
+    const payload = JSON.parse(run.stdout) as {
+      composed: { environment: { created: boolean }; attachment: unknown };
+    };
+    assert.equal(payload.composed.environment.created, true);
+    assert.deepEqual(payload.composed.attachment, { attached: true });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run rejects a --compose-* refinement with no --compose-host", async () => {
+  // The host is what MAKES it a composed run; the others only refine a stack
+  // that already has one, so a silently-ignored flag would be worse.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-computer",
+          "default",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--compose-\* flags need --compose-host/);
+    assert.equal(fixture.composeBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run rejects --compose-host together with --environment", async () => {
+  // Refused by the op, which owns the rule for every surface. Composing has a
+  // persistent side effect, so silently ignoring it would edit the suite for a
+  // run that did not use the result.
+  const fixture = await startEvalFixture({
+    suiteDetail: { environmentIds: ["env-staging"] },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-host",
+          "Claude Code",
+          "--environment",
+          "staging",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /compose/);
+    assert.equal(fixture.composeBodies.length, 0);
+    assert.equal(fixture.runBodies.length, 0);
   } finally {
     await fixture.close();
   }

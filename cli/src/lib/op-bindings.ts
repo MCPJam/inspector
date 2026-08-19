@@ -168,6 +168,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_project_environment: { command: "environments get" },
   resolve_project_environment: { command: "environments resolve" },
   create_project_environment: { command: "environments create" },
+  ensure_adhoc_environment: { command: "environments ensure-adhoc" },
+  name_environment: { command: "environments name" },
   update_project_environment: { command: "environments update" },
   archive_project_environment: { command: "environments archive" },
   restore_project_environment: { command: "environments restore" },

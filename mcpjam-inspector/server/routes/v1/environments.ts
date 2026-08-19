@@ -154,6 +154,26 @@ function toEnvironmentDto(row: EnvironmentRow) {
   };
 }
 
+/**
+ * An AD-HOC row, which the rest of this surface deliberately never emits.
+ *
+ * A separate mapper rather than a flag on `toEnvironmentDto`, because the two
+ * shapes make DIFFERENT promises. `PlatformEnvironment.name` is a required
+ * string, and every listing here filters ad-hoc rows out precisely so that
+ * promise holds. An ad-hoc row has no name at all, so it gets a shape that
+ * says so — `name: null` plus `adhoc: true` — instead of quietly widening a
+ * published type and breaking readers who trusted it.
+ */
+function toAdhocEnvironmentDto(row: EnvironmentRow) {
+  return {
+    ...toEnvironmentDto(row),
+    // EXPLICIT, not absent: a caller has to be able to tell "unnamed by
+    // construction" from "the platform forgot to send a name".
+    name: null,
+    adhoc: true,
+  };
+}
+
 function toResolvedDto(resolved: ResolvedEnvironmentRow) {
   return {
     environment: {
@@ -432,6 +452,35 @@ const updateEnvironmentSchema = z
     }
   );
 
+/**
+ * A COMPOSED stack: the same execution axes a named environment carries, minus
+ * the name. Content-addressed server-side, so the same stack always resolves
+ * to the same row.
+ *
+ * Deliberately the create schema's field set: an ad-hoc environment IS an
+ * environment, and a second vocabulary for the same axes is how the two
+ * descriptions drift.
+ */
+const ensureAdhocEnvironmentSchema = z.strictObject({
+  hostId: z.string().trim().min(1),
+  serverAttachmentId: z.string().trim().min(1).optional(),
+  modelId: z.string().trim().min(1).optional(),
+  skillSelection: skillSelectionSchema.optional(),
+  pluginVersionIds: pluginVersionIdsSchema.optional(),
+  sandboxImageId: z.string().trim().min(1).optional(),
+});
+
+/**
+ * Promotion of an ad-hoc row to a named one. `expectedRevision` for the same
+ * reason every other mutation takes it: supplying the current value
+ * server-side would turn a safe concurrent-edit rejection into a clobber.
+ */
+const nameEnvironmentSchema = z.strictObject({
+  expectedRevision: z.number().int().nonnegative(),
+  name: z.string().trim().min(1),
+  description: z.string().optional(),
+});
+
 /** Archive and restore carry only the precondition. */
 const revisionBodySchema = z.strictObject({
   expectedRevision: z.number().int().nonnegative(),
@@ -597,6 +646,137 @@ environments.post("/projects/:projectId/environments", async (c) => {
   }
   return v1Resource(c, toEnvironmentDto(created), 201);
 });
+
+// POST /v1/projects/:projectId/environments/ensure-adhoc
+//
+// GET-OR-CREATE an UNNAMED, content-addressed environment for a composed
+// stack — the same thing the app's environment composer produces when a user
+// assembles a client/model/computer/skills combination instead of picking a
+// saved environment.
+//
+// WHY NOT `POST /environments`. That mints a NAMED row, which lands in the
+// project's environment list forever. A composed stack is a throwaway: the
+// caller wants to run this exact combination, not to add a permanent entry
+// someone else has to reason about. Ad-hoc rows exist to avoid exactly that
+// pollution, and until now the only way to reach them was the browser hook.
+//
+// Deduped by a SERVER-SIDE fingerprint, so the same stack always returns the
+// same environment (`created: false` on every call after the first) and a
+// retried launch converges instead of accumulating rows.
+//
+// Registered ABOVE `/:environmentId` so the literal segment is not captured as
+// an environment id.
+environments.post(
+  "/projects/:projectId/environments/ensure-adhoc",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const body = parseWithSchema(
+      ensureAdhocEnvironmentSchema,
+      await readJsonObjectBody(c)
+    );
+    const convexClient = createConvexClient(
+      await getConvexBearerForRequest(c)
+    );
+
+    // Same boundary rename as create: the public `sandboxImageId` is the
+    // internal `computerEnvironmentId`, and the spread must not forward the
+    // public name.
+    const { sandboxImageId, ...stack } = body;
+    let result: { environment: EnvironmentRow; created: boolean };
+    try {
+      result = (await convexClient.mutation(
+        "projectEnvironments:ensureAdhocEnvironment" as any,
+        {
+          projectId,
+          ...stack,
+          ...(sandboxImageId !== undefined
+            ? { computerEnvironmentId: sandboxImageId }
+            : {}),
+        } as any
+      )) as { environment: EnvironmentRow; created: boolean };
+    } catch (error) {
+      // DEPLOY SKEW, translated rather than surfaced as a 500: a backend that
+      // predates ad-hoc environments simply does not export this function, and
+      // the honest answer names the alternative the caller does have.
+      if (isMissingConvexFunctionError(error)) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "This deployment predates ad-hoc environments — create a named environment instead (POST /environments).",
+          { reason: "ADHOC_UNAVAILABLE" }
+        );
+      }
+      throw translateConvexError(error);
+    }
+
+    // 200, not 201: this is get-or-create, and the caller learns which
+    // happened from `created` rather than from the status line. A 201 on the
+    // dedupe path would claim a row was minted when none was.
+    return v1Resource(c, {
+      environment: toAdhocEnvironmentDto(result.environment),
+      created: result.created === true,
+    });
+  }
+);
+
+// POST /v1/projects/:projectId/environments/:environmentId/name
+//
+// PROMOTE an ad-hoc row to a named environment, in place.
+//
+// This is the ONLY promotion path: `PATCH /environments/:id` cannot do it. The
+// backend's rename is admin-gated and refuses a row that already has a name;
+// promotion is member-gated and refuses a row that already has one. Routing
+// promotion through PATCH would either open the admin rename to members or
+// leave ad-hoc rows unnameable — the backend keeps them apart on purpose, and
+// so does this.
+//
+// Promotion also CLEARS the content fingerprint, because a named row is
+// mutable: keeping it would let a later composition dedupe onto a row that has
+// since been edited into something else.
+environments.post(
+  "/projects/:projectId/environments/:environmentId/name",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const environmentId = c.req.param("environmentId");
+    const body = parseWithSchema(
+      nameEnvironmentSchema,
+      await readJsonObjectBody(c)
+    );
+    const convexClient = createConvexClient(
+      await getConvexBearerForRequest(c)
+    );
+    let named: EnvironmentRow;
+    try {
+      named = (await convexClient.mutation(
+        "projectEnvironments:nameEnvironment" as any,
+        {
+          projectId,
+          environmentId,
+          expectedRevision: body.expectedRevision,
+          name: body.name,
+          ...(body.description !== undefined
+            ? { description: body.description }
+            : {}),
+        } as any
+      )) as EnvironmentRow;
+    } catch (error) {
+      if (isMissingConvexFunctionError(error)) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "This deployment predates ad-hoc environments, so there is nothing to promote.",
+          { reason: "ADHOC_UNAVAILABLE" }
+        );
+      }
+      // An already-named row comes back as the backend's CONFLICT, which is
+      // the honest answer: the request asked to promote something that is not
+      // promotable, and renaming a named environment is a different (and
+      // admin-gated) operation.
+      throw translateConvexError(error);
+    }
+    return v1Resource(c, toEnvironmentDto(named));
+  }
+);
 
 // PATCH /v1/projects/:projectId/environments/:environmentId
 // `expectedRevision` is required; a stale value is a 409 rather than a

@@ -14,6 +14,7 @@ import {
   computeRunTargets,
   type RunTarget,
   type RunTargetHost,
+  type RunTargetPlan,
 } from "./suite-run-plans.js";
 import {
   evaluateMarketHosts,
@@ -51,6 +52,8 @@ import type {
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
   PlatformEvalRunGroupCreated,
+  PlatformAdhocEnvironment,
+  PlatformAdhocEnvironmentBody,
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
@@ -1142,10 +1145,28 @@ function assertRunTargetSelectorsCoherent(input: {
   host?: string;
   hosts?: string[];
   allAttached?: boolean;
+  compose?: unknown;
 }): void {
   const hasEnvironmentAxis =
     Boolean(input.environment) || (input.environments?.length ?? 0) > 0;
   const hasHostAxis = Boolean(input.host) || (input.hosts?.length ?? 0) > 0;
+
+  // `compose` DESCRIBES a target rather than selecting one, so it cannot be
+  // combined with any selector. Rejected loudly because the alternative is
+  // worse than usual here: composing has a persistent side effect (a new
+  // environment, attached to the suite), so silently ignoring it would edit
+  // the suite for a run that did not use the result.
+  if (
+    input.compose &&
+    (hasEnvironmentAxis ||
+      hasHostAxis ||
+      (input.servers?.length ?? 0) > 0 ||
+      input.allAttached)
+  ) {
+    throw operationInputError(
+      "Pass compose OR a target selector, not both — compose builds the execution stack the run uses, so naming an environment, host, server override or allAttached alongside it describes two different runs.",
+    );
+  }
 
   if (input.environment && (input.environments?.length ?? 0) > 0) {
     throw operationInputError(
@@ -1306,6 +1327,105 @@ function runKnobBody(
   };
 }
 
+/** What a `compose` produced, plus the report the result carries. */
+interface ComposedRunEnvironment {
+  environment: { id: string };
+  report: {
+    environment: { id: string; name: null; adhoc: true; created: boolean };
+    attachment: { attached: boolean };
+  };
+}
+
+/**
+ * Turn a composed stack into a runnable target: ensure the ad-hoc environment,
+ * then ATTACH it to the suite.
+ *
+ * THE ATTACHMENT IS DELIBERATE AND VISIBLE, not incidental. It is what makes
+ * the run reproducible from the app afterwards — an environment the suite does
+ * not list is one nobody can re-run from the UI — and it mirrors what the app's
+ * own composer does when a user edits a pill. Both operations say so in their
+ * descriptions, because a caller must not discover it from a changed suite.
+ *
+ * Appended ATOMICALLY rather than read-modify-write: the replace door would
+ * silently detach an environment someone else attached between the read and
+ * the write, and this path attaches on every launch.
+ */
+async function composeRunEnvironment(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  suite: PlatformEvalSuite,
+  stack: {
+    host: string;
+    serverGroup?: string;
+    model?: string;
+    computer?: string;
+    skills?: { mode: "explicit"; skillIds: string[] };
+    pluginVersionIds?: string[];
+  },
+  signal: AbortSignal | undefined,
+): Promise<ComposedRunEnvironment> {
+  const body = await resolveComposeStack(client, project, stack, signal);
+  const ensured = await client.ensureAdhocEnvironment(
+    { projectId: project.id, body },
+    { signal },
+  );
+  const attachment = await client.attachEvalSuiteEnvironment(
+    {
+      projectId: project.id,
+      suiteId: suite.id,
+      environmentId: ensured.environment.id,
+    },
+    { signal },
+  );
+  return {
+    environment: { id: ensured.environment.id },
+    report: {
+      environment: {
+        id: ensured.environment.id,
+        name: null,
+        adhoc: true,
+        created: ensured.created === true,
+      },
+      attachment: { attached: attachment.attached === true },
+    },
+  };
+}
+
+/**
+ * Launch, and on failure make sure the caller still learns what compose
+ * PERSISTED.
+ *
+ * A compose-and-run writes before it spends: it ensures an environment and
+ * edits the suite's attachment list. If the launch then throws, an unannotated
+ * error leaves the caller believing nothing happened — when in fact their suite
+ * changed. So the persisted outcomes ride on the thrown error's details, where
+ * every surface already renders them.
+ */
+async function createEvalRunOrReportCompose<T>(
+  composed: ComposedRunEnvironment | undefined,
+  launch: () => Promise<T>,
+): Promise<T> {
+  if (!composed) return launch();
+  try {
+    return await launch();
+  } catch (error) {
+    if (error instanceof PlatformApiError) {
+      throw new PlatformApiError(
+        `${error.message} (The composed environment ${composed.report.environment.id} was ${
+          composed.report.environment.created ? "created" : "reused"
+        } and ${
+          composed.report.attachment.attached
+            ? "attached to the suite"
+            : "was already attached"
+        }; retrying is safe — it will reuse both.)`,
+        error.code,
+        { status: error.status, details: error.details },
+      );
+    }
+    throw error;
+  }
+}
+
 /**
  * Call the grouped-launch endpoint, translating "this server does not have it"
  * into an instruction rather than a raw NOT_FOUND.
@@ -1428,6 +1548,67 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
  * knob callers have to remember two rules for, and the divergence is invisible
  * until someone hits it.
  */
+/**
+ * A COMPOSED run target: assemble a stack instead of naming a saved
+ * environment. Declared here, above the run inputs, for the same
+ * temporal-dead-zone reason `publicMatchOptionsSchema` is.
+ *
+ * The stack resolves to an ad-hoc (unnamed, content-addressed) environment and
+ * then launches through the ORDINARY environment path — same resolution, same
+ * immutable snapshot. There is deliberately no "override the model for this
+ * run" field: that would be a second execution-context channel with none of an
+ * environment's guarantees.
+ */
+const composeRunTargetInput = z
+  .object({
+    host: z
+      .string()
+      .trim()
+      .min(1)
+      .describe(
+        "Host (name or ID) the composed stack runs as — the client whose configuration the run is stamped with.",
+      ),
+    serverGroup: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Standalone server group to pin (by ID). Omit to use the host's own servers.",
+      ),
+    model: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Model to run instead of the host's pinned one. Stored verbatim.",
+      ),
+    computer: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Sandbox image (name or ID) to pin, so the run boots a fresh computer from it. Must be project-shared.",
+      ),
+    skills: z
+      .object({
+        mode: z.literal("explicit"),
+        skillIds: z.array(z.string().trim().min(1)).min(1),
+      })
+      .optional()
+      .describe("Explicit pinned skill selection for the composed stack."),
+    pluginVersionIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe("Plugin VERSION IDs to pin for the composed stack."),
+  })
+  .describe(
+    "Compose an execution stack to run instead of naming a saved environment. THIS EDITS THE SUITE: the composed environment is appended to the suite's environment list, which is what makes the run reproducible from the app afterwards. Deduplicated by content, so composing the same stack twice reuses one environment. Mutually exclusive with environment/environments/host/hosts/servers/allAttached.",
+  );
+
 const RUN_KNOB_FIELDS = {
   iterations: z
     .number()
@@ -1534,6 +1715,7 @@ const runEvalSuiteInput = z.object({
     .describe(
       "PERSISTS A NEW HOST-CONFIG SNAPSHOT ON THE SUITE, changing what every future run of it uses — not just this one. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target runs only; rejected with any multi-target launch, where last-writer-wins on a frozen snapshot is never what was meant.",
     ),
+  compose: composeRunTargetInput.optional(),
   ...RUN_KNOB_FIELDS,
 });
 
@@ -1576,6 +1758,18 @@ export type RunEvalSuiteResult = {
   failedCount: number;
   /** Set only on a grouped launch. Sibling runs share it. */
   runGroupId?: string;
+  /**
+   * What `compose` PERSISTED, reported even when the launch itself failed.
+   *
+   * A compose-and-run has side effects before it spends: it ensures an ad-hoc
+   * environment and attaches it to the suite. A caller whose launch then fails
+   * still needs to know the suite's attachment list changed — and that a retry
+   * will hit the dedupe and no-op paths rather than composing again.
+   */
+  composed?: {
+    environment: { id: string; name: null; adhoc: true; created: boolean };
+    attachment: { attached: boolean };
+  };
   /** One entry per target, in launch order. */
   targets: RunEvalTargetResult[];
   /**
@@ -1619,6 +1813,20 @@ export const runEvalSuiteOperation: PlatformOperation<
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
 
+    // COMPOSE runs before anything else target-shaped, because it PRODUCES the
+    // target: the stack becomes an ad-hoc environment, the environment is
+    // appended to the suite, and the launch then takes the ordinary pinned-
+    // environment path. Its two writes are reported even if the launch fails.
+    const composed = input.compose
+      ? await composeRunEnvironment(
+          client,
+          project,
+          suite,
+          input.compose,
+          signal,
+        )
+      : undefined;
+
     // No client-side server default: the platform derives the suite's saved
     // selection when serverIds is omitted — the exact set the run snapshot
     // references, which a project-wide guess here could miss.
@@ -1627,14 +1835,18 @@ export const runEvalSuiteOperation: PlatformOperation<
       : undefined;
 
     // The suite DETAIL carries both attachment axes in attach order, so the
-    // targets compute from one read. Skipped only on the explicit-servers
-    // path, which is a single legacy run by construction and has no axis.
-    const detail = overrideServers
-      ? undefined
-      : await client.getEvalSuite(
-          { projectId: project.id, suiteId: suite.id },
-          { signal },
-        );
+    // targets compute from one read. Skipped on the two paths that have no
+    // axis to read: an explicit server override is a single legacy run by
+    // construction, and a composed stack has already PRODUCED its target — for
+    // either of them the attachments are simply not consulted, so fetching
+    // them would be a round trip spent on an answer nobody reads.
+    const detail =
+      overrideServers || composed
+        ? undefined
+        : await client.getEvalSuite(
+            { projectId: project.id, suiteId: suite.id },
+            { signal },
+          );
 
     const selectedEnvironments = await resolveSuiteEnvironmentTargets(
       client,
@@ -1655,23 +1867,30 @@ export const runEvalSuiteOperation: PlatformOperation<
         )
       : undefined;
 
-    const plan = computeRunTargets({
-      attachedEnvironments: (detail?.environmentIds ?? []).map((id) => ({
-        id,
-      })),
-      attachedHosts: (detail?.hosts ?? []).map((host) => ({
-        id: host.id,
-        name: host.name,
-      })),
-      selectedEnvironments,
-      selectedHosts,
-      ...(input.allAttached !== undefined
-        ? { allAttached: input.allAttached }
-        : {}),
-      ...(overrideServers
-        ? { serverIds: overrideServers.map((server) => server.id) }
-        : {}),
-    });
+    // A composed stack IS the target — it produced an environment, so there is
+    // nothing left to select between and the attachment axes do not apply.
+    const plan: RunTargetPlan = composed
+      ? {
+          kind: "single",
+          target: { kind: "environment", id: composed.environment.id },
+        }
+      : computeRunTargets({
+          attachedEnvironments: (detail?.environmentIds ?? []).map((id) => ({
+            id,
+          })),
+          attachedHosts: (detail?.hosts ?? []).map((host) => ({
+            id: host.id,
+            name: host.name,
+          })),
+          selectedEnvironments,
+          selectedHosts,
+          ...(input.allAttached !== undefined
+            ? { allAttached: input.allAttached }
+            : {}),
+          ...(overrideServers
+            ? { serverIds: overrideServers.map((server) => server.id) }
+            : {}),
+        });
 
     if (plan.kind === "target-required") {
       throw operationInputError(targetRequiredMessage(plan));
@@ -1687,7 +1906,10 @@ export const runEvalSuiteOperation: PlatformOperation<
     const suiteInfo = { id: suite.id, name: suite.name };
 
     if (plan.kind === "single") {
-      const created = await client.createEvalRun(
+      const created = await createEvalRunOrReportCompose(
+        composed,
+        () =>
+          client.createEvalRun(
         {
           projectId: project.id,
           body: {
@@ -1704,6 +1926,7 @@ export const runEvalSuiteOperation: PlatformOperation<
           },
         },
         { signal },
+      ),
       );
       const servers =
         overrideServers?.map((server) => ({
@@ -1724,6 +1947,7 @@ export const runEvalSuiteOperation: PlatformOperation<
         outcome: "started",
         startedCount: 1,
         failedCount: 0,
+        ...(composed ? { composed: composed.report } : {}),
         targets: [
           {
             status: "started",
@@ -1851,6 +2075,7 @@ const runEvalCaseInput = z.object({
     .describe(
       "One host ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that host's configuration. Mutually exclusive with `environment` and `servers`.",
     ),
+  compose: composeRunTargetInput.optional(),
   iterations: RUN_KNOB_FIELDS.iterations,
   idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
 });
@@ -1866,6 +2091,11 @@ export type RunEvalCaseResult = {
   environment: PlatformEvalRunCreated["environment"];
   /** The attached host the run is stamped with, when one was named. */
   host?: { id: string; name: string };
+  /** See `RunEvalSuiteResult.composed`. */
+  composed?: {
+    environment: { id: string; name: null; adhoc: true; created: boolean };
+    attachment: { attached: boolean };
+  };
   runId: string;
   status: string;
 };
@@ -1900,6 +2130,15 @@ export const runEvalCaseOperation: PlatformOperation<
     const overrideServers = input.servers
       ? await resolveRunServers(client, project, input.servers, signal)
       : undefined;
+    const composed = input.compose
+      ? await composeRunEnvironment(
+          client,
+          project,
+          suite,
+          input.compose,
+          signal,
+        )
+      : undefined;
     const environment = input.environment
       ? await resolveEnvironmentSelector(
           client,
@@ -1921,7 +2160,8 @@ export const runEvalCaseOperation: PlatformOperation<
           [input.host],
         )[0]!
       : undefined;
-    const created = await client.createEvalRun(
+    const created = await createEvalRunOrReportCompose(composed, () =>
+      client.createEvalRun(
       {
         projectId: project.id,
         body: {
@@ -1930,6 +2170,7 @@ export const runEvalCaseOperation: PlatformOperation<
           ...(overrideServers
             ? { serverIds: overrideServers.map((server) => server.id) }
             : {}),
+          ...(composed ? { environmentId: composed.environment.id } : {}),
           ...(environment ? { environmentId: environment.id } : {}),
           ...(host ? { namedHostId: host.id } : {}),
           ...(input.iterations !== undefined
@@ -1941,6 +2182,7 @@ export const runEvalCaseOperation: PlatformOperation<
         },
       },
       { signal },
+      ),
     );
     const servers =
       overrideServers?.map((server) => ({
@@ -1958,6 +2200,7 @@ export const runEvalCaseOperation: PlatformOperation<
       servers,
       environment: created.environment ?? null,
       ...(host ? { host } : {}),
+      ...(composed ? { composed: composed.report } : {}),
       runId: created.runId,
       status: created.status,
     };
@@ -4543,6 +4786,215 @@ export const createEnvironmentOperation: PlatformOperation<
             : {}),
           ...(input.sandboxImageId !== undefined
             ? { sandboxImageId: input.sandboxImageId }
+            : {}),
+        },
+      },
+      { signal },
+    );
+  },
+};
+
+
+// ── Composed (ad-hoc) environments ───────────────────────────────────────────
+//
+// A composed stack is the same thing as a saved environment MINUS the name:
+// one host, an optional server group, an optional model override, an optional
+// computer image, an optional skill selection. It exists so a caller can run a
+// specific combination WITHOUT adding a permanent entry to the project's
+// environment list that someone else then has to reason about — which is
+// exactly what `create_project_environment` would do.
+//
+// Everything downstream still goes through the ENVIRONMENT path: an ad-hoc row
+// is an environment, so it resolves, snapshots and pins identically. There is
+// deliberately no "override the model for this run" field anywhere — that
+// would be a second, weaker execution-context channel with none of the
+// environment's resolution or immutability guarantees.
+
+/** The composed stack, in SELECTOR vocabulary (names or IDs). */
+const composeStackFields = {
+  host: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Host (name or ID) the composed stack runs as — the client whose configuration the run is stamped with.",
+    ),
+  serverGroup: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Standalone server group to pin (by ID). Omit to use the host's own servers.",
+    ),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Model to run instead of the host's pinned one. Stored verbatim — pass exactly the id the provider request should carry.",
+    ),
+  computer: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Sandbox image (name or ID) to pin, so runs boot a fresh computer from it. Must be project-shared; promote a personal draft first.",
+    ),
+  skills: skillSelectionInput.optional(),
+  pluginVersionIds: pluginVersionIdsInput.optional(),
+} as const;
+
+const ensureAdhocEnvironmentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  ...composeStackFields,
+});
+export type EnsureAdhocEnvironmentInput = z.infer<
+  typeof ensureAdhocEnvironmentInput
+>;
+
+export type EnsureAdhocEnvironmentResult = {
+  project: SelectedProjectInfo;
+  environment: PlatformAdhocEnvironment;
+  /** False when this stack had already been composed — see the op description. */
+  created: boolean;
+};
+
+/**
+ * Resolve a composed stack's selectors to the ids the platform stores.
+ *
+ * Shared by the standalone op and the run ops' `compose` field, so a stack
+ * means the same thing wherever it is written — a second resolver would be a
+ * second set of rules for one vocabulary.
+ */
+async function resolveComposeStack(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  stack: {
+    host: string;
+    serverGroup?: string;
+    model?: string;
+    computer?: string;
+    skills?: { mode: "explicit"; skillIds: string[] };
+    pluginVersionIds?: string[];
+  },
+  signal: AbortSignal | undefined,
+): Promise<PlatformAdhocEnvironmentBody> {
+  const host = await resolveHost(client, project, stack.host, signal);
+  const image = stack.computer
+    ? await resolveImage(client, project, stack.computer, signal)
+    : undefined;
+  return {
+    hostId: host.id,
+    ...(stack.serverGroup ? { serverAttachmentId: stack.serverGroup } : {}),
+    ...(stack.model ? { modelId: stack.model } : {}),
+    ...(image ? { sandboxImageId: image.id } : {}),
+    ...(stack.skills ? { skillSelection: stack.skills } : {}),
+    ...(stack.pluginVersionIds
+      ? { pluginVersionIds: stack.pluginVersionIds }
+      : {}),
+  };
+}
+
+export const ensureAdhocEnvironmentOperation: PlatformOperation<
+  EnsureAdhocEnvironmentInput,
+  EnsureAdhocEnvironmentResult
+> = {
+  name: "ensure_adhoc_environment",
+  title: "Compose an MCPJam environment without naming it",
+  description:
+    "Get or create an UNNAMED environment for a composed stack — a host plus an optional server group, model, computer image and pinned skills. Deduplicated by CONTENT: the same stack always returns the same environment, and `created` is false on every call after the first. Use this instead of create_project_environment when you want to RUN a combination rather than add a permanent entry to the project's environment list. Promote one to a named environment later with name_environment.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: ensureAdhocEnvironmentInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const body = await resolveComposeStack(client, project, input, signal);
+    const ensured = await client.ensureAdhocEnvironment(
+      { projectId: project.id, body },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      environment: ensured.environment,
+      created: ensured.created === true,
+    };
+  },
+};
+
+const nameEnvironmentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "The ad-hoc environment to promote, by ID (an unnamed environment has no name to select it by).",
+    ),
+  expectedRevision: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe(EXPECTED_REVISION_DESCRIPTION),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Display name for the promoted environment. Must be unique among the project's live environments.",
+    ),
+  description: z
+    .string()
+    .optional()
+    .describe("Optional free-text description."),
+});
+export type NameEnvironmentInput = z.infer<typeof nameEnvironmentInput>;
+
+export const nameEnvironmentOperation: PlatformOperation<
+  NameEnvironmentInput,
+  PlatformEnvironment
+> = {
+  name: "name_environment",
+  title: "Promote an ad-hoc MCPJam environment",
+  description:
+    "Give an UNNAMED (ad-hoc) environment a name, promoting it in place — the same environment, now a permanent entry in the project's environment list, with the same id every existing run still points at. This is the ONLY way to promote one: update_project_environment renames an already-named environment and refuses an unnamed one. Promotion also drops the content fingerprint, so a later identical composition gets a fresh ad-hoc row rather than deduplicating onto this one, which is now independently editable.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: nameEnvironmentInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    return client.nameEnvironment(
+      {
+        projectId: project.id,
+        // By ID only: an unnamed row has no name to resolve against, and the
+        // name-or-id resolver would report it as "not found" rather than as
+        // the unnameable thing it is.
+        environmentId: input.environment.trim(),
+        body: {
+          expectedRevision: input.expectedRevision,
+          name: input.name,
+          ...(input.description !== undefined
+            ? { description: input.description }
             : {}),
         },
       },
@@ -7973,6 +8425,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEnvironmentOperation,
   resolveEnvironmentOperation,
   createEnvironmentOperation,
+  ensureAdhocEnvironmentOperation,
+  nameEnvironmentOperation,
   updateEnvironmentOperation,
   archiveEnvironmentOperation,
   restoreEnvironmentOperation,

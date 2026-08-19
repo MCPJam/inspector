@@ -7,6 +7,10 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunInsightsRequested,
+  PlatformAdhocEnvironmentBody,
+  PlatformAdhocEnvironmentEnsured,
+  PlatformEnvironmentNameBody,
+  PlatformEvalSuiteEnvironmentAttached,
   PlatformEvalRunCreated,
   PlatformEvalRunGroupCreated,
   PlatformEvalCase,
@@ -672,6 +676,61 @@ export class PlatformApiClient {
   }
 
   /**
+   * `POST /projects/{p}/environments/ensure-adhoc` — GET-OR-CREATE an UNNAMED,
+   * content-addressed environment for a composed stack.
+   *
+   * Distinct from `createEnvironment`, which mints a NAMED row that lands in
+   * the project's environment list forever. A composed stack is a throwaway:
+   * the caller wants to run this exact combination, not to add a permanent
+   * entry someone else has to reason about.
+   *
+   * Deduped server-side by a fingerprint of the stack, so the same stack
+   * always returns the same environment (`created: false` after the first
+   * call) and a retried launch converges instead of accumulating rows.
+   */
+  ensureAdhocEnvironment(
+    params: { projectId: string; body: PlatformAdhocEnvironmentBody },
+    options?: RequestOptions,
+  ): Promise<PlatformAdhocEnvironmentEnsured> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/environments/ensure-adhoc`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/environments/{id}/name` — PROMOTE an ad-hoc
+   * environment to a named one, in place.
+   *
+   * The ONLY promotion path: `updateEnvironment` cannot do it. The platform
+   * keeps the two apart because its rename is admin-gated and refuses a row
+   * that already has a name, while promotion is member-gated and refuses one
+   * that already has a name. Routing promotion through the rename would either
+   * open it to members or leave ad-hoc rows unnameable.
+   */
+  nameEnvironment(
+    params: {
+      projectId: string;
+      environmentId: string;
+      body: PlatformEnvironmentNameBody;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/environments/${encodeURIComponent(params.environmentId)}/name`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
    * Only the fields you pass change. Pass `null` for `serverAttachmentId`,
    * `modelId`, `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting
    * a field leaves it alone.
@@ -948,6 +1007,30 @@ export class PlatformApiClient {
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
       { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/eval-suites/{id}/environments` — APPEND one
+   * environment to the suite's attachments, atomically.
+   *
+   * Distinct from `updateEvalSuite({ environmentIds })`, which REPLACES the
+   * whole list: an append built on that is a read-modify-write across two
+   * round trips, and a concurrent attach landing in between is silently
+   * detached. Idempotent — attaching an already-attached environment reports
+   * `attached: false` and changes nothing.
+   */
+  attachEvalSuiteEnvironment(
+    params: { projectId: string; suiteId: string; environmentId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalSuiteEnvironmentAttached> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/environments`,
+      { body: { environmentId: params.environmentId } },
       options,
     );
   }

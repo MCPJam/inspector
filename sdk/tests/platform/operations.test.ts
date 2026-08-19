@@ -1886,6 +1886,8 @@ describe("operation catalog consistency", () => {
     get_project_environment: { environment: "e" },
     resolve_project_environment: { environment: "e" },
     create_project_environment: { name: "e", hostId: "h" },
+    ensure_adhoc_environment: { host: "h" },
+    name_environment: { environment: "e", expectedRevision: 0, name: "n" },
     update_project_environment: {
       environment: "e",
       expectedRevision: 0,
@@ -1966,6 +1968,8 @@ describe("operation catalog consistency", () => {
       "set_host_servers",
       "duplicate_host",
       "create_project_environment",
+      "ensure_adhoc_environment",
+      "name_environment",
       // Launching starts a fan-out that SPENDS model credits — the most
       // consequential write on this surface.
       "launch_journey_run",
