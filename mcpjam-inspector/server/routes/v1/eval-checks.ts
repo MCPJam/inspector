@@ -140,9 +140,16 @@ evalChecks.get(
     }
 
     // The repositories the App can actually reach — the choices a connect has.
-    // This one costs a GitHub round trip, so it FAILS SOFT: a GitHub outage
+    // This one costs a GitHub round trip, so it FAILS SOFT: a failed lookup
     // returns `connectable: null` (meaning "could not ask") rather than taking
     // down the list of what is already connected, which needs no GitHub at all.
+    //
+    // `[]` is NOT the same answer, and is not only "the App reaches nothing":
+    // a deployment with no GitHub App installation configured returns an empty
+    // list too (`checkRepoConfigsNode:listInstallationRepos` short-circuits on
+    // a null installation id). The platform does not distinguish those, so this
+    // boundary cannot either — say so rather than implying a distinction the
+    // wire does not carry.
     let connectable: Array<{ repo: string }> | null = null;
     try {
       const repos = ((await client.action(

@@ -1877,9 +1877,17 @@ export interface PlatformEvalCheckRepos {
   items: PlatformEvalCheckRepo[];
   /**
    * The repositories the MCPJam GitHub App can reach — the choices a connect
-   * has. `null` means the question could not be ASKED (GitHub was unavailable,
-   * or the organization has no installation), which is different from an empty
-   * list meaning the App reaches nothing.
+   * has.
+   *
+   * `null` means the question could not be ASKED: the lookup itself failed
+   * (GitHub unreachable, or the call errored). The already-connected `items`
+   * above still stand — they need no GitHub call.
+   *
+   * `[]` means it WAS asked and came back with nothing. That covers two
+   * situations the platform does not distinguish: the App is installed but
+   * reaches no repository, and this deployment has no App installation at all.
+   * If a connect is failing and this is empty, check the installation before
+   * assuming a permissions problem.
    */
   connectable: Array<{ repo: string }> | null;
 }

@@ -2906,7 +2906,7 @@ export const listEvalCheckReposOperation: PlatformOperation<
   name: "list_eval_check_repos",
   title: "List MCPJam GitHub Checks repositories",
   description:
-    "List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the App could not be asked, which is different from it reaching nothing.",
+    "List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.",
   readOnly: true,
   inputSchema: listEvalCheckReposInput,
   async execute(input, { client, signal }) {

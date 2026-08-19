@@ -155,6 +155,24 @@ describe("GET eval-check-repos", () => {
     expect(body.connectable).toBeNull();
   });
 
+  it("distinguishes a failed lookup from an empty one", async () => {
+    // `[]` and `null` are DIFFERENT answers and the DTO documents them as
+    // such: null = could not ask, [] = asked and got nothing. The empty case
+    // also covers a deployment with no GitHub App installed, because the
+    // platform returns [] for that too — so this pins the one distinction the
+    // boundary can actually make, and no more.
+    answer(
+      {
+        getGithubChecksSettingsAvailability: { state: "enabled" },
+        listForOrganization: [],
+      },
+      { listInstallationRepos: [] }
+    );
+    const body = (await (await makeApp().request(BASE)).json()) as any;
+    expect(body.connectable).toEqual([]);
+    expect(body.connectable).not.toBeNull();
+  });
+
   it("does NOT swallow a failure of the connected list", async () => {
     // The converse of the case above, and the other half of the design claim
     // in this file's header: the connectable list is allowed to fail soft
