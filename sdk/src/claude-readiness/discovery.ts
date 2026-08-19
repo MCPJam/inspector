@@ -106,6 +106,73 @@ interface FetchedJson {
   error?: string;
 }
 
+/**
+ * The JSON-RPC message carried by one SSE event, if it carries one.
+ *
+ * `data:` may be repeated within an event, and the payload is the lines joined
+ * with newlines — which is exactly how a pretty-printed JSON body arrives.
+ */
+function parseSseEventData(event: string): Record<string, unknown> | undefined {
+  const data = event
+    .split(/\r?\n/)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trimStart())
+    .join("\n");
+  if (!data) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(data);
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Read an SSE response only as far as its first JSON-RPC message, then stop.
+ *
+ * Stopping is the point: the server is entitled to hold the stream open after
+ * answering, so reading to `done` would hang until the probe's timeout and
+ * report a healthy connector as unreachable. The byte cap still applies, so a
+ * stream that never produces a parseable event cannot run away either.
+ */
+async function readSseJsonRpc(
+  response: Response,
+): Promise<Record<string, unknown> | undefined> {
+  const body = response.body;
+  if (!body || typeof body.getReader !== "function") return undefined;
+
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = "";
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      received += value.byteLength;
+      if (received > MAX_METADATA_BYTES) return undefined;
+      buffered += decoder.decode(value, { stream: true });
+
+      // Events are separated by a blank line; CRLF is as legal as LF.
+      const events = buffered.split(/\r?\n\r?\n/);
+      // The trailing segment is whatever has not been terminated yet.
+      buffered = events.pop() ?? "";
+      for (const event of events) {
+        const document = parseSseEventData(event);
+        if (document) return document;
+      }
+    }
+    // A stream that closed without a final blank line still left one event.
+    return parseSseEventData(buffered);
+  } finally {
+    await reader.cancel().catch(() => undefined);
+    reader.releaseLock?.();
+  }
+}
+
 async function fetchJson(
   url: string,
   options: ClaudeDiscoveryOptions,
@@ -135,6 +202,21 @@ async function fetchJson(
         status: response.status,
         headers: response.headers,
         error: `metadata document declared ${declaredLength} bytes, over the ${MAX_METADATA_BYTES}-byte cap`,
+      };
+    }
+    // AN SSE ANSWER IS A CONFORMING ANSWER. MCP's Streamable HTTP transport
+    // lets a server reply to a POST with either `application/json` or
+    // `text/event-stream`, and the unauthenticated probe advertises both — so
+    // reading an SSE reply as JSON would fail twice: the frames do not parse,
+    // making a working connector look like one that never answered, and the
+    // stream is allowed to stay open, so the read would block until the
+    // probe's own timeout fired rather than returning what already arrived.
+    const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+    if (contentType.includes("text/event-stream")) {
+      return {
+        status: response.status,
+        headers: response.headers,
+        document: await readSseJsonRpc(response),
       };
     }
     const text = await readBounded(response);

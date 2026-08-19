@@ -80,7 +80,15 @@ export interface PinnedStreamingFetchOptions {
 
 const DEFAULT_CHAIN_TIMEOUT_MS = 30_000;
 const DEFAULT_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
-const DEFAULT_MAX_REDIRECTS = 5;
+/**
+ * Matches `fetch` itself, and therefore `createGuardedFetch`'s
+ * `MAX_GUARDED_REDIRECTS`, which is what hosted conformance dialled through
+ * before this transport existed. A lower ceiling here would not have been a
+ * security improvement — every hop is validated either way — it would only
+ * have failed chains that legitimately worked, and enterprise OAuth chains
+ * (apex → www → CDN → tenant routing) do reach six and seven hops.
+ */
+const DEFAULT_MAX_REDIRECTS = 20;
 
 /** Credentials, in the sense Fetch means: dropped when the origin changes. */
 const CREDENTIAL_HEADERS = [
@@ -296,21 +304,38 @@ function toGuardedWebStream(
   destroyUpstream: () => void,
   maxResponseBytes: number,
   bodyIdleTimeoutMs: number,
+  onSettled: () => void,
 ): ReadableStream<Uint8Array> {
   let received = 0;
   let idleTimer: NodeJS.Timeout | undefined;
+  let settled = false;
+
+  const clearIdle = () => {
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = undefined;
+  };
+
+  /**
+   * The body stream outlives the function that returned the `Response`, and it
+   * is the last thing holding the caller's abort listener. Releasing it here —
+   * once, on whichever of end/error/cancel arrives first — is what stops a
+   * transport-lifetime signal accumulating one listener per request.
+   */
+  const settle = () => {
+    if (settled) return;
+    settled = true;
+    clearIdle();
+    onSettled();
+  };
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
-      const clearIdle = () => {
-        if (idleTimer) clearTimeout(idleTimer);
-        idleTimer = undefined;
-      };
       const armIdle = () => {
         if (bodyIdleTimeoutMs <= 0) return;
         clearIdle();
         idleTimer = setTimeout(() => {
           destroyUpstream();
+          settle();
           controller.error(
             new OAuthProxyError(
               504,
@@ -324,11 +349,17 @@ function toGuardedWebStream(
       };
 
       source.on("data", (chunk: Buffer | string) => {
+        // Destroying a socket is asynchronous, so a chunk already in flight
+        // can arrive after the stream settled — after a reader cancelled, or
+        // after the cap errored it. Enqueuing onto a closed controller throws
+        // `ERR_INVALID_STATE` out of an event handler, where nothing can catch
+        // it, so the verdict that already stands wins and the chunk is dropped.
+        if (settled) return;
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         received += buffer.byteLength;
         if (maxResponseBytes > 0 && received > maxResponseBytes) {
-          clearIdle();
           destroyUpstream();
+          settle();
           controller.error(
             new OAuthProxyError(
               400,
@@ -338,10 +369,20 @@ function toGuardedWebStream(
           return;
         }
         controller.enqueue(new Uint8Array(buffer));
+        // BACKPRESSURE. `source.on("data")` puts the socket in flowing mode,
+        // so without this the bridge enqueues as fast as the network delivers
+        // and the queue — not the consumer — decides how much is held. A
+        // reader that is slow, or that checks `status` and never reads the
+        // body at all, would buffer the entire response in memory: up to the
+        // byte cap, and without limit when the cap is disabled. Pausing when
+        // the reader has no capacity and resuming from `pull` hands that
+        // decision back to the consumer, which is what makes the cap a
+        // ceiling rather than a target.
+        if ((controller.desiredSize ?? 1) <= 0) source.pause();
         armIdle();
       });
       source.on("end", () => {
-        clearIdle();
+        settle();
         try {
           controller.close();
         } catch {
@@ -349,12 +390,14 @@ function toGuardedWebStream(
         }
       });
       source.on("error", (error: Error) => {
-        clearIdle();
         // The SOCKET first. A decoder failure — a truncated gzip member, a
         // corrupt brotli frame — errors the decompressor but leaves the
         // response, and therefore the pinned connection, open. Erroring only
         // the reader would leak it for the lifetime of the process.
         destroyUpstream();
+        // `settle` clears the idle timer and releases the caller's abort
+        // listener; both have to happen on this path too.
+        settle();
         try {
           controller.error(error);
         } catch {
@@ -363,8 +406,12 @@ function toGuardedWebStream(
       });
       armIdle();
     },
+    pull() {
+      // The reader drained the queue and wants more.
+      source.resume();
+    },
     cancel() {
-      if (idleTimer) clearTimeout(idleTimer);
+      settle();
       destroyUpstream();
     },
   });
@@ -473,6 +520,22 @@ export function createPinnedStreamingFetch(
       if (chainDeadline) clearTimeout(chainDeadline);
       chainController.signal.removeEventListener("abort", onChainAbort);
     };
+    /**
+     * The caller's listener has to come off on EVERY terminal path, not only
+     * the error ones. An MCP transport hands the same connection-lifetime
+     * signal to every request it makes, so a listener left behind per request
+     * is a listener leak on a long-lived connection: Node warns at eleven and
+     * the retained closures grow for as long as the connection lives.
+     *
+     * It cannot be released when this function returns, though — the returned
+     * `Response` still has a live body, and the caller's abort must keep
+     * reaching the socket for as long as that body can be read. So a streaming
+     * response hands this to the body stream to call when it settles, and only
+     * the paths with no body left to read call it directly.
+     */
+    const releaseCallerAbort = () => {
+      callerSignal?.removeEventListener("abort", onCallerAbort);
+    };
 
     let currentUrl = startUrl;
     let currentMethod = (init?.method ?? (input as Request)?.method ?? "GET")
@@ -483,7 +546,7 @@ export function createPinnedStreamingFetch(
       currentBody = encodeBody(init?.body as BodyInit | null | undefined);
     } catch (error) {
       releaseChainDeadline();
-      callerSignal?.removeEventListener("abort", onCallerAbort);
+      releaseCallerAbort();
       throw error;
     }
 
@@ -512,7 +575,10 @@ export function createPinnedStreamingFetch(
         if (parsed.protocol !== "https:" && !(chainAllowsLoopback && hopIsLoopback)) {
           throw new OAuthProxyError(
             400,
-            `Refusing a plaintext connection to "${safeHost(currentUrl)}".`,
+            // Name the fix. This refusal is about the SCHEME, and a message
+            // that only says "refused" gets read as an address problem by
+            // whoever has to act on it.
+            `Refusing a plaintext connection to "${safeHost(currentUrl)}": the target must be served over https.`,
           );
         }
 
@@ -585,6 +651,9 @@ export function createPinnedStreamingFetch(
         const responseHeaders = normalizeResponseHeaders(response);
         if (NULL_BODY_STATUSES.has(status)) {
           response.resume();
+          // No body means nothing will settle later, so this path owns the
+          // release itself.
+          releaseCallerAbort();
           return finalizeResponse(
             new Response(null, {
               status,
@@ -603,6 +672,7 @@ export function createPinnedStreamingFetch(
           () => response.destroy(),
           maxResponseBytes,
           bodyIdleTimeoutMs,
+          releaseCallerAbort,
         );
         // `content-encoding`/`content-length` described bytes that no longer
         // exist once `decodeStream` has undone them; leaving them would make
@@ -623,7 +693,7 @@ export function createPinnedStreamingFetch(
       }
     } catch (error) {
       releaseChainDeadline();
-      callerSignal?.removeEventListener("abort", onCallerAbort);
+      releaseCallerAbort();
       // An abort raised by our own deadline reaches here as whatever `undici`
       // or `node:http` chose to throw; the reason we set is the honest one.
       const reason = socketController.signal.reason;
@@ -634,7 +704,8 @@ export function createPinnedStreamingFetch(
     }
     // NOTE: no `finally` that unhooks `onCallerAbort`. The caller's abort must
     // keep reaching the socket for as long as the body stream lives, which is
-    // after this function has already returned its `Response`.
+    // after this function has already returned its `Response` — which is why
+    // `releaseCallerAbort` is handed to that stream rather than called here.
   };
 
   return pinnedStreamingFetch as typeof fetch;

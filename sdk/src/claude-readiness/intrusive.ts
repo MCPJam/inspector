@@ -265,6 +265,17 @@ export interface ClaudeIntrusiveObservations {
     attempted: boolean;
     /** The server issued a NEW refresh token on the refresh. */
     rotated: boolean;
+    /**
+     * What the FIRST refresh request returned.
+     *
+     * Load-bearing for grading: a refresh that was rejected outright — a
+     * confidential client probed without its secret answers `401
+     * invalid_client` — issues no new token either, and is indistinguishable
+     * from a non-rotating server unless the status is kept. One is the
+     * server's defect; the other is the probe's own request being wrong.
+     */
+    refreshStatus?: number;
+    refreshError?: string;
     /** Replaying the old refresh token: what came back. */
     replayStatus?: number;
     replayError?: string;
@@ -279,6 +290,21 @@ export interface ClaudeIntrusiveObservations {
     wwwAuthenticate?: string;
     error?: string;
   };
+}
+
+/**
+ * Whether the refresh request itself was answered successfully.
+ *
+ * An older observation carries no `refreshStatus` — it predates the field —
+ * and the honest reading of "no status recorded" is that the request is not
+ * known to have failed, which keeps grading of previously captured evidence
+ * exactly as it was.
+ */
+function refreshRequestSucceeded(
+  refresh: NonNullable<ClaudeIntrusiveObservations["refresh"]>,
+): boolean {
+  if (refresh.refreshStatus === undefined) return true;
+  return refresh.refreshStatus >= 200 && refresh.refreshStatus < 300;
 }
 
 /**
@@ -363,13 +389,28 @@ export function gradeClaudeIntrusiveObservations(
           "no refresh token was available from a grant this run owns, and a borrowed one must never be spent here",
       ),
     );
+  } else if (!refresh.rotated && !refreshRequestSucceeded(refresh)) {
+    // THE PROBE'S OWN REQUEST FAILED, so the server was never asked the
+    // question this check grades. Calling that a rotation defect accuses a
+    // submitter of a bug we manufactured — a confidential client probed
+    // without its secret answers `401 invalid_client` and issues no token, and
+    // so does a server with nothing wrong with it.
+    findings.push(
+      notEvaluated(
+        REFRESH_ROTATION,
+        stamp,
+        `the refresh request was rejected (HTTP ${refresh.refreshStatus ?? "unknown"}${
+          refresh.refreshError ? `, ${refresh.refreshError}` : ""
+        }), so rotation was never exercised; check the credentials handed to the probe`,
+      ),
+    );
   } else if (!refresh.rotated) {
     findings.push(
       violated(
         REFRESH_ROTATION,
         stamp,
         "The refresh did not issue a new refresh token. Claude expects rotation; a static refresh token stays valid after a leak.",
-        { replayStatus: refresh.replayStatus },
+        { refreshStatus: refresh.refreshStatus, replayStatus: refresh.replayStatus },
       ),
     );
   } else {
@@ -609,13 +650,19 @@ export async function probeRefreshRotation(
     };
   }
 
+  const refreshStatus = first.response.status;
+  const refreshError =
+    typeof first.json.error === "string" ? first.json.error : undefined;
   const issued =
     typeof first.json.refresh_token === "string"
       ? first.json.refresh_token
       : undefined;
   const rotated = issued !== undefined && issued !== refreshToken;
   if (!rotated) {
-    return { attempted: true, rotated: false };
+    // Carry the status out. Grading cannot tell "this server does not rotate"
+    // from "the server refused OUR request" without it, and the difference
+    // decides whether the finding is the submitter's to fix.
+    return { attempted: true, rotated: false, refreshStatus, refreshError };
   }
 
   try {

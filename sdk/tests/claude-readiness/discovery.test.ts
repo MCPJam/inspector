@@ -110,6 +110,68 @@ describe("the unauthenticated probe", () => {
     });
     expect(evidence.unauthenticated?.servedWithoutCredentials).toBe(true);
   });
+
+  it("reads an SSE answer, which Streamable HTTP lets a server choose", async () => {
+    // The probe advertises `text/event-stream`, so answering with one is
+    // conforming. Parsing it as JSON would fail and record a working authless
+    // connector as one that never answered — a required runtime-blocker
+    // violation manufactured entirely by the probe.
+    const { origin } = await start((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("event: message\n");
+      res.write(
+        `data: ${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: { protocolVersion: "2025-06-18" },
+        })}\n\n`,
+      );
+      // Deliberately left OPEN: a server may keep the stream up after
+      // answering, and the probe must not wait for it to close.
+    });
+
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+      timeoutMs: 5_000,
+    });
+    expect(evidence.unauthenticated?.servedWithoutCredentials).toBe(true);
+  });
+
+  it("reads an SSE error frame as an answer too", async () => {
+    const { origin } = await start((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(
+        `data: ${JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          error: { code: -32600, message: "no" },
+        })}\n\n`,
+      );
+    });
+
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+      timeoutMs: 5_000,
+    });
+    expect(evidence.unauthenticated?.servedWithoutCredentials).toBe(true);
+  });
+
+  it("does not call an SSE stream carrying no JSON-RPC message an answer", async () => {
+    const { origin } = await start((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(": keepalive\n\n");
+      res.end();
+    });
+
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+      timeoutMs: 5_000,
+    });
+    expect(evidence.unauthenticated?.servedWithoutCredentials).toBe(false);
+  });
 });
 
 describe("PRM discovery order", () => {

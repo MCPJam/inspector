@@ -355,11 +355,45 @@ describe("refresh rotation and replay", () => {
   it("fails a server that never rotates", async () => {
     const finding = gradeClaudeIntrusiveObservations(
       withRefresh(),
-      { refresh: { attempted: true, rotated: false } },
+      { refresh: { attempted: true, rotated: false, refreshStatus: 200 } },
       STAMP,
     ).find((f) => f.id === "claude.intrusive.refresh-rotation")!;
     expect(finding.status).toBe("violated");
     expect(finding.remediation).toMatch(/rotation/);
+  });
+
+  it("does not blame the server when the probe's own request was rejected", async () => {
+    // A confidential client probed without its secret gets `401
+    // invalid_client` and no new token — identical on the wire to a server
+    // that does not rotate. Grading that as a rotation defect reports a
+    // required violation the submitter cannot act on, because it is ours.
+    const finding = gradeClaudeIntrusiveObservations(
+      withRefresh(),
+      {
+        refresh: {
+          attempted: true,
+          rotated: false,
+          refreshStatus: 401,
+          refreshError: "invalid_client",
+        },
+      },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.refresh-rotation")!;
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.notEvaluatedReason).toMatch(/401/);
+    expect(finding.notEvaluatedReason).toMatch(/invalid_client/);
+  });
+
+  it("still grades evidence captured before the status was recorded", async () => {
+    // An observation with no `refreshStatus` predates the field; treating
+    // "not known to have failed" as a failure would silently reclassify old
+    // evidence.
+    const finding = gradeClaudeIntrusiveObservations(
+      withRefresh(),
+      { refresh: { attempted: true, rotated: false } },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.refresh-rotation")!;
+    expect(finding.status).toBe("violated");
   });
 
   it("replays the OLD token, which is what proves it was invalidated", async () => {

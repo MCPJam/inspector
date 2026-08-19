@@ -13,6 +13,7 @@
  * and does not extend to any other private range.
  */
 
+import { getEventListeners } from "node:events";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
@@ -291,7 +292,115 @@ describe("the caller's redirect mode is honored", () => {
   });
 });
 
+describe("resources it must not leak", () => {
+  it("releases the caller's abort listener when the body is finished", async () => {
+    // An MCP transport hands ONE connection-lifetime signal to every request
+    // it makes. A listener left behind per request is a leak that warns at
+    // eleven and grows for as long as the connection lives.
+    const { origin } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+    });
+
+    const controller = new AbortController();
+    const fetchFn = loopbackFetch();
+    for (let i = 0; i < 12; i += 1) {
+      const response = await fetchFn(`${origin}/rpc`, {
+        signal: controller.signal,
+      });
+      await response.text();
+    }
+
+    // One listener would be ordinary; twelve is the leak.
+    expect(getEventListeners(controller.signal, "abort").length).toBe(0);
+  });
+
+  it("releases it for a null-body status too", async () => {
+    const { origin } = await startServer((_req, res) => {
+      res.writeHead(204);
+      res.end();
+    });
+
+    const controller = new AbortController();
+    await loopbackFetch()(`${origin}/nothing`, { signal: controller.signal });
+
+    expect(getEventListeners(controller.signal, "abort").length).toBe(0);
+  });
+
+  it("releases it when the reader cancels a stream it never finished", async () => {
+    const { origin } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write("data: one\n\n");
+      // Left open: the caller walks away instead.
+    });
+
+    const controller = new AbortController();
+    const response = await loopbackFetch()(`${origin}/sse`, {
+      signal: controller.signal,
+    });
+    await response.body!.cancel();
+
+    expect(getEventListeners(controller.signal, "abort").length).toBe(0);
+  });
+
+  it("does not buffer a body the consumer has not read", async () => {
+    // Without backpressure the data handler enqueues as fast as the socket
+    // delivers, so the QUEUE decides how much is held rather than the reader.
+    // A consumer that reads one chunk and pauses should leave the rest on the
+    // socket.
+    const chunk = Buffer.alloc(64 * 1024, 7);
+    let written = 0;
+    const { origin } = await startServer((_req, res) => {
+      res.writeHead(200, { "content-type": "application/octet-stream" });
+      const pump = () => {
+        // Write far more than any sane queue would hold.
+        while (written < 200) {
+          written += 1;
+          if (!res.write(chunk)) {
+            res.once("drain", pump);
+            return;
+          }
+        }
+        res.end();
+      };
+      pump();
+    });
+
+    const response = await loopbackFetch()(`${origin}/firehose`);
+    const reader = response.body!.getReader();
+    await reader.read();
+    // Give the socket room to run away if nothing is holding it back.
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    const seen = written;
+    await reader.cancel();
+
+    // The exact number depends on socket buffers; the point is that it is
+    // bounded rather than "all 200 chunks".
+    expect(seen).toBeLessThan(200);
+  });
+});
+
 describe("the bounds", () => {
+  it("allows a chain as long as fetch itself does by default", async () => {
+    // The ceiling exists to stop a loop, not to fail real infrastructure:
+    // apex → www → CDN → tenant routing genuinely reaches six and seven hops,
+    // and every hop is validated either way.
+    let hop = 0;
+    const { origin } = await startServer((_req, res) => {
+      hop += 1;
+      if (hop <= 7) {
+        res.writeHead(302, { location: `/hop-${hop}` });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ arrived: true }));
+    });
+
+    const response = await loopbackFetch()(`${origin}/start`);
+    expect(response.status).toBe(200);
+  });
+
   it("refuses a chain longer than the redirect ceiling", async () => {
     const { origin } = await startServer((_req, res) => {
       res.writeHead(302, { location: "/again" });

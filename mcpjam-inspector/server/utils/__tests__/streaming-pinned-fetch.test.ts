@@ -81,6 +81,21 @@ describe("createStreamingPinnedFetch", () => {
     );
   });
 
+  it("says a plaintext target is plaintext, not unroutable", async () => {
+    // The address message is right for an address problem and wrong for this
+    // one: an `http://` connector on a perfectly public host was being told it
+    // "is not a publicly routable address", sending its owner to look at DNS
+    // and firewalls for something one character in the URL fixes.
+    const guarded = createStreamingPinnedFetch({ hosted: true });
+    const refusal = await guarded("http://example.com/mcp").catch(
+      (error: unknown) => error,
+    );
+    expect(refusal).toBeInstanceOf(BlockedEgressTargetError);
+    expect((refusal as Error).message).toMatch(/plaintext/i);
+    expect((refusal as Error).message).toMatch(/https/i);
+    expect((refusal as Error).message).not.toMatch(/publicly routable/i);
+  });
+
   it("classifies an unresolvable host as a resolution failure, not a refusal", async () => {
     // `retryable`, not `terminal`: DNS failing is ours to retry, and reporting
     // it as an egress REFUSAL would put a perfectly legitimate target on the

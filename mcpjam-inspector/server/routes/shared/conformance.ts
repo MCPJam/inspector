@@ -38,10 +38,26 @@ import {
 } from "../../services/conformance-oauth-sessions.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
 
-/** DNS + connect + response headers, across every hop of one request. */
-const CONFORMANCE_CHAIN_TIMEOUT_MS = 30_000;
-/** No bytes for this long on an open stream ⇒ the stream is dead, not slow. */
-const CONFORMANCE_BODY_IDLE_TIMEOUT_MS = 120_000;
+/**
+ * DNS + connect + response headers, across every hop of one request.
+ *
+ * Matched to undici's `headersTimeout`, which is what these runs got from the
+ * global `fetch` before the transport swap. Closing an SSRF hole is not a
+ * reason to start failing servers that were graded fine yesterday, and a cold
+ * container answering its first `initialize` in forty seconds is slow, not
+ * unreachable — the suite's own per-check timeout is what bounds a slow run.
+ */
+const CONFORMANCE_CHAIN_TIMEOUT_MS = 300_000;
+/**
+ * No bytes for this long on an OPEN stream ⇒ the stream is dead, not slow.
+ *
+ * Matched to undici's `bodyTimeout` for the same reason. It cannot be tight:
+ * MCP requires no SSE keepalives, so a conforming notification stream is
+ * allowed to say nothing at all while a long check or an interactive OAuth
+ * wait runs, and killing it would fail the server for our impatience — and
+ * without resumability, drop the notifications the suite is there to observe.
+ */
+const CONFORMANCE_BODY_IDLE_TIMEOUT_MS = 300_000;
 /** Cumulative decompressed body cap for a single conformance request. */
 const CONFORMANCE_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
 
