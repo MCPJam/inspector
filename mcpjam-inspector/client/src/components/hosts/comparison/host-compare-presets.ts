@@ -60,6 +60,11 @@ export function buildPresetCompareEntries(
       // `initialize` list only carries the legacy ones. Carry the catalog
       // fact so the comparison shows real support, not the handshake list.
       supportedProtocolVersions: host.supportedProtocolVersions,
+      // Lets a row distinguish "probed and absent" from "never probed".
+      provenance: host.provenance,
+      // Both style themes for hosts that resolve their tokens per theme;
+      // hostContext.styles can only carry the one the host announces.
+      styleVariablesByTheme: host.styleVariablesByTheme,
     } as HostConfigDtoWithCatalogFacts;
 
     hosts.push({
