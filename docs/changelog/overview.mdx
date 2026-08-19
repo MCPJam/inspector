@@ -9,6 +9,25 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-08-19
+
+#### Added
+
+- **Dual-era protocol support for Claude and ChatGPT (`@mcpjam/inspector` minor, `@mcpjam/sdk` minor)**
+  - Claude and ChatGPT are now modeled as dual-era clients that speak both `2025-11-25` and `2026-07-28`. Both catalog rows are marked `provenance: "probe"` — captured from the real clients rather than assumed.
+  - Corrected host facts from the probe: ChatGPT and Claude do not honour `requestTeardown`. Claude's available display modes are `inline` and `fullscreen` (no PiP). Cursor's available display mode is `inline` only. Every MCP Apps row now carries explicit `cspConnectDomains` and `cspResourceDomains` sets.
+  - `mcpProtocolVersion: "auto"` is now a valid stored selection policy. It is never sent on the wire — at connect time the SDK negotiates the era with the server. Selecting **Automatic** in the Protocol tab now writes `"auto"` rather than leaving the field absent, so a client that negotiates deliberately says so explicitly.
+  - The Protocol tab's version dropdown now offers the union of the client's `initialize` accept-list and the eras the catalog row advertises, so `2026-07-28` is selectable on clients that speak it even when their `initialize` list only carries legacy revisions.
+  - The unadvertised-pin warning (`ConflictingProtocolVersionPin`) now fires for stateful pins only. A stateless pin is exempt from the accept-list check, matching the rule in the spec.
+
+- **Protocol versions row in Can-I-Use (`@mcpjam/inspector` minor)**
+  - The Can-I-Use / Compare matrix gains a **Protocol versions** row. It reads each host's catalog-advertised supported list rather than the preset's `initialize` handshake list, so the matrix reports what each client actually speaks. The value renders as a plain list, not a support chip — "which eras" is not a yes/no question.
+
+#### Fixed
+
+- **Toast theme in light mode (`@mcpjam/inspector` patch)**
+  - Toast descriptions are now readable when the app is in light mode on a dark-mode machine. The theme is now derived from the `.dark` class the design system scopes its dark tokens under, and the toast description text is pinned to `var(--foreground)`.
+
 ### 2026-06-26
 
 #### Added
