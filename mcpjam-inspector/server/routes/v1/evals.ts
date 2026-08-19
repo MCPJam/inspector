@@ -34,8 +34,18 @@ import { HOSTED_MODE } from "../../config.js";
 import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   deriveItemIdempotencyKey,
+  deriveOperationIdempotencyKey,
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
+import { opaqueIdSchema } from "@mcpjam/sdk/contract";
+import {
+  createEvalCasesInBatches,
+  partialResultOf,
+  withMintedCaseIds,
+  MAX_CASES_PER_BATCH,
+  type CaseBatchFailedEntry,
+  type EvalCaseBatchItem,
+} from "../shared/eval-case-batch.js";
 import {
   RunEvalsRequestSchema,
   prepareEvalRun,
@@ -1188,6 +1198,17 @@ function internalCaseToSteps(testCase: CaseDoc): TestStep[] {
 function toCaseDto(testCase: CaseDoc) {
   return {
     id: String(testCase._id),
+    // The EFFECTIVE declared identity — what the case answers to in a suite
+    // file, an import, or a CLI argument — so a caller can read back the id it
+    // authored (and see which id won when a retry replayed onto a stored row).
+    //
+    // Deliberately not folded into `id`. That field is the platform row id
+    // every case route takes as its path parameter and every selector resolves
+    // against; giving one name two meanings would break each of them. Absent on
+    // cases authored before declared identity existed.
+    ...(typeof testCase.declaredCaseId === "string"
+      ? { declaredId: testCase.declaredCaseId }
+      : {}),
     title: testCase.title ?? "",
     steps: internalCaseToSteps(testCase),
     ...(testCase.expectedOutput !== undefined
@@ -1448,8 +1469,47 @@ const publicCaseBodyShape = {
     .optional(),
 } as const;
 
-const createCaseSchema = z.object(publicCaseBodyShape);
+const createCaseSchema = z.object({
+  ...publicCaseBodyShape,
+  /**
+   * The case's DECLARED identity. Callers mint it (`mintCaseId` from
+   * `@mcpjam/sdk/contract`) so the id a suite file commits is the id the
+   * platform stores; when omitted, this first-party server mints one rather
+   * than leaving the case without an identity.
+   *
+   * Create only. It is absent from `updateCaseSchema` on purpose: a case's
+   * identity is not one of the fields a PATCH may edit, and accepting it there
+   * would make "change this case" and "point this id at a different case" the
+   * same request.
+   */
+  id: opaqueIdSchema.optional(),
+});
 const updateCaseSchema = z.object(publicCaseBodyShape);
+
+/**
+ * A case inside a `POST …/cases/batch` body. Same shape as a single create —
+ * the batch surface is the single surface repeated, not a second contract.
+ */
+const batchCaseSchema = createCaseSchema;
+
+const createCasesBatchSchema = z.object({
+  cases: z
+    .array(batchCaseSchema)
+    .min(1, "cases must contain at least one case.")
+    .max(
+      MAX_CASES_PER_BATCH,
+      `cases accepts at most ${MAX_CASES_PER_BATCH} entries per call; split larger writes into chunks.`,
+    ),
+  /**
+   * `block` (default) refuses a case whose definition already exists in the
+   * suite. Left as a plain string so an unrecognized value COERCES to `block`
+   * and reports the coercion, exactly as the platform does — validating it to
+   * an enum here would turn a typo into a rejected batch and hide the
+   * platform's own audit field.
+   */
+  duplicatePolicy: z.string().optional(),
+  overrideReason: z.string().optional(),
+});
 
 const updateSuiteSchema = z.object({
   name: z.string().min(1).optional(),
@@ -1579,6 +1639,11 @@ function buildCaseMutationArgs(
 ): Record<string, unknown> {
   const args: Record<string, unknown> = {};
   let isModelFreeStepsCase = false;
+  // The public field is `id` (what a caller reads back on the case DTO); the
+  // storage argument is `caseId`, which lands in `declaredCaseId`. It is never
+  // the `caseKey` — that stays the platform's own random `ui_*` storage key.
+  // Only create carries one; `updateCaseSchema` has no `id` to forward.
+  if ("id" in body && body.id !== undefined) args.caseId = body.id;
   if (body.title !== undefined) args.title = body.title;
   if (body.iterations !== undefined) args.runs = body.iterations;
   if (body.isNegative !== undefined) args.isNegativeTest = body.isNegative;
@@ -1653,6 +1718,63 @@ function buildCaseMutationArgs(
         : { mode: body.checks.mode, list: body.checks.list };
 
   return args;
+}
+
+/**
+ * Assert a case body can be CREATED, and hand back its narrowed title.
+ *
+ * `steps` is optional on the shared case shape so PATCH can be a partial
+ * update, but a create must carry the steps-first contract — otherwise the case
+ * is persisted with no executable steps. Shared by the single and batch routes
+ * so the two cannot disagree about what "creatable" means; `label` names the
+ * offending case when one call carries many.
+ */
+function assertCreatableCase(
+  body: { title?: string; steps?: unknown },
+  label = "",
+): string {
+  if (!body.title) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `${label}title is required.`,
+    );
+  }
+  if (!Array.isArray(body.steps) || body.steps.length === 0) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `${label}steps is required and must be a non-empty array when creating a case.`,
+    );
+  }
+  return body.title;
+}
+
+/**
+ * Turn one batch item's failure into the v1 error a single-case caller expects.
+ *
+ * The batch mutation reports per-item problems as data rather than throwing, so
+ * a caller that authored exactly one case would otherwise get a 201 carrying a
+ * failure. Identity and duplicate collisions are 409 (the request was
+ * well-formed; the suite is not in a state that accepts it); everything else is
+ * the caller's payload, so 400.
+ */
+function caseBatchFailureToWebError(
+  entry: CaseBatchFailedEntry,
+): WebRouteError {
+  const conflict =
+    entry.code === "DUPLICATE_CASE_ID" ||
+    entry.code === "DUPLICATE_IDEMPOTENCY_KEY" ||
+    entry.code === "IDEMPOTENCY_CONFLICT" ||
+    entry.code === "DUPLICATE_CONTENT";
+  return new WebRouteError(
+    conflict ? 409 : 400,
+    conflict ? ErrorCode.CONFLICT : ErrorCode.VALIDATION_ERROR,
+    entry.message,
+    // The stable code is what a program branches on; the message is prose and
+    // may be reworded.
+    { reason: entry.code },
+  );
 }
 
 /**
@@ -2963,23 +3085,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = c.req.param("suiteId");
   const body = parseWithSchema(createCaseSchema, await synthesizeServerBody(c));
-  if (!body.title) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "title is required.",
-    );
-  }
-  // `steps` is optional on the shared case shape so PATCH can be a partial
-  // update, but a CREATE must carry the steps-first contract — otherwise the
-  // case is persisted with no executable steps.
-  if (!Array.isArray(body.steps) || body.steps.length === 0) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "steps is required and must be a non-empty array when creating a case.",
-    );
-  }
+  const title = assertCreatableCase(body);
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
   let suite: SuiteDoc | null;
@@ -3001,24 +3107,180 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
       : [];
   const args = buildCaseMutationArgs(body, { forCreate: true, defaultModels });
   const { convexClient } = createConvexClients(token);
-  let caseId: string;
+  // A single create is a batch of one, deliberately: it is the same contract,
+  // so it gets the same default duplicate policy, the same warnings, the same
+  // override audit and the same identity handling. Two routes into two
+  // mutations is how the single and bulk paths would drift.
+  const [item] = withMintedCaseIds<EvalCaseBatchItem>([
+    { ...args, title, changeSource: "manual" },
+  ]);
+  let result: Awaited<ReturnType<typeof createEvalCasesInBatches>>;
   try {
-    caseId = await convexClient.mutation("testSuites:createTestCase" as any, {
+    result = await createEvalCasesInBatches(convexClient, {
       suiteId,
-      changeSource: "manual",
-      ...args,
+      cases: [item],
     });
   } catch (error) {
     throw translateConvexWriteError(error);
+  }
+  const failure = result.failed[0];
+  if (failure) throw caseBatchFailureToWebError(failure);
+  const committed = result.committed[0];
+  if (!committed) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Case create returned neither a committed case nor a failure.",
+    );
   }
   const created = await loadCaseInScope(
     createConvexReadClient(token),
     projectId,
     suiteId,
-    String(caseId),
+    String(committed.testCaseId),
   );
   return v1Resource(c, toCaseDto(created), 201);
 });
+
+// POST /v1/projects/:projectId/eval-suites/:suiteId/cases/batch
+//
+// The bulk authoring surface: an agent converting a repo's test files, or an
+// import, writes its cases in one call per chunk instead of one call per case.
+// It is the SINGLE create repeated — same case body, same identity rules, same
+// duplicate policy — so nothing here may grow a second meaning for a field the
+// single route already defines.
+evals.post(
+  "/projects/:projectId/eval-suites/:suiteId/cases/batch",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const suiteId = c.req.param("suiteId");
+    const body = parseWithSchema(
+      createCasesBatchSchema,
+      await synthesizeServerBody(c),
+    );
+
+    // Every case is checked before the suite is even loaded: a batch with one
+    // unusable body is a caller mistake about the whole request, and reporting
+    // it after 99 siblings were authored would leave the caller reconciling a
+    // partial write it cannot retry cleanly.
+    const titles = body.cases.map((testCase, index) =>
+      assertCreatableCase(testCase, `cases[${index}]: `),
+    );
+
+    const token = await getConvexBearerForRequest(c);
+    const readClient = createConvexReadClient(token);
+    let suite: SuiteDoc | null;
+    try {
+      suite = await readClient.query("testSuites:getTestSuite" as any, {
+        suiteId,
+      });
+    } catch (error) {
+      if (isConvexNotVisibleError(error)) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "Eval suite not found",
+        );
+      }
+      throw error;
+    }
+    requireProjectMatch(suite, projectId, "Eval suite");
+
+    // Resolved at most ONCE for the whole batch, and only when some case
+    // actually needs it — the single route's per-call lookup would otherwise
+    // become 100 identical queries.
+    const defaultModels = body.cases.some((tc) => tc.models === undefined)
+      ? await defaultCaseModels(readClient, suiteId)
+      : [];
+
+    // A retry of an interrupted import must land on the same rows rather than
+    // authoring the suite's cases twice. Discriminate by the caller's declared
+    // id when there is one — it is stable across retries by construction — and
+    // by position otherwise, which a verbatim retry also reproduces. Position
+    // is an idempotency discriminator only; it never becomes an identity.
+    const turnKey = readIdempotencyKey(c);
+    const operationKey = turnKey
+      ? deriveOperationIdempotencyKey(turnKey, "create_eval_cases", {
+          projectId,
+          suiteId,
+        })
+      : undefined;
+
+    const items = withMintedCaseIds<EvalCaseBatchItem>(
+      body.cases.map((testCase, index) => {
+        const args = buildCaseMutationArgs(testCase, {
+          forCreate: true,
+          defaultModels,
+        });
+        return {
+          ...args,
+          title: titles[index],
+          changeSource: "manual",
+          ...(operationKey
+            ? {
+                idempotencyKey: deriveItemIdempotencyKey(
+                  operationKey,
+                  testCase.id ? `id:${testCase.id}` : `index:${index}`,
+                ),
+              }
+            : {}),
+        };
+      }),
+    );
+
+    const { convexClient } = createConvexClients(token);
+    let result: Awaited<ReturnType<typeof createEvalCasesInBatches>>;
+    try {
+      result = await createEvalCasesInBatches(convexClient, {
+        suiteId,
+        cases: items,
+        ...(body.duplicatePolicy
+          ? { duplicatePolicy: body.duplicatePolicy }
+          : {}),
+        ...(body.overrideReason
+          ? { overrideReason: body.overrideReason }
+          : {}),
+      });
+    } catch (error) {
+      throw translateConvexWriteError(error);
+    }
+
+    // Committed entries are summaries, not full case DTOs. Reading back 100
+    // cases to echo bodies the caller just sent is 100 queries for data it
+    // already has; `id` is what it cannot know without asking, and `index` is
+    // what lets it line each result up against its own list.
+    return v1Resource(
+      c,
+      {
+        created: result.committed.map((entry) => ({
+          index: entry.index,
+          id: String(entry.testCaseId),
+          ...(entry.caseId ? { declaredId: entry.caseId } : {}),
+          title: entry.title,
+          // True when an idempotent retry landed on a case the first attempt
+          // had already authored — nothing new was written.
+          replayed: entry.replayed,
+          ...(entry.warnings?.length ? { warnings: entry.warnings } : {}),
+        })),
+        // Per-item failures are DATA, not an error response: the siblings that
+        // committed really did commit, and a 4xx for the whole call would tell
+        // the caller to retry writes that already landed.
+        failed: result.failed.map((entry) => ({
+          index: entry.index,
+          ...(entry.title ? { title: entry.title } : {}),
+          ...(entry.caseId ? { declaredId: entry.caseId } : {}),
+          code: entry.code,
+          message: entry.message,
+        })),
+        // The policy audit: an unrecognized value coerces to `block`, and the
+        // coercion is reported here rather than silently applied.
+        duplicatePolicy: result.duplicatePolicy,
+        ...(result.warnings.length > 0 ? { warnings: result.warnings } : {}),
+      },
+      201,
+    );
+  },
+);
 
 // PATCH /v1/projects/:projectId/eval-suites/:suiteId/cases/:caseId
 evals.patch(
@@ -3327,12 +3589,20 @@ evals.post(
       }
     }
 
-    // Persist each generated draft as a case under the suite.
+    // Persist the generated drafts as cases under the suite.
     const created: ReturnType<typeof toCaseDto>[] = [];
     const createdCaseIds: string[] = [];
     const skipped: Array<{ title: string; error: string }> = [];
     let normal = 0;
     let negative = 0;
+    // Built first, written once. Generation writes through the SAME batch
+    // mutation as every other authoring path — there is no private route for
+    // generated cases — so a 20-case generation is one write, not twenty.
+    const pendingDrafts: Array<{
+      item: EvalCaseBatchItem;
+      title: string;
+      isNegative: boolean;
+    }> = [];
     for (const [draftIndex, draft] of drafts.entries()) {
       // The legacy negative-only path emits only negative cases; otherwise the
       // plan-driven generator flags each draft. Negative cases must carry NO
@@ -3388,8 +3658,7 @@ evals.post(
         : normalizedSteps;
       const steps =
         draftSteps.length > 0 ? draftSteps : promptTurnsToSteps(promptTurns);
-      const args: Record<string, unknown> = {
-        suiteId,
+      const item: EvalCaseBatchItem = {
         title: draft.title,
         steps,
         query: typeof draft.query === "string" ? draft.query : "",
@@ -3414,25 +3683,104 @@ evals.post(
             }
           : {}),
       };
+      pendingDrafts.push({
+        item,
+        title: String(draft.title ?? ""),
+        isNegative: isNeg,
+      });
+    }
+
+    if (pendingDrafts.length > 0) {
+      // Minted HERE rather than in Convex: callers mint, the platform
+      // validates. A generated case is authored by this server, so this is the
+      // caller.
+      const cases = withMintedCaseIds(pendingDrafts.map((d) => d.item));
+      let result: Awaited<ReturnType<typeof createEvalCasesInBatches>>;
+      let rejection: string | undefined;
       try {
-        const caseId = await convexClient.mutation(
-          "testSuites:createTestCase" as any,
-          args,
-        );
-        const doc = await createConvexReadClient(token).query(
-          "testSuites:getTestCase" as any,
-          { testCaseId: caseId },
-        );
-        created.push(toCaseDto(doc));
-        createdCaseIds.push(String(caseId));
-        if (isNeg) negative += 1;
-        else normal += 1;
+        result = await createEvalCasesInBatches(convexClient, {
+          suiteId,
+          cases,
+        });
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        // A whole-call rejection is one condition, not N. But a rejection can
+        // still arrive after an earlier chunk committed, and those cases are
+        // persisted — reporting them as skipped would understate what the
+        // caller was billed for and invite a duplicate retry.
+        rejection = error instanceof Error ? error.message : String(error);
+        result = partialResultOf(error);
+        logger.warn("v1.eval.generate: failed to persist the generated cases", {
+          error: rejection,
+          drafts: pendingDrafts.length,
+          committedBeforeRejection: result.committed.length,
+        });
+      }
+
+      // The platform addresses each result by the index of the item we sent.
+      // An index outside that range is a bug, not an outcome — but it must not
+      // throw AFTER the writes landed and take the whole report down with it.
+      const draftAt = (index: number) => {
+        const draft = pendingDrafts[index];
+        if (!draft) {
+          logger.warn(
+            "v1.eval.generate: result named a draft index we never sent",
+            { index, sent: pendingDrafts.length },
+          );
+        }
+        return draft;
+      };
+
+      const reported = new Set<number>();
+      for (const entry of result.failed) {
+        const draft = draftAt(entry.index);
+        if (!draft) continue;
+        reported.add(entry.index);
+        const reason = `${entry.code}: ${entry.message}`;
         logger.warn("v1.eval.generate: failed to persist a generated case", {
           error: reason,
         });
-        skipped.push({ title: String(draft.title ?? ""), error: reason });
+        skipped.push({ title: draft.title, error: reason });
+      }
+      const readClient = createConvexReadClient(token);
+      // Read the committed cases in one pass. Committed entries arrive in item
+      // order, and `Promise.all` preserves it, so `created` still follows the
+      // order the generator produced.
+      const docs = await Promise.all(
+        result.committed.map((entry) =>
+          readClient.query("testSuites:getTestCase" as any, {
+            // The EFFECTIVE id, not the one just minted. A keyed retry replays
+            // onto the case the first attempt authored, and reporting the fresh
+            // proposal would name a case that was never written.
+            testCaseId: entry.testCaseId,
+          }),
+        ),
+      );
+      result.committed.forEach((entry, position) => {
+        const draft = draftAt(entry.index);
+        if (!draft) return;
+        reported.add(entry.index);
+        created.push(toCaseDto(docs[position]));
+        createdCaseIds.push(String(entry.testCaseId));
+        if (draft.isNegative) negative += 1;
+        else normal += 1;
+      });
+      // Drafts the rejected call never reached.
+      if (rejection !== undefined) {
+        pendingDrafts.forEach((draft, index) => {
+          if (!reported.has(index)) {
+            skipped.push({ title: draft.title, error: rejection! });
+          }
+        });
+      }
+
+      const entryWarnings = result.committed.flatMap((entry) =>
+        (entry.warnings ?? []).map((w) => ({ title: entry.title, ...w })),
+      );
+      if (result.warnings.length > 0 || entryWarnings.length > 0) {
+        logger.info("v1.eval.generate: case create returned warnings", {
+          suiteId,
+          warnings: [...result.warnings, ...entryWarnings],
+        });
       }
     }
 

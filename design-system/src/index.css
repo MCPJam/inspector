@@ -19,6 +19,15 @@
   border-width: 1px;
 }
 
+/* Sonner colours the description from its own theme rather than from the vars
+   we hand it, so it is the one part of a toast that can end up light-on-light.
+   Pinning it to our token keeps it readable even if the two themes drift. */
+[data-sonner-toaster][data-sonner-theme]
+  [data-sonner-toast][data-styled="true"]
+  [data-description] {
+  color: var(--foreground);
+}
+
 [data-sonner-toaster][data-sonner-theme]
   [data-sonner-toast][data-styled="true"]
   [data-close-button] {
