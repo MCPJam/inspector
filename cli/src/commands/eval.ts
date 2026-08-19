@@ -496,7 +496,13 @@ function buildSuiteUpdateInput(
  * range moves, and the second copy is the one that gets forgotten.
  */
 function parseJudgeThreshold(raw: string): number {
-  const threshold = Number(raw);
+  // Reject blank BEFORE coercing: `Number("")` and `Number("   ")` are both
+  // `0`, which is a perfectly valid threshold — so an empty flag would sail
+  // through the range check below and silently set "every case passes"
+  // (`passed = score >= 0`). A refusal is the only honest answer to a flag
+  // whose value the caller never supplied.
+  const normalized = raw.trim();
+  const threshold = normalized === "" ? Number.NaN : Number(normalized);
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
     throw usageError("--judge-threshold must be a number between 0 and 1.");
   }
