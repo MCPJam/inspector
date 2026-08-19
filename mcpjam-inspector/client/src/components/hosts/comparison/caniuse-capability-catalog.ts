@@ -10,7 +10,7 @@ import {
 } from "./support-level";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
-export const CANIUSE_LAST_VERIFIED_DATE = "2026-07-07";
+export const CANIUSE_LAST_VERIFIED_DATE = "2026-08-14";
 
 export const PUBLIC_CAN_I_USE_INLINE_PRESET_IDS = [
   "preset:claude",
@@ -26,7 +26,6 @@ const PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS = new Set([
   "temperature",
   "systemPrompt",
   "mcpProtocolVersion",
-  "supportedProtocolVersions",
   "clientInfo.name",
   "clientInfo.version",
   "connectionDefaults.requestTimeout",
@@ -67,12 +66,16 @@ function slugForField(field: HostConfigFieldDef): string {
   return toKebab(field.label);
 }
 
+// Fields that are not support-shaped but still answer a compatibility
+// question. They render as plain values (the matrix already knows how), so
+// keep this list tiny — a chip says "can I use this", a value does not.
+const PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS = new Set(["supportedProtocolVersions"]);
+
 export function isPublicCaniuseCapabilityField(
   field: HostConfigFieldDef,
 ): boolean {
-  return (
-    isSupportField(field) && !PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS.has(field.id)
-  );
+  if (PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS.has(field.id)) return false;
+  return isSupportField(field) || PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS.has(field.id);
 }
 
 export const PUBLIC_CAN_I_USE_FIELDS: ReadonlyArray<HostConfigFieldDef> =

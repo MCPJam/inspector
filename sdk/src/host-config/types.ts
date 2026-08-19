@@ -267,9 +267,10 @@ export type CspDomainSet = {
 // NOT validated here — that's a UI/SDK concern.
 export type HostConfigMcpProfileV1 = {
   profileVersion: 1;
-  // Host-default pinned MCP protocol version. Absent → SDK chooses at
-  // request time. Per-server pins live on serverConnectionOverrides.
-  mcpProtocolVersion?: McpProtocolVersion;
+  // Host-default protocol selection. `"auto"` negotiates at connect time;
+  // concrete revisions pin that exact wire era. Per-server pins live on
+  // serverConnectionOverrides and win over this default.
+  mcpProtocolVersion?: McpProtocolVersion | "auto";
   // Whether the simulated client mirrors `x-mcp-header` tool arguments into
   // `Mcp-Param-*` request headers (SEP-2243). Absent → `"mirror"`, the
   // spec-conforming default; `"omit"` simulates a non-conforming client so a

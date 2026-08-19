@@ -60,7 +60,10 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("chatgpt")?.capabilities).toMatchObject({
       serverResources: true,
       logging: true,
+      toolInputPartial: true,
+      toolCancelled: true,
       downloadFile: false,
+      resourceTeardown: true,
     });
   });
 
@@ -73,6 +76,7 @@ describe("buildMarketHostProfiles", () => {
     ]);
     expect(profileFor("claude")?.supportedProtocolVersions).toEqual([
       "2025-11-25",
+      "2026-07-28",
     ]);
     // MCPJam is the one template that deliberately advertises nothing: it is
     // the inspector itself rather than an emulated third-party client, so it
@@ -80,19 +84,20 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("mcpjam")?.supportedProtocolVersions).toBeUndefined();
   });
 
-  it("inlined protocol pins stay in sync with the host templates", () => {
-    // The catalog stores supportedProtocolVersions directly (so the runtime
-    // entry doesn't import the template machinery). This test IS the contract:
-    // it derives the same fact from the template source of truth and fails if
-    // the inlined pins drift — catching a template version bump that this file
-    // wouldn't otherwise notice.
+  it("keeps legacy initialize versions separate from modern catalog support", () => {
+    // The catalog list spans both eras. The nested initialize list contains
+    // only legacy revisions; modern support is discovered separately.
     for (const profile of buildMarketHostProfiles()) {
       const seeded = seedHostTemplate(profile.id as HostTemplateId);
       const initialize = seeded.mcpProfile?.initialize as
         | { supportedProtocolVersions?: string[] }
         | undefined;
-      expect(profile.supportedProtocolVersions).toEqual(
-        initialize?.supportedProtocolVersions
+      const legacyCatalogVersions =
+        profile.supportedProtocolVersions?.filter(
+          (version) => version < "2026-07-28"
+        ) ?? [];
+      expect(initialize?.supportedProtocolVersions ?? [], profile.id).toEqual(
+        legacyCatalogVersions
       );
     }
   });
