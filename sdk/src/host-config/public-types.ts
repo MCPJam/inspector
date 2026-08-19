@@ -92,8 +92,8 @@ export type HostMcp = Omit<
   HostConfigMcpProfileV1,
   "profileVersion" | "mcpProtocolVersion"
 > & {
-  /** Host-default pinned MCP protocol version (e.g. "2025-11-25"). */
-  protocolVersion?: McpProtocolVersion;
+  /** Automatic negotiation or one concrete host-default wire pin. */
+  protocolVersion?: McpProtocolVersion | "auto";
 };
 
 /**
