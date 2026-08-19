@@ -10882,7 +10882,11 @@
                 },
                 "runStatus": {
                   "type": "string",
-                  "description": "The RUN's status (always `running` at launch). Named apart from the entry's own `status` on purpose \u2014 two fields called `status` in one object is how a reader ends up branching on the wrong one."
+                  "description": "The RUN's status. `running` for a target that just launched; on a target whose run was REPLAYED (see `deduped`), that run's own status. Named apart from the entry's own `status` on purpose \u2014 two fields called `status` in one object is how a reader ends up branching on the wrong one."
+                },
+                "deduped": {
+                  "type": "boolean",
+                  "description": "Present and true when this target REPLAYED an existing run instead of starting one. A replayed run is not executed again, so the target costs no further credits."
                 },
                 "servers": {
                   "type": "array",
@@ -10988,7 +10992,11 @@
           },
           "status": {
             "type": "string",
-            "const": "running"
+            "description": "The run's status. `running` on a fresh launch; on a replay (see `deduped`), the existing run's own status, which may already be terminal."
+          },
+          "deduped": {
+            "type": "boolean",
+            "description": "Present and true when this request REPLAYED an existing run instead of starting one (an idempotency-key hit, or the short keyless dedupe window). A replayed run is not executed again, so no further credits are spent; read `status` for what that run actually is. Absent on a fresh launch."
           },
           "runGroupId": {
             "type": "string",

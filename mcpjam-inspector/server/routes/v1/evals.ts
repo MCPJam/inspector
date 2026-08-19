@@ -40,6 +40,8 @@ import {
 import { opaqueIdSchema } from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
+import { TERMINAL_RUN_STATUSES } from "../../services/evals/run-status.js";
+import { shouldSkipExecution } from "../shared/evals.js";
 import {
   createEvalCasesInBatches,
   partialResultOf,
@@ -1023,16 +1025,6 @@ export async function fetchSuiteRunServerSelection(
   }
   return { serverIds, serverNames };
 }
-
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  // The runner finalizes run/iteration timeouts as `timed_out` before
-  // rethrowing into the detached catch. Treat it as terminal so the defensive
-  // re-finalize can't overwrite a timeout result with `failed`.
-  "timed_out",
-]);
 
 /**
  * Whether the run record already reached a terminal status. Used by the
@@ -2206,6 +2198,14 @@ async function resolveHostAttachments(
 interface LaunchedEvalRun {
   runId: string;
   suiteId: string;
+  /**
+   * What the run IS, not what a launch would make it. `running` for a fresh
+   * start; on an idempotent replay, the existing run's own status — which may
+   * already be terminal.
+   */
+  status: string;
+  /** This request replayed an existing run instead of starting one. */
+  deduped: boolean;
   caseUpsert: unknown;
   servers: Array<{ id: string; name?: string }>;
   environment: {
@@ -2323,6 +2323,41 @@ async function launchEvalRun(params: {
   // outside the runner's own try (provider construction, etc.) — it only
   // finalizes when the run record is still non-terminal, so the runner's
   // completedAt/notes are never restamped by a second terminal write.
+  // A REPLAY of a finished run executes nothing. `prepared.execute()` would
+  // re-run every case and bill for it, writing over results that are already
+  // final — the exact double-spend the caller sent an idempotency key to
+  // prevent. The slot and the manager still have to be settled here, because
+  // the `.finally` that normally does it belongs to an execution that is not
+  // going to happen.
+  if (shouldSkipExecution(prepared)) {
+    logger.info("[v1 evals] idempotent replay — not re-executing", {
+      runId: prepared.runId,
+      suiteId: prepared.suiteId,
+      status: prepared.status,
+      projectId,
+    });
+    onSettled();
+    void manager.disconnectAllServers().catch(() => {});
+    return {
+      runId: prepared.runId,
+      suiteId: prepared.suiteId,
+      status: prepared.status ?? "running",
+      deduped: true,
+      caseUpsert: prepared.caseUpsert,
+      servers: serverIds.map((serverId, index) => ({
+        id: serverId,
+        ...(serverNames?.[index] ? { name: serverNames[index] } : {}),
+      })),
+      environment: environmentLaunch
+        ? {
+            id: environmentLaunch.environmentRef.environmentId,
+            name: environmentLaunch.environmentRef.name,
+            revision: environmentLaunch.environmentRef.revision,
+          }
+        : null,
+    };
+  }
+
   void prepared
     .execute()
     .catch(async (error) => {
@@ -2352,6 +2387,10 @@ async function launchEvalRun(params: {
   return {
     runId: prepared.runId,
     suiteId: prepared.suiteId,
+    // Executing now. A replay of a run still IN FLIGHT lands here too and is
+    // reported as running, which is what it is.
+    status: prepared.status ?? "running",
+    deduped: prepared.deduped === true,
     caseUpsert: prepared.caseUpsert,
     // The servers the run connects to — explicit or derived from the
     // suite's saved selection — so callers that omitted serverIds can
@@ -2594,7 +2633,12 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       {
         runId: launched.runId,
         suiteId: launched.suiteId,
-        status: "running",
+        // The run's REAL status. A replay of a finished run reports what it
+        // finished as; only a launch reports `running`.
+        status: launched.status,
+        // Present so a caller can tell "I started this" from "this already
+        // existed and I got it back" without diffing run ids across retries.
+        ...(launched.deduped ? { deduped: true } : {}),
         caseUpsert: launched.caseUpsert,
         servers: launched.servers,
         environment: launched.environment,
@@ -2936,11 +2980,10 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         // started/failed discriminant, and two fields with one name is how a
         // reader ends up branching on the wrong one.
         //
-        // Always `running`, matching the single-run route: an idempotent
-        // replay returns the ORIGINAL run, which may have finished, and the
-        // prepare layer does not report which happened. Poll the run for its
-        // real state — this field says a run exists, not how it is doing.
-        runStatus: "running",
+        // The run's REAL status, so a target that replayed a finished run says
+        // so instead of claiming to be running.
+        runStatus: launched.status,
+        ...(launched.deduped ? { deduped: true } : {}),
         servers: launched.servers,
         environment: launched.environment,
         caseUpsert: launched.caseUpsert,
@@ -2991,7 +3034,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
             const first = entries.find((entry) => entry.status === "started")!;
             return {
               runId: first.runId,
-              status: "running",
+              status: first.runStatus,
               servers: first.servers,
               environment: first.environment,
               caseUpsert: first.caseUpsert,

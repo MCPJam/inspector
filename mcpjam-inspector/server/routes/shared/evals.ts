@@ -17,6 +17,7 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
+import { isTerminalRunStatus } from "../../services/evals/run-status.js";
 import { checkEvalHarnessAdmission } from "../../services/evals/harness-admission";
 import {
   applyVisibilityPolicyAndCountSignals,
@@ -979,14 +980,60 @@ export type PreparedEvalRun = {
   };
   recorder: SuiteRunRecorder;
   /**
+   * This "start" REPLAYED an existing run rather than creating one — an
+   * idempotency-key hit, or the keyless fingerprint window. Undefined against a
+   * backend that predates the signal.
+   *
+   * Read it through {@link shouldSkipExecution}; a bare truthiness check here
+   * is the wrong question, because a replay of a run still in flight is not the
+   * same as a replay of one that finished.
+   */
+  deduped?: boolean;
+  /** The run's status as the platform holds it. `running` for a fresh start;
+   *  on a replay, whatever the existing run actually is. */
+  status?: string;
+  /**
    * Execute the prepared run to completion. `runEvalSuiteWithAiSdk` owns
    * terminal run status (completed/failed/cancelled); callers that detach
    * this (the async /api/v1 route) should still catch and defensively
    * finalize via `recorder` for errors thrown outside the runner's own
    * try.
+   *
+   * DO NOT call this unconditionally on a prepared run — see
+   * {@link shouldSkipExecution}. A replay of a finished run must not execute:
+   * the suite would run a second time and bill a second time, against a run
+   * whose results are already recorded.
    */
   execute: () => Promise<void>;
 };
+
+/**
+ * Whether a prepared run has already been run and must NOT be executed again.
+ *
+ * TRUE for exactly one case: the platform replayed an existing run AND that run
+ * is terminal. Executing then would re-run every case and bill for it, writing
+ * over results that are already final — which is the double-spend an
+ * idempotency key is sent to prevent.
+ *
+ * FALSE for a replay of a NON-terminal run, deliberately. Two situations are
+ * indistinguishable from here — a run genuinely in flight, and one abandoned
+ * when its process died mid-execution — and they want opposite treatments. The
+ * conservative answer preserves the behaviour that predates this check, so a
+ * crashed run can still be driven to completion by a retry the way it always
+ * has been. Deciding that case needs a liveness signal (a lease or heartbeat on
+ * the run), not a guess made here.
+ *
+ * FALSE against a backend with no `deduped` field, for the same reason: unknown
+ * is not a licence to change behaviour.
+ */
+export function shouldSkipExecution(prepared: {
+  deduped?: boolean;
+  status?: string;
+}): boolean {
+  return (
+    prepared.deduped === true && isTerminalRunStatus(prepared.status)
+  );
+}
 
 /**
  * A probe's identity is title + server + tool: every probe shares query ""
@@ -1979,6 +2026,8 @@ export async function prepareEvalRun(
     runId,
     config,
     recorder,
+    deduped: runWasDeduped,
+    status: existingRunStatus,
     hostConfig: runHostConfigSnapshot,
     pluginVersions: runEnvironmentPluginVersions = [],
   } = await startSuiteRunWithRecorder({
@@ -2253,6 +2302,8 @@ export async function prepareEvalRun(
       failed: failedCases,
     },
     recorder,
+    deduped: runWasDeduped,
+    status: existingRunStatus,
     execute,
   };
 }
