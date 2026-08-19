@@ -15,7 +15,12 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
  * queries forever. It reads exactly as it did before the gate existed.
  */
 export function useActorCanQuery(): boolean {
-  const { isAuthenticated } = useConvexAuth();
+  const { isAuthenticated, isLoading } = useConvexAuth();
   const isUserReady = useDbUserReady();
+  // While Convex is still resolving auth, `isAuthenticated` reads false for an
+  // actor that is about to be authenticated. Treating that as "no identity,
+  // read away" would fire the query unauthenticated in exactly the window this
+  // gate exists to cover, so wait for auth to settle first.
+  if (isLoading) return false;
   return !isAuthenticated || isUserReady;
 }

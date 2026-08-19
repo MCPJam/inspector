@@ -832,9 +832,17 @@ export function TestTemplateEditor({
   const draftKind = parseDraftTestCaseId(selectedTestCaseId);
   const isDraft = draftKind !== null;
 
-  const testCases = useQuery("testSuites:listTestCases" as any, {
-    suiteId,
-  }) as any[] | undefined;
+  // Same readiness gate the suite list upstream uses: a signed-in actor must
+  // wait for its `users` row, while an actor that will never have one (a
+  // direct guest) keeps reading. Covers every suite-scoped read below —
+  // the editor stays mounted across an identity change, so any ungated one
+  // re-fires on its own schedule in exactly the window the gate exists for.
+  const canQuerySuite = useActorCanQuery();
+
+  const testCases = useQuery(
+    "testSuites:listTestCases" as any,
+    canQuerySuite ? ({ suiteId } as any) : "skip",
+  ) as any[] | undefined;
 
   const currentTestCase = useMemo(() => {
     if (draftKind) {
@@ -846,14 +854,14 @@ export function TestTemplateEditor({
 
   const routeCompareAnchorIteration = useQuery(
     "testSuites:getTestIteration" as any,
-    routeCompareAnchorIterationId
+    canQuerySuite && routeCompareAnchorIterationId
       ? { iterationId: routeCompareAnchorIterationId }
       : "skip",
   ) as EvalIteration | null | undefined;
 
   const lastSavedIteration = useQuery(
     "testSuites:getTestIteration" as any,
-    currentTestCase?.lastMessageRun
+    canQuerySuite && currentTestCase?.lastMessageRun
       ? { iterationId: currentTestCase.lastMessageRun }
       : "skip",
   ) as EvalIteration | undefined;
@@ -868,12 +876,6 @@ export function TestTemplateEditor({
       .filter((iteration) => iteration.testCaseId === selectedTestCaseId)
       .slice(0, 200);
   }, [suiteIterations, selectedTestCaseId]);
-
-  // Same readiness gate the suite list upstream uses: a signed-in actor must
-  // wait for its `users` row, while a direct guest — which never gets one —
-  // keeps reading. Without it these two fire on their own schedule when the
-  // editor stays mounted across an identity change.
-  const canQuerySuite = useActorCanQuery();
 
   const suite = useQuery(
     "testSuites:getTestSuite" as any,
