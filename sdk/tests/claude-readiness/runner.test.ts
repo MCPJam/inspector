@@ -7,9 +7,14 @@ import type { Tool } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
 import {
+  enforceCapabilityGate,
   gradeClaudeReadiness,
   type ClaudeReadinessInput,
 } from "../../src/claude-readiness/runner.js";
+import type {
+  ClaudeFindingStatus,
+  ClaudeReadinessFinding,
+} from "../../src/claude-readiness/types.js";
 import { toConformanceReport } from "../../src/conformance-reporting.js";
 
 const URL_UNDER_TEST = "https://mcp.example.com/mcp";
@@ -245,11 +250,16 @@ describe("coverage and context", () => {
     // without anyone remembering to extend it.
     const result = gradeClaudeReadiness(input({ capabilities: ["dns"] }));
     const held = new Set(result.context.capabilities);
+    // A VERDICT is what the gate exists to prevent. `not-applicable` is not
+    // one: it says the requirement does not apply to this SERVER, which no
+    // amount of capability could change, and rewriting it would trade a true
+    // statement for a false one.
+    const verdicts = new Set(["satisfied", "violated", "informational"]);
     const overreaching = result.findings.filter(
       (finding) =>
         (finding.requiresCapabilities ?? []).some(
           (capability) => !held.has(capability),
-        ) && finding.status !== "not-evaluated",
+        ) && verdicts.has(finding.status),
     );
     expect(overreaching).toEqual([]);
     // And the gate is reached at all — a run where nothing declares a missing
@@ -263,19 +273,40 @@ describe("coverage and context", () => {
     ).toBe(true);
   });
 
-  it("never upgrades a finding on the strength of a capability", () => {
-    // The gate is one-directional. Holding a capability cannot turn an
-    // unevaluated check into a pass.
-    const result = gradeClaudeReadiness(
+  it("changes nothing while every check honours its own declaration", () => {
+    // The gate is a BACKSTOP, and on a healthy catalog a backstop does not
+    // fire. Grading the same evidence with and without the capabilities has to
+    // produce the same statuses — a difference here means a check module
+    // published a verdict it declared it could not reach, which is exactly the
+    // defect the gate is there to contain.
+    const capable = gradeClaudeReadiness(
       input({ capabilities: ["browser", "dns", "interactive-oauth"] }),
     );
-    const gated = result.findings.filter((f) =>
-      (f.requiresCapabilities ?? []).length > 0,
+    const constrained = gradeClaudeReadiness(input({ capabilities: ["dns"] }));
+
+    const before = new Map(
+      capable.findings.map((finding) => [finding.id, finding.status]),
     );
-    expect(gated.length).toBeGreaterThan(0);
-    for (const finding of gated) {
-      expect(finding.status).not.toBe("satisfied");
+    for (const finding of constrained.findings) {
+      expect([finding.id, finding.status]).toEqual([
+        finding.id,
+        before.get(finding.id),
+      ]);
     }
+  });
+
+  it("leaves a not-applicable finding alone even when its capability is absent", () => {
+    // `claude.apps.instance-supersession` declares `browser` and is reported
+    // `not-applicable` when this server has no widgets. There is no contract
+    // to test, so "this run had no browser capability" would be both false and
+    // a coverage gap that does not exist — the finding must keep the reason
+    // the CHECK gave it.
+    const constrained = gradeClaudeReadiness(input({ capabilities: ["dns"] }));
+    const supersession = constrained.findings.find(
+      (finding) => finding.id === "claude.apps.instance-supersession",
+    );
+    expect(supersession?.status).toBe("not-applicable");
+    expect(supersession?.notEvaluatedReason).not.toMatch(/capability/);
   });
 
   it("stamps one evaluatedAt across every finding", () => {
@@ -286,6 +317,70 @@ describe("coverage and context", () => {
 
   it("carries the policy snapshot date the corpus was pinned at", () => {
     expect(gradeClaudeReadiness(input()).policySnapshotDate).toBe("2026-08-19");
+  });
+});
+
+describe("the capability gate itself", () => {
+  // Tested directly, over synthetic findings, because the gate only acts on a
+  // check that broke its own contract — and by construction no shipped check
+  // does. A whole-run test can therefore only ever prove the gate is idle.
+  function finding(
+    status: ClaudeFindingStatus,
+    overrides: Partial<ClaudeReadinessFinding> = {},
+  ): ClaudeReadinessFinding {
+    return {
+      id: `synthetic.${status}`,
+      title: "Synthetic",
+      lane: "experience-insights",
+      class: "heuristic",
+      status,
+      source: {
+        page: "directory",
+        section: "§Synthetic",
+        url: "https://example.com",
+        revision: null,
+      },
+      provenance: "browser",
+      intrusiveness: "read-only",
+      requiresCapabilities: ["browser"],
+      evaluatedAt: "2026-08-19T00:00:01.000Z",
+      engineVersion: "1",
+      ...overrides,
+    };
+  }
+
+  it.each(["satisfied", "violated", "informational"] as const)(
+    "downgrades a %s verdict the run could not have observed",
+    (status) => {
+      const [gated] = enforceCapabilityGate([finding(status)], ["dns"]);
+      expect(gated.status).toBe("not-evaluated");
+      expect(gated.notEvaluatedReason).toMatch(/no browser capability/);
+    },
+  );
+
+  it.each(["not-evaluated", "not-applicable"] as const)(
+    "leaves a %s finding exactly as the check reported it",
+    (status) => {
+      const original = finding(status, {
+        notEvaluatedReason: "the check's own reason",
+      });
+      expect(enforceCapabilityGate([original], ["dns"])[0]).toBe(original);
+    },
+  );
+
+  it("touches nothing when the run holds what the finding asked for", () => {
+    const original = finding("satisfied");
+    expect(enforceCapabilityGate([original], ["browser", "dns"])[0]).toBe(
+      original,
+    );
+  });
+
+  it("names every missing capability, not just the first", () => {
+    const [gated] = enforceCapabilityGate(
+      [finding("satisfied", { requiresCapabilities: ["browser", "interactive-oauth"] })],
+      ["dns"],
+    );
+    expect(gated.notEvaluatedReason).toMatch(/browser, interactive-oauth/);
   });
 });
 

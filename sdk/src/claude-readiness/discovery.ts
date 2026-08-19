@@ -405,6 +405,7 @@ async function discoverProtectedResourceMetadata(
       discoveredVia: "not-found",
       fetchError: "connector URL is not parseable",
       rejectedPointer,
+      reachedServer: false,
     };
   }
 
@@ -416,8 +417,14 @@ async function discoverProtectedResourceMetadata(
     ? `the challenge's resource_metadata pointer was refused (it must be an http(s) URL on the connector's own origin)`
     : undefined;
   let lastError: string | undefined;
+  // Whether anything on that host answered AT ALL. A 404 counts: it is the
+  // server saying "no document here", which is a finding. A transport failure
+  // does not, and the difference is what keeps an unreachable host from being
+  // graded as a connector that publishes no metadata.
+  let reachedServer = false;
   for (const attempt of attempts) {
     const result = await fetchJson(attempt.url, options);
+    if (result.status !== 0) reachedServer = true;
     if (result.status >= 200 && result.status < 300 && result.document) {
       // `rejectedPointer` rides along on SUCCESS too: the fallback worked, and
       // the server still published a pointer no conforming client can follow.
@@ -426,6 +433,7 @@ async function discoverProtectedResourceMetadata(
         url: attempt.url,
         document: result.document,
         rejectedPointer,
+        reachedServer: true,
       };
     }
     lastError = result.error ?? `${attempt.url} answered ${result.status}`;
@@ -434,6 +442,7 @@ async function discoverProtectedResourceMetadata(
     discoveredVia: "not-found",
     fetchError: [rejectionNote, lastError].filter(Boolean).join("; ") || undefined,
     rejectedPointer,
+    reachedServer,
   };
 }
 

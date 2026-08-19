@@ -168,7 +168,7 @@ function summarizeLane(
  * It only ever downgrades. A missing capability turns a verdict into
  * `not-evaluated`; nothing here can turn a `not-evaluated` into a pass.
  */
-function enforceCapabilityGate(
+export function enforceCapabilityGate(
   findings: ClaudeReadinessFinding[],
   capabilities: ClaudeRunnerCapability[],
 ): ClaudeReadinessFinding[] {
@@ -177,7 +177,16 @@ function enforceCapabilityGate(
     const missing = (finding.requiresCapabilities ?? []).filter(
       (capability) => !available.has(capability),
     );
-    if (missing.length === 0 || finding.status === "not-evaluated") {
+    // `not-applicable` is a verdict about the SERVER, not about this run's
+    // reach: no capability could make an absent contract present. Rewriting it
+    // would replace a true statement ("this widget claims no single active
+    // instance, so there is no supersession contract") with a false one ("we
+    // had no browser"), and count a settled question as a coverage gap.
+    if (
+      missing.length === 0 ||
+      finding.status === "not-evaluated" ||
+      finding.status === "not-applicable"
+    ) {
       return finding;
     }
     return {

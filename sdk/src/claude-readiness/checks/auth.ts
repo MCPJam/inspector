@@ -67,6 +67,20 @@ export interface ClaudeAuthEvidence {
     document?: Record<string, unknown>;
     fetchError?: string;
     /**
+     * Whether ANY discovery attempt got an HTTP response back.
+     *
+     * "The server answered 404 at every documented location" and "nothing on
+     * that host answered at all" are the same `not-found`, and they are not the
+     * same finding: the first is a connector that publishes no metadata, the
+     * second is a run that established nothing. Without this the second reads
+     * as the first, and an unreachable host is reported as violating a
+     * requirement it was never asked about.
+     *
+     * `undefined` means the evidence did not record it — graded as the stricter
+     * reading, so hand-built evidence keeps its existing meaning.
+     */
+    reachedServer?: boolean;
+    /**
      * A `resource_metadata` pointer discovery refused to dial — off-origin, or
      * not http(s). Recorded rather than dropped: the server published a
      * pointer no conforming client can follow, and silence would look like the
@@ -366,6 +380,17 @@ export function runClaudeAuthChecks(
       "the server is authless, so it publishes no Protected Resource Metadata";
     findings.push(notApplicable(PRM_DISCOVERABLE, stamp, reason));
     findings.push(notApplicable(PRM_RESOURCE_MATCHES_ENTERED, stamp, reason));
+  } else if (prm.discoveredVia === "not-found" && prm.reachedServer === false) {
+    // NOT a violation. No discovery attempt got a response, so the connector
+    // was never asked whether it publishes metadata — and a host that is down,
+    // firewalled or misspelled would otherwise be reported as failing a
+    // requirement, which points the submitter at the wrong defect and turns an
+    // "we established nothing" run into an "unmet requirement" verdict.
+    const reason = `no Protected Resource Metadata request reached the server${
+      prm.fetchError ? ` (${prm.fetchError})` : ""
+    }`;
+    findings.push(notEvaluated(PRM_DISCOVERABLE, stamp, reason));
+    findings.push(notEvaluated(PRM_RESOURCE_MATCHES_ENTERED, stamp, reason));
   } else {
     findings.push(
       prm.discoveredVia === "not-found"

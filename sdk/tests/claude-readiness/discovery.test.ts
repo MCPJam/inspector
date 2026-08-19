@@ -474,3 +474,49 @@ describe("the transport is the caller's", () => {
     }
   });
 });
+
+describe("whether anything answered is recorded separately from what it said", () => {
+  // `discoveredVia: "not-found"` covers two different worlds, and the checks
+  // grade them differently: a server that answered 404 publishes no metadata,
+  // a host that never answered was never asked.
+  it("records reachedServer: false when nothing on the origin answers", async () => {
+    const origin = await closedLoopbackOrigin();
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+      timeoutMs: 2_000,
+    });
+    expect(evidence.prm?.discoveredVia).toBe("not-found");
+    expect(evidence.prm?.reachedServer).toBe(false);
+  });
+
+  it("records reachedServer: true when the server answers 404", async () => {
+    const { origin } = await start((_req, res) => {
+      res.writeHead(404);
+      res.end();
+    });
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+    });
+    expect(evidence.prm?.discoveredVia).toBe("not-found");
+    expect(evidence.prm?.reachedServer).toBe(true);
+  });
+
+  it("records reachedServer: true alongside a successful discovery", async () => {
+    const { origin } = await start((req, res) => {
+      if (req.url === "/.well-known/oauth-protected-resource/mcp") {
+        json(res, 200, { resource: "x", authorization_servers: [] });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+    });
+    expect(evidence.prm?.discoveredVia).toBe("well-known-path-suffixed");
+    expect(evidence.prm?.reachedServer).toBe(true);
+  });
+});

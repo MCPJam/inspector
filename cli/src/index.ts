@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { registerAppsCommands } from "./commands/apps.js";
 import { registerAuthCommands } from "./commands/auth.js";
+import { registerClaudeReadinessCommands } from "./commands/claude-readiness.js";
 import { registerCompatCommands } from "./commands/compat.js";
 import { registerImagesCommands } from "./commands/images.js";
 import { registerChatCommands } from "./commands/chat.js";
@@ -90,6 +91,7 @@ export async function main(
   );
   const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
 
+  registerClaudeReadinessCommands(program);
   registerServerCommands(program);
   registerToolsCommands(program);
   registerResourcesCommands(program);
