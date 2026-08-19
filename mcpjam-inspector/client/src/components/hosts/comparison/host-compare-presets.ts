@@ -1,4 +1,4 @@
-import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import type { HostConfigDtoWithCatalogFacts } from "@/lib/host-config-field-schema";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import {
@@ -52,7 +52,7 @@ export function buildPresetCompareEntries(
     const hostId = `${PRESET_HOST_ID_PREFIX}${host.id}`;
     const input = getCatalogTemplate(catalog, host.id);
     if (!input) continue;
-    const config: HostConfigDtoV2 = {
+    const config: HostConfigDtoWithCatalogFacts = {
       ...input,
       id: hostId,
       schemaVersion: 2,
@@ -60,7 +60,7 @@ export function buildPresetCompareEntries(
       // `initialize` list only carries the legacy ones. Carry the catalog
       // fact so the comparison shows real support, not the handshake list.
       supportedProtocolVersions: host.supportedProtocolVersions,
-    } as HostConfigDtoV2;
+    } as HostConfigDtoWithCatalogFacts;
 
     hosts.push({
       hostId,

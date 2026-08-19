@@ -493,8 +493,7 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Accept-list supported in the initialize handshake.",
     kind: { kind: "string-array" },
     read: (cfg) =>
-      (cfg as { supportedProtocolVersions?: string[] })
-        .supportedProtocolVersions ??
+      (cfg as HostConfigDtoWithCatalogFacts).supportedProtocolVersions ??
       mcpProfile(cfg)?.initialize?.supportedProtocolVersions,
   },
 
@@ -826,6 +825,16 @@ export function groupHostConfigFields(
 // ============================================================
 // Comparison subject — what the matrix actually consumes
 // ============================================================
+
+/**
+ * A preset/caniuse subject's config, plus the catalog facts that live beside
+ * `hostConfig` in the catalog row rather than inside it. Declared instead of
+ * cast at each end so the extra key is visible in the types.
+ */
+export type HostConfigDtoWithCatalogFacts = HostConfigDtoV2 & {
+  /** Every era the client speaks; the profile's list is legacy-only. */
+  supportedProtocolVersions?: string[];
+};
 
 export interface HostComparisonSubject {
   hostId: string;
