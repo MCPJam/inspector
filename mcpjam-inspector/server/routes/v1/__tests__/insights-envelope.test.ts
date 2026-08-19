@@ -500,6 +500,23 @@ describe("eval-run judge request", () => {
     expect(mutationMock).not.toHaveBeenCalled();
   });
 
+  it("surfaces a refused request instead of a false pending receipt", async () => {
+    // `202 pending` is a PROMISE that grading was scheduled. Reporting it for
+    // a mutation that never landed sends the caller to poll a judge that will
+    // never move off `null`.
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockRejectedValue(new Error("Suite not found or unauthorized"));
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      { method: "POST" },
+    );
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.status).not.toBe("pending");
+    expect(body.code).toBeTruthy();
+  });
+
   it.each([
     ["malformed JSON", "{not json"],
     ["a truthy non-boolean force", JSON.stringify({ force: "false" })],

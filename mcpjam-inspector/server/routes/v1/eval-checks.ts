@@ -31,6 +31,7 @@ import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { v1Resource } from "./envelope.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 
 const evalChecks = new Hono();
 
@@ -151,7 +152,18 @@ evalChecks.get(
       connectable = repos.map((repo) => ({
         repo: String(repo.fullName ?? repo.repoFullName ?? ""),
       }));
-    } catch {
+    } catch (error) {
+      // Fail SOFT, but never silent: the caller still gets the connected list,
+      // and the reason the other half is missing reaches the logs rather than
+      // being inferred from a `null` nobody can explain.
+      reportRouteFailure(
+        "[v1.evalChecks] installation repositories unavailable",
+        error,
+        {
+          source: "v1.evalChecks.listInstallationRepos",
+          hop: "mcpjam_internal",
+        },
+      );
       connectable = null;
     }
 

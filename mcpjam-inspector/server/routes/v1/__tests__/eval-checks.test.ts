@@ -154,6 +154,22 @@ describe("GET eval-check-repos", () => {
     // `null` = could not ask. An empty array would claim the App reaches none.
     expect(body.connectable).toBeNull();
   });
+
+  it("does NOT swallow a failure of the connected list", async () => {
+    // The converse of the case above, and the other half of the design claim
+    // in this file's header: the connectable list is allowed to fail soft
+    // because it costs a GitHub call, the connected list is not. Reporting an
+    // empty `items` for a failed read would say "nothing is connected".
+    answer(
+      {
+        getGithubChecksSettingsAvailability: { state: "enabled" },
+        listForOrganization: new Error("convex unavailable"),
+      },
+      { listInstallationRepos: [] }
+    );
+    const res = await makeApp().request(BASE);
+    expect(res.status).toBeGreaterThanOrEqual(400);
+  });
 });
 
 describe("POST eval-check-repos", () => {

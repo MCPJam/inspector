@@ -85,6 +85,7 @@ export type {
   PlatformEvalSuiteHost,
   PlatformEvalSuiteSchedule,
   PlatformEvalSuiteSettings,
+  PlatformEvalSuiteComputerEnvironment,
   PlatformEnvironment,
   PlatformJourney,
   PlatformJourneyRun,

@@ -2973,10 +2973,14 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
       input.project,
       signal,
     );
+    // BEFORE the suite lookup: a project with no organization can never
+    // connect, so spending a round trip to resolve a suite first only delays
+    // the same refusal — and makes the failure look like a suite problem.
+    const organizationId = checkRepoOrganizationOrThrow(project);
     const suite = await resolveSuite(client, project, input.suite, signal);
     const check = await client.connectEvalCheckRepo(
       {
-        organizationId: checkRepoOrganizationOrThrow(project),
+        organizationId,
         projectId: project.id,
         suiteId: suite.id,
         repo: input.repo,

@@ -482,17 +482,38 @@ function buildSuiteUpdateInput(
   }
   if (options.judgeModel !== undefined) judge.model = options.judgeModel;
   if (options.judgeThreshold !== undefined) {
-    const threshold = Number(options.judgeThreshold);
-    if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
-      throw usageError("--judge-threshold must be a number between 0 and 1.");
-    }
-    judge.threshold = threshold;
+    judge.threshold = parseJudgeThreshold(options.judgeThreshold);
   }
   if (Object.keys(judge).length > 0) settings.judge = judge;
   if (Object.keys(settings).length > 0) input.settings = settings;
 
   return input;
 }
+
+/**
+ * `--judge-threshold`, coerced and bounded. Shared by `eval update` and
+ * `eval judge`: two copies of a range check are two places to update when the
+ * range moves, and the second copy is the one that gets forgotten.
+ */
+function parseJudgeThreshold(raw: string): number {
+  const threshold = Number(raw);
+  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+    throw usageError("--judge-threshold must be a number between 0 and 1.");
+  }
+  return threshold;
+}
+
+/**
+ * Hyphens on the flag, underscores on the wire: the flag reads like every other
+ * CLI value, and the API keeps the platform's own spelling. Both spellings are
+ * accepted so a caller echoing back an API value is not punished for it.
+ */
+const OUTAGE_POLICY_BY_FLAG = new Map([
+  ["fail-open", "fail_open"],
+  ["fail-closed", "fail_closed"],
+  ["fail_open", "fail_open"],
+  ["fail_closed", "fail_closed"],
+]);
 
 /** Merge a --file/--json case body with the selectors (+ optional --title). */
 function buildCaseInput(
@@ -1370,7 +1391,7 @@ export function registerEvalCommands(program: Command): void {
         }
       );
       writeResult(result, globalOptions.format);
-      writeJudgeSummary(globalOptions.format, (result.run as any).judges);
+      writeJudgeSummary(globalOptions.format, result.run.judges);
       writeRunLink(globalOptions.format, webOrigin, {
         projectId: result.project.id,
         suiteId: result.run.suiteId,
@@ -1428,15 +1449,10 @@ export function registerEvalCommands(program: Command): void {
       },
       command
     ) => {
-      let threshold: number | undefined;
-      if (options.judgeThreshold !== undefined) {
-        threshold = Number(options.judgeThreshold);
-        if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
-          throw usageError(
-            "--judge-threshold must be a number between 0 and 1."
-          );
-        }
-      }
+      const threshold =
+        options.judgeThreshold !== undefined
+          ? parseJudgeThreshold(options.judgeThreshold)
+          : undefined;
       const input = validateOpInput(requestEvalRunJudgeOperation, {
         project: options.project,
         runId: options.run,
@@ -1502,14 +1518,11 @@ export function registerEvalCommands(program: Command): void {
       },
       command
     ) => {
-      // Hyphens on the flag, underscores on the wire: the flag reads like every
-      // other CLI value, and the API keeps the platform's own spelling.
-      const policy = {
-        "fail-open": "fail_open",
-        "fail-closed": "fail_closed",
-        fail_open: "fail_open",
-        fail_closed: "fail_closed",
-      }[options.outagePolicy];
+      // A Map, not an object literal: `{...}[key]` consults the prototype
+      // chain, so `--outage-policy constructor` would be truthy, skip the
+      // message written for the caller, and fail later against a schema they
+      // never typed.
+      const policy = OUTAGE_POLICY_BY_FLAG.get(options.outagePolicy);
       if (!policy) {
         throw usageError(
           '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.'

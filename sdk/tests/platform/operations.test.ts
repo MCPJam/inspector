@@ -5,6 +5,8 @@ import {
   createEvalSuiteOperation,
   createHostOperation,
   cancelEvalRunOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   createTunnelOperation,
   diagnoseServerOperation,
   getScenarioOperation,
@@ -625,6 +627,79 @@ describe("listProjectServersOperation", () => {
     expect(error).toBeInstanceOf(PlatformApiError);
     expect((error as PlatformApiError).code).toBe("NOT_FOUND");
     expect((error as PlatformApiError).message).toContain("Available projects");
+  });
+});
+
+describe("GitHub Checks operations", () => {
+  /**
+   * A client whose only project belongs to NO organization — the personal-
+   * project case. `PlatformProject.organizationId` is nullable, and GitHub
+   * Checks is configured per organization, so this is the one branch in these
+   * two operations that throws before any request.
+   */
+  function personalProjectClient(): {
+    client: PlatformApiClient;
+    fetchMock: ReturnType<typeof vi.fn>;
+  } {
+    const fetchMock = vi.fn(async (target: unknown) => {
+      const path = new URL(String(target)).pathname;
+      if (path === "/api/v1/projects") {
+        return Response.json({
+          items: [
+            {
+              id: "project-personal",
+              name: "Personal",
+              description: null,
+              icon: null,
+              organizationId: null,
+              visibility: null,
+              createdAt: 1,
+              updatedAt: 100,
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected fetch: ${path}`);
+    });
+    const client = new PlatformApiClient({
+      baseUrl: "https://api.example.com/api/v1",
+      getAuth: () => "sk_test",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    return { client, fetchMock };
+  }
+
+  it("refuses to list for a project with no organization", async () => {
+    const { client, fetchMock } = personalProjectClient();
+
+    const error = await listEvalCheckReposOperation
+      .execute({}, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    // The reason, not just a refusal: GitHub Checks is per organization.
+    expect((error as PlatformApiError).message).toContain("organization");
+    // An empty organizationId would have built `/organizations//eval-check-repos`
+    // and come back as a flat not-found. Nothing is sent at all.
+    expect(callsTo(fetchMock, "/eval-check-repos")).toHaveLength(0);
+  });
+
+  it("refuses to connect for a project with no organization", async () => {
+    const { client, fetchMock } = personalProjectClient();
+
+    const error = await connectEvalCheckRepoOperation
+      .execute(
+        { suite: "s", repo: "acme/widgets", outagePolicy: "fail_open" },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    // It reaches a shared repository — the refusal must land before the write,
+    // and before the suite lookup that would otherwise run first.
+    expect(callsTo(fetchMock, "/eval-check-repos")).toHaveLength(0);
   });
 });
 
