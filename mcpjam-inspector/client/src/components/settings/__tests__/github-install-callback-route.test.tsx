@@ -1,3 +1,4 @@
+import { StrictMode } from "react";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
@@ -64,13 +65,24 @@ import { GithubInstallCallbackRoute } from "../GithubInstallCallbackRoute";
 
 const PATH = "/settings/integrations/github/callback";
 
+/**
+ * Rendered inside `StrictMode` deliberately.
+ *
+ * StrictMode mounts, unmounts and remounts in development, running the effect
+ * twice — and BOTH legs consume a single-use state, so a second run would burn
+ * it and land the user on a refusal having done nothing wrong. A `rerender`
+ * would not exercise that: it keeps the same instance, so the guard's ref
+ * survives for a reason unrelated to the double mount.
+ */
 function renderCallback(query: string) {
   return render(
-    <MemoryRouter initialEntries={[`${PATH}${query}`]}>
-      <Routes>
-        <Route path={PATH} element={<GithubInstallCallbackRoute />} />
-      </Routes>
-    </MemoryRouter>
+    <StrictMode>
+      <MemoryRouter initialEntries={[`${PATH}${query}`]}>
+        <Routes>
+          <Route path={PATH} element={<GithubInstallCallbackRoute />} />
+        </Routes>
+      </MemoryRouter>
+    </StrictMode>
   );
 }
 
@@ -124,26 +136,39 @@ describe("the setup leg", () => {
     expect(mockCompleteInstallSetup).not.toHaveBeenCalled();
   });
 
-  it("runs the one-time state exchange exactly once", async () => {
-    // Both legs CONSUME a single-use state. A second run — StrictMode's double
-    // effect, say — would burn it and land the user on a refusal having done
-    // nothing wrong.
+  it("runs the one-time state exchange exactly once under StrictMode", async () => {
+    // The real hazard, and the reason `renderCallback` wraps in StrictMode:
+    // the development double-mount would otherwise burn the single-use state
+    // on its second run.
     mockCompleteInstallSetup.mockResolvedValue({
       authorizeUrl: "https://github.com/login/oauth/authorize",
     });
-    const { rerender } = renderCallback("?installation_id=1&state=s");
+    renderCallback("?installation_id=1&state=s");
+
     await waitFor(() =>
       expect(mockCompleteInstallSetup).toHaveBeenCalledTimes(1)
     );
-
-    rerender(
-      <MemoryRouter initialEntries={[`${PATH}?installation_id=1&state=s`]}>
-        <Routes>
-          <Route path={PATH} element={<GithubInstallCallbackRoute />} />
-        </Routes>
-      </MemoryRouter>
-    );
+    // Let anything the second mount queued settle before asserting, so this
+    // cannot pass merely by looking too early.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(mockCompleteInstallSetup).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the refusal when the returned URL is not a GitHub URL", async () => {
+    // `redirectToGithub` throws on anything outside github.com, and that throw
+    // lands in the same `.catch` as a backend refusal. The seam between the
+    // redirect guard and this page is exactly where a regression would hide.
+    mockCompleteInstallSetup.mockResolvedValue({
+      authorizeUrl: "https://github.com.evil.test/login/oauth/authorize",
+    });
+    mockRedirectToGithub.mockImplementation(() => {
+      throw new Error("Refused to redirect outside GitHub");
+    });
+    renderCallback("?installation_id=4242&state=s");
+
+    expect(
+      await screen.findByText(/could not finish connecting/i)
+    ).toBeInTheDocument();
   });
 });
 

@@ -106,7 +106,22 @@ export function GithubInstallCallbackRoute() {
         return;
       }
       void completeInstallSetup({ installationId: parsed, state })
-        .then(({ authorizeUrl }) => redirectToGithub(authorizeUrl))
+        .then(({ authorizeUrl }) => {
+          try {
+            redirectToGithub(authorizeUrl);
+          } catch {
+            // A redirect the guard refused is NOT a backend refusal, and must
+            // not be reported as one: `UnsafeRedirectError`'s message is
+            // developer text ("Refused to redirect outside GitHub"), and
+            // `fail` would put it on screen verbatim. The user gets the flat
+            // binding copy; there is nothing for them to do differently.
+            console.error("[github-checks] refused an unsafe authorize URL");
+            setPhase({
+              kind: "failed",
+              message: GITHUB_BINDING_FAILED_MESSAGE,
+            });
+          }
+        })
         .catch(fail);
       return;
     }

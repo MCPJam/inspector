@@ -306,16 +306,20 @@ describe("SuiteGithubChecksSection repository identity", () => {
   });
 
   it("distinguishes same-named repositories from different accounts", async () => {
+    // IDENTICAL `fullName` on both, which is what makes this test mean
+    // anything: with different names, an implementation that resolved the pick
+    // by name would satisfy every assertion below. The account suffix is the
+    // only thing telling the two options apart.
     mockListInstallationRepos.mockResolvedValue([
       {
         repositoryId: 201,
-        fullName: "acme/widgets",
+        fullName: "widgets",
         installationRef: "bind-acme",
         accountLogin: "acme",
       },
       {
         repositoryId: 202,
-        fullName: "globex/widgets",
+        fullName: "widgets",
         installationRef: "bind-globex",
         accountLogin: "globex",
       },
@@ -325,7 +329,7 @@ describe("SuiteGithubChecksSection repository identity", () => {
     await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
 
     // With more than one account in play the label earns its place.
-    await chooseOption(user, "Repository", "globex/widgets · globex");
+    await chooseOption(user, "Repository", "widgets · globex");
     await chooseOption(user, "Outage policy", "Fail closed");
     await user.click(screen.getByRole("button", { name: /Connect/ }));
 
@@ -334,7 +338,7 @@ describe("SuiteGithubChecksSection repository identity", () => {
     );
     expect(mockConnectVerifiedRepo).toHaveBeenCalledWith(
       expect.objectContaining({
-        repoFullName: "globex/widgets",
+        repoFullName: "widgets",
         installationRef: "bind-globex",
         repositoryId: 202,
       })
