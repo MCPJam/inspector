@@ -281,6 +281,7 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   list_eval_cases: "Case-level browsing is the Evaluate tab's job.",
   get_eval_case: "Case-level browsing is the Evaluate tab's job.",
   create_eval_case: "Case authoring belongs to the Evaluate editor.",
+  create_eval_cases: "Case authoring belongs to the Evaluate editor.",
   update_eval_case: "Case authoring belongs to the Evaluate editor.",
   delete_eval_case: "Irreversible delete; the Evaluate tab confirms it.",
   generate_eval_cases:
