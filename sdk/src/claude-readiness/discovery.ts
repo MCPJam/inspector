@@ -173,20 +173,70 @@ async function readSseJsonRpc(
   }
 }
 
+/**
+ * The caller's headers, but only for a request that stays on the connector's
+ * own origin.
+ *
+ * A `--header "Authorization: …"` is a credential for the SERVER UNDER TEST.
+ * Protected Resource Metadata names an authorization server that is routinely
+ * on somebody else's domain, and a redirect can point anywhere at all — so
+ * merging the caller's headers into every request meant handing their bearer
+ * token to whatever host the target's own documents named. The target chooses
+ * those hosts, which makes it an exfiltration primitive rather than a leak.
+ *
+ * Same-origin is the whole rule, and it is deliberately not "same host": a
+ * scheme or port change is a different origin, and a token that travels from
+ * `https://` to `http://` is a token on the wire.
+ */
+function callerHeadersFor(
+  url: string,
+  options: ClaudeDiscoveryOptions,
+): Record<string, string> | undefined {
+  if (!options.headers) return undefined;
+  try {
+    return new URL(url).origin === new URL(options.enteredUrl).origin
+      ? options.headers
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+interface FetchJsonOptions {
+  init?: RequestInit;
+  /**
+   * `"none"` suppresses the caller's headers even on the connector's own
+   * origin. The unauthenticated probe uses it: a request that carries a
+   * credential cannot answer the question "what does this server do for a
+   * client that has none", and a 200 obtained WITH one would be recorded as
+   * evidence the connector is authless.
+   */
+  credentials?: "caller" | "none";
+}
+
 async function fetchJson(
   url: string,
   options: ClaudeDiscoveryOptions,
-  init?: RequestInit,
+  fetchOptions: FetchJsonOptions = {},
 ): Promise<FetchedJson> {
+  const { init, credentials = "caller" } = fetchOptions;
   const controller = new AbortController();
   const timer = setTimeout(
     () => controller.abort(new Error("readiness discovery timed out")),
     options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
   );
+  // Hoisted so the catch below can tell "the request never got an answer" from
+  // "the answer arrived and reading its body failed". Only the first is a
+  // status of 0, and `reachedServer` is decided on exactly that difference.
+  let response: Response | undefined;
   try {
-    const response = await options.fetchFn(url, {
+    response = await options.fetchFn(url, {
       ...init,
-      headers: { accept: "application/json", ...options.headers, ...init?.headers },
+      headers: {
+        accept: "application/json",
+        ...(credentials === "caller" ? callerHeadersFor(url, options) : {}),
+        ...init?.headers,
+      },
       signal: controller.signal,
     });
     // REFUSE BEFORE READING when the server tells us the size. `await
@@ -240,8 +290,11 @@ async function fetchJson(
     return { status: response.status, headers: response.headers, document };
   } catch (error) {
     return {
-      status: 0,
-      headers: new Headers(),
+      // A body that failed to read is still a server that ANSWERED. Reporting
+      // 0 here would tell `reachedServer` nothing was reachable, and a PRM
+      // failure would come back as "never asked" instead of as a finding.
+      status: response?.status ?? 0,
+      headers: response?.headers ?? new Headers(),
       error: error instanceof Error ? error.message : String(error),
     };
   } finally {
@@ -274,7 +327,11 @@ export async function traceConnectorRedirects(
       response = await options.fetchFn(current, {
         method: "HEAD",
         redirect: "manual",
-        headers: options.headers,
+        // Dropped the moment the chain leaves the connector's origin. A
+        // redirect target is chosen by the server under test, so replaying the
+        // caller's credential onto it would let any target collect it by
+        // answering `302 Location: https://attacker.example/`.
+        headers: callerHeadersFor(current, options),
         signal: controller.signal,
       });
     } catch {
@@ -317,21 +374,33 @@ async function probeUnauthenticated(
   options: ClaudeDiscoveryOptions,
 ): Promise<ClaudeAuthEvidence["unauthenticated"]> {
   const result = await fetchJson(options.enteredUrl, options, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "mcpjam-claude-readiness", version: "1" },
+    // NO CALLER HEADERS, which is what makes this probe's name true. With them
+    // merged in, a `--header "Authorization: …"` produced a 200 that
+    // `servedWithoutCredentials` recorded as "this connector needs no
+    // authentication at all" — a connector graded authless because the person
+    // grading it was logged in.
+    //
+    // The cost is real and accepted: a server that needs a routing header to
+    // answer at all reports no 401 challenge here. That is a finding a
+    // submitter can act on, and the alternative is a verdict nobody can trust.
+    credentials: "none",
+    init: {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
       },
-    }),
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "mcpjam-claude-readiness", version: "1" },
+        },
+      }),
+    },
   });
 
   if (result.status === 0) return undefined;
@@ -489,6 +558,31 @@ async function fetchFirstAuthorizationServer(
     return { issuer, reachable: false, fetchError: "issuer is not a valid URL" };
   }
 
+  // THE ISSUER COMES OUT OF THE TARGET'S OWN DOCUMENT, and unlike the
+  // `resource_metadata` pointer it legitimately names another origin — so
+  // same-origin is not available as a rule here, and the URL is otherwise
+  // whatever the server under test chose to write down. Left unchecked, a
+  // connector could point a run at `http://169.254.169.254/` and have it
+  // dialled. In a hosted run the pinned transport refuses that; this module
+  // accepts any `fetchFn`, and the CLI passes the plain global one.
+  //
+  // RFC 8414 §2 settles what an issuer may be, so the check is the spec's
+  // rather than an invention: an https URL with no query and no fragment.
+  // Loopback over http is allowed only when it is the connector's own origin,
+  // which is a developer testing their own server, not a redirection to a
+  // metadata service.
+  const rejection = rejectIssuer(base, options.enteredUrl);
+  if (rejection) {
+    return {
+      issuer,
+      reachable: false,
+      fetchError: rejection,
+      // A connector Claude cannot use, reported as such rather than as an
+      // outage: "unreachable" would send its owner to look at DNS.
+      rejected: rejection,
+    };
+  }
+
   const path = base.pathname.replace(/\/$/, "");
   const candidates = [
     `${base.origin}/.well-known/oauth-authorization-server${path}`,
@@ -505,6 +599,36 @@ async function fetchFirstAuthorizationServer(
     lastError = result.error ?? `${url} answered ${result.status}`;
   }
   return { issuer, reachable: false, fetchError: lastError };
+}
+
+/**
+ * Why an `authorization_servers[0]` entry must not be dialled, or `undefined`
+ * when it is fine.
+ *
+ * Returns the reason rather than a boolean: the caller reports it, and "we
+ * refused to fetch this" is a different finding from "we fetched it and it was
+ * broken".
+ */
+function rejectIssuer(issuer: URL, enteredUrl: string): string | undefined {
+  if (issuer.username || issuer.password) {
+    return "issuer must not carry credentials in the URL";
+  }
+  if (issuer.search || issuer.hash) {
+    return "issuer must have no query or fragment (RFC 8414 §2)";
+  }
+  if (issuer.protocol === "https:") return undefined;
+  if (issuer.protocol !== "http:") {
+    return `issuer must be an https URL, not ${issuer.protocol}`;
+  }
+  let entered: URL;
+  try {
+    entered = new URL(enteredUrl);
+  } catch {
+    return "issuer must be an https URL";
+  }
+  return issuer.origin === entered.origin
+    ? undefined
+    : "issuer must be an https URL (plaintext is accepted only on the connector's own origin)";
 }
 
 /**

@@ -346,6 +346,21 @@ test("rejects --format junit-xml the way every other conformance command does", 
   assert.match(`${run.stdout}${run.stderr}`, /--reporter junit-xml/);
 });
 
+test("an empty --submission-profile is a usage error, not a silent skip", async () => {
+  // Truthiness made `--submission-profile ""` report "no profile supplied",
+  // which reads as our limitation rather than the caller's typo.
+  const run = await runCli([
+    "claude",
+    "readiness",
+    "--url",
+    "https://example.invalid/mcp",
+    "--submission-profile",
+    "",
+  ]);
+  assert.equal(run.exitCode, 2);
+  assert.match(`${run.stdout}${run.stderr}`, /submission-profile/);
+});
+
 test("the JUnit reporter carries advisories as properties, never as failures", async () => {
   const server = await startMockStreamableHttpServer();
   try {

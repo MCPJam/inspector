@@ -99,6 +99,14 @@ export interface ClaudeAuthEvidence {
     reachable: boolean;
     document?: Record<string, unknown>;
     fetchError?: string;
+    /**
+     * Why discovery REFUSED to dial this issuer, when it did. Distinct from
+     * `fetchError`: one says the URL was never fetched because no conforming
+     * client would fetch it, the other says the fetch was tried and failed.
+     * Reporting the second for the first sends a submitter to look at DNS for
+     * a problem with what their metadata says.
+     */
+    rejected?: string;
   };
   /** A `403` step-up challenge, if the run happened to see one. */
   insufficientScopeChallenge?: { header: string };
@@ -532,11 +540,14 @@ export function runClaudeAuthChecks(
       violated(
         FIRST_AS_USABLE,
         stamp,
-        `Claude uses \`authorization_servers[0]\` and does not fall back to later entries. Fix "${authServers[0]}" or list a working server first.`,
+        first?.rejected
+          ? `\`authorization_servers[0]\` names a URL no conforming client will fetch: ${first.rejected}. Claude uses entry zero and does not fall back, so fix "${authServers[0]}" or list a working server first.`
+          : `Claude uses \`authorization_servers[0]\` and does not fall back to later entries. Fix "${authServers[0]}" or list a working server first.`,
         {
           issuer: authServers[0],
           metadataUrl: first?.metadataUrl,
           fetchError: first?.fetchError,
+          rejected: first?.rejected,
           // Naming the alternatives makes the "no fallback" rule concrete for
           // a submitter whose second entry is perfectly healthy.
           otherEntries: authServers.slice(1),

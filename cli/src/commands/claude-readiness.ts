@@ -217,7 +217,11 @@ export function registerClaudeReadinessCommands(program: Command): void {
           : undefined);
 
       let submissionProfile: unknown;
-      if (options.submissionProfile) {
+      // PRESENCE, not truthiness. `--submission-profile ""` is a path the
+      // caller supplied and got wrong; skipping it on falsiness reported the
+      // lane as "no profile supplied", which reads as our limitation rather
+      // than their typo.
+      if (options.submissionProfile !== undefined) {
         // Read but NOT validated here: a malformed profile becomes findings in
         // the submission-artifacts lane, which tells the submitter which field
         // is wrong. Rejecting it at the CLI boundary would replace that with

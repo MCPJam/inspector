@@ -596,3 +596,54 @@ describe("CSP shape", () => {
     ).toBe("satisfied");
   });
 });
+
+describe("the report says when the design lints graded a subset", () => {
+  // The widget URI list comes from the target's tool metadata, so a run bounds
+  // how many it reads. Grading fewer widgets without saying so looks identical
+  // to a server that has fewer widgets.
+  const base = {
+    enteredUrl: "https://mcp.example.com/mcp",
+    appsSuiteRan: true,
+    tools: [
+      {
+        name: "show",
+        resourceUri: "ui://widget/show.html",
+        hasNestedField: true,
+        hasLegacyField: false,
+      },
+    ],
+    resources: [
+      {
+        uri: "ui://widget/show.html",
+        mimeType: "text/html+skybridge",
+        html: "<button>Go</button>",
+      },
+    ],
+  };
+
+  it("is satisfied when every referenced resource was read", () => {
+    const finding = runClaudeAppsChecks(base, STAMP).find(
+      (entry) => entry.id === "claude.apps.widget-resource-coverage",
+    );
+    expect(finding?.status).toBe("satisfied");
+  });
+
+  it("names the resources it did not read, without failing anything", () => {
+    const findings = runClaudeAppsChecks(
+      { ...base, unreadResourceUris: ["ui://widget/a.html", "ui://widget/b.html"] },
+      STAMP,
+    );
+    const finding = findings.find(
+      (entry) => entry.id === "claude.apps.widget-resource-coverage",
+    );
+    // Informational, and in the insights lane: a run that read three of forty
+    // widgets is a coverage fact, not a policy violation by the connector.
+    expect(finding?.status).toBe("informational");
+    expect(finding?.lane).toBe("experience-insights");
+    expect(finding?.details?.unreadResourceUris).toEqual([
+      "ui://widget/a.html",
+      "ui://widget/b.html",
+    ]);
+    expect(finding?.remediation).toMatch(/1 of 3/);
+  });
+});

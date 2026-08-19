@@ -82,12 +82,32 @@ export interface ClaudeReadinessRunConfig {
   capabilities?: ClaudeRunnerCapability[];
 }
 
+/**
+ * How many widget resources one run will read, and how long it will spend.
+ *
+ * The URI list comes from the TARGET's tool metadata, so its length is the
+ * target's choice: a server advertising four hundred unreadable widgets would
+ * otherwise cost four hundred times the per-request timeout, in a command
+ * someone put in CI. Both bounds are generous next to any real connector —
+ * a widget per tool, and thirty seconds to fetch a page of HTML.
+ */
+const MAX_WIDGET_RESOURCE_READS = 25;
+const WIDGET_RESOURCE_BUDGET_MS = 30_000;
+
 /** What one MCP connection yielded, or why it yielded nothing. */
 interface ConnectionEvidence {
   tools?: Tool[];
   appTools: ClaudeAppToolEvidence[];
   appResources: ClaudeAppResourceEvidence[];
   connected: boolean;
+  /**
+   * Widget URIs the run did not get to, because the read budget ran out.
+   *
+   * Carried rather than dropped: fewer resources means fewer design findings,
+   * and a lane that silently grades less than it was asked to is the failure
+   * every check module here is written to avoid.
+   */
+  unreadResourceUris: string[];
 }
 
 /**
@@ -133,7 +153,16 @@ async function gatherFromConnection(
               .filter((uri) => uri.length > 0)
           ),
         ];
-        for (const uri of uris) {
+        const unreadResourceUris: string[] = [];
+        const readsDeadline = Date.now() + WIDGET_RESOURCE_BUDGET_MS;
+        for (const [index, uri] of uris.entries()) {
+          if (
+            index >= MAX_WIDGET_RESOURCE_READS ||
+            Date.now() >= readsDeadline
+          ) {
+            unreadResourceUris.push(uri);
+            continue;
+          }
           try {
             const contents = await manager.readResource(serverId, { uri });
             for (const content of contents.contents ?? []) {
@@ -156,7 +185,13 @@ async function gatherFromConnection(
           }
         }
 
-        return { tools, appTools, appResources, connected: true };
+        return {
+          tools,
+          appTools,
+          appResources,
+          connected: true,
+          unreadResourceUris,
+        };
       },
       {
         timeout: config.timeoutMs ?? 30_000,
@@ -167,7 +202,12 @@ async function gatherFromConnection(
     // `tools: undefined` is load-bearing — it means "no listing was captured",
     // which the tool checks report as an untested obligation rather than as a
     // server with no tools.
-    return { appTools: [], appResources: [], connected: false };
+    return {
+      appTools: [],
+      appResources: [],
+      connected: false,
+      unreadResourceUris: [],
+    };
   }
 }
 
@@ -214,6 +254,7 @@ export async function runClaudeReadiness(
       appsSuiteRan: config.appsSuiteRan ?? false,
       tools: connection.appTools,
       resources: connection.appResources,
+      unreadResourceUris: connection.unreadResourceUris,
     },
     submissionProfile: config.submissionProfile,
     claimedFeatures: config.claimedFeatures,
