@@ -131,6 +131,16 @@ export interface ClaudeAuthEvidence {
 
 // ── Check definitions ───────────────────────────────────────────────────
 
+/**
+ * The input that lets {@link RFC8707_RESOURCE_CANONICAL} run.
+ *
+ * A completed authorization is not enough on its own: an access token is the
+ * OUTPUT of the flow and carries no record of the `resource` parameter that
+ * was sent to reach it. The caller that drove `/authorize` and `/token` is the
+ * only party that saw those requests, so it has to hand them back.
+ */
+export const CLAUDE_AUTHORIZATION_REQUESTS_INPUT = "authorizationRequests";
+
 const CHALLENGE_PRESENT: ClaudeCheckDefinition = {
   id: "claude.auth.unauthenticated-challenge",
   title: "An unauthenticated request is answered with a usable 401 challenge",
@@ -287,6 +297,51 @@ export function canonicalResourceIndicator(url: string): string | undefined {
   return parsed.pathname === "/" && !url.endsWith("/")
     ? rendered.replace(/\/$/, "")
     : rendered;
+}
+
+/**
+ * Read the RFC 8707 `resource` parameter out of the two requests that carry
+ * it, so a caller that drove an authorization can report what it sent.
+ *
+ * Exists because every surface that completes a flow would otherwise write
+ * this parsing itself, and each copy would be a chance to read the wrong
+ * parameter and hand the check a value the client never sent — worse than the
+ * `not-evaluated` it replaces, because a wrong verdict does not announce
+ * itself.
+ *
+ * Returns `undefined` when neither request carried a `resource`. That is NOT a
+ * violation: absence means we still have nothing to grade, and the check must
+ * go on saying so rather than reading a missing parameter as a bad one.
+ */
+export function resourceIndicatorsFrom(requests: {
+  /** The full `/authorize` URL, `resource` included, as it was sent. */
+  authorizationUrl?: string;
+  /** The `/token` request body — form-encoded string, params, or a record. */
+  tokenRequestBody?: string | URLSearchParams | Record<string, string>;
+}): ClaudeAuthEvidence["resourceIndicatorsSent"] | undefined {
+  let authorize: string | undefined;
+  if (requests.authorizationUrl) {
+    try {
+      authorize =
+        new URL(requests.authorizationUrl).searchParams.get("resource") ??
+        undefined;
+    } catch {
+      authorize = undefined;
+    }
+  }
+
+  let token: string | undefined;
+  const body = requests.tokenRequestBody;
+  if (typeof body === "string") {
+    token = new URLSearchParams(body).get("resource") ?? undefined;
+  } else if (body instanceof URLSearchParams) {
+    token = body.get("resource") ?? undefined;
+  } else if (body) {
+    token = typeof body.resource === "string" ? body.resource : undefined;
+  }
+
+  if (authorize === undefined && token === undefined) return undefined;
+  return { authorize, token };
 }
 
 // ── The run ─────────────────────────────────────────────────────────────
@@ -473,7 +528,10 @@ export function runClaudeAuthChecks(
         RFC8707_RESOURCE_CANONICAL,
         stamp,
         "checking the `resource` parameter on /authorize and /token requires completing an authorization, which this run did not do",
-        { expectedCanonicalForm: canonical },
+        {
+          expectedCanonicalForm: canonical,
+          missingInput: CLAUDE_AUTHORIZATION_REQUESTS_INPUT,
+        },
       ),
     );
   } else {

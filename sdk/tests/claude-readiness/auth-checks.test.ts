@@ -18,6 +18,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   canonicalResourceIndicator,
+  resourceIndicatorsFrom,
   runClaudeAuthChecks,
   type ClaudeAuthEvidence,
 } from "../../src/claude-readiness/checks/auth.js";
@@ -618,5 +619,71 @@ describe("a refused issuer is reported as a metadata defect, not an outage", () 
     );
     expect(finding.status).toBe("violated");
     expect(finding.remediation).not.toMatch(/no conforming client/);
+  });
+});
+
+describe("capturing the resource indicators a flow actually sent", () => {
+  const TARGET = "https://mcp.example.com/mcp";
+
+  it("reads `resource` out of the authorize URL and the token body", () => {
+    expect(
+      resourceIndicatorsFrom({
+        authorizationUrl: `https://auth.example.com/authorize?client_id=abc&resource=${encodeURIComponent(TARGET)}&state=xyz`,
+        tokenRequestBody: `grant_type=authorization_code&code=c&resource=${encodeURIComponent(TARGET)}`,
+      }),
+    ).toEqual({ authorize: TARGET, token: TARGET });
+  });
+
+  it("accepts the token body as params or a record, not only a string", () => {
+    // Three shapes because three callers already exist: a raw body string, the
+    // `URLSearchParams` a fetch was built from, and a plain record. A helper
+    // that took only one would be reimplemented by the other two.
+    const expected = { authorize: undefined, token: TARGET };
+    expect(
+      resourceIndicatorsFrom({
+        tokenRequestBody: new URLSearchParams({ resource: TARGET }),
+      }),
+    ).toEqual(expected);
+    expect(
+      resourceIndicatorsFrom({ tokenRequestBody: { resource: TARGET } }),
+    ).toEqual(expected);
+  });
+
+  it("returns undefined when neither request carried one", () => {
+    // NOT an empty object. `{}` would satisfy the check's "did the caller
+    // supply this?" test and turn a gap into a silent pass; `undefined` keeps
+    // the finding at `not-evaluated`, which is the truth.
+    expect(
+      resourceIndicatorsFrom({
+        authorizationUrl: "https://auth.example.com/authorize?client_id=abc",
+        tokenRequestBody: "grant_type=authorization_code&code=c",
+      }),
+    ).toBeUndefined();
+    expect(resourceIndicatorsFrom({})).toBeUndefined();
+  });
+
+  it("does not throw on an unparseable authorization URL", () => {
+    expect(
+      resourceIndicatorsFrom({
+        authorizationUrl: "not a url",
+        tokenRequestBody: { resource: TARGET },
+      }),
+    ).toEqual({ authorize: undefined, token: TARGET });
+  });
+
+  it("feeds the RFC 8707 check, which then grades instead of skipping", () => {
+    const captured = resourceIndicatorsFrom({
+      authorizationUrl: `https://auth.example.com/authorize?resource=${encodeURIComponent("https://MCP.example.com:443/mcp")}`,
+    });
+    const finding = byId(
+      runClaudeAuthChecks(
+        { ...HEALTHY, enteredUrl: TARGET, resourceIndicatorsSent: captured },
+        STAMP,
+      ),
+      "claude.auth.rfc8707-resource-canonical",
+    );
+    // Uppercased host and an explicit default port: a real value a real client
+    // can send, and exactly what the canonical form exists to reject.
+    expect(finding.status).toBe("violated");
   });
 });

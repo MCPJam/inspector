@@ -16,6 +16,44 @@ import { runEphemeralConnection } from "../web/auth.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 
 /**
+ * Parse the body as a JSON object (or `{}` when empty), WITHOUT merging path
+ * params in — so a `.strict()` schema sees only the caller's own fields and can
+ * honestly reject unknown ones.
+ *
+ * The distinction from `synthesizeServerBody` is the whole point: a schema laid
+ * over a synthesized body can never be strict (it would reject the `projectId`
+ * this module just injected), which means a route using it silently DROPS
+ * anything it does not declare. That is fine for a body whose spec says
+ * `additionalProperties: true`, and a lie for one that promises otherwise —
+ * a caller who sends a knob the route does not support gets a success and no
+ * knob.
+ */
+export async function readJsonObjectBody(
+  c: Context
+): Promise<Record<string, unknown>> {
+  const text = await c.req.text();
+  if (!text || !text.trim()) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid JSON body"
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Request body must be a JSON object"
+    );
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/**
  * Build the web-schema body from the v1 path params + the public JSON body.
  * Path params win, so a caller can't smuggle a different projectId/serverId in
  * the body than the URL they were authorized against.

@@ -17,6 +17,7 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
+import { checkEvalHarnessAdmission } from "../../services/evals/harness-admission";
 import {
   applyVisibilityPolicyAndCountSignals,
   extractHostExecutionPolicy,
@@ -1698,6 +1699,86 @@ export async function fetchRunPinnedSkillsWithRetry(
 }
 
 /**
+ * Titles of the run's cases that assert `widgetRendered`.
+ *
+ * Only relevant to a harness run, where the inspector's widget manager never
+ * sees the tool call — the harness reaches MCP through the signed proxy — so
+ * the assertion has nothing to observe. Collected here rather than inside the
+ * gate because the gate is deliberately shape-agnostic about cases; this is the
+ * one place that already knows the run's own step model.
+ */
+function casesAssertingWidgetRender(
+  tests: ReadonlyArray<Record<string, any>>
+): string[] {
+  const titles = new Set<string>();
+  for (const test of tests) {
+    const steps = Array.isArray(test.steps) ? test.steps : [];
+    const asserts =
+      steps.some(
+        (step: any) =>
+          step?.kind === "assert" && step?.assertion?.type === "widgetRendered"
+      ) ||
+      (Array.isArray(test.successPredicates) &&
+        test.successPredicates.some(
+          (predicate: any) => predicate?.type === "widgetRendered"
+        ));
+    if (asserts) titles.add(String(test.title ?? "(untitled case)"));
+  }
+  return [...titles];
+}
+
+/**
+ * Terminally fail a run that has a row but has not executed anything.
+ *
+ * `startSuiteRunWithRecorder` creates the run AND precreates its iteration
+ * rows, so finalizing only the run leaves every attempt stuck pending — the
+ * shape an operator sees as a run that never ends. Both writes are best-effort
+ * and their failures are LOGGED, never rethrown: the caller is already
+ * reporting a real cause, and masking it with a cleanup error costs the reason
+ * the run failed.
+ *
+ * Shared by the pinned-skill setup abort and the harness admission gate: they
+ * fail at the same point in the lifecycle and must leave the same wreckage
+ * behind, which is exactly the invariant a second hand-written copy loses.
+ */
+async function failRunBeforeExecution(
+  convexClient: ConvexHttpClient,
+  recorder: SuiteRunRecorder,
+  runId: string,
+  { reason }: { reason: string }
+): Promise<void> {
+  const cause = reason.slice(0, 500);
+  await convexClient
+    .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
+      runId,
+      error: cause,
+    })
+    .catch((cleanupError: unknown) =>
+      logger.warn(
+        "[evals] Failed to fail pending iterations after setup abort",
+        {
+          runId,
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        }
+      )
+    );
+  await recorder
+    .finalize({ status: "failed", notes: cause })
+    .catch((finalizeError: unknown) =>
+      logger.warn("[evals] Failed to finalize run after setup abort", {
+        runId,
+        error:
+          finalizeError instanceof Error
+            ? finalizeError.message
+            : String(finalizeError),
+      })
+    );
+}
+
+/**
  * Prepare phase of a suite run: validate, upsert suite + cases, create the
  * run record (status 'running'), store replay configs, and resolve model
  * credentials. Returns an `execute` closure over `runEvalSuiteWithAiSdk` so
@@ -1933,6 +2014,60 @@ export async function prepareEvalRun(
   const suiteHostConfig =
     runHostConfigSnapshot ??
     (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
+
+  // HARNESS HONESTY GATE. A host config carrying `harness` runs the REAL
+  // runtime in chat and swarms; eval runs used to forward the selector into
+  // `prepareChatV2` and then quietly execute on the emulated engine, reporting
+  // green for a runtime that never ran. Decided HERE — after the run's host
+  // config is known, before the runner touches a model — so a refusal costs
+  // nothing and names the reason the shared gate gave.
+  //
+  // The run row already exists (`startSuiteRunWithRecorder` created it and
+  // precreated its iterations), so a refusal has to finalize it rather than
+  // throw and strand it running forever. Same cleanup the setup phase below
+  // performs, for the same reason.
+  const harnessAdmission = checkEvalHarnessAdmission({
+    hostConfig: suiteHostConfig ?? null,
+    // Already includes the servers the environment's pinned plugin versions
+    // contribute (`environmentServerIds` projects the effective set), so the
+    // gate's plugin-servers-count rule is satisfied without a second read.
+    serverIds: resolvedServerIds,
+    // The run's OWN snapshotted cases (`config.tests`), not the request's
+    // inline tests: a bare rerun has none of the latter, and the snapshot is
+    // what actually executes.
+    cases: config.tests as Array<{
+      title?: string;
+      model?: string;
+      provider?: string;
+    }>,
+    // Read off the RUN's frozen environment — the same value the runner itself
+    // uses to decide whether to provision a box — rather than off the live
+    // environment row, so the gate judges what will actually execute.
+    // Explicitly `null` when absent: here that is a resolved fact, not
+    // "not looked up".
+    pinnedComputerImageId:
+      (config.environment as { computerEnvironmentId?: string } | undefined)
+        ?.computerEnvironmentId ?? null,
+    widgetAssertingCaseTitles: casesAssertingWidgetRender(config.tests),
+  });
+  if (!harnessAdmission.ok) {
+    await failRunBeforeExecution(convexClient, recorder, runId, {
+      reason: harnessAdmission.reason,
+    });
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      harnessAdmission.reason,
+      { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness }
+    );
+  }
+  // ATTRIBUTION is stamped by the platform, not here: `startTestSuiteRun`
+  // derives `configSnapshot.executionEngine` from the run's own
+  // `hostConfigId`, so the record cannot disagree with the config the run
+  // executed under and no client can claim an engine it did not use. This
+  // gate's job is to make sure the two agree in the first place — an admitted
+  // harness run reaches a harness, and a refused one reaches nothing.
+
   const suiteInjectOpenAiCompat =
     resolveOpenAiCompatForHostConfig(suiteHostConfig);
   const suiteHostPolicy = extractHostExecutionPolicy(
@@ -2076,43 +2211,12 @@ export async function prepareEvalRun(
           : { kind: "pinned", skills: runPinnedSkills };
       }
     } catch (error) {
-      const cause = (
-        error instanceof Error ? error.message : String(error)
-      ).slice(0, 500);
-      // startSuiteRunWithRecorder already precreated the iteration rows, so
-      // finalizing only the run leaves every attempt stuck pending. Mirror the
-      // precreate-failure cleanup: fail the pending iterations, then the run.
-      // Log cleanup failures (but never let them mask the original pin-fetch
-      // error): if either call fails the run can stay stranded pending, and an
-      // operator needs a breadcrumb to find and repair it.
-      await convexClient
-        .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
-          runId,
-          error: cause,
-        })
-        .catch((cleanupError: unknown) =>
-          logger.warn(
-            "[evals] Failed to fail pending iterations after setup abort",
-            {
-              runId,
-              error:
-                cleanupError instanceof Error
-                  ? cleanupError.message
-                  : String(cleanupError),
-            }
-          )
-        );
-      await recorder
-        .finalize({ status: "failed", notes: cause })
-        .catch((finalizeError: unknown) =>
-          logger.warn("[evals] Failed to finalize run after setup abort", {
-            runId,
-            error:
-              finalizeError instanceof Error
-                ? finalizeError.message
-                : String(finalizeError),
-          })
-        );
+      await failRunBeforeExecution(convexClient, recorder, runId, {
+        reason: (error instanceof Error ? error.message : String(error)).slice(
+          0,
+          500
+        ),
+      });
       throw error;
     }
   }

@@ -26,6 +26,16 @@ import {
   type ClaudeCheckStamp,
 } from "./helpers.js";
 
+/**
+ * The input that closes this module's coverage gap.
+ *
+ * A tool listing is not something a caller "has" — on an OAuth connector it
+ * costs a completed authorization to get one. Naming it lets a surface tell
+ * the submitter to authenticate rather than leaving the run-level summary to
+ * offer whatever unrelated input happened to be declared elsewhere.
+ */
+export const CLAUDE_TOOL_LISTING_INPUT = "toolListing";
+
 const TOOL_NAME_LENGTH: ClaudeCheckDefinition = {
   id: "claude.tools.name-length",
   title: "Tool names fit Claude's 64-character limit",
@@ -262,7 +272,18 @@ export function runClaudeToolChecks(
   // looked at.
   if (!tools) {
     return definitions.map((definition) =>
-      notEvaluated(definition, stamp, "no tool listing was captured for this run"),
+      notEvaluated(
+        definition,
+        stamp,
+        "no tool listing was captured for this run",
+        // NAMING THE INPUT IS WHAT MAKES THE GAP ACTIONABLE. Without it the
+        // run-level summary can only offer inputs some OTHER check declared,
+        // and on an OAuth connector the only one left is `intrusive` — so a
+        // server whose sole problem is "we could not authenticate" got told to
+        // run the one probe that must never be aimed at someone else's
+        // production server.
+        { missingInput: CLAUDE_TOOL_LISTING_INPUT },
+      ),
     );
   }
   if (tools.length === 0) {

@@ -672,6 +672,18 @@ describe("partial widget coverage cannot produce a pass", () => {
     ],
   };
 
+  /**
+   * A widget the connector ADVERTISES and the run did not read — which is the
+   * only way a URI reaches `unreadResourceUris` in a real run. A fixture that
+   * skipped the tool would be testing an unread resource nobody asked for.
+   */
+  const unreadWidget = {
+    name: "other",
+    resourceUri: "ui://widget/other.html",
+    hasNestedField: true,
+    hasLegacyField: false,
+  };
+
   function byId(evidence: typeof base & { unreadResourceUris?: string[] }) {
     const findings = runClaudeAppsChecks(evidence, STAMP);
     return (id: string) => findings.find((finding) => finding.id === id)!;
@@ -688,6 +700,7 @@ describe("partial widget coverage cannot produce a pass", () => {
   ])("withholds %s when a resource went unread", (id) => {
     const finding = byId({
       ...base,
+      tools: [...base.tools, unreadWidget],
       unreadResourceUris: ["ui://widget/other.html"],
     })(id);
     expect(finding.status).toBe("not-evaluated");
@@ -702,6 +715,7 @@ describe("partial widget coverage cannot produce a pass", () => {
     // cannot make a widget that DID break the rule stop having broken it.
     const finding = byId({
       ...base,
+      tools: [...base.tools, unreadWidget],
       resources: [{ uri: "ui://widget/show.html", mimeType: "text/plain" }],
       unreadResourceUris: ["ui://widget/other.html"],
     })("claude.apps.html-mime-profile");

@@ -641,7 +641,16 @@ function rejectIssuer(issuer: URL, enteredUrl: string): string | undefined {
  */
 export async function discoverClaudeAuthEvidence(
   options: ClaudeDiscoveryOptions,
-  extras: Pick<ClaudeAuthEvidence, "declaredAuthMode" | "accessTokenAudience"> = {},
+  // `resourceIndicatorsSent` rides in as an EXTRA rather than being discovered:
+  // discovery never drives an authorization, so the only party that can have
+  // seen those requests is the caller that made them.
+  extras: Pick<
+    ClaudeAuthEvidence,
+    | "declaredAuthMode"
+    | "accessTokenAudience"
+    | "resourceIndicatorsSent"
+    | "insufficientScopeChallenge"
+  > = {},
 ): Promise<ClaudeAuthEvidence> {
   const unauthenticated = await probeUnauthenticated(options);
   const challengePointer = parseBearerAuthenticateParameters(

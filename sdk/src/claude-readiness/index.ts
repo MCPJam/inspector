@@ -53,6 +53,7 @@ export type {
 } from "./manifest.js";
 
 export {
+  CLAUDE_GATED_INPUTS,
   CLAUDE_READINESS_INPUTS,
   gradeClaudeReadiness,
 } from "./runner.js";
@@ -75,6 +76,7 @@ export type {
 } from "./intrusive.js";
 
 export {
+  CLAUDE_APPS_RESULT_INPUT,
   claudeAppContentDomain,
   claudeAppResourceEvidenceFrom,
   claudeAppToolEvidenceFrom,
@@ -86,7 +88,9 @@ export type {
   ClaudeAppsEvidence,
 } from "./checks/apps.js";
 export {
+  CLAUDE_AUTHORIZATION_REQUESTS_INPUT,
   canonicalResourceIndicator,
+  resourceIndicatorsFrom,
   runClaudeAuthChecks,
 } from "./checks/auth.js";
 export type {
@@ -104,7 +108,10 @@ export {
   runClaudeSubmissionChecks,
 } from "./checks/submission.js";
 export type { ClaudeSubmissionEvidence } from "./checks/submission.js";
-export { runClaudeToolChecks } from "./checks/tools.js";
+export {
+  CLAUDE_TOOL_LISTING_INPUT,
+  runClaudeToolChecks,
+} from "./checks/tools.js";
 export { runClaudeEndpointChecks } from "./checks/endpoint.js";
 export type {
   ClaudeEndpointEvidence,
