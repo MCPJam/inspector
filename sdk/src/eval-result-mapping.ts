@@ -380,6 +380,7 @@ export function promptsToEvalResult(
     errorDetails: overrides.errorDetails,
     trace,
     externalIterationId: overrides.externalIterationId,
+    caseId: overrides.caseId,
     externalCaseId: overrides.externalCaseId,
     metadata: overrides.metadata,
     isNegativeTest: overrides.isNegativeTest,
@@ -496,6 +497,19 @@ export interface IterationToEvalResultOptions {
   promptSelector?: "first" | "last";
   /** @see MCPJamReportingConfig.failOnToolError */
   failOnToolError?: boolean;
+  /**
+   * The case's DECLARED identity (`EvalTestConfig.id`), forwarded when given.
+   *
+   * Optional and never defaulted, because this converter cannot know it: it
+   * receives a `casePrefix`, not an `EvalTest`. Passing it is what lets a
+   * reporter built on these helpers join a renamed test to its hosted history.
+   *
+   * Supplying one across a run's iterations declares them ONE case rather than
+   * one case per iteration — a change to how they land hosted, which is why
+   * nothing supplies it on the caller's behalf. See {@link runToEvalResults}
+   * for the `caseTitle` consequence.
+   */
+  caseId?: string;
 }
 
 /**
@@ -554,6 +568,7 @@ export function iterationToEvalResult(
 
   return {
     caseTitle: options.caseTitle,
+    ...(options.caseId !== undefined ? { caseId: options.caseId } : {}),
     query: selectedPrompt?.getPrompt(),
     passed,
     durationMs: durationMs > 0 ? durationMs : undefined,
@@ -586,10 +601,21 @@ export interface RunToEvalResultsOptions {
   expectedToolCalls?: EvalExpectedToolCall[];
   promptSelector?: "first" | "last";
   failOnToolError?: boolean;
+  /** @see IterationToEvalResultOptions.caseId */
+  caseId?: string;
 }
 
 /**
  * Convert all iterations from an EvalRunResult to EvalResultInput payloads.
+ *
+ * The per-iteration `-iter-N` title suffix is what makes each iteration land as
+ * its OWN hosted case, so it is dropped when a declared `caseId` is supplied:
+ * that id says these iterations are one case, and the backend then titles that
+ * case from the first result it accepts (`sdkEvals.ts`, the grouped-stats
+ * `title` is set once and never revised) — leaving a case that holds N
+ * iterations named after iteration 1, or after iteration 2 when the first is
+ * skipped. Nothing is lost by dropping it: the iteration number already rides
+ * every result as `metadata.iterationNumber`.
  */
 export function runToEvalResults(
   run: EvalRunResult,
@@ -597,12 +623,16 @@ export function runToEvalResults(
 ): EvalResultInput[] {
   return run.iterationDetails.map((iteration, index) =>
     iterationToEvalResult(iteration, index, {
-      caseTitle: `${options.casePrefix}-iter-${index + 1}`,
+      caseTitle:
+        options.caseId !== undefined
+          ? options.casePrefix
+          : `${options.casePrefix}-iter-${index + 1}`,
       provider: options.provider,
       model: options.model,
       expectedToolCalls: options.expectedToolCalls,
       promptSelector: options.promptSelector,
       failOnToolError: options.failOnToolError,
+      caseId: options.caseId,
     })
   );
 }
@@ -617,6 +647,13 @@ export interface SuiteRunToEvalResultsOptions {
   expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>;
   promptSelector?: "first" | "last";
   failOnToolError?: boolean;
+  /**
+   * Declared case ids, keyed by test name — the same shape as
+   * `expectedToolCallsByTest`, because one id cannot describe a whole suite.
+   *
+   * @see IterationToEvalResultOptions.caseId
+   */
+  caseIdByTest?: Record<string, string>;
 }
 
 /**
@@ -638,6 +675,7 @@ export function suiteRunToEvalResults(
       expectedToolCalls,
       promptSelector: options.promptSelector,
       failOnToolError: options.failOnToolError,
+      caseId: options.caseIdByTest?.[testName],
     });
     results.push(...testResults);
   }
@@ -742,6 +780,8 @@ function syntheticStepsForCase(
  * backend reads them to join a local run to a hosted case's history.
  */
 export type EvalCaseIdentity = {
+  /** The case's DECLARED identity — `EvalTestConfig.id`. */
+  caseId?: string;
   externalCaseId?: string;
   isNegativeTest?: boolean;
   expectedOutput?: string;
@@ -787,10 +827,14 @@ export function iterationsToEvalResultInputs(
       durationMs: durationMs > 0 ? durationMs : undefined,
       expectedToolCalls,
       actualToolCalls,
-      // Hosted↔local identity and semantics. These are the SAME wire fields
-      // the backend already hashes into caseKey and renders on the run page,
-      // so a materialized hosted case joins its own history instead of
-      // appearing as a new scenario.
+      // Hosted↔local identity and semantics, on the wire. `caseId` is the
+      // DECLARED identity the backend resolves by first (and adopts onto a
+      // case that resolved by content hash); `externalCaseId` is the older
+      // join key it hashes into caseKey. Either way a materialized hosted case
+      // joins its own history instead of appearing as a new scenario.
+      ...(caseIdentity?.caseId !== undefined
+        ? { caseId: caseIdentity.caseId }
+        : {}),
       ...(caseIdentity?.externalCaseId !== undefined
         ? { externalCaseId: caseIdentity.externalCaseId }
         : {}),
@@ -880,6 +924,7 @@ export function suiteTestResultsToEvalResultInputs(
         durationMs: durationMs > 0 ? durationMs : undefined,
         expectedToolCalls,
         actualToolCalls,
+        ...(identity?.caseId !== undefined ? { caseId: identity.caseId } : {}),
         ...(identity?.externalCaseId !== undefined
           ? { externalCaseId: identity.externalCaseId }
           : {}),
