@@ -67,6 +67,16 @@ type HostCatalogMetadata = {
   imageSupport?: HostImageSupport;
   /** Structured vendor-document evidence that does not shape execution. */
   compatibilityEvidence?: HostCompatibilityEvidence;
+  /**
+   * Style variables per theme, for hosts that resolve their tokens and send
+   * literals rather than `light-dark(…)`. The host config carries only the one
+   * theme the emulated host announces, so the pair lives here; each side is
+   * optional because a host may have been probed in a single theme.
+   */
+  styleVariablesByTheme?: {
+    light?: Record<string, string>;
+    dark?: Record<string, string>;
+  };
 };
 
 /**

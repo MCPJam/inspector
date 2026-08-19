@@ -150,6 +150,18 @@ const hostCatalogMetadataSchema = z.object({
   verifiedAt: z.number().optional(),
   imageSupport: hostImageSupportSchema.optional(),
   compatibilityEvidence: hostCompatibilityEvidenceSchema.optional(),
+  // Both themes for a host that resolves its style tokens per theme and sends
+  // literals. Declared here because Zod strips unknown keys: without it a
+  // live-fetched catalog would lose the pair and only the bundled snapshot
+  // would carry it. Each theme is optional — a host with `light-dark(…)`
+  // values has nothing to split, and one probed in a single theme must not
+  // have the other invented.
+  styleVariablesByTheme: z
+    .object({
+      light: z.record(z.string(), z.string()).optional(),
+      dark: z.record(z.string(), z.string()).optional(),
+    })
+    .optional(),
 });
 
 const hostConfigMcpProfileSchema = z

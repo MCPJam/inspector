@@ -20,6 +20,7 @@ import {
   HOST_CONFIG_FIELDS,
   NOT_SUPPORTED,
   type HostComparisonSubject,
+  type StyleVariableByTheme,
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
 import { SupportChip } from "./support-chip";
@@ -686,6 +687,33 @@ function FieldCell({
         return <span className="text-[12px] text-muted-foreground/60">""</span>;
       }
       return <span className="font-mono text-[12px] break-all">{s}</span>;
+    }
+
+    case "style-variable": {
+      const v = value as StyleVariableByTheme;
+      // One string answering both themes renders bare — labelling it "light"
+      // and "dark" twice would imply a distinction the host does not make.
+      if ("same" in v) {
+        return <span className="font-mono text-[12px] break-all">{v.same}</span>;
+      }
+      return (
+        <div className="flex flex-col gap-1">
+          {(["light", "dark"] as const).map((theme) => (
+            <div key={theme} className="flex flex-col gap-0.5">
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
+                {theme}
+              </span>
+              {v[theme] === undefined ? (
+                <span className="text-[12px] text-muted-foreground/60">—</span>
+              ) : (
+                <span className="font-mono text-[12px] break-all">
+                  {v[theme]}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      );
     }
 
     case "string-long": {

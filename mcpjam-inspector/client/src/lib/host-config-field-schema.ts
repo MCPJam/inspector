@@ -99,6 +99,11 @@ export type HostConfigFieldKind =
   | { kind: "mode-set"; modes: ReadonlyArray<string> }
   /** Short string rendered inline. */
   | { kind: "string" }
+  /**
+   * A style variable's value, shown per theme when the host resolves its
+   * tokens and sends different literals for light and dark.
+   */
+  | { kind: "style-variable" }
   /** Long string (system prompt). Matrix shows first-line preview + char count. */
   | { kind: "string-long" }
   | { kind: "string-array" }
@@ -307,24 +312,43 @@ void _styleVariableCoverage;
  */
 export const NOT_SUPPORTED = Symbol("not-supported");
 
+/** One variable's value in each theme; `same` when a single string answers both. */
+export type StyleVariableByTheme =
+  | { same: string }
+  | { light?: string; dark?: string };
+
 function readStyleVariable(
   cfg: HostConfigDtoV2,
   key: McpUiStyleVariableKey
-): string | typeof NOT_SUPPORTED | undefined {
+): StyleVariableByTheme | typeof NOT_SUPPORTED | undefined {
+  const facts = cfg as HostConfigDtoWithCatalogFacts;
+  const byTheme = facts.styleVariablesByTheme;
+  const light = byTheme?.light?.[key];
+  const dark = byTheme?.dark?.[key];
+  if (typeof light === "string" || typeof dark === "string") {
+    // A host that resolves per theme: show each capture separately, and
+    // collapse when the two agree (sizes, radii and shadows usually do).
+    return light === dark && typeof light === "string"
+      ? { same: light }
+      : { light, dark };
+  }
+
   const styles = (cfg.hostContext as { styles?: unknown } | undefined)?.styles;
   const variables = (styles as { variables?: unknown } | undefined)?.variables;
   const value =
     variables !== null && typeof variables === "object"
       ? (variables as Record<string, unknown>)[key]
       : undefined;
-  if (typeof value === "string") return value;
+  // A single value answers both themes — either because it is theme-agnostic
+  // (`light-dark(…)`) or because only one theme was ever captured. Both read
+  // the same way here; the catalog's per-theme pair is what distinguishes them.
+  if (typeof value === "string") return { same: value };
+
   // Only a probed host can be said not to support the variable: we connected,
   // read its host context, and it sent nothing here. For a vendor-doc or
   // assumed host the same blank means no View was ever run, which is an
   // absence of evidence rather than evidence of absence.
-  return (cfg as HostConfigDtoWithCatalogFacts).provenance === "probe"
-    ? NOT_SUPPORTED
-    : undefined;
+  return facts.provenance === "probe" ? NOT_SUPPORTED : undefined;
 }
 
 /**
@@ -346,7 +370,7 @@ const APPS_STYLE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
     label: key,
     path: `hostContext.styles.variables.${key}`,
     description: `Value the host sends widgets for ${key}.`,
-    kind: { kind: "string" },
+    kind: { kind: "style-variable" },
     read: (cfg) => readStyleVariable(cfg, key),
   }));
 
@@ -1000,6 +1024,15 @@ export type HostConfigDtoWithCatalogFacts = HostConfigDtoV2 & {
    * probed this host", which look identical in the config alone.
    */
   provenance?: "probe" | "vendor-doc" | "assumed";
+  /**
+   * Style variables per theme, for hosts that resolve their tokens instead of
+   * emitting `light-dark(…)`. `hostContext.styles` can only carry the one
+   * theme the emulated host announces, so the pair rides beside it.
+   */
+  styleVariablesByTheme?: {
+    light?: Record<string, string>;
+    dark?: Record<string, string>;
+  };
 };
 
 export interface HostComparisonSubject {
