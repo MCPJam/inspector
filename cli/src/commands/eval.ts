@@ -6,6 +6,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { Command } from "commander";
 import {
   createEvalCaseOperation,
@@ -58,19 +59,31 @@ import {
   detectFlakyCases,
   evaluateCompareGates,
   formatGateReport,
+  formatSuiteFileFindings,
   HostedOnlyCaseError,
+  loadEvalSuiteFile,
+  MAX_SUITE_FILE_BYTES,
+  serializeEvalSuiteFile,
   verifyCorpusLock,
   type FlakyCase,
   type GateReport,
   type LoadedCorpus,
   type PublicMatchOptions,
   type StructuredRunReport,
+  type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
 import type {
   PlatformEvalCase,
   PlatformEvalIteration,
   PlatformRunCompare,
 } from "@mcpjam/sdk/platform";
+import { writeFileAtomic } from "../lib/atomic-write.js";
+import {
+  buildSuiteFileFromPlatform,
+  defaultSuiteFilePath,
+  suiteFileTooLarge,
+  type SuiteExportFinding,
+} from "../lib/eval-suite-export.js";
 import {
   CORPUS_DRIFT_EXIT_CODE,
   CORPUS_INCOMPLETE_EXIT_CODE,
@@ -113,7 +126,10 @@ import {
   toCliError,
   webOriginForApiBaseUrl,
 } from "../lib/platform-client.js";
-import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
+import {
+  getGlobalOptions,
+  parsePositiveInteger,
+} from "../lib/server-config.js";
 import {
   detectInlineImageProtocol,
   encodeInlineImage,
@@ -640,11 +656,7 @@ function buildSuiteUpdateInput(
       settings.minimumIterations = null;
     } else {
       const iterations = Number(options.minIterations);
-      if (
-        !Number.isInteger(iterations) ||
-        iterations < 1 ||
-        iterations > 10
-      ) {
+      if (!Number.isInteger(iterations) || iterations < 1 || iterations > 10) {
         throw usageError(
           '--min-iterations must be a whole number from 1 to 10, or "off".'
         );
@@ -1408,6 +1420,286 @@ async function writeCompareResult(
   );
 }
 
+// ── suite files ──────────────────────────────────────────────────────────────
+
+/**
+ * Exit codes for `eval validate`, spelled out because the difference between
+ * them is the whole point of the command.
+ *
+ * 1 means the file was READ AND JUDGED and it is invalid. 2 means nothing was
+ * judged — the path was wrong, the input was over the cap, the YAML was
+ * malformed. A script that retries on 2 and opens a ticket on 1 is doing the
+ * right thing with both.
+ */
+const SUITE_FILE_INVALID_EXIT_CODE = 1;
+/**
+ * Nothing was judged. The same code `usageError` carries (`lib/output.ts`),
+ * named here so the two suite-file commands do not borrow the eval GATE's
+ * constant for a thing that has nothing to do with a gate.
+ */
+const SUITE_FILE_USAGE_EXIT_CODE = 2;
+
+/**
+ * Read `--file`, keeping the file's REAL byte count.
+ *
+ * The bytes are what the 1 MiB cap is about, and a string re-encoded from a
+ * file that was not valid UTF-8 does not have the same length as the file. So
+ * the buffer's length travels with the text rather than being re-derived from
+ * it.
+ */
+function readSuiteFileInput(value: string): { text: string; bytes: number } {
+  try {
+    const buffer = value === "-" ? readFileSync(0) : readFileSync(value);
+    return { text: buffer.toString("utf8"), bytes: buffer.byteLength };
+  } catch (error) {
+    throw usageError(
+      value === "-"
+        ? "Failed to read the suite file from stdin."
+        : `Failed to read the suite file "${value}".`,
+      { source: error instanceof Error ? error.message : String(error) }
+    );
+  }
+}
+
+/** The `--format json` envelope. Pinned: `docs/cli/reference.mdx` repeats it. */
+type ValidateResult = {
+  valid: boolean;
+  file: string;
+  /** Absent when valid. `contract` is exit 1; `input`/`parse` are exit 2. */
+  stage?: SuiteFileFailureStage;
+  suite?: {
+    id: string;
+    name: string;
+    cases: number;
+    enabledCases: number;
+  };
+  findings: unknown[];
+};
+
+/**
+ * Validate a suite file offline.
+ *
+ * NO auth, NO network, NO project: this command builds no platform client,
+ * reads no API key and resolves no project, which is why it takes no
+ * `--project`. It answers "is this file well-formed and contract-valid?" and
+ * nothing else.
+ *
+ * What it deliberately does NOT answer: whether the tool names, server
+ * references and fixtures a case mentions exist in some project. That
+ * re-resolution against live discovery is project-aware validation, it needs a
+ * network round trip, and it is a later step's work. "Valid" here therefore
+ * means "a valid suite file", never "this will run".
+ */
+function runEvalValidate(options: { file: string }, command: Command): void {
+  const globalOptions = getGlobalOptions(command);
+  const source = readSuiteFileInput(options.file);
+  const label = options.file === "-" ? "<stdin>" : options.file;
+  const loaded = loadEvalSuiteFile(source.text, { byteLength: source.bytes });
+
+  if (loaded.ok) {
+    const result: ValidateResult = {
+      valid: true,
+      file: label,
+      suite: {
+        id: loaded.authored.suite.id,
+        name: loaded.authored.suite.name,
+        cases: loaded.resolved.cases.length,
+        enabledCases: loaded.resolved.enabledCases.length,
+      },
+      findings: [],
+    };
+    if (globalOptions.format === "human") {
+      const total = result.suite?.cases ?? 0;
+      process.stdout.write(
+        `${label}: valid — suite ${result.suite?.id} ` +
+          `(${total} ${total === 1 ? "case" : "cases"}, ` +
+          `${result.suite?.enabledCases} enabled)\n`
+      );
+      return;
+    }
+    writeResult(result, globalOptions.format);
+    return;
+  }
+
+  // Annotated, like the success envelope above: the shape is pinned in
+  // `docs/cli/reference.mdx`, and an unannotated literal can drift from it
+  // without the compiler noticing.
+  const result: ValidateResult = {
+    valid: false,
+    file: label,
+    stage: loaded.stage,
+    findings: [...loaded.findings],
+  };
+  if (globalOptions.format === "human") {
+    process.stdout.write(
+      `${label}: invalid (${loaded.findings.length} ${
+        loaded.findings.length === 1 ? "finding" : "findings"
+      })\n${formatSuiteFileFindings(loaded.findings)}\n`
+    );
+  } else {
+    writeResult(result, globalOptions.format);
+  }
+
+  // Exit 1 only when the file PARSED and lost on the contract. Everything else
+  // means no verdict was reached, and reporting that as "your file is invalid"
+  // sends someone to edit a file whose problem is its size or its syntax.
+  setProcessExitCode(
+    loaded.stage === "contract"
+      ? SUITE_FILE_INVALID_EXIT_CODE
+      : SUITE_FILE_USAGE_EXIT_CODE
+  );
+}
+
+/**
+ * Fetch a hosted suite and write it as a suite file — or write nothing.
+ *
+ * The fetch is the SAME operation pair `eval pull` uses, including its
+ * fail-closed pagination guard: a suite whose cases do not fit one page refuses
+ * rather than exporting a file that silently holds fewer tests than the suite.
+ */
+async function runEvalExport(
+  options: PlatformOptions & {
+    suite: string;
+    project?: string;
+    out?: string;
+    force?: boolean;
+  },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+
+  // Checked BEFORE the fetch when the caller named the path: refusing to
+  // overwrite is not worth a round trip. With no `--out` the path is derived
+  // from the suite's id, so that check has to wait until it is known.
+  if (options.out !== undefined) {
+    refuseToOverwrite(options.out, options.force === true);
+  }
+
+  const fetched = await runPlatformCommand(
+    options,
+    globalOptions.timeout,
+    async ({ client, signal }) => {
+      const selector = {
+        ...(options.project ? { project: options.project } : {}),
+        suite: options.suite,
+      };
+      const [detail, page] = await Promise.all([
+        getEvalSuiteOperation.execute(selector, { client, signal }),
+        listEvalCasesOperation.execute(selector, { client, signal }),
+      ]);
+
+      // Same guard as `eval pull`, same reason: the cases endpoint returns the
+      // whole suite today and the client has no cursor to follow. A truncated
+      // export is a file that describes a smaller suite than the one it names.
+      if (page.nextCursor) {
+        throw cliError(
+          "SUITE_FILE_TRUNCATED",
+          `Suite "${options.suite}" returned more cases than one page and this ` +
+            `CLI cannot follow the cursor. Upgrade @mcpjam/cli.`,
+          SUITE_FILE_USAGE_EXIT_CODE
+        );
+      }
+
+      return { detail, cases: page.items };
+    }
+  );
+
+  const built = buildSuiteFileFromPlatform(fetched);
+  if (!built.ok) {
+    writeExportRefusal(built.findings, globalOptions.format);
+    return;
+  }
+
+  const text = serializeEvalSuiteFile(built.file);
+
+  // Over the cap is a REFUSAL, not a bug. Nothing in the contract bounds a
+  // suite's total size — 500 cases and an unbounded `expectedOutput` are all
+  // legal — so a suite that serializes past the limit is a representability
+  // answer like any other, and reporting it through the round-trip assertion
+  // below would tell the author to file a CLI bug about their own suite.
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > MAX_SUITE_FILE_BYTES) {
+    writeExportRefusal(
+      [suiteFileTooLarge(bytes, MAX_SUITE_FILE_BYTES)],
+      globalOptions.format
+    );
+    return;
+  }
+
+  // The round trip is asserted HERE, not only in tests. A serializer that
+  // loses a field is a file that runs a different suite than the dashboard
+  // does, and the bytes about to be written are the only thing that can prove
+  // it did not happen for THIS suite.
+  const reloaded = loadEvalSuiteFile(text, { byteLength: bytes });
+  if (!reloaded.ok || !isDeepStrictEqual(reloaded.authored, built.file)) {
+    throw operationalError(
+      `The suite file written for "${built.file.suite.id}" does not read back ` +
+        `identically, so nothing was written. This is a bug in @mcpjam/cli — ` +
+        `please report it.`,
+      reloaded.ok ? undefined : { findings: reloaded.findings }
+    );
+  }
+
+  const outPath = options.out ?? defaultSuiteFilePath(built.file.suite.id);
+  if (options.out === undefined) {
+    refuseToOverwrite(outPath, options.force === true);
+  }
+  const written = await writeFileAtomic(outPath, text, { createParents: true });
+
+  writeResult(
+    {
+      exported: true,
+      path: written,
+      suite: { id: built.file.suite.id, name: built.file.suite.name },
+      cases: built.file.cases.length,
+      bytes,
+    },
+    globalOptions.format
+  );
+}
+
+/** Refuse to replace a file the caller did not ask to replace. */
+function refuseToOverwrite(outPath: string, force: boolean): void {
+  if (force || !existsSync(outPath)) return;
+  throw usageError(
+    `"${outPath}" already exists. Pass --force to replace it, or --out to ` +
+      `write somewhere else.`
+  );
+}
+
+/**
+ * Report a suite that cannot be represented, and write NOTHING.
+ *
+ * A verdict, not a crash — the command did its job and the answer is "this
+ * suite does not fit the format". Same shape as `eval pull --frozen`'s drift
+ * report: the finding list goes to stdout so a script can read it, and the
+ * exit code says the export did not happen.
+ */
+function writeExportRefusal(
+  findings: SuiteExportFinding[],
+  format: ReturnType<typeof getGlobalOptions>["format"]
+): void {
+  if (format === "human") {
+    process.stdout.write(
+      `Nothing was written: this suite cannot be represented as a suite file ` +
+        `(${findings.length} ${
+          findings.length === 1 ? "reason" : "reasons"
+        }).\n` +
+        findings
+          .map((entry) =>
+            entry.pointer === ""
+              ? `  ${entry.code} ${entry.message}`
+              : `  ${entry.code} ${entry.pointer}: ${entry.message}`
+          )
+          .join("\n") +
+        "\n"
+    );
+  } else {
+    writeResult({ exported: false, path: null, findings }, format);
+  }
+  setProcessExitCode(SUITE_FILE_INVALID_EXIT_CODE);
+}
+
 export function registerEvalCommands(program: Command): void {
   const evals = program
     .command("eval")
@@ -1778,16 +2070,14 @@ export function registerEvalCommands(program: Command): void {
         "List the repositories running an eval suite on their pull requests"
       )
       .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
-    async (options: PlatformOptions & { project?: string }, command) => {
-      await executeOp(
-        listEvalCheckReposOperation,
-        { project: options.project },
-        options,
-        command
-      );
-    }
-  );
+  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+    await executeOp(
+      listEvalCheckReposOperation,
+      { project: options.project },
+      options,
+      command
+    );
+  });
 
   addPlatformOptions(
     checks
@@ -1860,7 +2150,9 @@ export function registerEvalCommands(program: Command): void {
         project: options.project,
         runId: options.run,
         ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
-        ...(options.limit !== undefined ? { limit: Number(options.limit) } : {}),
+        ...(options.limit !== undefined
+          ? { limit: Number(options.limit) }
+          : {}),
       });
       await executeOp(listEvalRunIterationsOperation, input, options, command);
     }
@@ -1973,11 +2265,57 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+  evals
+    .command("validate")
+    .description(
+      "Validate a local eval suite file offline — no auth, no network (0 valid, 1 contract-invalid, 2 unreadable/oversize/malformed)"
+    )
+    .requiredOption(
+      "--file <path>",
+      "Suite file to validate, .yaml or .json (or - for stdin)"
+    )
+    .action((options: { file: string }, command: Command) => {
+      runEvalValidate(options, command);
+    });
+
+  addPlatformOptions(
+    evals
+      .command("export")
+      .description(
+        "Write a hosted eval suite to a local suite file, refusing anything it cannot represent losslessly"
+      )
+      .requiredOption(
+        "--suite <id-or-name>",
+        "Eval suite to export (name or ID)"
+      )
+      .option(
+        "--project <id-or-name>",
+        "Project the suite belongs to (defaults to the most recently updated project)"
+      )
+      .option(
+        "--out <path>",
+        "Where to write (default .mcpjam/evals/<suite-id>.yaml)"
+      )
+      .option("--force", "Replace an existing file at the output path")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        suite: string;
+        project?: string;
+        out?: string;
+        force?: boolean;
+      },
+      command
+    ) => {
+      await runEvalExport(options, command);
+    }
+  );
+
   addPlatformOptions(
     evals
       .command("pull")
       .description(
-        "Materialize a hosted eval suite into a local corpus lock (0 clean, 1 drift under --frozen, 2 usage, 3 incomplete)"
+        "LEGACY: materialize a hosted eval suite into a corpus lock for @mcpjam/vitest — new work should use `eval export` (0 clean, 1 drift under --frozen, 2 usage, 3 incomplete)"
       )
       .requiredOption("--suite <id-or-name>", "Eval suite to pull (name or ID)")
       .option(
@@ -2235,7 +2573,10 @@ export function registerEvalCommands(program: Command): void {
         "--project <id-or-name>",
         "Project the run belongs to (name or ID)"
       )
-      .option("--out <path>", "Download the .webm to this file instead of printing the URL")
+      .option(
+        "--out <path>",
+        "Download the .webm to this file instead of printing the URL"
+      )
   ).action(
     async (
       options: PlatformOptions & {

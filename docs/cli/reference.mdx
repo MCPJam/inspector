@@ -1098,6 +1098,124 @@ Show an eval suite's full settings.
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
+### `eval validate`
+
+Validate a local eval **suite file** — the versioned declarative document that
+describes a suite, its defaults and its cases (`schemaVersion: "1"`, YAML
+canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`).
+
+Offline: this command takes **no `--project`**, builds no API client and reads
+no API key. It never touches the network.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--file <path>` | Yes | Suite file to validate, `.yaml` or `.json` (or `-` for stdin) |
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Valid |
+| `1` | Parsed, but invalid against the suite-file contract. Every finding is reported, not just the first |
+| `2` | Nothing was validated: unreadable path, input over the 1 MiB limit, or malformed YAML |
+
+Input is capped at **1,048,576 bytes (1 MiB) of UTF-8** and is never truncated —
+a file over the cap is rejected outright.
+
+Under `--format json`, stdout carries this envelope whether the file is valid or
+not:
+
+```jsonc
+// exit 0
+{
+  "valid": true,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "suite": { "id": "s_billing", "name": "Billing smoke", "cases": 12, "enabledCases": 11 },
+  "findings": []
+}
+
+// exit 1 or 2
+{
+  "valid": false,
+  "file": ".mcpjam/evals/s_billing.yaml",
+  "stage": "contract",           // "contract" is exit 1; "input" and "parse" are exit 2
+  "findings": [
+    {
+      "code": "SUITE_FILE_INVALID",   // or SUITE_FILE_TOO_LARGE / _EMPTY / _YAML_INVALID / _MULTIPLE_DOCUMENTS
+      "path": ["cases", 1, "id"],      // field path as segments
+      "pointer": "cases[1].id",        // the same path, rendered
+      "message": "duplicate case id \"c_refund\""
+      // `location` accompanies SUITE_FILE_YAML_INVALID findings only, where the
+      // YAML parser reported a position: { "line": 24, "column": 9 }
+    }
+  ]
+}
+```
+
+Findings are deterministically ordered and carry no timestamps, so two runs over
+the same bytes produce byte-identical output.
+
+An unreadable or missing path is a usage error and goes to stderr in the CLI's
+standard error envelope rather than as findings — nothing was read, so there is
+nothing to report about.
+
+**What "valid" does not mean.** This command checks the file against the
+suite-file contract. It does **not** re-resolve tool names, server references or
+fixtures against a project's live discovery — that is project-aware validation,
+it needs a network round trip, and it is deliberately deferred. A file that
+validates here can still fail to run.
+
+### `eval export`
+
+Write a hosted eval suite to a local suite file.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite to export (name or ID) |
+| `--project <id-or-name>` | No | Project the suite belongs to (defaults to the most recently updated project) |
+| `--out <path>` | No | Where to write (default `.mcpjam/evals/<suite-id>.yaml`) |
+| `--force` | No | Replace an existing file at the output path |
+
+The default path uses the suite's **id**, not its display name: an id is stable
+and path-safe, so a rename does not leave a second file behind.
+
+**Fail-closed.** A suite file cannot express everything a hosted suite can, and
+this command refuses rather than writing a file that describes a different test
+than the dashboard runs. When any part of a suite is not representable it emits
+`UNSUPPORTED_SUITE_EXPORT` findings, exits `1`, and writes **no file at all** —
+not a partial one, not one with a warning comment. Every finding names the field
+it is about, so the command's output is the authoritative list; the constructs
+that refuse today include:
+
+- host attachments, and attached project environments (a suite file names an
+  environment, and resolving an id to a name would need a second fetch this
+  command does not make);
+- a pinned sandbox image, an execution system prompt, or an execution
+  temperature — each changes what runs and has no field in the file;
+- LLM-as-judge grading, non-default match options, and an iterations floor that
+  raises a case above its own count;
+- a compare-across-models case, a scenario-bound case, and cases that name
+  **different model providers** (a suite file carries one suite-level provider);
+- `replace`/`extend` check overrides, a case that inherits the suite's checks
+  while also carrying its own, and any suite check the predicate contract does
+  not recognise;
+- a suite with no execution model, no minimum accuracy, no name, no selected
+  servers, or no cases; a case with no steps; and a suite or case id that is not
+  an opaque id;
+- a suite that serializes past the 1 MiB suite-file limit — the size is a
+  property of the suite, and this never truncates.
+
+Case identity is never freshly minted: a case exports under its declared id, or
+under its platform row id, or it refuses. Exporting the same suite twice
+produces the same case ids.
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Written |
+| `1` | The suite cannot be represented losslessly; nothing was written |
+| `2` | Usage: the output path exists and `--force` was not passed, or the suite's cases did not fit one page |
+
+The file is written through a sibling temp file and a rename, so an interrupted
+write leaves the previous file exactly as it was.
+
 ### `eval update`
 
 Edit an eval suite's settings (only the flags you pass change).
