@@ -3185,6 +3185,124 @@
         }
       }
     },
+    "/projects/{projectId}/eval-suites/{suiteId}/cases/batch": {
+      "post": {
+        "operationId": "createEvalCases",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Create several eval cases",
+        "description": "Adds up to 100 cases to the suite in one call — the bulk form of the single create, and the way to import a suite or convert a repo's test files without a round trip per case. Every entry needs a `title` and a non-empty `steps` array. Cases are validated together and reported individually: a `failed` entry does not roll back its committed siblings, so the response is `201` even when some entries were refused — read `failed` rather than branching on the status alone. Send an `Idempotency-Key` header to make a retry land on the same rows.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Makes the write retry-safe. A repeat of the same request under the same key lands on the rows the first attempt authored instead of creating a second copy; those entries come back with `replayed: true`.",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalCasesBatchCreateRequest"
+              },
+              "example": {
+                "cases": [
+                  {
+                    "id": "c_lists_files",
+                    "title": "lists files",
+                    "steps": [
+                      {
+                        "id": "s1",
+                        "kind": "prompt",
+                        "prompt": "List the files in the project root."
+                      },
+                      {
+                        "id": "s2",
+                        "kind": "assert",
+                        "assertion": {
+                          "type": "toolCalledWith",
+                          "toolName": "list_files",
+                          "args": {
+                            "args": {}
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "title": "reads a file",
+                    "steps": [
+                      {
+                        "id": "s1",
+                        "kind": "prompt",
+                        "prompt": "Read README.md."
+                      },
+                      {
+                        "id": "s2",
+                        "kind": "assert",
+                        "assertion": {
+                          "type": "toolCalledWith",
+                          "toolName": "read_file",
+                          "args": {
+                            "args": {}
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Per-case outcomes. Some entries may have failed; see `failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCasesBatchResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/cases/generate": {
       "post": {
         "operationId": "generateEvalCases",
@@ -8448,6 +8566,10 @@
           "id": {
             "type": "string"
           },
+        "declaredId": {
+          "type": "string",
+          "description": "The case's effective declared id. Absent on cases authored before declared identity existed."
+        },
           "title": {
             "type": "string"
           },
@@ -8541,6 +8663,11 @@
             "type": "string",
             "minLength": 1
           },
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]{1,128}$",
+          "description": "Stable declared id for the case — the id it answers to in a suite file, an import or a CLI argument. Minted for you when omitted, and unique within the suite. Distinct from the `id` on the response, which is the case's platform row id."
+        },
           "steps": {
             "type": "array",
             "minItems": 1,
@@ -8609,6 +8736,170 @@
                   "type": "object"
                 }
               }
+            }
+          }
+        }
+      },
+      "EvalCaseWarning": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "description": "Names something that would otherwise have to be inferred from silence. A warning never changes what was written.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "EvalCasesBatchCreateRequest": {
+        "type": "object",
+        "required": [
+          "cases"
+        ],
+        "description": "Author several cases in one call. Each entry takes the same fields as a single create. The 100-case cap is deliberately smaller than a suite file's 500-case limit, so a maximal file uploads in several calls.",
+        "properties": {
+          "cases": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/EvalCaseCreateRequest"
+            }
+          },
+          "duplicatePolicy": {
+            "type": "string",
+            "enum": [
+              "block",
+              "warn",
+              "create_anyway"
+            ],
+            "default": "block",
+            "description": "What to do with a case whose definition already matches one in the suite. An unrecognized value coerces to `block` and reports the coercion in the response's `duplicatePolicy` rather than failing the call."
+          },
+          "overrideReason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Required by `warn` and `create_anyway`. Recorded on the case's revision."
+          }
+        }
+      },
+      "EvalCasesBatchResult": {
+        "type": "object",
+        "required": [
+          "created",
+          "failed",
+          "duplicatePolicy"
+        ],
+        "description": "A partial outcome by design: the cases in `created` were written even when `failed` is non-empty. Both arrays carry the `index` of the request entry they describe.",
+        "properties": {
+          "created": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "index",
+                "id",
+                "title",
+                "replayed"
+              ],
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "description": "Position in the request's `cases` array."
+                },
+                "id": {
+                  "type": "string",
+                  "description": "Platform case id — the path parameter for the per-case routes."
+                },
+                "declaredId": {
+                  "type": "string",
+                  "description": "The effective declared id. On a replay this is the stored case's, not the one just sent."
+                },
+                "title": {
+                  "type": "string"
+                },
+                "replayed": {
+                  "type": "boolean",
+                  "description": "True when an idempotent retry landed on an already-authored case; nothing new was written."
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EvalCaseWarning"
+                  }
+                }
+              }
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "index",
+                "code",
+                "message"
+              ],
+              "properties": {
+                "index": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "declaredId": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string",
+                  "description": "Stable machine-readable reason.",
+                  "enum": [
+                    "INVALID_ITEM",
+                    "INVALID_CASE_ID",
+                    "DUPLICATE_CASE_ID",
+                    "DUPLICATE_IDEMPOTENCY_KEY",
+                    "IDEMPOTENCY_CONFLICT",
+                    "DUPLICATE_CONTENT",
+                    "OVERRIDE_REASON_REQUIRED",
+                    "INVALID_CASE",
+                    "UNSTORABLE_ITEM",
+                    "ITEM_TOO_LARGE"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "duplicatePolicy": {
+            "type": "object",
+            "required": [
+              "effectivePolicy",
+              "coerced"
+            ],
+            "description": "What policy actually applied, so a coercion is never silent.",
+            "properties": {
+              "requestedPolicy": {
+                "type": "string"
+              },
+              "effectivePolicy": {
+                "type": "string"
+              },
+              "coerced": {
+                "type": "boolean"
+              }
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalCaseWarning"
             }
           }
         }
@@ -17176,7 +17467,13 @@
               "unpublishUserTestingScenario",
               "changeUserTestingExposure",
               "manageUserTestingGuestExecution",
-              "requestInsights"
+              "requestInsights",
+              "readEvals",
+              "writeEvalSuites",
+              "launchEvalRun",
+              "deleteAnyEvalSuite",
+              "deleteAnyEvalRun",
+              "exportEvalTraces"
             ],
             "description": "The booleans to branch on, derived server-side rather than left for each caller to re-derive from `role` plus flag state.",
             "properties": {
@@ -17215,6 +17512,30 @@
               },
               "requestInsights": {
                 "type": "boolean"
+              },
+              "readEvals": {
+                "type": "boolean",
+                "description": "Reading eval suites, runs, iterations and traces."
+              },
+              "writeEvalSuites": {
+                "type": "boolean",
+                "description": "Authoring suites and cases — every eval write short of deleting. Unlike the swarm keys this counts a project GRANT, not organization rank alone."
+              },
+              "launchEvalRun": {
+                "type": "boolean",
+                "description": "Starting a suite or case run."
+              },
+              "deleteAnyEvalSuite": {
+                "type": "boolean",
+                "description": "Deleting a suite SOMEONE ELSE created — the project admin tier. The creator of a suite may always delete it whatever their role, so `false` here does not mean you cannot delete your own."
+              },
+              "deleteAnyEvalRun": {
+                "type": "boolean",
+                "description": "Same tier and same creator exception, for runs."
+              },
+              "exportEvalTraces": {
+                "type": "boolean",
+                "description": "Whether the trace export surface is open. Export still filters row by row against the caller, so this does not promise every session in the project lands in the file."
               }
             }
           }

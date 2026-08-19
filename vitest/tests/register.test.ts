@@ -27,7 +27,9 @@ function passingSuite(): EvalSuite {
   const suite = new EvalSuite({ name: "registered suite" });
   suite.add(
     new EvalTest({
-      id: "c_register_first",
+      // A corpus-backed case declares its hosted id in both fields; `EvalTest`
+      // rejects a differing pair.
+      id: "case_first",
       name: "answers the first prompt",
       externalCaseId: "case_first",
       test: async (executor) => {
