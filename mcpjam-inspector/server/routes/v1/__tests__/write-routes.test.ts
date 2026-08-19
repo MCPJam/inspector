@@ -81,7 +81,7 @@ vi.mock("convex/browser", () => ({
 }));
 
 import v1Routes from "../index.js";
-import { parseMaxConcurrentRuns } from "../evals.js";
+import { MAX_RUN_GROUP_TARGETS, parseMaxConcurrentRuns } from "../evals.js";
 
 function makeApp(): Hono {
   const app = new Hono();
@@ -1321,6 +1321,544 @@ describe("v1 write routes", () => {
       await vi.waitFor(() =>
         expect(disconnectAllServers).toHaveBeenCalledTimes(4)
       );
+    });
+  });
+
+
+  describe("POST /eval-run-groups", () => {
+    // A suite with two attached hosts — the shape a fan-out is for. The route
+    // reads `hostAttachments` for names and attachment membership.
+    const HOST_SUITE = {
+      ...SUITE_DOC,
+      hostAttachments: [
+        { namedHostId: "host_claude", hostName: "Claude" },
+        { namedHostId: "host_chatgpt", hostName: "ChatGPT" },
+      ],
+    };
+
+    /**
+     * A prepare seam whose `execute` never settles until released, so a test
+     * can observe the group HOLDING its slot. Returns the release handles and
+     * the manager teardown spy.
+     */
+    function mockPendingLaunches(perCall?: () => Record<string, unknown>) {
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      const releaseGates: Array<() => void> = [];
+      let call = 0;
+      prepareEvalRunMock.mockImplementation(async () => {
+        call += 1;
+        return {
+          suiteId: "suite_1",
+          runId: `run_${call}`,
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn(
+            () => new Promise<void>((resolve) => releaseGates.push(resolve))
+          ),
+          ...(perCall ? perCall() : {}),
+        };
+      });
+      return { releaseGates, disconnectAllServers };
+    }
+
+    function hostSuiteQueries(
+      extra: Record<string, (args: any) => unknown> = {}
+    ) {
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => HOST_SUITE,
+        "testSuites:getSuiteRunServerSelection": () => ({
+          serverIds: ["s_alpha"],
+          serverNames: ["alpha"],
+          source: "host_config",
+        }),
+        // The group's dry pass resolves each target's host config to run the
+        // static admission checks. A plain (non-harness) host by default;
+        // the harness test overrides this.
+        "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+        ...extra,
+      });
+    }
+
+    async function drain(
+      releaseGates: Array<() => void>,
+      disconnectAllServers: ReturnType<typeof vi.fn>,
+      expected: number
+    ) {
+      for (const release of releaseGates.splice(0)) release();
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(expected)
+      );
+    }
+
+    it("launches one run per target under a single minted group id", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [
+            { namedHostId: "host_claude" },
+            { namedHostId: "host_chatgpt" },
+          ],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as any;
+      expect(body.outcome).toBe("started");
+      expect(body.startedCount).toBe(2);
+      expect(body.failedCount).toBe(0);
+      expect(typeof body.runGroupId).toBe("string");
+      expect(body.targets.map((entry: any) => entry.target.name)).toEqual([
+        "Claude",
+        "ChatGPT",
+      ]);
+      expect(body.targets.every((entry: any) => entry.status === "started")).toBe(
+        true
+      );
+      // The entry discriminant owns `status`; the RUN's own status is
+      // `runStatus`, so a reader can never branch on the wrong one.
+      expect(body.targets[0].runStatus).toBe("running");
+      // Deprecated mirrors of the first started run, for readers written
+      // against the single-run receipt.
+      expect(body.runId).toBe("run_1");
+      expect(body.status).toBe("running");
+
+      // Every sibling carries the SAME group id, and each target's own host.
+      const groupIds = prepareEvalRunMock.mock.calls.map(
+        (call) => call[1].runGroupId
+      );
+      expect(new Set(groupIds).size).toBe(1);
+      expect(groupIds[0]).toBe(body.runGroupId);
+      expect(
+        prepareEvalRunMock.mock.calls.map((call) => call[1].namedHostId)
+      ).toEqual(["host_claude", "host_chatgpt"]);
+
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("holds ONE slot for the whole group, and releases it only after the LAST sibling", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const app = makeApp();
+
+      const group = await request(
+        app,
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [
+            { namedHostId: "host_claude" },
+            { namedHostId: "host_chatgpt" },
+          ],
+        }
+      );
+      expect(group.status).toBe(202);
+
+      // Two targets under ONE slot: with the cap at 2, a single further launch
+      // still fits. Charging per target would have exhausted the cap here,
+      // which is what makes a 3-target fan-out unlaunchable.
+      const single = await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+        suiteId: "suite_1",
+        serverIds: ["s1"],
+      });
+      expect(single.status).toBe(202);
+
+      // …and the next one is gated, so the group's slot is genuinely held.
+      const gated = await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+        suiteId: "suite_1",
+        serverIds: ["s1"],
+      });
+      expect(gated.status).toBe(429);
+
+      // Release exactly ONE sibling: the group still owns its slot.
+      releaseGates.splice(0, 1)[0]!();
+      await vi.waitFor(() =>
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+      );
+      expect(
+        (
+          await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+            suiteId: "suite_1",
+            serverIds: ["s1"],
+          })
+        ).status
+      ).toBe(429);
+
+      await drain(releaseGates, disconnectAllServers, 3);
+      expect(
+        (
+          await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+            suiteId: "suite_1",
+            serverIds: ["s1"],
+          })
+        ).status
+      ).toBe(202);
+      await drain(releaseGates, disconnectAllServers, 4);
+    });
+
+    it("RATE_LIMITs a group when the caller is already at the cap", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const app = makeApp();
+      for (let i = 0; i < 2; i += 1) {
+        expect(
+          (
+            await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+              suiteId: "suite_1",
+              serverIds: ["s1"],
+            })
+          ).status
+        ).toBe(202);
+      }
+      const res = await request(
+        app,
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        { suiteId: "suite_1", targets: [{ namedHostId: "host_claude" }] }
+      );
+      expect(res.status).toBe(429);
+      expect(await res.json()).toMatchObject({
+        code: "RATE_LIMITED",
+        details: { reason: "CONCURRENT_RUN_LIMIT" },
+      });
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("a PARTIAL group releases the slot fully — the failed target never reaches a .finally", async () => {
+      hostSuiteQueries();
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      const releaseGates: Array<() => void> = [];
+      let call = 0;
+      prepareEvalRunMock.mockImplementation(async () => {
+        call += 1;
+        if (call === 2) throw new Error("environment revision conflict");
+        return {
+          suiteId: "suite_1",
+          runId: "run_1",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn(
+            () => new Promise<void>((resolve) => releaseGates.push(resolve))
+          ),
+        };
+      });
+
+      const app = makeApp();
+      const res = await request(
+        app,
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [
+            { namedHostId: "host_claude" },
+            { namedHostId: "host_chatgpt" },
+          ],
+        }
+      );
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as any;
+      expect(body.outcome).toBe("partial");
+      expect(body.startedCount).toBe(1);
+      expect(body.failedCount).toBe(1);
+      expect(body.targets[1]).toMatchObject({
+        status: "failed",
+        error: { message: expect.stringContaining("revision conflict") },
+      });
+      // A runtime per-target failure does NOT abort its siblings.
+      expect(body.runId).toBe("run_1");
+
+      // The failed target decremented in the launch loop, so releasing the one
+      // started sibling releases the whole group's slot.
+      await drain(releaseGates, disconnectAllServers, 1);
+      expect(
+        (
+          await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+            suiteId: "suite_1",
+            serverIds: ["s1"],
+          })
+        ).status
+      ).toBe(202);
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
+
+    it("an ALL-FAILED group releases its slot — a leak here bricks the org's quota", async () => {
+      hostSuiteQueries();
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { disconnectAllServers },
+        oauthServerUrls: {},
+        authenticatedUserId: null,
+      });
+      prepareEvalRunMock.mockRejectedValue(new Error("backend unavailable"));
+
+      const app = makeApp();
+      const res = await request(
+        app,
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [
+            { namedHostId: "host_claude" },
+            { namedHostId: "host_chatgpt" },
+          ],
+        }
+      );
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as any;
+      expect(body.outcome).toBe("failed");
+      expect(body.startedCount).toBe(0);
+      expect(body.failedCount).toBe(2);
+      // No first started run to mirror — the deprecated fields stay ABSENT
+      // rather than inventing one.
+      expect(body.runId).toBeUndefined();
+
+      // The slot must be back. Two fresh single launches both fit.
+      const { releaseGates, disconnectAllServers: d2 } = mockPendingLaunches();
+      for (let i = 0; i < 2; i += 1) {
+        expect(
+          (
+            await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+              suiteId: "suite_1",
+              serverIds: ["s1"],
+            })
+          ).status
+        ).toBe(202);
+      }
+      await drain(releaseGates, d2, 2);
+    });
+
+    it("rejects an unattached target with ZERO runs started", async () => {
+      hostSuiteQueries();
+      mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [
+            { namedHostId: "host_claude" },
+            { namedHostId: "host_nope" },
+          ],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        code: "VALIDATION_ERROR",
+        details: { reason: "HOST_NOT_ATTACHED" },
+      });
+      // The whole point of validating first: nothing spent on a request that
+      // was never satisfiable.
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a HETEROGENEOUS target list", async () => {
+      hostSuiteQueries();
+      mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [
+            { namedHostId: "host_claude" },
+            { environmentId: "env_1" },
+          ],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "HETEROGENEOUS_TARGETS" },
+      });
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects more targets than the fan-out bound allows", async () => {
+      hostSuiteQueries();
+      mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: Array.from({ length: MAX_RUN_GROUP_TARGETS + 1 }, (_, i) => ({
+            namedHostId: `host_${i}`,
+          })),
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a target whose host selects an unavailable harness, before any sibling starts", async () => {
+      // The static half of the harness admission gate, run during the group's
+      // dry pass. Without it target 1 would already be spending when target 2
+      // failed a check that needed no run row.
+      hostSuiteQueries({
+        "hosts:getHost": () => ({ config: { harness: "claude-code" } }),
+      });
+      mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [
+            { namedHostId: "host_claude" },
+            { namedHostId: "host_chatgpt" },
+          ],
+        }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as any;
+      expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
+      expect(body.message).toContain("Claude");
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("deduplicates repeated targets instead of launching twice", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [
+            { namedHostId: "host_claude" },
+            { namedHostId: "host_claude" },
+          ],
+        }
+      );
+      expect(res.status).toBe(202);
+      expect(((await res.json()) as any).startedCount).toBe(1);
+      expect(prepareEvalRunMock).toHaveBeenCalledTimes(1);
+      await drain(releaseGates, disconnectAllServers, 1);
+    });
+
+    it("normalizes the PUBLIC match-option vocabulary and forwards the knobs", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [{ namedHostId: "host_claude" }],
+          iterationOverride: 3,
+          caseIds: ["case_1"],
+          matchOptionsOverride: {
+            toolCallOrder: "in-order",
+            extraToolCalls: "unlimited",
+            arguments: "partial",
+          },
+          skillsOverride: "exclude",
+          notes: "nightly",
+          passCriteria: { minimumPassRate: 80 },
+        }
+      );
+      expect(res.status).toBe(202);
+      const forwarded = prepareEvalRunMock.mock.calls[0][1];
+      expect(forwarded.iterationOverride).toBe(3);
+      expect(forwarded.caseIds).toEqual(["case_1"]);
+      expect(forwarded.skillsOverride).toBe("exclude");
+      expect(forwarded.notes).toBe("nightly");
+      expect(forwarded.passCriteria).toEqual({ minimumPassRate: 80 });
+      expect(forwarded.matchOptionsOverride).toEqual({
+        toolCallOrder: "superset",
+        maxExtraToolCalls: null,
+        argumentMatching: "partial",
+      });
+      await drain(releaseGates, disconnectAllServers, 1);
+    });
+
+    it("replays a keyed group onto the SAME group id and the same per-target run keys", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const app = makeApp();
+      const body = {
+        suiteId: "suite_1",
+        targets: [
+          { namedHostId: "host_claude" },
+          { namedHostId: "host_chatgpt" },
+        ],
+        idempotencyKey: "trigger-42",
+      };
+
+      const first = (await (
+        await request(app, "POST", "/api/v1/projects/p1/eval-run-groups", body)
+      ).json()) as any;
+      const firstKeys = prepareEvalRunMock.mock.calls.map(
+        (call) => call[1].idempotencyKey
+      );
+      // Each target gets its OWN derived key. One shared key would return
+      // target 1's run for every target; no key at all would double-launch.
+      expect(new Set(firstKeys).size).toBe(2);
+
+      await drain(releaseGates, disconnectAllServers, 2);
+      prepareEvalRunMock.mockClear();
+
+      // Simulate a retry after a crash mid-launch: the SAME request replays.
+      const { releaseGates: gates2, disconnectAllServers: d2 } =
+        mockPendingLaunches();
+      const replay = (await (
+        await request(app, "POST", "/api/v1/projects/p1/eval-run-groups", body)
+      ).json()) as any;
+      expect(replay.runGroupId).toBe(first.runGroupId);
+      expect(
+        prepareEvalRunMock.mock.calls.map((call) => call[1].idempotencyKey)
+      ).toEqual(firstKeys);
+      await drain(gates2, d2, 2);
+    });
+
+    it("does not treat a client-supplied runGroupId on the single-run route as a group", async () => {
+      mockConvexQueries({
+        "testSuites:getSuiteRunServerSelection": () => ({
+          serverIds: ["s_alpha"],
+          serverNames: ["alpha"],
+        }),
+      });
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+      const app = makeApp();
+      const post = () =>
+        request(app, "POST", "/api/v1/projects/p1/eval-runs", {
+          suiteId: "suite_1",
+          runGroupId: "client-minted",
+        });
+
+      const first = await post();
+      expect(first.status).toBe(202);
+      // Echoed as a label…
+      expect((await first.json()) as any).toMatchObject({
+        runGroupId: "client-minted",
+      });
+      expect((await post()).status).toBe(202);
+      // …and metered as N independent launches, not one group.
+      expect((await post()).status).toBe(429);
+      await drain(releaseGates, disconnectAllServers, 2);
     });
   });
 

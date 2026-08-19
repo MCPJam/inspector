@@ -280,6 +280,14 @@ export interface PlatformEvalRunCreated {
   runId: string;
   suiteId: string;
   status: string;
+  /**
+   * Echo of the request's `runGroupId`, when one was sent. A LABEL only — it
+   * groups sibling rows for display and carries no quota or launch semantics.
+   * Grouped-launch behaviour (one concurrency slot for a whole fan-out,
+   * validate-all-then-launch) lives on `createEvalRunGroup`, which mints the
+   * id itself. Absent when the request sent none, and on older deployments.
+   */
+  runGroupId?: string;
   /** Per-case upsert outcomes for inline tests; empty on plain reruns. */
   caseUpsert: {
     committed?: Array<{ id?: string; name?: string }>;
@@ -298,6 +306,78 @@ export interface PlatformEvalRunCreated {
    * that happened. `null` for a legacy run; absent on older API deployments.
    */
   environment?: PlatformEvalRunEnvironment | null;
+}
+
+/** Which target one entry of a grouped launch ran. Exactly one id is set. */
+export interface PlatformEvalRunGroupTarget {
+  environmentId?: string;
+  namedHostId?: string;
+  /** The target's display name, when the platform resolved one. */
+  name?: string;
+}
+
+/**
+ * One target's outcome in a grouped launch.
+ *
+ * DISCRIMINATED on `status` rather than "a runId when it worked, an error when
+ * it didn't": a reader branches on one field instead of probing which optional
+ * members happen to be present, and a target that failed can never be mistaken
+ * for one that started with an unread `runId`.
+ */
+export type PlatformEvalRunGroupEntry =
+  | {
+      status: "started";
+      target: PlatformEvalRunGroupTarget;
+      runId: string;
+      /**
+       * The RUN's status (always `"running"` at launch). Named apart from the
+       * entry's own `status` on purpose — two fields called `status` in one
+       * object is how a reader ends up branching on the wrong one.
+       */
+      runStatus: string;
+      servers?: Array<{ id: string; name?: string }>;
+      environment?: PlatformEvalRunEnvironment | null;
+      caseUpsert?: PlatformEvalRunCreated["caseUpsert"];
+    }
+  | {
+      status: "failed";
+      target: PlatformEvalRunGroupTarget;
+      error: { code: string; message: string };
+    };
+
+/**
+ * The receipt for `POST /eval-run-groups`: one run per target, under one
+ * server-minted group id.
+ *
+ * A per-target failure does NOT abort its siblings, so a caller must read
+ * `outcome` rather than assume a 202 means everything started.
+ */
+export interface PlatformEvalRunGroupCreated {
+  runGroupId: string;
+  suiteId: string;
+  /**
+   * `"started"` — every target launched; `"partial"` — some did and some did
+   * not; `"failed"` — none did (still a 202: the group itself was valid, and
+   * the per-target reasons are in `targets`).
+   */
+  outcome: "started" | "partial" | "failed";
+  startedCount: number;
+  failedCount: number;
+  targets: PlatformEvalRunGroupEntry[];
+  /**
+   * @deprecated Mirror of the FIRST started run, so readers written against
+   * the single-run receipt keep working. Absent when nothing started. Read
+   * `targets` instead — this describes one run out of several.
+   */
+  runId?: string;
+  /** @deprecated See `runId`. */
+  status?: string;
+  /** @deprecated See `runId`. */
+  servers?: Array<{ id: string; name?: string }>;
+  /** @deprecated See `runId`. */
+  environment?: PlatformEvalRunEnvironment | null;
+  /** @deprecated See `runId`. */
+  caseUpsert?: PlatformEvalRunCreated["caseUpsert"];
 }
 
 /**

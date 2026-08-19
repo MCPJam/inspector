@@ -8,6 +8,7 @@ import type {
   PlatformEvalRun,
   PlatformEvalRunInsightsRequested,
   PlatformEvalRunCreated,
+  PlatformEvalRunGroupCreated,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
@@ -946,6 +947,33 @@ export class PlatformApiClient {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/eval-run-groups` — launch ONE run per target (attached
+   * environments, or attached named hosts) under a single server-minted group
+   * id, and respond 202 with a per-target receipt.
+   *
+   * The ONLY endpoint with grouped-launch semantics: the server bounds the
+   * fan-out, validates every target before launching any of them, and holds
+   * ONE organization concurrency slot for the whole group. `createEvalRun`
+   * accepts a `runGroupId` too, but purely as a display label — it gives N
+   * separate launches no group treatment, which is why a fan-out has to come
+   * through here.
+   *
+   * A per-target failure does not abort its siblings, so read `outcome` rather
+   * than treating the 202 as "everything started".
+   */
+  createEvalRunGroup(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunGroupCreated> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/eval-run-groups`,
       { body: params.body },
       options,
     );

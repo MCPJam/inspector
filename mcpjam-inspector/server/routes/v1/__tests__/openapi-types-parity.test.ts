@@ -77,6 +77,7 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalRun: "PlatformEvalRun",
   EvalRunEnvironment: "PlatformEvalRunEnvironment",
   EvalRunCreated: "PlatformEvalRunCreated",
+  EvalRunGroupCreated: "PlatformEvalRunGroupCreated",
   EvalSuiteCreated: "PlatformEvalSuiteCreated",
   EvalSuite: "PlatformEvalSuite",
   EvalSuiteSchedule: "PlatformEvalSuiteSchedule",
