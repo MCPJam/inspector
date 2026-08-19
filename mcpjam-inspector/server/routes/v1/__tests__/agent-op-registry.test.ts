@@ -31,6 +31,7 @@ import {
   cancelEvalRunOperation,
   checkHostCompatibilityOperation,
   createEvalCaseOperation,
+  createEvalCasesOperation,
   connectProjectServerOperation,
   createEvalSuiteOperation,
   diagnoseServerOperation,
@@ -143,6 +144,7 @@ describe("agent op registry", () => {
       [
         createEvalSuiteOperation.name,
         createEvalCaseOperation.name,
+        createEvalCasesOperation.name,
         updateEvalCaseOperation.name,
         updateEvalSuiteOperation.name,
         "create_persona",

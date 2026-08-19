@@ -283,6 +283,12 @@ export class EvalSuite {
       matchOptionsByTest[name] = test.getConfig().matchOptions;
       const config = test.getConfig();
       const identity = {
+        // Unconditional, unlike its three siblings: `id` is required, so
+        // there is no absent case to spread around. `identity` is therefore
+        // always non-empty and `caseIdentityByTest` goes from sparse to dense
+        // — safe because every reader looks the record up by test NAME and
+        // none of them branches on how many entries it holds.
+        caseId: config.id,
         ...(config.externalCaseId !== undefined
           ? { externalCaseId: config.externalCaseId }
           : {}),
