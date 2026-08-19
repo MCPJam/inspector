@@ -157,6 +157,39 @@ describe("HostStyleTokens", () => {
     expect(screen.queryByText(/light-dark\(#222222/)).toBeNull();
   });
 
+  it("previews a token the host sends in dark only", () => {
+    const draft = draftWith({
+      hostStyle: "claude",
+      chatUiOverride: {
+        styleVariables: {
+          // Nothing in light: the preview has only the dark value to read.
+          light: {},
+          dark: {
+            "--font-mono": "Menlo, monospace",
+            "--font-weight-bold": "800",
+            "--border-radius-lg": "9px",
+          },
+        },
+      },
+    } as Partial<HostConfigInputV2>);
+    render(<HostStyleTokens draft={draft} />);
+    expandTokens();
+
+    const monoRow = screen.getByText("--font-mono").closest("button");
+    expect(within(monoRow as HTMLElement).getByText("Aa")).toHaveStyle({
+      fontFamily: "Menlo, monospace",
+    });
+    const boldRow = screen.getByText("--font-weight-bold").closest("button");
+    expect(within(boldRow as HTMLElement).getByText("Aa")).toHaveStyle({
+      fontWeight: "800",
+    });
+    // Same fallback in the non-type previews.
+    const radiusRow = screen.getByText("--border-radius-lg").closest("button");
+    expect(
+      (radiusRow as HTMLElement).querySelector('[style*="border-radius: 9px"]')
+    ).not.toBeNull();
+  });
+
   it("reports a clipboard failure instead of claiming a copy", async () => {
     mockClipboard.writeText.mockRejectedValue(new Error("denied"));
     render(<HostStyleTokens draft={draftWith({ hostStyle: "claude" })} />);

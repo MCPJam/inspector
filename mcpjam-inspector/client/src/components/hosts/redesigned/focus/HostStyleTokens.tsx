@@ -107,6 +107,10 @@ function StyleTokenPreview({ row }: { row: StyleTokenRow }) {
   const { name, light, dark } = row;
   const boxClasses =
     "flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-[4px] border border-border/70";
+  // Non-color previews are single-valued, so they take whichever theme
+  // defines the token. A host may send a token in one theme only — reading
+  // `light` alone would render a dark-only token with no preview at all.
+  const previewValue = light ?? dark;
 
   if (name.startsWith("--color-")) {
     return (
@@ -122,7 +126,7 @@ function StyleTokenPreview({ row }: { row: StyleTokenRow }) {
       <span className={cn(boxClasses, "bg-background")}>
         <span
           className="size-3 rounded-[2px] bg-background"
-          style={{ boxShadow: light }}
+          style={{ boxShadow: previewValue }}
         />
       </span>
     );
@@ -135,8 +139,8 @@ function StyleTokenPreview({ row }: { row: StyleTokenRow }) {
           className="size-3.5 border border-foreground/40"
           style={
             name.startsWith("--border-radius")
-              ? { borderRadius: light }
-              : { borderWidth: light }
+              ? { borderRadius: previewValue }
+              : { borderWidth: previewValue }
           }
         />
       </span>
@@ -150,18 +154,18 @@ function StyleTokenPreview({ row }: { row: StyleTokenRow }) {
   const isFamilyToken = name === "--font-sans" || name === "--font-mono";
   const isWeightToken = name.startsWith("--font-weight");
   const glyphStyle: CSSProperties = {};
-  if (isSizeToken && light !== undefined) {
+  if (isSizeToken && previewValue !== undefined) {
     // Heading sizes run to 48px, well past the 20px chip. The raw value
     // goes onto a custom property and the ceiling lives in a STATIC
     // declaration, so the untrusted value still reaches CSS through the
     // CSSOM (never spliced into a string) and a garbage token simply
     // fails to resolve.
     (glyphStyle as Record<string, string>)["--style-token-preview-size"] =
-      light;
+      previewValue;
     glyphStyle.fontSize = "min(var(--style-token-preview-size), 12px)";
   }
-  if (isFamilyToken) glyphStyle.fontFamily = light;
-  if (isWeightToken) glyphStyle.fontWeight = light;
+  if (isFamilyToken) glyphStyle.fontFamily = previewValue;
+  if (isWeightToken) glyphStyle.fontWeight = previewValue;
   return (
     <span
       className={cn(
