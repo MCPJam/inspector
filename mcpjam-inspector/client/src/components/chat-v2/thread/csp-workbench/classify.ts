@@ -127,6 +127,13 @@ function directiveToSubtype(directive: string): CspSubtype | undefined {
   }
 }
 
+/** The three subtypes that share `connect-src` and cannot be told apart by
+ *  CSP, so `buildCSP` leaves their declared origins in place (collapsing to
+ *  'none' only when all three are off) and a guard blocks the call instead. */
+function isConnectSubtype(field: CspField | null): boolean {
+  return field === "fetch" || field === "xhr" || field === "websocket";
+}
+
 function subtypeIsFalse(
   input: ClassifierInput,
   subtype: CspSubtype | undefined
@@ -150,17 +157,16 @@ function whyForClass(
   klass: DiagnosisClass,
   directive: string,
   field: CspField | null,
-  // A connect subtype the host does not support is enforced by the injected
-  // guard, not by CSP: the origin is still in `connect-src`. Saying "host
-  // stripped this entry" would send the reader looking for a missing entry
-  // that is right there.
-  blockedBySubtype = false
+  // True only when the injected guard did the blocking and the origin is
+  // still in the effective CSP. See `guardEnforced` below — a resource
+  // subtype really is stripped, so it keeps the stripped wording.
+  guardEnforced = false
 ): string {
   switch (klass) {
     case "csp":
       return `${directive} does not allow this origin`;
     case "host-stripped":
-      return blockedBySubtype && field
+      return guardEnforced && field
         ? `${directive} — host does not support ${field} requests`
         : `${directive} — host stripped this entry from effective CSP`;
     case "runtime-mismatch":
@@ -269,11 +275,18 @@ export function classifyDiagnoses(input: ClassifierInput): Diagnosis[] {
     const declaredEntry = findDeclaredEntry(origin, declared);
     const risks = extractRisks(klass, field, origin, declaredEntry);
 
+    // Only a connect subtype leaves its origin in the effective CSP — the
+    // guard is what refuses the call. A resource subtype loses its origins
+    // from that directive, and so does `connect-src` when all three connect
+    // subtypes are off, and both of those ARE strippings.
+    const guardEnforced =
+      blockedBySubtype && isConnectSubtype(field) && inEffective;
+
     const evidence: EvidenceEntry[] = [];
     if (klass === "host-stripped" || klass === "runtime-mismatch") {
       evidence.push({
         kind: "host-effective-csp",
-        note: blockedBySubtype
+        note: guardEnforced
           ? `Host does not support ${field} requests; the origin stays in the effective CSP`
           : klass === "host-stripped"
           ? `Origin declared by widget but absent from effective ${field}`
@@ -304,7 +317,7 @@ export function classifyDiagnoses(input: ClassifierInput): Diagnosis[] {
       url: v.blockedUri,
       directive,
       ...(subtype ? { subtype } : {}),
-      why: whyForClass(klass, directive, field, blockedBySubtype),
+      why: whyForClass(klass, directive, field, guardEnforced),
       browserMessage: reconstructBrowserMessage(v),
       risks,
       primarySource,

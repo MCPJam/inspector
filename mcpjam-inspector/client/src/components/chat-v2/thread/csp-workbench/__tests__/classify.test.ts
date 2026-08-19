@@ -149,6 +149,58 @@ describe("classifyDiagnoses", () => {
     }
   });
 
+  // The two subtype families are blocked by different machinery, so they
+  // cannot share one explanation. `buildCSP` keeps declared origins in
+  // `connect-src` (a guard refuses the call), but drops them from a blocked
+  // resource directive outright.
+  it("says the guard blocked a connect subtype whose origin survived the CSP", () => {
+    const origin = "https://api.example.com";
+    const out = classifyDiagnoses({
+      effective: { ...EMPTY_EFFECTIVE, connectDomains: [origin] },
+      widgetDeclared: { connectDomains: [origin] },
+      subtypePolicy: { cspConnectDomains: { fetch: false } },
+      violations: [v(`${origin}/data`, "connect-src", 1000, "fetch")],
+    });
+
+    expect(out[0].why).toContain("host does not support fetch requests");
+    expect(out[0].evidence[0].note).toContain(
+      "the origin stays in the effective CSP"
+    );
+  });
+
+  it("still says stripped for a resource subtype, whose origin is gone", () => {
+    const origin = "https://cdn.example.com";
+    const out = classifyDiagnoses({
+      // A blocked resource subtype loses its declared origins from that
+      // directive, so the effective list no longer carries them.
+      effective: EMPTY_EFFECTIVE,
+      widgetDeclared: { resourceDomains: [origin] },
+      subtypePolicy: { cspResourceDomains: { script: false } },
+      violations: [v(`${origin}/app.js`, "script-src", 1000, "script")],
+    });
+
+    expect(out[0].why).toContain("host stripped this entry from effective CSP");
+    expect(out[0].evidence[0].note).toContain("absent from effective script");
+    expect(out[0].evidence[0].note).not.toContain("stays in the effective CSP");
+  });
+
+  it("calls connect-src stripped once every connect subtype is off", () => {
+    const origin = "https://api.example.com";
+    const out = classifyDiagnoses({
+      // All three off collapses the directive to 'none', so this really is
+      // a stripping, not a guard refusal.
+      effective: EMPTY_EFFECTIVE,
+      widgetDeclared: { connectDomains: [origin] },
+      subtypePolicy: {
+        cspConnectDomains: { fetch: false, xhr: false, websocket: false },
+      },
+      violations: [v(`${origin}/data`, "connect-src", 1000, "fetch")],
+    });
+
+    expect(out[0].why).toContain("host stripped this entry from effective CSP");
+    expect(out[0].evidence[0].note).toContain("absent from effective fetch");
+  });
+
   it("leaves unknown Goose websocket behavior unchanged", () => {
     const origin = "wss://declared.example.com";
     const out = classifyDiagnoses({
