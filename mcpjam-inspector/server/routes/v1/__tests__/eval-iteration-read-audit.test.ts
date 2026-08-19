@@ -180,7 +180,12 @@ describe("GET …/iterations/:iterationId/trace — read audit", () => {
     // The whole trace, unchanged — `v1Resource` serves the resource itself,
     // so this is the caller's actual response body, not an envelope field.
     expect(await res.json()).toEqual(TRACE);
-    expect(reportRouteFailureMock).toHaveBeenCalledTimes(1);
+    // `waitFor`, not a bare assertion: the audit is DETACHED, so the response
+    // is allowed to land before the failure is reported. Asserting
+    // synchronously here would be asserting on that race.
+    await vi.waitFor(() =>
+      expect(reportRouteFailureMock).toHaveBeenCalledTimes(1)
+    );
   });
 
   it("still serves the trace when the platform route is not deployed yet", async () => {
@@ -191,7 +196,46 @@ describe("GET …/iterations/:iterationId/trace — read audit", () => {
     const res = await read("trace");
 
     expect(res.status).toBe(200);
-    expect(reportRouteFailureMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(reportRouteFailureMock).toHaveBeenCalledTimes(1)
+    );
+  });
+
+  it("serves the trace without waiting for the audit to answer", async () => {
+    // A backend that accepts the POST and never replies. Awaiting the audit
+    // would hold this response open behind it; detaching means the caller is
+    // unaffected by our bookkeeping being stuck.
+    fetchMock.mockReturnValue(new Promise(() => {}));
+
+    const res = await read("trace");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual(TRACE);
+    // …and the request really was in flight, so this is not passing by never
+    // having attempted it.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("bounds the audit request so a stalled backend cannot hold it forever", async () => {
+    await read("trace");
+
+    // `fetch` has no default timeout, so without a signal a half-open
+    // connection would retain the request and its socket indefinitely.
+    const signal = (auditCall().init as { signal?: AbortSignal }).signal;
+    expect(signal).toBeInstanceOf(AbortSignal);
+    expect(signal!.aborted).toBe(false);
+  });
+
+  it("releases the deadline timer once the audit settles", async () => {
+    const clearTimeoutSpy = vi.spyOn(globalThis, "clearTimeout");
+
+    await read("trace");
+
+    // Without the `finally`, every read would leave a 5s timer pending —
+    // harmless once, a per-request leak that keeps the event loop busy at
+    // volume, and the reason the deadline is cleared rather than just set.
+    await vi.waitFor(() => expect(clearTimeoutSpy).toHaveBeenCalled());
+    clearTimeoutSpy.mockRestore();
   });
 
   it("reports nothing when there is no trace to read", async () => {
@@ -256,6 +300,17 @@ describe("GET …/iterations/:iterationId/steps — read audit", () => {
     const res = await read("steps");
 
     expect(res.status).toBe(200);
-    expect(reportRouteFailureMock).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(reportRouteFailureMock).toHaveBeenCalledTimes(1)
+    );
+  });
+
+  it("serves the verdicts without waiting for the audit to answer", async () => {
+    fetchMock.mockReturnValue(new Promise(() => {}));
+
+    const res = await read("steps");
+
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

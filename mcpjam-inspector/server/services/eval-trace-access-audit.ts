@@ -45,6 +45,17 @@ import { reportRouteFailure } from "../utils/route-error-report.js";
 
 const ITERATION_READ_PATH = "/internal/v1/evals/iteration-read";
 
+/**
+ * How long the audit POST may stay in flight.
+ *
+ * `fetch` has no default timeout, so a backend that accepts the connection and
+ * then stalls would hold this request — and its socket — open indefinitely.
+ * The call is detached from the read path (see below), so this deadline is not
+ * about latency; it is about not accumulating pending work under a backend
+ * that is up enough to accept connections and not up enough to answer.
+ */
+const AUDIT_REQUEST_TIMEOUT_MS = 5_000;
+
 /** Which of the two per-iteration read routes served the request. */
 export type EvalIterationReadMode = "trace" | "steps";
 
@@ -73,17 +84,31 @@ export interface EvalIterationReadAudit {
  * a slow network must not turn a served response into a 500. A failure is
  * reported once through the centralized path and swallowed.
  *
- * Deliberately awaited rather than fired and forgotten. The audit row and the
- * response should not race, and a floating promise here would be an unhandled
- * rejection in the one case this function exists to survive.
+ * Callers DETACH this rather than awaiting it (`void recordEvalIterationRead`).
+ * Awaiting would put a best-effort audit write on the critical path of a read
+ * that has already succeeded — a stalled backend would then show up as a slow
+ * `/trace`, which is the caller's problem for our bookkeeping. Detaching is
+ * safe precisely because this function swallows its own failures: there is no
+ * rejection to go unhandled.
+ *
+ * That trade only works in a long-lived process, which is what the Inspector
+ * server is (Railway / Electron), NOT a serverless invocation that may be
+ * frozen the moment its response is returned. Revisit if that ever changes —
+ * there the row would be silently lost.
  */
 export async function recordEvalIterationRead(
   audit: EvalIterationReadAudit
 ): Promise<void> {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    AUDIT_REQUEST_TIMEOUT_MS
+  );
   try {
     const { convexUrl, serviceToken } = getInternalBackendConfig();
     const response = await fetch(`${convexUrl}${ITERATION_READ_PATH}`, {
       method: "POST",
+      signal: controller.signal,
       headers: {
         "content-type": "application/json",
         "x-inspector-service-token": serviceToken,
@@ -113,6 +138,8 @@ export async function recordEvalIterationRead(
       hop: "mcpjam_internal",
       context: { mode: audit.mode },
     });
+  } finally {
+    clearTimeout(timeout);
   }
 }
 

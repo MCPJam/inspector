@@ -2827,9 +2827,14 @@ evals.get(
       );
     }
     // AFTER the read resolves and after the 404s, so a row means a transcript
-    // actually left the product. Best-effort: `recordEvalIterationRead` never
-    // throws, so a backend outage cannot turn a served trace into a 500.
-    await recordEvalIterationRead({
+    // actually left the product.
+    //
+    // DETACHED, not awaited: bookkeeping must not sit on the critical path of
+    // a read that already succeeded, or a stalled audit backend shows up as a
+    // slow `/trace`. Safe to float because `recordEvalIterationRead` swallows
+    // its own failures — there is no rejection to go unhandled — and it bounds
+    // its own request.
+    void recordEvalIterationRead({
       convexAuthToken,
       iterationId,
       mode: "trace",
@@ -2911,7 +2916,8 @@ evals.get(
     // Unlike `/trace`, a missing envelope is not a 404 here — verdicts still
     // return — so `traceBytes` is present only when evidence was actually
     // resolved, and its absence is how the row says "verdicts only".
-    await recordEvalIterationRead({
+    // Detached for the same reason as the `/trace` site above.
+    void recordEvalIterationRead({
       convexAuthToken,
       iterationId,
       mode: "steps",

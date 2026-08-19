@@ -35,13 +35,18 @@ looks like an answer. `getConvexBearerForRequest` already returns a bearer for
 both kinds of caller, and both carry the person's external id as `sub`, so
 forwarding it lets one platform path resolve either.
 
-## It cannot fail your read
+## It cannot fail — or delay — your read
 
-The report is best-effort and awaited: it runs after the response body is
-already resolved, and a platform outage, a slow network, or an
-older-than-expected deployment logs once and is swallowed. A `/trace` read that
-404s because no trace exists reports nothing at all — a row here means a
-transcript actually left the product.
+The report is best-effort and detached. It is started after the response body
+is already resolved and is deliberately not awaited, so a platform outage, a
+slow network, or an older-than-expected deployment can neither fail the read
+nor hold it open behind our own bookkeeping; failures log once and are
+swallowed. The request also carries its own 5-second deadline, so a backend
+that accepts the connection and then stalls cannot retain the work and its
+socket indefinitely.
+
+A `/trace` read that 404s because no trace exists reports nothing at all — a
+row here means a transcript actually left the product.
 
 `/steps` behaves differently on purpose, matching the route: a missing envelope
 is not a 404 there, so its row carries a trace size only when evidence was
