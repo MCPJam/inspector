@@ -52,6 +52,45 @@ export type {
 } from "./manifest.js";
 
 export {
+  CLAUDE_SUBMISSION_PROFILE_INPUT,
+  runClaudeSubmissionChecks,
+} from "./checks/submission.js";
+export type { ClaudeSubmissionEvidence } from "./checks/submission.js";
+export { runClaudeToolChecks } from "./checks/tools.js";
+export { runClaudeEndpointChecks } from "./checks/endpoint.js";
+export type {
+  ClaudeEndpointEvidence,
+  ClaudeRedirectHop,
+} from "./checks/endpoint.js";
+export {
+  derivedFrom,
+  informational,
+  notApplicable,
+  notEvaluated,
+  satisfied,
+  violated,
+} from "./checks/helpers.js";
+export type {
+  ClaudeCheckDefinition,
+  ClaudeCheckStamp,
+} from "./checks/helpers.js";
+
+export {
+  CLAUDE_ATTESTATIONS,
+  CLAUDE_DATA_HANDLING_MODES,
+  CLAUDE_DECLARED_AUTH_MODES,
+  claudeSubmissionProfileSchema,
+  parseClaudeSubmissionProfile,
+} from "./submission-profile.js";
+export type {
+  ClaudeAttestation,
+  ClaudeDataHandlingMode,
+  ClaudeDeclaredAuthMode,
+  ClaudeSubmissionProfile,
+  ClaudeSubmissionProfileParse,
+} from "./submission-profile.js";
+
+export {
   CLAUDE_APP_CONTENT_DOMAIN_HASH_LENGTH,
   CLAUDE_APP_CONTENT_DOMAIN_SUFFIX,
   CLAUDE_APP_DESIGN_BUDGETS,
