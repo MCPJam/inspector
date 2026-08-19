@@ -82,6 +82,16 @@ export interface ClaudeAuthEvidence {
   /** A `403` step-up challenge, if the run happened to see one. */
   insufficientScopeChallenge?: { header: string };
   /**
+   * The RFC 8707 `resource` parameter the CLIENT actually sent, per endpoint.
+   * Present only when the run completed an authorization — which is why the
+   * check that reads it declares `interactive-oauth` as a prerequisite rather
+   * than guessing from the metadata.
+   */
+  resourceIndicatorsSent?: {
+    authorize?: string;
+    token?: string;
+  };
+  /**
    * The `aud` claim of an access token the caller supplied, when it was a JWT.
    * EVIDENCE ONLY — see the check.
    */
@@ -386,15 +396,45 @@ export function runClaudeAuthChecks(
     );
   }
 
+  // THE SECOND HALF OF THE RESOURCE STORY. The PRM check above is about the
+  // document; this one is about what the CLIENT sends, and a server can
+  // satisfy either while failing the other. It needs an authorization to have
+  // happened, so a headless run reports it unevaluated rather than inferring
+  // it from metadata that says nothing about the parameter.
   const canonical = canonicalResourceIndicator(evidence.enteredUrl);
-  findings.push(
-    notEvaluated(
-      RFC8707_RESOURCE_CANONICAL,
-      stamp,
-      "checking the `resource` parameter on /authorize and /token requires completing an authorization, which this run did not do",
-      { expectedCanonicalForm: canonical },
-    ),
-  );
+  const sent = evidence.resourceIndicatorsSent;
+  if (!sent || (sent.authorize === undefined && sent.token === undefined)) {
+    findings.push(
+      notEvaluated(
+        RFC8707_RESOURCE_CANONICAL,
+        stamp,
+        "checking the `resource` parameter on /authorize and /token requires completing an authorization, which this run did not do",
+        { expectedCanonicalForm: canonical },
+      ),
+    );
+  } else {
+    const wrong = (["authorize", "token"] as const).filter(
+      (endpoint) =>
+        sent[endpoint] !== undefined && sent[endpoint] !== canonical,
+    );
+    findings.push(
+      wrong.length === 0
+        ? satisfied(RFC8707_RESOURCE_CANONICAL, stamp, {
+            canonical,
+            sent,
+          })
+        : violated(
+            RFC8707_RESOURCE_CANONICAL,
+            stamp,
+            `The \`resource\` parameter must be the canonical form \`${canonical}\` — lowercased scheme and host, no default port, no query, no fragment — on every endpoint that carries it.`,
+            {
+              canonical,
+              sent,
+              endpoints: wrong,
+            },
+          ),
+    );
+  }
 
   // ── Authorization server ─────────────────────────────────────────────
   const authServers = stringArray(prm?.document?.authorization_servers);

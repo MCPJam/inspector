@@ -39,27 +39,21 @@ describe("a well-formed tool list", () => {
   });
 });
 
-describe("an absent or empty tool list", () => {
-  it("is not-applicable rather than a clean pass", () => {
-    // Five satisfied requirements over an empty list would be five statements
-    // about nothing.
-    for (const findings of [
-      runClaudeToolChecks([], STAMP),
-      runClaudeToolChecks(undefined, STAMP),
-    ]) {
-      expect(
-        findings.every((finding) => finding.status === "not-applicable"),
-      ).toBe(true);
-    }
+describe("an absent tool list is not an empty one", () => {
+  it("treats a server with no tools as inapplicable", () => {
+    // Nothing here can violate a tool requirement, and five satisfied
+    // requirements over an empty list would be five statements about nothing.
+    const findings = runClaudeToolChecks([], STAMP);
+    expect(findings.every((f) => f.status === "not-applicable")).toBe(true);
+    expect(findings[0].notEvaluatedReason).toMatch(/advertises no tools/);
   });
 
-  it("says which of the two situations it was in", () => {
-    expect(runClaudeToolChecks([], STAMP)[0].notEvaluatedReason).toMatch(
-      /advertises no tools/,
-    );
-    expect(runClaudeToolChecks(undefined, STAMP)[0].notEvaluatedReason).toMatch(
-      /no tool listing was captured/,
-    );
+  it("treats an uncaptured listing as an untested obligation", () => {
+    // Collapsing this into "not applicable" would claim we established
+    // something we never looked at, and a lane would read clean on a gap.
+    const findings = runClaudeToolChecks(undefined, STAMP);
+    expect(findings.every((f) => f.status === "not-evaluated")).toBe(true);
+    expect(findings[0].notEvaluatedReason).toMatch(/no tool listing was captured/);
   });
 });
 

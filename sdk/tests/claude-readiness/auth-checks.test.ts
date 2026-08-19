@@ -171,6 +171,56 @@ describe("the PRM resource check is about the ENTERED url", () => {
   });
 });
 
+describe("the RFC 8707 resource parameter, once an authorization happened", () => {
+  it("passes the canonical form on both endpoints", () => {
+    expect(
+      byId(
+        runClaudeAuthChecks(
+          {
+            ...HEALTHY,
+            resourceIndicatorsSent: {
+              authorize: URL_UNDER_TEST,
+              token: URL_UNDER_TEST,
+            },
+          },
+          STAMP,
+        ),
+        "claude.auth.rfc8707-resource-canonical",
+      ).status,
+    ).toBe("satisfied");
+  });
+
+  it("fails a non-canonical value and names the endpoint that sent it", () => {
+    const finding = byId(
+      runClaudeAuthChecks(
+        {
+          ...HEALTHY,
+          resourceIndicatorsSent: {
+            authorize: URL_UNDER_TEST,
+            token: `${URL_UNDER_TEST}?tenant=acme`,
+          },
+        },
+        STAMP,
+      ),
+      "claude.auth.rfc8707-resource-canonical",
+    );
+    expect(finding.status).toBe("violated");
+    expect(finding.details).toMatchObject({ endpoints: ["token"] });
+  });
+
+  it("grades an endpoint that carried the parameter and ignores one that did not", () => {
+    expect(
+      byId(
+        runClaudeAuthChecks(
+          { ...HEALTHY, resourceIndicatorsSent: { authorize: URL_UNDER_TEST } },
+          STAMP,
+        ),
+        "claude.auth.rfc8707-resource-canonical",
+      ).status,
+    ).toBe("satisfied");
+  });
+});
+
 describe("canonicalResourceIndicator", () => {
   it("drops the query, fragment and default port but keeps the path", () => {
     expect(

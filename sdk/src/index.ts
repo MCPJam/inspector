@@ -411,6 +411,14 @@ export type {
 // and the dialing checks are deliberately not re-exported here, so importing
 // the result model never pulls a transport in with it.
 export * from "./claude-readiness/index.js";
+// The one readiness module that touches the network, exported only from the
+// Node entry. It is deliberately absent from `claude-readiness/index.ts` so
+// that importing the result model can never pull a transport in with it.
+export {
+  discoverClaudeAuthEvidence,
+  traceConnectorRedirects,
+} from "./claude-readiness/discovery.js";
+export type { ClaudeDiscoveryOptions } from "./claude-readiness/discovery.js";
 export {
   buildOutcomeSummary,
   decideConformanceOutcome,

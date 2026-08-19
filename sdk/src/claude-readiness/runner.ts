@@ -1,0 +1,275 @@
+/**
+ * The composite readiness run.
+ *
+ * It gathers evidence once, hands it to the pure check modules, and assembles
+ * five lanes plus coverage. It deliberately does NOT re-implement anything the
+ * conformance suites already grade: an apps result and a protocol result are
+ * INPUTS, cited by the findings that rest on them.
+ *
+ * WHAT `status` MEANS HERE. Only the required lanes roll up
+ * (runtime-compatibility and directory-policy). Optional features can never
+ * make a connector "not ready" — a missing badge is not a defect — and
+ * experience insights can never do so either, because an LLM's opinion and a
+ * markup heuristic are not things a submitter should be held to.
+ *
+ * WHY `capabilities` IS ON THE RESULT. A CLI on a laptop can open a browser
+ * and complete an interactive authorization; a hosted node may refuse a raw
+ * origin; a Slack bot has neither. Two surfaces grading the same target agree
+ * only on their SHARED capability subset, and recording what this run could
+ * actually do is what makes a coverage gap legible instead of looking like a
+ * disagreement.
+ */
+
+import { runClaudeAppsChecks, type ClaudeAppsEvidence } from "./checks/apps.js";
+import {
+  runClaudeAuthChecks,
+  type ClaudeAuthEvidence,
+} from "./checks/auth.js";
+import {
+  runClaudeEndpointChecks,
+  type ClaudeEndpointEvidence,
+} from "./checks/endpoint.js";
+import { runClaudeOptionalFeatureChecks } from "./checks/optional-features.js";
+import {
+  CLAUDE_SUBMISSION_PROFILE_INPUT,
+  runClaudeSubmissionChecks,
+} from "./checks/submission.js";
+import { runClaudeToolChecks } from "./checks/tools.js";
+import {
+  gradeClaudeIntrusiveObservations,
+  resolveClaudeIntrusiveMode,
+  type ClaudeIntrusiveConfig,
+  type ClaudeIntrusiveObservations,
+} from "./intrusive.js";
+import { CLAUDE_POLICY_SNAPSHOT_DATE } from "./manifest.js";
+import {
+  parseClaudeSubmissionProfile,
+  type ClaudeSubmissionProfile,
+} from "./submission-profile.js";
+import {
+  CLAUDE_READINESS_ENGINE_VERSION,
+  CLAUDE_READINESS_LANES,
+  decideLaneStatus,
+  rollUpLaneStatus,
+  summarizeLaneCoverage,
+  type ClaudeCapabilityBadge,
+  type ClaudeReadinessAuthMode,
+  type ClaudeReadinessFinding,
+  type ClaudeReadinessLane,
+  type ClaudeReadinessLaneResult,
+  type ClaudeReadinessResult,
+  type ClaudeRunnerCapability,
+} from "./types.js";
+
+import type { Tool } from "@modelcontextprotocol/client";
+
+/**
+ * Everything a run needs, already gathered.
+ *
+ * The runner takes evidence rather than a URL because the two halves have
+ * different trust requirements: gathering evidence needs the pinned transport
+ * and a live connection, and grading it needs neither. Splitting them means
+ * the grading half is a pure function that a test can drive with a fixture and
+ * a hosted surface cannot accidentally point at `169.254.169.254`.
+ */
+export interface ClaudeReadinessInput {
+  /** The connector URL exactly as the user entered it. */
+  enteredUrl: string;
+  authMode: ClaudeReadinessAuthMode;
+  capabilities: ClaudeRunnerCapability[];
+  startedAt: string;
+  evaluatedAt: string;
+  durationMs: number;
+
+  endpoint: ClaudeEndpointEvidence;
+  auth: ClaudeAuthEvidence;
+  apps: ClaudeAppsEvidence;
+  tools?: Tool[];
+
+  /** Raw submission profile, validated here so its issues become findings. */
+  submissionProfile?: unknown;
+  /** Features the submitter claimed, if any. */
+  claimedFeatures?: {
+    lazyAuthentication?: boolean;
+    enterpriseManagedAuth?: boolean;
+  };
+  /** Observed auth mode, for contradicting a declaration. Never for supplying one. */
+  observedAuthMode?: string;
+
+  intrusive?: ClaudeIntrusiveConfig;
+  intrusiveObservations?: ClaudeIntrusiveObservations;
+
+  /** Suite results consumed as evidence, named for the report. */
+  evidenceSources?: string[];
+}
+
+/** Inputs a caller could supply to close a lane's gaps, by lane. */
+function missingInputsFor(
+  lane: ClaudeReadinessLane,
+  findings: ClaudeReadinessFinding[],
+): string[] {
+  return findings
+    .filter((finding) => finding.lane === lane)
+    .flatMap((finding) => {
+      const named = (finding.details as { missingInput?: unknown } | undefined)
+        ?.missingInput;
+      return typeof named === "string" ? [named] : [];
+    });
+}
+
+const LANE_SUMMARIES: Record<ClaudeReadinessLane, string> = {
+  "runtime-compatibility": "whether Claude can connect, authenticate and render",
+  "directory-policy": "the deterministic submission and review requirements",
+  "optional-features": "capability badges; nothing here can make a connector unready",
+  "submission-artifacts": "listing fields, screenshots and attestations",
+  "experience-insights": "heuristics and observations for a human to weigh",
+};
+
+function summarizeLane(
+  lane: ClaudeReadinessLane,
+  status: ClaudeReadinessLaneResult["status"],
+  findings: ClaudeReadinessFinding[],
+): string {
+  const violations = findings.filter(
+    (finding) =>
+      finding.status === "violated" &&
+      (finding.class === "required" || finding.class === "runtime-blocker"),
+  );
+  if (status === "not-ready") {
+    return `${violations.length} requirement(s) unmet — ${LANE_SUMMARIES[lane]}.`;
+  }
+  if (status === "incomplete") {
+    const unevaluated = findings.filter(
+      (finding) => finding.status === "not-evaluated",
+    ).length;
+    return unevaluated > 0
+      ? `${unevaluated} requirement(s) not evaluated — ${LANE_SUMMARIES[lane]}.`
+      : `Nothing dispositive was evaluated — ${LANE_SUMMARIES[lane]}.`;
+  }
+  return `All applicable requirements satisfied — ${LANE_SUMMARIES[lane]}.`;
+}
+
+/**
+ * Grade gathered evidence. Pure — no network, no clock, no randomness.
+ */
+export function gradeClaudeReadiness(
+  input: ClaudeReadinessInput,
+): ClaudeReadinessResult {
+  const stamp = { evaluatedAt: input.evaluatedAt };
+
+  // A malformed profile is kept and reported, not discarded: the caller did
+  // the work and got it wrong, and "no input" would hide their mistake.
+  const parsedProfile = input.submissionProfile
+    ? parseClaudeSubmissionProfile(input.submissionProfile)
+    : { profile: undefined as ClaudeSubmissionProfile | undefined, issues: [] };
+
+  const auth = runClaudeAuthChecks(
+    { ...input.auth, declaredAuthMode: parsedProfile.profile?.declaredAuthMode },
+    stamp,
+  );
+  const optional = runClaudeOptionalFeatureChecks(
+    {
+      auth: input.auth,
+      claimedFeatures: input.claimedFeatures,
+    },
+    stamp,
+  );
+
+  const intrusiveMode = resolveClaudeIntrusiveMode(input.intrusive, {
+    // A run whose auth mode is `provided-token` is holding somebody's
+    // credentials. The resolver is told so it can refuse to spend them.
+    hasBorrowedAccessToken: input.authMode === "provided-token",
+  });
+
+  const findings: ClaudeReadinessFinding[] = [
+    ...runClaudeEndpointChecks(input.endpoint, stamp),
+    ...auth.findings,
+    ...runClaudeToolChecks(input.tools, stamp),
+    ...runClaudeAppsChecks(input.apps, stamp),
+    ...runClaudeSubmissionChecks(
+      {
+        profile: parsedProfile.profile,
+        profileIssues: parsedProfile.issues,
+        observedAuthMode: input.observedAuthMode,
+      },
+      stamp,
+    ),
+    ...optional.findings,
+    ...gradeClaudeIntrusiveObservations(
+      intrusiveMode,
+      input.intrusiveObservations ?? {},
+      stamp,
+    ),
+  ];
+
+  const badges: ClaudeCapabilityBadge[] = [...auth.badges, ...optional.badges];
+
+  const lanes: ClaudeReadinessLaneResult[] = CLAUDE_READINESS_LANES.map((lane) => {
+    const laneFindings = findings.filter((finding) => finding.lane === lane);
+    const status = decideLaneStatus(laneFindings);
+    return {
+      lane,
+      status,
+      summary: summarizeLane(lane, status, laneFindings),
+      coverage: summarizeLaneCoverage(
+        lane,
+        laneFindings,
+        missingInputsFor(lane, findings),
+      ),
+    };
+  });
+
+  const status = rollUpLaneStatus(lanes);
+
+  return {
+    status,
+    summary: buildRunSummary(status, lanes),
+    context: {
+      target: input.enteredUrl,
+      authMode: input.authMode,
+      capabilities: [...input.capabilities].sort(),
+      evidenceSources: [...(input.evidenceSources ?? [])].sort(),
+    },
+    lanes,
+    findings,
+    badges,
+    policySnapshotDate: CLAUDE_POLICY_SNAPSHOT_DATE,
+    engineVersion: CLAUDE_READINESS_ENGINE_VERSION,
+    startedAt: input.startedAt,
+    durationMs: input.durationMs,
+  };
+}
+
+function buildRunSummary(
+  status: ClaudeReadinessResult["status"],
+  lanes: ClaudeReadinessLaneResult[],
+): string {
+  const required = lanes.filter(
+    (lane) =>
+      lane.lane === "runtime-compatibility" || lane.lane === "directory-policy",
+  );
+  if (status === "not-ready") {
+    const failing = required
+      .filter((lane) => lane.status === "not-ready")
+      .map((lane) => lane.lane);
+    return `Not ready for the Claude directory: ${failing.join(" and ")} ${
+      failing.length === 1 ? "has" : "have"
+    } unmet requirements.`;
+  }
+  if (status === "incomplete") {
+    const gaps = required
+      .filter((lane) => lane.status === "incomplete")
+      .flatMap((lane) => lane.coverage.missingInputs);
+    const unique = [...new Set(gaps)];
+    return unique.length > 0
+      ? `Readiness is undetermined: some requirements were not evaluated. Supply ${unique.join(", ")} to close the gap.`
+      : "Readiness is undetermined: some requirements could not be evaluated by this run.";
+  }
+  return "Every requirement this run could evaluate is satisfied.";
+}
+
+/** Named inputs a surface can offer to make a run more complete. */
+export const CLAUDE_READINESS_INPUTS = {
+  submissionProfile: CLAUDE_SUBMISSION_PROFILE_INPUT,
+  intrusive: "intrusive",
+} as const;

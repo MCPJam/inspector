@@ -52,6 +52,26 @@ export type {
 } from "./manifest.js";
 
 export {
+  CLAUDE_READINESS_INPUTS,
+  gradeClaudeReadiness,
+} from "./runner.js";
+export type { ClaudeReadinessInput } from "./runner.js";
+
+export {
+  gradeClaudeIntrusiveObservations,
+  probeDynamicRegistration,
+  probeRefreshRotation,
+  resolveClaudeIntrusiveMode,
+} from "./intrusive.js";
+export type {
+  ClaudeGrantOrigin,
+  ClaudeIntrusiveConfig,
+  ClaudeIntrusiveMode,
+  ClaudeIntrusiveObservations,
+  ClaudeIntrusiveProbeOptions,
+} from "./intrusive.js";
+
+export {
   claudeAppContentDomain,
   claudeAppResourceEvidenceFrom,
   claudeAppToolEvidenceFrom,

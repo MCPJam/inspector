@@ -19,6 +19,7 @@ import { CLAUDE_SUBMISSION_LIMITS } from "../profile.js";
 import type { ClaudeReadinessFinding } from "../types.js";
 import {
   notApplicable,
+  notEvaluated,
   satisfied,
   violated,
   type ClaudeCheckDefinition,
@@ -249,12 +250,24 @@ export function runClaudeToolChecks(
     CATCH_ALL_FREE_STRING,
   ];
 
-  if (!tools || tools.length === 0) {
-    const reason = tools
-      ? "the server advertises no tools, so there is nothing to grade"
-      : "no tool listing was captured for this run";
+  // THESE TWO ARE NOT THE SAME THING, and collapsing them is how a coverage
+  // gap gets reported as a clean lane. A server that advertises no tools has
+  // nothing that could violate a tool requirement — genuinely inapplicable. A
+  // run that never captured the listing has an untested obligation, and saying
+  // "not applicable" there would claim we established something we never
+  // looked at.
+  if (!tools) {
     return definitions.map((definition) =>
-      notApplicable(definition, stamp, reason),
+      notEvaluated(definition, stamp, "no tool listing was captured for this run"),
+    );
+  }
+  if (tools.length === 0) {
+    return definitions.map((definition) =>
+      notApplicable(
+        definition,
+        stamp,
+        "the server advertises no tools, so there is nothing to grade",
+      ),
     );
   }
 
