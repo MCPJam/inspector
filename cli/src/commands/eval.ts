@@ -17,6 +17,9 @@ import {
   cancelEvalRunOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   listEvalCasesOperation,
@@ -170,6 +173,56 @@ function writeRunLink(
       suiteId
     )}/runs/${encodeURIComponent(runId)}${query}\n`
   );
+}
+
+/** Judge keys the CLI knows how to label, in the order it prints them. */
+const JUDGE_LABELS: ReadonlyArray<[string, string]> = [
+  ["goalCompletion", "goal completion"],
+  ["groundedness", "groundedness"],
+];
+
+/**
+ * One line per judge that has actually been asked to grade this run.
+ *
+ * Human format only — `--format json` output stays byte-identical, and the
+ * full `judges` envelope is in the JSON either way. A judge nobody requested
+ * prints NOTHING rather than a "not requested" line each: the absence is the
+ * answer, and enumerating every judge the platform could run would turn a
+ * status read into a catalog.
+ */
+function writeJudgeSummary(format: string, judges: unknown): void {
+  if (format !== "human" || !judges || typeof judges !== "object") return;
+  for (const [key, label] of JUDGE_LABELS) {
+    const judge = (judges as Record<string, any>)[key];
+    const status = judge?.status;
+    // null/absent = never requested.
+    if (!status) continue;
+    if (status !== "completed") {
+      const code =
+        typeof judge.errorCode === "string" ? ` (${judge.errorCode})` : "";
+      process.stdout.write(`Judge ${label}: ${status}${code}\n`);
+      continue;
+    }
+    const cases: any[] = Array.isArray(judge.cases) ? judge.cases : [];
+    if (cases.length === 0) {
+      // A completed judge with no cases graded nothing — its summary says why,
+      // and "0/0 passed" would bury that behind a number.
+      const why =
+        typeof judge.summary === "string" ? judge.summary : "nothing graded";
+      process.stdout.write(`Judge ${label}: ${why}\n`);
+      continue;
+    }
+    const passed = cases.filter((c) => c?.passed === true).length;
+    const at =
+      typeof judge.threshold === "number"
+        ? ` at threshold ${judge.threshold}`
+        : "";
+    const model =
+      typeof judge.modelUsed === "string" ? ` — ${judge.modelUsed}` : "";
+    process.stdout.write(
+      `Judge ${label}: ${passed}/${cases.length} passed${at}${model}\n`
+    );
+  }
 }
 
 async function runPlatformCommand<TOutput>(
@@ -362,6 +415,15 @@ function buildSuiteUpdateInput(
       ...(input.environment ?? {}),
       servers: options.server,
     };
+  if (options.computerImage !== undefined) {
+    input.environment = {
+      ...(input.environment ?? {}),
+      // NULL, not undefined — `off` has to reach the wire as an explicit
+      // clear, and omitting the servers alongside it preserves them.
+      computerEnvironment:
+        options.computerImage === "off" ? null : options.computerImage,
+    };
+  }
   if (options.host !== undefined)
     input.hosts = options.host.map((host: string) => ({ host }));
 
@@ -376,6 +438,26 @@ function buildSuiteUpdateInput(
   const settings = { ...(input.settings ?? {}) };
   if (options.minAccuracy !== undefined)
     settings.minimumAccuracy = Number(options.minAccuracy);
+  if (options.minIterations !== undefined) {
+    if (options.minIterations === "off") {
+      // NULL, not undefined. `undefined` is "leave this alone" all the way
+      // down the stack, so writing it here would make `--min-iterations off`
+      // a no-op that reports success.
+      settings.minimumIterations = null;
+    } else {
+      const iterations = Number(options.minIterations);
+      if (
+        !Number.isInteger(iterations) ||
+        iterations < 1 ||
+        iterations > 10
+      ) {
+        throw usageError(
+          '--min-iterations must be a whole number from 1 to 10, or "off".'
+        );
+      }
+      settings.minimumIterations = iterations;
+    }
+  }
   const mo = { ...(settings.matchOptions ?? {}) };
   if (options.toolCallOrder !== undefined)
     mo.toolCallOrder = options.toolCallOrder;
@@ -391,14 +473,53 @@ function buildSuiteUpdateInput(
     if (options.judge !== "on" && options.judge !== "off") {
       throw usageError('--judge must be "on" or "off".');
     }
+    // ONE switch, matching the app's LLM-as-Judge toggle, which binds to
+    // `enabled && autoRun`. Writing `enabled` alone changes nothing a user
+    // can observe: it already defaults on, and the grader gates on `autoRun`.
+    // "Turn the judge on" means "grade my runs", so both flip together.
     judge.enabled = options.judge === "on";
+    judge.autoRun = options.judge === "on";
   }
   if (options.judgeModel !== undefined) judge.model = options.judgeModel;
+  if (options.judgeThreshold !== undefined) {
+    judge.threshold = parseJudgeThreshold(options.judgeThreshold);
+  }
   if (Object.keys(judge).length > 0) settings.judge = judge;
   if (Object.keys(settings).length > 0) input.settings = settings;
 
   return input;
 }
+
+/**
+ * `--judge-threshold`, coerced and bounded. Shared by `eval update` and
+ * `eval judge`: two copies of a range check are two places to update when the
+ * range moves, and the second copy is the one that gets forgotten.
+ */
+function parseJudgeThreshold(raw: string): number {
+  // Reject blank BEFORE coercing: `Number("")` and `Number("   ")` are both
+  // `0`, which is a perfectly valid threshold — so an empty flag would sail
+  // through the range check below and silently set "every case passes"
+  // (`passed = score >= 0`). A refusal is the only honest answer to a flag
+  // whose value the caller never supplied.
+  const normalized = raw.trim();
+  const threshold = normalized === "" ? Number.NaN : Number(normalized);
+  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+    throw usageError("--judge-threshold must be a number between 0 and 1.");
+  }
+  return threshold;
+}
+
+/**
+ * Hyphens on the flag, underscores on the wire: the flag reads like every other
+ * CLI value, and the API keeps the platform's own spelling. Both spellings are
+ * accepted so a caller echoing back an API value is not punished for it.
+ */
+const OUTAGE_POLICY_BY_FLAG = new Map([
+  ["fail-open", "fail_open"],
+  ["fail-closed", "fail_closed"],
+  ["fail_open", "fail_open"],
+  ["fail_closed", "fail_closed"],
+]);
 
 /** Merge a --file/--json case body with the selectors (+ optional --title). */
 function buildCaseInput(
@@ -1276,6 +1397,7 @@ export function registerEvalCommands(program: Command): void {
         }
       );
       writeResult(result, globalOptions.format);
+      writeJudgeSummary(globalOptions.format, result.run.judges);
       writeRunLink(globalOptions.format, webOrigin, {
         projectId: result.project.id,
         suiteId: result.run.suiteId,
@@ -1306,7 +1428,121 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+  addPlatformOptions(
+    evals
+      .command("judge")
+      .description(
+        "Grade a finished eval run with LLM as Judge (SPENDS your model budget)"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--force", "Re-grade a run that already has a judge result")
+      .option(
+        "--enable",
+        "Grade this run even though the judge was off when it ran"
+      )
+      .option("--judge-model <id>", "Judge model for this run only")
+      .option("--judge-threshold <0-1>", "Pass threshold for this run only")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        force?: boolean;
+        enable?: boolean;
+        judgeModel?: string;
+        judgeThreshold?: string;
+      },
+      command
+    ) => {
+      const threshold =
+        options.judgeThreshold !== undefined
+          ? parseJudgeThreshold(options.judgeThreshold)
+          : undefined;
+      const input = validateOpInput(requestEvalRunJudgeOperation, {
+        project: options.project,
+        runId: options.run,
+        ...(options.force ? { force: true } : {}),
+        ...(options.enable ? { enable: true } : {}),
+        ...(options.judgeModel !== undefined
+          ? { model: options.judgeModel }
+          : {}),
+        ...(threshold !== undefined ? { threshold } : {}),
+      });
+      await executeOp(requestEvalRunJudgeOperation, input, options, command);
+    }
+  );
+
   const PROJECT_OPT = "Project name or ID (defaults to most recently updated)";
+
+  // ── GitHub Checks: run this suite on every pull request ────────────
+  // A subgroup, not two flat commands: `checks` is a different resource from
+  // the suite it points at, and flattening it would put `eval connect` next to
+  // `eval run` as if they were the same kind of verb.
+  const checks = evals
+    .command("checks")
+    .description("Run an eval suite on a repository's pull requests");
+
+  addPlatformOptions(
+    checks
+      .command("list")
+      .description(
+        "List the repositories running an eval suite on their pull requests"
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+  ).action(
+    async (options: PlatformOptions & { project?: string }, command) => {
+      await executeOp(
+        listEvalCheckReposOperation,
+        { project: options.project },
+        options,
+        command
+      );
+    }
+  );
+
+  addPlatformOptions(
+    checks
+      .command("connect")
+      .description(
+        "Run this suite on every pull request to a repository (affects everyone who opens one)"
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .requiredOption("--repo <owner/repo>", "Repository to connect")
+      .requiredOption(
+        "--outage-policy <fail-open|fail-closed>",
+        "What the check reports when MCPJam cannot conclude"
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        suite: string;
+        repo: string;
+        outagePolicy: string;
+      },
+      command
+    ) => {
+      // A Map, not an object literal: `{...}[key]` consults the prototype
+      // chain, so `--outage-policy constructor` would be truthy, skip the
+      // message written for the caller, and fail later against a schema they
+      // never typed.
+      const policy = OUTAGE_POLICY_BY_FLAG.get(options.outagePolicy);
+      if (!policy) {
+        throw usageError(
+          '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.'
+        );
+      }
+      const input = validateOpInput(connectEvalCheckRepoOperation, {
+        project: options.project,
+        suite: options.suite,
+        repo: options.repo,
+        outagePolicy: policy,
+      });
+      await executeOp(connectEvalCheckRepoOperation, input, options, command);
+    }
+  );
 
   // ── Eval run iterations + traces ───────────────────────────────────
   addPlatformOptions(
@@ -1815,16 +2051,28 @@ export function registerEvalCommands(program: Command): void {
         "--server <name...>",
         "Replace the suite's server selection (project server names)"
       )
+      .option(
+        "--computer-image <name-or-id|off>",
+        "Sandbox image eval runs boot from (see `mcpjam images list`); off uses the default base image"
+      )
       .option("--host <name...>", "Replace host attachments (by name/ID)")
       .option("--model <id>", "Execution model id")
       .option("--system-prompt <text>", "Execution system prompt")
       .option("--temperature <n>", "Execution temperature")
       .option("--min-accuracy <pct>", "Minimum accuracy, 0–100")
+      .option(
+        "--min-iterations <1-10|off>",
+        "Floor on per-case iterations; off removes the floor"
+      )
       .option("--tool-call-order <any|in-order|exact>", "Tool call order")
       .option("--arguments <ignore|partial|exact>", "Argument matching")
       .option("--extra-tool-calls <unlimited|N>", "Allowed extra tool calls")
-      .option("--judge <on|off>", "Enable/disable LLM-as-judge grading")
+      .option(
+        "--judge <on|off>",
+        "Turn LLM-as-judge grading on/off (grades every run as it completes)"
+      )
       .option("--judge-model <id>", "Judge model id")
+      .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1")
   ).action(async (options: PlatformOptions & Record<string, any>, command) => {
     const input = validateOpInput(
       updateEvalSuiteOperation,

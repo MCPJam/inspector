@@ -942,6 +942,31 @@ Get the status and summary of an eval run.
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--project <id-or-name>` | Yes | Project name or ID |
 
+The response carries a `judges` block with each advisory grader's state and
+per-case grades. `status: null` means that judge was never requested for the
+run — different from a judge that ran and graded nothing. In `--format human`,
+each judge that actually graded gets a one-line summary.
+
+### `eval judge`
+
+Grade a finished eval run with LLM as Judge. **Spends your organization's model
+budget.** Returns a pending receipt; read the grades from `eval status`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | Yes | Project name or ID |
+| `--force` | No | Re-grade a run that already has a judge result |
+| `--enable` | No | Grade this run even though the judge was off when it ran |
+| `--judge-model <id>` | No | Judge model for this run only |
+| `--judge-threshold <0-1>` | No | Pass threshold for this run only |
+
+A run's grading config is pinned when the run starts, so turning the judge on
+for the suite does not reach a run that was already recorded — `--enable` is
+what grades it, and it changes nothing beyond that run. Passing neither
+`--judge-model` nor `--judge-threshold` grades with the suite's own config,
+clearing any override a previous request left on the run.
+
 ### `eval iterations`
 
 List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency). Results are paginated.
@@ -985,16 +1010,52 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--name <name>` | No | Rename the suite |
 | `--description <text>` | No | Suite description |
 | `--server <name...>` | No | Replace the suite's server selection (project server names) |
+| `--computer-image <name-or-id\|off>` | No | Sandbox image eval runs boot a fresh computer from (list them with `mcpjam images list`). `off` uses the provider's default base image |
 | `--host <name...>` | No | Replace host attachments (by name/ID) |
 | `--model <id>` | No | Execution model ID |
 | `--system-prompt <text>` | No | Execution system prompt |
 | `--temperature <n>` | No | Execution temperature |
 | `--min-accuracy <pct>` | No | Minimum accuracy, 0–100 |
+| `--min-iterations <1-10\|off>` | No | Floor on per-case iterations — every case runs at least this many times. `off` removes the floor |
 | `--tool-call-order <any\|in-order\|exact>` | No | Tool call order |
 | `--arguments <ignore\|partial\|exact>` | No | Argument matching |
 | `--extra-tool-calls <unlimited\|N>` | No | Allowed extra tool calls |
-| `--judge <on\|off>` | No | Enable/disable LLM-as-judge grading |
+| `--judge <on\|off>` | No | Turn LLM-as-judge grading on/off. `on` both enables the judge and sets it to grade every run as it completes; `off` stops both |
 | `--judge-model <id>` | No | Judge model ID |
+| `--judge-threshold <0-1>` | No | Judge pass threshold, 0–1 (a case passes when its score is at or above it) |
+
+### `eval checks list`
+
+List the repositories whose pull requests run an eval suite, plus the
+repositories the MCPJam GitHub App can reach.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | No | Project name or ID — only used to pick the organization (defaults to the most recently updated project) |
+
+`available: false` means GitHub Checks is not enabled for the organization at
+all, so connecting a repository will not help. `connectable: null` means the
+App could not be asked (GitHub unavailable, or no installation) — different
+from an empty list, which would mean it reaches nothing.
+
+### `eval checks connect`
+
+Run this suite on every pull request to a repository. **Affects everyone who
+opens a pull request on that repository**, and with `fail-closed` it can block
+their merges.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--repo <owner/repo>` | Yes | Repository to connect. Must be one `eval checks list` reports as connectable |
+| `--outage-policy <fail-open\|fail-closed>` | Yes | What the check reports when MCPJam cannot conclude |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+`--outage-policy` has no default on purpose: it decides what happens to other
+people's pull requests during an MCPJam outage, and it is not editable from
+this command afterwards. Retargeting a repository at a different suite, pausing
+it, and disconnecting all live in the app's Settings → Integrations, where every
+connected repository is visible at once.
 
 ### `eval delete`
 

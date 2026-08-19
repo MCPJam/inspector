@@ -37,6 +37,9 @@
 import {
   callServerToolOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   createEvalCaseOperation,
   createEvalCasesOperation,
   createEvalSuiteOperation,
@@ -620,6 +623,65 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Cancel the run",
       kind: "cancel",
     },
+  },
+  // GATED because it SPENDS. `kind: "generate"` matches the other
+  // request-an-analysis ops: nothing starts running that a person is waiting
+  // on, an advisory result is authored in the background.
+  {
+    operation: requestEvalRunJudgeOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const run = named(input, "runId") ?? "(unnamed)";
+        // `force` re-grades a run that already has a result — the same spend
+        // a second time. An approval button that said only "Grade run X"
+        // would hide the fact that X was already graded.
+        const again = input.force === true ? " again" : "";
+        // `enable` is the reason a run recorded with the judge off can be
+        // graded at all, and it is exactly the case where a reader would
+        // otherwise expect the click to do nothing.
+        const despite =
+          input.enable === true ? " (judge was off when it ran)" : "";
+        return `Grade run ${run}${again} with LLM as Judge${despite}`;
+      },
+      buttonLabel: "Grade it",
+      kind: "generate",
+    },
+    promptNotes: [
+      "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
+    ],
+  },
+
+  // ── GitHub Checks. The read is free and is what makes the write
+  // answerable: `connectable` names the repositories the App can actually
+  // reach, so a proposal can quote a real one instead of a guess.
+  { operation: listEvalCheckReposOperation, tier: "direct" },
+  // GATED for REACH, not spend. Connecting changes what happens in a SHARED
+  // repository for everyone who opens a pull request against it, and with
+  // `fail_closed` it can block their merges. `kind: "external"` is the honest
+  // one: the effect lands on GitHub, where MCPJam cannot describe or undo it.
+  {
+    operation: connectEvalCheckRepoOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const repo = named(input, "repo") ?? "(unnamed repository)";
+        const suite = named(input, "suite") ?? "(unnamed)";
+        // The policy is the half of this decision that outlives the click, so
+        // it is in the sentence rather than buried in the arguments.
+        const policy =
+          input.outagePolicy === "fail_closed"
+            ? " (failing checks closed when MCPJam cannot conclude)"
+            : " (passing checks open when MCPJam cannot conclude)";
+        return `Run eval suite ${suite} on every pull request to ${repo}${policy}`;
+      },
+      buttonLabel: "Connect the repository",
+      kind: "external",
+      confirmSeverity: "external",
+    },
+    promptNotes: [
+      "- `connect_eval_check_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_check_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do.",
+    ],
   },
 
   // ── GATED because the spend RECURS.

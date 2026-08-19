@@ -80,6 +80,7 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalSuiteCreated: "PlatformEvalSuiteCreated",
   EvalSuite: "PlatformEvalSuite",
   EvalSuiteSchedule: "PlatformEvalSuiteSchedule",
+  EvalSuiteComputerEnvironment: "PlatformEvalSuiteComputerEnvironment",
   EvalSuiteDetail: "PlatformEvalSuiteDetail",
   EvalIteration: "PlatformEvalIteration",
   EvalCase: "PlatformEvalCase",
@@ -172,6 +173,14 @@ const PAIRS: Readonly<Record<string, string>> = {
   ActionableFindingEvidence: "PlatformActionableFindingEvidence",
   ScenarioInsightsRequested: "PlatformUserTestingInsightsRequested",
   EvalRunInsightsRequested: "PlatformEvalRunInsightsRequested",
+  EvalRunJudgeRequested: "PlatformEvalRunJudgeRequested",
+  EvalRunJudges: "PlatformEvalRunJudges",
+  EvalRunJudgeState: "PlatformEvalRunJudgeState",
+  EvalRunGoalCompletionJudge: "PlatformEvalRunGoalCompletionJudge",
+  EvalRunGroundednessJudge: "PlatformEvalRunGroundednessJudge",
+  EvalRunJudgeCase: "PlatformEvalRunJudgeCase",
+  EvalRunGoalCompletionCase: "PlatformEvalRunGoalCompletionCase",
+  EvalRunGroundednessCase: "PlatformEvalRunGroundednessCase",
   ProjectCapabilities: "PlatformCapabilities",
 };
 

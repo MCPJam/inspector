@@ -2552,6 +2552,96 @@
         }
       }
     },
+    "/organizations/{organizationId}/eval-check-repos": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/organizationId"
+        }
+      ],
+      "get": {
+        "operationId": "listEvalCheckRepos",
+        "tags": [
+          "Evals"
+        ],
+        "summary": "List GitHub Checks repositories",
+        "description": "The repositories in this organization whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach (the choices a connect has).\n\n`available: false` means GitHub Checks is not enabled for this organization at all \u2014 connecting a repository will not help. `connectable: null` means the App could not be asked (GitHub unavailable, or no installation), which is different from an empty list meaning it reaches nothing; the already-connected list needs no GitHub call and is returned either way.",
+        "responses": {
+          "200": {
+            "description": "Connected and connectable repositories.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCheckRepos"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "connectEvalCheckRepo",
+        "tags": [
+          "Evals"
+        ],
+        "summary": "Run an eval suite on a repository's pull requests",
+        "description": "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. **Affects everyone who opens a pull request on that repository**, and with `outagePolicy: fail_closed` it can block their merges.\n\nThe repository is verified against the organization's GitHub App installation before it is stored. A repository that does not exist and one the App cannot see answer identically, on purpose: answering differently would make this an oracle for private repository names.\n\nDeliberately narrow: retargeting a repository at a different suite, pausing it, and disconnecting are repo-level decisions and live in the app's Settings \u2192 Integrations, where every connected repository is visible at once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalCheckRepoConnectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Connected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCheckRepoConnected"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects": {
       "get": {
         "operationId": "listProjects",
@@ -8267,6 +8357,64 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/judge": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/runId"
+        }
+      ],
+      "post": {
+        "operationId": "requestEvalRunJudge",
+        "tags": [
+          "Evals"
+        ],
+        "summary": "Grade an eval run with LLM as Judge",
+        "description": "**Spends.** Runs the goal-completion judge over the finished run, scoring each case's final answer against its expected output.\n\n`202`: scheduled, not done. Read the grades from the run detail's `judges.goalCompletion` rather than re-requesting \u2014 a second POST only spends again.\n\nA run's grading config is pinned when the run is created, so turning the judge on for the suite does not reach an already-recorded run: `enable: true` is what grades one, and it changes nothing beyond that run. Omitting `model` and `threshold` clears any override a previous request left on the run.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalRunJudgeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Scheduled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunJudgeRequested"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/capabilities": {
       "parameters": [
         {
@@ -8319,6 +8467,15 @@
       }
     },
     "parameters": {
+      "organizationId": {
+        "name": "organizationId",
+        "in": "path",
+        "required": true,
+        "description": "ID of the organization, from `GET /organizations`.",
+        "schema": {
+          "type": "string"
+        }
+      },
       "projectId": {
         "name": "projectId",
         "in": "path",
@@ -9926,13 +10083,24 @@
           },
           "environment": {
             "type": "object",
-            "description": "LEGACY server bag, kept as rollback data. Unrelated to `environmentIds`.",
+            "description": "LEGACY server bag, kept as rollback data, plus the suite's sandbox-image pin. Unrelated to `environmentIds`.",
             "properties": {
               "servers": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 }
+              },
+              "computerEnvironment": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/EvalSuiteComputerEnvironment"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The custom sandbox image this suite's eval runs boot a fresh computer from. `null` means the provider's default base image. PATCH it by name or id (see `GET /projects/{projectId}/images`); PATCH `null` to clear the pin."
               }
             }
           },
@@ -9994,6 +10162,13 @@
                 ],
                 "description": "Minimum pass rate for the suite to count as passing."
               },
+              "minimumIterations": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Suite-level floor on per-case iterations, 1\u201310: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor \u2014 the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
+              },
               "matchOptions": {
                 "type": [
                   "object",
@@ -10008,16 +10183,26 @@
               },
               "judge": {
                 "type": "object",
-                "description": "Goal-completion judge. Absent config reads as enabled.",
+                "description": "Goal-completion judge (LLM as Judge), FULLY RESOLVED: every field is the platform default where the suite set none, so this is what a run on this suite would actually grade with.",
                 "properties": {
                   "enabled": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "description": "Judge is available on the suite. On its own this grades nothing."
                   },
                   "model": {
                     "type": [
                       "string",
                       "null"
-                    ]
+                    ],
+                    "description": "Resolved judge model. `null` only from deployments that predate resolution."
+                  },
+                  "autoRun": {
+                    "type": "boolean",
+                    "description": "The flag that makes grading HAPPEN: grade every run as it completes. Spends per run."
+                  },
+                  "threshold": {
+                    "type": "number",
+                    "description": "Advisory pass threshold, 0\u20131 (`passed = score >= threshold`)."
                   }
                 }
               }
@@ -10330,6 +10515,376 @@
               }
             ],
             "description": "The common actionable-insights envelope. Present on the DETAIL response only \u2014 lists stay compact \u2014 and absent when the caller may not have it or the deployment cannot produce one. Treat absence exactly like `status: \"not_available\"`."
+          },
+          "judges": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EvalRunJudges"
+              }
+            ],
+            "description": "Advisory LLM graders on this run. Present on the DETAIL response only \u2014 lists stay compact \u2014 and absent on deployments that predate the envelope."
+          }
+        }
+      },
+      "EvalRunJudges": {
+        "type": "object",
+        "description": "Advisory graders on a run, keyed by judge. An envelope rather than a bare `judge` field because goal completion is one of several; a future judge is a new key here, not a reshaped response.",
+        "properties": {
+          "goalCompletion": {
+            "$ref": "#/components/schemas/EvalRunGoalCompletionJudge"
+          },
+          "groundedness": {
+            "$ref": "#/components/schemas/EvalRunGroundednessJudge"
+          }
+        }
+      },
+      "EvalRunJudgeState": {
+        "type": "object",
+        "description": "The state every advisory judge reports on a run.",
+        "required": [
+          "status",
+          "errorCode",
+          "summary",
+          "generatedAt",
+          "modelUsed",
+          "threshold"
+        ],
+        "properties": {
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "pending",
+              "completed",
+              "failed",
+              null
+            ],
+            "description": "`null` means this judge was NEVER requested for the run \u2014 a different answer from \"requested and graded nothing\". Poll rather than re-requesting while `pending`."
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Machine-readable failure reason, set alongside `status: \"failed\"`."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generatedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "modelUsed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The threshold these results were scored against (`passed = score >= threshold`)."
+          }
+        }
+      },
+      "EvalRunGoalCompletionJudge": {
+        "type": "object",
+        "description": "Goal completion: grades each case's final answer against its expected output.",
+        "required": [
+          "status",
+          "errorCode",
+          "summary",
+          "generatedAt",
+          "modelUsed",
+          "threshold",
+          "cases"
+        ],
+        "properties": {
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "pending",
+              "completed",
+              "failed",
+              null
+            ],
+            "description": "`null` means this judge was NEVER requested for the run \u2014 a different answer from \"requested and graded nothing\". Poll rather than re-requesting while `pending`."
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Machine-readable failure reason, set alongside `status: \"failed\"`."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generatedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "modelUsed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The threshold these results were scored against (`passed = score >= threshold`)."
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalRunGoalCompletionCase"
+            },
+            "description": "Per-case grades. EMPTY unless `status` is `completed` \u2014 a pending or failed judge carries no cases, and `status` is what says which."
+          }
+        }
+      },
+      "EvalRunGroundednessJudge": {
+        "type": "object",
+        "description": "Groundedness: grades whether each answer is SUPPORTED by its tool trajectory.",
+        "required": [
+          "status",
+          "errorCode",
+          "summary",
+          "generatedAt",
+          "modelUsed",
+          "threshold",
+          "cases"
+        ],
+        "properties": {
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "pending",
+              "completed",
+              "failed",
+              null
+            ],
+            "description": "`null` means this judge was NEVER requested for the run \u2014 a different answer from \"requested and graded nothing\". Poll rather than re-requesting while `pending`."
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Machine-readable failure reason, set alongside `status: \"failed\"`."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generatedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "modelUsed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The threshold these results were scored against (`passed = score >= threshold`)."
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalRunGroundednessCase"
+            },
+            "description": "Per-case grades. EMPTY unless `status` is `completed`."
+          }
+        }
+      },
+      "EvalRunJudgeCase": {
+        "type": "object",
+        "description": "The per-case fields every judge reports.",
+        "required": [
+          "caseKey",
+          "score",
+          "passed",
+          "reason"
+        ],
+        "properties": {
+          "caseKey": {
+            "type": "string",
+            "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id \u2014 do not join it against the ids the per-case routes take."
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "EvalRunGoalCompletionCase": {
+        "type": "object",
+        "required": [
+          "caseKey",
+          "score",
+          "passed",
+          "reason",
+          "rubricHits"
+        ],
+        "properties": {
+          "caseKey": {
+            "type": "string",
+            "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id \u2014 do not join it against the ids the per-case routes take."
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rubricHits": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Rubric criteria the answer satisfied."
+          }
+        }
+      },
+      "EvalRunGroundednessCase": {
+        "type": "object",
+        "required": [
+          "caseKey",
+          "score",
+          "passed",
+          "reason",
+          "unsupportedClaims"
+        ],
+        "properties": {
+          "caseKey": {
+            "type": "string",
+            "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id \u2014 do not join it against the ids the per-case routes take."
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unsupportedClaims": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Claims the tool trajectory does not support."
+          }
+        }
+      },
+      "EvalRunJudgeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Optional. A bodyless POST grades with the suite's own config.",
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "description": "Re-grade a run that already has a result. SPENDS AGAIN. Must be a real boolean \u2014 `\"false\"` is rejected rather than read as consent."
+          },
+          "enable": {
+            "type": "boolean",
+            "description": "Grade this run even though the judge was off when it ran. A per-RUN answer, not a suite edit: grading reads the config pinned when the run was created, so enabling the judge on the suite does not reach an already-recorded run."
+          },
+          "model": {
+            "type": "string",
+            "description": "Judge model for this run only."
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Pass threshold for this run only."
+          }
+        }
+      },
+      "EvalRunJudgeRequested": {
+        "type": "object",
+        "required": [
+          "runId",
+          "projectId",
+          "status"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending"
+            ]
           }
         }
       },
@@ -11606,6 +12161,199 @@
             "items": {
               "$ref": "#/components/schemas/EvalSuite"
             }
+          }
+        }
+      },
+      "EvalCheckRepo": {
+        "type": "object",
+        "description": "A repository whose pull requests run an eval suite.",
+        "required": [
+          "id",
+          "repo",
+          "enabled",
+          "suiteId",
+          "projectId",
+          "outagePolicy",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string",
+            "description": "`owner/repo`, canonicalized by the platform."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "suiteId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The eval suite this repository's pull requests run."
+          },
+          "projectId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outagePolicy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "fail_open",
+              "fail_closed",
+              null
+            ],
+            "description": "What the check reports when MCPJam cannot conclude. `null` is a REAL state \u2014 nobody chose a policy, because the repository was connected before the choice existed. The effective behaviour is `fail_open`, but reporting `fail_open` would say someone picked it."
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "EvalCheckRepos": {
+        "type": "object",
+        "required": [
+          "organizationId",
+          "available",
+          "items",
+          "connectable"
+        ],
+        "properties": {
+          "organizationId": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "Whether GitHub Checks is available for this organization at all. `false` and \"available, nothing connected\" are different situations, and only one of them is fixed by connecting a repository."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalCheckRepo"
+            },
+            "description": "The repositories already connected."
+          },
+          "connectable": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "required": [
+                "repo"
+              ],
+              "properties": {
+                "repo": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The repositories the MCPJam GitHub App can reach \u2014 the choices a connect has. `null` means the question could not be ASKED: the lookup itself failed (GitHub unreachable, or the call errored); the connected `items` still stand, as they need no GitHub call. An EMPTY list means it was asked and came back with nothing, which covers two situations the platform does not distinguish: the App is installed but reaches no repository, and this deployment has no App installation at all. If a connect is failing against an empty list, check the installation before assuming a permissions problem."
+          }
+        }
+      },
+      "EvalCheckRepoConnectRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "projectId",
+          "suiteId",
+          "repo",
+          "outagePolicy"
+        ],
+        "properties": {
+          "projectId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string",
+            "description": "The eval suite this repository's pull requests will run."
+          },
+          "repo": {
+            "type": "string",
+            "description": "`owner/repo`. Canonicalized and VERIFIED against the App's installation before it is stored."
+          },
+          "outagePolicy": {
+            "type": "string",
+            "enum": [
+              "fail_open",
+              "fail_closed"
+            ],
+            "description": "REQUIRED here, though the platform leaves it optional for a deploy window: a surface that defaults it is the one that quietly produces repositories nobody chose a policy for."
+          }
+        }
+      },
+      "EvalCheckRepoConnected": {
+        "type": "object",
+        "required": [
+          "id",
+          "organizationId",
+          "projectId",
+          "suiteId",
+          "repo",
+          "outagePolicy"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "organizationId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "outagePolicy": {
+            "type": "string",
+            "enum": [
+              "fail_open",
+              "fail_closed"
+            ]
+          }
+        }
+      },
+      "EvalSuiteComputerEnvironment": {
+        "type": "object",
+        "description": "The sandbox image a suite's eval runs boot from.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The image's name, resolved for you so a caller can echo back what it set. `null` when the pinned image could not be resolved (deleted, or not visible to this caller)."
           }
         }
       },
