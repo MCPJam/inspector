@@ -126,6 +126,27 @@ function deriveCapabilities(row: CapabilitiesRow) {
    * backend and kept as a floor in case that folding ever moves.
    */
   const isAdmin = row.isProjectAdmin || rank >= ROLE_RANK.admin;
+  /**
+   * Evals do NOT gate the way swarms do, so `isMember` is the wrong predicate
+   * for the eval keys and the warning above does not carry over to them.
+   *
+   * Swarm writes call `requireProjectRole`, which ranks the organization role
+   * alone. Eval writes go through `resolveProjectAccess`, where a project
+   * GRANT counts: the published edit tier is org rank >= member, OR any
+   * project grant, OR a legacy workspace row (mcpjam-backend
+   * `convex/lib/evalPermissions.ts`). Reporting `isMember` here would tell a
+   * guest holding an editor grant they may not author suites, when the
+   * mutation would have accepted every one of those writes.
+   *
+   * Which makes this `true`, and deliberately so. A guest with no grant does
+   * not resolve access at all, and the query behind this route returns null
+   * for that caller, so the route 404s before reaching here — every caller who
+   * receives this row satisfies the edit tier. It is a constant because the
+   * matrix has no viewer-without-edit state to express yet, not because the
+   * check was skipped; when a `viewer` grant role exists this stops being one
+   * and callers already branching on it keep working.
+   */
+  const evalsEditTier = true;
   // `enforced` already folds in the gate MODE: in `dark` the flag is evaluated
   // and logged but not applied, so a would-be denial is not a denial and an
   // agent must not plan around one.
@@ -173,6 +194,40 @@ function deriveCapabilities(row: CapabilitiesRow) {
     manageUserTestingGuestExecution: isAdmin,
     /** Requesting an LLM insight pass over a wave or window. */
     requestInsights: isMember,
+    /**
+     * Reading suites, runs, iterations and traces. The eval read floor is
+     * "access resolves at all", which is the same condition under which this
+     * endpoint answers instead of 404ing — so a caller holding this row has
+     * it. See `evalsEditTier` below for why that is not `isMember`.
+     */
+    readEvals: evalsEditTier,
+    /** Authoring suites and cases, and every write short of deleting. */
+    writeEvalSuites: evalsEditTier,
+    /** Starting a suite or case run. Spends hosted model credits. */
+    launchEvalRun: evalsEditTier,
+    /**
+     * Deleting a suite someone ELSE created, which is the project MANAGE tier
+     * (`hasMinimumRole(role, 'admin') || projectRole === 'admin'` — exactly
+     * what `isProjectAdmin` already folds together).
+     *
+     * Named "any" on purpose. The backend keeps a creator escape hatch: the
+     * user who created a suite may delete it whatever their role, which is
+     * what lets an interrupted CLI import roll its own half-written suite
+     * back. A key called `deleteEvalSuite` reading `false` would tell an
+     * ordinary member they cannot delete the suite they just made, and this
+     * endpoint's job is to avoid exactly that kind of denied-capability lie.
+     */
+    deleteAnyEvalSuite: isAdmin,
+    /** Same tier, same creator hatch, for runs. */
+    deleteAnyEvalRun: isAdmin,
+    /**
+     * Exporting traces. Project-level floor only: the export path filters row
+     * by row against the caller (another member's PRIVATE Playground
+     * transcripts are excluded from the export, not merely hidden), so `true`
+     * means "the export surface is open to you", never "every session in this
+     * project will be in the file".
+     */
+    exportEvalTraces: evalsEditTier,
   };
 }
 
