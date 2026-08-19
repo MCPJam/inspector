@@ -7,6 +7,7 @@ import type { Tool } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
 import {
+  CLAUDE_GATED_INPUTS,
   gradeClaudeReadiness,
   type ClaudeReadinessInput,
 } from "../../src/claude-readiness/runner.js";
@@ -444,5 +445,54 @@ describe("it renders through the shared report adapter", () => {
       findings: [orphaned],
     });
     expect(report.advisories?.map((a) => a.id)).toContain("claude.test.orphan");
+  });
+});
+
+describe("what an incomplete run tells the reader to do", () => {
+  it("names the tool listing, not `intrusive`, when the run never connected", () => {
+    // The reported failure: an OAuth connector the run could not authenticate
+    // to came back `incomplete` with "Supply intrusive to close the gap",
+    // because the tool checks named no input of their own and `intrusive` was
+    // the only candidate left standing.
+    const result = gradeClaudeReadiness(
+      input({ tools: undefined, apps: { enteredUrl: URL_UNDER_TEST, appsSuiteRan: false } }),
+    );
+
+    expect(result.status).toBe("incomplete");
+    expect(result.summary).toContain("toolListing");
+    expect(result.summary).not.toMatch(/Supply[^.]*intrusive/);
+  });
+
+  it("never puts a gated input in the `Supply …` clause", () => {
+    // The invariant, over every input the runner can name, rather than the one
+    // string this bug happened to produce.
+    for (const probe of [
+      input(),
+      input({ tools: undefined }),
+      input({ apps: { enteredUrl: URL_UNDER_TEST, appsSuiteRan: false } }),
+      input({ submissionProfile: undefined }),
+    ]) {
+      const summary = gradeClaudeReadiness(probe).summary;
+      const supplyClause = /Supply ([^.]*)\./.exec(summary)?.[1] ?? "";
+      for (const gated of CLAUDE_GATED_INPUTS) {
+        expect(supplyClause).not.toContain(gated);
+      }
+    }
+  });
+
+  it("says a clean run's only gap needs opt-in, and asks for nothing", () => {
+    // Notion's authenticated run: nothing failed, every lane the run could
+    // reach was satisfied, and the only remaining gap was the intrusive trio.
+    const base = fullyCapable();
+    const result = gradeClaudeReadiness({
+      ...base,
+      capabilities: ["dns", "interactive-oauth"],
+      intrusive: undefined,
+      intrusiveObservations: undefined,
+    });
+
+    expect(result.status).toBe("incomplete");
+    expect(result.summary).not.toContain("Supply");
+    expect(result.summary).toContain("opt-in on a server you control");
   });
 });
