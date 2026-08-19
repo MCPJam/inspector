@@ -11,6 +11,11 @@ import { MAX_BATCH_CREATE_CASES } from "../contract/suite-file.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
 import {
+  computeRunTargets,
+  type RunTarget,
+  type RunTargetHost,
+} from "./suite-run-plans.js";
+import {
   evaluateMarketHosts,
   scanWidgetUsage,
   type CompatFinding,
@@ -45,6 +50,7 @@ import type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalRunGroupCreated,
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
@@ -1048,6 +1054,30 @@ export const checkHostCompatibilityOperation: PlatformOperation<
 
 // ── Eval operations ──────────────────────────────────────────────────
 
+// Declared HERE, above the run operations that reference it, rather than beside
+// the eval-EDIT operations further down where its siblings live: every input
+// schema in this file is built at module-init time, so a later `const` would be
+// in its temporal dead zone and importing this module would throw.
+const publicMatchOptionsSchema = z
+  .object({
+    toolCallOrder: z
+      .enum(["any", "in-order", "exact"])
+      .optional()
+      .describe(
+        "any = order ignored; in-order = expected calls appear in order (extras allowed); exact = exact sequence.",
+      ),
+    extraToolCalls: z
+      .union([z.literal("unlimited"), z.number().int().min(0)])
+      .optional()
+      .describe('"unlimited" or a max count of unexpected extra tool calls.'),
+    arguments: z
+      .enum(["ignore", "partial", "exact"])
+      .optional()
+      .describe("Argument comparison strictness."),
+  })
+  .describe("Tool-call match options.");
+
+
 const SUITE_SELECTOR_DESCRIPTION = "Eval suite name or ID.";
 // Declared here rather than beside the environment operations further down
 // because the eval inputs below are built at module-init time and would hit the
@@ -1091,6 +1121,216 @@ function assertNoServerOverrideWithEnvironment(input: {
     throw operationInputError(
       "Pass either environment or servers, not both — a project environment supplies its own closed server set, which servers cannot override.",
     );
+  }
+}
+
+
+/**
+ * Reject every ambiguous COMBINATION of target selectors before anything
+ * resolves.
+ *
+ * All of these are refusals rather than a precedence rule, and deliberately so:
+ * each pair describes two different launches, and silently picking one would
+ * spend on a run the caller did not ask for. `servers` × a target axis is the
+ * same rejection the platform makes (an environment or host supplies its own
+ * closed server set), raised here so it costs no round trip.
+ */
+function assertRunTargetSelectorsCoherent(input: {
+  servers?: string[];
+  environment?: string;
+  environments?: string[];
+  host?: string;
+  hosts?: string[];
+  allAttached?: boolean;
+}): void {
+  const hasEnvironmentAxis =
+    Boolean(input.environment) || (input.environments?.length ?? 0) > 0;
+  const hasHostAxis = Boolean(input.host) || (input.hosts?.length ?? 0) > 0;
+
+  if (input.environment && (input.environments?.length ?? 0) > 0) {
+    throw operationInputError(
+      "Pass either environment (one) or environments (several), not both.",
+    );
+  }
+  if (input.host && (input.hosts?.length ?? 0) > 0) {
+    throw operationInputError(
+      "Pass either host (one) or hosts (several), not both.",
+    );
+  }
+  if (hasEnvironmentAxis && hasHostAxis) {
+    throw operationInputError(
+      "Pass environments or hosts, not both — a run targets ONE axis, and an environment already resolves a host, so combining them would describe a configuration the suite never had.",
+    );
+  }
+  if (hasHostAxis && (input.servers?.length ?? 0) > 0) {
+    throw operationInputError(
+      "Pass either a host or servers, not both — running an attached host uses that host's own configured server set, which servers cannot override.",
+    );
+  }
+  if (input.allAttached && (hasEnvironmentAxis || hasHostAxis)) {
+    throw operationInputError(
+      "Pass allAttached or name targets explicitly, not both — 'every attached target' and 'these ones' cannot both be meant, and guessing would either skip a run you asked for or start one you did not.",
+    );
+  }
+  if (input.allAttached && (input.servers?.length ?? 0) > 0) {
+    throw operationInputError(
+      "Pass allAttached or servers, not both — a server override replaces the suite's selection for one run and has no fan-out.",
+    );
+  }
+}
+
+/**
+ * The TARGET_REQUIRED refusal, enumerating what is actually pickable.
+ *
+ * Named after the machine-readable code so a surface can match on it, and
+ * written so the caller never has to go look the choices up: the whole failure
+ * mode this replaces was an agent guessing a target because the error did not
+ * say which ones existed.
+ */
+function targetRequiredMessage(plan: {
+  attachedEnvironments: RunTarget[];
+  attachedHosts: RunTarget[];
+}): string {
+  const parts: string[] = [];
+  if (plan.attachedEnvironments.length > 0) {
+    parts.push(
+      `environments: ${plan.attachedEnvironments
+        .map((target) => (target.name ? `"${target.name}" (${target.id})` : target.id))
+        .join(", ")}`,
+    );
+  }
+  if (plan.attachedHosts.length > 0) {
+    parts.push(
+      `hosts: ${plan.attachedHosts
+        .map((target) => `"${target.name}" (${target.id})`)
+        .join(", ")}`,
+    );
+  }
+  return (
+    "TARGET_REQUIRED — this suite has several attached targets, so which one to run is ambiguous and running all of them would spend more than you may have meant. " +
+    `Attached ${parts.join("; ")}. ` +
+    "Name one with environment or host, several with environments or hosts, or run every attached target with allAttached (one PAID RUN per target)."
+  );
+}
+
+/**
+ * Resolve environment selectors to ids AND check attachment CLIENT-SIDE.
+ *
+ * The attachment check is not redundant with the platform's: a fan-out issues
+ * one request per target, so an unattached fourth target would otherwise be
+ * discovered only after the first three had started spending. Failing here
+ * costs nothing and leaves nothing running.
+ */
+async function resolveSuiteEnvironmentTargets(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  suite: PlatformEvalSuite,
+  detail: PlatformEvalSuiteDetail | undefined,
+  selectors: string[],
+  signal: AbortSignal | undefined,
+): Promise<Array<{ id: string; name?: string }>> {
+  if (selectors.length === 0) return [];
+  const attached = detail?.environmentIds ?? [];
+  const resolved: Array<{ id: string; name?: string }> = [];
+  for (const selector of selectors) {
+    const environment = await resolveEnvironmentSelector(
+      client,
+      project,
+      selector,
+      signal,
+    );
+    if (!attached.includes(environment.id)) {
+      throw operationInputError(
+        attached.length === 0
+          ? `Environment "${selector}" is not attached to suite "${suite.name ?? suite.id}", which has no environments at all. Attach it with set_eval_suite_environments first.`
+          : `Environment "${selector}" is not attached to suite "${suite.name ?? suite.id}". Attached environment IDs: ${attached.join(", ")}.`,
+      );
+    }
+    resolved.push({
+      id: environment.id,
+      ...(environment.name ? { name: environment.name } : {}),
+    });
+  }
+  return resolved;
+}
+
+/** Host selectors → attached hosts, by id or unique name. Same rationale as
+ *  the environment resolver above: validated here so a fan-out cannot spend on
+ *  its first targets and then discover a bad one. */
+function resolveSuiteHostTargets(
+  suite: PlatformEvalSuite,
+  detail: PlatformEvalSuiteDetail | undefined,
+  selectors: string[],
+): RunTargetHost[] {
+  if (selectors.length === 0) return [];
+  const hosts = detail?.hosts ?? [];
+  if (hosts.length === 0) {
+    throw operationInputError(
+      `Suite "${suite.name ?? suite.id}" has no attached hosts, so there is no host to run. Attach one to the suite first, or omit the host selector.`,
+    );
+  }
+  return selectors.map((selector) =>
+    resolveByIdOrName(
+      hosts,
+      selector,
+      "Suite host",
+      `suite "${suite.name ?? suite.id}"`,
+    ),
+  );
+}
+
+/** The knobs both launch shapes forward, in the wire's own vocabulary. */
+function runKnobBody(
+  input: {
+    iterations?: number;
+    notes?: string;
+    minPassRate?: number;
+    matchOptions?: z.infer<typeof publicMatchOptionsSchema>;
+    excludeSkills?: boolean;
+    idempotencyKey?: string;
+  },
+  caseIds: string[] | undefined,
+): Record<string, unknown> {
+  return {
+    ...(input.iterations !== undefined
+      ? { iterationOverride: input.iterations }
+      : {}),
+    ...(caseIds ? { caseIds } : {}),
+    ...(input.matchOptions ? { matchOptionsOverride: input.matchOptions } : {}),
+    ...(input.excludeSkills ? { skillsOverride: "exclude" as const } : {}),
+    ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    ...(input.minPassRate !== undefined
+      ? { passCriteria: { minimumPassRate: input.minPassRate } }
+      : {}),
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+  };
+}
+
+/**
+ * Call the grouped-launch endpoint, translating "this server does not have it"
+ * into an instruction rather than a raw NOT_FOUND.
+ *
+ * The SDK publishes independently of the hosted API, so a client can legitimately
+ * be newer than the server it is pointed at. A bare 404 there reads as "your
+ * suite does not exist", which sends the caller looking in the wrong place.
+ */
+async function createEvalRunGroupOrExplain(
+  client: PlatformApiClient,
+  projectId: string,
+  body: Record<string, unknown>,
+  signal: AbortSignal | undefined,
+): Promise<PlatformEvalRunGroupCreated> {
+  try {
+    return await client.createEvalRunGroup({ projectId, body }, { signal });
+  } catch (error) {
+    if (error instanceof PlatformApiError && error.status === 404) {
+      throw new PlatformApiError(
+        "This MCPJam server is too old for grouped eval-run launches. Run the targets one at a time (name a single environment or host per call) until it is upgraded.",
+        "NOT_FOUND",
+        { status: 404 },
+      );
+    }
+    throw error;
   }
 }
 
@@ -1182,6 +1422,56 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
   },
 };
 
+/**
+ * Knobs that apply to a run whatever it targets. Declared once and spread into
+ * both run inputs: a knob that exists on the suite op and not the case op is a
+ * knob callers have to remember two rules for, and the divergence is invisible
+ * until someone hits it.
+ */
+const RUN_KNOB_FIELDS = {
+  iterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe(
+      "Run each case this many times, overriding its saved iteration count FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs.",
+    ),
+  notes: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Free-text note stored on the run, for your own attribution."),
+  minPassRate: z
+    .number()
+    .min(0)
+    .max(100)
+    .optional()
+    .describe(
+      "Pass threshold for this run as a percentage (0-100), overriding the suite's own criterion.",
+    ),
+  matchOptions: publicMatchOptionsSchema.optional().describe(
+    "Tool-call match options for this run only, layered over suite defaults and per-case overrides. Does NOT edit the suite or its cases.",
+  ),
+  excludeSkills: z
+    .boolean()
+    .optional()
+    .describe(
+      "Run the 'without skills' arm of an A/B comparison: NO skills are pinned from any channel and the run is labelled as excluded, rather than merely being skill-free. Scoped to skill delivery — a pinned plugin's MCP servers stay connected, because which servers an arm connects is the one variable a skills A/B has to hold fixed.",
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Retry-safety key. Repeating a call with the same key returns the run it already started instead of starting (and billing) a second one. On a multi-target launch the key covers the whole group: a retry returns the same group and the same runs.",
+    ),
+} as const;
+
 const runEvalSuiteInput = z.object({
   project: z
     .string()
@@ -1203,23 +1493,105 @@ const runEvalSuiteInput = z.object({
     .min(1)
     .optional()
     .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+  environments: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Several attached environments to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error.",
+    ),
+  host: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "One host ATTACHED to the suite (name or ID) to run against. The run is stamped with that host's configuration; without it a suite with several attached hosts cannot be run at all, and one with exactly one runs against it automatically. Mutually exclusive with the environment selectors and with `servers`.",
+    ),
+  hosts: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Several attached hosts to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `host` for exactly one; passing both is an error.",
+    ),
+  allAttached: z
+    .boolean()
+    .optional()
+    .describe(
+      "Run EVERY attached environment (or, when the suite has none, every attached host), one run per target, grouped under a single launch. THIS LAUNCHES MULTIPLE PAID RUNS — one per target, each consuming credits. Cannot be combined with naming targets explicitly: 'all of them' and 'these ones' cannot both be meant.",
+    ),
+  cases: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Run only these cases (titles or IDs) instead of the whole suite. The suite itself is untouched.",
+    ),
+  refreshSnapshot: z
+    .boolean()
+    .optional()
+    .describe(
+      "PERSISTS A NEW HOST-CONFIG SNAPSHOT ON THE SUITE, changing what every future run of it uses — not just this one. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target runs only; rejected with any multi-target launch, where last-writer-wins on a frozen snapshot is never what was meant.",
+    ),
+  ...RUN_KNOB_FIELDS,
 });
 
 export type RunEvalSuiteInput = z.infer<typeof runEvalSuiteInput>;
 
+/** One target's outcome, discriminated on `status`. See `targets` below. */
+export type RunEvalTargetResult =
+  | {
+      status: "started";
+      environment?: PlatformEvalRunCreated["environment"];
+      host?: { id: string; name: string };
+      runId: string;
+      runStatus: string;
+      servers?: Array<{ id: string; name?: string }>;
+      caseUpsert?: PlatformEvalRunCreated["caseUpsert"];
+    }
+  | {
+      status: "failed";
+      environment?: PlatformEvalRunCreated["environment"];
+      host?: { id: string; name: string };
+      error: { code: string; message: string };
+    };
+
 export type RunEvalSuiteResult = {
   project: SelectedProjectInfo;
   suite: { id: string; name: string | null };
-  /** The servers the run connects to; names are included when known. */
-  servers: Array<{ id: string; name?: string }>;
   /**
-   * The environment the run is pinned to. Non-null even when `environment` was
-   * omitted, if the suite has exactly one attached — the platform selects it.
+   * `"started"` — every target launched; `"partial"` — some did and some did
+   * not; `"failed"` — none did.
+   *
+   * A SINGLE-target run is always `"started"`, because its failures throw:
+   * there is one thing the caller asked for, and reporting "it failed" in a
+   * resolved value would make every caller check a field to find out whether
+   * their one action happened. A multi-target launch cannot do that — aborting
+   * on the first failure would strand its already-started siblings unreported —
+   * so it resolves with the receipt and the caller reads `outcome`.
    */
-  environment: PlatformEvalRunCreated["environment"];
-  runId: string;
-  status: string;
-  caseUpsert: PlatformEvalRunCreated["caseUpsert"];
+  outcome: "started" | "partial" | "failed";
+  startedCount: number;
+  failedCount: number;
+  /** Set only on a grouped launch. Sibling runs share it. */
+  runGroupId?: string;
+  /** One entry per target, in launch order. */
+  targets: RunEvalTargetResult[];
+  /**
+   * @deprecated Mirrors of the FIRST started run, kept so callers written
+   * against the single-run shape keep working. Read `targets` instead — on a
+   * grouped launch these describe one run out of several.
+   */
+  runId?: string;
+  /** @deprecated See `runId`. */
+  status?: string;
+  /** @deprecated See `runId`. */
+  servers?: Array<{ id: string; name?: string }>;
+  /** @deprecated See `runId`. */
+  environment?: PlatformEvalRunCreated["environment"];
+  /** @deprecated See `runId`. */
+  caseUpsert?: PlatformEvalRunCreated["caseUpsert"];
 };
 
 export const runEvalSuiteOperation: PlatformOperation<
@@ -1229,64 +1601,218 @@ export const runEvalSuiteOperation: PlatformOperation<
   name: "run_eval_suite",
   title: "Run MCPJam eval suite",
   description:
-    "Start an asynchronous rerun of an existing eval suite. By default the run connects the suite's saved server selection, resolved by the platform; pass servers only to override it. For a suite with attached project environments, pass environment to choose which one runs (required when several are attached; a lone one is used automatically) — attach them first with set_eval_suite_environments. Returns a runId immediately; poll get_eval_run with the returned project and runId until status is completed, failed, or cancelled. Eval runs execute LLM iterations and consume the organization's credits or configured provider keys.",
+    "Start an asynchronous rerun of an existing eval suite. Returns immediately; poll get_eval_run with the returned project and runId until status is completed, failed, or cancelled. Eval runs execute LLM iterations and CONSUME the organization's credits or configured provider keys.\n\nWHICH TARGET RUNS is explicit, never guessed. A suite with nothing attached runs its saved server selection. A suite with exactly ONE attached environment or host runs against that one automatically. A suite with SEVERAL fails with TARGET_REQUIRED, listing them — name one with environment or host, several with environments or hosts, or every one with allAttached. Each named target is a separate paid run.\n\nA multi-target launch returns a group receipt: outcome (started | partial | failed), startedCount, failedCount, and one entry per target that either started (with its runId) or failed (with its reason). A failed target does not abort its siblings, so read outcome rather than assuming everything started.",
   readOnly: false,
+  risk: "spend",
   inputSchema: runEvalSuiteInput,
   async execute(input, { client, signal }) {
+    // ── Guards first: reject every ambiguous combination BEFORE resolving
+    // anything, so a caller who meant two different things is told so without
+    // spending a round trip — let alone a run.
     assertNoServerOverrideWithEnvironment(input);
+    assertRunTargetSelectorsCoherent(input);
+
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
+
     // No client-side server default: the platform derives the suite's saved
     // selection when serverIds is omitted — the exact set the run snapshot
     // references, which a project-wide guess here could miss.
     const overrideServers = input.servers
       ? await resolveRunServers(client, project, input.servers, signal)
       : undefined;
-    // Name-or-ID → id. Whether the environment is ATTACHED to the suite is the
-    // platform's call, not ours: only it can decide that without racing a
-    // concurrent attachment edit.
-    const environment = input.environment
-      ? await resolveEnvironmentSelector(
-          client,
-          project,
-          input.environment,
-          signal,
+
+    // The suite DETAIL carries both attachment axes in attach order, so the
+    // targets compute from one read. Skipped only on the explicit-servers
+    // path, which is a single legacy run by construction and has no axis.
+    const detail = overrideServers
+      ? undefined
+      : await client.getEvalSuite(
+          { projectId: project.id, suiteId: suite.id },
+          { signal },
+        );
+
+    const selectedEnvironments = await resolveSuiteEnvironmentTargets(
+      client,
+      project,
+      suite,
+      detail,
+      input.environment ? [input.environment] : (input.environments ?? []),
+      signal,
+    );
+    const selectedHosts = resolveSuiteHostTargets(
+      suite,
+      detail,
+      input.host ? [input.host] : (input.hosts ?? []),
+    );
+    const caseIds = input.cases
+      ? (await resolveCases(client, project, suite, input.cases, signal)).map(
+          (testCase) => testCase.id,
         )
       : undefined;
-    const created = await client.createEvalRun(
-      {
-        projectId: project.id,
-        body: {
-          suiteId: suite.id,
-          ...(overrideServers
-            ? { serverIds: overrideServers.map((server) => server.id) }
-            : {}),
-          ...(environment ? { environmentId: environment.id } : {}),
+
+    const plan = computeRunTargets({
+      attachedEnvironments: (detail?.environmentIds ?? []).map((id) => ({
+        id,
+      })),
+      attachedHosts: (detail?.hosts ?? []).map((host) => ({
+        id: host.id,
+        name: host.name,
+      })),
+      selectedEnvironments,
+      selectedHosts,
+      ...(input.allAttached !== undefined
+        ? { allAttached: input.allAttached }
+        : {}),
+      ...(overrideServers
+        ? { serverIds: overrideServers.map((server) => server.id) }
+        : {}),
+    });
+
+    if (plan.kind === "target-required") {
+      throw operationInputError(targetRequiredMessage(plan));
+    }
+    if (plan.kind === "group" && input.refreshSnapshot) {
+      throw operationInputError(
+        "refreshSnapshot cannot be used with a multi-target launch — it PERSISTS one host-config snapshot on the suite, and several runs racing to write it would leave the suite pinned to whichever finished last. Run one target at a time to refresh it.",
+      );
+    }
+
+    const knobs = runKnobBody(input, caseIds);
+    const projectInfo = toSelectedProjectInfo(project);
+    const suiteInfo = { id: suite.id, name: suite.name };
+
+    if (plan.kind === "single") {
+      const created = await client.createEvalRun(
+        {
+          projectId: project.id,
+          body: {
+            suiteId: suite.id,
+            ...(plan.serverIds ? { serverIds: plan.serverIds } : {}),
+            ...(plan.target?.kind === "environment"
+              ? { environmentId: plan.target.id }
+              : {}),
+            ...(plan.target?.kind === "host"
+              ? { namedHostId: plan.target.id }
+              : {}),
+            ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
+            ...knobs,
+          },
         },
+        { signal },
+      );
+      const servers =
+        overrideServers?.map((server) => ({
+          id: server.id,
+          name: server.name,
+        })) ??
+        (created.servers ?? []).map((server) => ({
+          id: server.id,
+          ...(server.name ? { name: server.name } : {}),
+        }));
+      const host =
+        plan.target?.kind === "host"
+          ? { id: plan.target.id, name: plan.target.name }
+          : undefined;
+      return {
+        project: projectInfo,
+        suite: suiteInfo,
+        outcome: "started",
+        startedCount: 1,
+        failedCount: 0,
+        targets: [
+          {
+            status: "started",
+            environment: created.environment ?? null,
+            ...(host ? { host } : {}),
+            runId: created.runId,
+            runStatus: created.status,
+            servers,
+            caseUpsert: created.caseUpsert,
+          },
+        ],
+        runId: created.runId,
+        status: created.status,
+        servers,
+        environment: created.environment ?? null,
+        caseUpsert: created.caseUpsert,
+      };
+    }
+
+    const group = await createEvalRunGroupOrExplain(
+      client,
+      project.id,
+      {
+        suiteId: suite.id,
+        targets: plan.targets.map((target) =>
+          target.kind === "environment"
+            ? { environmentId: target.id }
+            : { namedHostId: target.id },
+        ),
+        ...knobs,
       },
-      { signal },
+      signal,
     );
-    const servers =
-      overrideServers?.map((server) => ({
-        id: server.id,
-        name: server.name,
-      })) ??
-      (created.servers ?? []).map((server) => ({
-        id: server.id,
-        ...(server.name ? { name: server.name } : {}),
-      }));
+
+    const nameById = new Map(
+      plan.targets.map((target) => [target.id, target.name]),
+    );
+    const targets: RunEvalTargetResult[] = group.targets.map((entry) => {
+      const id = entry.target.namedHostId ?? entry.target.environmentId ?? "";
+      const host = entry.target.namedHostId
+        ? {
+            id: entry.target.namedHostId,
+            name: entry.target.name ?? nameById.get(id) ?? "",
+          }
+        : undefined;
+      if (entry.status === "failed") {
+        return {
+          status: "failed",
+          ...(host ? { host } : {}),
+          error: entry.error,
+        };
+      }
+      return {
+        status: "started",
+        environment: entry.environment ?? null,
+        ...(host ? { host } : {}),
+        runId: entry.runId,
+        runStatus: entry.runStatus,
+        ...(entry.servers ? { servers: entry.servers } : {}),
+        ...(entry.caseUpsert ? { caseUpsert: entry.caseUpsert } : {}),
+      };
+    });
+    const firstStarted = targets.find(
+      (target): target is Extract<RunEvalTargetResult, { status: "started" }> =>
+        target.status === "started",
+    );
     return {
-      project: toSelectedProjectInfo(project),
-      suite: { id: suite.id, name: suite.name },
-      servers,
-      environment: created.environment ?? null,
-      runId: created.runId,
-      status: created.status,
-      caseUpsert: created.caseUpsert,
+      project: projectInfo,
+      suite: suiteInfo,
+      // NOT thrown, even when every target failed. The receipt carries each
+      // target's own reason, and throwing would discard exactly the detail the
+      // caller needs — including which siblings DID start. The op throws only
+      // when the HTTP call itself fails.
+      outcome: group.outcome,
+      startedCount: group.startedCount,
+      failedCount: group.failedCount,
+      runGroupId: group.runGroupId,
+      targets,
+      ...(firstStarted
+        ? {
+            runId: firstStarted.runId,
+            status: firstStarted.runStatus,
+            ...(firstStarted.servers ? { servers: firstStarted.servers } : {}),
+            environment: firstStarted.environment ?? null,
+            ...(firstStarted.caseUpsert
+              ? { caseUpsert: firstStarted.caseUpsert }
+              : {}),
+          }
+        : {}),
     };
   },
 };
@@ -1317,6 +1843,16 @@ const runEvalCaseInput = z.object({
     .min(1)
     .optional()
     .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+  host: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "One host ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that host's configuration. Mutually exclusive with `environment` and `servers`.",
+    ),
+  iterations: RUN_KNOB_FIELDS.iterations,
+  idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
 });
 
 export type RunEvalCaseInput = z.infer<typeof runEvalCaseInput>;
@@ -1328,6 +1864,8 @@ export type RunEvalCaseResult = {
   servers: Array<{ id: string; name?: string }>;
   /** The environment the run is pinned to; see `RunEvalSuiteResult`. */
   environment: PlatformEvalRunCreated["environment"];
+  /** The attached host the run is stamped with, when one was named. */
+  host?: { id: string; name: string };
   runId: string;
   status: string;
 };
@@ -1339,11 +1877,13 @@ export const runEvalCaseOperation: PlatformOperation<
   name: "run_eval_case",
   title: "Run a single MCPJam eval case",
   description:
-    "Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). For a suite with attached project environments, pass environment to choose which one runs. Returns a runId immediately; poll get_eval_run until terminal. Consumes credits like any eval run.",
+    "Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). For a suite with attached project environments, pass environment to choose which one runs; for one with attached hosts, pass host so the run is stamped with that host's configuration. Returns a runId immediately; poll get_eval_run until terminal. CONSUMES credits like any eval run.",
   readOnly: false,
+  risk: "spend",
   inputSchema: runEvalCaseInput,
   async execute(input, { client, signal }) {
     assertNoServerOverrideWithEnvironment(input);
+    assertRunTargetSelectorsCoherent(input);
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
@@ -1368,6 +1908,19 @@ export const runEvalCaseOperation: PlatformOperation<
           signal,
         )
       : undefined;
+    // The suite detail is read ONLY when a host was named — a case run is
+    // otherwise unchanged, and paying for an extra request on every call to
+    // support an optional selector would be a tax on the common path.
+    const host = input.host
+      ? resolveSuiteHostTargets(
+          suite,
+          await client.getEvalSuite(
+            { projectId: project.id, suiteId: suite.id },
+            { signal },
+          ),
+          [input.host],
+        )[0]!
+      : undefined;
     const created = await client.createEvalRun(
       {
         projectId: project.id,
@@ -1378,6 +1931,13 @@ export const runEvalCaseOperation: PlatformOperation<
             ? { serverIds: overrideServers.map((server) => server.id) }
             : {}),
           ...(environment ? { environmentId: environment.id } : {}),
+          ...(host ? { namedHostId: host.id } : {}),
+          ...(input.iterations !== undefined
+            ? { iterationOverride: input.iterations }
+            : {}),
+          ...(input.idempotencyKey
+            ? { idempotencyKey: input.idempotencyKey }
+            : {}),
         },
       },
       { signal },
@@ -1397,6 +1957,7 @@ export const runEvalCaseOperation: PlatformOperation<
       case: { id: testCase.id, title: testCase.title },
       servers,
       environment: created.environment ?? null,
+      ...(host ? { host } : {}),
       runId: created.runId,
       status: created.status,
     };
@@ -1637,25 +2198,6 @@ export const createEvalSuiteOperation: PlatformOperation<
 // internal field names cross this boundary.
 
 const CASE_SELECTOR_DESCRIPTION = "Eval case title or ID.";
-
-const publicMatchOptionsSchema = z
-  .object({
-    toolCallOrder: z
-      .enum(["any", "in-order", "exact"])
-      .optional()
-      .describe(
-        "any = order ignored; in-order = expected calls appear in order (extras allowed); exact = exact sequence.",
-      ),
-    extraToolCalls: z
-      .union([z.literal("unlimited"), z.number().int().min(0)])
-      .optional()
-      .describe('"unlimited" or a max count of unexpected extra tool calls.'),
-    arguments: z
-      .enum(["ignore", "partial", "exact"])
-      .optional()
-      .describe("Argument comparison strictness."),
-  })
-  .describe("Tool-call match options.");
 
 const publicCheckSchema = z
   .object({ type: z.string().trim().min(1) })
@@ -2813,9 +3355,44 @@ async function resolveSuite(
 }
 
 /**
- * Resolve a test case within a suite by id or (case-insensitive) title. Cases
- * expose `title`, so map it onto the `name` field `resolveByIdOrName` matches.
+ * Resolve several test cases within a suite by id or (case-insensitive) title,
+ * over ONE listing. Cases expose `title`, so map it onto the `name` field
+ * `resolveByIdOrName` matches.
+ *
+ * Deduplicated by resolved id: naming a case twice is one case, not two — and
+ * on a run selector, two entries for one case would narrow the run to a list
+ * with a duplicate in it.
  */
+async function resolveCases(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  suite: PlatformEvalSuite,
+  selectors: string[],
+  signal: AbortSignal | undefined,
+): Promise<PlatformEvalCase[]> {
+  const page = await client.listEvalCases(
+    { projectId: project.id, suiteId: suite.id },
+    { signal },
+  );
+  const items = page.items.map((testCase) => ({
+    ...testCase,
+    name: testCase.title,
+  }));
+  const resolved = new Map<string, PlatformEvalCase>();
+  for (const selector of selectors) {
+    const testCase = resolveByIdOrName(
+      items,
+      selector,
+      "Eval case",
+      `suite "${suite.name ?? suite.id}"`,
+    );
+    resolved.set(testCase.id, testCase);
+  }
+  return [...resolved.values()];
+}
+
+/** One case, by id or title. Thin wrapper over {@link resolveCases} so the
+ *  single-case callers keep their ergonomics without a second listing path. */
 async function resolveCase(
   client: PlatformApiClient,
   project: PlatformProject,
@@ -2823,16 +3400,14 @@ async function resolveCase(
   selector: string,
   signal: AbortSignal | undefined,
 ): Promise<PlatformEvalCase> {
-  const page = await client.listEvalCases(
-    { projectId: project.id, suiteId: suite.id },
-    { signal },
+  const [testCase] = await resolveCases(
+    client,
+    project,
+    suite,
+    [selector],
+    signal,
   );
-  return resolveByIdOrName(
-    page.items.map((testCase) => ({ ...testCase, name: testCase.title })),
-    selector,
-    "Eval case",
-    `suite "${suite.name ?? suite.id}"`,
-  );
+  return testCase!;
 }
 
 /**

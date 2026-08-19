@@ -327,6 +327,34 @@ type FixtureOverrides = {
    * and answered without the echo marker.
    */
   sessionsEnvelope?: Record<string, unknown>;
+  /**
+   * The suite DETAIL the run ops read to compute their targets. Default: a
+   * suite with NOTHING attached, which is the bare-rerun shape most of these
+   * tests are about. Override it to model an attached-environment or
+   * attached-host suite.
+   */
+  suiteDetail?: Record<string, unknown>;
+  /** Per-target failure injection for the grouped-launch endpoint, keyed by
+   *  target id. A present entry makes that target's entry a failure. */
+  groupTargetFailures?: Record<string, { code: string; message: string }>;
+  /** Model an API deployment with no grouped-launch endpoint at all. */
+  noRunGroupEndpoint?: boolean;
+};
+
+/** A suite with nothing attached — the shape a bare rerun expects. */
+const BARE_SUITE_DETAIL: Record<string, unknown> = {
+  id: "suite-1",
+  name: "Smoke",
+  description: null,
+  projectId: "project-new",
+  environment: { servers: [] },
+  executionConfig: null,
+  hosts: [],
+  environmentIds: [],
+  settings: {},
+  schedule: {},
+  createdAt: 1,
+  updatedAt: 1,
 };
 
 function makeClient(overrides: FixtureOverrides = {}): {
@@ -373,6 +401,68 @@ function makeClient(overrides: FixtureOverrides = {}): {
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites$/.test(path)) {
       return Response.json({ items: suites });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-run-groups$/.test(path) &&
+      init?.method === "POST"
+    ) {
+      if (overrides.noRunGroupEndpoint) {
+        return Response.json(
+          { code: "NOT_FOUND", message: "No route" },
+          { status: 404 }
+        );
+      }
+      const requestBody = JSON.parse(String(init?.body)) as {
+        suiteId: string;
+        targets: Array<{ environmentId?: string; namedHostId?: string }>;
+      };
+      let started = 0;
+      let failed = 0;
+      const entries = requestBody.targets.map((target, index) => {
+        const id = target.environmentId ?? target.namedHostId ?? "";
+        const failure = overrides.groupTargetFailures?.[id];
+        if (failure) {
+          failed += 1;
+          return { target, status: "failed", error: failure };
+        }
+        started += 1;
+        return {
+          target,
+          status: "started",
+          runId: `run-group-${index + 1}`,
+          runStatus: "running",
+          servers: [{ id: "server-saved", name: "Saved" }],
+          environment: target.environmentId
+            ? { id: target.environmentId, name: "Staging", revision: 7 }
+            : null,
+          caseUpsert: { committed: [], failed: [] },
+        };
+      });
+      const firstStarted = entries.find((entry) => entry.status === "started");
+      return Response.json(
+        {
+          runGroupId: "group-1",
+          suiteId: requestBody.suiteId,
+          outcome:
+            started === 0 ? "failed" : failed > 0 ? "partial" : "started",
+          startedCount: started,
+          failedCount: failed,
+          targets: entries,
+          ...(firstStarted
+            ? {
+                runId: (firstStarted as { runId: string }).runId,
+                status: "running",
+              }
+            : {}),
+        },
+        { status: 202 }
+      );
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+$/.test(path) &&
+      (init?.method ?? "GET") === "GET"
+    ) {
+      return Response.json(overrides.suiteDetail ?? BARE_SUITE_DETAIL);
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/.test(path)) {
       return Response.json({ items: [RUN] });
@@ -769,7 +859,13 @@ describe("runEvalSuiteOperation", () => {
   });
 
   it("resolves an environment name and echoes the pinned triple", async () => {
-    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    // ATTACHED, because the op now checks attachment client-side: a fan-out
+    // issues one request per target, so an unattached one has to fail before
+    // its siblings start spending rather than after.
+    const { client, fetchMock } = makeClient({
+      servers: HTTP_SERVERS,
+      suiteDetail: { ...BARE_SUITE_DETAIL, environmentIds: ["env-stg"] },
+    });
 
     const result = await runEvalSuiteOperation.execute(
       { suite: "Smoke", environment: "staging" },

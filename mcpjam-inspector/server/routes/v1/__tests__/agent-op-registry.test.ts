@@ -229,6 +229,129 @@ describe("agent op registry", () => {
     expect(cancelDescribe({ run: "run_1" })).toBe("Cancel run (unnamed)");
   });
 
+  it("says HOW MANY paid runs a fan-out proposal starts", () => {
+    // A cost is normally excluded from approval copy because any number would
+    // be an estimate. A resolved target LIST is not an estimate: by the time
+    // this renders, `normalizeArgs` has already frozen exactly which targets
+    // run, so the count is the decided one.
+    const describeRun = proposalMetaFor(runEvalSuiteOperation.name).description;
+    expect(
+      describeRun({ suite: "smoke", hosts: ["host_a", "host_b", "host_c"] })
+    ).toBe("Start 3 paid eval runs of suite smoke: host_a, host_b, host_c");
+    expect(describeRun({ suite: "smoke", host: "host_a" })).toBe(
+      "Run eval suite smoke against host_a"
+    );
+    // Unfrozen `allAttached` (normalization could not reach the platform):
+    // say it fans out, without claiming a number we do not have.
+    expect(describeRun({ suite: "smoke", allAttached: true })).toBe(
+      "Run eval suite smoke against every attached target — one paid run each"
+    );
+  });
+
+  it("marks both eval-run proposals as SPEND", () => {
+    // Every eval run consumes credits, and a fan-out consumes them N times —
+    // the host's default confirmation copy does not say so.
+    expect(
+      proposalMetaFor(runEvalSuiteOperation.name).severityFor({})
+    ).toBe("spend");
+    expect(proposalMetaFor(runEvalCaseOperation.name).severityFor({})).toBe(
+      "spend"
+    );
+  });
+
+  it("freezes allAttached into an explicit target list at MINT time", async () => {
+    // The whole point: `allAttached` means "everything attached RIGHT NOW",
+    // and "now" moves between the proposal and the click. Attaching a fourth
+    // environment must not widen an approved 3-run spend.
+    const client = {
+      listEvalSuites: async () => ({ items: [{ id: "ts_1", name: "smoke" }] }),
+      getEvalSuite: async () => ({
+        id: "ts_1",
+        environmentIds: ["env_a", "env_b"],
+        hosts: [{ id: "host_a", name: "Claude" }],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    const frozen = await proposalMetaFor(
+      runEvalSuiteOperation.name
+    ).normalizeArgs(
+      { suite: "smoke", allAttached: true },
+      { projectId: "p1", client }
+    );
+    // ONE axis, environments first — the precedence the operation itself
+    // applies, so the frozen set is the set that would have run.
+    expect(frozen).toEqual({ suite: "smoke", environments: ["env_a", "env_b"] });
+    // `allAttached` is DROPPED, not merely supplemented: leaving it would let
+    // the re-expansion happen at approval time anyway.
+    expect(frozen.allAttached).toBeUndefined();
+  });
+
+  it("resolves host NAMES to ids so a rename cannot repoint an approval", async () => {
+    const client = {
+      listEvalSuites: async () => ({ items: [{ id: "ts_1", name: "smoke" }] }),
+      getEvalSuite: async () => ({
+        id: "ts_1",
+        environmentIds: [],
+        hosts: [
+          { id: "host_a", name: "Claude" },
+          { id: "host_b", name: "ChatGPT" },
+        ],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        { suite: "smoke", hosts: ["Claude", "ChatGPT"] },
+        { projectId: "p1", client }
+      )
+    ).toEqual({ suite: "smoke", hosts: ["host_a", "host_b"] });
+  });
+
+  it("keeps the proposal when normalization cannot reach the platform", async () => {
+    // A failed resolution must cost the caller a frozen target list, never the
+    // proposal itself — the worst case is the pre-existing behaviour.
+    const client = {
+      listEvalSuites: async () => {
+        throw new Error("platform unreachable");
+      },
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+    const input = { suite: "smoke", allAttached: true };
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(input, {
+        projectId: "p1",
+        client,
+      })
+    ).toEqual(input);
+  });
+
+  it("links a GROUP launch to the group, not to one of its runs", () => {
+    // The contract carries one resource. Linking the first run would hide a
+    // sibling's failure — the one thing an approver of N paid runs needs.
+    const entry = gatedEntryFor(runEvalSuiteOperation.name);
+    const groupResource = entry?.proposal.resource?.(
+      { suite: { id: "ts_1" }, runGroupId: "grp_1", runId: "run_1" },
+      { projectId: "p1" }
+    );
+    expect(groupResource).toMatchObject({
+      type: "eval_run_group",
+      id: "grp_1",
+    });
+    expect(groupResource?.url).toContain("view=runs");
+
+    const singleResource = entry?.proposal.resource?.(
+      { suite: { id: "ts_1" }, runId: "run_1" },
+      { projectId: "p1" }
+    );
+    expect(singleResource).toMatchObject({ type: "eval_run", id: "run_1" });
+    expect(singleResource?.url).toContain("/runs/run_1");
+  });
+
   it("caps the WHOLE description, not only the argument preview", () => {
     // `previewToolCall` bounds the parenthesised part, but the templates that
     // wrap it interpolate validated-yet-model-authored selectors verbatim.
@@ -778,8 +901,6 @@ describe("tier derives from operation.risk", () => {
     "promote_sandbox_image",
     "reset_computer",
     "restore_project_environment",
-    "run_eval_case",
-    "run_eval_suite",
     "set_eval_suite_environments",
     "set_eval_suite_schedule",
     "set_host_servers",
@@ -794,11 +915,11 @@ describe("tier derives from operation.risk", () => {
   ]);
 
   /**
-   * The 38 writes above predate `risk`. This number may only go DOWN — if
+   * The 36 writes above predate `risk`. This number may only go DOWN — if
    * you are raising it to admit a new unclassified write, classify the write
    * instead; that is one field in the SDK catalog.
    */
-  const UNCLASSIFIED_WRITES_CEILING = 38;
+  const UNCLASSIFIED_WRITES_CEILING = 36;
 
   it("pins the unclassified legacy writes — the list only shrinks", () => {
     const unclassified = ALL_OPERATIONS.filter(

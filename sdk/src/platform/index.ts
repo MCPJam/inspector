@@ -22,6 +22,14 @@ export {
   type PlatformApiClientOptions,
 } from "./client.js";
 
+export {
+  computeRunTargets,
+  type ComputeRunTargetsInput,
+  type RunTarget,
+  type RunTargetHost,
+  type RunTargetPlan,
+} from "./suite-run-plans.js";
+
 export type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
