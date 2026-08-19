@@ -6,6 +6,8 @@
  * product catalog unchanged.
  */
 import { z } from "zod";
+import { opaqueIdSchema } from "../contract/identity.js";
+import { MAX_BATCH_CREATE_CASES } from "../contract/suite-file.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
 import {
@@ -31,6 +33,7 @@ import type {
   PlatformChatSession,
   PlatformDoctorReport,
   PlatformEvalCase,
+  PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
   PlatformEvalIteration,
@@ -1728,6 +1731,29 @@ function buildCaseBody(
   return body;
 }
 
+/**
+ * The case's declared identity, accepted on CREATE only.
+ *
+ * Not part of `caseFieldsShape`, which create and update share: an update may
+ * change what a case tests, never which case it is. Omitting it is supported —
+ * the platform mints one — so an agent that has no id of its own does not have
+ * to invent a scheme.
+ */
+const declaredCaseIdField = opaqueIdSchema
+  .optional()
+  .describe(
+    "Stable declared id for the case (e.g. from a suite file). Minted for you when omitted.",
+  );
+
+/** `buildCaseBody` plus the create-only declared id. */
+function buildCreateCaseBody(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const body = buildCaseBody(input);
+  if (input.id !== undefined) body.id = input.id;
+  return body;
+}
+
 const getEvalSuiteInput = z.object({
   project: z
     .string()
@@ -2133,6 +2159,7 @@ const createEvalCaseInput = z.object({
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
   ...caseFieldsShape,
   title: z.string().trim().min(1).describe("Short case label."),
+  id: declaredCaseIdField,
 });
 export type CreateEvalCaseInput = z.infer<typeof createEvalCaseInput>;
 
@@ -2154,7 +2181,112 @@ export const createEvalCaseOperation: PlatformOperation<
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.createEvalCase(
-      { projectId: project.id, suiteId: suite.id, body: buildCaseBody(input) },
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        body: buildCreateCaseBody(input),
+      },
+      { signal },
+    );
+  },
+};
+
+const createEvalCasesInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  cases: z
+    .array(
+      z.object({
+        ...caseFieldsShape,
+        title: z.string().trim().min(1).describe("Short case label."),
+        id: declaredCaseIdField,
+      }),
+    )
+    .min(1)
+    .max(MAX_BATCH_CREATE_CASES)
+    .describe(
+      `The cases to author, up to ${MAX_BATCH_CREATE_CASES} per call. Split a larger set into several calls.`,
+    ),
+  duplicatePolicy: z
+    .enum(["block", "warn", "create_anyway"])
+    .optional()
+    .describe(
+      "What to do with a case whose definition already exists in the suite. Defaults to `block`. `warn` and `create_anyway` require `overrideReason`.",
+    ),
+  overrideReason: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Why authoring a duplicate is intended. Recorded on the case's revision.",
+    ),
+});
+export type CreateEvalCasesInput = z.infer<typeof createEvalCasesInput>;
+
+export const createEvalCasesOperation: PlatformOperation<
+  CreateEvalCasesInput,
+  PlatformEvalCaseBatchResult
+> = {
+  name: "create_eval_cases",
+  title: "Create MCPJam eval cases",
+  description:
+    "Add several test cases to an eval suite in one call — the bulk form of `create_eval_case`, and the way to convert a repo's test files or import a suite without a round trip per case. Each case takes the same fields as `create_eval_case`. Cases are validated together and reported individually: `created` and `failed` both carry the `index` of the case they describe, so a partial result lines up against the list you sent.",
+  readOnly: false,
+  // Authoring cases persists, but each one is individually deletable and
+  // nothing is spent until a run is started. (`create_eval_case` predates this
+  // field and is pinned as legacy-unclassified; it means the same thing.)
+  risk: "none",
+  inputSchema: createEvalCasesInput,
+  async execute(input, { client, signal }) {
+    // Checked HERE rather than as a schema `.refine`: an operation's
+    // `inputSchema` is handed to the agent tool surface, which needs a plain
+    // object schema — a refinement wraps it in `ZodEffects` and the toolset
+    // stops building. The platform refuses these two policies without a reason
+    // per case, so without this the caller spends a round trip to get N
+    // identical OVERRIDE_REASON_REQUIRED failures back.
+    if (
+      input.duplicatePolicy !== undefined &&
+      input.duplicatePolicy !== "block" &&
+      !input.overrideReason
+    ) {
+      throw new PlatformApiError(
+        `duplicatePolicy \`${input.duplicatePolicy}\` authors a case that duplicates ` +
+          "an existing one, so it requires an overrideReason — the reason is what " +
+          "gets recorded on the case's revision.",
+        "VALIDATION_ERROR",
+        // Client-synthesized: no request was made, so quoting a server status
+        // would misreport what happened.
+        { status: 0 },
+      );
+    }
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    return client.createEvalCases(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        body: {
+          cases: input.cases.map((testCase) =>
+            buildCreateCaseBody(testCase as Record<string, unknown>),
+          ),
+          ...(input.duplicatePolicy
+            ? { duplicatePolicy: input.duplicatePolicy }
+            : {}),
+          ...(input.overrideReason
+            ? { overrideReason: input.overrideReason }
+            : {}),
+        },
+      },
       { signal },
     );
   },
@@ -7230,6 +7362,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listEvalCasesOperation,
   getEvalCaseOperation,
   createEvalCaseOperation,
+  createEvalCasesOperation,
   updateEvalCaseOperation,
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
