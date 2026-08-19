@@ -350,6 +350,11 @@ function toGuardedWebStream(
       });
       source.on("error", (error: Error) => {
         clearIdle();
+        // The SOCKET first. A decoder failure — a truncated gzip member, a
+        // corrupt brotli frame — errors the decompressor but leaves the
+        // response, and therefore the pinned connection, open. Erroring only
+        // the reader would leak it for the lifetime of the process.
+        destroyUpstream();
         try {
           controller.error(error);
         } catch {

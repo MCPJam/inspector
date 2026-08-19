@@ -244,17 +244,22 @@ async function main() {
       entry.revision && previous[entry.page] !== entry.revision,
   );
   const unsnapshotted = drifted.filter((entry) => !previous[entry.page]);
+  // A page that was never recorded did not CHANGE. Folding both into one
+  // "changed since the recorded snapshot" line sends a maintainer to re-audit
+  // a check against a diff that does not exist.
+  const changed = drifted.filter((entry) => previous[entry.page]);
 
   if (checkOnly) {
-    if (unsnapshotted.length === drifted.length && drifted.length > 0) {
+    if (unsnapshotted.length > 0) {
       console.error(
         `\nNOT SNAPSHOTTED: ${unsnapshotted.length} page(s) have no recorded ` +
           `revision. Run \`npm run claude-policy:sync\` to pin the corpus ` +
           `before relying on a readiness grade's provenance.`,
       );
-    } else if (drifted.length > 0) {
+    }
+    if (changed.length > 0) {
       console.error(
-        `\nDRIFT: ${drifted
+        `\nDRIFT: ${changed
           .map((entry) => entry.page)
           .join(", ")} changed since the recorded snapshot. Re-audit the checks ` +
           `that cite these pages, then re-run without --check.`,

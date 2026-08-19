@@ -17,6 +17,12 @@
  */
 
 import { sha256Hex } from "../../contract/canonical.js";
+import {
+  hasAccessibilityAffordance,
+  hasInteractiveElement,
+  scanHtml,
+  type ScannedHtml,
+} from "../html-scan.js";
 import { getToolVisibility } from "../../widget-runtime/tool-visibility.js";
 import { claudePolicySource } from "../manifest.js";
 import {
@@ -182,7 +188,8 @@ const INSTANCE_SUPERSESSION: ClaudeCheckDefinition = {
  */
 const DESIGN_LINTS: Array<{
   definition: ClaudeCheckDefinition;
-  detect: (html: string) => boolean;
+  /** True when the widget looks like it MISSES the guideline. */
+  detect: (scanned: ScannedHtml) => boolean;
   remediation: string;
 }> = [
   {
@@ -191,10 +198,10 @@ const DESIGN_LINTS: Array<{
       "Widget appears to have no narrow-viewport handling",
       "§Responsiveness",
     ),
-    detect: (html) =>
-      !/@media[^{]*\(\s*max-width/i.test(html) &&
-      !/@container/i.test(html) &&
-      !/\bminmax\(|\bclamp\(|\bflex-wrap\b/i.test(html),
+    detect: (scanned) =>
+      !/@media[^{]*\(\s*max-width/i.test(scanned.styleText) &&
+      !/@container/i.test(scanned.styleText) &&
+      !/\bminmax\(|\bclamp\(|\bflex-wrap\b/i.test(scanned.styleText),
     remediation:
       "Claude renders widgets as narrow as 320px. No media query, container query, or intrinsic sizing was found.",
   },
@@ -204,10 +211,10 @@ const DESIGN_LINTS: Array<{
       "Interactive elements may be below the 44×44px touch target",
       "§Touch targets",
     ),
-    detect: (html) =>
-      /<(button|a)\b/i.test(html) &&
-      !/min-height\s*:\s*(4[4-9]|[5-9]\d|\d{3,})px/i.test(html) &&
-      !/min-block-size/i.test(html),
+    detect: (scanned) =>
+      hasInteractiveElement(scanned) &&
+      !/min-height\s*:\s*(4[4-9]|[5-9]\d|\d{3,})px/i.test(scanned.styleText) &&
+      !/min-block-size/i.test(scanned.styleText),
     remediation:
       "Interactive controls were found with no minimum height reaching 44px.",
   },
@@ -217,7 +224,7 @@ const DESIGN_LINTS: Array<{
       "Widget does not account for the device safe area",
       "§Safe areas",
     ),
-    detect: (html) => !/safe-area-inset/i.test(html),
+    detect: (scanned) => !/safe-area-inset/i.test(scanned.styleText),
     remediation:
       "No `env(safe-area-inset-*)` usage was found; content can sit under a notch or home indicator.",
   },
@@ -227,10 +234,10 @@ const DESIGN_LINTS: Array<{
       "Widget appears not to follow the host's light/dark theme",
       "§Theming",
     ),
-    detect: (html) =>
-      !/prefers-color-scheme/i.test(html) &&
-      !/color-scheme/i.test(html) &&
-      !/data-theme/i.test(html),
+    detect: (scanned) =>
+      !/prefers-color-scheme/i.test(scanned.styleText) &&
+      !/color-scheme/i.test(scanned.styleText) &&
+      !scanned.attributes.has("data-theme"),
     remediation:
       "No `prefers-color-scheme`, `color-scheme`, or theme attribute was found; the widget will not follow Claude's theme.",
   },
@@ -240,8 +247,10 @@ const DESIGN_LINTS: Array<{
       "Widget paints an opaque background over the host surface",
       "§Backgrounds",
     ),
-    detect: (html) =>
-      /body\s*{[^}]*background(-color)?\s*:\s*(#|rgb|hsl|white|black)/i.test(html),
+    detect: (scanned) =>
+      /body\s*{[^}]*background(-color)?\s*:\s*(#|rgb|hsl|white|black)/i.test(
+        scanned.styleText,
+      ),
     remediation:
       "The widget paints its own body background; Claude's surface shows through a transparent one.",
   },
@@ -251,7 +260,8 @@ const DESIGN_LINTS: Array<{
       "Widget introduces its own scroll container",
       "§Scrolling",
     ),
-    detect: (html) => /overflow(-y)?\s*:\s*(auto|scroll)/i.test(html),
+    detect: (scanned) =>
+      /overflow(-y)?\s*:\s*(auto|scroll)/i.test(scanned.styleText),
     remediation:
       "A nested scroll region was found. Claude scrolls the conversation, and a scroll-within-a-scroll is hard to use on touch.",
   },
@@ -261,12 +271,9 @@ const DESIGN_LINTS: Array<{
       "Widget shows few accessibility affordances",
       "§Accessibility",
     ),
-    detect: (html) =>
-      /<(button|a|input)\b/i.test(html) &&
-      !/aria-[a-z]+=/i.test(html) &&
-      !/\brole=/i.test(html),
-    remediation:
-      "Interactive elements carry no ARIA attributes or roles.",
+    detect: (scanned) =>
+      hasInteractiveElement(scanned) && !hasAccessibilityAffordance(scanned),
+    remediation: "Interactive elements carry no ARIA attributes or roles.",
   },
   {
     definition: designLint(
@@ -274,7 +281,10 @@ const DESIGN_LINTS: Array<{
       "Widget does not react to the host's display mode",
       "§Display modes",
     ),
-    detect: (html) => !/displayMode|display-mode/i.test(html),
+    detect: (scanned) =>
+      !/displayMode/i.test(scanned.scriptText) &&
+      !/display-mode/i.test(scanned.styleText) &&
+      !scanned.attributes.has("data-display-mode"),
     remediation:
       "No reference to the host display mode was found; the widget will render identically inline and fullscreen.",
   },
@@ -568,8 +578,17 @@ function runDesignLints(
     );
   }
 
+  // Scanned ONCE per resource, not once per lint: eight regex passes over the
+  // same markup would be eight chances to disagree about what is in it.
+  const scanned = withHtml.map((resource) => ({
+    resource,
+    html: scanHtml(resource.html),
+  }));
+
   return DESIGN_LINTS.map((lint) => {
-    const flagged = withHtml.filter((resource) => lint.detect(resource.html));
+    const flagged = scanned
+      .filter((entry) => lint.detect(entry.html))
+      .map((entry) => entry.resource);
     // PROVENANCE IS HONEST HERE. These are `static` reads of markup even when
     // the run also had a browser: a rendering engine was not what produced
     // this signal, and labelling it `browser` would overstate the evidence.

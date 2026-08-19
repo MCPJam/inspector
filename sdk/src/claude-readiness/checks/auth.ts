@@ -366,10 +366,25 @@ export function runClaudeAuthChecks(
             "Publish Protected Resource Metadata — via the challenge's `resource_metadata` pointer, or at `/.well-known/oauth-protected-resource` with the resource path appended.",
             { fetchError: prm.fetchError },
           )
-        : satisfied(PRM_DISCOVERABLE, stamp, {
-            discoveredVia: prm.discoveredVia,
-            url: prm.url,
-          }),
+        : prm.rejectedPointer
+          ? // Discovery SUCCEEDED, via a fallback — and the server still
+            // published a pointer no conforming client can follow. Reporting
+            // only the success would hide a defect that breaks any client
+            // which trusts the challenge, which is most of them.
+            violated(
+              PRM_DISCOVERABLE,
+              stamp,
+              "The 401 challenge points at a Protected Resource Metadata URL on another origin (or a non-http scheme). Point it at this connector's own origin — a conforming client refuses to follow it, and only found your metadata by falling back to the well-known path.",
+              {
+                discoveredVia: prm.discoveredVia,
+                url: prm.url,
+                rejectedPointer: prm.rejectedPointer,
+              },
+            )
+          : satisfied(PRM_DISCOVERABLE, stamp, {
+              discoveredVia: prm.discoveredVia,
+              url: prm.url,
+            }),
     );
 
     // TWO DIFFERENT REQUIREMENTS, deliberately not one check. This one is

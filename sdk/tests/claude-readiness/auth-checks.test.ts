@@ -221,6 +221,39 @@ describe("the RFC 8707 resource parameter, once an authorization happened", () =
   });
 });
 
+describe("a refused resource_metadata pointer is reported, not swallowed", () => {
+  it("fails discovery even when the well-known fallback worked", () => {
+    // The fallback found the document, and the server still published a
+    // pointer no conforming client can follow. Reporting only the success
+    // would hide a defect that breaks every client which trusts the challenge.
+    const finding = byId(
+      runClaudeAuthChecks(
+        {
+          ...HEALTHY,
+          prm: {
+            ...HEALTHY.prm!,
+            discoveredVia: "well-known-path-suffixed",
+            rejectedPointer: "https://elsewhere.example/prm.json",
+          },
+        },
+        STAMP,
+      ),
+      "claude.auth.prm-discoverable",
+    );
+    expect(finding.status).toBe("violated");
+    expect(finding.details).toMatchObject({
+      rejectedPointer: "https://elsewhere.example/prm.json",
+    });
+  });
+
+  it("passes when the pointer was followed normally", () => {
+    expect(
+      byId(runClaudeAuthChecks(HEALTHY, STAMP), "claude.auth.prm-discoverable")
+        .status,
+    ).toBe("satisfied");
+  });
+});
+
 describe("canonicalResourceIndicator", () => {
   it("drops the query, fragment and default port but keeps the path", () => {
     expect(

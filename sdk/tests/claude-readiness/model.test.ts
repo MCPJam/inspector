@@ -19,6 +19,7 @@ import {
   CLAUDE_READINESS_ENGINE_VERSION,
   claudePolicySource,
   decideLaneStatus,
+  isDispositiveClaudeFinding,
   isPolicyCorpusVerified,
   rollUpLaneStatus,
   summarizeLaneCoverage,
@@ -63,10 +64,12 @@ function lane(
 
 describe("decideLaneStatus", () => {
   it("lets only required and runtime-blocker findings fail a lane", () => {
-    // Derived from the constant so a class added to the model is covered here
-    // automatically, rather than quietly escaping the central rule.
+    // Derived from the constant AND filtered by the model's own predicate.
+    // Restating the rule as a second literal list would let a newly
+    // dispositive class be picked up here and then asserted non-dispositive —
+    // the suite would stay green while contradicting the model.
     const nonDispositive = CLAUDE_FINDING_CLASSES.filter(
-      (cls) => cls !== "required" && cls !== "runtime-blocker",
+      (cls) => !isDispositiveClaudeFinding({ class: cls }),
     );
     for (const cls of nonDispositive) {
       expect(

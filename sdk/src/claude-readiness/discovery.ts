@@ -326,12 +326,19 @@ async function discoverProtectedResourceMetadata(
     };
   }
 
-  let lastError: string | undefined = rejectedPointer
-    ? `the challenge's resource_metadata pointer was refused: it must be an http(s) URL on the connector's own origin`
+  // The refusal is a SEPARATE fact from whatever the fallback attempts
+  // report, and it must not be overwritten by them: a server that published an
+  // off-origin pointer AND has no well-known document has two problems, and a
+  // report that mentions only the second sends the submitter to the wrong one.
+  const rejectionNote = rejectedPointer
+    ? `the challenge's resource_metadata pointer was refused (it must be an http(s) URL on the connector's own origin)`
     : undefined;
+  let lastError: string | undefined;
   for (const attempt of attempts) {
     const result = await fetchJson(attempt.url, options);
     if (result.status >= 200 && result.status < 300 && result.document) {
+      // `rejectedPointer` rides along on SUCCESS too: the fallback worked, and
+      // the server still published a pointer no conforming client can follow.
       return {
         discoveredVia: attempt.step,
         url: attempt.url,
@@ -341,7 +348,11 @@ async function discoverProtectedResourceMetadata(
     }
     lastError = result.error ?? `${attempt.url} answered ${result.status}`;
   }
-  return { discoveredVia: "not-found", fetchError: lastError, rejectedPointer };
+  return {
+    discoveredVia: "not-found",
+    fetchError: [rejectionNote, lastError].filter(Boolean).join("; ") || undefined,
+    rejectedPointer,
+  };
 }
 
 /**
