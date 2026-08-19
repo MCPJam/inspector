@@ -1325,11 +1325,14 @@ function runEvalValidate(options: { file: string }, command: Command): void {
     return;
   }
 
-  const result = {
+  // Annotated, like the success envelope above: the shape is pinned in
+  // `docs/cli/reference.mdx`, and an unannotated literal can drift from it
+  // without the compiler noticing.
+  const result: ValidateResult = {
     valid: false,
     file: label,
     stage: loaded.stage,
-    findings: loaded.findings,
+    findings: [...loaded.findings],
   };
   if (globalOptions.format === "human") {
     process.stdout.write(

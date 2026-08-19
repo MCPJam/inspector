@@ -20,17 +20,33 @@
  */
 
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import test, { describe } from "node:test";
 import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadEvalSuiteFile } from "@mcpjam/sdk";
+import {
+  modalRepetitions,
+  percentToFraction,
+} from "../src/lib/eval-suite-export.js";
 import { main } from "../src/index.js";
 
 const telemetryDisabled = {
   env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
 };
+
+/**
+ * The two helpers below mutate PROCESS-GLOBAL state — `captureProcessOutput`
+ * replaces `process.stdout.write`/`process.stderr.write`, and `withTempDir`
+ * calls `process.chdir` (which `eval export`'s default path resolution needs).
+ * Both restore in `finally`, which is correct only while the tests in this file
+ * run one at a time. `node:test` runs subtests within a file sequentially by
+ * default; do NOT enable concurrency here, or one test will capture another's
+ * output and read another's working directory.
+ */
 
 async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
   result: T;
@@ -291,6 +307,56 @@ async function runExport(
   }
 }
 
+// ── the percent → fraction conversion ────────────────────────────────────────
+
+describe("percentToFraction", () => {
+  test("shifts the decimal point exactly, in decimal", () => {
+    // `85 / 100` in binary floating point is the nearest double, and
+    // `(85 / 100) * 100` is 85.00000000000001 — so a divide-then-verify
+    // conversion would reject almost every percent a person has typed. These
+    // are the values the hosted `minimumAccuracy` actually carries.
+    const cases: Array<[number, number]> = [
+      [0, 0],
+      [1, 0.01],
+      [7, 0.07],
+      [20, 0.2],
+      [80, 0.8],
+      [85, 0.85],
+      [99, 0.99],
+      [100, 1],
+      [0.5, 0.005],
+      [5.5, 0.055],
+      [12.345, 0.12345],
+      [33.333333, 0.33333333],
+    ];
+    for (const [percent, fraction] of cases) {
+      assert.equal(percentToFraction(percent), fraction, `${percent}%`);
+    }
+  });
+
+  test("refuses anything it cannot represent without losing a digit", () => {
+    for (const percent of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      1e-7, // exponent notation: `toString` is "1e-7", not plain decimal
+    ]) {
+      assert.equal(percentToFraction(percent), null, String(percent));
+    }
+  });
+});
+
+describe("modalRepetitions", () => {
+  test("picks the most common count, smallest on a tie", () => {
+    assert.equal(modalRepetitions([5, 5, 9]), 5);
+    assert.equal(modalRepetitions([9, 5, 5]), 5);
+    // A tie must resolve the SAME way whatever order the cases arrive in, or
+    // an export's diff moves when somebody reorders the suite.
+    assert.equal(modalRepetitions([9, 3]), 3);
+    assert.equal(modalRepetitions([3, 9]), 3);
+    assert.equal(modalRepetitions([]), 1);
+  });
+});
+
 // ── eval validate ────────────────────────────────────────────────────────────
 
 describe("eval validate", () => {
@@ -508,6 +574,42 @@ describe("eval validate", () => {
       // The file on disk is untouched: rejecting is not trimming.
       assert.equal(Buffer.byteLength(await readFile(file, "utf8")), 1_048_577);
     });
+  });
+
+  test("--file - reads the suite from stdin and labels it <stdin>", async () => {
+    // The one test in this file that spawns the CLI instead of calling `main()`
+    // in-process. `readSuiteFileInput` reads file descriptor 0 directly, and a
+    // process cannot repoint its own fd 0 from JavaScript — so the only honest
+    // way to exercise the branch the docs advertise is to be a parent with a
+    // pipe.
+    const cli = fileURLToPath(new URL("../src/index.ts", import.meta.url));
+    const tsx = fileURLToPath(
+      new URL("../../node_modules/.bin/tsx", import.meta.url)
+    );
+
+    const run = await new Promise<{ code: number; stdout: string }>(
+      (resolve, reject) => {
+        const child = spawn(
+          tsx,
+          [cli, "eval", "validate", "--file", "-", "--format", "json"],
+          {
+            env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
+            stdio: ["pipe", "pipe", "pipe"],
+          }
+        );
+        let stdout = "";
+        child.stdout.on("data", (chunk) => (stdout += chunk));
+        child.on("error", reject);
+        child.on("close", (code) => resolve({ code: code ?? -1, stdout }));
+        child.stdin.end(VALID_SUITE_FILE);
+      }
+    );
+
+    assert.equal(run.code, 0, run.stdout);
+    const payload = JSON.parse(run.stdout);
+    assert.equal(payload.valid, true);
+    assert.equal(payload.file, "<stdin>");
+    assert.equal(payload.suite.id, "s_billing");
   });
 
   test("--format human says what is wrong in prose", async () => {

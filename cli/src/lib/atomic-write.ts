@@ -55,6 +55,9 @@ export async function writeFileAtomic(
   const temporary = `${resolved}.${process.pid}-${randomBytes(6).toString(
     "hex"
   )}.tmp`;
+  // Which side of the rename a failure lands on decides whether there is a
+  // temp file left to clean up, and whether the destination changed.
+  let renamed = false;
 
   try {
     if (options.createParents) {
@@ -75,12 +78,49 @@ export async function writeFileAtomic(
       await handle.close();
     }
     await rename(temporary, resolved);
+    renamed = true;
+    // `rename` is atomic for a READER the instant it returns, but it is not
+    // yet DURABLE: the new directory entry can still be sitting in the page
+    // cache. A crash in that window leaves the destination holding the
+    // previous bytes — or nothing — after this function already reported
+    // success. Flushing the containing directory is what closes that window,
+    // and it is the second half of the recipe whose first half is the fsync
+    // above.
+    await syncDirectory(path.dirname(resolved));
   } catch (error) {
-    // Best-effort: the write may have failed before the file existed, and a
-    // cleanup failure must not mask the original error.
-    await unlink(temporary).catch(() => {});
+    // Only before the rename. Afterwards the temp NAME no longer exists, and
+    // unlinking `resolved` under its new name is the last thing a failed
+    // durability flush should do. Best-effort either way: the write may have
+    // failed before the file existed, and a cleanup failure must not mask the
+    // original error.
+    if (!renamed) {
+      await unlink(temporary).catch(() => {});
+    }
     throw error;
   }
 
   return resolved;
+}
+
+/**
+ * Flush a directory's entries to storage.
+ *
+ * Skipped on Windows, where Node cannot open a directory handle at all — the
+ * call fails with `EPERM`/`EISDIR` rather than doing nothing, so attempting it
+ * would turn every successful write on that platform into an error. NTFS
+ * commits the directory entry as part of the rename, so there is nothing this
+ * would add there.
+ *
+ * Everywhere else a failure PROPAGATES. A durability flush that quietly failed
+ * would leave this function reporting a success it cannot vouch for, which is
+ * the same class of bug the temp-file dance exists to prevent.
+ */
+async function syncDirectory(directoryPath: string): Promise<void> {
+  if (process.platform === "win32") return;
+  const handle = await open(directoryPath, "r");
+  try {
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
 }

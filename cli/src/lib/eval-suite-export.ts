@@ -111,13 +111,13 @@ export function percentToFraction(percent: number): number | null {
     normalized === "" || normalized === "-" ? "0" : normalized
   );
 
-  // `Number.prototype.toString` prints the SHORTEST decimal that round-trips,
-  // so this equality is the statement "no digit was lost turning the percent
-  // into a fraction".
   if (!Number.isFinite(value)) return null;
-  return value.toString() === Number(normalized || "0").toString()
-    ? value
-    : null;
+  // `Number.prototype.toString` prints the SHORTEST decimal that round-trips
+  // through a double. So this compares the double against the decimal the
+  // shift above computed, and holds exactly when no digit was lost turning the
+  // percent into a fraction. Comparing `value` against another parse of the
+  // same text would compare it with itself and prove nothing.
+  return value.toString() === normalized ? value : null;
 }
 
 // ── match options ────────────────────────────────────────────────────────────
@@ -436,6 +436,10 @@ function caseLevelFindings(
   }
 
   const checks = evalCase.checks;
+  // Same tolerant-reader `?? []` as `models`/`steps` above: `list` is typed
+  // required beside `mode`, and a backend that skewed and sent only `mode`
+  // would otherwise raise a TypeError where a finding belongs.
+  const checkList = checks?.list ?? [];
   if (checks && checks.mode !== "inherit") {
     findings.push(
       unsupported(
@@ -445,7 +449,7 @@ function caseLevelFindings(
           `\`assertions\`, so there is nothing for a "${checks.mode}" to mean.`
       )
     );
-  } else if (checks && checks.mode === "inherit" && checks.list.length > 0) {
+  } else if (checks && checks.mode === "inherit" && checkList.length > 0) {
     // `resolveEffectiveChecks` proves the list is dead in `inherit` mode — the
     // case grades on the suite's checks. Dead or not, it is authored content
     // with nowhere to go, and this command does not decide on an author's
@@ -454,7 +458,7 @@ function caseLevelFindings(
       unsupported(
         ["cases", index, "checks", "list"],
         `case "${evalCase.title}" inherits the suite's checks but also carries ` +
-          `${checks.list.length} of its own. The hosted run ignores them; a file ` +
+          `${checkList.length} of its own. The hosted run ignores them; a file ` +
           `would have to drop them outright, which this refuses to do silently.`
       )
     );
@@ -563,7 +567,19 @@ function hoistProvider(cases: PlatformEvalCase[]): ProviderDecision {
 
 // ── the deep-equality proof ──────────────────────────────────────────────────
 
-/** Every path at which `actual` differs from `expected`, in document order. */
+/**
+ * Every path at which `actual` differs from `expected`, in document order.
+ *
+ * Descends so a difference is reported at the field that changed rather than
+ * at the whole document. The two `if (out.length === before)` guards keep the
+ * function's contract — "unequal implies at least one path" — true even where
+ * descending cannot find the difference: a key PRESENT with an `undefined`
+ * value on one side and ABSENT on the other is unequal to
+ * `isDeepStrictEqual`, but compares `undefined` with `undefined` key-by-key
+ * and would otherwise push nothing. This function is the module's exactness
+ * proof, and a proof that can silently return "no differences" for a value it
+ * was told is different is not one.
+ */
 function differences(
   expected: unknown,
   actual: unknown,
@@ -572,11 +588,17 @@ function differences(
 ): Array<Array<string | number>> {
   if (isDeepStrictEqual(expected, actual)) return out;
 
+  // Against `out.length` AT ENTRY, not against zero: `out` accumulates across
+  // the whole traversal, so a sibling's finding would otherwise mask this
+  // node's.
+  const before = out.length;
+
   if (Array.isArray(expected) && Array.isArray(actual)) {
     const length = Math.max(expected.length, actual.length);
     for (let index = 0; index < length; index += 1) {
       differences(expected[index], actual[index], [...path, index], out);
     }
+    if (out.length === before) out.push(path);
     return out;
   }
 
@@ -602,6 +624,7 @@ function differences(
         out
       );
     }
+    if (out.length === before) out.push(path);
     return out;
   }
 
