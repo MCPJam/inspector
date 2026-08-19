@@ -38,6 +38,7 @@ import {
   callServerToolOperation,
   cancelEvalRunOperation,
   createEvalCaseOperation,
+  createEvalCasesOperation,
   createEvalSuiteOperation,
   diagnoseServerOperation,
   generateEvalCasesOperation,
@@ -565,6 +566,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // derived idempotency set below and echoed in the response envelope.
   { operation: createEvalSuiteOperation, tier: "direct" },
   { operation: createEvalCaseOperation, tier: "direct" },
+  { operation: createEvalCasesOperation, tier: "direct" },
   { operation: updateEvalCaseOperation, tier: "direct" },
   { operation: updateEvalSuiteOperation, tier: "direct" },
 
