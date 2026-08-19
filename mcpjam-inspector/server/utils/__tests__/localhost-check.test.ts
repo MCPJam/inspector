@@ -7,6 +7,7 @@
 
 import { describe, it, expect } from "vitest";
 import {
+  isAllowedHost,
   isLocalhostRequest,
   isTunnelHost,
   mayServeSessionToken,
@@ -345,5 +346,92 @@ describe("mayServeSessionToken", () => {
         hostedMode: true,
       })
     ).toBe(true);
+  });
+
+  // Self-hosted (npx/Docker) runs with hostedMode: false. The allowlist used to
+  // be ignored entirely in that mode, so a self-hosted user reaching the
+  // inspector over the LAN (raw IP) had no supported way to receive the token.
+  // MCPJAM_ALLOWED_HOSTS is now honored in BOTH modes (BB-118).
+  describe("self-hosted network access (hostedMode: false)", () => {
+    it("serves an allowlisted LAN IP over the network", () => {
+      expect(
+        mayServeSessionToken({
+          host: "192.168.1.50:6274",
+          allowedHosts: ["192.168.1.50"],
+          hostedMode: false,
+        })
+      ).toBe(true);
+    });
+
+    it("still denies a host that isn't allowlisted", () => {
+      expect(
+        mayServeSessionToken({
+          host: "192.168.1.50:6274",
+          allowedHosts: ["192.168.1.99"],
+          hostedMode: false,
+        })
+      ).toBe(false);
+      // Empty allowlist = localhost-only, the pre-BB-118 default.
+      expect(
+        mayServeSessionToken({
+          host: "192.168.1.50:6274",
+          allowedHosts: [],
+          hostedMode: false,
+        })
+      ).toBe(false);
+    });
+
+    it("still vetoes a tunnel host in self-hosted mode even if allowlisted", () => {
+      expect(
+        mayServeSessionToken({
+          host: "abc123.tunnels.mcpjam.com",
+          allowedHosts: ["*.tunnels.mcpjam.com"],
+          hostedMode: false,
+        })
+      ).toBe(false);
+    });
+  });
+});
+
+describe("isAllowedHost", () => {
+  it("always allows localhost regardless of mode or allowlist", () => {
+    expect(isAllowedHost("localhost:6274", [], false)).toBe(true);
+    expect(isAllowedHost("127.0.0.1", [], false)).toBe(true);
+    expect(isAllowedHost("[::1]:6274", [], true)).toBe(true);
+  });
+
+  it("honors the allowlist in self-hosted mode (hostedMode: false)", () => {
+    expect(isAllowedHost("192.168.1.50:6274", ["192.168.1.50"], false)).toBe(
+      true
+    );
+    expect(isAllowedHost("inspector.lan", ["inspector.lan"], false)).toBe(true);
+  });
+
+  it("honors the allowlist in hosted mode (hostedMode: true)", () => {
+    expect(isAllowedHost("myapp.railway.app", ["*.railway.app"], true)).toBe(
+      true
+    );
+  });
+
+  it("matches on hostname, ignoring the port", () => {
+    // The operator sets the bare hostname; requests carry host:port.
+    expect(isAllowedHost("192.168.1.50:8080", ["192.168.1.50"], false)).toBe(
+      true
+    );
+  });
+
+  it("does not weaken DNS-rebinding protection: a non-allowlisted host is denied", () => {
+    // attacker.com resolving to the box's IP still sends Host: attacker.com,
+    // which is not in the allowlist.
+    expect(isAllowedHost("attacker.com", ["192.168.1.50"], false)).toBe(false);
+    expect(isAllowedHost("192.168.1.51:6274", ["192.168.1.50"], false)).toBe(
+      false
+    );
+  });
+
+  it("denies any non-localhost host when the allowlist is empty", () => {
+    expect(isAllowedHost("192.168.1.50:6274", [], false)).toBe(false);
+    expect(isAllowedHost("example.com", [], true)).toBe(false);
+    expect(isAllowedHost(undefined, [], false)).toBe(false);
   });
 });

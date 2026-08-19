@@ -243,14 +243,32 @@ export function mayServeGuestBootstrap(options: {
 /**
  * Check if the request is from an allowed host.
  *
- * In hosted mode (cloud deployments), this allows both localhost and
- * configured allowed hosts (MCPJAM_ALLOWED_HOSTS) to receive tokens.
- * This enables deployment to platforms like Railway while maintaining
- * security by only allowing explicitly configured hosts.
+ * Localhost is always allowed. Beyond that, `MCPJAM_ALLOWED_HOSTS`
+ * (`allowedHosts`) is an explicit, admin-controlled opt-in that names the
+ * exact hosts permitted to receive the token — in BOTH hosted and self-hosted
+ * deployments:
+ * - Hosted (cloud, e.g. Railway): the deployment sets it to its canonical app
+ *   host(s) so `app.mcpjam.com` can receive the token/guest bearer.
+ * - Self-hosted (npx/Docker on a remote box, accessed over the LAN via a raw
+ *   IP like `192.168.x.x:6274`): the operator sets it to their own host so the
+ *   inspector is reachable off-localhost. Without this opt-in the token is
+ *   localhost-only and network access dead-ends on an auth error.
+ *
+ * The allowlist is deliberately NOT gated on `hostedMode`: withholding it in
+ * self-hosted mode gave those operators no supported way to reach the
+ * inspector over the network, which is the whole point of self-hosting on a
+ * remote box. This does not weaken DNS-rebinding protection — the match is
+ * against the exact `Host` the operator configured, so a malicious domain that
+ * resolves to the same IP still fails the check (its `Host` isn't allowlisted).
+ * The tunnel veto in `mayServeSessionToken`/`mayServeGuestBootstrap` runs
+ * BEFORE this, so a tunnel host can never be allowlisted into a token leak.
+ *
+ * `hostedMode` is retained in the signature for its callers but no longer gates
+ * the allowlist.
  *
  * @param hostHeader - The Host header value from the request
  * @param allowedHosts - List of additional allowed hosts (from config)
- * @param hostedMode - Whether hosted mode is enabled
+ * @param hostedMode - Whether hosted mode is enabled (no longer gates the allowlist)
  * @returns true if the request is from an allowed host, false otherwise
  */
 export function isAllowedHost(
@@ -258,13 +276,15 @@ export function isAllowedHost(
   allowedHosts: string[],
   hostedMode: boolean
 ): boolean {
+  void hostedMode; // retained for callers; no longer gates the allowlist (see above)
+
   // Always allow localhost
   if (isLocalhostRequest(hostHeader)) {
     return true;
   }
 
-  // In hosted mode, check configured allowed hosts
-  if (hostedMode && hostHeader && allowedHosts.length > 0) {
+  // Explicit admin opt-in via MCPJAM_ALLOWED_HOSTS (both hosted + self-hosted).
+  if (hostHeader && allowedHosts.length > 0) {
     const host = hostHeader.toLowerCase();
     // Extract hostname without port for comparison
     const hostWithoutPort = host.split(":")[0];
