@@ -324,6 +324,39 @@ export type {
   PublicCheckOverride,
   PublicMatchOptions,
 } from "./corpus.js";
+
+// Suite files: read one, resolve its documented defaults in memory, write an
+// authored one back. Pure and browser-safe — the file I/O half lives in
+// @mcpjam/cli (`eval validate`, `eval export`).
+//
+// Deliberately NOT re-exported from `@mcpjam/sdk/contract`. That subpath is
+// dependency-light (zod only) and browser-bundled on purpose; routing the
+// loader through it would pull `yaml` into every client bundle that imports
+// the contract for its types.
+export {
+  MAX_SUITE_FILE_BYTES,
+  SUITE_FILE_DEFAULT_CAPTURE_LEVEL,
+  SUITE_FILE_FINDING_CODES,
+  SUITE_FILE_VALIDITY_DEFAULTS,
+  formatSuiteFileFindings,
+  loadEvalSuiteFile,
+  resolveEvalSuiteFile,
+  serializeEvalSuiteFile,
+  suiteFilePointer,
+} from "./suite-file-loader.js";
+export type {
+  LoadEvalSuiteFileOptions,
+  ResolvedEvalSuiteFile,
+  ResolvedEvalSuiteFileCase,
+  ResolvedEvalSuiteFileValidity,
+  SuiteFileFailureStage,
+  SuiteFileFinding,
+  SuiteFileFindingCode,
+  SuiteFileLoadFailure,
+  SuiteFileLoadResult,
+  SuiteFileLoadSuccess,
+  SuiteFileLocation,
+} from "./suite-file-loader.js";
 export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,
