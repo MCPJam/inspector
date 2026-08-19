@@ -1,0 +1,73 @@
+---
+title: "GitHub Checks"
+description: "Run MCPJam eval suites as GitHub status checks on pull requests — connect a GitHub account, then attach a repository to a suite."
+icon: "github"
+---
+
+GitHub Checks posts a pass/fail status check on a pull request's head commit
+each time a connected eval suite runs. The check appears alongside your CI
+jobs and blocks or allows merge according to your branch protection rules.
+
+## Connect a GitHub account
+
+Before you can attach a repository, you need to connect the GitHub account
+that owns it. Go to **Settings → Integrations → GitHub** and find the
+**GitHub accounts** section.
+
+Two paths are available:
+
+- **Install on a GitHub account** — installs the MCPJam GitHub App on an
+  account you choose. You are sent to GitHub to complete the install, then
+  returned automatically.
+- **Claim an existing installation** — for an account where somebody already
+  installed the app from GitHub's side, without going through MCPJam first.
+  You are asked to sign in to GitHub so MCPJam can confirm you administer that
+  account. Installing the app is not on its own proof that an installation is
+  yours to connect to a workspace, so this sign-in step is required.
+
+Once connected, the account appears in the **GitHub accounts** list with its
+status:
+
+| Status | Meaning |
+|--------|---------|
+| Connected | Repositories on this account can run checks. |
+| Suspended on GitHub | The app was suspended on GitHub. Checks are paused until it is unsuspended there. |
+| App uninstalled | The app was removed from this account. Reinstall it to resume checks. |
+
+### Disconnect an account
+
+Click **Disconnect** next to an account and confirm. Checks on its
+repositories stop immediately. Your suite and policy settings are kept, so
+reconnecting restores them without rebuilding anything.
+
+## Connect a repository
+
+With at least one GitHub account connected, use the **Connect a repository**
+section on the same settings page to attach a repository to a suite.
+
+1. Pick a **repository** from the list. If you have repositories from more
+   than one connected account with the same name, each option shows the account
+   name beside it so you can tell them apart.
+2. Pick a **suite** — the eval suite whose results will be posted as the check.
+3. Pick an **outage policy** — what the check reports if MCPJam cannot reach
+   GitHub to post a result:
+   - **Fail open** — the check is skipped rather than failed.
+   - **Fail closed** — the check is marked failed.
+4. Click **Connect**.
+
+## Repository connection states
+
+Each connected repository shows a badge when something needs attention. A
+healthy repository shows no badge.
+
+| Badge | Meaning |
+|-------|---------|
+| **Reconnect required** | This repository was connected before MCPJam verified repository identities. Disconnect and reconnect it to keep checks running. This is not a problem with your pull requests. |
+| **App inactive** | The MCPJam GitHub App is not active on the connected account, so checks are paused. This is not a problem with your pull requests — reconnect the app from the GitHub accounts section above. |
+| **No access** | The MCPJam GitHub App no longer has access to this repository, so checks are paused. This is not a problem with your pull requests — grant it access on GitHub, then reconnect. |
+
+## Configure checks on a suite
+
+You can also connect a repository directly from a suite's **GitHub Checks**
+section. The same repository picker and outage policy options are available
+there, scoped to that suite.
