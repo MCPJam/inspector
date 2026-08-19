@@ -243,7 +243,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
-      verifiedAt: 1786492800000,
+      verifiedAt: 1786665600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -659,7 +659,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
-      verifiedAt: 1785974400000,
+      verifiedAt: 1786665600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1011,7 +1011,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-03-26"],
-      verifiedAt: 1786579200000,
+      verifiedAt: 1786665600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,
@@ -1464,7 +1464,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       provenance: "probe",
       rendersMcpApps: true,
       supportedProtocolVersions: ["2025-11-25"],
-      verifiedAt: 1786579200000,
+      verifiedAt: 1786665600000,
       modelVisibleMcpToolResults: {
         directContent: {
           image: true,

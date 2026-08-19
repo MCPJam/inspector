@@ -586,6 +586,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        mcpProtocolVersion: "auto",
         initialize: {
           supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
           // Base MCP protocol: clientInfo sent to MCP servers during
