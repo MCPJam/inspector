@@ -158,6 +158,65 @@ describe("StepListEditor", () => {
     ]);
   });
 
+  // A locator with no reference point is rejected at the write boundary, so the
+  // placeholders an added step carries have to read as unfinished on the fields
+  // themselves — not only in the blocked-Save tooltip.
+  it("flags the seeded placeholders on an untouched interact step", () => {
+    const steps: TestStep[] = [
+      {
+        id: "1",
+        kind: "interact",
+        toolName: "",
+        action: { kind: "click", target: { testId: "" } },
+      },
+    ];
+    render(
+      <StepListEditor
+        steps={steps}
+        onStepsChange={vi.fn()}
+        availableTools={[]}
+        suiteServers={[]}
+        evalValidationBorderClass=""
+      />,
+    );
+    expect(screen.getByPlaceholderText("view tool name…")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    expect(screen.getByPlaceholderText("testId…")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+  });
+
+  it("clears the flags once the step names a view and an element", () => {
+    const steps: TestStep[] = [
+      {
+        id: "1",
+        kind: "interact",
+        toolName: "create_view",
+        action: { kind: "click", target: { testId: "add-to-cart" } },
+      },
+    ];
+    render(
+      <StepListEditor
+        steps={steps}
+        onStepsChange={vi.fn()}
+        availableTools={[]}
+        suiteServers={[]}
+        evalValidationBorderClass=""
+      />,
+    );
+    expect(screen.getByPlaceholderText("view tool name…")).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+    expect(screen.getByPlaceholderText("testId…")).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+  });
+
   describe("readOnly (snapshot view)", () => {
     const steps: TestStep[] = [
       { id: "1", kind: "prompt", prompt: "Draw a cat" },

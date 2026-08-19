@@ -41,7 +41,13 @@ import {
   type RecorderReadyEvent,
   type RecorderStepEvent,
 } from "@/components/chat-v2/thread/recorder-types";
-import type { ScriptedStep, StepAssertion } from "@/shared/scripted-steps";
+import {
+  MAX_SCRIPTED_STEP_TEXT_CHARS,
+  MAX_SCRIPTED_WAIT_MS,
+  type ElementLocator,
+  type ScriptedStep,
+  type StepAssertion,
+} from "@/shared/scripted-steps";
 import { AssertPickChooser, type AssertPick } from "./assert-pick-chooser";
 import { CaseRunsHistory } from "./runs/case-runs-history";
 import { ReplayedScenarioPane } from "./runs/replayed-scenario-pane";
@@ -72,6 +78,7 @@ import {
   deriveExpectedToolCalls,
   deriveQuery,
   isAssertStep,
+  isInteractStep,
   isModelFree,
   isPromptStep,
   isToolCallStep,
@@ -82,9 +89,12 @@ import {
   stepAssertionToWidgetAssertion,
   stepsToPromptTurns,
   stepTurnIndices,
+  WIDGET_ASSERTION_LABELS,
   type InteractAction,
+  type InteractStep,
   type TestStep,
   type ToolCallStep,
+  type WidgetAssertion,
 } from "@/shared/steps";
 import { appendScenarioPredicatesAsAssertSteps } from "@/shared/predicate-migration";
 
@@ -451,18 +461,134 @@ function isToolCallStepIncomplete(step: ToolCallStep): boolean {
   );
 }
 
+/**
+ * The authoring gap in a widget step (`interact`, or an `assert` carrying a
+ * `WidgetAssertion`), or null when it is complete — phrased for the blocked
+ * Save/Run tooltip.
+ *
+ * These mirror the backend `assertValidSteps` rules (mcpjam-backend
+ * `convex/lib/steps.ts`). The editor seeds every widget step with placeholder
+ * fields it cannot fill for the user — `toolName: ""`, `target: { testId: "" }`
+ * — so without this gate an untouched step reaches `createTestCase` and the
+ * mutation rejects the whole save with a raw `ConvexError` (Sentry CONVEX-1PD,
+ * CONVEX-1P2). Keep in lockstep with `assertValidInteractStep` /
+ * `assertValidWidgetAssertion`.
+ */
+function getWidgetStepGap(step: TestStep): string | null {
+  if (isInteractStep(step)) return getInteractStepGap(step);
+  if (isAssertStep(step) && isWidgetAssertion(step.assertion)) {
+    return getWidgetAssertionGap(step.assertion);
+  }
+  return null;
+}
+
+/**
+ * Read a step's string field defensively. `normalizeSteps` and the legacy
+ * `widgetChecks` bridge both cast stored blobs to the step types without
+ * checking leaf fields, so a field the type promises can still arrive missing —
+ * and this runs inside the editor's render-time `useMemo`, where a `.trim()` on
+ * `undefined` would blank the pane instead of reporting the gap.
+ */
+const trimmed = (value: unknown): string =>
+  typeof value === "string" ? value.trim() : "";
+
+const tooLong = (value: unknown): boolean =>
+  typeof value === "string" && value.length > MAX_SCRIPTED_STEP_TEXT_CHARS;
+
+function getInteractStepGap(step: InteractStep): string | null {
+  const label = `${step.action.kind} step`;
+  if (!trimmed(step.toolName)) return `Pick a view (tool) for the ${label}.`;
+  const a = step.action;
+  switch (a.kind) {
+    case "click":
+      return getLocatorGap(a.target, label);
+    case "type":
+      return (
+        getLocatorGap(a.target, label) ??
+        (tooLong(a.text)
+          ? `Shorten the typed text to ${MAX_SCRIPTED_STEP_TEXT_CHARS} characters or fewer.`
+          : null)
+      );
+    case "key":
+      return trimmed(a.key) ? null : "Enter a key for the key step.";
+    case "scroll":
+      return a.amount === undefined ||
+        (Number.isInteger(a.amount) && a.amount >= 1)
+        ? null
+        : "Scroll amount must be a whole number of 1 or more.";
+    case "wait":
+      return Number.isInteger(a.ms) && a.ms >= 1 && a.ms <= MAX_SCRIPTED_WAIT_MS
+        ? null
+        : `Wait must be a whole number of milliseconds between 1 and ${MAX_SCRIPTED_WAIT_MS}.`;
+  }
+}
+
+function getWidgetAssertionGap(a: WidgetAssertion): string | null {
+  const label = WIDGET_ASSERTION_LABELS[a.kind].toLowerCase();
+  if (!trimmed(a.toolName)) return `Pick a view (tool) for the ${label} check.`;
+  switch (a.kind) {
+    case "textVisible":
+      if (!trimmed(a.text)) return "Enter the text the check looks for.";
+      return tooLong(a.text)
+        ? `Shorten the expected text to ${MAX_SCRIPTED_STEP_TEXT_CHARS} characters or fewer.`
+        : null;
+    case "elementVisible":
+    case "elementHidden":
+      return getLocatorGap(a.target, `${label} check`);
+    case "inputValue":
+      return (
+        getLocatorGap(a.target, `${label} check`) ??
+        (tooLong(a.equals)
+          ? `Shorten the expected value to ${MAX_SCRIPTED_STEP_TEXT_CHARS} characters or fewer.`
+          : null)
+      );
+    case "widgetToolCalled":
+      return trimmed(a.calledToolName)
+        ? null
+        : "Enter the tool name the view is expected to call.";
+  }
+}
+
+/**
+ * A locator needs at least one reference point, and every field it does carry
+ * must be non-empty. Both halves matter: `{}` fails the backend's
+ * "at least one of" check, while `{ testId: "" }` (the editor's placeholder) and
+ * `{ role: { role: "" } }` clear that check and fail its per-field non-empty
+ * ones — a truthy `role` object satisfies the bundle but an empty ARIA role
+ * string does not.
+ */
+function getLocatorGap(
+  loc: ElementLocator | undefined,
+  label: string,
+): string | null {
+  const gap = `Pick an element target for the ${label}.`;
+  if (!loc || typeof loc !== "object") return gap;
+  for (const value of [loc.text, loc.css, loc.testId]) {
+    if (value !== undefined && !trimmed(value)) return gap;
+  }
+  if (loc.role !== undefined && !trimmed(loc.role.role)) return gap;
+  // Past those checks a present field is a usable one, so "carries at least
+  // one" is just "at least one is set".
+  const hasReferencePoint = [loc.role, loc.text, loc.css, loc.testId].some(
+    (value) => value !== undefined,
+  );
+  return hasReferencePoint ? null : gap;
+}
+
 const validateSteps = (steps: TestStep[]): boolean => {
   if (!Array.isArray(steps) || steps.length === 0) {
     return false;
   }
 
-  // Each primary step must be complete: prompts need text, tool calls need a
-  // server + real tool.
+  // Each step must be complete: prompts need text, tool calls need a server +
+  // real tool, widget steps need a view and a resolvable element target.
   for (const step of steps) {
     if (isPromptStep(step)) {
       if (!step.prompt.trim()) return false;
     } else if (isToolCallStep(step)) {
       if (isToolCallStepIncomplete(step)) return false;
+    } else if (getWidgetStepGap(step)) {
+      return false;
     }
   }
 
@@ -527,6 +653,18 @@ export function getStepsBlockReason(steps: TestStep[]): string | null {
       return "Enter a user prompt before run or save.";
     }
     return `Enter a user prompt for step(s) ${emptySteps.join(", ")}.`;
+  }
+
+  // Widget steps report the FIRST gap rather than a joined list: each carries a
+  // different message, so one specific instruction beats a merged one. Turn
+  // numbers come from the runner's grouping (`stepTurnIndices`) — the same one
+  // the step cards number themselves by, so the message points at the card the
+  // user is looking at.
+  const turnIndices = stepTurnIndices(steps);
+  for (const [i, step] of steps.entries()) {
+    const gap = getWidgetStepGap(step);
+    if (!gap) continue;
+    return turns.length === 1 ? gap : `${gap} (turn ${turnIndices[i] + 1})`;
   }
 
   if (validateSteps(steps)) {

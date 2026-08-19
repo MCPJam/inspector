@@ -703,7 +703,10 @@ function StepRow({
                         onUpdate({ ...step, toolName: next })
                       }
                     >
-                      <SelectTrigger className="h-7 text-[11px]">
+                      <SelectTrigger
+                        aria-invalid={!readOnly && !step.toolName.trim()}
+                        className="h-7 text-[11px]"
+                      >
                         <SelectValue placeholder="Pick a view tool…" />
                       </SelectTrigger>
                       <SelectContent>
@@ -729,6 +732,7 @@ function StepRow({
                         onUpdate({ ...step, toolName: e.target.value })
                       }
                       placeholder="view tool name…"
+                      aria-invalid={!readOnly && !step.toolName.trim()}
                       className="h-7 text-[11px]"
                     />
                   )}

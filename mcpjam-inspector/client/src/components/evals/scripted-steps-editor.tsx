@@ -108,6 +108,11 @@ export function LocatorFields({
   onChange: (next: ElementLocator) => void;
 }) {
   const by = locatorBy(value);
+  // Every mode seeds an EMPTY field (`emptyLocatorFor`), and a locator with no
+  // reference point is rejected at the write boundary — so flag the gap on the
+  // field, not only in the blocked-Save tooltip. `aria-invalid` is enough: the
+  // design-system Input carries the destructive outline for it.
+  const invalid = by === "role" ? !value.role?.role.trim() : !value[by]?.trim();
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Select
@@ -134,6 +139,7 @@ export function LocatorFields({
               })
             }
             placeholder="button"
+            aria-invalid={invalid}
             className="h-7 w-[110px] text-[11px]"
           />
           <Input
@@ -152,6 +158,7 @@ export function LocatorFields({
           value={value[by] ?? ""}
           onChange={(e) => onChange({ [by]: e.target.value })}
           placeholder={by === "css" ? ".my-button" : `${by}…`}
+          aria-invalid={invalid}
           className="h-7 flex-1 text-[11px]"
         />
       )}
