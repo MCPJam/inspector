@@ -17,7 +17,7 @@
  * this block is the "what does the widget get" view.
  */
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { ChevronDown } from "lucide-react";
 import { toast } from "sonner";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
@@ -143,24 +143,34 @@ function StyleTokenPreview({ row }: { row: StyleTokenRow }) {
     );
   }
 
-  // Type tokens: size/family rows preview the glyph, the numeric ones
-  // (weight, line-height) get a neutral mark — there is nothing to show.
-  const isGlyphToken =
-    name.endsWith("-size") ||
-    name === "--font-sans" ||
-    name === "--font-mono" ||
-    name.startsWith("--font-weight");
+  // Type tokens: the glyph renders in the property the token drives, so a
+  // mono family reads as mono and a bold weight reads as bold. Line-height
+  // has nothing to show on a single glyph and gets a neutral mark.
+  const isSizeToken = name.endsWith("-size");
+  const isFamilyToken = name === "--font-sans" || name === "--font-mono";
+  const isWeightToken = name.startsWith("--font-weight");
+  const glyphStyle: CSSProperties = {};
+  if (isSizeToken && light !== undefined) {
+    // Heading sizes run to 48px, well past the 20px chip. The raw value
+    // goes onto a custom property and the ceiling lives in a STATIC
+    // declaration, so the untrusted value still reaches CSS through the
+    // CSSOM (never spliced into a string) and a garbage token simply
+    // fails to resolve.
+    (glyphStyle as Record<string, string>)["--style-token-preview-size"] =
+      light;
+    glyphStyle.fontSize = "min(var(--style-token-preview-size), 12px)";
+  }
+  if (isFamilyToken) glyphStyle.fontFamily = light;
+  if (isWeightToken) glyphStyle.fontWeight = light;
   return (
     <span
       className={cn(
         boxClasses,
         "bg-muted/40 text-[9px] leading-none text-muted-foreground"
       )}
-      style={
-        name.startsWith("--font-weight") ? { fontWeight: light } : undefined
-      }
+      style={glyphStyle}
     >
-      {isGlyphToken ? "Aa" : "·"}
+      {isSizeToken || isFamilyToken || isWeightToken ? "Aa" : "·"}
     </span>
   );
 }
