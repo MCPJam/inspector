@@ -222,6 +222,17 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     kind: { kind: "enum", support: DISPLAY_MODE_SUPPORT },
     read: (cfg) => effMcpApps(cfg).widgetDisplayModeRequests,
   },
+  {
+    id: "hostContext.styles",
+    section: "apps",
+    subsection: "MCP Apps capabilities",
+    label: "Host styles",
+    path: "hostContext.styles",
+    description:
+      "CSS variables (and any font CSS) the host sends widgets for theming.",
+    kind: { kind: "capability" },
+    read: (cfg) => cfg.hostContext?.styles,
+  },
   ...MCP_APPS_DIMENSIONS.map(
     ({ key, description }): HostConfigFieldDef => ({
       id: `appsCap.${key}`,
@@ -462,6 +473,40 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   },
 
   // ============================================================
+  // Protocol · clientInfo
+  //
+  // Leads the protocol section: every other row below describes facts captured
+  // from one specific build of the client, so the version those facts came
+  // from is the context for reading them.
+  // ============================================================
+  {
+    id: "clientInfo.version",
+    section: "protocol",
+    subsection: "clientInfo",
+    label: "Client version",
+    path: "mcpProfile.initialize.clientInfo.version",
+    description: "`initialize.clientInfo.version` sent to the server.",
+    kind: { kind: "string" },
+    read: (cfg) => {
+      const info = mcpProfile(cfg)?.initialize?.clientInfo;
+      return typeof info?.version === "string" ? info.version : undefined;
+    },
+  },
+  {
+    id: "clientInfo.name",
+    section: "protocol",
+    subsection: "clientInfo",
+    label: "Client name",
+    path: "mcpProfile.initialize.clientInfo.name",
+    description: "`initialize.clientInfo.name` sent to the server.",
+    kind: { kind: "string" },
+    read: (cfg) => {
+      const info = mcpProfile(cfg)?.initialize?.clientInfo;
+      return typeof info?.name === "string" ? info.name : undefined;
+    },
+  },
+
+  // ============================================================
   // Protocol · Version
   // ============================================================
   {
@@ -497,35 +542,6 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       mcpProfile(cfg)?.initialize?.supportedProtocolVersions,
   },
 
-  // ============================================================
-  // Protocol · clientInfo
-  // ============================================================
-  {
-    id: "clientInfo.name",
-    section: "protocol",
-    subsection: "clientInfo",
-    label: "Client name",
-    path: "mcpProfile.initialize.clientInfo.name",
-    description: "`initialize.clientInfo.name` sent to the server.",
-    kind: { kind: "string" },
-    read: (cfg) => {
-      const info = mcpProfile(cfg)?.initialize?.clientInfo;
-      return typeof info?.name === "string" ? info.name : undefined;
-    },
-  },
-  {
-    id: "clientInfo.version",
-    section: "protocol",
-    subsection: "clientInfo",
-    label: "Client version",
-    path: "mcpProfile.initialize.clientInfo.version",
-    description: "`initialize.clientInfo.version` sent to the server.",
-    kind: { kind: "string" },
-    read: (cfg) => {
-      const info = mcpProfile(cfg)?.initialize?.clientInfo;
-      return typeof info?.version === "string" ? info.version : undefined;
-    },
-  },
 
   // ============================================================
   // Protocol · Client capabilities supported

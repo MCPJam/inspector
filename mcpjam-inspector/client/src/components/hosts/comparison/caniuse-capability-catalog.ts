@@ -27,7 +27,6 @@ const PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS = new Set([
   "systemPrompt",
   "mcpProtocolVersion",
   "clientInfo.name",
-  "clientInfo.version",
   "connectionDefaults.requestTimeout",
   "connectionDefaults.headers",
   "uiInitialize.hostInfo",
@@ -69,7 +68,12 @@ function slugForField(field: HostConfigFieldDef): string {
 // Fields that are not support-shaped but still answer a compatibility
 // question. They render as plain values (the matrix already knows how), so
 // keep this list tiny — a chip says "can I use this", a value does not.
-const PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS = new Set(["supportedProtocolVersions"]);
+const PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS = new Set([
+  "supportedProtocolVersions",
+  // Which build of the client the rest of the protocol rows were captured
+  // from. A value, not a support claim — hence plain rather than a chip.
+  "clientInfo.version",
+]);
 
 export function isPublicCaniuseCapabilityField(
   field: HostConfigFieldDef,
