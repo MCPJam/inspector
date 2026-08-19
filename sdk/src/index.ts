@@ -399,12 +399,18 @@ export {
 } from "./conformance-reporting.js";
 export type {
   ConformanceReport,
+  ConformanceReportAdvisory,
   ConformanceReportCase,
   ConformanceReportCaseStatus,
   ConformanceReportGroup,
   ConformanceReportKind,
   SupportedConformanceResult,
 } from "./conformance-reporting.js";
+
+// Claude directory readiness. Pure data and data reasoning only — the runner
+// and the dialing checks are deliberately not re-exported here, so importing
+// the result model never pulls a transport in with it.
+export * from "./claude-readiness/index.js";
 export {
   buildOutcomeSummary,
   decideConformanceOutcome,

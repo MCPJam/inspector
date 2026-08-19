@@ -26,6 +26,11 @@ export {
   type McpModelVisibleToolResultPolicy,
   type McpLinkedResourceReader,
 } from "./mcp-client-manager/model-output.js";
+// Claude directory readiness: the result model, the policy manifest, and the
+// host profile. All pure data — a client rendering lanes, coverage and badges
+// needs exactly this and must not reach the root entry for it.
+export * from "./claude-readiness/index.js";
+
 export { redactForTelemetry } from "./telemetry-redaction.js";
 /**
  * @deprecated Renamed to `redactForTelemetry`. Kept as an alias so external
