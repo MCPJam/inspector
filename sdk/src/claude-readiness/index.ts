@@ -52,6 +52,17 @@ export type {
 } from "./manifest.js";
 
 export {
+  claudeAppContentDomain,
+  claudeAppResourceEvidenceFrom,
+  claudeAppToolEvidenceFrom,
+  runClaudeAppsChecks,
+} from "./checks/apps.js";
+export type {
+  ClaudeAppResourceEvidence,
+  ClaudeAppToolEvidence,
+  ClaudeAppsEvidence,
+} from "./checks/apps.js";
+export {
   canonicalResourceIndicator,
   runClaudeAuthChecks,
 } from "./checks/auth.js";
