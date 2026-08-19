@@ -9,6 +9,7 @@ import type {
   PlatformEvalRunInsightsRequested,
   PlatformEvalRunCreated,
   PlatformEvalCase,
+  PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
   PlatformEvalSuite,
@@ -1230,6 +1231,29 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId,
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * Author several cases in one call. The bulk form of {@link createEvalCase} —
+   * same case body, same identity rules — so an import writes one request per
+   * chunk instead of one per case.
+   */
+  createEvalCases(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalCaseBatchResult> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/batch`,
       { body: params.body },
       options,
     );

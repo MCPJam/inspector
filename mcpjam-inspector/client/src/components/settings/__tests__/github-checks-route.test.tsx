@@ -1,4 +1,11 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -8,8 +15,10 @@ const {
   mockSuites,
   mockSetRepoEnabled,
   mockSetRepoSuite,
+  mockSetRepoOutagePolicy,
   mockDisconnectRepo,
   mockConnectRepo,
+  mockConnectVerifiedRepo,
   mockListInstallationRepos,
   mockOrgsLoading,
   mockAuthLoading,
@@ -21,8 +30,13 @@ const {
   mockSuites: { value: [] as unknown[] },
   mockSetRepoEnabled: vi.fn(async () => ({ changed: true })),
   mockSetRepoSuite: vi.fn(async () => ({ changed: true })),
+  mockSetRepoOutagePolicy: vi.fn(async () => ({ changed: true })),
   mockDisconnectRepo: vi.fn(async () => ({ removed: true })),
-  mockConnectRepo: vi.fn(async () => ({ configId: "cfg-new" })),
+  // The unverified connect the backend still exposes for the two-deploy
+  // window. It is handed to the component so that reaching for it is a
+  // recorded call rather than a crash — "never called" is the assertion.
+  mockConnectRepo: vi.fn(async () => ({ configId: "cfg-legacy" })),
+  mockConnectVerifiedRepo: vi.fn(async () => ({ configId: "cfg-new" })),
   mockListInstallationRepos: vi.fn(async () => [
     { fullName: "mcpjam/other-repo" },
   ]),
@@ -32,16 +46,16 @@ const {
 
 // The availability gate is the unit under test; the data layer is stubbed.
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
-  GITHUB_CHECKS_UNAVAILABLE_MESSAGE:
-    "GitHub Checks settings are not currently available.",
   useGithubChecksSettings: () => ({
     availability: mockAvailability.value,
     isEnabled: mockAvailability.value?.state === "enabled",
     repos: mockRepos.value,
     suites: mockSuites.value,
     connectRepo: mockConnectRepo,
+    connectVerifiedRepo: mockConnectVerifiedRepo,
     setRepoEnabled: mockSetRepoEnabled,
     setRepoSuite: mockSetRepoSuite,
+    setRepoOutagePolicy: mockSetRepoOutagePolicy,
     disconnectRepo: mockDisconnectRepo,
     listInstallationRepos: mockListInstallationRepos,
   }),
@@ -67,6 +81,7 @@ vi.mock("../SettingsNav", () => ({
   SettingsNav: () => <nav data-testid="settings-nav" />,
 }));
 
+import { toast } from "@/lib/toast";
 import { GithubChecksRoute } from "../GithubChecksRoute";
 
 const ROW = {
@@ -80,8 +95,12 @@ const ROW = {
   updatedAt: 1,
 };
 
-function renderRoute(activeOrganizationId: string | null = "org-1") {
-  return render(
+/** A row connected before the outage policy existed: nothing was stored. */
+const UNSET_POLICY_ROW = ROW;
+const FAIL_OPEN_ROW = { ...ROW, outagePolicy: "fail_open" as const };
+
+function routeTree(activeOrganizationId: string | null) {
+  return (
     <MemoryRouter initialEntries={["/settings/integrations/github"]}>
       <Routes>
         <Route
@@ -95,6 +114,38 @@ function renderRoute(activeOrganizationId: string | null = "org-1") {
     </MemoryRouter>
   );
 }
+
+function renderRoute(activeOrganizationId: string | null = "org-1") {
+  return render(routeTree(activeOrganizationId));
+}
+
+/**
+ * Pick a value from one of the page's Radix selects.
+ *
+ * Radix renders its options in a portal that only exists while the trigger is
+ * open, so both halves have to happen through the real controls — which is also
+ * the only way a test sees a disabled trigger the way a user would.
+ */
+async function chooseOption(
+  user: ReturnType<typeof userEvent.setup>,
+  triggerLabel: string,
+  optionName: string | RegExp
+) {
+  await user.click(screen.getByLabelText(triggerLabel));
+  await user.click(await screen.findByRole("option", { name: optionName }));
+}
+
+/** Repository + suite + policy, in the order the page presents them. */
+async function fillConnectForm(
+  user: ReturnType<typeof userEvent.setup>,
+  policyLabel: "Fail open" | "Fail closed" = "Fail closed"
+) {
+  await chooseOption(user, "Repository", "mcpjam/other-repo");
+  await chooseOption(user, "Suite", "Fixture suite");
+  await chooseOption(user, "Outage policy", policyLabel);
+}
+
+const connectButton = () => screen.getByRole("button", { name: /Connect/ });
 
 describe("GithubChecksRoute availability gate", () => {
   beforeEach(() => {
@@ -253,5 +304,526 @@ describe("GithubChecksRoute availability gate", () => {
     expect(
       screen.queryByText(/No repositories connected yet/)
     ).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Connecting a repository is where the outage policy is DECIDED, and the
+ * decision is the point: an administrator who is never asked leaves a row the
+ * backend treats as fail-open without anyone having chosen that. So the policy
+ * is required, unselected until picked, and described before it is picked.
+ *
+ * The connect itself goes to the server-VERIFIED action, which proves the
+ * pinned installation can reach the repository before writing anything. The
+ * unverified mutation is still deployed; nothing here may call it.
+ */
+describe("GithubChecksRoute connect flow", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [];
+    mockSuites.value = [
+      { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
+      { _id: "suite-2", name: "Second suite", projectId: "proj-1" },
+    ];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockListInstallationRepos.mockReset();
+    mockListInstallationRepos.mockResolvedValue([
+      { fullName: "mcpjam/other-repo", private: false },
+    ]);
+    mockConnectVerifiedRepo.mockReset();
+    mockConnectVerifiedRepo.mockResolvedValue({ configId: "cfg-new" });
+  });
+
+  it("keeps Connect disabled until repository, suite AND policy are chosen", async () => {
+    const user = userEvent.setup();
+    renderRoute();
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    expect(connectButton()).toBeDisabled();
+    await chooseOption(user, "Repository", "mcpjam/other-repo");
+    expect(connectButton()).toBeDisabled();
+    await chooseOption(user, "Suite", "Fixture suite");
+    // Repository + suite used to BE the whole form. They are not a policy, and
+    // treating them as a complete answer is what produced unstamped rows.
+    expect(connectButton()).toBeDisabled();
+
+    await chooseOption(user, "Outage policy", "Fail closed");
+    expect(connectButton()).toBeEnabled();
+  });
+
+  it("does not offer a connected repository whose listing name is padded", async () => {
+    mockRepos.value = [ROW];
+    // One normalization on both sides, or none: a padded entry that earns a
+    // visibility badge from one comparison and slips past the already-connected
+    // filter beside it becomes an offer the submit is refused for.
+    mockListInstallationRepos.mockResolvedValue([
+      { fullName: " MCPJam/MCP-Check-Fixture ", private: true },
+      { fullName: "mcpjam/other-repo", private: false },
+    ]);
+    const user = userEvent.setup();
+    renderRoute();
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await user.click(screen.getByLabelText("Repository"));
+
+    expect(
+      await screen.findByRole("option", { name: "mcpjam/other-repo" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: /MCP-Check-Fixture/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("preselects neither policy", () => {
+    renderRoute();
+
+    const policy = screen.getByLabelText("Outage policy");
+    expect(policy).toHaveTextContent("Select an outage policy");
+    // A placeholder is not a choice. Showing either value here would mean the
+    // form submits a policy the administrator never read.
+    expect(policy).not.toHaveTextContent("Fail open");
+    expect(policy).not.toHaveTextContent("Fail closed");
+  });
+
+  it("sends the verified action the derived project and the explicit policy", async () => {
+    const user = userEvent.setup();
+    renderRoute();
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await fillConnectForm(user, "Fail closed");
+    await user.click(connectButton());
+
+    await waitFor(() =>
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+    );
+    expect(mockConnectVerifiedRepo).toHaveBeenCalledWith({
+      repoFullName: "mcpjam/other-repo",
+      // Derived from the suite, never picked separately.
+      projectId: "proj-1",
+      suiteId: "suite-1",
+      outagePolicy: "fail_closed",
+    });
+    // The unverified mutation still exists on the backend. Calling it would
+    // write a config row for a repository nobody proved the App can reach.
+    expect(mockConnectRepo).not.toHaveBeenCalled();
+  });
+
+  it("clears all three selections after a successful connect", async () => {
+    const user = userEvent.setup();
+    renderRoute();
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await fillConnectForm(user, "Fail open");
+    await user.click(connectButton());
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+    expect(screen.getByLabelText("Repository")).toHaveTextContent(
+      "Select a repository"
+    );
+    expect(screen.getByLabelText("Suite")).toHaveTextContent("Select a suite");
+    // Especially the policy: leaving it set would carry one repository's
+    // decision silently onto the next one connected.
+    expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
+      "Select an outage policy"
+    );
+  });
+
+  it("clears the policy choice when the organization changes", async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(routeTree("org-1"));
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+    await fillConnectForm(user, "Fail closed");
+    expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
+      "Fail closed"
+    );
+
+    rerender(routeTree("org-2"));
+
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+    );
+    expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
+      "Select an outage policy"
+    );
+    expect(screen.getByLabelText("Repository")).toHaveTextContent(
+      "Select a repository"
+    );
+  });
+
+  it("shows the verified action's flat refusal and keeps the selections", async () => {
+    // The action answers refusals with one sentence on purpose — which repo the
+    // App can see is not something a caller gets to enumerate. The page repeats
+    // it verbatim rather than parsing GitHub detail out of it.
+    mockConnectVerifiedRepo.mockRejectedValueOnce(
+      new Error("Repository is not accessible to the MCPJam GitHub App.")
+    );
+    const user = userEvent.setup();
+    renderRoute();
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await fillConnectForm(user, "Fail closed");
+    await user.click(connectButton());
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Repository is not accessible to the MCPJam GitHub App."
+      )
+    );
+    // Nothing was connected, so nothing is cleared: the administrator can fix
+    // the App installation and press Connect again.
+    expect(screen.getByLabelText("Repository")).toHaveTextContent(
+      "mcpjam/other-repo"
+    );
+    expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
+      "Fail closed"
+    );
+  });
+
+  it("states what each policy CONCLUDES and leaves merging to branch protection", () => {
+    renderRoute();
+
+    expect(
+      screen.getByText(
+        /During an MCPJam outage or pause, the check reports neutral\./
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /During an MCPJam outage or pause, the check reports failed\./
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Whether a failed or neutral check blocks merging depends on this repository's branch-protection settings\./
+      )
+    ).toBeInTheDocument();
+
+    // MCPJam sets a conclusion. Whether a conclusion stops a merge is branch
+    // protection's answer, in a repository setting this app cannot read — so
+    // any categorical merge promise here is a promise made for someone else.
+    const page = document.body.textContent ?? "";
+    for (const forbidden of [
+      /merges proceed/i,
+      /merges are blocked/i,
+      /merge will be blocked/i,
+      /cannot be merged/i,
+      /can still be merged/i,
+    ]) {
+      expect(page).not.toMatch(forbidden);
+    }
+  });
+});
+
+/**
+ * The per-row policy control, and the distinction it has to keep visible:
+ * a row with `fail_open` STORED and a row with nothing stored behave the same
+ * way at conclusion time, and are not the same thing. One is a decision; the
+ * other is a decision nobody has made yet.
+ */
+describe("GithubChecksRoute row outage policy", () => {
+  const POLICY_LABEL = "Outage policy for mcpjam/mcp-check-fixture";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockSuites.value = [
+      { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
+    ];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockListInstallationRepos.mockReset();
+    mockListInstallationRepos.mockResolvedValue([]);
+    mockSetRepoOutagePolicy.mockReset();
+    mockSetRepoOutagePolicy.mockResolvedValue({ changed: true });
+  });
+
+  it("shows a stored policy as the selected value and writes a change", async () => {
+    mockRepos.value = [FAIL_OPEN_ROW];
+    const user = userEvent.setup();
+    renderRoute();
+
+    expect(screen.getByLabelText(POLICY_LABEL)).toHaveTextContent("Fail open");
+
+    await chooseOption(user, POLICY_LABEL, "Fail closed");
+
+    expect(mockSetRepoOutagePolicy).toHaveBeenCalledWith({
+      configId: "cfg-1",
+      outagePolicy: "fail_closed",
+    });
+  });
+
+  it("says a legacy row has no policy instead of showing fail open", () => {
+    mockRepos.value = [UNSET_POLICY_ROW];
+    renderRoute();
+
+    const policy = screen.getByLabelText(POLICY_LABEL);
+    expect(policy).toHaveTextContent("Policy not chosen");
+    // Binding the control to `fail_open` would render somebody else's default
+    // as this administrator's choice.
+    expect(policy).not.toHaveTextContent("Fail open");
+    expect(screen.getByText(/No outage policy chosen/)).toBeInTheDocument();
+    // …and the behaviour it actually has today is still stated.
+    expect(screen.getByText(/effectively fails open/)).toBeInTheDocument();
+  });
+
+  it("persists an explicit choice made on a row that had none", async () => {
+    mockRepos.value = [UNSET_POLICY_ROW];
+    const user = userEvent.setup();
+    renderRoute();
+
+    await chooseOption(user, POLICY_LABEL, "Fail open");
+
+    // Same value the backend would have assumed, now actually recorded.
+    expect(mockSetRepoOutagePolicy).toHaveBeenCalledWith({
+      configId: "cfg-1",
+      outagePolicy: "fail_open",
+    });
+  });
+
+  it("treats a silent no-op as success", async () => {
+    mockRepos.value = [FAIL_OPEN_ROW];
+    mockSetRepoOutagePolicy.mockResolvedValue({ changed: false });
+    const user = userEvent.setup();
+    renderRoute();
+
+    await chooseOption(user, POLICY_LABEL, "Fail closed");
+
+    await waitFor(() => expect(mockSetRepoOutagePolicy).toHaveBeenCalled());
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed policy write through the existing write-error toast", async () => {
+    mockRepos.value = [FAIL_OPEN_ROW];
+    mockSetRepoOutagePolicy.mockRejectedValueOnce(new Error("network"));
+    const user = userEvent.setup();
+    renderRoute();
+
+    await chooseOption(user, POLICY_LABEL, "Fail closed");
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("network"));
+  });
+
+  it("disables the policy control while its write is in flight and drops a duplicate", async () => {
+    mockRepos.value = [FAIL_OPEN_ROW];
+    let release: (() => void) | undefined;
+    mockSetRepoOutagePolicy.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ changed: true });
+        })
+    );
+    const user = userEvent.setup();
+    renderRoute();
+
+    await chooseOption(user, POLICY_LABEL, "Fail closed");
+
+    // The select stays bound to the SERVER snapshot until the list refreshes,
+    // so a second change made before the first settles would be decided against
+    // a row state that is already moving. Both halves of the guard hang off the
+    // same pending set: the control goes disabled, and the handler drops a
+    // change for a row it is already writing.
+    const policy = screen.getByLabelText(POLICY_LABEL);
+    expect(policy).toBeDisabled();
+    await user.click(policy);
+    expect(screen.queryByRole("option")).not.toBeInTheDocument();
+    expect(mockSetRepoOutagePolicy).toHaveBeenCalledTimes(1);
+
+    release?.();
+    await waitFor(() =>
+      expect(screen.getByLabelText(POLICY_LABEL)).toBeEnabled()
+    );
+  });
+
+  it("leaves the enable toggle usable while a policy write is pending", async () => {
+    mockRepos.value = [FAIL_OPEN_ROW];
+    mockSetRepoOutagePolicy.mockImplementationOnce(() => new Promise(() => {}));
+    const user = userEvent.setup();
+    renderRoute();
+
+    await chooseOption(user, POLICY_LABEL, "Fail closed");
+
+    // Two different writes on one row. Sharing a pending set would freeze a
+    // control the user has no reason to think is busy.
+    expect(
+      screen.getByLabelText("Enable checks for mcpjam/mcp-check-fixture")
+    ).toBeEnabled();
+  });
+});
+
+/**
+ * Visibility is a LIVE GitHub fact, joined from the installation listing and
+ * persisted nowhere. Everything that is not an explicit boolean is unknown, and
+ * unknown renders nothing — labelling a private repository "Public" on the
+ * owner's own settings page is the one mistake this join must never make.
+ */
+describe("GithubChecksRoute repository visibility", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockSuites.value = [
+      { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
+    ];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockRepos.value = [ROW];
+    mockListInstallationRepos.mockReset();
+  });
+
+  it("badges private and public from the live listing, joined case-insensitively", async () => {
+    mockRepos.value = [
+      ROW,
+      { ...ROW, _id: "cfg-2", repoFullName: "mcpjam/public-fixture" },
+    ];
+    // GitHub answers with its own casing, and the row stores the canonical
+    // lowercase form. Both sides are normalized so the join survives that.
+    mockListInstallationRepos.mockResolvedValue([
+      { fullName: "MCPJam/MCP-Check-Fixture", private: true },
+      { fullName: " mcpjam/Public-Fixture ", private: false },
+    ]);
+    renderRoute();
+
+    expect(await screen.findByText("Private")).toBeInTheDocument();
+    expect(screen.getByText("Public")).toBeInTheDocument();
+  });
+
+  it.each([
+    [
+      "GitHub omitted the flag",
+      [{ fullName: "mcpjam/mcp-check-fixture" }] as unknown[],
+    ],
+    [
+      "the row is not in the installation listing",
+      [{ fullName: "mcpjam/other-repo", private: false }] as unknown[],
+    ],
+    ["the listing is empty", [] as unknown[]],
+  ])("asserts no visibility when %s", async (_case, listing) => {
+    mockListInstallationRepos.mockResolvedValue(listing);
+    renderRoute();
+
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+    // A connected repository can legitimately be missing from the current
+    // listing; the row stays, only the claim goes.
+    expect(screen.getByText("mcpjam/mcp-check-fixture")).toBeInTheDocument();
+    expect(screen.queryByText("Public")).not.toBeInTheDocument();
+    expect(screen.queryByText("Private")).not.toBeInTheDocument();
+  });
+
+  it("asserts no visibility when the listing fails", async () => {
+    mockListInstallationRepos.mockRejectedValue(new Error("network"));
+    renderRoute();
+
+    expect(
+      await screen.findByText(/Could not load repositories from GitHub/)
+    ).toBeInTheDocument();
+    // An outage is not evidence that anything is public.
+    expect(screen.queryByText("Public")).not.toBeInTheDocument();
+    expect(screen.queryByText("Private")).not.toBeInTheDocument();
+  });
+
+  it("shows no visibility while the listing is still loading", () => {
+    mockListInstallationRepos.mockImplementation(() => new Promise(() => {}));
+    renderRoute();
+
+    expect(screen.getByText("mcpjam/mcp-check-fixture")).toBeInTheDocument();
+    expect(screen.queryByText("Public")).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * Switching organizations while requests are in flight.
+ *
+ * The component stays mounted across the switch, so every pending promise
+ * resolves onto a page that is now showing a DIFFERENT organization. None of
+ * them may land there: not the repository listing (it would badge the new org's
+ * rows with the old org's visibility), and not a connect (it would clear a
+ * fresh selection and announce a repository connected to an org it was not).
+ */
+describe("GithubChecksRoute organization switching", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockSuites.value = [
+      { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
+    ];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockListInstallationRepos.mockReset();
+    mockConnectVerifiedRepo.mockReset();
+    mockConnectVerifiedRepo.mockResolvedValue({ configId: "cfg-new" });
+  });
+
+  it("drops a listing that arrives after the organization changed", async () => {
+    mockRepos.value = [ROW];
+    let resolveStale: ((repos: unknown[]) => void) | undefined;
+    mockListInstallationRepos
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStale = resolve as (repos: unknown[]) => void;
+          })
+      )
+      .mockResolvedValue([
+        { fullName: "mcpjam/mcp-check-fixture", private: false },
+      ]);
+
+    const { rerender } = render(routeTree("org-1"));
+    rerender(routeTree("org-2"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+    );
+    expect(await screen.findByText("Public")).toBeInTheDocument();
+
+    // org-1's answer, arriving late and disagreeing.
+    await act(async () => {
+      resolveStale?.([{ fullName: "mcpjam/mcp-check-fixture", private: true }]);
+    });
+
+    expect(screen.getByText("Public")).toBeInTheDocument();
+    expect(screen.queryByText("Private")).not.toBeInTheDocument();
+  });
+
+  it("drops a connect that completes after the organization changed", async () => {
+    mockRepos.value = [];
+    mockListInstallationRepos.mockResolvedValue([
+      { fullName: "mcpjam/other-repo", private: false },
+    ]);
+    let resolveStaleConnect: ((result: unknown) => void) | undefined;
+    mockConnectVerifiedRepo.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveStaleConnect = resolve as (result: unknown) => void;
+        })
+    );
+
+    const user = userEvent.setup();
+    const { rerender } = render(routeTree("org-1"));
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+    await fillConnectForm(user, "Fail closed");
+    await user.click(connectButton());
+    await waitFor(() =>
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+    );
+
+    rerender(routeTree("org-2"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+    );
+    await fillConnectForm(user, "Fail open");
+
+    await act(async () => {
+      resolveStaleConnect?.({ configId: "cfg-new" });
+    });
+
+    // No success for an organization the user has left…
+    expect(toast.success).not.toHaveBeenCalled();
+    // …and the selections just made for THIS organization survive.
+    expect(screen.getByLabelText("Repository")).toHaveTextContent(
+      "mcpjam/other-repo"
+    );
+    expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
+      "Fail open"
+    );
   });
 });

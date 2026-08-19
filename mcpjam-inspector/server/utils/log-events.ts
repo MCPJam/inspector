@@ -32,6 +32,26 @@ interface CommonLogContext {
   durationMs?: number;
 
   authType: AuthType;
+  /**
+   * Whether the caller presented a bearer credential AT ALL, set by
+   * `bearerAuthMiddleware` on every route it fronts. This is not "was the
+   * caller authorized" — an invalid key, an unknown user and an orphaned key
+   * are all `true`. It answers the one question a 401 count cannot: did
+   * somebody's credential fail, or did nobody send one?
+   *
+   * The distinction is the difference between a customer outage and
+   * background noise. A contracted pentest sweep (or any scanner) walks the
+   * public API with no `Authorization` header and produces hundreds of
+   * perfectly correct 401s; a real auth incident produces 401s from callers
+   * who DID present something. Without this field both fingerprint as
+   * "route 401" and the 4xx storm monitor cannot tell them apart — which is
+   * exactly what happened on 2026-08-18, where a scan tripped the WARN and
+   * triage had no query that could name the caller.
+   *
+   * Absent on routes that do not run `bearerAuthMiddleware`; monitors must
+   * treat null as "unknown", never as "no credential".
+   */
+  credentialPresented?: boolean | null;
   userId?: string | null;
   userExternalId?: string | null;
   guestExternalId?: string | null;
