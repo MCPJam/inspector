@@ -461,6 +461,13 @@ export interface PlatformEvalSuiteSettings {
   };
 }
 
+/** The sandbox image a suite's eval runs boot from. */
+export interface PlatformEvalSuiteComputerEnvironment {
+  id: string;
+  /** `null` when the pinned image could not be resolved. */
+  name: string | null;
+}
+
 export interface PlatformEvalSuiteHost {
   id: string;
   name: string;
@@ -491,7 +498,17 @@ export interface PlatformEvalSuiteDetail {
   description: string | null;
   projectId: string | null;
   /** LEGACY server selection by name. Not the project-environment attachments. */
-  environment: { servers: string[] };
+  environment: {
+    servers: string[];
+    /**
+     * The custom sandbox image this suite's eval runs boot a fresh computer
+     * from. `null` means the provider's default base image. The `name` is the
+     * one `list_sandbox_images` reports; it is `null` when the image could not
+     * be resolved (deleted, or not visible to this caller). Absent on older
+     * API deployments.
+     */
+    computerEnvironment?: PlatformEvalSuiteComputerEnvironment | null;
+  };
   /**
    * Attached project environments, in attach order. A non-empty list makes the
    * suite environment-based: its runs resolve one of these instead of the

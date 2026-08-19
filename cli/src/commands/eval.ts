@@ -413,6 +413,15 @@ function buildSuiteUpdateInput(
       ...(input.environment ?? {}),
       servers: options.server,
     };
+  if (options.computerImage !== undefined) {
+    input.environment = {
+      ...(input.environment ?? {}),
+      // NULL, not undefined — `off` has to reach the wire as an explicit
+      // clear, and omitting the servers alongside it preserves them.
+      computerEnvironment:
+        options.computerImage === "off" ? null : options.computerImage,
+    };
+  }
   if (options.host !== undefined)
     input.hosts = options.host.map((host: string) => ({ host }));
 
@@ -1948,6 +1957,10 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--server <name...>",
         "Replace the suite's server selection (project server names)"
+      )
+      .option(
+        "--computer-image <name-or-id|off>",
+        "Sandbox image eval runs boot from (see `mcpjam images list`); off uses the default base image"
       )
       .option("--host <name...>", "Replace host attachments (by name/ID)")
       .option("--model <id>", "Execution model id")

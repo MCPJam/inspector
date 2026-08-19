@@ -1773,7 +1773,7 @@ export const getEvalSuiteOperation: PlatformOperation<
   name: "get_eval_suite",
   title: "Get MCPJam eval suite",
   description:
-    "Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule.",
+    "Fetch one eval suite's full settings: environment (servers, computer image), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule.",
   readOnly: true,
   inputSchema: getEvalSuiteInput,
   async execute(input, { client, signal }) {
@@ -1801,9 +1801,24 @@ const updateEvalSuiteInput = z.object({
   name: z.string().trim().min(1).optional(),
   description: z.string().trim().optional(),
   environment: z
-    .object({ servers: z.array(z.string().trim().min(1)) })
+    .object({
+      servers: z
+        .array(z.string().trim().min(1))
+        .optional()
+        .describe(
+          "Server selection by name; replaces the suite's server set. Omit to leave it (and its bindings) alone.",
+        ),
+      computerEnvironment: z
+        .union([z.string().trim().min(1), z.null()])
+        .optional()
+        .describe(
+          "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image.",
+        ),
+    })
     .optional()
-    .describe("Server selection by name; replaces the suite's server set."),
+    .describe(
+      "Suite environment: server selection and the sandbox image runs boot from. Unspecified fields are preserved.",
+    ),
   executionConfig: z
     .object({
       model: z.string().trim().min(1).optional(),
@@ -1868,7 +1883,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, and LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available). Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, and LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available). Only the fields you pass change.",
   readOnly: false,
   inputSchema: updateEvalSuiteInput,
   async execute(input, { client, signal }) {

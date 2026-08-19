@@ -9984,13 +9984,24 @@
           },
           "environment": {
             "type": "object",
-            "description": "LEGACY server bag, kept as rollback data. Unrelated to `environmentIds`.",
+            "description": "LEGACY server bag, kept as rollback data, plus the suite's sandbox-image pin. Unrelated to `environmentIds`.",
             "properties": {
               "servers": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 }
+              },
+              "computerEnvironment": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/EvalSuiteComputerEnvironment"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The custom sandbox image this suite's eval runs boot a fresh computer from. `null` means the provider's default base image. PATCH it by name or id (see `GET /projects/{projectId}/images`); PATCH `null` to clear the pin."
               }
             }
           },
@@ -12051,6 +12062,26 @@
             "items": {
               "$ref": "#/components/schemas/EvalSuite"
             }
+          }
+        }
+      },
+      "EvalSuiteComputerEnvironment": {
+        "type": "object",
+        "description": "The sandbox image a suite's eval runs boot from.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The image's name, resolved for you so a caller can echo back what it set. `null` when the pinned image could not be resolved (deleted, or not visible to this caller)."
           }
         }
       },

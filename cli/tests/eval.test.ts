@@ -1360,3 +1360,64 @@ test("eval update rejects an out-of-range --min-iterations before any write", as
     await fixture.close();
   }
 });
+
+test("eval update --computer-image sends the selector, off sends null", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const set = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--computer-image",
+            "Playwright",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(set.result.exitCode, 0);
+    let patchBody = fixture.createBodies.at(-1) as {
+      environment?: Record<string, unknown>;
+    };
+    // The server resolves name-or-id; the CLI forwards the selector as typed
+    // and does NOT restate servers, which is what preserves them.
+    assert.deepEqual(patchBody.environment, {
+      computerEnvironment: "Playwright",
+    });
+
+    const cleared = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "update",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--computer-image",
+            "off",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(cleared.result.exitCode, 0);
+    patchBody = fixture.createBodies.at(-1) as {
+      environment?: Record<string, unknown>;
+    };
+    assert.deepEqual(patchBody.environment, { computerEnvironment: null });
+  } finally {
+    await fixture.close();
+  }
+});

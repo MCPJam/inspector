@@ -133,6 +133,9 @@ const PLAIN_TOOLS = [
   "list_project_environments",
   "get_project_environment",
   "resolve_project_environment",
+  // Sandbox image reads: the picker behind a suite's computer image.
+  "list_sandbox_images",
+  "get_sandbox_image",
   // Agent Plugins reads: agent-oriented payloads, no widget view.
   "list_project_plugins",
   "get_plugin_version",
@@ -318,6 +321,8 @@ describe("platform tool registration", () => {
       "list_project_environments",
       "get_project_environment",
       "resolve_project_environment",
+      "list_sandbox_images",
+      "get_sandbox_image",
       "list_project_plugins",
       "get_plugin_version",
       "list_scenarios",

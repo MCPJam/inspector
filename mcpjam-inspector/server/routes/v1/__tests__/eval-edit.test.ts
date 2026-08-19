@@ -535,8 +535,175 @@ describe("v1 eval-edit routes", () => {
     const args = convexMutationMock.mock.calls.find(
       (c) => c[0] === "testSuites:updateTestSuite"
     )![1];
-    expect(args.environment).toEqual({ servers: ["Excalidraw (App)"] });
+    // The platform REPLACES the environment envelope wholesale, so a partial
+    // write must be layered onto the suite's current one. Sending `{ servers }`
+    // alone dropped the bindings the rest of this test is about.
+    expect(args.environment).toEqual({
+      servers: ["Excalidraw (App)"],
+      serverBindings: [
+        { serverName: "Excalidraw (App)", projectServerId: "srv_1" },
+      ],
+    });
     expect(args.refreshHostConfigFromEnvironment).toBe(true);
+  });
+
+  it("PATCH computerEnvironment resolves by name and preserves servers + bindings", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "computerEnvironments:listEnvironments") {
+        return Promise.resolve([
+          { environmentId: "img_1", projectId: "p1", name: "Playwright" },
+          { environmentId: "img_2", projectId: "p1", name: "Node 22" },
+        ]);
+      }
+      return defaultQueryImpl(name);
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { environment: { computerEnvironment: "playwright" } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.environment).toEqual({
+      servers: ["Excalidraw (App)"],
+      serverBindings: [
+        { serverName: "Excalidraw (App)", projectServerId: "srv_1" },
+      ],
+      computerEnvironmentId: "img_1",
+    });
+    // Pinning an image does not change which servers a host sees, so the host
+    // config does not need rebuilding.
+    expect(args.refreshHostConfigFromEnvironment).toBeUndefined();
+  });
+
+  it("PATCH computerEnvironment null clears the pin", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            environment: {
+              ...SUITE_DOC.environment,
+              computerEnvironmentId: "img_1",
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { environment: { computerEnvironment: null } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.environment.computerEnvironmentId).toBeUndefined();
+    expect(args.environment.servers).toEqual(["Excalidraw (App)"]);
+  });
+
+  it("PATCH servers alone carries an existing computer-image pin through", async () => {
+    // The regression this whole merge exists to prevent: editing the server
+    // list used to silently unpin the suite's image.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            environment: {
+              ...SUITE_DOC.environment,
+              computerEnvironmentId: "img_1",
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { environment: { servers: ["Excalidraw (App)", "Other"] } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.environment.computerEnvironmentId).toBe("img_1");
+    expect(args.environment.servers).toEqual(["Excalidraw (App)", "Other"]);
+  });
+
+  it("PATCH an unknown computer image 404s and names the real choices", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "computerEnvironments:listEnvironments") {
+        return Promise.resolve([
+          { environmentId: "img_1", projectId: "p1", name: "Playwright" },
+        ]);
+      }
+      return defaultQueryImpl(name);
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { environment: { computerEnvironment: "ghost" } }
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as any;
+    expect(body.message).toContain("ghost");
+    expect(body.message).toContain("Playwright (id: img_1)");
+    // Resolution happens BEFORE the write, so nothing is persisted.
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("PATCH an ambiguous computer image name is a 400", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "computerEnvironments:listEnvironments") {
+        return Promise.resolve([
+          { environmentId: "img_1", projectId: "p1", name: "Playwright" },
+          { environmentId: "img_2", projectId: "p1", name: "playwright" },
+        ]);
+      }
+      return defaultQueryImpl(name);
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { environment: { computerEnvironment: "Playwright" } }
+    );
+    expect(res.status).toBe(400);
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("GET reports the pinned computer image with its resolved name", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite") {
+        return Promise.resolve({
+          ...SUITE_DOC,
+          environment: {
+            ...SUITE_DOC.environment,
+            computerEnvironmentId: "img_1",
+          },
+        });
+      }
+      if (name === "computerEnvironments:getEnvironment") {
+        return Promise.resolve({
+          environmentId: "img_1",
+          projectId: "p1",
+          name: "Playwright",
+        });
+      }
+      return defaultQueryImpl(name);
+    });
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.environment.computerEnvironment).toEqual({
+      id: "img_1",
+      name: "Playwright",
+    });
+  });
+
+  it("GET reports an unpinned suite's computer image as null", async () => {
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    const body = (await res.json()) as any;
+    expect(body.environment.computerEnvironment).toBeNull();
   });
 
   it("PATCH env+hosts resolves host server picks against the patched environment", async () => {

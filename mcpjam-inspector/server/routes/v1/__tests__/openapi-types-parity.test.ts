@@ -80,6 +80,7 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalSuiteCreated: "PlatformEvalSuiteCreated",
   EvalSuite: "PlatformEvalSuite",
   EvalSuiteSchedule: "PlatformEvalSuiteSchedule",
+  EvalSuiteComputerEnvironment: "PlatformEvalSuiteComputerEnvironment",
   EvalSuiteDetail: "PlatformEvalSuiteDetail",
   EvalIteration: "PlatformEvalIteration",
   EvalCase: "PlatformEvalCase",

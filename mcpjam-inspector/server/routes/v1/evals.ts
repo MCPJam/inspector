@@ -1322,7 +1322,11 @@ function toCaseDto(testCase: CaseDoc) {
 
 type SuiteDoc = Record<string, any>;
 
-function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
+function toSuiteDetailDto(
+  suite: SuiteDoc,
+  execConfig: any,
+  resolved: { computerEnvironmentName?: string | null } = {},
+) {
   const goal = suite.judgeConfig?.goalCompletion;
   return {
     id: String(suite._id),
@@ -1333,6 +1337,16 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
       servers: Array.isArray(suite.environment?.servers)
         ? suite.environment.servers.map(String)
         : [],
+      // The sandbox image this suite's eval runs boot from. `null` = the
+      // provider's default base image. The NAME rides along beside the id so a
+      // caller can echo back what it set without a second lookup — it is what
+      // the picker shows and what a person recognizes.
+      computerEnvironment: suite.environment?.computerEnvironmentId
+        ? {
+            id: String(suite.environment.computerEnvironmentId),
+            name: resolved.computerEnvironmentName ?? null,
+          }
+        : null,
     },
     executionConfig: execConfig
       ? {
@@ -1612,7 +1626,18 @@ const updateSuiteSchema = z.object({
   description: z.string().optional(),
   // The LEGACY server bag (kept as rollback/compat data). Unrelated to
   // `environmentIds` below, which is the project-environment attachment list.
-  environment: z.object({ servers: z.array(z.string().min(1)) }).optional(),
+  environment: z
+    .object({
+      // Optional so a caller can set the computer image WITHOUT restating the
+      // server list. Omitting it preserves the suite's current servers (and
+      // their bindings) rather than clearing them.
+      servers: z.array(z.string().min(1)).optional(),
+      // Sandbox-image name or id; `null` clears the pin (runs fall back to the
+      // provider's default base image). Enumerate the choices with
+      // `list_sandbox_images`.
+      computerEnvironment: z.union([z.string().min(1), z.null()]).optional(),
+    })
+    .optional(),
   // Project-environment attachments, in attach order: a non-empty array
   // sets/replaces, `null` clears (reverts the suite to legacy config), and `[]`
   // is rejected rather than silently treated as a clear — mirroring the
@@ -1932,6 +1957,71 @@ function translateConvexWriteError(error: unknown): WebRouteError {
  * project's host catalog; per-host server names resolve against the suite's
  * own environment bindings (no live connection, no extra catalog query).
  */
+/**
+ * Resolve a sandbox-image selector (name or id) to the `computerEnvironments`
+ * row a suite's eval runs boot from.
+ *
+ * Name-or-id, matching every other selector on this surface — an agent that
+ * just read `list_sandbox_images` has the name in hand, and making it round
+ * trip for an id would be the only place we ask that. Ambiguous names are a
+ * 400 rather than a silent first-match: two images called "playwright" is a
+ * situation only the caller can resolve.
+ *
+ * Returns the row so callers can report the resolved NAME back — a caller must
+ * be able to echo what it just set without a second read.
+ */
+async function resolveComputerEnvironment(
+  readClient: ReturnType<typeof createConvexReadClient>,
+  projectId: string,
+  selector: string,
+): Promise<{ id: string; name: string }> {
+  const trimmed = selector.trim();
+  let rows: any[] | null | undefined;
+  try {
+    rows = await readClient.query(
+      "computerEnvironments:listEnvironments" as any,
+      { projectId },
+    );
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  const list = rows ?? [];
+  const byId = list.find((row: any) => String(row.environmentId) === trimmed);
+  if (byId) {
+    return { id: String(byId.environmentId), name: String(byId.name ?? "") };
+  }
+  const matches = list.filter(
+    (row: any) =>
+      String(row.name ?? "").toLocaleLowerCase() === trimmed.toLocaleLowerCase(),
+  );
+  if (matches.length > 1) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Computer image name "${trimmed}" is ambiguous; use the image id.`,
+    );
+  }
+  if (matches.length === 0) {
+    // Enumerate the real choices: a typo is then one round trip to fix rather
+    // than a bare not-found, and the picker's contents are not otherwise
+    // visible from a shell.
+    const available = list
+      .map((row: any) => `${row.name} (id: ${row.environmentId})`)
+      .join(", ");
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      `Computer image "${trimmed}" was not found in this project.${
+        available ? ` Available: ${available}.` : ""
+      }`,
+    );
+  }
+  return {
+    id: String(matches[0].environmentId),
+    name: String(matches[0].name ?? ""),
+  };
+}
+
 async function resolveHostAttachments(
   convexClient: ReturnType<typeof createConvexClients>["convexClient"],
   projectId: string,
@@ -2855,7 +2945,25 @@ async function readSuiteDetail(
   } catch {
     execConfig = null;
   }
-  return toSuiteDetailDto(suite!, execConfig);
+  // The suite row stores the computer-image PIN as an id only. Resolve the
+  // name beside it so a caller can echo back what it set — that is what the
+  // picker shows and what a person recognizes. Best-effort: a failed lookup
+  // (a deleted image, a caller who can read the suite but not the image list)
+  // reports the id with a null name rather than failing the whole read.
+  let computerEnvironmentName: string | null = null;
+  const pinnedImageId = suite!.environment?.computerEnvironmentId;
+  if (pinnedImageId) {
+    try {
+      const image: any = await convex.query(
+        "computerEnvironments:getEnvironment" as any,
+        { environmentId: String(pinnedImageId) },
+      );
+      if (typeof image?.name === "string") computerEnvironmentName = image.name;
+    } catch {
+      computerEnvironmentName = null;
+    }
+  }
+  return toSuiteDetailDto(suite!, execConfig, { computerEnvironmentName });
 }
 
 /** Default execution models for a new case: the suite's configured model. */
@@ -2996,8 +3104,41 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.description !== undefined) updateArgs.description = body.description;
   if (body.environment !== undefined) {
-    updateArgs.environment = { servers: body.environment.servers };
-    updateArgs.refreshHostConfigFromEnvironment = true;
+    // `updateTestSuite` REPLACES the environment envelope wholesale, so this
+    // has to be a merge over the suite's current one. Sending `{ servers }`
+    // alone — which is what this did — silently dropped the server bindings
+    // and the computer-image pin on any edit that touched servers. The suite
+    // settings sheet spreads the current environment for exactly this reason.
+    const current = suite!.environment ?? {};
+    const environment: Record<string, unknown> = {
+      servers: body.environment.servers ?? current.servers ?? [],
+      ...(current.serverBindings
+        ? { serverBindings: current.serverBindings }
+        : {}),
+    };
+    if (body.environment.computerEnvironment === undefined) {
+      // Untouched: carry the existing pin through the rebuild.
+      if (current.computerEnvironmentId) {
+        environment.computerEnvironmentId = current.computerEnvironmentId;
+      }
+    } else if (body.environment.computerEnvironment !== null) {
+      // Resolved BEFORE the write so an unknown image is a clean 404 rather
+      // than a rejected mutation with the rest of the PATCH already applied.
+      const image = await resolveComputerEnvironment(
+        readClient,
+        projectId,
+        body.environment.computerEnvironment,
+      );
+      environment.computerEnvironmentId = image.id;
+    }
+    // `null` falls through with the key absent, which is how the platform
+    // spells "no pin" — the environment validator has no null for it.
+    updateArgs.environment = environment;
+    // Only a server-list change needs the host config refreshed; a pin edit
+    // does not touch which servers a host sees.
+    if (body.environment.servers !== undefined) {
+      updateArgs.refreshHostConfigFromEnvironment = true;
+    }
   }
   if (body.settings) {
     const s = body.settings;

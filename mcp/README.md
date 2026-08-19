@@ -72,6 +72,8 @@ so results respect the caller's project access.
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
+| `list_sandbox_images` | List the custom Computer sandbox images (blueprints) in a project — the choices for a suite's `environment.computerEnvironment`. | — |
+| `get_sandbox_image` | Show one sandbox image's blueprint, sharing, and latest build status. | — |
 | `list_project_plugins` | List the live Agent Plugins installed in a project: name, display name, enabled state, and active version id. | — |
 | `get_plugin_version` | Show one imported plugin version: status, component counts, and per-component summaries (servers with placement and auth timing, skills with their namespaced refs). | — |
 | `list_scenarios` | List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
