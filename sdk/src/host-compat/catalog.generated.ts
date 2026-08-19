@@ -754,21 +754,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           },
           compatRuntime: {
             openaiApps: true,
-            openaiAppsOverrides: {
-              callTool: true,
-              sendFollowUpMessage: true,
-              setWidgetState: true,
-              requestDisplayMode: "all",
-              notifyIntrinsicHeight: true,
-              openExternal: true,
-              setOpenInAppUrl: true,
-              requestModal: true,
-              uploadFile: true,
-              selectFiles: true,
-              getFileDownloadUrl: true,
-              requestCheckout: true,
-              requestClose: true,
-            },
           },
           sandbox: {
             csp: {
