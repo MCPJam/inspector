@@ -1703,6 +1703,15 @@ describe("operation catalog consistency", () => {
     list_eval_run_iterations: { project: "p", runId: "r" },
     get_eval_iteration_trace: { project: "p", runId: "r", iterationId: "i" },
     cancel_eval_run: { project: "p", runId: "r" },
+    request_eval_run_judge: { project: "p", runId: "r" },
+    list_eval_check_repos: {},
+    connect_eval_check_repo: {
+      suite: "s",
+      repo: "acme/widgets",
+      // No default: the policy decides what other people's pull requests
+      // report during an outage, so every caller states it.
+      outagePolicy: "fail_open",
+    },
     get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
     create_tunnel: { name: "t" },
     close_tunnel: { serverId: "s" },
@@ -1842,6 +1851,8 @@ describe("operation catalog consistency", () => {
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
+      "request_eval_run_judge",
+      "connect_eval_check_repo",
       "create_eval_suite",
       "set_eval_suite_environments",
       "call_server_tool",
