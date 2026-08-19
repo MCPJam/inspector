@@ -350,6 +350,41 @@ describe("design-guideline lints", () => {
     );
   });
 
+  it("counts inline style declarations, not only <style> blocks", () => {
+    // `<button style="min-height: 44px">` satisfies the guideline exactly as
+    // well as a stylesheet does. Reading only `<style>` bodies would report a
+    // violation the author already fixed.
+    const inlineHtml =
+      '<html><body><button style="min-height: 48px" aria-label="Go">Go</button></body></html>';
+    const flagged = run({
+      tools: [MODERN_TOOL],
+      resources: [{ ...GOOD_RESOURCE, html: inlineHtml }],
+    }).filter(
+      (finding) =>
+        finding.id === "claude.apps.design.touch-targets" &&
+        finding.status === "violated",
+    );
+    expect(flagged).toEqual([]);
+  });
+
+  it("does not see a button that exists only inside a comment", () => {
+    // The regexes this scanner replaced matched markup anywhere in the file,
+    // including commented-out code, and then demanded ARIA on an element the
+    // widget does not have.
+    const commented =
+      "<html><body><!-- <button>old</button> --><p>text</p></body></html>";
+    const flagged = run({
+      tools: [MODERN_TOOL],
+      resources: [{ ...GOOD_RESOURCE, html: commented }],
+    }).filter(
+      (finding) =>
+        (finding.id === "claude.apps.design.accessibility" ||
+          finding.id === "claude.apps.design.touch-targets") &&
+        finding.status === "violated",
+    );
+    expect(flagged).toEqual([]);
+  });
+
   it("clears a careful widget", () => {
     const flagged = run({
       tools: [MODERN_TOOL],

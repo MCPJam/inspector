@@ -23,7 +23,15 @@ export interface ScannedHtml {
   tags: Set<string>;
   /** Lowercased attribute names that appear on any element. */
   attributes: Set<string>;
-  /** Concatenated contents of every `<style>` element. */
+  /**
+   * Every declaration the document carries: `<style>` bodies AND the value of
+   * every inline `style` attribute.
+   *
+   * Both, because a widget written as `<button style="min-height: 44px">`
+   * satisfies the touch-target guideline exactly as well as one with a
+   * stylesheet — and a lint that only read `<style>` blocks would report a
+   * violation the author already fixed.
+   */
   styleText: string;
   /** Concatenated contents of every `<script>` element. */
   scriptText: string;
@@ -113,7 +121,12 @@ export function scanHtml(html: string): ScannedHtml {
         if (attributeStart === -1 && isNameChar(char) && isSpace(html[cursor - 1])) {
           attributeStart = cursor;
         } else if (attributeStart !== -1 && !isNameChar(char)) {
-          attributes.add(html.slice(attributeStart, cursor).toLowerCase());
+          const attributeName = html.slice(attributeStart, cursor).toLowerCase();
+          attributes.add(attributeName);
+          if (attributeName === "style") {
+            const value = readAttributeValue(html, cursor);
+            if (value) styleParts.push(value);
+          }
           attributeStart = -1;
         }
       }
@@ -159,6 +172,31 @@ export function scanHtml(html: string): ScannedHtml {
     styleText: styleParts.join("\n"),
     scriptText: scriptParts.join("\n"),
   };
+}
+
+/**
+ * Read an attribute's value, starting at the character after its name.
+ *
+ * Returns `undefined` for a valueless attribute (`disabled`, `hidden`), and
+ * handles both quote styles plus the unquoted form.
+ */
+function readAttributeValue(html: string, from: number): string | undefined {
+  let index = from;
+  while (index < html.length && isSpace(html[index])) index += 1;
+  if (html[index] !== "=") return undefined;
+  index += 1;
+  while (index < html.length && isSpace(html[index])) index += 1;
+
+  const quote = html[index];
+  if (quote === '"' || quote === "'") {
+    const end = html.indexOf(quote, index + 1);
+    return end === -1 ? undefined : html.slice(index + 1, end);
+  }
+  const start = index;
+  while (index < html.length && !isSpace(html[index]) && html[index] !== ">") {
+    index += 1;
+  }
+  return index > start ? html.slice(start, index) : undefined;
 }
 
 /** Whether the markup contains any element a user can interact with. */
