@@ -4,7 +4,9 @@ import {
   MAX_CASES_PER_BATCH,
   chunkCases,
   createEvalCasesInBatches,
+  partialResultOf,
   withMintedCaseIds,
+  type EvalCaseBatchItem,
 } from "../eval-case-batch";
 import { authorEvalSuite } from "../evals";
 import { deriveItemIdempotencyKey } from "../../../utils/idempotency";
@@ -20,14 +22,19 @@ function fakeConvexClient(
     failTitles?: Record<string, string>;
     replayTitles?: Record<string, { testCaseId: string; caseId: string }>;
     throwOnBatch?: Error;
+    /** Reject only this chunk (0-based), so earlier chunks stay committed. */
+    throwOnChunk?: number;
   } = {}
 ) {
   const calls: Array<{ name: string; args: any }> = [];
+  let chunkIndex = -1;
   const mutation = vi.fn(async (name: string, args: any) => {
     calls.push({ name, args });
     if (name === "testSuites:createTestSuite") return { _id: "suite_new" };
     if (name === "testSuites:createTestCases") {
+      chunkIndex += 1;
       if (plan.throwOnBatch) throw plan.throwOnBatch;
+      if (plan.throwOnChunk === chunkIndex) throw new Error("Not authorized");
       const committed: any[] = [];
       const failed: any[] = [];
       (args.cases ?? []).forEach((item: any, index: number) => {
@@ -115,17 +122,22 @@ describe("chunkCases", () => {
 
 describe("withMintedCaseIds", () => {
   it("mints a usable declared id for a case that arrives without one", () => {
-    const [minted] = withMintedCaseIds([{ title: "a" }]);
+    const [minted] = withMintedCaseIds<EvalCaseBatchItem>([{ title: "a" }]);
     expect(isOpaqueId(minted.caseId)).toBe(true);
   });
 
   it("keeps a caller's id rather than overwriting the identity it chose", () => {
-    const [kept] = withMintedCaseIds([{ title: "a", caseId: "c_mine" }]);
+    const [kept] = withMintedCaseIds<EvalCaseBatchItem>([
+      { title: "a", caseId: "c_mine" },
+    ]);
     expect(kept.caseId).toBe("c_mine");
   });
 
   it("mints a DISTINCT id per case", () => {
-    const items = withMintedCaseIds([{ title: "a" }, { title: "b" }]);
+    const items = withMintedCaseIds<EvalCaseBatchItem>([
+      { title: "a" },
+      { title: "b" },
+    ]);
     expect(items[0].caseId).not.toBe(items[1].caseId);
   });
 });
@@ -198,6 +210,60 @@ describe("createEvalCasesInBatches", () => {
         cases: [{ title: "a" }, { title: "b" }],
       })
     ).rejects.toThrow("Not authorized");
+  });
+
+  it("reports the STORED declared id on a replay, not the one just minted", async () => {
+    const { client } = fakeConvexClient({
+      replayTitles: { a: { testCaseId: "case_first", caseId: "c_first" } },
+    });
+    const result = await createEvalCasesInBatches(client, {
+      suiteId: "suite_1",
+      cases: [{ title: "a", caseId: "c_second" }],
+    });
+    // The id the first attempt authored wins. Reporting the fresh proposal
+    // would name a case that was never written.
+    expect(result.committed[0]).toMatchObject({
+      index: 0,
+      testCaseId: "case_first",
+      caseId: "c_first",
+      replayed: true,
+    });
+  });
+
+  it("carries what earlier chunks committed on a later chunk's rejection", async () => {
+    const { client } = fakeConvexClient({ throwOnChunk: 1 });
+    const cases = Array.from({ length: MAX_CASES_PER_BATCH + 5 }, (_, i) => ({
+      title: `case-${i}`,
+    }));
+    let thrown: unknown;
+    try {
+      await createEvalCasesInBatches(client, { suiteId: "suite_1", cases });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    // The first chunk's cases are PERSISTED. Reporting them as failed would
+    // send the caller into a retry that authors them a second time.
+    const partial = partialResultOf(thrown);
+    expect(partial.committed).toHaveLength(MAX_CASES_PER_BATCH);
+    expect(partial.committed.at(-1)).toMatchObject({
+      index: MAX_CASES_PER_BATCH - 1,
+    });
+  });
+
+  it("carries an empty partial when the FIRST chunk is rejected", async () => {
+    const { client } = fakeConvexClient({ throwOnChunk: 0 });
+    let thrown: unknown;
+    try {
+      await createEvalCasesInBatches(client, {
+        suiteId: "suite_1",
+        cases: [{ title: "a" }],
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    // "Nothing was written" is simply true here.
+    expect(partialResultOf(thrown).committed).toEqual([]);
   });
 });
 
@@ -317,6 +383,23 @@ describe("authorEvalSuite: batch authoring", () => {
     expect(calls.some((c) => c.name === "testSuites:deleteTestSuite")).toBe(
       true
     );
+  });
+
+  it("keeps the cases an interrupted batch DID commit out of the failed list", async () => {
+    const { client } = fakeConvexClient({ throwOnChunk: 1 });
+    const result = await authorEvalSuite(
+      authorArgs({
+        convexClient: client,
+        tests: Array.from({ length: MAX_CASES_PER_BATCH + 3 }, (_, i) =>
+          buildTest(`case-${i}`)
+        ),
+      })
+    );
+    // The first chunk landed; only the cases the rejected call never reached
+    // are reported as failures.
+    expect(result.caseUpsert.committed).toHaveLength(MAX_CASES_PER_BATCH);
+    expect(result.caseUpsert.failed).toHaveLength(3);
+    expect(result.caseUpsert.failed[0].error).toContain("Not authorized");
   });
 
   it("does not write a declared id into the storage caseKey (D7)", async () => {

@@ -139,6 +139,21 @@ describe("generateTestCases: dual-shape reader", () => {
     expect(testCase.expectedToolCalls).toEqual([]);
   });
 
+  it.each([
+    ["null steps", null],
+    ["an empty array", []],
+    ["entries that all fail normalization", [{ nonsense: true }]],
+  ])(
+    "rejects a Wave-0 case whose steps normalize to nothing: %s",
+    async (_label, steps) => {
+      // The legacy fields cannot stand in — they are derived FROM the steps — so
+      // a stepless Wave-0 case would persist as one that can never execute.
+      await expect(
+        generate([{ shapeVersion: "wave0", title: "bare", steps }])
+      ).rejects.toThrow(/no usable steps/);
+    }
+  );
+
   it("still fails loudly on a response that is not a generation result", async () => {
     vi.stubGlobal(
       "fetch",

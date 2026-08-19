@@ -38,6 +38,7 @@ import {
 import { deriveItemIdempotencyKey } from "../../utils/idempotency.js";
 import {
   createEvalCasesInBatches,
+  partialResultOf,
   withMintedCaseIds,
   type EvalCaseBatchItem,
 } from "./eval-case-batch.js";
@@ -1137,40 +1138,58 @@ async function commitPendingCaseCreates(args: {
   const cases = withMintedCaseIds(pending.map((p) => p.item));
 
   let result: Awaited<ReturnType<typeof createEvalCasesInBatches>>;
+  let rejection: string | undefined;
   try {
     result = await createEvalCasesInBatches(convexClient, { suiteId, cases });
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    for (const { slot, title } of pending) {
-      outcomes[slot] = { kind: "failed", name: title, error: reason };
-    }
+    // A rejection carries whatever earlier chunks committed. Those rows exist;
+    // reporting them as failures would send the caller into a retry that
+    // authors them twice.
+    result = partialResultOf(error);
+    rejection = error instanceof Error ? error.message : String(error);
     logger.warn("[evals] Batch case create rejected the whole call", {
       suiteId,
       cases: pending.length,
-      error: reason,
+      committedBeforeRejection: result.committed.length,
+      error: rejection,
     });
-    return;
   }
 
   for (const entry of result.committed) {
-    const { slot, title } = pending[entry.index];
-    outcomes[slot] = {
+    const slotted = pending[entry.index];
+    if (!slotted) {
+      logger.warn("[evals] Batch result named a case index we never sent", {
+        suiteId,
+        index: entry.index,
+        sent: pending.length,
+      });
+      continue;
+    }
+    outcomes[slotted.slot] = {
       kind: "committed",
       id: String(entry.testCaseId),
-      name: title,
+      name: slotted.title,
     };
   }
   for (const entry of result.failed) {
-    const { slot, title } = pending[entry.index];
-    outcomes[slot] = {
+    const slotted = pending[entry.index];
+    if (!slotted) {
+      logger.warn("[evals] Batch result named a case index we never sent", {
+        suiteId,
+        index: entry.index,
+        sent: pending.length,
+      });
+      continue;
+    }
+    outcomes[slotted.slot] = {
       kind: "failed",
-      name: title,
+      name: slotted.title,
       // The code is the stable half; the message is what a human reads.
       error: `${entry.code}: ${entry.message}`,
     };
     logger.warn("[evals] Failed to create test case", {
       suiteId,
-      title,
+      title: slotted.title,
       code: entry.code,
       error: entry.message,
     });
@@ -1179,6 +1198,16 @@ async function commitPendingCaseCreates(args: {
   // Warnings are the audit half of the batch contract — a policy coercion, a
   // replay that kept a different id. This surface renders `{id?, name}` and has
   // nowhere to put them, so they are logged rather than dropped.
+  // Everything the rejected call never reached. Filled last so a case the
+  // partial result already accounted for keeps its real outcome.
+  if (rejection !== undefined) {
+    for (const { slot, title } of pending) {
+      if (outcomes[slot] === undefined) {
+        outcomes[slot] = { kind: "failed", name: title, error: rejection };
+      }
+    }
+  }
+
   const entryWarnings = result.committed.flatMap((entry) =>
     (entry.warnings ?? []).map((w) => ({ title: entry.title, ...w }))
   );

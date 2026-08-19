@@ -95,6 +95,51 @@ describe("generateAndPersistEvalTests", () => {
     expect(new Set(ids).size).toBe(2);
   });
 
+  it("persists a Wave-0 case's authored steps instead of rebuilding them", async () => {
+    mockQuery.mockResolvedValue([]);
+    // A `toolCall` step has no legacy spelling: rebuilding from query /
+    // expectedToolCalls / promptTurns could only ever produce a prompt case, so
+    // this step is exactly what a rebuild would lose.
+    const authored = [
+      {
+        id: "s1",
+        kind: "toolCall",
+        serverName: "Excalidraw",
+        toolName: "new_tool",
+        arguments: { keep: 1 },
+      },
+      {
+        id: "s2",
+        kind: "assert",
+        assertion: { type: "widgetRendered", toolName: "new_tool" },
+      },
+    ];
+    vi.mocked(generateEvalTests).mockResolvedValue({
+      success: true,
+      tests: [
+        {
+          title: "renders the widget",
+          query: "",
+          runs: 1,
+          expectedToolCalls: [],
+          steps: authored,
+        },
+      ],
+    } as any);
+    mockCreateTestCase.mockResolvedValue("new-case-id");
+
+    await generateAndPersistEvalTests({
+      convex,
+      getAccessToken: mockGetAccessToken,
+      projectId: "ws",
+      suiteId: "suite",
+      serverIds: ["srv"],
+      createTestCase: mockCreateTestCase,
+    });
+
+    expect(mockCreateTestCase.mock.calls[0][0].steps).toEqual(authored);
+  });
+
   it("persists steps for generated multi-turn cases", async () => {
     mockQuery.mockResolvedValue([]);
     vi.mocked(generateEvalTests).mockResolvedValue({

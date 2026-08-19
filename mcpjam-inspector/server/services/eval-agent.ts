@@ -138,6 +138,16 @@ function adaptCase(tc: BackendCase): GeneratedTestCase {
 
 function adaptWave0Case(tc: BackendWave0TestCase): GeneratedTestCase {
   const steps = normalizeSteps(tc.steps);
+  // `steps` IS the Wave-0 case. Null, an empty array, or entries that all fail
+  // normalization leave nothing to run, and the legacy fields cannot stand in —
+  // they are derived FROM the steps here. Persisting the result would author a
+  // case that can never execute, so fail where the shape is still visible.
+  if (steps.length === 0) {
+    throw new Error(
+      `Generated case ${JSON.stringify(tc.title)} declares shapeVersion ` +
+        `"wave0" but has no usable steps.`
+    );
+  }
   return {
     title: tc.title,
     steps,

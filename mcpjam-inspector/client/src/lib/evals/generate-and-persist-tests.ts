@@ -97,12 +97,21 @@ function toCreateTestCaseInput(
     isNegativeTest,
     scenario: test.scenario,
     expectedOutput: test.expectedOutput,
-    steps: buildStepsForCaseInput({
-      query: test.query,
-      expectedToolCalls: test.expectedToolCalls,
-      expectedOutput: test.expectedOutput,
-      promptTurns: test.promptTurns,
-    }),
+    // Authored steps win when the generator produced them. Rebuilding from
+    // `query` / `expectedToolCalls` / `promptTurns` can only express a prompt
+    // case: a `toolCall`, an `interact`, or a widget assertion has no legacy
+    // spelling, so a Wave-0 case would silently lose exactly the steps the new
+    // shape exists to carry. The rebuild stays for the legacy shape, which has
+    // no steps of its own.
+    steps:
+      Array.isArray(test.steps) && test.steps.length > 0
+        ? (test.steps as TestStep[])
+        : buildStepsForCaseInput({
+            query: test.query,
+            expectedToolCalls: test.expectedToolCalls,
+            expectedOutput: test.expectedOutput,
+            promptTurns: test.promptTurns,
+          }),
   };
 }
 

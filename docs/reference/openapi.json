@@ -3199,6 +3199,16 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Makes the write retry-safe. A repeat of the same request under the same key lands on the rows the first attempt authored instead of creating a second copy; those entries come back with `replayed: true`.",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
           }
         ],
         "requestBody": {

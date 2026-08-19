@@ -2244,6 +2244,27 @@ export const createEvalCasesOperation: PlatformOperation<
   risk: "none",
   inputSchema: createEvalCasesInput,
   async execute(input, { client, signal }) {
+    // Checked HERE rather than as a schema `.refine`: an operation's
+    // `inputSchema` is handed to the agent tool surface, which needs a plain
+    // object schema — a refinement wraps it in `ZodEffects` and the toolset
+    // stops building. The platform refuses these two policies without a reason
+    // per case, so without this the caller spends a round trip to get N
+    // identical OVERRIDE_REASON_REQUIRED failures back.
+    if (
+      input.duplicatePolicy !== undefined &&
+      input.duplicatePolicy !== "block" &&
+      !input.overrideReason
+    ) {
+      throw new PlatformApiError(
+        `duplicatePolicy \`${input.duplicatePolicy}\` authors a case that duplicates ` +
+          "an existing one, so it requires an overrideReason — the reason is what " +
+          "gets recorded on the case's revision.",
+        "VALIDATION_ERROR",
+        // Client-synthesized: no request was made, so quoting a server status
+        // would misreport what happened.
+        { status: 0 },
+      );
+    }
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,

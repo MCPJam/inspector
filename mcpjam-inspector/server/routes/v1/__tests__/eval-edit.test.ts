@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { isOpaqueId } from "@mcpjam/sdk/contract";
+import { MAX_CASES_PER_BATCH } from "../../shared/eval-case-batch.js";
 import { Hono } from "hono";
 
 // Covers the v1 eval-edit surface: suite settings/schedule/delete + case CRUD
@@ -173,7 +174,10 @@ function defaultQueryImpl(name: string) {
  * that returned only an id would let a route that ignores the batch envelope
  * keep passing.
  */
-function batchCreateResult(args: { cases?: Array<Record<string, unknown>> }) {
+function batchCreateResult(args: {
+  cases?: Array<Record<string, unknown>>;
+  duplicatePolicy?: unknown;
+}) {
   const cases = args?.cases ?? [];
   return {
     caseUpsert: {
@@ -2074,12 +2078,57 @@ describe("v1 eval-edit routes", () => {
     expect(args.overrideReason).toBe("porting a fixture verbatim");
   });
 
+  it("POST /cases/batch keys each case by its declared id, else by position", async () => {
+    const res = await makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          "x-mcpjam-idempotency-key": "turn_1",
+        },
+        body: JSON.stringify({
+          cases: [
+            { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
+            {
+              id: "c_b",
+              title: "b",
+              steps: [{ id: "s1", kind: "prompt", prompt: "b" }],
+            },
+          ],
+        }),
+      }
+    );
+    expect(res.status).toBe(201);
+    const items = allAuthoredCaseArgs();
+    // Both carry a key — an interrupted import lands on its original rows on
+    // retry rather than authoring the suite twice.
+    expect(items[0].idempotencyKey).toEqual(expect.any(String));
+    expect(items[1].idempotencyKey).toEqual(expect.any(String));
+    expect(items[0].idempotencyKey).not.toBe(items[1].idempotencyKey);
+  });
+
+  it("POST /cases/batch sends no idempotency key when the caller supplied none", async () => {
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+      {
+        cases: [
+          { title: "a", steps: [{ id: "s1", kind: "prompt", prompt: "a" }] },
+        ],
+      }
+    );
+    expect(res.status).toBe(201);
+    expect(allAuthoredCaseArgs()[0].idempotencyKey).toBeUndefined();
+  });
+
   it("POST /cases/batch refuses more than the cap in one call", async () => {
     const res = await request(
       "POST",
       "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
       {
-        cases: Array.from({ length: 101 }, (_, i) => ({
+        cases: Array.from({ length: MAX_CASES_PER_BATCH + 1 }, (_, i) => ({
           title: `case-${i}`,
           steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
         })),

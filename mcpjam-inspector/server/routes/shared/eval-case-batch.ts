@@ -90,6 +90,49 @@ type ConvexMutationClient = {
 };
 
 /**
+ * A chunk was rejected AFTER an earlier chunk had already committed.
+ *
+ * The rejection still propagates — a whole-call error is a caller-level
+ * mistake, not a per-item outcome — but it carries what did land. Without that,
+ * a caller writing 250 cases whose second chunk is refused would report all 250
+ * as failed while 100 sit persisted in the suite, and a retry would author them
+ * a second time.
+ *
+ * `partial` is empty when the FIRST chunk failed, which is the common case and
+ * the one where "nothing was written" is simply true.
+ */
+export class CaseBatchPartialFailureError extends Error {
+  readonly partial: CaseBatchResult;
+  constructor(cause: unknown, partial: CaseBatchResult) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = "CaseBatchPartialFailureError";
+    this.cause = cause;
+    this.partial = partial;
+  }
+}
+
+/**
+ * The committed/failed entries a rejection carried, or empty when it carried
+ * none. Lets a catch site report what landed without knowing this module's
+ * error type.
+ */
+export function partialResultOf(error: unknown): CaseBatchResult {
+  return error instanceof CaseBatchPartialFailureError
+    ? error.partial
+    : {
+        committed: [],
+        failed: [],
+        duplicatePolicy: DEFAULT_POLICY,
+        warnings: [],
+      };
+}
+
+const DEFAULT_POLICY = {
+  effectivePolicy: "block",
+  coerced: false,
+} as const;
+
+/**
  * Give every case a declared identity, keeping one the caller already chose.
  *
  * An id the caller supplies is passed through verbatim rather than validated
@@ -123,12 +166,18 @@ export function chunkCases<T>(items: T[], size = MAX_CASES_PER_BATCH): T[][] {
  * passed 250 cases reads `index` against the list it actually sent. Without
  * that, item 137's failure would report as index 37 and name the wrong case.
  *
- * A chunk that throws is not swallowed. The backend rejects a whole call only
- * for a caller-level mistake — bad args, no items, over the cap, unauthorized —
- * and every one of those is wrong for the entire request, not for one case.
- * Filing them as per-item failures would report an auth error as 100 separate
- * "case failed" lines and let the caller believe the other chunks are a partial
- * success worth retrying.
+ * A chunk that throws is not swallowed into per-item failures. The backend
+ * rejects a whole call only for a caller-level mistake — bad args, no items,
+ * over the cap, unauthorized — and every one of those is wrong for the entire
+ * request, not for one case. Filing them as per-item failures would report an
+ * auth error as 100 separate "case failed" lines.
+ *
+ * It does NOT throw the entries away, though. Chunks are separate
+ * transactions, so a rejection at chunk 2 leaves chunk 1 persisted; the
+ * rejection carries those committed entries (see
+ * {@link CaseBatchPartialFailureError} and {@link partialResultOf}) so a
+ * caller reports what landed instead of a uniform failure it would retry into
+ * duplicates.
  */
 export async function createEvalCasesInBatches(
   convexClient: ConvexMutationClient,
@@ -155,17 +204,33 @@ export async function createEvalCasesInBatches(
   const chunks = chunkCases(args.cases);
   let offset = 0;
   for (const chunk of chunks) {
-    const response = await convexClient.mutation(
-      "testSuites:createTestCases" as any,
-      {
-        suiteId: args.suiteId,
-        cases: chunk,
-        ...(args.duplicatePolicy
-          ? { duplicatePolicy: args.duplicatePolicy }
-          : {}),
-        ...(args.overrideReason ? { overrideReason: args.overrideReason } : {}),
-      }
-    );
+    let response: any;
+    try {
+      response = await convexClient.mutation(
+        "testSuites:createTestCases" as any,
+        {
+          suiteId: args.suiteId,
+          cases: chunk,
+          ...(args.duplicatePolicy
+            ? { duplicatePolicy: args.duplicatePolicy }
+            : {}),
+          ...(args.overrideReason
+            ? { overrideReason: args.overrideReason }
+            : {}),
+        }
+      );
+    } catch (error) {
+      // Earlier chunks are already persisted and cannot be taken back — this
+      // is several transactions, not one. Carry them on the rejection so the
+      // caller reports what landed instead of a uniform failure it would then
+      // retry into duplicates.
+      throw new CaseBatchPartialFailureError(error, {
+        committed,
+        failed,
+        duplicatePolicy,
+        warnings,
+      });
+    }
     const chunkOffset = offset;
     for (const entry of response?.caseUpsert?.committed ?? []) {
       committed.push({ ...entry, index: chunkOffset + entry.index });

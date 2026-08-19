@@ -40,6 +40,7 @@ import {
 import { opaqueIdSchema } from "@mcpjam/sdk/contract";
 import {
   createEvalCasesInBatches,
+  partialResultOf,
   withMintedCaseIds,
   MAX_CASES_PER_BATCH,
   type CaseBatchFailedEntry,
@@ -1720,15 +1721,6 @@ function buildCaseMutationArgs(
 }
 
 /**
- * Turn one batch item's failure into the v1 error a single-case caller expects.
- *
- * The batch mutation reports per-item problems as data rather than throwing, so
- * a caller that authored exactly one case would otherwise get a 201 carrying a
- * failure. Identity and duplicate collisions are 409 (the request was
- * well-formed; the suite is not in a state that accepts it); everything else is
- * the caller's payload, so 400.
- */
-/**
  * Assert a case body can be CREATED, and hand back its narrowed title.
  *
  * `steps` is optional on the shared case shape so PATCH can be a partial
@@ -1758,6 +1750,15 @@ function assertCreatableCase(
   return body.title;
 }
 
+/**
+ * Turn one batch item's failure into the v1 error a single-case caller expects.
+ *
+ * The batch mutation reports per-item problems as data rather than throwing, so
+ * a caller that authored exactly one case would otherwise get a 201 carrying a
+ * failure. Identity and duplicate collisions are 409 (the request was
+ * well-formed; the suite is not in a state that accepts it); everything else is
+ * the caller's payload, so 400.
+ */
 function caseBatchFailureToWebError(
   entry: CaseBatchFailedEntry,
 ): WebRouteError {
@@ -3694,63 +3695,92 @@ evals.post(
       // validates. A generated case is authored by this server, so this is the
       // caller.
       const cases = withMintedCaseIds(pendingDrafts.map((d) => d.item));
-      let result: Awaited<
-        ReturnType<typeof createEvalCasesInBatches>
-      > | null = null;
+      let result: Awaited<ReturnType<typeof createEvalCasesInBatches>>;
+      let rejection: string | undefined;
       try {
         result = await createEvalCasesInBatches(convexClient, {
           suiteId,
           cases,
         });
       } catch (error) {
-        // A whole-call rejection is one condition, not N — but the drafts are
-        // paid for and the response promises to name every one that did not
-        // land, so each is reported as skipped rather than vanishing.
-        const reason = error instanceof Error ? error.message : String(error);
+        // A whole-call rejection is one condition, not N. But a rejection can
+        // still arrive after an earlier chunk committed, and those cases are
+        // persisted — reporting them as skipped would understate what the
+        // caller was billed for and invite a duplicate retry.
+        rejection = error instanceof Error ? error.message : String(error);
+        result = partialResultOf(error);
         logger.warn("v1.eval.generate: failed to persist the generated cases", {
-          error: reason,
+          error: rejection,
           drafts: pendingDrafts.length,
+          committedBeforeRejection: result.committed.length,
         });
-        for (const draft of pendingDrafts) {
-          skipped.push({ title: draft.title, error: reason });
-        }
       }
 
-      if (result) {
-        for (const entry of result.failed) {
-          const reason = `${entry.code}: ${entry.message}`;
-          logger.warn("v1.eval.generate: failed to persist a generated case", {
-            error: reason,
-          });
-          skipped.push({
-            title: pendingDrafts[entry.index].title,
-            error: reason,
-          });
+      // The platform addresses each result by the index of the item we sent.
+      // An index outside that range is a bug, not an outcome — but it must not
+      // throw AFTER the writes landed and take the whole report down with it.
+      const draftAt = (index: number) => {
+        const draft = pendingDrafts[index];
+        if (!draft) {
+          logger.warn(
+            "v1.eval.generate: result named a draft index we never sent",
+            { index, sent: pendingDrafts.length },
+          );
         }
-        const readClient = createConvexReadClient(token);
-        // Committed entries arrive in item order, so `created` still follows
-        // the order the generator produced.
-        for (const entry of result.committed) {
-          // The EFFECTIVE id, not the one just minted. A keyed retry replays
-          // onto the case the first attempt authored, and reporting the fresh
-          // proposal would name a case that was never written.
-          const doc = await readClient.query("testSuites:getTestCase" as any, {
+        return draft;
+      };
+
+      const reported = new Set<number>();
+      for (const entry of result.failed) {
+        const draft = draftAt(entry.index);
+        if (!draft) continue;
+        reported.add(entry.index);
+        const reason = `${entry.code}: ${entry.message}`;
+        logger.warn("v1.eval.generate: failed to persist a generated case", {
+          error: reason,
+        });
+        skipped.push({ title: draft.title, error: reason });
+      }
+      const readClient = createConvexReadClient(token);
+      // Read the committed cases in one pass. Committed entries arrive in item
+      // order, and `Promise.all` preserves it, so `created` still follows the
+      // order the generator produced.
+      const docs = await Promise.all(
+        result.committed.map((entry) =>
+          readClient.query("testSuites:getTestCase" as any, {
+            // The EFFECTIVE id, not the one just minted. A keyed retry replays
+            // onto the case the first attempt authored, and reporting the fresh
+            // proposal would name a case that was never written.
             testCaseId: entry.testCaseId,
-          });
-          created.push(toCaseDto(doc));
-          createdCaseIds.push(String(entry.testCaseId));
-          if (pendingDrafts[entry.index].isNegative) negative += 1;
-          else normal += 1;
-        }
-        const entryWarnings = result.committed.flatMap((entry) =>
-          (entry.warnings ?? []).map((w) => ({ title: entry.title, ...w })),
-        );
-        if (result.warnings.length > 0 || entryWarnings.length > 0) {
-          logger.info("v1.eval.generate: case create returned warnings", {
-            suiteId,
-            warnings: [...result.warnings, ...entryWarnings],
-          });
-        }
+          }),
+        ),
+      );
+      result.committed.forEach((entry, position) => {
+        const draft = draftAt(entry.index);
+        if (!draft) return;
+        reported.add(entry.index);
+        created.push(toCaseDto(docs[position]));
+        createdCaseIds.push(String(entry.testCaseId));
+        if (draft.isNegative) negative += 1;
+        else normal += 1;
+      });
+      // Drafts the rejected call never reached.
+      if (rejection !== undefined) {
+        pendingDrafts.forEach((draft, index) => {
+          if (!reported.has(index)) {
+            skipped.push({ title: draft.title, error: rejection! });
+          }
+        });
+      }
+
+      const entryWarnings = result.committed.flatMap((entry) =>
+        (entry.warnings ?? []).map((w) => ({ title: entry.title, ...w })),
+      );
+      if (result.warnings.length > 0 || entryWarnings.length > 0) {
+        logger.info("v1.eval.generate: case create returned warnings", {
+          suiteId,
+          warnings: [...result.warnings, ...entryWarnings],
+        });
       }
     }
 
