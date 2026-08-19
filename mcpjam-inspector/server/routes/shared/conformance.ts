@@ -36,7 +36,47 @@ import {
   submitAuthorizationCode,
   type OAuthConformanceSession,
 } from "../../services/conformance-oauth-sessions.js";
-import { createGuardedFetch } from "../../utils/hosted-egress-guard.js";
+import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
+
+/** DNS + connect + response headers, across every hop of one request. */
+const CONFORMANCE_CHAIN_TIMEOUT_MS = 30_000;
+/** No bytes for this long on an open stream ⇒ the stream is dead, not slow. */
+const CONFORMANCE_BODY_IDLE_TIMEOUT_MS = 120_000;
+/** Cumulative decompressed body cap for a single conformance request. */
+const CONFORMANCE_MAX_RESPONSE_BYTES = 32 * 1024 * 1024;
+
+/**
+ * The one outbound transport every hosted conformance run dials through.
+ *
+ * `createGuardedFetch` — what this used to be — resolves the hostname to
+ * classify it and then hands the URL to a client that resolves it a SECOND
+ * time, which is the DNS-rebinding window itself: pass the check with a public
+ * answer, serve `169.254.169.254` to the connection that actually happens. The
+ * pinned transport resolves once, refuses the disallowed answers, and pins the
+ * surviving addresses into the socket, re-running all of it on every redirect
+ * hop.
+ *
+ * It is handed to the suites as `fetchFn`, which each runner now also threads
+ * into the MCP transport as `baseFetch` — so the one real MCP connection a run
+ * opens is under the same guard as the raw probes beside it, rather than
+ * following its redirects unchecked as it did while this comment's predecessor
+ * documented the gap.
+ *
+ * A no-op outside hosted mode, where reaching localhost is the point.
+ */
+function createConformanceFetch(targetLabel: string): typeof fetch {
+  return createStreamingPinnedFetch({
+    targetLabel,
+    // DNS + connect + headers, summed across the redirect chain. Deliberately
+    // NOT a bound on an established body: an SSE stream is long-lived by
+    // design, and killing one at 30s would fail conforming servers.
+    chainTimeoutMs: CONFORMANCE_CHAIN_TIMEOUT_MS,
+    // A stalled stream still has to die. This is the bound that can apply to
+    // SSE without punishing a healthy stream for staying open.
+    bodyIdleTimeoutMs: CONFORMANCE_BODY_IDLE_TIMEOUT_MS,
+    maxResponseBytes: CONFORMANCE_MAX_RESPONSE_BYTES,
+  });
+}
 
 // ── Result shapes shared with clients ───────────────────────────────────
 
@@ -107,7 +147,7 @@ export async function runProtocolConformance(
     // threading a base fetch through the client manager, which is a shared
     // connection path for every protocol version and every surface, and does not
     // belong in this change.
-    fetchFn: createGuardedFetch(),
+    fetchFn: createConformanceFetch("MCP server"),
   };
   const test = new MCPConformanceTest(config);
   const result = await test.run();
@@ -119,7 +159,13 @@ export async function runProtocolConformance(
 export async function runAppsConformance(
   serverConfig: MCPAppsConformanceConfig,
 ): Promise<{ result: MCPAppsConformanceResult }> {
-  const test = new MCPAppsConformanceTest(serverConfig);
+  // The apps suite is entirely client-driven — it has no raw probes — so
+  // before `baseFetch` existed there was no seam at all to guard it through,
+  // and a hosted apps run dialled the target with nothing in front of it.
+  const test = new MCPAppsConformanceTest({
+    ...serverConfig,
+    baseFetch: serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
+  });
   const result = await test.run();
   return { result };
 }
@@ -129,7 +175,10 @@ export async function runAppsConformance(
 export async function runTasksConformance(
   serverConfig: MCPTasksConformanceConfig,
 ): Promise<{ result: MCPTasksConformanceResult }> {
-  const test = new MCPTasksConformanceTest(serverConfig);
+  const test = new MCPTasksConformanceTest({
+    ...serverConfig,
+    baseFetch: serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
+  });
   const result = await test.run();
   return { result };
 }
@@ -195,7 +244,7 @@ export async function startOAuthConformance(
     // was ever checkable up front. Every request goes through the hop-checking
     // fetch instead. Requests that ask for `redirect: "manual"` keep their 3xx:
     // this suite grades redirects, and following one would erase the evidence.
-    fetchFn: createGuardedFetch(),
+    fetchFn: createConformanceFetch("OAuth endpoint"),
   };
 
   const test = new OAuthConformanceTest(oauthConfig, {
