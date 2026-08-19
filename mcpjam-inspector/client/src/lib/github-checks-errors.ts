@@ -1,4 +1,8 @@
 import { convexErrMessage } from "@/lib/convex-error";
+import type {
+  GithubCheckConnectionStatus,
+  GithubInstallationBindingStatus,
+} from "@/hooks/useGithubChecksSettings";
 
 /**
  * What a refused GitHub Checks write says to the person who made it.
@@ -71,7 +75,10 @@ export const GITHUB_CONNECTION_STATUS_COPY = {
     "The MCPJam GitHub App is not active on this account right now, so checks are paused. This is not a problem with your pull requests — reconnect the app from the section above.",
   repository_access_removed:
     "The MCPJam GitHub App no longer has access to this repository, so checks are paused. This is not a problem with your pull requests — grant it access on GitHub, then reconnect.",
-} as const;
+  // `satisfies`, not a plain annotation: the map keeps its literal types for
+  // callers AND the compiler refuses it if the union gains or loses a member.
+  // Without it, a new status is only noticed when something indexes the map.
+} as const satisfies Record<GithubCheckConnectionStatus, string | null>;
 
 /** The short badge label beside a row. Same states, fewer words. */
 export const GITHUB_CONNECTION_STATUS_LABEL = {
@@ -79,7 +86,7 @@ export const GITHUB_CONNECTION_STATUS_LABEL = {
   legacy_unverified: "Reconnect required",
   installation_inactive: "App inactive",
   repository_access_removed: "No access",
-} as const;
+} as const satisfies Record<GithubCheckConnectionStatus, string | null>;
 
 /**
  * What an installation binding's state means to an administrator.
@@ -94,8 +101,14 @@ export const GITHUB_BINDING_STATUS_COPY = {
     "Suspended on GitHub. Checks are paused for this account until somebody unsuspends the app there.",
   removed:
     "The app was uninstalled from this account. Reconnect it to start running checks again.",
+  // UNREACHABLE IN PRACTICE, and kept anyway. The backend's
+  // `listBindingsForOrganization` filters `unbound` rows out: an admin severed
+  // that relationship deliberately, and keeping it on the page as a fifth state
+  // to interpret adds nothing. The entry stays because the map is total over
+  // the status union — a partial map would mean this file stopped failing to
+  // compile the day the backend changed its mind.
   unbound: "Disconnected from this workspace.",
-} as const;
+} as const satisfies Record<GithubInstallationBindingStatus, string>;
 
 /**
  * The confirmation before an admin severs a binding.

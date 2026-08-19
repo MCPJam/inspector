@@ -1051,11 +1051,38 @@ describe("GithubChecksRoute installations", () => {
   });
 
   it("never renders a raw GitHub installation id", async () => {
-    mockBindings.value = [binding("acme")];
+    // The fixture CARRIES one, and this is the only assertion that mentions it.
+    // Without it the test passes for any rendering — including one that echoes
+    // an id it was never given — because no other fixture here has digits in.
+    const RAW_INSTALLATION_ID = "48213907";
+    mockBindings.value = [
+      { ...binding("acme"), installationId: Number(RAW_INSTALLATION_ID) },
+    ];
     const { container } = renderRoute();
     await screen.findByText("acme");
-    // The opaque ref is all the page has, and even that is not user-facing.
+
+    // The opaque ref is all the page should use, and even that is not
+    // user-facing.
+    expect(container.textContent).not.toContain(RAW_INSTALLATION_ID);
     expect(container.textContent).not.toMatch(/\b\d{6,}\b/);
+  });
+
+  it("has copy for `unbound`, which the backend does not send", async () => {
+    // The fourth state in `GITHUB_BINDING_STATUS_COPY`. The BACKEND filters
+    // `unbound` rows out of `listBindingsForOrganization` — an admin severed
+    // that relationship deliberately, and a fifth state to interpret adds
+    // nothing — so this is unreachable in practice.
+    //
+    // The page deliberately does NOT re-implement that filter. A second
+    // authority on which bindings are visible is exactly the kind of thing
+    // that disagrees with the first one later. The map stays total over the
+    // status union instead, so a backend that ever did send one renders
+    // something true rather than `undefined`, and this pins that.
+    mockBindings.value = [binding("acme", { status: "unbound" })];
+    renderRoute();
+    expect(
+      await screen.findByText(/Disconnected from this workspace/i)
+    ).toBeInTheDocument();
   });
 
   it("asks before disconnecting, and says what is KEPT as well as what stops", async () => {

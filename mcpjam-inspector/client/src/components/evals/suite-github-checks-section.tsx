@@ -12,6 +12,13 @@ import {
 import { useAppNavigate } from "@/lib/app-navigation";
 import { githubChecksWriteErrorMessage } from "@/lib/github-checks-errors";
 import {
+  findRepoByPickerValue,
+  pickerLabelFor,
+  pickerValueFor,
+  shouldShowAccountLabels,
+  verifiedConnectArgs,
+} from "@/lib/github-repo-picker";
+import {
   useGithubChecksSettings,
   type GithubCheckOutagePolicy,
   type InstallationRepo,
@@ -127,19 +134,10 @@ export function SuiteGithubChecksSection({
           (repo) => !alreadyConnected.has(repo.fullName.toLowerCase())
         );
 
-  /** The listing entry the picker's value refers to. See the Select below. */
-  const pickedRepo = connectableRepos.find(
-    (repo) => String(repo.repositoryId) === pickerRepo
-  );
-
-  // Same rule as the settings page: the account label earns its place only when
-  // it disambiguates. One connected account means one repeated label.
-  const showAccountLabels =
-    new Set(
-      connectableRepos
-        .map((repo) => repo.accountLogin)
-        .filter((login): login is string => Boolean(login))
-    ).size > 1;
+  // Selection, labelling and the connect payload are shared with the settings
+  // page through `@/lib/github-repo-picker` — the same contract, stated once.
+  const pickedRepo = findRepoByPickerValue(connectableRepos, pickerRepo);
+  const showAccountLabels = shouldShowAccountLabels(connectableRepos);
 
   const handleConnect = async () => {
     if (!pickedRepo || !projectId || !pickerPolicy) return;
@@ -148,18 +146,14 @@ export function SuiteGithubChecksSection({
       // The server-VERIFIED connect: it proves the selected installation can
       // actually reach this repository before any row is written, and the
       // reference and repository id say WHICH installation and WHICH repository
-      // — both re-verified server-side. The reference is absent only while the
-      // backend is still falling back to its pinned installation.
-      await connectVerifiedRepo({
-        repoFullName: pickedRepo.fullName,
-        projectId,
-        suiteId,
-        outagePolicy: pickerPolicy,
-        ...(pickedRepo.installationRef
-          ? { installationRef: pickedRepo.installationRef }
-          : {}),
-        repositoryId: pickedRepo.repositoryId,
-      });
+      // — both re-verified server-side.
+      await connectVerifiedRepo(
+        verifiedConnectArgs(pickedRepo, {
+          projectId,
+          suiteId,
+          outagePolicy: pickerPolicy,
+        })
+      );
       if (!mountedRef.current) return;
       setPickerRepo("");
       setPickerPolicy("");
@@ -207,13 +201,8 @@ export function SuiteGithubChecksSection({
           </SelectTrigger>
           <SelectContent>
             {connectableRepos.map((repo) => (
-              <SelectItem
-                key={repo.repositoryId}
-                value={String(repo.repositoryId)}
-              >
-                {showAccountLabels && repo.accountLogin
-                  ? `${repo.fullName} · ${repo.accountLogin}`
-                  : repo.fullName}
+              <SelectItem key={repo.repositoryId} value={pickerValueFor(repo)}>
+                {pickerLabelFor(repo, showAccountLabels)}
               </SelectItem>
             ))}
           </SelectContent>

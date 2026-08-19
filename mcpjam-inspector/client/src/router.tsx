@@ -66,6 +66,15 @@ function ciEvalsRedirect({ request }: { request: Request }) {
  *
  * Loaders (redirects) live here for the same reason.
  */
+/**
+ * EVERY key here must also be a path in `APP_ROUTES`.
+ *
+ * `buildRouteChildren` iterates `APP_ROUTES`, not this map, so a route
+ * registered ONLY here is never mounted — the URL falls through to the `"*"`
+ * catch-all and renders something else entirely, with no error anywhere.
+ * The reverse direction throws loudly; this one fails silently, which is why
+ * `router.test.tsx` asserts it.
+ */
 const ROUTE_ELEMENTS: Record<
   string,
   { element?: React.ReactElement; loader?: (args: any) => unknown }
@@ -220,6 +229,24 @@ const ROUTE_ELEMENTS: Record<
 
 /** Route table → react-router children, preserving declaration order. */
 function buildRouteChildren() {
+  // THE OTHER DIRECTION, and the one that used to fail silently. This function
+  // iterates `APP_ROUTES`, so a path registered only in `ROUTE_ELEMENTS` is
+  // never mounted: the URL falls through to the `"*"` catch-all and renders a
+  // different screen, with nothing in the console and no failing test — a
+  // component test mounts the component directly, so it never notices.
+  //
+  // Checked here rather than only in a test because this is where the asymmetry
+  // lives, and because a route that cannot be reached should stop the app at
+  // startup rather than reach a user as a wrong page.
+  const tablePaths = new Set(APP_ROUTES.map((route) => route.path));
+  for (const path of Object.keys(ROUTE_ELEMENTS)) {
+    if (!tablePaths.has(path)) {
+      throw new Error(
+        `[router] element registered for "${path}", which is not in APP_ROUTES — it would never be mounted`
+      );
+    }
+  }
+
   return APP_ROUTES.map((route) => {
     const rendered = ROUTE_ELEMENTS[route.path];
     if (!rendered) {

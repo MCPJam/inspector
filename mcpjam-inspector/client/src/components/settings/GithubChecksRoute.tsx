@@ -40,6 +40,13 @@ import {
 } from "@/lib/github-checks-errors";
 import { redirectToGithub } from "@/lib/github-external-redirect";
 import {
+  findRepoByPickerValue,
+  pickerLabelFor,
+  pickerValueFor,
+  shouldShowAccountLabels,
+  verifiedConnectArgs,
+} from "@/lib/github-repo-picker";
+import {
   useGithubChecksSettings,
   type GithubCheckOutagePolicy,
   type GithubCheckRepoConfigRow,
@@ -394,7 +401,7 @@ export function GithubChecksRoute({
 
   const handleConnect = async () => {
     const suite = suiteById(pickerSuite);
-    const repo = repoByPickerValue(pickerRepo);
+    const repo = findRepoByPickerValue(connectableRepos, pickerRepo);
     // The same three-way rule the button enforces, enforced again here. The
     // disabled attribute is a hint to a person; this is the invariant, and the
     // policy half of it is why: a connect that quietly omitted `outagePolicy`
@@ -412,23 +419,13 @@ export function GithubChecksRoute({
       // The project is DERIVED from the suite, never picked separately: the
       // backend requires them to agree, so offering two controls would only
       // create a way to get it wrong.
-      //
-      // `installationRef` and `repositoryId` are taken STRAIGHT OFF the picked
-      // listing entry rather than reassembled: they say which installation this
-      // repository was enumerated through and which repository it actually is,
-      // and the server re-verifies both. The ref is absent only while the
-      // backend is still falling back to its pinned installation, and omitting
-      // it is what keeps that compatibility path reachable.
-      await connectVerifiedRepo({
-        repoFullName: repo.fullName,
-        projectId: suite.projectId,
-        suiteId: suite._id,
-        outagePolicy: pickerPolicy,
-        ...(repo.installationRef
-          ? { installationRef: repo.installationRef }
-          : {}),
-        repositoryId: repo.repositoryId,
-      });
+      await connectVerifiedRepo(
+        verifiedConnectArgs(repo, {
+          projectId: suite.projectId,
+          suiteId: suite._id,
+          outagePolicy: pickerPolicy,
+        })
+      );
       // A completion for the PREVIOUS org lands on a page that is now showing a
       // different one. Clearing selections there would wipe a fresh choice, and
       // the success toast would credit the wrong organization.
@@ -548,20 +545,12 @@ export function GithubChecksRoute({
           (repo) => !alreadyConnected.has(normalizeRepoName(repo.fullName))
         );
 
-  /** The listing entry the picker's value refers to. */
-  const repoByPickerValue = (value: string): InstallationRepo | undefined =>
-    connectableRepos.find((repo) => String(repo.repositoryId) === value);
-
-  // Show the account beside a repository ONLY when it disambiguates. With one
-  // connected account every row would carry the same label, which is a column
-  // of noise; with several, `widgets` and `widgets` are genuinely two different
-  // repositories and the name alone cannot say which.
-  const accountLogins = new Set(
-    connectableRepos
-      .map((repo) => repo.accountLogin)
-      .filter((login): login is string => Boolean(login))
-  );
-  const showAccountLabels = accountLogins.size > 1;
+  // Selection and labelling live in `@/lib/github-repo-picker`, shared with the
+  // suite's own picker: which value selects a repository, and what the verified
+  // connect is told about it, are a contract with the backend rather than a
+  // presentation detail, and two copies drift the first time either side gains
+  // a field.
+  const showAccountLabels = shouldShowAccountLabels(connectableRepos);
 
   const bindingRows: GithubInstallationBinding[] = bindings ?? [];
 
@@ -815,11 +804,9 @@ export function GithubChecksRoute({
               {connectableRepos.map((repo) => (
                 <SelectItem
                   key={repo.repositoryId}
-                  value={String(repo.repositoryId)}
+                  value={pickerValueFor(repo)}
                 >
-                  {showAccountLabels && repo.accountLogin
-                    ? `${repo.fullName} · ${repo.accountLogin}`
-                    : repo.fullName}
+                  {pickerLabelFor(repo, showAccountLabels)}
                 </SelectItem>
               ))}
             </SelectContent>

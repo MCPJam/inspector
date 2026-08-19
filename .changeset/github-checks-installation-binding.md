@@ -1,9 +1,12 @@
 ---
-"@mcpjam/inspector": patch
+"@mcpjam/inspector": minor
 ---
 
 Connect GitHub accounts to a workspace, and say when a connected repository is
 not actually ready.
+
+Needs the matching backend deployment: until it lands, the account and
+binding functions this surface calls do not resolve.
 
 GitHub Checks used to assume one GitHub App installation for the whole
 deployment, so the settings page had nothing to say about WHICH account a

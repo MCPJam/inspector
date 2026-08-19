@@ -167,8 +167,12 @@ export function GithubInstallCallbackRoute() {
         <h2 className="text-lg font-medium">Connect a GitHub account</h2>
       </div>
 
+      {/* This page replaces its whole content asynchronously — "Finishing up"
+          becomes a refusal or an account picker with no interaction — so a
+          screen reader would otherwise sit on a message that has already gone.
+          `role="status"` announces the replacement politely. */}
       {phase.kind === "working" ? (
-        <p className="text-sm text-muted-foreground">
+        <p role="status" className="text-sm text-muted-foreground">
           Finishing up with GitHub…
         </p>
       ) : null}
@@ -176,7 +180,9 @@ export function GithubInstallCallbackRoute() {
       {phase.kind === "failed" ? (
         <SettingsSection title="Could not connect">
           <div className="space-y-3 px-4 py-4">
-            <p className="text-sm text-muted-foreground">{phase.message}</p>
+            <p role="status" className="text-sm text-muted-foreground">
+              {phase.message}
+            </p>
             <Button
               variant="outline"
               onClick={() => appNavigate(SETTINGS_PATH)}
