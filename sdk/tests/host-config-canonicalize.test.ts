@@ -437,6 +437,28 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
     expect(c.mcpProfile?.initialize).toBeUndefined();
   });
 
+  it("preserves automatic dual-era selection in the existing initialize envelope", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          mcpProtocolVersion: "auto",
+          initialize: {
+            supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+            clientInfo: { name: "openai-mcp", version: "1.0.0" },
+          },
+        },
+      })
+    );
+    expect(c.mcpProfile).toMatchObject({
+      mcpProtocolVersion: "auto",
+      initialize: {
+        supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+        clientInfo: { name: "openai-mcp", version: "1.0.0" },
+      },
+    });
+  });
+
   it("throws ConflictingProtocolVersionPin when pin not advertised", () => {
     expect(() =>
       canonicalizeHostConfigV2(
@@ -450,13 +472,34 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
       )
     ).toThrow(/ConflictingProtocolVersionPin/);
   });
+
+  it("keeps an unadvertised 2026 pin — it never runs initialize", () => {
+    // A host saved this way predates the dual-era work. It must keep saving
+    // (editing an unrelated field would otherwise be rejected); the UI warns
+    // when a client is not verified for the selected revision.
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          mcpProtocolVersion: "2026-07-28",
+          initialize: { supportedProtocolVersions: ["2025-11-25"] },
+        },
+      })
+    );
+    expect(c.mcpProfile?.mcpProtocolVersion).toBe("2026-07-28");
+    expect(c.mcpProfile?.initialize?.supportedProtocolVersions).toEqual([
+      "2025-11-25",
+    ]);
+  });
 });
 
 describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
   it("round-trips both literals", () => {
     for (const mode of ["mirror", "omit"] as const) {
       const c = canonicalizeHostConfigV2(
-        base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: mode } })
+        base({
+          mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: mode },
+        })
       );
       expect(c.mcpProfile?.toolParamHeaderMirroring).toBe(mode);
     }
@@ -474,9 +517,17 @@ describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
 
   it("does not collide with an untouched profile's hash", async () => {
     expect(
-      await hash(base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "omit" } }))
+      await hash(
+        base({
+          mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "omit" },
+        })
+      )
     ).not.toBe(
-      await hash(base({ mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "mirror" } }))
+      await hash(
+        base({
+          mcpProfile: { profileVersion: 1, toolParamHeaderMirroring: "mirror" },
+        })
+      )
     );
   });
 
@@ -486,8 +537,7 @@ describe("canonicalizeHostConfigV2 — toolParamHeaderMirroring", () => {
         base({
           mcpProfile: {
             profileVersion: 1,
-            toolParamHeaderMirroring:
-              "corrupt" as unknown as "mirror",
+            toolParamHeaderMirroring: "corrupt" as unknown as "mirror",
           },
         })
       )
@@ -789,7 +839,10 @@ describe("canonicalizeHostConfigV2 — skillSelection", () => {
   it("dedupes and sorts explicit skillIds deterministically (order-insensitive)", async () => {
     const c = canonicalizeHostConfigV2(
       base({
-        skillSelection: { mode: "explicit", skillIds: ["sk-b", "sk-a", "sk-b"] },
+        skillSelection: {
+          mode: "explicit",
+          skillIds: ["sk-b", "sk-a", "sk-b"],
+        },
       })
     );
     expect(c.skillSelection).toEqual({
@@ -798,7 +851,9 @@ describe("canonicalizeHostConfigV2 — skillSelection", () => {
     });
     expect(
       await hash(
-        base({ skillSelection: { mode: "explicit", skillIds: ["sk-a", "sk-b"] } })
+        base({
+          skillSelection: { mode: "explicit", skillIds: ["sk-a", "sk-b"] },
+        })
       )
     ).toBe(
       await hash(

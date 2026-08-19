@@ -2384,7 +2384,7 @@ export class MCPClientManager {
       //
       // A pin absent from the list is left alone: it would put a version on
       // the wire the client never claimed to speak. `canonicalizeMcpProfile`
-      // rejects that combination for stateful pins anyway, so this only
+      // rejects that combination for stateful host pins anyway, so this only
       // guards hand-built configs.
       const supportedProtocolVersions =
         !wantsStateless &&
