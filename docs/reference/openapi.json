@@ -10323,6 +10323,10 @@
               }
             ]
           },
+          "executionEngine": {
+            "type": "string",
+            "description": "Which engine executed the run: `emulated` (the platform's own turn loop) or `harness:<id>` (a real agent runtime such as Claude Code). ABSENT means the run recorded no engine \u2014 a run created before the platform attributed one. Treat that as UNKNOWN, never as `emulated`: those are different claims, and the runs whose engine was never recorded are exactly the ones a reader must not vouch for."
+          },
           "insights": {
             "allOf": [
               {

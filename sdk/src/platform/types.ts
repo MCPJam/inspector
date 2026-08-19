@@ -235,6 +235,16 @@ export interface PlatformEvalRun {
    */
   environment?: PlatformEvalRunEnvironment | null;
   /**
+   * Which engine executed the run: `"emulated"` (the platform's own turn loop)
+   * or `"harness:<id>"` (a real agent runtime such as Claude Code).
+   *
+   * ABSENT means the run recorded no engine — a run created before the
+   * platform attributed one. Treat that as UNKNOWN, never as `"emulated"`:
+   * those are different claims, and the runs whose engine was never recorded
+   * are exactly the ones a reader must not vouch for.
+   */
+  executionEngine?: string;
+  /**
    * Whether the run's score evidence verified at ingest.
    *
    * TRI-STATE, and the third state matters: `"valid"` means the backend

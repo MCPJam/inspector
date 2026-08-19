@@ -970,6 +970,18 @@ function toRunDto(run: RunDoc) {
     source: run.source ?? "ui",
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
+    // Which engine the run actually executed on: `"emulated"` (the inspector's
+    // own turn loop) or `"harness:<id>"` (a real agent runtime). Read from the
+    // run's IMMUTABLE snapshot, where the platform derives it from the run's
+    // own host config.
+    //
+    // OMITTED, never defaulted, when the snapshot has none: a run predating
+    // the field recorded nothing, and rendering that as "emulated" would put a
+    // claim on exactly the runs whose engine was never verified — the same
+    // false-green this attribution exists to make impossible.
+    ...(typeof run.configSnapshot?.executionEngine === "string"
+      ? { executionEngine: run.configSnapshot.executionEngine }
+      : {}),
     // Whether the run's score evidence verified at ingest. ABSENT means no
     // verdict was produced — a deployment that does not yet check integrity —
     // and a score gate must treat that exactly like `"invalid"`: absent
