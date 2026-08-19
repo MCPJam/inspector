@@ -24,6 +24,7 @@ import {
   type ClaudeAppsEvidence,
 } from "../../src/claude-readiness/checks/apps.js";
 import { decideLaneStatus } from "../../src/claude-readiness/index.js";
+import { CLAUDE_APP_DESIGN_BUDGETS } from "../../src/claude-readiness/profile.js";
 
 const STAMP = { evaluatedAt: "2026-08-19T00:00:00.000Z" };
 const URL_UNDER_TEST = "https://mcp.example.com/mcp";
@@ -65,6 +66,34 @@ describe("no apps evidence versus no apps", () => {
   it("reports not-applicable when the suite ran and found no widgets", () => {
     const findings = run({ tools: [] });
     expect(findings.every((f) => f.status === "not-applicable")).toBe(true);
+  });
+
+  it("accounts for every check on both early returns, design lints included", () => {
+    // The early returns used to enumerate the checks by hand and omit the
+    // eight design lints, so a run with no apps evidence quietly produced
+    // fewer findings than the catalog advertises. A missing finding is worse
+    // than a `not-evaluated` one: the reader has to notice the absence.
+    const everyId = new Set(
+      runClaudeAppsChecks(
+        {
+          enteredUrl: URL_UNDER_TEST,
+          appsSuiteRan: true,
+          tools: [MODERN_TOOL],
+          resources: [GOOD_RESOURCE],
+        },
+        STAMP,
+      ).map((finding) => finding.id),
+    );
+
+    for (const evidence of [
+      { enteredUrl: URL_UNDER_TEST, appsSuiteRan: false },
+      { enteredUrl: URL_UNDER_TEST, appsSuiteRan: true, tools: [] },
+    ]) {
+      const reported = new Set(
+        runClaudeAppsChecks(evidence, STAMP).map((finding) => finding.id),
+      );
+      expect(reported).toEqual(everyId);
+    }
   });
 });
 
@@ -365,6 +394,38 @@ describe("design-guideline lints", () => {
         finding.status === "violated",
     );
     expect(flagged).toEqual([]);
+  });
+
+  it("reads the touch-target minimum as a number, not as digits in a regex", () => {
+    const touchTarget = (html: string) =>
+      run({
+        tools: [MODERN_TOOL],
+        resources: [{ ...GOOD_RESOURCE, html }],
+      }).find((f) => f.id === "claude.apps.design.touch-targets")!.status;
+
+    // Exactly the budget passes, and so does the logical property — which the
+    // old regex accepted at ANY value, including ones far below the minimum.
+    expect(
+      touchTarget(
+        `<html><body><button style="min-height: ${CLAUDE_APP_DESIGN_BUDGETS.minTouchTargetPx}px" aria-label="Go">Go</button></body></html>`,
+      ),
+    ).toBe("satisfied");
+    expect(
+      touchTarget(
+        '<html><body><button style="min-block-size: 48px" aria-label="Go">Go</button></body></html>',
+      ),
+    ).toBe("satisfied");
+    expect(
+      touchTarget(
+        '<html><body><button style="min-block-size: 8px" aria-label="Go">Go</button></body></html>',
+      ),
+    ).toBe("violated");
+    // A fractional value below the budget is still below it.
+    expect(
+      touchTarget(
+        '<html><body><button style="min-height: 43.5px" aria-label="Go">Go</button></body></html>',
+      ),
+    ).toBe("violated");
   });
 
   it("does not see a button that exists only inside a comment", () => {

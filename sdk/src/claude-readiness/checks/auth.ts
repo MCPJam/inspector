@@ -235,6 +235,15 @@ function stringArray(value: unknown): string[] {
  * The canonical form of a resource indicator (RFC 8707 §2): scheme and host
  * lowercased, default port removed, no fragment, and no query. The path is
  * KEPT — an MCP server at `/mcp` is a different resource from the origin.
+ *
+ * DELIBERATELY NOT `canonicalizeResourceUrl` from `oauth/resource-policy.ts`,
+ * and the difference is the point rather than an oversight. That function is
+ * the client's own canonicalizer: it keeps the query and keeps a default port,
+ * because its job is to build a value MCPJam will send and then match. This one
+ * grades what CLAUDE sends, and Claude's documented form drops both. Unifying
+ * them would make the check pass values Claude would never produce, so if the
+ * two ever need to converge it has to be because the documentation moved —
+ * check the manifest revision, not this comment.
  */
 export function canonicalResourceIndicator(url: string): string | undefined {
   let parsed: URL;

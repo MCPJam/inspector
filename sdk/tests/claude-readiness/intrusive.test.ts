@@ -469,6 +469,53 @@ describe("step-up grading", () => {
     expect(finding.status).toBe("satisfied");
   });
 
+  it("records the challenged scopes against the ones the run expected", () => {
+    // `expectedScopes` is required alongside `protectedToolName` so the run
+    // states what it asserts — but nothing compared it, so the requirement
+    // produced a config error and no evidence.
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      {
+        stepUp: {
+          attempted: true,
+          toolName: "read_private",
+          status: 403,
+          wwwAuthenticate:
+            'Bearer error="insufficient_scope", scope="private:read other:write"',
+        },
+      },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.details).toMatchObject({
+      expectedScopes: ["private:read"],
+      challengedScopes: ["private:read", "other:write"],
+      scopesOverlapExpectation: true,
+    });
+  });
+
+  it("does not call an omitted scope a mismatch", () => {
+    // `scope` is OPTIONAL on an insufficient_scope challenge; Claude selects
+    // from discovery when it is absent. Reporting `false` would read as the
+    // server contradicting the run, which it never did.
+    const finding = gradeClaudeIntrusiveObservations(
+      withTool(),
+      {
+        stepUp: {
+          attempted: true,
+          toolName: "read_private",
+          status: 403,
+          wwwAuthenticate: 'Bearer error="insufficient_scope"',
+        },
+      },
+      STAMP,
+    ).find((f) => f.id === "claude.intrusive.step-up-challenge")!;
+    expect(finding.status).toBe("satisfied");
+    expect(finding.details).toMatchObject({ challengedScopes: [] });
+    expect(
+      (finding.details as Record<string, unknown>).scopesOverlapExpectation,
+    ).toBeUndefined();
+  });
+
   it("fails a bare 403 with no challenge", () => {
     const finding = gradeClaudeIntrusiveObservations(
       withTool(),

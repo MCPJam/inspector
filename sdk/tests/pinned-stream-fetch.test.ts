@@ -292,6 +292,39 @@ describe("the caller's redirect mode is honored", () => {
   });
 });
 
+describe("a method rewrite drops every body header", () => {
+  it("strips content-language and content-location too", async () => {
+    // Fetch's request-body-header list is all five, and `oauth-proxy.ts`'s
+    // `updateRequestForRedirect` strips all five. Leaving two behind sends a
+    // rewritten GET still claiming to describe a body it no longer carries.
+    const { origin, received } = await startServer((req, res) => {
+      if (req.url === "/start") {
+        res.writeHead(303, { location: "/done" });
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    });
+
+    await loopbackFetch()(`${origin}/start`, {
+      method: "POST",
+      body: "{}",
+      headers: {
+        "content-type": "application/json",
+        "content-language": "en",
+        "content-location": "/local",
+      },
+    });
+
+    const rewritten = received.at(-1)!;
+    expect(rewritten.method).toBe("GET");
+    expect(rewritten.headers["content-language"]).toBeUndefined();
+    expect(rewritten.headers["content-location"]).toBeUndefined();
+    expect(rewritten.headers["content-type"]).toBeUndefined();
+  });
+});
+
 describe("resources it must not leak", () => {
   it("releases the caller's abort listener when the body is finished", async () => {
     // An MCP transport hands ONE connection-lifetime signal to every request

@@ -236,6 +236,48 @@ describe("coverage and context", () => {
     ]);
   });
 
+  it("will not let a check outrun the capabilities it declared", () => {
+    // `requiresCapabilities` was documented as an invariant and enforced
+    // nowhere, so it held only for as long as every check author remembered
+    // it. A check that forgets does not fail loudly — it publishes a verdict
+    // it had no evidence for. Asserted over EVERY declaring finding rather
+    // than one known id, so a check added later is covered by this test
+    // without anyone remembering to extend it.
+    const result = gradeClaudeReadiness(input({ capabilities: ["dns"] }));
+    const held = new Set(result.context.capabilities);
+    const overreaching = result.findings.filter(
+      (finding) =>
+        (finding.requiresCapabilities ?? []).some(
+          (capability) => !held.has(capability),
+        ) && finding.status !== "not-evaluated",
+    );
+    expect(overreaching).toEqual([]);
+    // And the gate is reached at all — a run where nothing declares a missing
+    // capability would pass the assertion above vacuously.
+    expect(
+      result.findings.some((finding) =>
+        (finding.requiresCapabilities ?? []).some(
+          (capability) => !held.has(capability),
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("never upgrades a finding on the strength of a capability", () => {
+    // The gate is one-directional. Holding a capability cannot turn an
+    // unevaluated check into a pass.
+    const result = gradeClaudeReadiness(
+      input({ capabilities: ["browser", "dns", "interactive-oauth"] }),
+    );
+    const gated = result.findings.filter((f) =>
+      (f.requiresCapabilities ?? []).length > 0,
+    );
+    expect(gated.length).toBeGreaterThan(0);
+    for (const finding of gated) {
+      expect(finding.status).not.toBe("satisfied");
+    }
+  });
+
   it("stamps one evaluatedAt across every finding", () => {
     const result = gradeClaudeReadiness(input());
     const moments = new Set(result.findings.map((finding) => finding.evaluatedAt));

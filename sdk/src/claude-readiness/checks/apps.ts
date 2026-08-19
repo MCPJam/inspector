@@ -28,6 +28,7 @@ import { claudePolicySource } from "../manifest.js";
 import {
   CLAUDE_APP_CONTENT_DOMAIN_HASH_LENGTH,
   CLAUDE_APP_CONTENT_DOMAIN_SUFFIX,
+  CLAUDE_APP_DESIGN_BUDGETS,
   CLAUDE_APP_HTML_MIME,
 } from "../profile.js";
 import type { ClaudeReadinessFinding } from "../types.js";
@@ -186,6 +187,28 @@ const INSTANCE_SUPERSESSION: ClaudeCheckDefinition = {
  * responsive. The value is in pointing a reviewer at the likely places, not in
  * pronouncing a verdict.
  */
+/**
+ * Whether the stylesheet declares a block-axis minimum that reaches Claude's
+ * touch-target budget.
+ *
+ * Both spellings count — `min-height` and its logical equivalent
+ * `min-block-size` — and both are read as NUMBERS, so the lint tracks
+ * {@link CLAUDE_APP_DESIGN_BUDGETS} instead of restating it. Only `px` is
+ * considered: a relative unit cannot be resolved without a layout, and
+ * guessing at one would be a rendered observation this static pass never made.
+ */
+function declaresMinimumTouchTarget(styleText: string): boolean {
+  const declarations = styleText.matchAll(
+    /min-(?:height|block-size)\s*:\s*([\d.]+)px/gi,
+  );
+  for (const [, value] of declarations) {
+    if (Number.parseFloat(value) >= CLAUDE_APP_DESIGN_BUDGETS.minTouchTargetPx) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const DESIGN_LINTS: Array<{
   definition: ClaudeCheckDefinition;
   /** True when the widget looks like it MISSES the guideline. */
@@ -202,21 +225,23 @@ const DESIGN_LINTS: Array<{
       !/@media[^{]*\(\s*max-width/i.test(scanned.styleText) &&
       !/@container/i.test(scanned.styleText) &&
       !/\bminmax\(|\bclamp\(|\bflex-wrap\b/i.test(scanned.styleText),
-    remediation:
-      "Claude renders widgets as narrow as 320px. No media query, container query, or intrinsic sizing was found.",
+    remediation: `Claude renders widgets as narrow as ${CLAUDE_APP_DESIGN_BUDGETS.minViewportWidthPx}px. No media query, container query, or intrinsic sizing was found.`,
   },
   {
     definition: designLint(
       "touch-targets",
-      "Interactive elements may be below the 44×44px touch target",
+      `Interactive elements may be below the ${CLAUDE_APP_DESIGN_BUDGETS.minTouchTargetPx}×${CLAUDE_APP_DESIGN_BUDGETS.minTouchTargetPx}px touch target`,
       "§Touch targets",
     ),
+    // Read the declared minimums and COMPARE them, rather than pattern-matching
+    // the digits of one particular number: a regex spelling out `4[4-9]|[5-9]\d`
+    // silently stops agreeing with the budget the moment the budget changes,
+    // and it could only ever check `min-height` while treating any
+    // `min-block-size` at all — including `min-block-size: 8px` — as passing.
     detect: (scanned) =>
       hasInteractiveElement(scanned) &&
-      !/min-height\s*:\s*(4[4-9]|[5-9]\d|\d{3,})px/i.test(scanned.styleText) &&
-      !/min-block-size/i.test(scanned.styleText),
-    remediation:
-      "Interactive controls were found with no minimum height reaching 44px.",
+      !declaresMinimumTouchTarget(scanned.styleText),
+    remediation: `Interactive controls were found with no minimum height reaching ${CLAUDE_APP_DESIGN_BUDGETS.minTouchTargetPx}px.`,
   },
   {
     definition: designLint(
@@ -345,16 +370,28 @@ export function runClaudeAppsChecks(
     CSP_SHAPE,
   ];
 
+  /**
+   * EVERY definition this module can emit, which is what an early return owes
+   * the report.
+   *
+   * The design lints were missing here, so a run with no apps evidence — or a
+   * server with no widgets — silently produced eight fewer findings than the
+   * catalog advertises. Absent is not the same as `not-evaluated`: one is a
+   * check the report can explain, the other is a hole a reader has to notice.
+   */
+  const everyDefinition = [
+    ...staticDefinitions,
+    RESULT_SIZE,
+    INSTANCE_SUPERSESSION,
+    ...DESIGN_LINTS.map((lint) => lint.definition),
+  ];
+
   if (!evidence.appsSuiteRan) {
     // No apps evidence at all is NOT "this server has no apps". Saying
     // `not-applicable` would claim we established something we never looked at.
     const reason =
       "no MCP Apps conformance result was available, so nothing app-specific was evaluated";
-    for (const definition of [
-      ...staticDefinitions,
-      RESULT_SIZE,
-      INSTANCE_SUPERSESSION,
-    ]) {
+    for (const definition of everyDefinition) {
       findings.push(notEvaluated(definition, stamp, reason));
     }
     return findings;
@@ -362,11 +399,7 @@ export function runClaudeAppsChecks(
 
   if (tools.length === 0) {
     const reason = "this server advertises no MCP Apps widgets";
-    for (const definition of [
-      ...staticDefinitions,
-      RESULT_SIZE,
-      INSTANCE_SUPERSESSION,
-    ]) {
+    for (const definition of everyDefinition) {
       findings.push(notApplicable(definition, stamp, reason));
     }
     return findings;

@@ -30,6 +30,7 @@
  *      registration that cannot be cleaned up is reported rather than hidden.
  */
 
+import { parseBearerAuthenticateParameters } from "../oauth/state-machines/shared/challenges.js";
 import { claudePolicySource } from "./manifest.js";
 import type { ClaudeReadinessFinding } from "./types.js";
 import {
@@ -293,6 +294,37 @@ export interface ClaudeIntrusiveObservations {
 }
 
 /**
+ * The scopes a step-up challenge asked for, beside the ones the run expected.
+ *
+ * Reported, never graded. A challenge that names no `scope` is conforming, and
+ * a server is free to ask for scopes the operator did not list — so the useful
+ * output is the comparison itself, which tells whoever reads the report
+ * whether their declared expectation matched reality.
+ */
+function summarizeStepUpScopes(
+  wwwAuthenticate: string | undefined,
+  expectedScopes: string[] | undefined,
+): Record<string, unknown> {
+  const expected = expectedScopes ?? [];
+  const challengedScopes = wwwAuthenticate
+    ? (parseBearerAuthenticateParameters(wwwAuthenticate).scope ?? "")
+        .split(/\s+/)
+        .filter(Boolean)
+    : [];
+  return {
+    expectedScopes: expected,
+    challengedScopes,
+    // `undefined` rather than a boolean when the challenge named nothing:
+    // there is no overlap to report, and `false` would read as a mismatch the
+    // server never committed.
+    scopesOverlapExpectation:
+      challengedScopes.length === 0
+        ? undefined
+        : challengedScopes.some((scope) => expected.includes(scope)),
+  };
+}
+
+/**
  * Whether the refresh request itself was answered successfully.
  *
  * An older observation carries no `refreshStatus` — it predates the field —
@@ -461,11 +493,23 @@ export function gradeClaudeIntrusiveObservations(
     const challenged =
       stepUp.status === 403 &&
       /insufficient_scope/.test(stepUp.wwwAuthenticate ?? "");
+    // WHAT THE CONFIG PROMISED, MEASURED. `expectedScopes` is required
+    // alongside `protectedToolName` so the run states what it is asserting,
+    // but nothing compared it, so the requirement bought a config error and no
+    // evidence. Recorded rather than graded: the `scope` parameter is OPTIONAL
+    // on an `insufficient_scope` challenge — Claude selects scopes from
+    // discovery when it is absent — so a server that omits it, or names its
+    // own, is not thereby wrong.
+    const scopeEvidence = summarizeStepUpScopes(
+      stepUp.wwwAuthenticate,
+      mode.expectedScopes,
+    );
     findings.push(
       challenged
         ? satisfied(STEP_UP, stamp, {
             toolName: stepUp.toolName,
             wwwAuthenticate: stepUp.wwwAuthenticate,
+            ...scopeEvidence,
           })
         : violated(
             STEP_UP,
@@ -474,7 +518,7 @@ export function gradeClaudeIntrusiveObservations(
             {
               status: stepUp.status,
               wwwAuthenticate: stepUp.wwwAuthenticate,
-              expectedScopes: mode.expectedScopes,
+              ...scopeEvidence,
             },
           ),
     );

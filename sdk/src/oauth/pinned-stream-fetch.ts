@@ -129,15 +129,30 @@ function stripCredentials(
   );
 }
 
+/**
+ * Fetch's "request-body-header name" list, which is what a method rewrite has
+ * to drop along with the body.
+ *
+ * All five, not the obvious three: `content-language` and `content-location`
+ * describe a body that no longer exists once 301/302/303 rewrote the request
+ * to GET, and leaving them on sends a GET that still claims to carry one.
+ * `oauth-proxy.ts`'s `updateRequestForRedirect` strips the same five — the two
+ * transports must not disagree about what a redirect does to a request.
+ */
+const BODY_HEADERS = [
+  "content-encoding",
+  "content-language",
+  "content-length",
+  "content-location",
+  "content-type",
+];
+
 function stripBodyHeaders(
   headers: Record<string, string>,
 ): Record<string, string> {
   return Object.fromEntries(
     Object.entries(headers).filter(
-      ([name]) =>
-        !["content-type", "content-length", "content-encoding"].includes(
-          name.toLowerCase(),
-        ),
+      ([name]) => !BODY_HEADERS.includes(name.toLowerCase()),
     ),
   );
 }
