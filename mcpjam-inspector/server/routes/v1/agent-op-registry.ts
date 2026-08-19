@@ -322,7 +322,10 @@ function describeEvalSuiteRun(input: Record<string, unknown>): string {
  * would let the re-expansion happen anyway.
  *
  * Name selectors are resolved for the same reason: a name is a pointer, and
- * the row it points at can be renamed or replaced.
+ * the row it points at can be renamed or replaced. Every spelling of them —
+ * `environment`/`environments` and `host`/`hosts` — because a rename repoints
+ * a single target exactly as readily as it repoints several, and a guarantee
+ * that depended on which form the caller used would be no guarantee.
  */
 async function freezeEvalRunTargets(
   input: Record<string, unknown>,
@@ -333,9 +336,16 @@ async function freezeEvalRunTargets(
   const wantsAll = input.allAttached === true;
   const namedEnvironments = readStringList(input, "environments");
   const namedHosts = readStringList(input, "hosts");
-  if (!wantsAll && namedEnvironments.length === 0 && namedHosts.length === 0) {
-    // A single named target (or none) already denotes one run, and the op
-    // resolves it the same way at execution time.
+  const namedEnvironment = named(input, "environment");
+  const namedHost = named(input, "host");
+  if (
+    !wantsAll &&
+    namedEnvironments.length === 0 &&
+    namedHosts.length === 0 &&
+    !namedEnvironment &&
+    !namedHost
+  ) {
+    // Nothing to freeze: no target named at all.
     return input;
   }
 
@@ -364,15 +374,20 @@ async function freezeEvalRunTargets(
   }
 
   const next: Record<string, unknown> = { ...rest };
-  if (namedHosts.length > 0) {
+  if (namedHosts.length > 0 || namedHost) {
     const byName = new Map(
       (detail.hosts ?? []).map((host) => [host.name.toLocaleLowerCase(), host.id]),
     );
-    next.hosts = namedHosts.map(
-      (selector) => byName.get(selector.toLocaleLowerCase()) ?? selector,
-    );
+    const freeze = (selector: string) =>
+      byName.get(selector.toLocaleLowerCase()) ?? selector;
+    // Singular and plural alike. A rename repoints ONE target just as readily
+    // as it repoints several — the count is unchanged, but the run is not the
+    // run that was approved — so the guarantee cannot depend on which spelling
+    // the model happened to emit.
+    if (namedHosts.length > 0) next.hosts = namedHosts.map(freeze);
+    if (namedHost) next.host = freeze(namedHost);
   }
-  if (namedEnvironments.length > 0) {
+  if (namedEnvironments.length > 0 || namedEnvironment) {
     // Same reason as hosts, one axis over: an environment name is a pointer,
     // and the row it points at can be renamed or replaced between the proposal
     // and the click. Narrowed to the suite's ATTACHED environments, so a name
@@ -397,12 +412,14 @@ async function freezeEvalRunTargets(
       // platform that cannot answer must not cost the caller the proposal. The
       // operation still resolves and validates these selectors on the click.
     }
-    next.environments = namedEnvironments.map(
-      (selector) =>
-        (attached.has(selector) ? selector : undefined) ??
-        byName.get(selector.toLocaleLowerCase()) ??
-        selector,
-    );
+    const freeze = (selector: string) =>
+      (attached.has(selector) ? selector : undefined) ??
+      byName.get(selector.toLocaleLowerCase()) ??
+      selector;
+    if (namedEnvironments.length > 0) {
+      next.environments = namedEnvironments.map(freeze);
+    }
+    if (namedEnvironment) next.environment = freeze(namedEnvironment);
   }
   return next;
 }

@@ -355,6 +355,59 @@ describe("agent op registry", () => {
     ).toEqual({ suite: "smoke", environments: ["env_stg", "env_prod"] });
   });
 
+  it("freezes the SINGULAR selectors too — the guarantee cannot depend on spelling", async () => {
+    // A rename repoints one target as readily as it repoints several. The
+    // count is unchanged, which is exactly why this is easy to miss: the
+    // approved proposal still says "one run", and it runs something else.
+    const client = {
+      listEvalSuites: async () => ({ items: [{ id: "ts_1", name: "smoke" }] }),
+      getEvalSuite: async () => ({
+        id: "ts_1",
+        environmentIds: ["env_stg"],
+        hosts: [{ id: "host_a", name: "Claude" }],
+      }),
+      listEnvironments: async () => ({
+        items: [{ id: "env_stg", name: "Staging" }],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        { suite: "smoke", environment: "Staging" },
+        { projectId: "p1", client }
+      )
+    ).toEqual({ suite: "smoke", environment: "env_stg" });
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        { suite: "smoke", host: "Claude" },
+        { projectId: "p1", client }
+      )
+    ).toEqual({ suite: "smoke", host: "host_a" });
+  });
+
+  it("leaves an UNRESOLVABLE singular selector alone rather than failing the proposal", async () => {
+    // Freezing is a narrowing. A name that resolves to nothing here may still
+    // resolve on the click, and the operation rejects it with a better message
+    // than this function could.
+    const client = {
+      listEvalSuites: async () => ({ items: [{ id: "ts_1", name: "smoke" }] }),
+      getEvalSuite: async () => ({ id: "ts_1", environmentIds: [], hosts: [] }),
+      listEnvironments: async () => ({ items: [] }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        { suite: "smoke", environment: "Ghost" },
+        { projectId: "p1", client }
+      )
+    ).toEqual({ suite: "smoke", environment: "Ghost" });
+  });
+
   it("leaves allAttached ALONE when the suite has nothing attached", async () => {
     // There is no set to freeze, so stripping `allAttached` would store a
     // proposal that no longer says what the describer announced — and approval

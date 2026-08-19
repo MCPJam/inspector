@@ -2077,6 +2077,27 @@ describe("v1 write routes", () => {
       });
     });
 
+    it("surfaces a RECORDED execution engine, and only when the run has one", async () => {
+      // The omission case is pinned by the exact-match assertion above: a run
+      // whose snapshot predates the field must not acquire `executionEngine`,
+      // because absent means UNKNOWN and reporting `emulated` would be a claim
+      // about a run nobody attributed.
+      convexQueryMock.mockResolvedValueOnce({
+        ...RUN_DOC,
+        configSnapshot: { executionEngine: "harness:claude-code" },
+      });
+      const res = await request(
+        makeApp(),
+        "GET",
+        "/api/v1/projects/p1/eval-runs/run_1"
+      );
+      expect(res.status).toBe(200);
+      expect((await res.json()) as any).toMatchObject({
+        id: "run_1",
+        executionEngine: "harness:claude-code",
+      });
+    });
+
     it("404s when the run belongs to a different project", async () => {
       convexQueryMock.mockResolvedValueOnce({ ...RUN_DOC, projectId: "p2" });
       const res = await request(
