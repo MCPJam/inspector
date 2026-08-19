@@ -359,7 +359,20 @@ export interface PlatformEvalRunEnvironment {
 export interface PlatformEvalRunCreated {
   runId: string;
   suiteId: string;
+  /**
+   * The run's status. `running` on a fresh launch; on a replay (see
+   * `deduped`), the existing run's own status — which may already be terminal.
+   */
   status: string;
+  /**
+   * This request REPLAYED an existing run rather than starting one — an
+   * idempotency-key hit, or the short keyless dedupe window.
+   *
+   * A replayed run is NOT executed again, so a retry spends nothing further.
+   * Absent on a fresh launch, and on an API deployment that predates the
+   * signal — where absence means "not reported", not "fresh".
+   */
+  deduped?: boolean;
   /**
    * Echo of the request's `runGroupId`, when one was sent. A LABEL only — it
    * groups sibling rows for display and carries no quota or launch semantics.

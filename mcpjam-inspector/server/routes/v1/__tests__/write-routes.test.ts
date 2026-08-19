@@ -408,6 +408,137 @@ describe("v1 write routes", () => {
       });
     });
 
+    describe("idempotent replay", () => {
+      function mockReplay(status: string) {
+        const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        const execute = vi.fn().mockResolvedValue(undefined);
+        prepareEvalRunMock.mockResolvedValue({
+          suiteId: "suite_1",
+          runId: "run_1",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute,
+          // What the platform reports when a key (or the keyless fingerprint
+          // window) matched an existing run.
+          deduped: true,
+          status,
+        });
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_alpha"],
+            serverNames: ["alpha"],
+            source: "host_config",
+          }),
+        });
+        return { execute, disconnectAllServers };
+      }
+
+      it("does NOT re-execute a replay of a FINISHED run", async () => {
+        // The whole point of sending a key. Executing here would run every
+        // case a second time and bill for it, over results already final.
+        const { execute, disconnectAllServers } = mockReplay("completed");
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1", idempotencyKey: "same-key" }
+        );
+
+        expect(res.status).toBe(202);
+        const body = (await res.json()) as any;
+        expect(body.runId).toBe("run_1");
+        // Reports what the run IS, not what a launch would have made it.
+        expect(body.status).toBe("completed");
+        expect(body.deduped).toBe(true);
+        expect(execute).not.toHaveBeenCalled();
+        // The manager and the concurrency slot are still settled — the
+        // `.finally` that normally does it belongs to an execution that never
+        // happened.
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        );
+      });
+
+      it("releases the concurrency slot when it skips execution", async () => {
+        // A skipped run that kept its slot would brick the org's quota just as
+        // surely as a leaked one.
+        mockReplay("completed");
+        for (let i = 0; i < 5; i += 1) {
+          const res = await request(
+            makeApp(),
+            "POST",
+            "/api/v1/projects/p1/eval-runs",
+            { suiteId: "suite_1", idempotencyKey: `key_${i}` }
+          );
+          expect(res.status).toBe(202);
+        }
+      });
+
+      it("DOES execute a replay of a run still in flight", async () => {
+        // Deliberately unchanged: an in-flight run and one abandoned mid-flight
+        // are indistinguishable from here, and refusing to execute would strand
+        // the second. Deciding that needs a liveness signal, not a guess.
+        const { execute } = mockReplay("running");
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1", idempotencyKey: "same-key" }
+        );
+
+        expect(res.status).toBe(202);
+        expect((await res.json()).status).toBe("running");
+        expect(execute).toHaveBeenCalledTimes(1);
+      });
+
+      it("executes normally against a backend with no replay signal", async () => {
+        // Deploy skew: absent `deduped` is UNKNOWN, not "fresh". Unknown must
+        // keep the old behaviour rather than start refusing to run.
+        const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        const execute = vi.fn().mockResolvedValue(undefined);
+        prepareEvalRunMock.mockResolvedValue({
+          suiteId: "suite_1",
+          runId: "run_1",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute,
+        });
+        mockConvexQueries({
+          "testSuites:getSuiteRunServerSelection": () => ({
+            serverIds: ["s_alpha"],
+            serverNames: ["alpha"],
+            source: "host_config",
+          }),
+        });
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1", idempotencyKey: "same-key" }
+        );
+
+        expect(res.status).toBe(202);
+        const body = (await res.json()) as any;
+        expect(body.status).toBe("running");
+        expect(body.deduped).toBeUndefined();
+        expect(execute).toHaveBeenCalledTimes(1);
+      });
+    });
+
+
     describe("environment-backed runs", () => {
       // Attach-ordered environments on the suite; the route's selection rule
       // reads this, not the caller's word.
