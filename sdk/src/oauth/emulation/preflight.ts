@@ -57,6 +57,15 @@ import {
   isInvalidRedirectUriRejection,
   planCompletionSafeRedirects,
 } from "./redirects.js";
+import {
+  compareOAuthEmulationTrace,
+  computeOAuthGoldenTraceDigest,
+  insertAuthorizationRedirectStep,
+  normalizeOAuthTrace,
+  type NormalizedTraceStep,
+  type OAuthGoldenTrace,
+  type OAuthTraceComparisonResult,
+} from "./golden-trace.js";
 import type {
   EmulatedAuthAttempt,
   EmulatedRegistrationPreference,
@@ -117,6 +126,31 @@ export interface EmulatedOAuthPreflightConfig {
     authorizationUrl: string;
     callbackUrl: string;
   }) => Promise<{ code: string }>;
+  /**
+   * Compare this run against a real-client capture. Both the golden and the
+   * digest of the profile the run used are required together: comparing
+   * without verifying the binding would diff two clients that only look alike.
+   * Captures live in the private backend — nothing here ships one.
+   */
+  goldenComparison?: {
+    golden: OAuthGoldenTrace;
+    profileDigest: string;
+    expectedClientVersion?: string;
+    /** Injected so staleness is deterministic; defaults to the current date. */
+    now?: Date;
+  };
+  /** Recorded verbatim in `bindings`, for backend provenance. */
+  catalogRevision?: string;
+  profileSchemaVersion?: 1 | 2;
+  /**
+   * Digest of the profile this run used. Recorded in `bindings` so a
+   * capture-only run (one taken to BECOME a golden) is bound to its profile
+   * too. When `goldenComparison` is supplied, its digest is used if this is
+   * absent — and supplying BOTH with different values is rejected, since a
+   * run has exactly one profile and a disagreement here would defeat the
+   * comparator's binding check.
+   */
+  profileDigest?: string;
   /** Override the hardened default executor (tests, alternate transports). */
   requestExecutor?: OAuthRequestExecutor;
   allowLoopbackMetadataFetch?: boolean;
@@ -166,10 +200,22 @@ export interface EmulatedOAuthPreflightResult {
   coverage: OAuthEmulationCoverage;
   coverageSummary: "complete" | "partial";
   /**
-   * Third, independent dimension. Golden-trace comparison is a later step; a
-   * run never claims a match on its own.
+   * Third, independent dimension. Absent a golden capture this stays
+   * `not_compared` — a run never claims a match on its own.
    */
-  comparison: "not_compared";
+  comparison: OAuthTraceComparisonResult;
+  /** The run's normalized steps, for capture or offline comparison. */
+  trace: NormalizedTraceStep[];
+  /**
+   * What this run is bound to, so a result can always be traced back to the
+   * exact profile and capture that produced it.
+   */
+  bindings: {
+    profileSchemaVersion?: 1 | 2;
+    profileDigest?: string;
+    goldenTraceDigest?: string;
+    catalogRevision?: string;
+  };
   attempts: EmulatedAuthAttemptResult[];
   authorizationUrl?: string;
   /** Compile-time divergences plus everything this run declared. */
@@ -360,6 +406,36 @@ export async function runEmulatedOAuthPreflight(
     resourceIndicatorEnforcement = "warn",
   } = config;
 
+  // ONE digest per run, resolved before anything touches the network.
+  //
+  // Letting `profileDigest` and `goldenComparison.profileDigest` disagree does
+  // not just make the report inconsistent — it routes around the comparator's
+  // binding check. That check refuses when `golden.profileDigest` differs from
+  // the run's, precisely so a capture of one client is never diffed against a
+  // run of another; a caller supplying the golden's digest here while the run
+  // used a different profile would sail through it and get a confident match
+  // for two different clients. Contradictory input is rejected rather than
+  // silently resolved, and rejected BEFORE any client is registered.
+  //
+  // Presence, not truthiness: an explicitly supplied `""` is still a second
+  // digest, and a truthy check would wave it through to be resolved as `""`
+  // (`??` does not fall back on an empty string) — leaving the comparison
+  // holding `""` while `bindings` omits the digest entirely, which is the one
+  // disagreement this guard exists to prevent.
+  if (
+    config.profileDigest !== undefined &&
+    config.goldenComparison &&
+    config.profileDigest !== config.goldenComparison.profileDigest
+  ) {
+    throw new Error(
+      "runEmulatedOAuthPreflight: profileDigest and goldenComparison.profileDigest disagree " +
+        `("${config.profileDigest}" vs "${config.goldenComparison.profileDigest}"). ` +
+        "A run has one profile; supply one digest, or the same value twice."
+    );
+  }
+  const profileDigest =
+    config.profileDigest ?? config.goldenComparison?.profileDigest;
+
   const executor =
     config.requestExecutor ?? createHardenedExecutor(timeoutMs);
   const protocolVersion = derived.protocolVersion;
@@ -373,7 +449,20 @@ export async function runEmulatedOAuthPreflight(
   });
 
   let outcome: EmulatedOAuthPreflightOutcome = "blocked";
+  /** Reported to the caller: the run stopped here and needs a human. */
   let authorizationUrl: string | undefined;
+  /**
+   * The authorization URL each attempt produced, keyed by its index in
+   * `attempts`. Kept per attempt so the redirect is placed inside the attempt
+   * that performed it, rather than relying on only one attempt ever
+   * authorizing.
+   */
+  const authorizationUrlByAttempt = new Map<number, string>();
+  /**
+   * Divergences THIS RUN introduced, as distinct from compile-time ones the
+   * profile already carried. Only these are substitutions in the trace.
+   */
+  const runtimeDivergences: OAuthEmulationDivergence[] = [];
   let credentials: EmulatedOAuthPreflightResult["credentials"];
   let error: { message: string } | undefined;
   let redirectDivergencesDeclared = false;
@@ -760,11 +849,13 @@ export async function runEmulatedOAuthPreflight(
           detail:
             "the emulated client prefers a static credential, but none was supplied",
         });
-        divergences.push({
+        const skipped: OAuthEmulationDivergence = {
           kind: "not-enforced",
           detail:
             "api-key rung skipped: no static credential was supplied, and the runner never invents one",
-        });
+        };
+        divergences.push(skipped);
+        runtimeDivergences.push(skipped);
         continue;
       }
 
@@ -838,13 +929,25 @@ export async function runEmulatedOAuthPreflight(
     // true once a registration actually ran.
     if (attemptOutput.registrations > 0 && !redirectDivergencesDeclared) {
       divergences.push(...redirectPlan.divergences);
+      runtimeDivergences.push(...redirectPlan.divergences);
       redirectDivergencesDeclared = true;
     }
     divergences.push(...attemptOutput.divergences);
+    runtimeDivergences.push(...attemptOutput.divergences);
 
     if (attemptOutput.outcome) outcome = attemptOutput.outcome;
     if (attemptOutput.authorizationUrl) {
       authorizationUrl = attemptOutput.authorizationUrl;
+    }
+    // A completed run authorized too; its URL simply never had to be handed
+    // back to a caller. The TRACE needs it either way, or a completed run
+    // would omit the authorize leg and mismatch every golden that records it.
+    // Kept separate from `authorizationUrl`, which means "stopped here, a
+    // human is required" and must not start appearing on completed runs.
+    const attemptAuthorizationUrl =
+      attemptOutput.authorizationUrl ?? attemptOutput.state?.authorizationUrl;
+    if (attemptAuthorizationUrl) {
+      authorizationUrlByAttempt.set(attempts.length - 1, attemptAuthorizationUrl);
     }
     if (attemptOutput.state) {
       const { accessToken, refreshToken, clientId, clientSecret } =
@@ -866,13 +969,71 @@ export async function runEmulatedOAuthPreflight(
     if (attemptOutput.stop) break;
   }
 
+  // The run's own wire behavior, normalized: what a capture would record and
+  // what a comparison diffs. Each attempt carries ITS OWN authorization URL,
+  // so the redirect lands at the authorization boundary of the attempt that
+  // performed it rather than depending on only one attempt ever authorizing.
+  const trace: NormalizedTraceStep[] = attempts.flatMap((attempt, index) =>
+    insertAuthorizationRedirectStep(
+      normalizeOAuthTrace(attempt.httpHistory ?? []),
+      authorizationUrlByAttempt.get(index)
+    )
+  );
+
+  const comparison: OAuthTraceComparisonResult = config.goldenComparison
+    ? compareOAuthEmulationTrace({
+        trace,
+        golden: config.goldenComparison.golden,
+        // The single resolved digest — the guard above proved it equals
+        // `goldenComparison.profileDigest` whenever both were supplied.
+        profileDigest: profileDigest ?? config.goldenComparison.profileDigest,
+        coverageSummary: derived.coverageSummary,
+        // Only what THIS RUN substituted. Compile-time divergences (a narrowed
+        // ladder version, an unenforced field) describe the profile, not the
+        // wire, and would otherwise downgrade a byte-exact match to
+        // "matched with declared substitutions". They stay in `divergences`.
+        declaredSubstitutions: runtimeDivergences,
+        expectedClientVersion: config.goldenComparison.expectedClientVersion,
+        now: config.goldenComparison.now,
+      })
+    : {
+        status: "not_compared",
+        reason: "no_golden",
+        qualifiers: [],
+        differences: [],
+        declaredSubstitutions: runtimeDivergences,
+      };
+
+  // `profileDigest` (resolved at the top) is what BOTH the comparison and
+  // these bindings report, so provenance and comparison can never disagree.
+  // A capture-only run records it too — that binding is what makes the
+  // capture usable as a golden later.
+  const bindings: EmulatedOAuthPreflightResult["bindings"] = {
+    ...(config.profileSchemaVersion
+      ? { profileSchemaVersion: config.profileSchemaVersion }
+      : {}),
+    ...(profileDigest ? { profileDigest } : {}),
+    ...(config.goldenComparison
+      ? {
+          goldenTraceDigest: await computeOAuthGoldenTraceDigest(
+            config.goldenComparison.golden
+          ),
+        }
+      : {}),
+    ...(config.catalogRevision
+      ? { catalogRevision: config.catalogRevision }
+      : {}),
+  };
+
   return {
     serverUrl,
     protocolVersion,
     outcome,
     coverage: derived.coverage,
     coverageSummary: derived.coverageSummary,
-    comparison: "not_compared",
+    comparison,
+    trace,
+    bindings,
     attempts,
     ...(authorizationUrl ? { authorizationUrl } : {}),
     divergences,
