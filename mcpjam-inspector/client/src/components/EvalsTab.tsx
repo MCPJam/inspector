@@ -160,7 +160,7 @@ function EvalsTabContent({
     organizationId,
     connectedServerNames,
     userMap,
-    canDeleteSuite,
+    canDeleteArtifact,
     canDeleteRuns,
     availableModels,
   } = useEvalTabContext({
@@ -1011,7 +1011,8 @@ function EvalsTabContent({
               currentSuiteId={selectedSuite._id}
               onSelectSuite={handleSelectSuite}
               onCreateSuite={handleOpenCreateSuite}
-              onDeleteSuite={canDeleteSuite ? handlers.handleDelete : undefined}
+              onDeleteSuite={handlers.handleDelete}
+              canDeleteSuite={(suite) => canDeleteArtifact(suite.createdBy)}
             />
           </BreadcrumbItem>
           <BreadcrumbSeparator />
@@ -1169,7 +1170,7 @@ function EvalsTabContent({
           onDeleteRun={handlers.handleDeleteRun}
           onDirectDeleteRun={handlers.directDeleteRun}
           connectedServerNames={connectedServerNames}
-          canDeleteSuite={canDeleteSuite}
+          canDeleteSuite={canDeleteArtifact(selectedSuite.createdBy)}
           rerunningSuiteId={rerunningSuiteId}
           cancellingRunId={cancellingRunId}
           deletingSuiteId={deletingSuiteId}
@@ -1181,6 +1182,7 @@ function EvalsTabContent({
           navigation={playgroundNavigation}
           onContinueInChat={onContinueInChat}
           canDeleteRuns={canDeleteRuns}
+          canDeleteRun={(run) => canDeleteArtifact(run.createdBy)}
           hideRunActions
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}

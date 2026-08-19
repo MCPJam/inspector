@@ -132,4 +132,36 @@ describe("SuiteSwitcher", () => {
       screen.queryByRole("button", { name: "Delete suite mixed" }),
     ).not.toBeInTheDocument();
   });
+
+  it("offers delete per SUITE, not per caller", async () => {
+    // A plain member may delete the suites they created and no others, so the
+    // affordance has to be decided row by row. One list, two answers.
+    const user = userEvent.setup();
+    const theirs = makeEntry("suite-b", "theirs");
+    theirs.suite.createdBy = "user-2";
+
+    render(
+      <SuiteSwitcher
+        suites={[makeEntry("suite-a", "mine"), theirs]}
+        currentSuiteId="suite-a"
+        onSelectSuite={vi.fn()}
+        onCreateSuite={vi.fn()}
+        onDeleteSuite={vi.fn()}
+        canDeleteSuite={(suite) => suite.createdBy === "user-1"}
+      />,
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /Switch suite \(current: mine\)/,
+      }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Delete suite mine" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Delete suite theirs" }),
+    ).not.toBeInTheDocument();
+  });
 });
