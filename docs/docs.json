@@ -174,7 +174,8 @@
               "sdk/reference/oauth-emulation",
               "sdk/reference/apps-conformance",
               "sdk/reference/tasks-conformance",
-              "sdk/reference/host-compat"
+              "sdk/reference/host-compat",
+              "sdk/reference/claude-readiness"
             ]
           }
         ]
