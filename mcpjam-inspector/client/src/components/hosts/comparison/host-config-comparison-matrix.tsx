@@ -18,6 +18,7 @@ import {
   fieldDiverges,
   groupHostConfigFields,
   HOST_CONFIG_FIELDS,
+  NOT_SUPPORTED,
   type HostComparisonSubject,
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
@@ -574,6 +575,12 @@ function FieldCell({
 }) {
   const value = field.read(subject.config);
   const kind = field.kind;
+
+  // An explicit "we probed this host and it does not send this" — distinct
+  // from the em dash below, which means nobody has looked.
+  if (value === NOT_SUPPORTED) {
+    return <SupportChip level="unsupported" label="Not supported" />;
+  }
 
   // Tri-state and capability fields treat `undefined` as a meaningful value
   // (Auto / not-advertised), so we must NOT short-circuit on undefined for

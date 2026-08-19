@@ -300,15 +300,31 @@ const _styleVariableCoverage: [UncoveredStyleVariableKey] extends [never]
   : ["style variable rows missing spec keys", UncoveredStyleVariableKey] = true;
 void _styleVariableCoverage;
 
+/**
+ * A field that is genuinely absent because someone looked, as opposed to
+ * absent because nobody has looked yet. The matrix renders it as an explicit
+ * "Not supported"; a plain `undefined` stays an em dash.
+ */
+export const NOT_SUPPORTED = Symbol("not-supported");
+
 function readStyleVariable(
   cfg: HostConfigDtoV2,
   key: McpUiStyleVariableKey
-): string | undefined {
+): string | typeof NOT_SUPPORTED | undefined {
   const styles = (cfg.hostContext as { styles?: unknown } | undefined)?.styles;
   const variables = (styles as { variables?: unknown } | undefined)?.variables;
-  if (variables === null || typeof variables !== "object") return undefined;
-  const value = (variables as Record<string, unknown>)[key];
-  return typeof value === "string" ? value : undefined;
+  const value =
+    variables !== null && typeof variables === "object"
+      ? (variables as Record<string, unknown>)[key]
+      : undefined;
+  if (typeof value === "string") return value;
+  // Only a probed host can be said not to support the variable: we connected,
+  // read its host context, and it sent nothing here. For a vendor-doc or
+  // assumed host the same blank means no View was ever run, which is an
+  // absence of evidence rather than evidence of absence.
+  return (cfg as HostConfigDtoWithCatalogFacts).provenance === "probe"
+    ? NOT_SUPPORTED
+    : undefined;
 }
 
 /**
@@ -978,6 +994,12 @@ export function groupHostConfigFields(
 export type HostConfigDtoWithCatalogFacts = HostConfigDtoV2 & {
   /** Every era the client speaks; the profile's list is legacy-only. */
   supportedProtocolVersions?: string[];
+  /**
+   * How the catalog knows this host's facts. Carried so a field can tell
+   * "we ran a probe and the host sent nothing" apart from "nobody has
+   * probed this host", which look identical in the config alone.
+   */
+  provenance?: "probe" | "vendor-doc" | "assumed";
 };
 
 export interface HostComparisonSubject {
