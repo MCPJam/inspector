@@ -473,18 +473,23 @@ describe("canonicalizeHostConfigV2 — mcpProfile derivation", () => {
     ).toThrow(/ConflictingProtocolVersionPin/);
   });
 
-  it("also rejects an unadvertised concrete 2026 pin", () => {
-    expect(() =>
-      canonicalizeHostConfigV2(
-        base({
-          mcpProfile: {
-            profileVersion: 1,
-            mcpProtocolVersion: "2026-07-28",
-            initialize: { supportedProtocolVersions: ["2025-11-25"] },
-          },
-        })
-      )
-    ).toThrow(/ConflictingProtocolVersionPin/);
+  it("keeps an unadvertised 2026 pin — it never runs initialize", () => {
+    // A host saved this way predates the dual-era work. It must keep saving
+    // (editing an unrelated field would otherwise be rejected); the UI warns
+    // when a client is not verified for the selected revision.
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          mcpProtocolVersion: "2026-07-28",
+          initialize: { supportedProtocolVersions: ["2025-11-25"] },
+        },
+      })
+    );
+    expect(c.mcpProfile?.mcpProtocolVersion).toBe("2026-07-28");
+    expect(c.mcpProfile?.initialize?.supportedProtocolVersions).toEqual([
+      "2025-11-25",
+    ]);
   });
 });
 

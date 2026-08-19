@@ -848,6 +848,11 @@ function canonicalizeMcpProfile(
       out.initialize = sortedInit;
     } else if (
       advertised !== undefined &&
+      // A stateless pin never runs `initialize`, so it has no business being
+      // in that legacy accept-list. Hosts saved this way predate the dual-era
+      // work and must keep saving; the UI already warns when a client is not
+      // verified for the selected revision.
+      !isStatelessProtocolVersion(out.mcpProtocolVersion) &&
       !advertised.includes(out.mcpProtocolVersion)
     ) {
       throw new Error(
