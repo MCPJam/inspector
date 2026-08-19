@@ -4079,7 +4079,7 @@
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/scenarioId"
+            "$ref": "#/components/parameters/projectScenarioId"
           }
         ],
         "responses": {
@@ -8810,7 +8810,7 @@
           "type": "string"
         }
       },
-      "scenarioId": {
+      "projectScenarioId": {
         "name": "scenarioId",
         "in": "path",
         "required": true,
@@ -13525,7 +13525,7 @@
           }
         }
       },
-      "Scenario": {
+      "ProjectScenario": {
         "type": "object",
         "description": "Summary of a published scenario, as returned by the list endpoint.",
         "required": [
@@ -13756,7 +13756,7 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Scenario"
+              "$ref": "#/components/schemas/ProjectScenario"
             }
           }
         }
