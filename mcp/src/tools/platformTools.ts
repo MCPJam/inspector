@@ -321,6 +321,10 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "A deployment-compatibility probe, not an action: it answers whether this platform accepts an environment model override, which the write paths already ask on the caller's behalf.",
   create_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
+  ensure_adhoc_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface. Composing a stack to RUN it needs no separate tool here: run_eval_suite takes a `compose` object and ensures the environment itself, so excluding this costs the surface no capability.",
+  name_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface. Promotion turns a throwaway into a permanent entry in the project's environment list, which is exactly the kind of durable edit an unattended caller should not make on its own.",
   update_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
   archive_project_environment:
