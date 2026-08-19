@@ -588,7 +588,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         initialize: {
-          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          supportedProtocolVersions: ["2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
           // `initialize`. Matches what real claude.ai publishes.
           clientInfo: { name: "claude-ai", version: "0.1.0" },
@@ -845,7 +845,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         initialize: {
-          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          supportedProtocolVersions: ["2025-11-25"],
           // Stored in the established connection-profile envelope. The
           // runtime sends initialize only when a 2025 protocol is selected.
           clientInfo: { name: "openai-mcp", version: "1.0.0" },
