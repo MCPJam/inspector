@@ -252,6 +252,7 @@ export function SuiteIterationsView({
   omitRunIterationList = false,
   canDeleteSuite,
   canDeleteRuns = true,
+  canDeleteRun,
   readOnlyConfig = false,
   hideRunActions = false,
   casesSidebarHidden,
@@ -311,8 +312,13 @@ export function SuiteIterationsView({
   omitRunIterationList?: boolean;
   /** When true, show suite delete affordances. */
   canDeleteSuite: boolean;
-  /** Project admins only: run list batch delete and selection. */
+  /** Whether the run selection + batch delete surface is shown at all. */
   canDeleteRuns?: boolean;
+  /**
+   * Per ROW, because deleting a run takes the project manage tier OR
+   * authorship of that run. Omitted means every listed run may be deleted.
+   */
+  canDeleteRun?: (run: EvalSuiteRun) => boolean;
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
   readOnlyConfig?: boolean;
   /** When true, suppress suite-level run/replay entry points in shared chrome. */
@@ -1188,6 +1194,7 @@ export function SuiteIterationsView({
                     }
                     userMap={userMap}
                     canDeleteRuns={canDeleteRuns && !hideRunActions}
+                    canDeleteRun={canDeleteRun}
                     canDeleteSuite={canDeleteSuite && !hideRunActions}
                     onDeleteSuite={() => onDelete(suite)}
                     deletingSuiteId={deletingSuiteId}
