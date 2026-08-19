@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import { mintCaseId } from "@mcpjam/sdk/contract";
 import { track } from "@/lib/analytics";
 import type { ConvexReactClient } from "convex/react";
 import {
@@ -260,6 +261,10 @@ export async function runExcalidrawQuickstart(
       await createTestCase({
         ...caseDraft,
         suiteId: createdSuiteId,
+        // Minted per case, not per curated draft: the drafts are a module-level
+        // constant, so an id baked into one would be reused by every quickstart
+        // ever run and collide on the second suite.
+        caseId: mintCaseId(),
         // The Convex mutation rejects `promptTurns`; describe the curated
         // case as unified `steps` derived from its query + expected calls.
         steps: buildStepsForCaseInput(caseDraft),
