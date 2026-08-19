@@ -19,6 +19,13 @@ on:
     - cron: "0 13 * * 1"
   workflow_dispatch:
 
+# The job reads a checkout and fetches public documentation. It writes nothing
+# back — re-pinning is a deliberate human step — so the token needs no more
+# than `contents: read`, and an unscoped default token on a scheduled workflow
+# is a standing grant nobody is watching.
+permissions:
+  contents: read
+
 env:
   NODE_VERSION: "24.14.0"
 
