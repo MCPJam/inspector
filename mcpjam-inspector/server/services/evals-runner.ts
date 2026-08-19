@@ -37,6 +37,7 @@ import {
 } from "../utils/chat-helpers";
 import { resolveExecutionContext } from "../utils/host-execution-context";
 import { resolveHostTools } from "../utils/built-in-tools/registry.js";
+import { resolveWebAuthorizedHarnessStrategy } from "../utils/harness/harness-proxy-strategy.js";
 import {
   buildEvalBashTool,
   EVAL_BASH_TOOL_NAME,
@@ -3360,6 +3361,32 @@ const runHostedIterationWithBrowser = async (
       ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
       : null
   );
+  // ── Harness execution inputs, resolved once per iteration.
+  //
+  // Both are cheap and harness-gated: `resolveWebAuthorizedHarnessStrategy`
+  // only makes a deploy-topology decision, and the pinned-skill projection is a
+  // map over an already-fetched list. Resolving them here (rather than inside
+  // the turn) keeps the decision with the run's other frozen inputs.
+  //
+  // An eval run builds an ephemeral authorized manager exactly as the hosted
+  // chat routes do, so it is a WEB-authorized plane request and resolves the
+  // same strategy they do. Deriving a different one here is how a sandbox ends
+  // up pointed at the wrong manager.
+  const harnessMcpProxy = resolvedExecution.harness
+    ? resolveWebAuthorizedHarnessStrategy()
+    : undefined;
+  // NOT wired yet, deliberately: the run's pinned skills.
+  //
+  // The eval run pins `PinnableSkill`s (name/description/content/contentHash),
+  // while the harness `runtimeSkillsOverride` takes `CloudSkillRuntimeItem`s,
+  // which additionally require a `skillId` and an `aggregateHash` that the eval
+  // pin simply does not carry. Synthesizing those would put invented identity
+  // and an invented integrity hash on the box — and the whole point of a pinned
+  // skill is that its hash is the thing you can trust. So a harness eval turn
+  // currently falls through to the harness's own skill delivery rather than
+  // being handed a fabricated set. Closing this needs the eval pin to carry the
+  // runtime identity, not a conversion here.
+
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
   // clean failed iteration; released right after the agent run below.
@@ -3571,6 +3598,31 @@ const runHostedIterationWithBrowser = async (
     isAborted,
     harness: resolvedExecution.harness,
     requireToolApproval: resolvedExecution.requireToolApproval,
+    // ── Harness execution (harness hosts only; every field below is inert on
+    // the emulated path, which is why they are all conditional).
+    //
+    // THE SAME BOX the tool resolver already exposes as `bash`, handed to the
+    // harness as well: one box per iteration, never two. It rides the handler
+    // options rather than the host config because the run's config snapshot is
+    // member-readable, so a binding writable there would be forgeable.
+    ...(resolvedExecution.harness && evalSandbox?.ok
+      ? {
+          harnessSandboxBinding: {
+            sandboxRowId: evalSandbox.value.sandboxRowId,
+            sandboxId: evalSandbox.value.sandboxId,
+          },
+        }
+      : {}),
+    // How the sandbox reaches this inspector's MCP proxy. An eval run builds
+    // an ephemeral authorized manager exactly as the hosted chat routes do, so
+    // it resolves the SAME strategy rather than re-deriving the plane — and
+    // `runHarnessTurn` throws without one whenever servers are selected, which
+    // for an eval suite is always.
+    ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // Passed EXPLICITLY: `runHarnessTurn` reads built-ins off this field and
+    // nowhere else, so supplying only `tools` would hand the runtime a turn
+    // with no built-ins and no way to notice.
+    ...(builtInTools ? { builtInTools } : {}),
     ...(builtInTarget && "projectId" in builtInTarget
       ? { projectId: builtInTarget.projectId }
       : {}),

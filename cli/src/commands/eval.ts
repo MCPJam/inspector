@@ -156,6 +156,200 @@ function addPlatformOptions(command: Command): Command {
  * `/ci-evals` twin is behind the `evaluate-ci` flag and its redirect drops
  * the run path.
  */
+/**
+ * A variadic selector maps to the SINGULAR op field for one value and the
+ * PLURAL for several. The op rejects both together, and the singular field
+ * carries the semantics (and description) callers already rely on.
+ */
+function selectorField(
+  singular: string,
+  plural: string,
+  values: string[] | undefined
+): Record<string, string | string[]> {
+  if (!values?.length) return {};
+  return values.length === 1
+    ? { [singular]: values[0]! }
+    : { [plural]: values };
+}
+
+/**
+ * The `--compose-*` flags as the op's `compose` object, or nothing at all.
+ *
+ * `--compose-host` is what MAKES it a composed run — the other axes only
+ * refine a stack that already has a host — so a `--compose-computer` with no
+ * host is a usage error rather than a silently ignored flag. Combining any of
+ * them with `--environment`/`--host`/`--all-targets` is rejected by the op,
+ * which owns that rule for every surface.
+ */
+function composeField(options: {
+  composeHost?: string;
+  composeComputer?: string;
+  composeModel?: string;
+  composeServerGroup?: string;
+  composeSkill?: string[];
+}): {
+  compose?: {
+    host: string;
+    serverGroup?: string;
+    model?: string;
+    computer?: string;
+    skills?: { mode: "explicit"; skillIds: string[] };
+  };
+} {
+  const refinements =
+    options.composeComputer !== undefined ||
+    options.composeModel !== undefined ||
+    options.composeServerGroup !== undefined ||
+    (options.composeSkill?.length ?? 0) > 0;
+  if (!options.composeHost) {
+    if (refinements) {
+      throw usageError(
+        "--compose-* flags need --compose-host: the host is what the composed stack runs as, and the others only refine it."
+      );
+    }
+    return {};
+  }
+  return {
+    compose: {
+      host: options.composeHost,
+      ...(options.composeServerGroup !== undefined
+        ? { serverGroup: options.composeServerGroup }
+        : {}),
+      ...(options.composeModel !== undefined
+        ? { model: options.composeModel }
+        : {}),
+      ...(options.composeComputer !== undefined
+        ? { computer: options.composeComputer }
+        : {}),
+      ...(options.composeSkill?.length
+        ? {
+            skills: {
+              mode: "explicit" as const,
+              skillIds: options.composeSkill,
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+/**
+ * `--iterations 3` → 3, and anything else → a usage error rather than NaN.
+ *
+ * The emptiness guard is not decoration: `Number("")` and `Number(" ")` are
+ * both `0`, and `0` passes `isInteger` and `isFinite` alike. Without it
+ * `--min-pass-rate ""` would become a threshold of 0 — inside the documented
+ * range, so nothing downstream objects, and every run passes.
+ */
+function parseIntOption(raw: string, flag: string): number {
+  if (raw.trim() === "") {
+    throw usageError(`${flag} requires a value.`);
+  }
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed)) {
+    throw usageError(`${flag} must be a whole number (got "${raw}").`);
+  }
+  return parsed;
+}
+
+function parseNumberOption(raw: string, flag: string): number {
+  if (raw.trim() === "") {
+    throw usageError(`${flag} requires a value.`);
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    throw usageError(`${flag} must be a number (got "${raw}").`);
+  }
+  return parsed;
+}
+
+/**
+ * `--match-options '{"toolCallOrder":"exact"}'`. Malformed JSON is a usage
+ * error naming the flag: the op's own schema would reject the parsed value
+ * with a field-level message, which is unhelpful when the real problem is a
+ * missing quote in the shell.
+ */
+function parseMatchOptionsOption(raw: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw usageError(
+      `--match-options must be valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw usageError("--match-options must be a JSON object.");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * Human-format summary of a launch: one `View:` link per started run, a group
+ * line when several were launched, and a named line per failure.
+ *
+ * Silent on `--format json`, where the receipt IS the output — see the
+ * one-document rule at the call site.
+ */
+function writeRunGroupSummary(
+  format: string,
+  webOrigin: string,
+  result: {
+    project: { id: string };
+    suite: { id: string };
+    outcome: string;
+    startedCount: number;
+    failedCount: number;
+    runGroupId?: string;
+    targets: Array<
+      | {
+          status: "started";
+          runId: string;
+          host?: { id: string; name: string };
+          environment?: { id: string; name?: string | null } | null;
+        }
+      | {
+          status: "failed";
+          host?: { id: string; name: string };
+          environment?: { id: string; name?: string | null } | null;
+          error: { code: string; message: string };
+        }
+    >;
+  }
+): void {
+  if (format !== "human") return;
+  for (const target of result.targets) {
+    if (target.status !== "started") continue;
+    writeRunLink(format, webOrigin, {
+      projectId: result.project.id,
+      suiteId: result.suite.id,
+      runId: target.runId,
+    });
+  }
+  const total = result.startedCount + result.failedCount;
+  if (total > 1) {
+    process.stdout.write(
+      `Started ${result.startedCount}/${total} runs` +
+        (result.runGroupId ? ` (group ${result.runGroupId})` : "") +
+        "\n"
+    );
+  }
+  for (const target of result.targets) {
+    if (target.status !== "failed") continue;
+    const label =
+      target.host?.name ??
+      target.host?.id ??
+      target.environment?.name ??
+      target.environment?.id ??
+      "target";
+    process.stderr.write(
+      `Failed: ${label} — ${target.error.code}: ${target.error.message}\n`
+    );
+  }
+}
+
 function writeRunLink(
   format: string,
   webOrigin: string,
@@ -1330,16 +1524,86 @@ export function registerEvalCommands(program: Command): void {
         "Override the suite's saved server selection (HTTP servers only)"
       )
       .option(
-        "--environment <id-or-name>",
-        "Project environment to run against (must be attached to the suite; optional when it has exactly one)"
+        "--environment <id-or-name...>",
+        "Attached project environment(s) to run. Several values start one PAID RUN each."
+      )
+      .option(
+        "--host <id-or-name...>",
+        "Attached host(s) to run, so the run is stamped with that host's config. Several values start one PAID RUN each."
+      )
+      .option(
+        "--all-targets",
+        "Run EVERY attached environment (or, if none, every attached host) — one PAID RUN per target"
+      )
+      .option("--iterations <n>", "Run each case this many times (1-10)", (v) =>
+        parseIntOption(v, "--iterations")
+      )
+      .option(
+        "--case <id-or-title...>",
+        "Run only these cases instead of the whole suite"
+      )
+      .option(
+        "--exclude-skills",
+        "Run the 'without skills' arm: no skills are pinned, and the run is labelled as excluded"
+      )
+      .option(
+        "--refresh-snapshot",
+        "PERSISTS a new host-config snapshot on the suite, changing every future run of it. Single-target runs only."
+      )
+      .option("--notes <text>", "Free-text note stored on the run")
+      .option("--min-pass-rate <n>", "Pass threshold for this run (0-100)", (v) =>
+        parseNumberOption(v, "--min-pass-rate")
+      )
+      .option(
+        "--match-options <json>",
+        'Tool-call match options for this run, e.g. \'{"toolCallOrder":"exact"}\''
+      )
+      .option(
+        "--idempotency-key <key>",
+        "Retry-safety key: repeating the call returns the run it already started"
+      )
+      .option(
+        "--compose-host <id-or-name>",
+        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+      )
+      .option(
+        "--compose-computer <id-or-name>",
+        "Sandbox image to pin on the composed stack"
+      )
+      .option(
+        "--compose-model <id>",
+        "Model to run on the composed stack, instead of the host's"
+      )
+      .option(
+        "--compose-server-group <id>",
+        "Standalone server group to pin on the composed stack"
+      )
+      .option(
+        "--compose-skill <id...>",
+        "Project-shared skill IDs to pin on the composed stack"
       )
   ).action(
     async (
       options: PlatformOptions & {
+        composeHost?: string;
+        composeComputer?: string;
+        composeModel?: string;
+        composeServerGroup?: string;
+        composeSkill?: string[];
         project?: string;
         suite: string;
         server?: string[];
-        environment?: string;
+        environment?: string[];
+        host?: string[];
+        allTargets?: boolean;
+        iterations?: number;
+        case?: string[];
+        excludeSkills?: boolean;
+        refreshSnapshot?: boolean;
+        notes?: string;
+        minPassRate?: number;
+        matchOptions?: string;
+        idempotencyKey?: string;
       },
       command
     ) => {
@@ -1355,20 +1619,44 @@ export function registerEvalCommands(program: Command): void {
               project: options.project,
               suite: options.suite,
               ...(options.server ? { servers: options.server } : {}),
-              ...(options.environment
-                ? { environment: options.environment }
+              // ONE value maps to the singular field, several to the plural:
+              // the op rejects sending both, and the singular carries the
+              // long-standing description a caller may already rely on.
+              ...selectorField("environment", "environments", options.environment),
+              ...selectorField("host", "hosts", options.host),
+              ...(options.allTargets ? { allAttached: true } : {}),
+              ...(options.iterations !== undefined
+                ? { iterations: options.iterations }
                 : {}),
+              ...(options.case?.length ? { cases: options.case } : {}),
+              ...(options.excludeSkills ? { excludeSkills: true } : {}),
+              ...(options.refreshSnapshot ? { refreshSnapshot: true } : {}),
+              ...(options.notes !== undefined ? { notes: options.notes } : {}),
+              ...(options.minPassRate !== undefined
+                ? { minPassRate: options.minPassRate }
+                : {}),
+              ...(options.matchOptions
+                ? { matchOptions: parseMatchOptionsOption(options.matchOptions) }
+                : {}),
+              ...(options.idempotencyKey
+                ? { idempotencyKey: options.idempotencyKey }
+                : {}),
+              ...composeField(options),
             },
             { client: context.client, signal: context.signal }
           );
         }
       );
+      // EXACTLY ONE JSON document on `--format json`: the receipt already
+      // carries every run, so appending human lines to it would make the
+      // stream unparseable for the CI callers that read it.
       writeResult(result, globalOptions.format);
-      writeRunLink(globalOptions.format, webOrigin, {
-        projectId: result.project.id,
-        suiteId: result.suite.id,
-        runId: result.runId,
-      });
+      writeRunGroupSummary(globalOptions.format, webOrigin, result);
+      // A partial or wholly failed fan-out is not a success. Exiting 0 would
+      // let a pipeline treat "1 of 3 runs never started" as a clean launch.
+      if (result.outcome !== "started") {
+        setProcessExitCode(1);
+      }
     }
   );
 
@@ -2279,14 +2567,53 @@ export function registerEvalCommands(program: Command): void {
         "--environment <id-or-name>",
         "Project environment to run against (must be attached to the suite)"
       )
+      .option(
+        "--host <id-or-name>",
+        "Attached host to run against, so the run is stamped with that host's config"
+      )
+      .option("--iterations <n>", "Run the case this many times (1-10)", (v) =>
+        parseIntOption(v, "--iterations")
+      )
+      .option(
+        "--idempotency-key <key>",
+        "Retry-safety key: repeating the call returns the run it already started"
+      )
+      .option(
+        "--compose-host <id-or-name>",
+        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+      )
+      .option(
+        "--compose-computer <id-or-name>",
+        "Sandbox image to pin on the composed stack"
+      )
+      .option(
+        "--compose-model <id>",
+        "Model to run on the composed stack, instead of the host's"
+      )
+      .option(
+        "--compose-server-group <id>",
+        "Standalone server group to pin on the composed stack"
+      )
+      .option(
+        "--compose-skill <id...>",
+        "Project-shared skill IDs to pin on the composed stack"
+      )
   ).action(
     async (
       options: PlatformOptions & {
+        composeHost?: string;
+        composeComputer?: string;
+        composeModel?: string;
+        composeServerGroup?: string;
+        composeSkill?: string[];
         project?: string;
         suite: string;
         case: string;
         server?: string[];
         environment?: string;
+        host?: string;
+        iterations?: number;
+        idempotencyKey?: string;
       },
       command
     ) => {
@@ -2298,6 +2625,14 @@ export function registerEvalCommands(program: Command): void {
           case: options.case,
           ...(options.server?.length ? { servers: options.server } : {}),
           ...(options.environment ? { environment: options.environment } : {}),
+          ...(options.host ? { host: options.host } : {}),
+          ...(options.iterations !== undefined
+            ? { iterations: options.iterations }
+            : {}),
+          ...(options.idempotencyKey
+            ? { idempotencyKey: options.idempotencyKey }
+            : {}),
+          ...composeField(options),
         },
         options,
         command
