@@ -81,8 +81,8 @@ describe("buildMarketHostProfiles", () => {
         font: true,
         media: true,
       },
-      cspFrameDomains: true,
-      cspBaseUriDomains: true,
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
       requestTeardown: false,
       toolCancelled: true,
     });

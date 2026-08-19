@@ -96,7 +96,7 @@ describe("seedHostTemplate", () => {
       mcpProtocolVersion: "auto",
       mrtrModes: { requestState: false, elicitation: false },
       initialize: {
-        supportedProtocolVersions: ["2025-11-25"],
+        supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
         clientInfo: { name: "claude-ai", version: "0.1.0" },
       },
     });
@@ -110,8 +110,8 @@ describe("seedHostTemplate", () => {
         font: true,
         media: true,
       },
-      cspFrameDomains: true,
-      cspBaseUriDomains: true,
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
       requestTeardown: false,
       resourceCacheTtl: true,
     });
@@ -182,6 +182,8 @@ describe("seedHostTemplate", () => {
     expect(config.hostCapabilitiesOverride).not.toHaveProperty("downloadFile");
     expect(config.mcpProfile?.mcpProtocolVersion).toBe("auto");
     expect(config.mcpProfile?.initialize?.supportedProtocolVersions).toEqual([
+      "2025-03-26",
+      "2025-06-18",
       "2025-11-25",
     ]);
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({

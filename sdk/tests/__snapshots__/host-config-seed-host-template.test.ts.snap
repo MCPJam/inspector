@@ -650,13 +650,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "inline",
             "fullscreen",
           ],
-          "cspBaseUriDomains": true,
+          "cspBaseUriDomains": false,
           "cspConnectDomains": {
             "fetch": true,
             "websocket": true,
             "xhr": true,
           },
-          "cspFrameDomains": true,
+          "cspFrameDomains": false,
           "cspResourceDomains": {
             "font": true,
             "image": true,
@@ -990,13 +990,13 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
             "inline",
             "fullscreen",
           ],
-          "cspBaseUriDomains": true,
+          "cspBaseUriDomains": false,
           "cspConnectDomains": {
             "fetch": true,
             "websocket": true,
             "xhr": true,
           },
-          "cspFrameDomains": true,
+          "cspFrameDomains": false,
           "cspResourceDomains": {
             "font": true,
             "image": true,

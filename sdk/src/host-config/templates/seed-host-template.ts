@@ -707,8 +707,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            cspFrameDomains: true,
-            cspBaseUriDomains: true,
+            // Claude advertises frameDomains and baseUriDomains and then
+            // blocks the origins it declared there (2026-08-19 probe), so
+            // neither is usable.
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
             cspConnectDomains: {
               fetch: true,
               xhr: true,
