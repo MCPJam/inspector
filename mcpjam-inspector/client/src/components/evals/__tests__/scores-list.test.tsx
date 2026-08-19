@@ -10,6 +10,10 @@ import {
 } from "@mcpjam/sdk/contract";
 import type { ScoreDefinition, ScoreResult } from "@mcpjam/sdk/contract";
 import {
+  EVAL_FAILED_BADGE_STRONG_CLASS,
+  EVAL_PASSED_BADGE_STRONG_CLASS,
+} from "../constants";
+import {
   ScoresList,
   isGatingScore,
   parseEvaluationConfig,
@@ -196,6 +200,60 @@ describe("ScoresList", () => {
     expect(
       screen.getByText("1 / 1 gating scores passed"),
     ).toBeInTheDocument();
+  });
+
+  it("keeps a not_applicable gating row visible but out of the count", () => {
+    // The section and the denominator are different memberships on purpose: an
+    // operator wants to see that the scorer was out of scope, and counting it
+    // would claim a check passed that never ran. The compact chip
+    // (`isGatingScore`) leaves it out, so the header must too — the same
+    // iteration summarized two ways on one screen is the bug.
+    const notApplicable = notApplicableScoreResult(gate, "no refund in scope");
+    render(
+      <ScoresList
+        scores={[
+          finalizeScoreResult(gate, { kind: "scored", value: 1 }),
+          notApplicable,
+        ]}
+        evaluationConfig={snapshot}
+      />,
+    );
+    expect(screen.getByText("1 / 1 gating scores passed")).toBeInTheDocument();
+    expect(screen.getByText("N/A")).toBeInTheDocument();
+    expect(isGatingScore(notApplicable, snapshot)).toBe(false);
+  });
+
+  it("counts an unjoinable row in the denominator, as a failure", () => {
+    const orphan: ScoreResult = {
+      ...finalizeScoreResult(gate, { kind: "scored", value: 1 }),
+      scorerId: "vanished",
+      definitionHash: "0".repeat(64),
+    };
+    render(
+      <ScoresList
+        scores={[finalizeScoreResult(gate, { kind: "scored", value: 1 }), orphan]}
+        evaluationConfig={snapshot}
+      />,
+    );
+    // It renders in its own section, but "1 / 1 passed" beside a row nobody can
+    // verify is the reassurance this view must never give.
+    expect(screen.getByText("1 / 2 gating scores passed")).toBeInTheDocument();
+  });
+
+  it("stays NEUTRAL when there was nothing to gate on", () => {
+    render(
+      <ScoresList
+        scores={[finalizeScoreResult(advisory, { kind: "scored", value: 1 })]}
+        evaluationConfig={snapshot}
+      />,
+    );
+    // Neither verdict is available to claim here: a green check would say a
+    // threshold was cleared, a red cross would report a regression that never
+    // happened. "0 / 0 passed" under either badge is the version to avoid.
+    const badge = screen.getByText("no gating scores");
+    expect(badge.className).not.toContain(EVAL_PASSED_BADGE_STRONG_CLASS);
+    expect(badge.className).not.toContain(EVAL_FAILED_BADGE_STRONG_CLASS);
+    expect(screen.queryByText(/gating scores passed/)).toBeNull();
   });
 
   it("renders a row with no matching definition as unresolved, not a crash", () => {

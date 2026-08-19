@@ -113,6 +113,28 @@ function isGating(joined: JoinedScore): boolean {
   return joined.definition?.role === "gating";
 }
 
+/**
+ * Does this row belong in a "N / M gating scores passed" count?
+ *
+ * Deliberately NOT `isGating`, and the difference is the whole point of two
+ * predicates:
+ *
+ *   - an UNJOINABLE row counts, even though it renders in its own section — it
+ *     fails closed everywhere else, and leaving it out would read
+ *     "2 / 2 checks passed" beside a failed iteration;
+ *   - a joined gating row that came back `not_applicable` does NOT count, even
+ *     though it renders under "Gating" — exclusion from every denominator is
+ *     exactly what distinguishes it from `skipped`.
+ *
+ * Every count in this file goes through here, so the header and the compact
+ * chip cannot disagree about the same iteration.
+ */
+function countsTowardGate(joined: JoinedScore): boolean {
+  if (joined.definition === null) return true;
+  if (joined.definition.role !== "gating") return false;
+  return joined.score.status !== "not_applicable";
+}
+
 /** Does this row count against the gate? Mirrors the SDK's `scoresPassed`. */
 function failsGate(joined: JoinedScore): boolean {
   if (!joined.definition) return true; // unjoinable ⇒ fails closed
@@ -139,24 +161,12 @@ function joinOne(
   return joinScores([score], config)[0];
 }
 
-/**
- * Whether this score decides the verdict. An UNJOINABLE row counts as gating:
- * it fails closed everywhere else, so excluding it from the chip's denominator
- * would show "2 / 2 checks passed" beside a failed iteration.
- */
+/** Whether this score decides the verdict — see {@link countsTowardGate}. */
 export function isGatingScore(
   score: ScoreResult,
   config: EvaluationConfigSnapshot | null,
 ): boolean {
-  const joined = joinOne(score, config);
-  // `not_applicable` is excluded from EVERY denominator — that is the property
-  // that distinguishes it from `skipped`. Counting it would render
-  // "1 / 1 checks passed" for an iteration where the only gating scorer was
-  // never in scope.
-  if (joined.definition !== null && score.status === "not_applicable") {
-    return false;
-  }
-  return joined.definition === null || isGating(joined);
+  return countsTowardGate(joinOne(score, config));
 }
 
 export function scoreFailsGate(
@@ -216,6 +226,16 @@ function formatValue(score: ScoreResult): string | null {
   return `${value} / ${threshold}`;
 }
 
+/** The header badge's three tones. `none` is muted: it asserts nothing. */
+const SUMMARY_TONE = {
+  passed: { icon: CheckCircle2, className: EVAL_PASSED_BADGE_STRONG_CLASS },
+  failed: { icon: XCircle, className: EVAL_FAILED_BADGE_STRONG_CLASS },
+  none: {
+    icon: MinusCircle,
+    className: "bg-muted text-muted-foreground border border-border/40",
+  },
+} as const;
+
 /**
  * Render the per-iteration score gate.
  *
@@ -245,14 +265,33 @@ export function ScoresList({
   );
   const unjoinable = joined.filter((row) => row.definition === null);
 
-  const gatingFailures = gating.filter(failsGate).length;
+  // The SECTIONS above group rows for a reader; the count below is the verdict,
+  // and the two memberships are not the same set. Counting the "Gating" section
+  // instead would put an out-of-scope `not_applicable` row in the denominator
+  // here while the compact chip left it out — the same iteration summarized two
+  // ways, in two places on the same screen.
+  const counted = joined.filter(countsTowardGate);
+  const countedFailures = counted.filter(failsGate).length;
   // An integrity downgrade means the backend could not verify this iteration's
   // gating evidence and flipped its verdict. The surviving rows may all read
   // green — they are the ones that DID validate — so summarizing them as a
   // pass would contradict the run's own result.
   const integrityInvalid = integrity === "score_integrity_invalid";
-  const allPassed =
-    gatingFailures === 0 && unjoinable.length === 0 && !integrityInvalid;
+  // THREE states, not two. An iteration with nothing to gate on has neither
+  // met a gate nor missed one, and a binary badge has to lie in one direction
+  // or the other: a green check claims a threshold was cleared, a red cross
+  // reports a regression that did not happen. It renders neutral instead.
+  const summary: { tone: keyof typeof SUMMARY_TONE; label: string } =
+    integrityInvalid
+      ? { tone: "failed", label: "score evidence did not verify" }
+      : counted.length === 0
+        ? { tone: "none", label: "no gating scores" }
+        : {
+            tone: countedFailures === 0 ? "passed" : "failed",
+            label: `${counted.length - countedFailures} / ${counted.length} gating scores passed`,
+          };
+  const tone = SUMMARY_TONE[summary.tone];
+  const SummaryIcon = tone.icon;
 
   return (
     <div
@@ -265,20 +304,10 @@ export function ScoresList({
           Scores
         </div>
         <div
-          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-            allPassed
-              ? EVAL_PASSED_BADGE_STRONG_CLASS
-              : EVAL_FAILED_BADGE_STRONG_CLASS
-          }`}
+          className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${tone.className}`}
         >
-          {allPassed ? (
-            <CheckCircle2 className="h-3 w-3 shrink-0" aria-hidden />
-          ) : (
-            <XCircle className="h-3 w-3 shrink-0" aria-hidden />
-          )}
-          {integrityInvalid
-            ? "score evidence did not verify"
-            : `${gating.length - gatingFailures} / ${gating.length} gating scores passed`}
+          <SummaryIcon className="h-3 w-3 shrink-0" aria-hidden />
+          {summary.label}
         </div>
       </div>
 

@@ -73,10 +73,17 @@ export function predicateScorer(
   // snapshot. When no ordinal was supplied, derive the suffix from the
   // predicate's content instead. Still `idSource: "generated"` — content-stable
   // is not the same as author-stable, and a gate must not select it.
+  //
+  // The WHOLE digest, not a prefix: two distinct predicates sharing a truncated
+  // one would mint a single id for two different definitions, and the snapshot
+  // builder would reject the config outright. `predicate:` + the longest
+  // predicate type + 64 hex is comfortably inside MAX_SCORER_ID_LENGTH, so
+  // there is nothing to buy by shortening it. Two IDENTICAL predicates still
+  // land on one id — they are one definition, and the builder collapses them.
   if (options?.id === undefined && options?.ordinal === undefined) {
     definition.scorerId = `predicate:${predicate.type}#${canonicalDigest(
       predicate
-    ).slice(0, 8)}`;
+    )}`;
   }
 
   return {
