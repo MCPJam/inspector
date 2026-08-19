@@ -96,6 +96,15 @@ export interface ClaudeAppsEvidence {
 
 // ── Definitions ─────────────────────────────────────────────────────────
 
+/**
+ * The input that closes this module's coverage gap.
+ *
+ * Distinct from the tool-listing input: a run can hold a tool listing and
+ * still have no apps evidence, because reading widget resources is a separate
+ * round trip the caller may not have made.
+ */
+export const CLAUDE_APPS_RESULT_INPUT = "appsResult";
+
 const RESOURCE_URI_MODERNITY: ClaudeCheckDefinition = {
   id: "claude.apps.resource-uri-modern",
   title: "Widget tools declare `_meta.ui.resourceUri`",
@@ -392,7 +401,9 @@ export function runClaudeAppsChecks(
     const reason =
       "no MCP Apps conformance result was available, so nothing app-specific was evaluated";
     for (const definition of everyDefinition) {
-      findings.push(notEvaluated(definition, stamp, reason));
+      findings.push(notEvaluated(definition, stamp, reason, {
+        missingInput: CLAUDE_APPS_RESULT_INPUT,
+      }));
     }
     return findings;
   }

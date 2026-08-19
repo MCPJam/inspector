@@ -20,8 +20,13 @@
  * disagreement.
  */
 
-import { runClaudeAppsChecks, type ClaudeAppsEvidence } from "./checks/apps.js";
 import {
+  CLAUDE_APPS_RESULT_INPUT,
+  runClaudeAppsChecks,
+  type ClaudeAppsEvidence,
+} from "./checks/apps.js";
+import {
+  CLAUDE_AUTHORIZATION_REQUESTS_INPUT,
   runClaudeAuthChecks,
   type ClaudeAuthEvidence,
 } from "./checks/auth.js";
@@ -34,7 +39,10 @@ import {
   CLAUDE_SUBMISSION_PROFILE_INPUT,
   runClaudeSubmissionChecks,
 } from "./checks/submission.js";
-import { runClaudeToolChecks } from "./checks/tools.js";
+import {
+  CLAUDE_TOOL_LISTING_INPUT,
+  runClaudeToolChecks,
+} from "./checks/tools.js";
 import {
   gradeClaudeIntrusiveObservations,
   resolveClaudeIntrusiveMode,
@@ -318,8 +326,31 @@ function buildRunSummary(
       .filter((lane) => lane.status === "incomplete")
       .flatMap((lane) => lane.coverage.missingInputs);
     const unique = [...new Set(gaps)];
-    return unique.length > 0
-      ? `Readiness is undetermined: some requirements were not evaluated. Supply ${unique.join(", ")} to close the gap.`
+
+    // GATED INPUTS ARE NOT RECOMMENDATIONS. `intrusive` registers OAuth
+    // clients and spends refresh grants; it is only ever legitimate against a
+    // server the submitter controls, with a dedicated test account. Listing it
+    // in the same breath as "give us a tool listing" reads as advice to run
+    // it — and on a connector whose ONLY gap was intrusive, that is exactly
+    // what a clean report told the reader to do.
+    const suggestable = unique.filter(
+      (input) => !CLAUDE_GATED_INPUTS.includes(input),
+    );
+    const gated = unique.filter((input) =>
+      CLAUDE_GATED_INPUTS.includes(input),
+    );
+    const gatedNote =
+      gated.length > 0
+        ? gated.length === 1
+          ? ` The remaining gap (${gated[0]}) needs explicit opt-in on a server you control.`
+          : ` The remaining gaps (${gated.join(", ")}) need explicit opt-in on a server you control.`
+        : "";
+
+    if (suggestable.length > 0) {
+      return `Readiness is undetermined: some requirements were not evaluated. Supply ${suggestable.join(", ")} to close the gap.${gatedNote}`;
+    }
+    return gated.length > 0
+      ? `Readiness is undetermined: nothing failed, and every remaining requirement needs a probe this run is not allowed to make on its own.${gatedNote}`
       : "Readiness is undetermined: some requirements could not be evaluated by this run.";
   }
   return "Every requirement this run could evaluate is satisfied.";
@@ -328,5 +359,20 @@ function buildRunSummary(
 /** Named inputs a surface can offer to make a run more complete. */
 export const CLAUDE_READINESS_INPUTS = {
   submissionProfile: CLAUDE_SUBMISSION_PROFILE_INPUT,
+  toolListing: CLAUDE_TOOL_LISTING_INPUT,
+  appsResult: CLAUDE_APPS_RESULT_INPUT,
+  authorizationRequests: CLAUDE_AUTHORIZATION_REQUESTS_INPUT,
   intrusive: "intrusive",
 } as const;
+
+/**
+ * Inputs a report must never simply ask for.
+ *
+ * Everything else on {@link CLAUDE_READINESS_INPUTS} is something a submitter
+ * can hand over at no cost to anyone. These are not: supplying them means
+ * running probes that mutate state on the target, so the decision belongs to
+ * whoever owns that server and a summary line is the wrong place to nudge it.
+ */
+export const CLAUDE_GATED_INPUTS: readonly string[] = [
+  CLAUDE_READINESS_INPUTS.intrusive,
+];
