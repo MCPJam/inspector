@@ -1,10 +1,12 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 const {
   mockAvailability,
   mockRepos,
   mockConnectRepo,
+  mockConnectVerifiedRepo,
   mockListInstallationRepos,
   mockNavigate,
   mockToast,
@@ -13,7 +15,11 @@ const {
     value: undefined as { state: "enabled" | "disabled" } | undefined,
   },
   mockRepos: { value: undefined as any[] | undefined },
-  mockConnectRepo: vi.fn(async () => ({ configId: "cfg-new" })),
+  // The unverified connect the backend still exposes for the two-deploy
+  // window. Handed to the component so that reaching for it is a recorded
+  // call rather than a crash — "never called" is the assertion.
+  mockConnectRepo: vi.fn(async () => ({ configId: "cfg-legacy" })),
+  mockConnectVerifiedRepo: vi.fn(async () => ({ configId: "cfg-new" })),
   mockListInstallationRepos: vi.fn(async () => [
     { fullName: "mcpjam/inspector" },
     { fullName: "mcpjam/backend" },
@@ -23,12 +29,11 @@ const {
 }));
 
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
-  GITHUB_CHECKS_UNAVAILABLE_MESSAGE:
-    "GitHub Checks settings are not currently available.",
   useGithubChecksSettings: () => ({
     availability: mockAvailability.value,
     repos: mockRepos.value,
     connectRepo: mockConnectRepo,
+    connectVerifiedRepo: mockConnectVerifiedRepo,
     listInstallationRepos: mockListInstallationRepos,
   }),
 }));
@@ -67,6 +72,7 @@ function renderSection(
     "availability" in opts ? opts.availability : { state: "enabled" };
   mockRepos.value = "repos" in opts ? opts.repos : [];
   mockConnectRepo.mockClear();
+  mockConnectVerifiedRepo.mockClear();
   mockNavigate.mockClear();
   return render(
     <SuiteGithubChecksSection
@@ -75,6 +81,16 @@ function renderSection(
       organizationId="org-1"
     />
   );
+}
+
+/** Radix renders options in a portal that exists only while the trigger is open. */
+async function chooseOption(
+  user: ReturnType<typeof userEvent.setup>,
+  triggerLabel: string,
+  optionName: string
+) {
+  await user.click(screen.getByLabelText(triggerLabel));
+  await user.click(await screen.findByRole("option", { name: optionName }));
 }
 
 describe("SuiteGithubChecksSection", () => {
@@ -132,5 +148,119 @@ describe("SuiteGithubChecksSection", () => {
     renderSection({ repos: [CONNECTED_HERE] });
     screen.getByText("Manage in Settings → Integrations").click();
     expect(mockNavigate).toHaveBeenCalledWith("/settings/integrations/github");
+  });
+
+  it("will not connect until an outage policy is chosen", async () => {
+    const user = userEvent.setup();
+    renderSection({ repos: [] });
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    const connect = screen.getByRole("button", { name: /Connect/ });
+    expect(connect).toBeDisabled();
+    await chooseOption(user, "Repository", "mcpjam/inspector");
+    // A repository alone is not an answer: this surface sets the policy once,
+    // at connect time, and never offers to change it afterwards.
+    expect(connect).toBeDisabled();
+
+    await chooseOption(user, "Outage policy", "Fail closed");
+    expect(connect).toBeEnabled();
+  });
+
+  it("connects through the verified action, never the unverified mutation", async () => {
+    const user = userEvent.setup();
+    renderSection({ repos: [] });
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await chooseOption(user, "Repository", "mcpjam/inspector");
+    await chooseOption(user, "Outage policy", "Fail open");
+    await user.click(screen.getByRole("button", { name: /Connect/ }));
+
+    await waitFor(() =>
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+    );
+    expect(mockConnectVerifiedRepo).toHaveBeenCalledWith({
+      repoFullName: "mcpjam/inspector",
+      projectId: "proj-1",
+      suiteId: "suite-1",
+      outagePolicy: "fail_open",
+    });
+    expect(mockConnectRepo).not.toHaveBeenCalled();
+    expect(mockToast.success).toHaveBeenCalledWith("Repository connected.");
+  });
+
+  it.each([
+    [
+      "an availability refusal",
+      "GitHub Checks settings are not currently available for this org.",
+      "GitHub Checks settings are not currently available.",
+    ],
+    [
+      "any other refusal",
+      "Repository is not accessible to the MCPJam GitHub App.",
+      "Repository is not accessible to the MCPJam GitHub App.",
+    ],
+  ])("surfaces %s from the verified connect", async (_case, thrown, shown) => {
+    mockConnectVerifiedRepo.mockRejectedValueOnce(new Error(thrown));
+    const user = userEvent.setup();
+    renderSection({ repos: [] });
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await chooseOption(user, "Repository", "mcpjam/inspector");
+    await chooseOption(user, "Outage policy", "Fail closed");
+    await user.click(screen.getByRole("button", { name: /Connect/ }));
+
+    await waitFor(() => expect(mockToast.error).toHaveBeenCalledWith(shown));
+    expect(mockToast.success).not.toHaveBeenCalled();
+  });
+
+  it("says nothing when a connect lands after the section is gone", async () => {
+    // The boundary around this section in `suite-iterations-view` is keyed by
+    // organizationId, so switching orgs unmounts this instance mid-connect.
+    // `toast` is global: without a mount guard, the previous organization's
+    // completion announces itself over the new organization's page.
+    let resolveConnect: ((result: unknown) => void) | undefined;
+    mockConnectVerifiedRepo.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveConnect = resolve as (result: unknown) => void;
+        })
+    );
+    const user = userEvent.setup();
+    const { unmount } = renderSection({ repos: [] });
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    await chooseOption(user, "Repository", "mcpjam/inspector");
+    await chooseOption(user, "Outage policy", "Fail open");
+    await user.click(screen.getByRole("button", { name: /Connect/ }));
+    await waitFor(() =>
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+    );
+
+    unmount();
+    await act(async () => {
+      resolveConnect?.({ configId: "cfg-new" });
+    });
+
+    expect(mockToast.success).not.toHaveBeenCalled();
+    expect(mockToast.error).not.toHaveBeenCalled();
+  });
+
+  it("states the conclusion each policy produces without promising a merge", () => {
+    renderSection({ repos: [] });
+
+    expect(
+      screen.getByText(
+        /During an MCPJam outage or pause, the check reports neutral\./
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Whether a failed or neutral check blocks merging depends on this repository's branch-protection settings\./
+      )
+    ).toBeInTheDocument();
+    const page = document.body.textContent ?? "";
+    for (const forbidden of [/merges proceed/i, /merges are blocked/i]) {
+      expect(page).not.toMatch(forbidden);
+    }
   });
 });
