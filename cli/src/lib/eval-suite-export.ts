@@ -116,7 +116,11 @@ export function suiteFileTooLarge(
  */
 export function percentToFraction(percent: number): number | null {
   if (!Number.isFinite(percent)) return null;
-  const text = percent.toString();
+  // `plainDecimal` on the way IN as well as out: a percent small enough that
+  // `toString` reaches for `1e-7` is still an ordinary decimal, and refusing
+  // it for its notation would be an arbitrary cliff between two values a
+  // hundredth apart.
+  const text = plainDecimal(percent);
   const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(text);
   if (!match) return null;
 
@@ -138,7 +142,24 @@ export function percentToFraction(percent: number): number | null {
   // shift above computed, and holds exactly when no digit was lost turning the
   // percent into a fraction. Comparing `value` against another parse of the
   // same text would compare it with itself and prove nothing.
-  return value.toString() === normalized ? value : null;
+  return plainDecimal(value) === normalized ? value : null;
+}
+
+/**
+ * A number's shortest round-tripping decimal, never in exponential notation.
+ *
+ * `toString` switches to `1e-7` below 1e-6, and the comparison above is against
+ * a plain decimal — so without this a threshold of 0.00001% would be refused for
+ * its NOTATION rather than for losing a digit. Rewriting the exponent form is
+ * exact: the same digits move, nothing is rounded. Only negative exponents are
+ * handled because the caller's values are in [0,1].
+ */
+function plainDecimal(value: number): string {
+  const text = value.toString();
+  const match = /^(-?)(\d)(?:\.(\d+))?e-(\d+)$/.exec(text);
+  if (!match) return text;
+  const [, sign, lead, rest = "", exponent] = match;
+  return `${sign}0.${"0".repeat(Number(exponent) - 1)}${lead}${rest}`;
 }
 
 // ── match options ────────────────────────────────────────────────────────────

@@ -343,6 +343,12 @@ describe("percentToFraction", () => {
       [5.5, 0.055],
       [12.345, 0.12345],
       [33.333333, 0.33333333],
+      // Below 1e-6 `Number.prototype.toString` switches to exponential
+      // notation. These are ordinary decimals and must convert on their
+      // digits, not be refused for how JavaScript happens to print them.
+      [0.0001, 0.000001],
+      [0.00001, 1e-7],
+      [1e-7, 1e-9],
     ];
     for (const [percent, fraction] of cases) {
       assert.equal(percentToFraction(percent), fraction, `${percent}%`);
@@ -353,7 +359,12 @@ describe("percentToFraction", () => {
     for (const percent of [
       Number.NaN,
       Number.POSITIVE_INFINITY,
-      1e-7, // exponent notation: `toString` is "1e-7", not plain decimal
+      // Percents carrying more significant digits than the shifted decimal
+      // survives as a double. The file would otherwise claim a threshold
+      // fractionally different from the one the dashboard grades with.
+      0.1 + 0.2, // 0.30000000000000004
+      12.345678901234567,
+      3.0000000000000004,
     ]) {
       assert.equal(percentToFraction(percent), null, String(percent));
     }
