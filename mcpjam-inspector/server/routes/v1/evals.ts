@@ -1621,7 +1621,13 @@ const createCasesBatchSchema = z.object({
   overrideReason: z.string().optional(),
 });
 
-const updateSuiteSchema = z.object({
+/**
+ * Exported for the settings-parity test
+ * (`__tests__/eval-suite-settings-parity.test.ts`), which asserts that every
+ * settings-sheet row the shared manifest marks `api:` is genuinely accepted
+ * here. Nothing else should import it — the route is the only writer.
+ */
+export const updateSuiteSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
   // The LEGACY server bag (kept as rollback/compat data). Unrelated to
