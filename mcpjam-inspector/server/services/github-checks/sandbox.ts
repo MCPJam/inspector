@@ -273,6 +273,72 @@ function stripControlCharacters(text: string): string {
   return out;
 }
 
+/** What every redacted credential form collapses to. */
+const REDACTED_CREDENTIAL = "[redacted]";
+
+/**
+ * Every `AUTHORIZATION: basic …` header, wherever it turns up.
+ *
+ * CONSTANT on purpose, and deliberately NOT built from the token: a secret
+ * interpolated into a pattern is a secret that can carry regex metacharacters,
+ * and the one time that matters is the time the redaction silently stops
+ * matching. The token-derived forms are removed by literal replacement instead
+ * (below); this pattern exists to catch the header AS A WHOLE — including the
+ * copy an SDK echoes back inside a failing command line — so nothing survives
+ * on the strength of an encoding we did not anticipate.
+ *
+ * The value class requires at least one character, which also makes the
+ * function idempotent: `AUTHORIZATION: basic [redacted]` no longer matches.
+ */
+const CLONE_AUTH_HEADER_PATTERN =
+  /AUTHORIZATION:\s*basic\s+[A-Za-z0-9+/=_-]+/gi;
+
+/**
+ * The base64 an installation token is sent as: `x-access-token:<token>`.
+ *
+ * Computed HOST-SIDE, so the token itself never appears in the command stream
+ * in plaintext — only this encoding of it does, and only inside the
+ * `http.extraheader` config value.
+ */
+function cloneAuthHeaderValue(token: string): string {
+  return Buffer.from(`x-access-token:${token}`, "utf8").toString("base64");
+}
+
+/**
+ * Strip a clone credential out of text that is about to be OBSERVED — thrown,
+ * logged, reported as an attempt detail, or rendered on somebody's pull request.
+ *
+ * Three forms, because the credential reaches observable text three ways:
+ *
+ *   1. the RAW installation token — anything that echoes what we were handed;
+ *   2. `base64(x-access-token:<token>)` — what the header actually carries;
+ *   3. the whole `AUTHORIZATION: basic …` header — which is how it arrives in
+ *      practice, since the E2B SDK's errors quote the command they were running
+ *      and the command contains the `-c http.extraheader=…` argument verbatim.
+ *
+ * Applied BEFORE `clampOutput`, never after. Clamping is a length and markdown
+ * boundary — it truncates, strips control characters and fences — and none of
+ * that removes a secret; a clamped log tail is exactly as leaked as an unclamped
+ * one.
+ */
+export function redactCloneCredential(
+  text: string,
+  token?: string | null
+): string {
+  if (typeof text !== "string" || text.length === 0) return "";
+  let out = text.replace(
+    CLONE_AUTH_HEADER_PATTERN,
+    `AUTHORIZATION: basic ${REDACTED_CREDENTIAL}`
+  );
+  if (token) {
+    // Literal, not regex: `split`/`join` treats the needle as bytes, so a token
+    // containing `.` or `+` cannot quietly widen or narrow the match.
+    out = out.split(cloneAuthHeaderValue(token)).join(REDACTED_CREDENTIAL);
+    out = out.split(token).join(REDACTED_CREDENTIAL);
+  }
+  return out;
+}
+
 export function isGithubChecksSandboxConfigured(): boolean {
   return Boolean(
     process.env.E2B_API_KEY?.trim() &&
@@ -343,6 +409,28 @@ export async function provisionCheckSandbox(args: {
 type RunResult = { exitCode: number; stdout: string; stderr: string };
 
 /**
+ * `{ envs }` when there is an environment to pass, and NOTHING otherwise.
+ *
+ * The empty case is the interesting one. Spreading the result of this into a
+ * command's options leaves an env-free command byte-identical to what this
+ * module has always sent — no `envs: undefined`, no `envs: {}` — so the
+ * overwhelmingly common no-environment path cannot be changed by the existence
+ * of the environment channel, and a diff of the option objects stays a diff
+ * about something real.
+ *
+ * This is the ONLY way a recipe's environment reaches a command. It is never
+ * written into a command STRING: the values come from a PR checkout, every
+ * diagnostic in this module quotes commands into check output, and an `export
+ * FOO=…` would additionally put author bytes inside a `bash -lc` quoting
+ * boundary that is already nested two deep.
+ */
+function envsOption(env: Record<string, string> | undefined): {
+  envs?: Record<string, string>;
+} {
+  return env && Object.keys(env).length > 0 ? { envs: env } : {};
+}
+
+/**
  * Foreground command, normalized. E2B throws on a non-zero exit; every caller
  * here wants the exit code and the streams, so translate the throw back into a
  * result and let the caller decide what a failure MEANS.
@@ -372,6 +460,22 @@ async function runForeground(
      * `infra_error` (neutral) rather than a red X on a good PR.
      */
     timeoutOutcome: CheckStepOutcome;
+    /**
+     * The clone credential, when THIS command carries one. Every observable
+     * form of a failure is redacted with it before anything else happens to the
+     * text — in particular before `clampOutput`, which is a length boundary and
+     * not a secret one.
+     */
+    secret?: string;
+    /**
+     * The recipe's declared environment, for the one command that runs the PR's
+     * own code (the build). SEPARATE CONCERN FROM `secret`, in both directions:
+     * these are non-secret literals from a committed file and are never
+     * redacted, and the clone credential is never one of them — it rides a
+     * command-line git header precisely so it does not become an environment
+     * variable in a box where PR code runs.
+     */
+    envs?: Record<string, string>;
   }
 ): Promise<RunResult> {
   const startedAt = Date.now();
@@ -379,6 +483,7 @@ async function runForeground(
     const result = (await sandbox.commands.run(command, {
       cwd: opts.cwd,
       timeoutMs: opts.timeoutMs,
+      ...envsOption(opts.envs),
     })) as Partial<RunResult> | undefined;
     return {
       exitCode: result?.exitCode ?? 0,
@@ -401,13 +506,24 @@ async function runForeground(
       throw new CheckStepError(
         opts.timeoutOutcome,
         `command exceeded its ${Math.round(opts.timeoutMs / 1000)}s deadline`,
-        clampOutput(`${exit.stdout ?? ""}\n${exit.stderr ?? ""}`) || undefined
+        clampOutput(
+          redactCloneCredential(
+            `${exit.stdout ?? ""}\n${exit.stderr ?? ""}`,
+            opts.secret
+          )
+        ) || undefined
       );
     }
     // Not a command failure — the sandbox itself is unreachable.
+    //
+    // THE LEAKIEST PATH IN THIS MODULE. `errorMessage` is fed the SDK's own
+    // error, and an E2B transport error quotes the command it was running —
+    // which, for a private clone, is the command carrying the auth header. It is
+    // redacted here rather than at the caller because this is where the SDK's
+    // text first becomes ours.
     throw new CheckStepError(
       "infra_error",
-      `sandbox command failed: ${errorMessage(error)}`
+      `sandbox command failed: ${errorMessage(error, opts.secret)}`
     );
   }
 }
@@ -427,7 +543,9 @@ function looksLikeSandboxTransportFailure(error: unknown): boolean {
 }
 
 /**
- * Clone the PR head, anonymously.
+ * Clone the PR head — anonymously for a public repository, and with a
+ * short-lived, repository-scoped `contents: read` installation token for a
+ * private one.
  *
  * `refs/pull/<n>/head` rather than the branch name: the branch may have been
  * renamed or deleted since the webhook fired, and the PR ref is stable. The
@@ -436,21 +554,74 @@ function looksLikeSandboxTransportFailure(error: unknown): boolean {
  * have us build a different tree and report the verdict against the sha in the
  * check, i.e. quietly lie about what was tested.
  *
- * No credentials: the repo is public, so the clone is anonymous. This is what
- * lets the box hold nothing worth stealing.
+ * ═══════════════════════════════════════════════════════════════════════════
+ * WHERE THE CREDENTIAL GOES, AND WHERE IT DELIBERATELY DOES NOT
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * On a command-line `-c http.extraheader=…`, on the CLONE and the FETCH, and
+ * nowhere else. Every alternative was rejected for a specific reason:
+ *
+ *   - IN THE URL (`https://x-access-token:<t>@github.com/…`) — git writes the
+ *     remote verbatim into `.git/config`, so the checkout the PR's own build
+ *     then runs inside would contain the credential as a file. It also lands in
+ *     `git remote -v`, in submodule resolution, and in any log that echoes the
+ *     remote.
+ *   - `git config --add` INSIDE the checkout — same problem by a different
+ *     route: a `-c` on the command line is process-scoped and never persisted,
+ *     which is the entire reason it is the mechanism here.
+ *   - A CREDENTIAL HELPER, an env var, or a file — each one leaves the secret
+ *     readable by whatever runs next in the box, and what runs next is the pull
+ *     request's build.
+ *
+ * The `fetch` needs it as much as the clone does: the PR ref is a second
+ * authenticated request against the same private repository, and a clone that
+ * succeeds followed by a fetch that 404s is the confusing shape of forgetting
+ * it. `checkout`, `rev-parse` and everything downstream are purely local and
+ * get nothing.
+ *
+ * THE RESIDUAL, NAMED: E2B is the sandbox provider and therefore sees the
+ * command stream, including this header. That is accepted rather than solved —
+ * we already trust E2B with the checkout itself. What is NOT accepted is the
+ * PR's own code seeing it, which is why nothing is persisted: clone and fetch
+ * both finish before any PR-controlled process runs.
  */
 export async function cloneAndCheckout(
   sandbox: CheckSandbox,
-  args: { repoFullName: string; prNumber: number; headSha: string }
+  args: {
+    repoFullName: string;
+    prNumber: number;
+    headSha: string;
+    /**
+     * Installation token for a PRIVATE repository. Absent ⇒ the clone is
+     * anonymous, byte-for-byte as it has always been.
+     */
+    cloneToken?: string;
+  }
 ): Promise<void> {
+  // Unchanged, and unchanged ON PURPOSE even when a token is in play: the
+  // credential travels in a header, so the URL stays the ordinary public-looking
+  // HTTPS one and nothing that echoes it can leak anything.
   const cloneUrl = `https://github.com/${args.repoFullName}.git`;
+  // A trailing space when present and the empty string when not, so the
+  // anonymous command bytes are identical to what they were before tokens
+  // existed.
+  const authConfig = args.cloneToken
+    ? `-c ${shellQuote(
+        `http.extraheader=AUTHORIZATION: basic ${cloneAuthHeaderValue(
+          args.cloneToken
+        )}`
+      )} `
+    : "";
   const script = [
     `set -e`,
     `rm -rf ${CHECKOUT_DIR}`,
     // Shallow, but deep enough that a PR ref's own history resolves.
-    `git clone --depth 50 ${shellQuote(cloneUrl)} ${CHECKOUT_DIR}`,
+    `git ${authConfig}clone --depth 50 ${shellQuote(cloneUrl)} ${CHECKOUT_DIR}`,
     `cd ${CHECKOUT_DIR}`,
-    `git fetch --depth 50 origin ${shellQuote(`pull/${args.prNumber}/head`)}`,
+    `git ${authConfig}fetch --depth 50 origin ${shellQuote(
+      `pull/${args.prNumber}/head`
+    )}`,
+    // No credential: a detached checkout is a purely local operation.
     `git checkout --detach ${shellQuote(args.headSha)}`,
   ].join(" && ");
 
@@ -459,18 +630,29 @@ export async function cloneAndCheckout(
     `bash -lc ${shellQuote(script)}`,
     {
       timeoutMs: CLONE_TIMEOUT_MS,
-      // A public repo we were just told about should clone promptly; a stall is
-      // ours or GitHub's, matching how a non-zero clone exit is attributed.
+      // A repo we were just told about, and now hold a credential for, should
+      // clone promptly; a stall is ours or GitHub's, matching how a non-zero
+      // clone exit is attributed.
       timeoutOutcome: "infra_error",
+      secret: args.cloneToken,
     }
   );
   if (result.exitCode !== 0) {
-    // A public repo we were just told about should always clone. If it doesn't,
-    // that is our problem (or GitHub's), not the PR author's.
+    // A repo we were just told about — and, for a private one, just minted a
+    // token for — should always clone. If it doesn't, that is our problem (or
+    // GitHub's), not the PR author's.
+    //
+    // REDACTED BEFORE CLAMPED. git prints the failing request on some errors,
+    // and clamping would merely shorten the header rather than remove it.
     throw new CheckStepError(
       "infra_error",
       `clone/checkout failed (exit ${result.exitCode})`,
-      clampOutput(`${result.stdout}\n${result.stderr}`)
+      clampOutput(
+        redactCloneCredential(
+          `${result.stdout}\n${result.stderr}`,
+          args.cloneToken
+        )
+      )
     );
   }
 
@@ -573,6 +755,11 @@ export async function buildAndStart(
         cwd: CHECKOUT_DIR,
         timeoutMs: options?.buildTimeoutMs ?? BUILD_TIMEOUT_MS,
         timeoutOutcome: "build_failed",
+        // The build gets the declared environment too, not just the start: a
+        // build step that reads its configuration (a codegen flag, a fixture
+        // mode) would otherwise produce a tree the start command's environment
+        // no longer matches.
+        ...envsOption(recipe.env),
       }
     );
   } catch (error) {
@@ -618,6 +805,12 @@ export async function buildAndStart(
         // forwards the value to connect-rpc, which treats <= 0 as an
         // already-expired deadline and would abort the spawn instantly.)
         timeoutMs: CHECK_SANDBOX_TIMEOUT_MS,
+        // The server's own configuration, handed to E2B beside the command
+        // rather than written into it. `startCommandScript` is unchanged and
+        // stays unchanged: the recipe's `start` runs in a nested `bash -lc`
+        // under a watchdog, and an environment assignment threaded through that
+        // would have to survive two quoting boundaries to arrive intact.
+        ...envsOption(recipe.env),
       }
     );
   } catch (error) {
@@ -706,14 +899,17 @@ async function readProcessGroup(
     `}catch(e){}`;
   let stdout = "";
   try {
-    const result = (await sandbox.commands.run(`node -e ${JSON.stringify(script)}`, {
-      timeoutMs: 30_000,
-    })) as { stdout?: unknown } | null;
+    const result = (await sandbox.commands.run(
+      `node -e ${JSON.stringify(script)}`,
+      {
+        timeoutMs: 30_000,
+      }
+    )) as { stdout?: unknown } | null;
     stdout = typeof result?.stdout === "string" ? result.stdout : "";
   } catch (error) {
     stdout =
       typeof (error as { stdout?: unknown })?.stdout === "string"
-        ? ((error as { stdout: string }).stdout)
+        ? (error as { stdout: string }).stdout
         : "";
   }
   for (const line of stdout.split("\n")) {
@@ -1227,7 +1423,9 @@ function isJsonRpcMessageShaped(value: unknown): boolean {
 
   if (message.result !== undefined) {
     return (
-      within(RESULT_RESPONSE_KEYS) && idIsValid && isResultShaped(message.result)
+      within(RESULT_RESPONSE_KEYS) &&
+      idIsValid &&
+      isResultShaped(message.result)
     );
   }
   if (message.error !== undefined) {
@@ -1685,6 +1883,20 @@ export function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`;
 }
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message.slice(0, 300) : String(error);
+/**
+ * An error's text, with any clone credential already removed.
+ *
+ * Redaction happens BEFORE the slice, deliberately: slicing first can cut a
+ * token in half, and half a token in a log is still half a token in a log —
+ * and no longer matches the literal the redaction is looking for.
+ *
+ * The `secret` is optional because most callers run commands that never carry
+ * one. They still get the constant header sweep, which costs nothing and means
+ * a future command that grows an `AUTHORIZATION:` header is covered the day it
+ * is written rather than the day somebody remembers.
+ */
+function errorMessage(error: unknown, secret?: string | null): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  const redacted = redactCloneCredential(raw, secret);
+  return error instanceof Error ? redacted.slice(0, 300) : redacted;
 }
