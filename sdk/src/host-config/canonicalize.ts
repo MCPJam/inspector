@@ -820,10 +820,10 @@ function canonicalizeMcpProfile(
     }
   }
 
-  // Any concrete pin must be one of the client's declared supported versions.
-  // For legacy pins, derive a missing list because initialize needs one. A
-  // modern pin does not run initialize, but the stored list still describes
-  // what this client can speak and therefore cannot contradict the pin.
+  // A stateful pin must be one of the client's declared supported versions,
+  // and a missing list is derived from it because initialize needs one. A
+  // stateless pin skips initialize entirely, so it is exempt from the
+  // accept-list check (see the guard below) — legacy rows carry that shape.
   if (
     out.mcpProtocolVersion !== undefined &&
     out.mcpProtocolVersion !== "auto"

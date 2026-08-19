@@ -111,9 +111,10 @@ const HOST_PROTOCOL_OPTIONS: Array<{
 /**
  * Which versions this client may actually be pinned to.
  *
- * The backend refuses to store a concrete pin the client does not also
+ * The backend refuses to store a STATEFUL pin the client does not also
  * advertise in `initialize.supportedProtocolVersions` — the SDK's
- * `ConflictingProtocolVersionPin` rule in `canonicalizeMcpProfile`. Presets
+ * `ConflictingProtocolVersionPin` rule in `canonicalizeMcpProfile`. A
+ * stateless pin skips `initialize`, so it is exempt from that rule. Presets
  * carry that list (VS Code ships `["2025-11-25"]`), so offering every version
  * on those clients produced choices that could only fail at Save with an
  * opaque "Server Error". Offer what actually saves instead.
@@ -674,13 +675,16 @@ export function ProtocolTab({
   );
   const protocolOptionsRestricted =
     protocolOptions.length < HOST_PROTOCOL_OPTIONS.length;
-  // A stored concrete pin outside the advertised list — a legacy row, or one
+  // A stored STATEFUL pin outside the advertised list — a legacy row, or one
   // hand-edited in the JSON. Its option is force-kept (see the helper), which
   // can pad the list back to full length, so this must be detected directly
   // rather than inferred from the option count. Saving such a draft throws
-  // `ConflictingProtocolVersionPin`; warn before Save does.
+  // `ConflictingProtocolVersionPin`; warn before Save does. A stateless pin
+  // skips `initialize` entirely, so both canonicalizers accept it outside the
+  // accept-list — warning there would promise a failure that never comes.
   const selectedPinUnadvertised =
     selectedDropdownValue !== "auto" &&
+    !isStatelessProtocolVersion(selectedDropdownValue) &&
     advertisedProtocolVersions !== undefined &&
     advertisedProtocolVersions.length > 0 &&
     !advertisedProtocolVersions.includes(selectedDropdownValue);

@@ -382,7 +382,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     ).toBeInTheDocument();
   });
 
-  it("does not warn on an advertised pin and warns on any unadvertised pin", () => {
+  it("does not warn on an advertised or stateless pin", () => {
     // Advertised pin: fine.
     const { unmount } = render(
       <Harness initial={withAdvertised(["2025-11-25"], "2025-11-25")} />
@@ -390,8 +390,17 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     expect(screen.queryByText(/does not advertise/)).toBeNull();
     unmount();
 
-    // The stateless wire path also has to match the client's advertised list.
-    render(<Harness initial={withAdvertised(["2025-11-25"], "2026-07-28")} />);
+    // A stateless pin skips `initialize`, so it never has to appear in that
+    // accept-list — both canonicalizers save this shape. Warning here would
+    // promise a failure that never comes.
+    const second = render(
+      <Harness initial={withAdvertised(["2025-11-25"], "2026-07-28")} />
+    );
+    expect(screen.queryByText(/does not advertise/)).toBeNull();
+    second.unmount();
+
+    // A stateful pin outside the list still throws at Save, so it still warns.
+    render(<Harness initial={withAdvertised(["2025-11-25"], "2025-06-18")} />);
     expect(screen.getByText(/does not advertise/)).toBeInTheDocument();
   });
 });

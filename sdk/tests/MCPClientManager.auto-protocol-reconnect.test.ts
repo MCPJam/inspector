@@ -243,7 +243,7 @@ describe("MCPClientManager Automatic legacy fallback", () => {
   it("leaves a pin that the accept-list does not contain alone", async () => {
     // Hoisting an unlisted pin would put a version on the wire this client
     // never claimed to speak. `canonicalizeMcpProfile` rejects that pairing
-    // for concrete host pins, so this only guards hand-built configs.
+    // for stateful host pins, so this only guards hand-built configs.
     await manager.connectToServer("bart", {
       url: fixture.url,
       timeout: 5_000,
