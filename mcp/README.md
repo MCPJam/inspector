@@ -58,6 +58,7 @@ so results respect the caller's project access.
 | `list_eval_cases` | List the test cases in an eval suite, with their ids and configuration. | — |
 | `get_eval_case` | Fetch one eval test case's full definition. | — |
 | `create_eval_case` | Add one test case to an eval suite. | — |
+| `create_eval_cases` | Add several test cases to an eval suite in one call. | — |
 | `update_eval_case` | Edit an eval test case. | — |
 | `delete_eval_case` | Permanently delete one test case from an eval suite. | — |
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |

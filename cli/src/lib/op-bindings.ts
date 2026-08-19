@@ -143,6 +143,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_eval_cases: { command: "eval cases list" },
   get_eval_case: { command: "eval cases get" },
   create_eval_case: { command: "eval cases create" },
+  create_eval_cases: {
+    excluded:
+      "Authoring several cases from a shell means passing a FILE, and the CLI's file path for suites is the suite-file loader still being designed — a batch command now would ship a second, throwaway format ahead of the one that is meant to last. The bulk writers today are the agent surfaces (MCP `create_eval_cases`, `POST …/cases/batch`), which take the cases inline. Bind this to whatever the suite-file commands settle on.",
+  },
   update_eval_case: { command: "eval cases update" },
   delete_eval_case: { command: "eval cases delete" },
   generate_eval_cases: { command: "eval cases generate" },
