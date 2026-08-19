@@ -123,6 +123,13 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "settings",
   },
   {
+    // Where GitHub sends the browser back — the App's setup URL and its OAuth
+    // callback both point here, told apart by which query parameters arrived.
+    path: "settings/integrations/github/callback",
+    kind: "screen",
+    surfaceId: "settings",
+  },
+  {
     path: "settings/github-checks",
     kind: "redirect",
     note: "Legacy: the page moved under Integrations; redirects to /settings/integrations/github.",

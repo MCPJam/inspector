@@ -45,6 +45,9 @@ import type {
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
+  PlatformEvalRunJudgeRequested,
+  PlatformEvalCheckRepos,
+  PlatformEvalCheckRepoConnected,
   PlatformRunCompare,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
@@ -2557,7 +2560,7 @@ export const getEvalSuiteOperation: PlatformOperation<
   name: "get_eval_suite",
   title: "Get MCPJam eval suite",
   description:
-    "Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge, schedule.",
+    "Fetch one eval suite's full settings: environment (servers, computer image), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule.",
   readOnly: true,
   inputSchema: getEvalSuiteInput,
   async execute(input, { client, signal }) {
@@ -2585,9 +2588,24 @@ const updateEvalSuiteInput = z.object({
   name: z.string().trim().min(1).optional(),
   description: z.string().trim().optional(),
   environment: z
-    .object({ servers: z.array(z.string().trim().min(1)) })
+    .object({
+      servers: z
+        .array(z.string().trim().min(1))
+        .optional()
+        .describe(
+          "Server selection by name; replaces the suite's server set. Omit to leave it (and its bindings) alone.",
+        ),
+      computerEnvironment: z
+        .union([z.string().trim().min(1), z.null()])
+        .optional()
+        .describe(
+          "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image.",
+        ),
+    })
     .optional()
-    .describe("Server selection by name; replaces the suite's server set."),
+    .describe(
+      "Suite environment: server selection and the sandbox image runs boot from. Unspecified fields are preserved.",
+    ),
   executionConfig: z
     .object({
       model: z.string().trim().min(1).optional(),
@@ -2608,13 +2626,36 @@ const updateEvalSuiteInput = z.object({
   settings: z
     .object({
       minimumAccuracy: z.number().min(0).max(100).optional(),
+      minimumIterations: z
+        .union([z.number().int().min(1).max(10), z.null()])
+        .optional()
+        .describe(
+          "Floor on per-case iterations, 1–10: every case runs at least this many times. null removes the floor.",
+        ),
       // Nullable to CLEAR suite defaults (vs omit to leave untouched).
       matchOptions: publicMatchOptionsSchema.nullable().optional(),
       checks: z.array(publicCheckSchema).nullable().optional(),
       judge: z
         .object({
-          enabled: z.boolean().optional(),
+          enabled: z
+            .boolean()
+            .optional()
+            .describe(
+              "Make the judge available on this suite. On its own this grades nothing — set autoRun (or request grading on a finished run) to make grading happen.",
+            ),
           model: z.string().trim().min(1).optional(),
+          autoRun: z
+            .boolean()
+            .optional()
+            .describe(
+              "Grade every run automatically as it completes. This is the flag that makes LLM-as-judge grading happen; it SPENDS on each run.",
+            ),
+          threshold: z
+            .number()
+            .min(0)
+            .max(1)
+            .optional()
+            .describe("Advisory pass threshold, 0–1 (passed = score >= threshold)."),
         })
         .optional(),
     })
@@ -2629,7 +2670,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge. Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, and LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available). Only the fields you pass change.",
   readOnly: false,
   inputSchema: updateEvalSuiteInput,
   async execute(input, { client, signal }) {
@@ -3526,6 +3567,213 @@ export const cancelEvalRunOperation: PlatformOperation<
       { signal },
     );
     return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const requestEvalRunJudgeInput = evalRunScopedInput.extend({
+  force: z
+    .boolean()
+    .optional()
+    .describe("Re-grade a run that already has a judge result."),
+  enable: z
+    .boolean()
+    .optional()
+    .describe(
+      "Grade this run even though the judge was off when it ran. A per-RUN answer, not a suite edit: grading reads the config pinned when the run was created, so turning the judge on for the suite does not reach an already-recorded run.",
+    ),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Judge model for this run only; defaults to the suite's."),
+  threshold: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Pass threshold for this run only, 0–1."),
+});
+
+export type RequestEvalRunJudgeInput = z.infer<typeof requestEvalRunJudgeInput>;
+
+export type RequestEvalRunJudgeResult = {
+  project: SelectedProjectInfo;
+  judge: PlatformEvalRunJudgeRequested;
+};
+
+export const requestEvalRunJudgeOperation: PlatformOperation<
+  RequestEvalRunJudgeInput,
+  RequestEvalRunJudgeResult
+> = {
+  name: "request_eval_run_judge",
+  title: "Request MCPJam eval run grading",
+  description:
+    "Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget. Returns immediately with a pending receipt — read the results from get_eval_run's `judges.goalCompletion`, do not re-request. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: requestEvalRunJudgeInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const judge = await client.requestEvalRunJudge(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        ...(input.force !== undefined ? { force: input.force } : {}),
+        ...(input.enable !== undefined ? { enable: input.enable } : {}),
+        ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.threshold !== undefined
+          ? { threshold: input.threshold }
+          : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), judge };
+  },
+};
+
+/**
+ * The organization a GitHub Checks connection belongs to.
+ *
+ * `PlatformProject.organizationId` is nullable — a personal project belongs to
+ * no organization — and GitHub Checks is an organization's App installation.
+ * Refused with the reason rather than sent as an empty string, which would
+ * reach the platform as an unparseable id and come back as a flat not-found.
+ */
+function checkRepoOrganizationOrThrow(project: PlatformProject): string {
+  const organizationId = project.organizationId;
+  if (!organizationId) {
+    throw operationInputError(
+      `Project "${project.name}" does not belong to an organization, and GitHub Checks is configured per organization. Move the suite to a project in an organization, or connect the repository from the app.`,
+    );
+  }
+  return organizationId;
+}
+
+// ── GitHub Checks: run a suite on every pull request ──────────────────────
+//
+// Two operations rather than fields on `update_eval_suite`, because the
+// resource is ORG-scoped: a connection binds the organization's GitHub App
+// installation to a repository, and the suite is only which suite that
+// repository answers for.
+//
+// Deliberately NARROW, mirroring the suite-side section in the app: connect,
+// and see what is connected. Pausing, retargeting and disconnecting are
+// repo-level decisions that want every repository visible at once — offering
+// them here would let a caller retarget a repository away from the suite it is
+// standing on.
+
+const listEvalCheckReposInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Project name or ID. Only used to select the ORGANIZATION whose connected repositories are listed.",
+    ),
+});
+export type ListEvalCheckReposInput = z.infer<typeof listEvalCheckReposInput>;
+
+export type ListEvalCheckReposResult = {
+  project: SelectedProjectInfo;
+  checks: PlatformEvalCheckRepos;
+};
+
+export const listEvalCheckReposOperation: PlatformOperation<
+  ListEvalCheckReposInput,
+  ListEvalCheckReposResult
+> = {
+  name: "list_eval_check_repos",
+  title: "List MCPJam GitHub Checks repositories",
+  description:
+    "List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.",
+  readOnly: true,
+  inputSchema: listEvalCheckReposInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const checks = await client.listEvalCheckRepos(
+      { organizationId: checkRepoOrganizationOrThrow(project) },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), checks };
+  },
+};
+
+const connectEvalCheckRepoInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  repo: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Repository as owner/repo. Must be one list_eval_check_repos reports as connectable — the MCPJam GitHub App has to be installed on it.",
+    ),
+  outagePolicy: z
+    .enum(["fail_open", "fail_closed"])
+    .describe(
+      "What the pull-request check reports when MCPJam cannot conclude: fail_open passes it, fail_closed fails it. Required — ask the user which they want rather than choosing for them; fail_closed blocks merges during an MCPJam outage, fail_open lets an unverified change through.",
+    ),
+});
+export type ConnectEvalCheckRepoInput = z.infer<
+  typeof connectEvalCheckRepoInput
+>;
+
+export type ConnectEvalCheckRepoResult = {
+  project: SelectedProjectInfo;
+  check: PlatformEvalCheckRepoConnected;
+};
+
+export const connectEvalCheckRepoOperation: PlatformOperation<
+  ConnectEvalCheckRepoInput,
+  ConnectEvalCheckRepoResult
+> = {
+  name: "connect_eval_check_repo",
+  title: "Run an MCPJam eval suite on a repository's pull requests",
+  description:
+    "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.",
+  readOnly: false,
+  // Not `spend`: it costs an eval run per pull request, but the hazard a
+  // surface needs to warn about here is REACH — it changes what happens in a
+  // shared repository for everyone who opens a PR against it.
+  risk: "exposure",
+  inputSchema: connectEvalCheckRepoInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    // BEFORE the suite lookup: a project with no organization can never
+    // connect, so spending a round trip to resolve a suite first only delays
+    // the same refusal — and makes the failure look like a suite problem.
+    const organizationId = checkRepoOrganizationOrThrow(project);
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const check = await client.connectEvalCheckRepo(
+      {
+        organizationId,
+        projectId: project.id,
+        suiteId: suite.id,
+        repo: input.repo,
+        outagePolicy: input.outagePolicy,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), check };
   },
 };
 
@@ -8398,6 +8646,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   getEvalRunStepsOperation,
   createTunnelOperation,
   closeTunnelOperation,

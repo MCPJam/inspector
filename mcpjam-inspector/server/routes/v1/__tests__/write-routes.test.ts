@@ -1968,6 +1968,29 @@ describe("v1 write routes", () => {
         notes: null,
         createdAt: 1,
         completedAt: 2,
+        // Always present on the detail, so a caller can branch on
+        // `judges.<name>.status` without first proving the field exists.
+        // `null` here means this run was never sent to that judge.
+        judges: {
+          goalCompletion: {
+            status: null,
+            errorCode: null,
+            summary: null,
+            generatedAt: null,
+            modelUsed: null,
+            threshold: null,
+            cases: [],
+          },
+          groundedness: {
+            status: null,
+            errorCode: null,
+            summary: null,
+            generatedAt: null,
+            modelUsed: null,
+            threshold: null,
+            cases: [],
+          },
+        },
       });
     });
 

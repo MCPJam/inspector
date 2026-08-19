@@ -25,6 +25,9 @@ import {
   updateProjectOperation,
   generateEvalCasesOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   getScenarioOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
@@ -45,6 +48,8 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  listImagesOperation,
+  getImageOperation,
   listEnvironmentsOperation,
   listProjectPluginsOperation,
   listProjectsOperation,
@@ -190,9 +195,17 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   listEnvironmentsOperation,
   getEnvironmentOperation,
   resolveEnvironmentOperation,
+  // Sandbox image READS. They are the picker behind `update_eval_suite`'s
+  // `environment.computerEnvironment`: without them an agent can set a
+  // suite's computer image but never enumerate the choices.
+  listImagesOperation,
+  getImageOperation,
   // Agent Plugins: the READ half only. Every plugin write (import, activate,
   // enable/disable, uninstall) stays off this unattended surface by policy —
   // there is no excluded write operation to list because the SDK ships none.
@@ -299,14 +312,16 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Host infrastructure writes are intentionally outside the unattended MCP catalog.",
   duplicate_host:
     "Host infrastructure writes are intentionally outside the unattended MCP catalog.",
-  list_sandbox_images:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
-  get_sandbox_image:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+  // The two READS moved INTO the catalog. The "lifecycle" rationale below is
+  // about builds and promotions — it never fit a listing and a detail read,
+  // and while it covered them an MCP agent could pin a suite's computer image
+  // (`update_eval_suite`) with no way to see which images exist. The
+  // exclusions that remain say "lifecycle WRITES", so the distinction survives
+  // the next person reading this map.
   validate_sandbox_image_blueprint:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface; blueprint linting belongs with the authoring flow that produces one.",
   list_sandbox_image_builds:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface, and a build log is only useful next to the build that produced it.",
   create_tunnel:
     "Tunnel lifecycle is exposed through the dedicated CLI and tunnel surface.",
   close_tunnel:
@@ -332,15 +347,15 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   restore_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
   create_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   update_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   build_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   promote_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   use_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   reset_computer:
     "Computer lifecycle writes are not offered on the unattended catalog surface.",
   delete_sandbox_image:
