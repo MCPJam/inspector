@@ -51,6 +51,6 @@ describe("caniuse capability catalog", () => {
   });
 
   it("uses a static latest verification date for v1", () => {
-    expect(CANIUSE_LAST_VERIFIED_DATE).toBe("2026-07-07");
+    expect(CANIUSE_LAST_VERIFIED_DATE).toBe("2026-08-14");
   });
 });
