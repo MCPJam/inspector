@@ -401,6 +401,7 @@ export class PromptResult {
       errorDetails: options?.errorDetails,
       trace,
       externalIterationId: options?.externalIterationId,
+      caseId: options?.caseId,
       externalCaseId: options?.externalCaseId,
       metadata: options?.metadata,
       isNegativeTest: options?.isNegativeTest,
