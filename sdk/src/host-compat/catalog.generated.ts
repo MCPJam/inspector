@@ -447,10 +447,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
-        mrtrModes: {
-          requestState: false,
-          elicitation: false,
-        },
         initialize: {
           supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
           clientInfo: {
@@ -546,7 +542,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               font: true,
               media: true,
             },
-            resourceCacheTtl: true,
             resourcePrefersBorder: true,
             downloadFile: true,
             requestTeardown: false,
@@ -743,11 +738,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
-        toolCallCancellation: false,
-        mrtrModes: {
-          requestState: true,
-          elicitation: false,
-        },
         initialize: {
           supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
           clientInfo: {
@@ -828,18 +818,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               font: false,
               media: false,
             },
-            resourceCacheTtl: true,
             resourcePrefersBorder: true,
             downloadFile: false,
-            containerSizing: {
-              defaultWidth: 670,
-              defaultHeight: 398,
-              width: "grows",
-              height: "grows",
-              testedUpToWidth: 10000,
-              testedUpToHeight: 10000,
-              limitObserved: false,
-            },
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
           },
