@@ -1687,6 +1687,12 @@ describe("operation catalog consistency", () => {
       title: "c",
       steps: [{ id: "s1", kind: "prompt", prompt: "q" }],
     },
+    create_eval_cases: {
+      suite: "s",
+      cases: [
+        { title: "c", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+      ],
+    },
     update_eval_case: { suite: "s", case: "c", title: "renamed" },
     delete_eval_case: { suite: "s", case: "c" },
     generate_eval_cases: { suite: "s", prompt: "q" },
@@ -1854,6 +1860,7 @@ describe("operation catalog consistency", () => {
       "delete_eval_suite",
       "set_eval_suite_schedule",
       "create_eval_case",
+      "create_eval_cases",
       "update_eval_case",
       "delete_eval_case",
       "generate_eval_cases",
