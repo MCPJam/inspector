@@ -1,0 +1,221 @@
+---
+title: "Claude readiness"
+description: "API reference for @mcpjam/sdk claude-readiness — grade an MCP connector against Claude directory requirements."
+icon: "book"
+---
+
+Use the Claude readiness module to grade an MCP connector against Anthropic's Claude directory requirements. It is a composite product, not a fifth conformance suite: it consumes protocol, OAuth, apps, and host-compat results as evidence rather than re-running equivalent checks.
+
+## Import
+
+```typescript
+import {
+  gradeClaudeReadiness,
+  CLAUDE_READINESS_INPUTS,
+  CLAUDE_GATED_INPUTS,
+  discoverClaudeAuthEvidence,
+  resourceIndicatorsFrom,
+} from "@mcpjam/sdk";
+```
+
+---
+
+## gradeClaudeReadiness()
+
+Grades gathered evidence. Pure — no network, no clock, no randomness.
+
+```typescript
+gradeClaudeReadiness(input: ClaudeReadinessInput): ClaudeReadinessResult
+```
+
+### ClaudeReadinessInput
+
+| Property | Type | Required | Description |
+|----------|------|----------|-------------|
+| `enteredUrl` | `string` | Yes | The connector URL exactly as the user entered it. |
+| `authMode` | `ClaudeReadinessAuthMode` | Yes | How the run authenticated: `"headless"`, `"interactive"`, or `"provided-token"`. |
+| `capabilities` | `ClaudeRunnerCapability[]` | Yes | What this run could do. See [capabilities](#capabilities). |
+| `startedAt` | `string` | Yes | ISO-8601 timestamp when the run started. |
+| `evaluatedAt` | `string` | Yes | ISO-8601 timestamp when grading ran. |
+| `durationMs` | `number` | Yes | Total run duration. |
+| `endpoint` | `ClaudeEndpointEvidence` | Yes | Endpoint evidence from `runClaudeEndpointChecks`. |
+| `auth` | `ClaudeAuthEvidence` | Yes | Auth evidence from `discoverClaudeAuthEvidence`. |
+| `apps` | `ClaudeAppsEvidence` | Yes | Apps evidence from `runClaudeAppsChecks`. |
+| `tools` | `Tool[]` | No | Tool listing from `tools/list`. Omit when the run could not authenticate. |
+| `submissionProfile` | `unknown` | No | Raw submission profile JSON. Validated here; issues become findings. |
+| `claimedFeatures` | `object` | No | Features the submitter claimed (`lazyAuthentication`, `enterpriseManagedAuth`). |
+| `observedAuthMode` | `string` | No | Observed auth mode, for contradicting a declaration. |
+| `intrusive` | `ClaudeIntrusiveConfig` | No | Opt-in configuration for side-effecting probes. |
+| `intrusiveObservations` | `ClaudeIntrusiveObservations` | No | Observations from intrusive probes. |
+| `evidenceSources` | `string[]` | No | Suite results consumed as evidence, named for the report. |
+
+### ClaudeReadinessResult
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `status` | `ClaudeLaneStatus` | Rollup of the two required lanes: `"ready"`, `"not-ready"`, or `"incomplete"`. |
+| `summary` | `string` | Human-readable rollup. Names what is missing when `incomplete`. |
+| `context` | `ClaudeReadinessRunContext` | Target, auth mode, capabilities, and evidence sources. |
+| `lanes` | `ClaudeReadinessLaneResult[]` | One result per lane. |
+| `findings` | `ClaudeReadinessFinding[]` | All individual findings. |
+| `badges` | `ClaudeCapabilityBadge[]` | Capability badges from the optional-features lane. |
+| `policySnapshotDate` | `string` | ISO date of the policy corpus this run graded against. |
+| `engineVersion` | `string` | Version of the readiness engine. |
+| `startedAt` | `string` | ISO-8601 start timestamp. |
+| `durationMs` | `number` | Total duration. |
+
+### Status values
+
+| `status` | Meaning |
+|----------|---------|
+| `"ready"` | Every applicable requirement in the required lanes was evaluated and satisfied. |
+| `"not-ready"` | At least one required-lane requirement was violated. |
+| `"incomplete"` | Nothing was violated, but something the required lanes need was never evaluated. |
+
+### Summary messages
+
+The `summary` field is human-readable and actionable:
+
+- When `incomplete` with evaluable gaps: `"Readiness is undetermined: some requirements were not evaluated. Supply toolListing, appsResult to close the gap."`
+- When `incomplete` with only gated gaps: `"Readiness is undetermined: nothing failed, and every remaining requirement needs a probe this run is not allowed to make on its own. The remaining gap (intrusive) needs explicit opt-in on a server you control."`
+- When `ready`: `"Every requirement this run could evaluate is satisfied."`
+
+---
+
+## CLAUDE_READINESS_INPUTS
+
+Named inputs a surface can offer to make a run more complete.
+
+```typescript
+const CLAUDE_READINESS_INPUTS = {
+  submissionProfile: "submissionProfile",
+  toolListing: "toolListing",
+  appsResult: "appsResult",
+  authorizationRequests: "authorizationRequests",
+  intrusive: "intrusive",
+} as const;
+```
+
+| Key | Value | What it closes |
+|-----|-------|----------------|
+| `submissionProfile` | `"submissionProfile"` | Directory-policy checks that need declared metadata. |
+| `toolListing` | `"toolListing"` | Tool checks. On an OAuth connector, requires a completed authorization. |
+| `appsResult` | `"appsResult"` | MCP Apps checks. Requires a separate widget resource round trip. |
+| `authorizationRequests` | `"authorizationRequests"` | The RFC 8707 `resource` parameter check. Requires the caller to have driven `/authorize` and `/token`. |
+| `intrusive` | `"intrusive"` | Side-effecting probes (DCR, refresh grant). Gated — see below. |
+
+---
+
+## CLAUDE_GATED_INPUTS
+
+Inputs a report must never simply ask for. Currently contains `"intrusive"`.
+
+```typescript
+const CLAUDE_GATED_INPUTS: readonly string[] = ["intrusive"];
+```
+
+`intrusive` registers OAuth clients via DCR and spends refresh grants. It is only legitimate against a server the submitter controls with a dedicated test account. The run summary never includes gated inputs in its `Supply …` clause — it instead notes that the gap needs explicit opt-in.
+
+---
+
+## discoverClaudeAuthEvidence()
+
+Discovers auth evidence by probing the target. Accepts caller-supplied extras for fields that can only come from a completed authorization flow.
+
+```typescript
+discoverClaudeAuthEvidence(
+  options: ClaudeDiscoveryOptions,
+  extras?: {
+    declaredAuthMode?: string;
+    accessTokenAudience?: string;
+    resourceIndicatorsSent?: ClaudeAuthEvidence["resourceIndicatorsSent"];
+    insufficientScopeChallenge?: ClaudeAuthEvidence["insufficientScopeChallenge"];
+  },
+): Promise<ClaudeAuthEvidence>
+```
+
+`resourceIndicatorsSent` must come from the caller that drove the authorization — discovery never completes a flow, so it cannot observe the `resource` parameter sent to `/authorize` and `/token`. Use `resourceIndicatorsFrom()` to extract it.
+
+---
+
+## resourceIndicatorsFrom()
+
+Reads the RFC 8707 `resource` parameter out of the two requests that carry it, so a caller that drove an authorization can report what it sent.
+
+```typescript
+resourceIndicatorsFrom(requests: {
+  authorizationUrl?: string;
+  tokenRequestBody?: string | URLSearchParams | Record<string, string>;
+}): ClaudeAuthEvidence["resourceIndicatorsSent"] | undefined
+```
+
+Returns `undefined` when neither request carried a `resource` parameter. This is intentional: an absent parameter keeps the `claude.auth.rfc8707-resource-canonical` check at `not-evaluated` rather than grading a missing value as a violation.
+
+### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `authorizationUrl` | `string` | The full `/authorize` URL as it was sent, including the `resource` query parameter. |
+| `tokenRequestBody` | `string \| URLSearchParams \| Record<string, string>` | The `/token` request body in any of three shapes. |
+
+### Example
+
+```typescript
+import { resourceIndicatorsFrom, discoverClaudeAuthEvidence } from "@mcpjam/sdk";
+
+// After completing an OAuth flow:
+const resourceIndicators = resourceIndicatorsFrom({
+  authorizationUrl: authorizationUrl,   // the URL you redirected to
+  tokenRequestBody: tokenRequestBody,   // the body you sent to /token
+});
+
+const authEvidence = await discoverClaudeAuthEvidence(options, {
+  resourceIndicatorsSent: resourceIndicators,
+});
+```
+
+---
+
+## Lanes
+
+The result has five lanes. Only `runtime-compatibility` and `directory-policy` roll up into the top-level `status`.
+
+| Lane | What it grades |
+|------|----------------|
+| `runtime-compatibility` | Whether Claude can connect, authenticate, and render. |
+| `directory-policy` | Deterministic submission and review requirements Anthropic states outright. |
+| `optional-features` | Capability badges (lazy auth, enterprise-managed auth). Absence is never a defect. |
+| `submission-artifacts` | Listing fields, screenshots, attestations. Needs a submission profile. |
+| `experience-insights` | Heuristics and observations for a human to weigh. Never a blocker. |
+
+Each `ClaudeReadinessLaneResult` includes:
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `lane` | `ClaudeReadinessLane` | Lane identifier. |
+| `status` | `ClaudeLaneStatus` | `"ready"`, `"not-ready"`, or `"incomplete"`. |
+| `summary` | `string` | One line a human can read without opening the findings. |
+| `coverage` | `ClaudeLaneCoverage` | Counts of evaluated, not-evaluated, and not-applicable findings, plus `missingInputs`. |
+
+---
+
+## Capabilities
+
+Declare what the run can actually do. Checks that need a capability the run lacks are automatically downgraded to `not-evaluated`.
+
+| Capability | Meaning |
+|------------|---------|
+| `"dns"` | Can resolve arbitrary hostnames. |
+| `"raw-origin"` | Can send requests with an arbitrary `Origin`. |
+| `"interactive-oauth"` | Can complete an interactive OAuth authorization. |
+| `"browser"` | Can render a widget in a real browser engine. |
+| `"webkit-browser"` | Can render in WebKit specifically. |
+| `"intrusive-probes"` | Explicit opt-in to side-effecting probes is present and configured. |
+
+---
+
+## Related
+
+- [Apps Conformance SDK](/sdk/reference/apps-conformance) — MCP Apps surface validation
+- [OAuth Conformance SDK](/sdk/reference/oauth-conformance) — OAuth server conformance
+- [Protocol Conformance SDK](/sdk/reference/protocol-conformance) — MCP protocol checks
