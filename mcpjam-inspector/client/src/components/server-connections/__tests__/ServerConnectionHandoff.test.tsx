@@ -25,12 +25,16 @@ import {
 } from "@testing-library/react";
 const authkit = vi.hoisted(() => ({
   getAccessToken: vi.fn(async (): Promise<string | undefined> => undefined),
+  isLoading: false,
 }));
 
 // The page is mounted inside <AuthKitProvider> by `main.tsx`; the hook is the
 // only part of it this component touches.
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ getAccessToken: authkit.getAccessToken }),
+  useAuth: () => ({
+    getAccessToken: authkit.getAccessToken,
+    isLoading: authkit.isLoading,
+  }),
 }));
 
 import { ServerConnectionHandoff } from "../ServerConnectionHandoff";
@@ -97,6 +101,7 @@ function goTo(path: string, search = "") {
 // fetch. Nothing below triggers a navigation, so the real object is fine.
 
 afterEach(() => {
+  authkit.isLoading = false;
   clearPendingAuthorization();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
@@ -299,6 +304,31 @@ describe("polling", () => {
 });
 
 describe("returning from the authorization server", () => {
+  it("completes even while AuthKit is still loading", async () => {
+    // The callback authenticates with the continuation cookie and wants
+    // nothing from AuthKit, so gating it on the session would be strictly
+    // harmful: a refresh that never settles would strand the code exchange
+    // AFTER the user had already consented, losing the authorization.
+    authkit.isLoading = true;
+    const calls = mockApi({
+      "/authorize/complete": () => ({
+        requestId: "scr_1",
+        status: "validating",
+      }),
+      "/state": () => stateBody({ status: "validating" }),
+    });
+    rememberPendingAuthorization("scr_1", AUTH_URL);
+    goTo("/oauth/callback", "?code=auth-code&state=st&iss=https://as.example");
+
+    render(<ServerConnectionHandoff />);
+
+    await waitFor(() =>
+      expect(
+        calls.find((call) => call.path === "/authorize/complete")
+      ).toBeDefined()
+    );
+  });
+
   it("posts the callback and clears the marker", async () => {
     const calls = mockApi({
       "/authorize/complete": () => ({
@@ -433,5 +463,29 @@ describe("proving who the visitor is", () => {
     await screen.findByText("Personal");
 
     expect(seen.find((entry) => entry.url.endsWith("/claim"))?.auth).toBeNull();
+  });
+
+  it("waits for AuthKit before claiming, so the token is not asked for too early", async () => {
+    // The regression that survived the first fix: `AuthKitProvider` restores
+    // its session asynchronously, so a claim fired on mount asks for a token
+    // that does not exist yet, goes out unidentified, and is refused — the
+    // owner sees "belongs to a different account" for their own link.
+    authkit.isLoading = true;
+    // What the real provider does: no session to hand out until it has
+    // finished restoring one. A mock that answers early cannot see this bug.
+    authkit.getAccessToken.mockImplementation(async () =>
+      authkit.isLoading ? undefined : "access-token-value"
+    );
+    const seen = mockWithHeaders();
+    goTo("/connect/server/handoff-token-abc");
+
+    const { rerender } = render(<ServerConnectionHandoff />);
+
+    authkit.isLoading = false;
+    rerender(<ServerConnectionHandoff />);
+    await screen.findByText("Personal");
+
+    const claim = seen.find((entry) => entry.url.endsWith("/claim"));
+    expect(claim?.auth).toBe("Bearer access-token-value");
   });
 });
