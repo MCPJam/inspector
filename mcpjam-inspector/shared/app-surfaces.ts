@@ -563,6 +563,7 @@ export const APP_SURFACES = [
       "settings/api-keys",
       "settings/integrations",
       "settings/integrations/github",
+      "settings/integrations/github/callback",
     ],
     navSegments: ["settings"],
     title: "Settings",
