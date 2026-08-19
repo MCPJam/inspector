@@ -59,7 +59,12 @@ new EvalTest(options: EvalTestConfig)
   `externalCaseId`, reuse that value verbatim as `id` — do not mint a new one.
   The hosted history for that case is keyed on `externalCaseId`, so setting
   `id` to the same value keeps the history intact. Setting `id` to a different
-  value is a hard error at ingest.
+  value is a hard error — at construction from 6.0, and at ingest.
+
+  If your `externalCaseId` is not a valid id (it was never charset-bound, so it
+  may contain spaces, slashes or punctuation), no `id` can agree with it.
+  Rename the external id itself to a conforming value and declare that same
+  value in both fields.
 
   ```typescript
   // Before
