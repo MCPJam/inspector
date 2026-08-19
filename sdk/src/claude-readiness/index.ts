@@ -16,6 +16,7 @@ export {
   CLAUDE_RUNNER_CAPABILITIES,
   CLAUDE_REQUIRED_LANES,
   decideLaneStatus,
+  isDispositiveClaudeFinding,
   rollUpLaneStatus,
   summarizeLaneCoverage,
   CLAUDE_READINESS_ENGINE_VERSION,
@@ -57,10 +58,13 @@ export {
 } from "./runner.js";
 export type { ClaudeReadinessInput } from "./runner.js";
 
+// The intrusive GATE and its GRADING are pure — a resolver over a config
+// object and a function over observations — so they belong here. The PROBES
+// are not: they open sockets and register clients. They live in
+// `intrusive-probes.js`, reachable only from the Node entry, so a browser
+// bundle cannot import a function that registers an OAuth client.
 export {
   gradeClaudeIntrusiveObservations,
-  probeDynamicRegistration,
-  probeRefreshRotation,
   resolveClaudeIntrusiveMode,
 } from "./intrusive.js";
 export type {
@@ -68,7 +72,6 @@ export type {
   ClaudeIntrusiveConfig,
   ClaudeIntrusiveMode,
   ClaudeIntrusiveObservations,
-  ClaudeIntrusiveProbeOptions,
 } from "./intrusive.js";
 
 export {

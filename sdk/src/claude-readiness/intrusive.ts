@@ -89,12 +89,39 @@ export type ClaudeIntrusiveMode =
       readonly authorization: IntrusiveAuthorization;
     };
 
-/** The unforgeable capability. Its shape is deliberately private. */
+/**
+ * The unforgeable capability.
+ *
+ * The BRAND is compile-time only, and a type-level guarantee evaporates at the
+ * first `as` cast or the first JavaScript caller. What makes the gate real is
+ * {@link assertArmed} below, which compares against this exact object — so a
+ * hand-built `{enabled: true, …}` reaches a throw rather than a client
+ * registration at somebody else's authorization server.
+ */
 declare const INTRUSIVE_BRAND: unique symbol;
 export interface IntrusiveAuthorization {
   readonly [INTRUSIVE_BRAND]: true;
 }
 const AUTHORIZATION = Object.freeze({}) as IntrusiveAuthorization;
+
+/**
+ * Refuse any mode that did not come out of {@link resolveClaudeIntrusiveMode}.
+ *
+ * Every probe calls this BEFORE its first request. Without it the module's
+ * claim that the capability "cannot be constructed outside this module" is
+ * true of the type and false of the runtime, which is the worse of the two
+ * places for it to be true.
+ */
+function assertArmed(mode: ClaudeIntrusiveMode): asserts mode is Extract<
+  ClaudeIntrusiveMode,
+  { enabled: true }
+> {
+  if (mode.enabled !== true || mode.authorization !== AUTHORIZATION) {
+    throw new Error(
+      "Intrusive probes require a mode returned by resolveClaudeIntrusiveMode.",
+    );
+  }
+}
 
 /**
  * The one door in.
@@ -147,9 +174,13 @@ export function resolveClaudeIntrusiveMode(
     };
   }
   if (context.hasBorrowedAccessToken && config.grantOrigin === "self-acquired") {
-    // The combination is the dangerous one: a run holding a user's token and
-    // claiming its grant is self-acquired is exactly how a borrowed session
-    // gets burned by a refresh-rotation probe.
+    // ONLY `self-acquired` is refused here, and the asymmetry is the point. A
+    // `dedicated-test-account` run spends `testCredentials.refreshToken` —
+    // credentials the caller owns — and never touches the borrowed grant, so
+    // holding one alongside it is harmless. A `self-acquired` run has no such
+    // separate credential, so "the grant this run acquired" and "the token
+    // somebody handed us" are the same thing, and the rotation probe would
+    // burn a live user's session.
     return {
       enabled: false,
       reason:
@@ -433,6 +464,7 @@ export async function probeDynamicRegistration(
   mode: Extract<ClaudeIntrusiveMode, { enabled: true }>,
   options: ClaudeIntrusiveProbeOptions,
 ): Promise<NonNullable<ClaudeIntrusiveObservations["registration"]>> {
+  assertArmed(mode);
   if (!options.registrationEndpoint) {
     return {
       attempted: false,
@@ -535,6 +567,7 @@ export async function probeRefreshRotation(
   mode: Extract<ClaudeIntrusiveMode, { enabled: true }>,
   options: ClaudeIntrusiveProbeOptions,
 ): Promise<NonNullable<ClaudeIntrusiveObservations["refresh"]>> {
+  assertArmed(mode);
   const refreshToken = mode.credentials.refreshToken;
   if (!options.tokenEndpoint || !refreshToken) {
     return {

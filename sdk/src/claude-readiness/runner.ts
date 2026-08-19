@@ -49,6 +49,7 @@ import {
 import {
   CLAUDE_READINESS_ENGINE_VERSION,
   CLAUDE_READINESS_LANES,
+  CLAUDE_REQUIRED_LANES,
   decideLaneStatus,
   rollUpLaneStatus,
   summarizeLaneCoverage,
@@ -159,17 +160,33 @@ export function gradeClaudeReadiness(
 
   // A malformed profile is kept and reported, not discarded: the caller did
   // the work and got it wrong, and "no input" would hide their mistake.
-  const parsedProfile = input.submissionProfile
-    ? parseClaudeSubmissionProfile(input.submissionProfile)
-    : { profile: undefined as ClaudeSubmissionProfile | undefined, issues: [] };
+  // PRESENCE, not truthiness. `submissionProfile` is `unknown`, so `null`, `0`
+  // and `""` are malformed INPUT rather than absent input, and routing them
+  // down the "no input" branch would hide a caller's mistake behind a status
+  // that reads like our limitation — the very thing the parse result exists to
+  // prevent.
+  const parsedProfile =
+    input.submissionProfile === undefined
+      ? { profile: undefined as ClaudeSubmissionProfile | undefined, issues: [] }
+      : parseClaudeSubmissionProfile(input.submissionProfile);
 
-  const auth = runClaudeAuthChecks(
-    { ...input.auth, declaredAuthMode: parsedProfile.profile?.declaredAuthMode },
-    stamp,
-  );
+  // ONE merged view, shared by both check modules.
+  //
+  // The profile is authoritative when it declares a mode, but a caller may
+  // also declare one directly on the evidence — and an unconditional overwrite
+  // with `parsedProfile.profile?.declaredAuthMode` erased that declaration
+  // whenever no profile was supplied, which graded a preregistered-client
+  // connector as a runtime failure it does not have. Handing the two modules
+  // different views of the same field was the second half of the same bug.
+  const authEvidence = {
+    ...input.auth,
+    declaredAuthMode:
+      parsedProfile.profile?.declaredAuthMode ?? input.auth.declaredAuthMode,
+  };
+  const auth = runClaudeAuthChecks(authEvidence, stamp);
   const optional = runClaudeOptionalFeatureChecks(
     {
-      auth: input.auth,
+      auth: authEvidence,
       claimedFeatures: input.claimedFeatures,
     },
     stamp,
@@ -244,9 +261,11 @@ function buildRunSummary(
   status: ClaudeReadinessResult["status"],
   lanes: ClaudeReadinessLaneResult[],
 ): string {
-  const required = lanes.filter(
-    (lane) =>
-      lane.lane === "runtime-compatibility" || lane.lane === "directory-policy",
+  // From the shared constant, not a restated literal: `rollUpLaneStatus`
+  // decides the verdict from `CLAUDE_REQUIRED_LANES`, and a second copy here
+  // would let the summary name the wrong lanes after a change to that set.
+  const required = lanes.filter((lane) =>
+    CLAUDE_REQUIRED_LANES.includes(lane.lane),
   );
   if (status === "not-ready") {
     const failing = required

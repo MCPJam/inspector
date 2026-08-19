@@ -87,6 +87,16 @@ export function extractText(html) {
       continue;
     }
 
+    // `<!doctype html>` is not a tag `readTag` recognises, so without this it
+    // would survive as literal text and a markup-only doctype change would
+    // move the policy revision.
+    if (/^<!doctype(?:\s|>)/i.test(html.slice(lt, lt + 10))) {
+      const end = html.indexOf(">", lt + 2);
+      out.push(" ");
+      index = end === -1 ? html.length : end + 1;
+      continue;
+    }
+
     const tag = readTag(html, lt);
     if (!tag) {
       // A `<` that does not begin a tag — "a < b" — is content, not markup.
@@ -225,15 +235,24 @@ async function main() {
     ].map((match) => [match[1], match[2]]),
   );
 
+  // A MISSING recorded revision counts as drift. Requiring `previous[page]`
+  // meant `--check` exited 0 whenever the corpus had never been snapshotted at
+  // all — CI would accept an unsnapshotted policy corpus as "no drift", which
+  // is the one state where a grade's provenance is least trustworthy.
   const drifted = results.filter(
     (entry) =>
-      entry.revision &&
-      previous[entry.page] &&
-      previous[entry.page] !== entry.revision,
+      entry.revision && previous[entry.page] !== entry.revision,
   );
+  const unsnapshotted = drifted.filter((entry) => !previous[entry.page]);
 
   if (checkOnly) {
-    if (drifted.length > 0) {
+    if (unsnapshotted.length === drifted.length && drifted.length > 0) {
+      console.error(
+        `\nNOT SNAPSHOTTED: ${unsnapshotted.length} page(s) have no recorded ` +
+          `revision. Run \`npm run claude-policy:sync\` to pin the corpus ` +
+          `before relying on a readiness grade's provenance.`,
+      );
+    } else if (drifted.length > 0) {
       console.error(
         `\nDRIFT: ${drifted
           .map((entry) => entry.page)
@@ -242,6 +261,17 @@ async function main() {
       );
     }
     process.exit(drifted.length > 0 || failures > 0 ? 1 : 0);
+  }
+
+  // NOTHING IS WRITTEN AFTER A PARTIAL FAILURE. `entries` excludes the pages
+  // that failed, so writing here would DELETE their previously recorded
+  // revisions — a transient network blip would silently un-verify part of the
+  // corpus on its way to exiting non-zero.
+  if (failures > 0) {
+    console.error(
+      `\n${failures} page(s) could not be fetched; the manifest was left unchanged.`,
+    );
+    process.exit(1);
   }
 
   const entries = results
@@ -256,12 +286,6 @@ async function main() {
     source.slice(0, beginIndex) + block + source.slice(endIndex),
   );
   console.log(`\nwrote ${MANIFEST}`);
-  if (failures > 0) {
-    console.error(
-      `${failures} page(s) could not be fetched; their revisions stay null.`,
-    );
-    process.exit(1);
-  }
 }
 
 if (

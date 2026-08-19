@@ -51,6 +51,54 @@ const DEFAULT_MAX_REDIRECTS = 5;
 /** Body caps for documents we only ever parse as small JSON. */
 const MAX_METADATA_BYTES = 512 * 1024;
 
+/**
+ * Read a response body, stopping at the cap.
+ *
+ * Returns `undefined` rather than a truncated string: a half-read JSON
+ * document is not a smaller document, it is a parse error dressed as data.
+ * Counts BYTES, because `String.length` counts UTF-16 code units and a
+ * document of multi-byte characters would sail past a cap named in bytes.
+ *
+ * Falls back to `text()` when the body is not a stream (a mocked `fetchFn`
+ * frequently returns a plain `Response`), and re-measures there.
+ */
+async function readBounded(response: Response): Promise<string | undefined> {
+  const body = response.body;
+  if (!body || typeof body.getReader !== "function") {
+    const text = await response.text();
+    return new TextEncoder().encode(text).length > MAX_METADATA_BYTES
+      ? undefined
+      : text;
+  }
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!value) continue;
+      received += value.byteLength;
+      if (received > MAX_METADATA_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        return undefined;
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock?.();
+  }
+
+  const joined = new Uint8Array(received);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(joined);
+}
+
 interface FetchedJson {
   status: number;
   headers: Headers;
@@ -74,8 +122,23 @@ async function fetchJson(
       headers: { accept: "application/json", ...options.headers, ...init?.headers },
       signal: controller.signal,
     });
-    const text = await response.text();
-    if (text.length > MAX_METADATA_BYTES) {
+    // REFUSE BEFORE READING when the server tells us the size. `await
+    // response.text()` materializes the whole body first, so a cap applied
+    // afterwards limits what is PARSED and not what is read — a hostile or
+    // misconfigured endpoint could exhaust memory before the guard ran. In a
+    // hosted run the pinned transport enforces its own decompressed-byte
+    // ceiling, but this function accepts any `fetchFn`, so the guarantee has
+    // to hold here too.
+    const declaredLength = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declaredLength) && declaredLength > MAX_METADATA_BYTES) {
+      return {
+        status: response.status,
+        headers: response.headers,
+        error: `metadata document declared ${declaredLength} bytes, over the ${MAX_METADATA_BYTES}-byte cap`,
+      };
+    }
+    const text = await readBounded(response);
+    if (text === undefined) {
       return {
         status: response.status,
         headers: response.headers,
@@ -224,15 +287,24 @@ async function discoverProtectedResourceMetadata(
   challengePointer: string | undefined,
 ): Promise<ClaudeAuthEvidence["prm"]> {
   const attempts: Array<{ step: ClaudePrmDiscoveryStep; url: string }> = [];
+  let rejectedPointer: string | undefined;
   if (challengePointer) {
-    try {
-      attempts.push({
-        step: "www-authenticate",
-        url: new URL(challengePointer, options.enteredUrl).toString(),
-      });
-    } catch {
-      // A malformed pointer is itself a finding, raised by the challenge
-      // check; here it simply does not produce an attempt.
+    // THE POINTER IS ATTACKER-CONTROLLED. It arrives in a `WWW-Authenticate`
+    // header from the server under test, and `new URL()` will happily accept
+    // `http://169.254.169.254/…` or a `file:` URL. In a hosted run the pinned
+    // transport would refuse it, but this module accepts any `fetchFn`, so the
+    // pointer is validated here rather than trusted to the caller's transport.
+    //
+    // Same origin is not an arbitrary narrowing: RFC 9728 constructs the
+    // metadata URL from the resource identifier itself, and requires the
+    // document's `resource` to equal the request URL. A pointer to another
+    // origin cannot satisfy that, so following it could only ever produce a
+    // document we would then reject.
+    const resolved = resolvePointer(challengePointer, options.enteredUrl);
+    if (resolved) {
+      attempts.push({ step: "www-authenticate", url: resolved });
+    } else {
+      rejectedPointer = challengePointer;
     }
   }
   try {
@@ -247,10 +319,16 @@ async function discoverProtectedResourceMetadata(
       url: `${base.origin}/.well-known/oauth-protected-resource`,
     });
   } catch {
-    return { discoveredVia: "not-found", fetchError: "connector URL is not parseable" };
+    return {
+      discoveredVia: "not-found",
+      fetchError: "connector URL is not parseable",
+      rejectedPointer,
+    };
   }
 
-  let lastError: string | undefined;
+  let lastError: string | undefined = rejectedPointer
+    ? `the challenge's resource_metadata pointer was refused: it must be an http(s) URL on the connector's own origin`
+    : undefined;
   for (const attempt of attempts) {
     const result = await fetchJson(attempt.url, options);
     if (result.status >= 200 && result.status < 300 && result.document) {
@@ -258,11 +336,35 @@ async function discoverProtectedResourceMetadata(
         discoveredVia: attempt.step,
         url: attempt.url,
         document: result.document,
+        rejectedPointer,
       };
     }
     lastError = result.error ?? `${attempt.url} answered ${result.status}`;
   }
-  return { discoveredVia: "not-found", fetchError: lastError };
+  return { discoveredVia: "not-found", fetchError: lastError, rejectedPointer };
+}
+
+/**
+ * Resolve a `resource_metadata` pointer, or refuse it.
+ *
+ * Refuses anything that is not http(s), and anything off the connector's own
+ * origin. Returns `undefined` for a refusal so the caller can report it rather
+ * than silently continuing to the well-known paths as if no pointer existed.
+ */
+function resolvePointer(pointer: string, enteredUrl: string): string | undefined {
+  let resolved: URL;
+  let base: URL;
+  try {
+    base = new URL(enteredUrl);
+    resolved = new URL(pointer, enteredUrl);
+  } catch {
+    return undefined;
+  }
+  if (resolved.protocol !== "https:" && resolved.protocol !== "http:") {
+    return undefined;
+  }
+  if (resolved.origin !== base.origin) return undefined;
+  return resolved.toString();
 }
 
 /**

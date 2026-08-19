@@ -204,17 +204,30 @@ function decodeStream(response: IncomingMessage): NodeJS.ReadableStream {
     .toString()
     .trim()
     .toLowerCase();
-  switch (encoding) {
-    case "gzip":
-    case "x-gzip":
-      return response.pipe(createGunzip());
-    case "deflate":
-      return response.pipe(createInflate());
-    case "br":
-      return response.pipe(createBrotliDecompress());
-    default:
-      return response;
-  }
+  const decompressor =
+    encoding === "gzip" || encoding === "x-gzip"
+      ? createGunzip()
+      : encoding === "deflate"
+        ? createInflate()
+        : encoding === "br"
+          ? createBrotliDecompress()
+          : undefined;
+  if (!decompressor) return response;
+
+  // `pipe` DOES NOT FORWARD ERRORS. Node's own documentation says so, and the
+  // consequence here is specific and bad: `toGuardedWebStream` listens to the
+  // decompressor alone, so a socket failure or a caller abort after the
+  // headers were in would error the source, reach nothing, and leave
+  // `Response.body` pending forever — a hang rather than a rejection.
+  //
+  // Destroying the decompressor WITH the reason is what turns that into an
+  // error event the guarded stream can surface.
+  const fail = (error: Error) => decompressor.destroy(error);
+  response.on("error", fail);
+  response.on("aborted", () =>
+    fail(new OAuthProxyError(499, "The connection was aborted.")),
+  );
+  return response.pipe(decompressor);
 }
 
 interface HopResult {

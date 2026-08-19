@@ -36,6 +36,15 @@ async function start(
   return { origin: `http://127.0.0.1:${port}`, hits };
 }
 
+/** An origin nothing listens on: opened to claim a port, then closed. */
+async function closedLoopbackOrigin(): Promise<string> {
+  const server = http.createServer(() => {});
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return `http://127.0.0.1:${port}`;
+}
+
 afterEach(async () => {
   await Promise.all(
     servers.splice(0).map(
@@ -260,8 +269,13 @@ describe("the redirect trace", () => {
   });
 
   it("returns the partial chain when a hop is unreachable", async () => {
+    // A port we listened on and then closed refuses immediately. Relying on a
+    // reserved `.invalid` name instead makes the case depend on the resolver:
+    // a wildcard or captive one answers with a routable address, and the test
+    // then waits out a timeout to reach the same assertion.
+    const deadOrigin = await closedLoopbackOrigin();
     const { origin } = await start((_req, res) => {
-      res.writeHead(302, { location: "https://unreachable.invalid/mcp" });
+      res.writeHead(302, { location: `${deadOrigin}/mcp` });
       res.end();
     });
 
@@ -270,6 +284,116 @@ describe("the redirect trace", () => {
       fetchFn: fetch,
     });
     expect(evidence.redirectChain).toHaveLength(1);
+  });
+});
+
+describe("the resource_metadata pointer is not trusted", () => {
+  it("refuses an off-origin pointer and never dials it", async () => {
+    const attacker = await start((_req, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ resource: "x", authorization_servers: [] }));
+    });
+    const { origin } = await start((req, res) => {
+      if (req.url === "/mcp") {
+        res.writeHead(401, {
+          "www-authenticate": `Bearer resource_metadata="${attacker.origin}/prm.json"`,
+        });
+        res.end();
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+    });
+
+    // The pointer arrives in a header from the server under test; `new URL()`
+    // would happily accept `http://169.254.169.254/…` here.
+    expect(attacker.hits).toEqual([]);
+    expect(evidence.prm?.rejectedPointer).toBe(`${attacker.origin}/prm.json`);
+  });
+
+  it("refuses a non-http scheme", async () => {
+    const { origin } = await start((_req, res) => {
+      res.writeHead(401, {
+        "www-authenticate": `Bearer resource_metadata="file:///etc/passwd"`,
+      });
+      res.end();
+    });
+
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+    });
+    expect(evidence.prm?.rejectedPointer).toBe("file:///etc/passwd");
+  });
+
+  it("still follows a same-origin pointer", async () => {
+    const { origin } = await start((req, res) => {
+      if (req.url === "/custom/prm.json") {
+        json(res, 200, { resource: "x", authorization_servers: [] });
+        return;
+      }
+      res.writeHead(401, {
+        "www-authenticate": `Bearer resource_metadata="/custom/prm.json"`,
+      });
+      res.end();
+    });
+
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+    });
+    expect(evidence.prm?.discoveredVia).toBe("www-authenticate");
+    expect(evidence.prm?.rejectedPointer).toBeUndefined();
+  });
+});
+
+describe("metadata documents are bounded", () => {
+  it("refuses a body that declares a size over the cap, before reading it", async () => {
+    const { origin } = await start((req, res) => {
+      if (req.url?.startsWith("/.well-known/")) {
+        res.writeHead(200, {
+          "content-type": "application/json",
+          "content-length": String(64 * 1024 * 1024),
+        });
+        res.end("{}");
+        return;
+      }
+      res.writeHead(401);
+      res.end();
+    });
+
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+    });
+    expect(evidence.prm?.discoveredVia).toBe("not-found");
+    expect(evidence.prm?.fetchError).toMatch(/over the .* cap/);
+  });
+
+  it("stops reading an oversized body that declared no length", async () => {
+    const { origin } = await start((req, res) => {
+      if (req.url?.startsWith("/.well-known/")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        // Chunked, so there is no content-length to pre-empt on.
+        for (let i = 0; i < 12; i += 1) res.write("x".repeat(64 * 1024));
+        res.end();
+        return;
+      }
+      res.writeHead(401);
+      res.end();
+    });
+
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+    });
+    expect(evidence.prm?.discoveredVia).toBe("not-found");
+    expect(evidence.prm?.fetchError).toMatch(/exceeded/);
   });
 });
 

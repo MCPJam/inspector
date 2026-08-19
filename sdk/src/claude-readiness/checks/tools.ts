@@ -143,8 +143,11 @@ function matchesVerb(value: string, verbs: string[]): boolean {
       normalized.startsWith(`${verb}_`) ||
       normalized.startsWith(`${verb}-`) ||
       // `getUser`, `createOrder` — camelCase, but only at the START, so
-      // `budget` does not match `get` and `deleted_at` does not match `delete`.
-      new RegExp(`^${verb}[A-Z]`).test(value),
+      // `budget` does not match `get` and `deleted_at` does not match
+      // `delete`. A direct character test rather than a `new RegExp` built on
+      // every comparison.
+      (normalized.startsWith(verb) &&
+        /[A-Z]/.test(value.charAt(verb.length))),
   );
 }
 
@@ -201,14 +204,15 @@ function freeStringDispatch(tool: Tool): string | undefined {
   return undefined;
 }
 
+/**
+ * The tool's display name, in the precedence MCP defines: top-level `title`,
+ * then `annotations.title`, then the raw `name` (which the caller handles).
+ */
 function toolTitle(tool: Tool): string | undefined {
-  const annotations = tool.annotations as { title?: unknown } | undefined;
-  const fromAnnotations =
-    typeof annotations?.title === "string" ? annotations.title : undefined;
   const fromTool = (tool as { title?: unknown }).title;
-  return (
-    fromAnnotations ?? (typeof fromTool === "string" ? fromTool : undefined)
-  );
+  if (typeof fromTool === "string") return fromTool;
+  const annotations = tool.annotations as { title?: unknown } | undefined;
+  return typeof annotations?.title === "string" ? annotations.title : undefined;
 }
 
 function behaviorHints(tool: Tool): {

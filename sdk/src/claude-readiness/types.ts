@@ -336,13 +336,24 @@ export function rollUpLaneStatus(
  * reads — that separation is what keeps an LLM's opinion out of a verdict a
  * submitter is held to.
  */
+/**
+ * Whether a finding can DECIDE a lane.
+ *
+ * Exported because the report adapter needs the same answer: a finding that
+ * decides a lane must render as a testcase, and one that does not must render
+ * as an advisory. Two copies of this predicate could disagree, and then a
+ * report would contradict the verdict it is reporting.
+ */
+export function isDispositiveClaudeFinding(
+  finding: Pick<ClaudeReadinessFinding, "class">,
+): boolean {
+  return finding.class === "required" || finding.class === "runtime-blocker";
+}
+
 export function decideLaneStatus(
   findings: ClaudeReadinessFinding[],
 ): ClaudeLaneStatus {
-  const dispositive = findings.filter(
-    (finding) =>
-      finding.class === "required" || finding.class === "runtime-blocker",
-  );
+  const dispositive = findings.filter(isDispositiveClaudeFinding);
   if (dispositive.some((finding) => finding.status === "violated")) {
     return "not-ready";
   }

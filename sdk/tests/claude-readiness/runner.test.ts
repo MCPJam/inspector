@@ -3,6 +3,7 @@
  * lanes from deciding anything.
  */
 
+import type { Tool } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -21,7 +22,12 @@ function input(overrides: Partial<ClaudeReadinessInput> = {}): ClaudeReadinessIn
     startedAt: "2026-08-19T00:00:00.000Z",
     evaluatedAt: "2026-08-19T00:00:01.000Z",
     durationMs: 1000,
-    endpoint: { enteredUrl: URL_UNDER_TEST, redirectChain: [] },
+    endpoint: {
+      enteredUrl: URL_UNDER_TEST,
+      // A REAL one-hop chain. An empty array means the run never reached the
+      // endpoint at all, which is a coverage gap rather than a clean result.
+      redirectChain: [{ url: URL_UNDER_TEST, status: 200 }],
+    },
     auth: {
       enteredUrl: URL_UNDER_TEST,
       unauthenticated: {
@@ -54,7 +60,10 @@ function input(overrides: Partial<ClaudeReadinessInput> = {}): ClaudeReadinessIn
         title: "List orders",
         annotations: { readOnlyHint: true },
         inputSchema: { type: "object", properties: {} },
-      } as never,
+        // `as Tool`, not `as never`: the bottom type is assignable to
+        // everything, so `as never` would stop the compiler checking this
+        // fixture against `Tool` at all.
+      } as Tool,
     ],
     evidenceSources: ["protocol-conformance", "apps-conformance"],
     ...overrides,
@@ -353,14 +362,45 @@ describe("it renders through the shared report adapter", () => {
     ]);
   });
 
-  it("routes every non-dispositive finding to advisories", () => {
-    const report = toConformanceReport(gradeClaudeReadiness(input()));
+  it("routes every finding to exactly one of cases or advisories", () => {
+    // Both directions. Asserting only that advisory ids are absent from cases
+    // would stay green if half the non-dispositive findings were dropped
+    // entirely — which is the failure mode that matters.
+    const result = gradeClaudeReadiness(input());
+    const report = toConformanceReport(result);
     const caseIds = new Set(
       report.groups.flatMap((group) => group.cases.map((entry) => entry.id)),
     );
-    for (const advisory of report.advisories ?? []) {
-      expect(caseIds.has(advisory.id)).toBe(false);
+    const advisoryIds = new Set((report.advisories ?? []).map((a) => a.id));
+
+    for (const finding of result.findings) {
+      const dispositive =
+        finding.class === "required" || finding.class === "runtime-blocker";
+      expect(
+        dispositive ? caseIds.has(finding.id) : advisoryIds.has(finding.id),
+      ).toBe(true);
+      expect(
+        dispositive ? advisoryIds.has(finding.id) : caseIds.has(finding.id),
+      ).toBe(false);
     }
-    expect((report.advisories ?? []).length).toBeGreaterThan(0);
+    expect(advisoryIds.size).toBeGreaterThan(0);
+  });
+
+  it("keeps a finding whose lane was not reported, rather than dropping it", () => {
+    // `lanes` and `findings` are independent arrays, so nothing in the type
+    // says every finding's lane is reported. A dropped VIOLATED requirement
+    // would understate the run with no counter and no error.
+    const result = gradeClaudeReadiness(input());
+    const orphaned = {
+      ...result.findings[0],
+      id: "claude.test.orphan",
+      lane: "experience-insights" as const,
+    };
+    const report = toConformanceReport({
+      ...result,
+      lanes: [],
+      findings: [orphaned],
+    });
+    expect(report.advisories?.map((a) => a.id)).toContain("claude.test.orphan");
   });
 });

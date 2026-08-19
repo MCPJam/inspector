@@ -10,13 +10,43 @@
  * outcome its bookkeeping exists to prevent.
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import { createStreamingPinnedFetch } from "../pinned-fetch.js";
-import {
-  BlockedEgressTargetError,
-  EgressResolutionError,
-} from "../hosted-egress-guard.js";
+/**
+ * DNS is stubbed for the whole file, and that is safe: every other case here
+ * dials a NUMERIC address, which the pinned transport classifies without a
+ * lookup. Only the unresolvable-host case reaches the resolver.
+ *
+ * It is stubbed at all because a `.invalid` name is reserved but not
+ * guaranteed: a wildcard or captive resolver in CI answers with a routable
+ * address, the transport dials it, and the rejection arrives as a plain
+ * `Error` — so the case would pass or fail on the network rather than on the
+ * classification it exists to prove.
+ */
+vi.mock("node:dns", async () => {
+  const actual = await vi.importActual<typeof import("node:dns")>("node:dns");
+  return {
+    ...actual,
+    default: actual,
+    lookup: (
+      _hostname: string,
+      options: unknown,
+      callback?: (error: NodeJS.ErrnoException | null) => void,
+    ) => {
+      const done = (typeof options === "function" ? options : callback) as (
+        error: NodeJS.ErrnoException | null,
+      ) => void;
+      const error: NodeJS.ErrnoException = new Error("getaddrinfo ENOTFOUND");
+      error.code = "ENOTFOUND";
+      done(error);
+    },
+  };
+});
+
+const { createStreamingPinnedFetch } = await import("../pinned-fetch.js");
+const { BlockedEgressTargetError, EgressResolutionError } = await import(
+  "../hosted-egress-guard.js"
+);
 
 describe("createStreamingPinnedFetch", () => {
   it("is the untouched global fetch outside hosted mode", async () => {
@@ -52,9 +82,12 @@ describe("createStreamingPinnedFetch", () => {
   });
 
   it("classifies an unresolvable host as a resolution failure, not a refusal", async () => {
+    // `retryable`, not `terminal`: DNS failing is ours to retry, and reporting
+    // it as an egress REFUSAL would put a perfectly legitimate target on the
+    // permanently-blocked list.
     const guarded = createStreamingPinnedFetch({ hosted: true });
     await expect(
-      guarded("https://this-host-does-not-exist.invalid/mcp"),
+      guarded("https://this-host-does-not-exist.example/mcp"),
     ).rejects.toBeInstanceOf(EgressResolutionError);
   });
 });

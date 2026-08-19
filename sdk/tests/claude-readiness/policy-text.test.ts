@@ -44,6 +44,14 @@ describe("extractText", () => {
     expect(text("<style>body{color:red}</style><p>keep</p>")).toBe("keep");
   });
 
+  it("drops a doctype declaration", () => {
+    // `readTag` does not recognise `<!doctype html>` as a tag, so without an
+    // explicit branch it survived as literal text — and a markup-only doctype
+    // change would have moved the policy revision.
+    expect(text("<!doctype html><p>Directory</p>")).toBe("Directory");
+    expect(text("<!DOCTYPE HTML><p>Directory</p>")).toBe("Directory");
+  });
+
   it("drops comments rather than treating them as content", () => {
     // A build id in a comment would otherwise make every rebuild look like a
     // policy change.

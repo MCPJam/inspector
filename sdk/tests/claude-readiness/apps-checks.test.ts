@@ -13,6 +13,7 @@
  *     changes the answer.
  */
 
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -122,6 +123,51 @@ describe("the html mime profile", () => {
     expect(finding.class).toBe("required");
   });
 
+  it("tolerates a charset parameter alongside the profile", () => {
+    // `charset` is legal on any `text/*` type and says nothing about the media
+    // type. Rejecting it would fail a conforming widget on a `required` check.
+    expect(
+      byId(
+        run({
+          tools: [MODERN_TOOL],
+          resources: [
+            {
+              uri: "ui://order",
+              mimeType: "text/html;profile=mcp-app; charset=utf-8",
+            },
+          ],
+        }),
+        "claude.apps.html-mime-profile",
+      ).status,
+    ).toBe("satisfied");
+  });
+
+  it("accepts a quoted profile value", () => {
+    expect(
+      byId(
+        run({
+          tools: [MODERN_TOOL],
+          resources: [
+            { uri: "ui://order", mimeType: 'text/html;profile="mcp-app"' },
+          ],
+        }),
+        "claude.apps.html-mime-profile",
+      ).status,
+    ).toBe("satisfied");
+  });
+
+  it("still rejects the essence alone, which carries no app signal", () => {
+    expect(
+      byId(
+        run({
+          tools: [MODERN_TOOL],
+          resources: [{ uri: "ui://order", mimeType: "text/html; charset=utf-8" }],
+        }),
+        "claude.apps.html-mime-profile",
+      ).status,
+    ).toBe("violated");
+  });
+
   it("tolerates spacing and case in the parameter", () => {
     expect(
       byId(
@@ -186,6 +232,18 @@ describe("ui.domain", () => {
     expect(claudeAppContentDomain(URL_UNDER_TEST)).toMatch(
       /^[0-9a-f]{32}\.claudemcpcontent\.com$/,
     );
+  });
+
+  it("pins the exact derivation, so a digest change cannot pass unnoticed", () => {
+    // Neither of the assertions above would catch a switch to a different
+    // digest, a different slice offset, or a lower-cased input — each of which
+    // satisfies "differs on differing input" and "looks like 32 hex" while
+    // breaking every deployed widget.
+    const expected = `${createHash("sha256")
+      .update(URL_UNDER_TEST)
+      .digest("hex")
+      .slice(0, 32)}.claudemcpcontent.com`;
+    expect(claudeAppContentDomain(URL_UNDER_TEST)).toBe(expected);
   });
 
   it("is not applicable when no resource sets one", () => {
@@ -408,6 +466,20 @@ describe("CSP shape", () => {
         run({
           tools: [MODERN_TOOL],
           resources: [{ ...GOOD_RESOURCE, csp: { "connect-src": ["https://*"] } }],
+        }),
+        "claude.apps.csp-shape",
+      ).status,
+    ).toBe("violated");
+  });
+
+  it("catches a wildcard written as a bare string rather than a list", () => {
+    expect(
+      byId(
+        run({
+          tools: [MODERN_TOOL],
+          resources: [
+            { ...GOOD_RESOURCE, csp: { "connect-src": "https://*.example.com" } },
+          ],
         }),
         "claude.apps.csp-shape",
       ).status,

@@ -66,6 +66,13 @@ export interface ClaudeAuthEvidence {
     url?: string;
     document?: Record<string, unknown>;
     fetchError?: string;
+    /**
+     * A `resource_metadata` pointer discovery refused to dial — off-origin, or
+     * not http(s). Recorded rather than dropped: the server published a
+     * pointer no conforming client can follow, and silence would look like the
+     * server never published one.
+     */
+    rejectedPointer?: string;
   };
   /**
    * Metadata for `authorization_servers[0]` ONLY. Claude does not fall back to

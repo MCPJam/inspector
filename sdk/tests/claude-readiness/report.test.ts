@@ -131,8 +131,15 @@ describe("toConformanceReport for readiness", () => {
 
     expect(report.kind).toBe("claude-directory-readiness");
     expect(report.score).toBeUndefined();
-    // And so it contributes nothing when a caller pools scores.
-    expect(pooledConformanceScore([]).score).toBeNull();
+    // And so it contributes nothing when a caller pools scores. Pooling the
+    // report's OWN (absent) score is what makes this assertion about the
+    // readiness adapter rather than about `pooledConformanceScore([])`, which
+    // returns null by definition and would pass either way.
+    const contributed = [report.score].filter(
+      (score): score is NonNullable<typeof score> => score !== undefined,
+    );
+    expect(contributed).toEqual([]);
+    expect(pooledConformanceScore(contributed).score).toBeNull();
   });
 
   it("maps the readiness verdict onto the shared outcome vocabulary", () => {
@@ -227,17 +234,21 @@ describe("JUnit rendering", () => {
     const xml = renderConformanceReportJUnitXml(
       toConformanceReport(makeResult(FINDINGS)),
     );
-    const insightsSuite = xml.slice(
-      xml.indexOf('<testsuite name="experience-insights"'),
-    );
+    // Pinned BEFORE slicing. A renamed or reordered suite makes `indexOf`
+    // return -1, and `slice(-1, n)` yields a near-empty string that satisfies
+    // `not.toContain` on nothing at all — the assertion survives while the
+    // coverage quietly does not.
+    const insightsAt = xml.indexOf('<testsuite name="experience-insights"');
+    const policyAt = xml.indexOf('<testsuite name="directory-policy"');
+    expect(insightsAt).toBeGreaterThan(-1);
+    expect(policyAt).toBeGreaterThan(-1);
+    expect(policyAt).toBeLessThan(insightsAt);
 
-    expect(insightsSuite).toContain("mcpjam.advisory.financial-transfer-tool");
-    // The policy lane raised no advisories, so it gets no properties block.
-    const policySuite = xml.slice(
-      xml.indexOf('<testsuite name="directory-policy"'),
-      xml.indexOf('<testsuite name="experience-insights"'),
+    expect(xml.slice(insightsAt)).toContain(
+      "mcpjam.advisory.financial-transfer-tool",
     );
-    expect(policySuite).not.toContain("<properties>");
+    // The policy lane raised no advisories, so it gets no properties block.
+    expect(xml.slice(policyAt, insightsAt)).not.toContain("<properties>");
   });
 
   it("stays valid XML when an advisory message contains markup", () => {

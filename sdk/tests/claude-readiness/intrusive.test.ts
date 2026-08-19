@@ -138,6 +138,59 @@ describe("a disabled mode grades everything as unevaluated", () => {
   });
 });
 
+describe("the gate is enforced at RUNTIME, not only in the type system", () => {
+  // The brand is compile-time only, so it evaporates at the first `as` cast or
+  // the first JavaScript caller. Without a runtime comparison, a hand-built
+  // object would register an OAuth client at a stranger's server.
+  const forged = {
+    enabled: true,
+    grantOrigin: "dedicated-test-account",
+    credentials: { clientId: "c", refreshToken: "rt" },
+    cleanup: true,
+    authorization: {},
+  } as unknown as Extract<ClaudeIntrusiveMode, { enabled: true }>;
+
+  it("refuses a forged mode before registering anything", async () => {
+    const fetchFn = vi.fn<typeof fetch>();
+    await expect(
+      probeDynamicRegistration(forged, {
+        fetchFn,
+        registrationEndpoint: "https://auth.example.com/register",
+        redirectUris: [],
+      }),
+    ).rejects.toThrow(/resolveClaudeIntrusiveMode/);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("refuses a forged mode before spending a refresh token", async () => {
+    const fetchFn = vi.fn<typeof fetch>();
+    await expect(
+      probeRefreshRotation(forged, {
+        fetchFn,
+        tokenEndpoint: "https://auth.example.com/token",
+        redirectUris: [],
+      }),
+    ).rejects.toThrow(/resolveClaudeIntrusiveMode/);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("refuses a disabled mode cast into the armed shape", async () => {
+    const disabled = resolveClaudeIntrusiveMode(undefined, NO_BORROWED);
+    const fetchFn = vi.fn<typeof fetch>();
+    await expect(
+      probeDynamicRegistration(
+        disabled as Extract<ClaudeIntrusiveMode, { enabled: true }>,
+        {
+          fetchFn,
+          registrationEndpoint: "https://auth.example.com/register",
+          redirectUris: [],
+        },
+      ),
+    ).rejects.toThrow(/resolveClaudeIntrusiveMode/);
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
+
 describe("registration cleanup", () => {
   it("deletes the client through the management URI", async () => {
     const calls: Array<{ url: string; method?: string }> = [];

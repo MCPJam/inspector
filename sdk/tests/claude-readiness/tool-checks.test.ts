@@ -96,6 +96,24 @@ describe("titles", () => {
     }
   });
 
+  it("prefers the top-level title over the annotation, per MCP precedence", () => {
+    expect(
+      statusOf(
+        runClaudeToolChecks(
+          [
+            tool({
+              name: "t",
+              title: "Top level",
+              annotations: { title: "   ", readOnlyHint: true },
+            }),
+          ],
+          STAMP,
+        ),
+        "claude.tools.title-present",
+      ),
+    ).toBe("satisfied");
+  });
+
   it("treats a whitespace-only title as absent", () => {
     expect(
       statusOf(
@@ -297,6 +315,32 @@ describe("the catch-all rule fails only on demonstrable verbs", () => {
     expect(statusOf(findings, "claude.tools.no-catch-all-read-write")).toBe(
       "violated",
     );
+  });
+
+  it("ignores a verb that is not at the start of the token", () => {
+    // The paired half of the rule above: `getUser` matches because the verb
+    // opens the token, so `userGet` must not.
+    expect(
+      statusOf(
+        runClaudeToolChecks(
+          [
+            tool({
+              name: "records",
+              title: "Records",
+              annotations: { readOnlyHint: true },
+              inputSchema: {
+                type: "object",
+                properties: {
+                  op: { type: "string", enum: ["userGet", "softDelete"] },
+                },
+              },
+            }),
+          ],
+          STAMP,
+        ),
+        "claude.tools.no-catch-all-read-write",
+      ),
+    ).toBe("satisfied");
   });
 
   it("ignores a schema with no properties at all", () => {

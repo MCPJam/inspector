@@ -390,8 +390,7 @@ export function runClaudeAppsChecks(
   // ── MIME profile ─────────────────────────────────────────────────────
   const wrongMime = resources.filter(
     (resource) =>
-      resource.mimeType !== undefined &&
-      normalizeMime(resource.mimeType) !== CLAUDE_APP_HTML_MIME,
+      resource.mimeType !== undefined && !isClaudeAppMime(resource.mimeType),
   );
   const unknownMime = resources.filter(
     (resource) => resource.mimeType === undefined,
@@ -494,11 +493,14 @@ export function runClaudeAppsChecks(
 
   // ── CSP ──────────────────────────────────────────────────────────────
   const wildcardCsp = resources.filter((resource) =>
-    Object.values(resource.csp ?? {}).some(
-      (value) =>
-        Array.isArray(value) &&
-        value.some((entry) => typeof entry === "string" && entry.includes("*")),
-    ),
+    Object.values(resource.csp ?? {}).some((value) => {
+      // A directive may be written as a single string rather than a list; a
+      // wildcard hidden in that form is the same wildcard.
+      const entries = Array.isArray(value) ? value : [value];
+      return entries.some(
+        (entry) => typeof entry === "string" && entry.includes("*"),
+      );
+    }),
   );
   findings.push(
     resources.every((resource) => resource.csp === undefined)
@@ -588,14 +590,47 @@ function runDesignLints(
   });
 }
 
-function normalizeMime(mimeType: string): string {
-  return mimeType
-    .split(";")
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join(";")
-    .toLowerCase();
+/**
+ * Whether a served mime type is the MCP App profile Claude requires.
+ *
+ * The comparison cannot be a string equality against
+ * `"text/html;profile=mcp-app"`. A `charset` parameter is legal on any `text/*`
+ * type and says nothing about the media type, so `text/html;profile=mcp-app;
+ * charset=utf-8` is a CONFORMING resource that a literal comparison would fail
+ * — and this is a `required` runtime check, so that false violation would tell
+ * a submitter to break a widget that works.
+ *
+ * It also cannot compare the essence alone: `profile=mcp-app` is the entire
+ * signal that the payload is an app rather than a document, and dropping it
+ * would make the check pass for plain `text/html`.
+ *
+ * So: essence must be `text/html`, the `profile` parameter must be `mcp-app`,
+ * and every other parameter is ignored.
+ */
+function isClaudeAppMime(mimeType: string): boolean {
+  const [rawEssence, ...rawParameters] = mimeType.split(";");
+  if (rawEssence.trim().toLowerCase() !== CLAUDE_APP_HTML_ESSENCE) return false;
+  for (const parameter of rawParameters) {
+    const separator = parameter.indexOf("=");
+    if (separator === -1) continue;
+    const name = parameter.slice(0, separator).trim().toLowerCase();
+    if (name !== "profile") continue;
+    // Quoted parameter values are legal: `profile="mcp-app"`.
+    const value = parameter
+      .slice(separator + 1)
+      .trim()
+      .replace(/^"(.*)"$/, "$1")
+      .toLowerCase();
+    return value === CLAUDE_APP_PROFILE_VALUE;
+  }
+  return false;
 }
+
+/** The two halves of {@link CLAUDE_APP_HTML_MIME}, split once. */
+const CLAUDE_APP_HTML_ESSENCE = CLAUDE_APP_HTML_MIME.split(";")[0]
+  .trim()
+  .toLowerCase();
+const CLAUDE_APP_PROFILE_VALUE = "mcp-app";
 
 function isAppOnly(tool: ClaudeAppToolEvidence): boolean {
   const visibility = getToolVisibility(tool.toolMeta);

@@ -102,7 +102,13 @@ export function runClaudeEndpointChecks(
   );
 
   const chain = evidence.redirectChain;
-  if (!chain) {
+  // AN EMPTY CHAIN IS NOT A CLEAN ONE. `traceConnectorRedirects` returns
+  // `redirectChain: []` when the very first request throws, so treating only
+  // the absent field as "never reached" reported two satisfied findings with
+  // `hops: 0` for an endpoint the run never actually touched — the exact
+  // "unobserved obligation reads as a pass" failure every other check module
+  // in this directory is written to avoid.
+  if (!chain || chain.length === 0) {
     const reason = "the run never reached the connector endpoint";
     findings.push(notEvaluated(REDIRECT_STAYS_SECURE, stamp, reason));
     findings.push(notEvaluated(REDIRECT_TERMINATES, stamp, reason));

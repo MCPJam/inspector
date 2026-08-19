@@ -160,31 +160,77 @@ export function runClaudeSubmissionChecks(
 
   const findings: ClaudeReadinessFinding[] = [];
 
-  // The zod schema already enforces these bounds, so a parsed profile cannot
-  // violate them. The check still runs and still reports, because a REPORT
-  // that silently omits a requirement it verified is indistinguishable from
-  // one that never checked it.
+  // RE-CHECKED, not assumed. A profile that came through
+  // `parseClaudeSubmissionProfile` cannot violate these bounds, but
+  // `ClaudeSubmissionEvidence.profile` is a typed field a caller can populate
+  // directly, and a check that reported `satisfied` without looking would be
+  // asserting something it never verified.
+  const overLongFields = [
+    ["name", profile.name.length, CLAUDE_SUBMISSION_LIMITS.nameMaxLength],
+    ["tagline", profile.tagline.length, CLAUDE_SUBMISSION_LIMITS.taglineMaxLength],
+    [
+      "description",
+      profile.description.length,
+      CLAUDE_SUBMISSION_LIMITS.descriptionMaxLength,
+    ],
+  ].filter(([, length, limit]) => (length as number) > (limit as number));
+  const categoryCount = profile.categories.length;
+  const categoriesOutOfRange =
+    categoryCount < CLAUDE_SUBMISSION_LIMITS.categoriesMin ||
+    categoryCount > CLAUDE_SUBMISSION_LIMITS.categoriesMax;
+
   findings.push(
-    satisfied(LISTING_FIELDS, stamp, {
+    overLongFields.length > 0 || categoriesOutOfRange
+      ? violated(
+          LISTING_FIELDS,
+          stamp,
+          `Listing fields must fit their limits: name ≤ ${CLAUDE_SUBMISSION_LIMITS.nameMaxLength}, tagline ≤ ${CLAUDE_SUBMISSION_LIMITS.taglineMaxLength}, description ≤ ${CLAUDE_SUBMISSION_LIMITS.descriptionMaxLength}, and ${CLAUDE_SUBMISSION_LIMITS.categoriesMin}–${CLAUDE_SUBMISSION_LIMITS.categoriesMax} categories.`,
+          {
+            overLong: overLongFields.map(([field, length, limit]) => ({
+              field,
+              length,
+              limit,
+            })),
+            categories: categoryCount,
+          },
+        )
+      : satisfied(LISTING_FIELDS, stamp, {
       nameLength: profile.name.length,
       taglineLength: profile.tagline.length,
       descriptionLength: profile.description.length,
       categories: profile.categories.length,
-      limits: {
-        name: CLAUDE_SUBMISSION_LIMITS.nameMaxLength,
-        tagline: CLAUDE_SUBMISSION_LIMITS.taglineMaxLength,
-        description: CLAUDE_SUBMISSION_LIMITS.descriptionMaxLength,
-      },
-    }),
-  );
-  findings.push(
-    satisfied(LISTING_URLS, stamp, {
-      documentationUrl: profile.documentationUrl,
-      privacyPolicyUrl: profile.privacyPolicyUrl,
-      supportUrl: profile.supportUrl,
-    }),
+          limits: {
+            name: CLAUDE_SUBMISSION_LIMITS.nameMaxLength,
+            tagline: CLAUDE_SUBMISSION_LIMITS.taglineMaxLength,
+            description: CLAUDE_SUBMISSION_LIMITS.descriptionMaxLength,
+          },
+        }),
   );
 
+  const listingUrls = {
+    documentationUrl: profile.documentationUrl,
+    privacyPolicyUrl: profile.privacyPolicyUrl,
+    supportUrl: profile.supportUrl,
+    iconUrl: profile.iconUrl,
+  };
+  const insecureUrls = Object.entries(listingUrls).filter(
+    ([, url]) => !isHttpsUrl(url),
+  );
+  findings.push(
+    insecureUrls.length === 0
+      ? satisfied(LISTING_URLS, stamp, listingUrls)
+      : violated(
+          LISTING_URLS,
+          stamp,
+          "Every listing link must be an https:// URL.",
+          { insecure: insecureUrls.map(([field, url]) => ({ field, url })) },
+        ),
+  );
+
+  const screenshotCount = profile.screenshots.length;
+  const countOutOfRange =
+    screenshotCount < CLAUDE_SUBMISSION_LIMITS.screenshotsMin ||
+    screenshotCount > CLAUDE_SUBMISSION_LIMITS.screenshotsMax;
   const badFormat = profile.screenshots.filter(
     (shot) =>
       !ACCEPTED_SCREENSHOT_MIME.includes(shot.mimeType.split(";")[0].trim().toLowerCase()),
@@ -192,9 +238,12 @@ export function runClaudeSubmissionChecks(
   const tooNarrow = profile.screenshots.filter(
     (shot) => shot.widthPx < CLAUDE_SUBMISSION_LIMITS.screenshotMinWidthPx,
   );
+  // The COUNT is evaluated here too, because the remediation names it. A
+  // message that quotes a range the check never looked at tells a submitter
+  // with too few screenshots that their screenshots are fine.
   findings.push(
-    badFormat.length === 0 && tooNarrow.length === 0
-      ? satisfied(SCREENSHOTS, stamp, { count: profile.screenshots.length })
+    badFormat.length === 0 && tooNarrow.length === 0 && !countOutOfRange
+      ? satisfied(SCREENSHOTS, stamp, { count: screenshotCount })
       : violated(
           SCREENSHOTS,
           stamp,
@@ -208,6 +257,7 @@ export function runClaudeSubmissionChecks(
               url: shot.url,
               widthPx: shot.widthPx,
             })),
+            count: screenshotCount,
           },
         ),
   );
@@ -290,6 +340,14 @@ export function runClaudeSubmissionChecks(
   );
 
   return findings;
+}
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 /**

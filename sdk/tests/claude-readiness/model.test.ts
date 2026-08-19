@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
+  CLAUDE_FINDING_CLASSES,
   CLAUDE_POLICY_MANIFEST,
   CLAUDE_POLICY_PAGES,
   CLAUDE_POLICY_SNAPSHOT_DATE,
@@ -62,7 +63,12 @@ function lane(
 
 describe("decideLaneStatus", () => {
   it("lets only required and runtime-blocker findings fail a lane", () => {
-    for (const cls of ["recommended", "heuristic", "manual-review", "experimental-feature"] as const) {
+    // Derived from the constant so a class added to the model is covered here
+    // automatically, rather than quietly escaping the central rule.
+    const nonDispositive = CLAUDE_FINDING_CLASSES.filter(
+      (cls) => cls !== "required" && cls !== "runtime-blocker",
+    );
+    for (const cls of nonDispositive) {
       expect(
         decideLaneStatus([
           finding({ class: "required", status: "satisfied" }),
@@ -194,9 +200,20 @@ describe("the policy manifest", () => {
     expect(CLAUDE_POLICY_PAGES).toContain("mcp-apps/design-guidelines");
   });
 
-  it("reports an unpopulated corpus as unverified rather than pretending", () => {
-    // A fabricated hash would make an unaudited corpus look audited. Until the
-    // sync script runs, surfaces must be able to say so.
+  it("reports verification from the corpus, never by fabricating a hash", () => {
+    // Asserting `false` here would have gone red the first time a maintainer
+    // ran `claude-policy:sync` as designed, and the failure would have read as
+    // a policy problem rather than a stale assertion. The RULE is what must
+    // hold: verified exactly when every page carries a revision.
+    const everyPageHasRevision = CLAUDE_POLICY_PAGES.every((page) =>
+      Boolean(CLAUDE_POLICY_MANIFEST[page].revision),
+    );
+    expect(isPolicyCorpusVerified()).toBe(everyPageHasRevision);
+  });
+
+  it("is unverified while the shipped corpus is unpopulated", () => {
+    // The state this change actually ships in, asserted separately so the rule
+    // above stays true after a sync while this one is deliberately updated.
     expect(isPolicyCorpusVerified()).toBe(false);
   });
 

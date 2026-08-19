@@ -31,9 +31,10 @@ import type {
   MCPTasksConformanceResult,
   MCPTasksCheckResult,
 } from "./tasks-conformance/index.js";
-import type {
-  ClaudeReadinessFinding,
-  ClaudeReadinessResult,
+import {
+  isDispositiveClaudeFinding,
+  type ClaudeReadinessFinding,
+  type ClaudeReadinessResult,
 } from "./claude-readiness/types.js";
 
 export type ConformanceReportKind =
@@ -568,15 +569,14 @@ function isClaudeReadinessResult(
 }
 
 /**
- * Only findings that can DECIDE a lane become testcases.
+ * Only findings that can DECIDE a lane become testcases; everything else is an
+ * advisory. A CI job that fails on a heuristic teaches its owners to ignore the
+ * job, and a capability badge is not a defect at all.
  *
- * Everything else is an advisory. A CI job that fails on a heuristic teaches
- * its owners to ignore the job, and a capability badge is not a defect at all,
- * so rendering either as a failed testcase would be actively harmful.
+ * The predicate itself is imported rather than restated, so the renderer and
+ * `decideLaneStatus` cannot drift into disagreeing about the same finding.
  */
-function isDispositiveFinding(finding: ClaudeReadinessFinding): boolean {
-  return finding.class === "required" || finding.class === "runtime-blocker";
-}
+const isDispositiveFinding = isDispositiveClaudeFinding;
 
 function readinessCaseStatus(
   finding: ClaudeReadinessFinding,
@@ -590,11 +590,18 @@ function createClaudeReadinessReport(
   result: ClaudeReadinessResult,
 ): ConformanceReport {
   const advisories: ConformanceReportAdvisory[] = [];
+  // `lanes` and `findings` are independent arrays on the result, so nothing in
+  // the type says every finding's lane appears in `lanes`. When it does not,
+  // an unconsumed finding — a VIOLATED requirement included — would vanish
+  // from the report with no counter and no error. Tracking what was consumed
+  // and sweeping the remainder into advisories keeps the report total.
+  const consumed = new Set<ClaudeReadinessFinding>();
   const groups: ConformanceReportGroup[] = result.lanes.map((lane) => {
     const laneFindings = result.findings.filter(
       (finding) => finding.lane === lane.lane,
     );
     for (const finding of laneFindings) {
+      consumed.add(finding);
       if (isDispositiveFinding(finding)) continue;
       advisories.push({
         id: finding.id,
@@ -654,6 +661,29 @@ function createClaudeReadinessReport(
       })),
     };
   });
+
+  for (const finding of result.findings) {
+    if (consumed.has(finding)) continue;
+    // Orphaned: its lane was not reported. Rendered as an advisory rather than
+    // dropped, and tagged with the lane it CLAIMED, so the gap is visible in
+    // the output instead of being invisible in it.
+    advisories.push({
+      id: finding.id,
+      title: finding.title,
+      group: finding.lane,
+      kind: finding.class,
+      status: finding.status,
+      message:
+        finding.remediation ??
+        finding.notEvaluatedReason ??
+        `reported outside any lane in this result`,
+      details: buildDetailPayload({
+        provenance: finding.provenance,
+        source: finding.source,
+        orphanedLane: finding.lane,
+      }),
+    });
+  }
 
   return {
     schemaVersion: 1,
@@ -858,15 +888,26 @@ export function renderConformanceReportJUnitXml(
   const time = (redactedReport.durationMs / 1000).toFixed(3);
   const name = escapeXml(redactedReport.name);
 
+  const advisories = redactedReport.advisories ?? [];
   const suites = redactedReport.groups
     .map((group) =>
-      renderConformanceTestSuite(
-        group,
-        redactedReport.score,
-        redactedReport.advisories ?? [],
-      ),
+      renderConformanceTestSuite(group, redactedReport.score, advisories),
     )
     .join("\n");
 
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${suites}\n</testsuites>\n`;
+  // An advisory whose `group` names no rendered testsuite would otherwise be
+  // filtered away in silence — present in the JSON report, absent from the
+  // JUnit output, with nothing saying so. It gets its own suite instead.
+  const renderedGroups = new Set(redactedReport.groups.map((group) => group.id));
+  const orphanedAdvisories = advisories.filter(
+    (advisory) => !renderedGroups.has(advisory.group),
+  );
+  const orphanSuite =
+    orphanedAdvisories.length > 0
+      ? `\n  <testsuite name="mcpjam.advisories" tests="0" failures="0" skipped="0" time="0.000">\n    <properties>\n${renderAdvisoryProperties(
+          orphanedAdvisories,
+        )}\n    </properties>\n  </testsuite>`
+      : "";
+
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<testsuites name="${name}" tests="${tests}" failures="${failures}" skipped="${skipped}" time="${time}">\n${suites}${orphanSuite}\n</testsuites>\n`;
 }
