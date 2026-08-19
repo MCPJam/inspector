@@ -79,19 +79,17 @@ describe("buildMarketHostProfiles", () => {
         font: true,
         media: true,
       },
-      cspFrameDomains: false,
-      cspBaseUriDomains: false,
+      cspFrameDomains: true,
+      cspBaseUriDomains: true,
       requestTeardown: false,
       resourceCacheTtl: true,
+      toolCancelled: true,
     });
-    expect(profileFor("claude")?.capabilities).not.toHaveProperty(
-      "toolCancelled"
-    );
   });
 
   it("keeps Goose CSP findings faithful to the raw probe", () => {
     expect(profileFor("goose")?.capabilities).toMatchObject({
-      cspConnectDomains: { fetch: false, xhr: false },
+      cspConnectDomains: { fetch: false, xhr: false, websocket: false },
       cspResourceDomains: {
         script: false,
         stylesheet: false,
@@ -103,9 +101,6 @@ describe("buildMarketHostProfiles", () => {
       cspBaseUriDomains: false,
       resourcePrefersBorder: true,
     });
-    expect(
-      profileFor("goose")?.capabilities?.cspConnectDomains
-    ).not.toHaveProperty("websocket");
   });
 
   it("carries each host's advertised protocol versions (or none)", () => {

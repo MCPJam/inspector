@@ -452,7 +452,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           elicitation: false,
         },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
           clientInfo: {
             name: "claude-ai",
             version: "0.1.0",
@@ -521,6 +521,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           mcpAppsOverrides: {
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
+            toolCancelled: true,
             hostContextChanged: true,
             resourceTeardown: true,
             toolInfo: true,
@@ -531,8 +532,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            cspFrameDomains: false,
-            cspBaseUriDomains: false,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
             cspConnectDomains: {
               fetch: true,
               xhr: true,
@@ -722,7 +723,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         availableDisplayModes: ["inline", "fullscreen", "pip"],
         containerDimensions: {
           height: 400,
-          maxWidth: 672,
+          maxWidth: 768,
         },
         locale: "en-US",
         timeZone: "America/Los_Angeles",
@@ -742,12 +743,13 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
       mcpProfile: {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
+        toolCallCancellation: false,
         mrtrModes: {
           requestState: true,
           elicitation: false,
         },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
           clientInfo: {
             name: "openai-mcp",
             version: "1.0.0",
@@ -767,7 +769,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               sendFollowUpMessage: true,
               setWidgetState: true,
               requestDisplayMode: "all",
-              notifyIntrinsicHeight: false,
+              notifyIntrinsicHeight: true,
               openExternal: true,
               setOpenInAppUrl: true,
               requestModal: true,
@@ -828,6 +830,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
             resourceCacheTtl: true,
             resourcePrefersBorder: true,
+            downloadFile: false,
             containerSizing: {
               defaultWidth: 670,
               defaultHeight: 398,
@@ -837,7 +840,6 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               testedUpToHeight: 10000,
               limitObserved: false,
             },
-            downloadFile: false,
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
           },
@@ -1209,6 +1211,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             cspConnectDomains: {
               fetch: false,
               xhr: false,
+              websocket: false,
             },
             cspResourceDomains: {
               script: false,
@@ -1589,8 +1592,8 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
               media: true,
             },
             resourcePrefersBorder: true,
-            downloadFile: false,
-            requestTeardown: true,
+            downloadFile: true,
+            requestTeardown: false,
             widgetDisplayModeRequests: "accept",
           },
         },

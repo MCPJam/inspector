@@ -127,7 +127,7 @@ export const MCP_APPS_GOOSE: McpAppsCapabilities = frozen({
   sandboxPermissions: false,
   cspFrameDomains: false,
   cspBaseUriDomains: false,
-  cspConnectDomains: { fetch: false, xhr: false },
+  cspConnectDomains: { fetch: false, xhr: false, websocket: false },
   cspResourceDomains: {
     script: false,
     stylesheet: false,

@@ -71,10 +71,8 @@ describe("SDK-sourced MCP Apps matrices are complete resolved surfaces", () => {
     expect(MCP_APPS_GOOSE_SURFACE.cspConnectDomains).toEqual({
       fetch: false,
       xhr: false,
+      websocket: false,
     });
-    expect(MCP_APPS_GOOSE_SURFACE.cspConnectDomains).not.toHaveProperty(
-      "websocket"
-    );
     expect(MCP_APPS_FULL_SURFACE.cspConnectDomains).toBeUndefined();
   });
 });
