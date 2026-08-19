@@ -84,7 +84,7 @@ export async function runUiRender(options: {
     );
   }
 
-  await client.connectServer(options.serverName, options.config, {
+  await client.connectServerAdhoc(options.serverName, options.config, {
     timeoutMs: options.timeoutMs,
   });
 
