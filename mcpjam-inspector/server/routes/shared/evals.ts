@@ -1699,6 +1699,35 @@ export async function fetchRunPinnedSkillsWithRetry(
 }
 
 /**
+ * Titles of the run's cases that assert `widgetRendered`.
+ *
+ * Only relevant to a harness run, where the inspector's widget manager never
+ * sees the tool call — the harness reaches MCP through the signed proxy — so
+ * the assertion has nothing to observe. Collected here rather than inside the
+ * gate because the gate is deliberately shape-agnostic about cases; this is the
+ * one place that already knows the run's own step model.
+ */
+function casesAssertingWidgetRender(
+  tests: ReadonlyArray<Record<string, any>>
+): string[] {
+  const titles = new Set<string>();
+  for (const test of tests) {
+    const steps = Array.isArray(test.steps) ? test.steps : [];
+    const asserts =
+      steps.some(
+        (step: any) =>
+          step?.kind === "assert" && step?.assertion?.type === "widgetRendered"
+      ) ||
+      (Array.isArray(test.successPredicates) &&
+        test.successPredicates.some(
+          (predicate: any) => predicate?.type === "widgetRendered"
+        ));
+    if (asserts) titles.add(String(test.title ?? "(untitled case)"));
+  }
+  return [...titles];
+}
+
+/**
  * Terminally fail a run that has a row but has not executed anything.
  *
  * `startSuiteRunWithRecorder` creates the run AND precreates its iteration
@@ -2011,6 +2040,15 @@ export async function prepareEvalRun(
       model?: string;
       provider?: string;
     }>,
+    // Read off the RUN's frozen environment — the same value the runner itself
+    // uses to decide whether to provision a box — rather than off the live
+    // environment row, so the gate judges what will actually execute.
+    // Explicitly `null` when absent: here that is a resolved fact, not
+    // "not looked up".
+    pinnedComputerImageId:
+      (config.environment as { computerEnvironmentId?: string } | undefined)
+        ?.computerEnvironmentId ?? null,
+    widgetAssertingCaseTitles: casesAssertingWidgetRender(config.tests),
   });
   if (!harnessAdmission.ok) {
     await failRunBeforeExecution(convexClient, recorder, runId, {

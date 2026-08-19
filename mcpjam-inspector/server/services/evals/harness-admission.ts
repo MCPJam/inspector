@@ -76,21 +76,46 @@ export function harnessOfHostConfig(
 }
 
 /**
- * Until real harness execution lands, admission's LAST word for an otherwise
- * eligible harness host is a refusal — an honest one, naming the harness.
+ * A harness eval iteration runs on ONE disposable box, and that box comes from
+ * the environment's pinned computer image.
  *
- * This is the whole point of the gate shipping ahead of the execution work: a
- * silently-emulated green run is a lie, and an explicit "not yet" is not. A
- * suite that wants emulated execution keeps a non-harness host, the same
- * choice a chat user has.
+ * REQUIRED, with no fallback to the acting member's personal computer. Falling
+ * back would make eval runs stateful across runs — the point of a per-iteration
+ * box is that every iteration starts from the same frozen image — and it would
+ * quietly put a shared computer to work for a run nobody pointed at it.
  */
-function harnessExecutionUnsupportedReason(harness: Harness): string {
+function harnessNeedsPinnedComputerReason(harness: Harness): string {
   const name = getHarnessAdapter(harness).displayName;
   return (
-    `eval runs cannot execute the ${name} harness yet — this suite's host ` +
-    `selects ${name}, and running it on the emulated engine instead would ` +
-    "report a result for a runtime that never ran. Point the suite at a host " +
-    "without a harness to run emulated, or run this host in chat."
+    `the ${name} harness runs each eval iteration on a fresh computer, so this ` +
+    "run's environment must pin a computer image — pin one on the environment " +
+    "(or attach an environment that does) and retry. There is deliberately no " +
+    "fallback to your personal computer: eval iterations are disposable, and " +
+    "reusing a shared box would carry state between them."
+  );
+}
+
+/**
+ * `widgetRendered` needs the inspector's own widget manager to observe the
+ * tool call — and a harness reaches MCP through the signed proxy instead, so
+ * the manager never sees it and the assertion has nothing to watch.
+ *
+ * REFUSED at admission rather than skipped at grade time: a skipped assertion
+ * on a passing run is indistinguishable from one that held, which is the same
+ * false green this whole gate exists to prevent.
+ */
+function harnessCannotObserveWidgetsReason(
+  harness: Harness,
+  caseTitles: readonly string[]
+): string {
+  const name = getHarnessAdapter(harness).displayName;
+  const named = caseTitles.slice(0, 10).join(", ");
+  return (
+    `the ${name} harness reaches MCP servers through a signed proxy rather ` +
+    "than through the inspector, so widgetRendered assertions have nothing to " +
+    "observe on a harness run. Remove them, or run these cases on a " +
+    `non-harness host. Cases asserting widgetRendered: ${named}` +
+    (caseTitles.length > 10 ? `, +${caseTitles.length - 10} more` : "")
   );
 }
 
@@ -111,11 +136,14 @@ export function checkEvalHarnessStaticAdmission(args: {
    *  slip the approval gate this exists to close. */
   pluginServerIds?: readonly string[];
   /**
-   * Set by PR 6 once eval runs can actually drive a harness. Until then the
-   * static half still refuses, so the batch route's dry run rejects a harness
-   * target for the same reason the runner would.
+   * The environment's pinned computer image, when the caller knows it.
+   *
+   * OMITTED means "not resolved here", NOT "absent": the batch route's dry run
+   * validates targets before any environment resolution, so it must not refuse
+   * a run over a pin it never looked up. An explicit `null` is a resolved
+   * absence and does refuse.
    */
-  allowHarnessExecution?: boolean;
+  pinnedComputerImageId?: string | null;
 }): EvalHarnessAdmission {
   const harness = harnessOfHostConfig(args.hostConfig);
   if (!harness) return { ok: true };
@@ -155,11 +183,25 @@ export function checkEvalHarnessStaticAdmission(args: {
     // empty probe id and not about anything the caller configured. Suppress it
     // here; the full check re-runs the same gate with real case models.
     if (!hostModelId && isModelReason(availability.reason)) {
-      return maybeUnsupported(harness, args.allowHarnessExecution);
+      return staticVerdict(harness, args.pinnedComputerImageId);
     }
     return { ok: false, harness, reason: availability.reason };
   }
-  return maybeUnsupported(harness, args.allowHarnessExecution);
+  return staticVerdict(harness, args.pinnedComputerImageId);
+}
+
+/**
+ * The static half's verdict. A pin the caller did not look up is not evidence
+ * of a missing pin, so `undefined` admits and leaves the decision to the full
+ * check; an explicit `null` is a resolved absence and refuses here.
+ */
+function staticVerdict(
+  harness: Harness,
+  pinnedComputerImageId: string | null | undefined
+): EvalHarnessAdmission {
+  return pinnedComputerImageId === undefined
+    ? { ok: true, harness }
+    : admitHarness(harness, { pinnedComputerImageId });
 }
 
 /**
@@ -175,7 +217,13 @@ export function checkEvalHarnessAdmission(args: {
   pluginServerIds?: readonly string[];
   /** The run's snapshotted cases (the recorder's `config.tests`). */
   cases: ReadonlyArray<EvalHarnessCase>;
-  allowHarnessExecution?: boolean;
+  /** The environment's pinned computer image; `null`/absent means none. */
+  pinnedComputerImageId?: string | null;
+  /**
+   * Titles of cases asserting `widgetRendered`. A harness reaches MCP through
+   * the signed proxy, so the inspector's widget manager never sees those calls.
+   */
+  widgetAssertingCaseTitles?: readonly string[];
 }): EvalHarnessAdmission {
   const harness = harnessOfHostConfig(args.hostConfig);
   if (!harness) return { ok: true };
@@ -243,19 +291,25 @@ export function checkEvalHarnessAdmission(args: {
   // No model-bearing case at all: the host-level rules still apply, so run the
   // static half to decide them rather than admitting by default.
   if (modelCases.length === 0) {
-    return checkEvalHarnessStaticAdmission({
+    const staticOnly = checkEvalHarnessStaticAdmission({
       hostConfig: args.hostConfig,
       ...(args.serverIds ? { serverIds: args.serverIds } : {}),
       ...(args.pluginServerIds
         ? { pluginServerIds: args.pluginServerIds }
         : {}),
-      ...(args.allowHarnessExecution !== undefined
-        ? { allowHarnessExecution: args.allowHarnessExecution }
-        : {}),
+      // Explicitly `null` when absent: the FULL check has resolved the run's
+      // environment, so "no pin" here is a fact rather than "not looked up".
+      pinnedComputerImageId: args.pinnedComputerImageId ?? null,
     });
+    if (!staticOnly.ok) return staticOnly;
   }
 
-  return maybeUnsupported(harness, args.allowHarnessExecution);
+  return admitHarness(harness, {
+    pinnedComputerImageId: args.pinnedComputerImageId ?? null,
+    ...(args.widgetAssertingCaseTitles
+      ? { widgetAssertingCaseTitles: args.widgetAssertingCaseTitles }
+      : {}),
+  });
 }
 
 /**
@@ -282,15 +336,32 @@ function isModelReason(reason: string): boolean {
   );
 }
 
-function maybeUnsupported(
+/**
+ * The last two rules, applied after every shared-gate rule has passed: the run
+ * needs a pinned computer image, and none of its cases may assert something a
+ * harness run cannot observe.
+ */
+function admitHarness(
   harness: Harness,
-  allowHarnessExecution: boolean | undefined
+  args: {
+    pinnedComputerImageId?: string | null;
+    widgetAssertingCaseTitles?: readonly string[];
+  }
 ): EvalHarnessAdmission {
-  return allowHarnessExecution
-    ? { ok: true, harness }
-    : {
-        ok: false,
-        harness,
-        reason: harnessExecutionUnsupportedReason(harness),
-      };
+  if (!args.pinnedComputerImageId) {
+    return {
+      ok: false,
+      harness,
+      reason: harnessNeedsPinnedComputerReason(harness),
+    };
+  }
+  const widgetCases = args.widgetAssertingCaseTitles ?? [];
+  if (widgetCases.length > 0) {
+    return {
+      ok: false,
+      harness,
+      reason: harnessCannotObserveWidgetsReason(harness, widgetCases),
+    };
+  }
+  return { ok: true, harness };
 }
