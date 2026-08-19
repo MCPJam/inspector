@@ -707,8 +707,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            cspFrameDomains: false,
-            cspBaseUriDomains: false,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
             cspConnectDomains: {
               fetch: true,
               xhr: true,

@@ -110,8 +110,8 @@ describe("seedHostTemplate", () => {
         font: true,
         media: true,
       },
-      cspFrameDomains: false,
-      cspBaseUriDomains: false,
+      cspFrameDomains: true,
+      cspBaseUriDomains: true,
       requestTeardown: false,
       resourceCacheTtl: true,
     });

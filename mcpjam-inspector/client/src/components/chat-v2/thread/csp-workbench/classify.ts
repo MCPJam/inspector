@@ -149,13 +149,20 @@ function subtypeIsFalse(
 function whyForClass(
   klass: DiagnosisClass,
   directive: string,
-  field: CspField | null
+  field: CspField | null,
+  // A connect subtype the host does not support is enforced by the injected
+  // guard, not by CSP: the origin is still in `connect-src`. Saying "host
+  // stripped this entry" would send the reader looking for a missing entry
+  // that is right there.
+  blockedBySubtype = false
 ): string {
   switch (klass) {
     case "csp":
       return `${directive} does not allow this origin`;
     case "host-stripped":
-      return `${directive} — host stripped this entry from effective CSP`;
+      return blockedBySubtype && field
+        ? `${directive} — host does not support ${field} requests`
+        : `${directive} — host stripped this entry from effective CSP`;
     case "runtime-mismatch":
       return `Effective CSP allowed ${directive} for this origin; browser blocked anyway`;
     case "cors":
@@ -266,10 +273,11 @@ export function classifyDiagnoses(input: ClassifierInput): Diagnosis[] {
     if (klass === "host-stripped" || klass === "runtime-mismatch") {
       evidence.push({
         kind: "host-effective-csp",
-        note:
-          klass === "host-stripped"
-            ? `Origin declared by widget but absent from effective ${field}`
-            : `Origin present in effective ${field}`,
+        note: blockedBySubtype
+          ? `Host does not support ${field} requests; the origin stays in the effective CSP`
+          : klass === "host-stripped"
+          ? `Origin declared by widget but absent from effective ${field}`
+          : `Origin present in effective ${field}`,
         timestamp: v.timestamp,
       });
     }
@@ -296,7 +304,7 @@ export function classifyDiagnoses(input: ClassifierInput): Diagnosis[] {
       url: v.blockedUri,
       directive,
       ...(subtype ? { subtype } : {}),
-      why: whyForClass(klass, directive, field),
+      why: whyForClass(klass, directive, field, blockedBySubtype),
       browserMessage: reconstructBrowserMessage(v),
       risks,
       primarySource,

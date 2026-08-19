@@ -451,12 +451,12 @@ document.addEventListener('securitypolicyviolation', function(e) {
     }
     return false;
   }
-  function report(subtype, url) {
+  function report(subtype, url, fallback) {
     window.parent.postMessage({
       type: "mcp-apps:csp-violation",
       directive: "connect-src",
       effectiveDirective: "connect-src",
-      blockedUri: url ? url.href : String(url),
+      blockedUri: url ? url.href : String(fallback),
       sourceFile: window.location.href,
       lineNumber: null,
       columnNumber: null,
@@ -470,7 +470,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
     if (config.blocked.indexOf(subtype) === -1) return false;
     var url = absoluteUrl(value);
     if (allowedByHost(url)) return false;
-    report(subtype, url || value);
+    report(subtype, url, value);
     return true;
   }
   if (config.blocked.indexOf("fetch") !== -1 && typeof window.fetch === "function") {

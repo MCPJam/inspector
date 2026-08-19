@@ -51,8 +51,6 @@ export const MCP_APPS_FULL: McpAppsCapabilities = frozen({
 export const MCP_APPS_CLAUDE: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
   availableDisplayModes: ["inline", "fullscreen"],
-  cspFrameDomains: false,
-  cspBaseUriDomains: false,
   cspConnectDomains: { fetch: true, xhr: true, websocket: true },
   cspResourceDomains: {
     script: true,
