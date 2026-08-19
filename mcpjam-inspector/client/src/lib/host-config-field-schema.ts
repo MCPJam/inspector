@@ -10,6 +10,7 @@
  * the description strings, then the paths.
  */
 
+import type { McpUiStyleVariableKey } from "@modelcontextprotocol/ext-apps/app-bridge";
 import {
   getMcpToolResultImageRenderPlacement,
   isMcpDirectContentImageVisible,
@@ -200,6 +201,136 @@ const TASKS_POLICY_SUPPORT: Readonly<Record<string, SupportLevel>> = {
 };
 
 /** "MCP Apps capabilities" subsection — effective SEP-1865 spec-bridge matrix. */
+/**
+ * Every style variable the MCP Apps spec defines, in spec order.
+ *
+ * Hand-listed because `McpUiStyleVariableKey` is a type-only union with no
+ * runtime counterpart, and the rows have to exist for hosts that send NOTHING
+ * — a host missing `--color-ring-info` must read as a gap, not as a row that
+ * quietly disappears. The `satisfies` clause rejects a typo or a stale key, and
+ * the assertion below fails the build if the spec adds one this list lacks.
+ */
+const MCP_UI_STYLE_VARIABLE_KEYS = [
+  "--color-background-primary",
+  "--color-background-secondary",
+  "--color-background-tertiary",
+  "--color-background-inverse",
+  "--color-background-ghost",
+  "--color-background-info",
+  "--color-background-danger",
+  "--color-background-success",
+  "--color-background-warning",
+  "--color-background-disabled",
+  "--color-text-primary",
+  "--color-text-secondary",
+  "--color-text-tertiary",
+  "--color-text-inverse",
+  "--color-text-ghost",
+  "--color-text-info",
+  "--color-text-danger",
+  "--color-text-success",
+  "--color-text-warning",
+  "--color-text-disabled",
+  "--color-border-primary",
+  "--color-border-secondary",
+  "--color-border-tertiary",
+  "--color-border-inverse",
+  "--color-border-ghost",
+  "--color-border-info",
+  "--color-border-danger",
+  "--color-border-success",
+  "--color-border-warning",
+  "--color-border-disabled",
+  "--color-ring-primary",
+  "--color-ring-secondary",
+  "--color-ring-inverse",
+  "--color-ring-info",
+  "--color-ring-danger",
+  "--color-ring-success",
+  "--color-ring-warning",
+  "--font-sans",
+  "--font-mono",
+  "--font-weight-normal",
+  "--font-weight-medium",
+  "--font-weight-semibold",
+  "--font-weight-bold",
+  "--font-text-xs-size",
+  "--font-text-sm-size",
+  "--font-text-md-size",
+  "--font-text-lg-size",
+  "--font-heading-xs-size",
+  "--font-heading-sm-size",
+  "--font-heading-md-size",
+  "--font-heading-lg-size",
+  "--font-heading-xl-size",
+  "--font-heading-2xl-size",
+  "--font-heading-3xl-size",
+  "--font-text-xs-line-height",
+  "--font-text-sm-line-height",
+  "--font-text-md-line-height",
+  "--font-text-lg-line-height",
+  "--font-heading-xs-line-height",
+  "--font-heading-sm-line-height",
+  "--font-heading-md-line-height",
+  "--font-heading-lg-line-height",
+  "--font-heading-xl-line-height",
+  "--font-heading-2xl-line-height",
+  "--font-heading-3xl-line-height",
+  "--border-radius-xs",
+  "--border-radius-sm",
+  "--border-radius-md",
+  "--border-radius-lg",
+  "--border-radius-xl",
+  "--border-radius-full",
+  "--border-width-regular",
+  "--shadow-hairline",
+  "--shadow-sm",
+  "--shadow-md",
+  "--shadow-lg",
+] as const satisfies readonly McpUiStyleVariableKey[];
+
+type UncoveredStyleVariableKey = Exclude<
+  McpUiStyleVariableKey,
+  (typeof MCP_UI_STYLE_VARIABLE_KEYS)[number]
+>;
+// Resolves to `true` only while the list covers the spec union; if the spec
+// gains a key, this becomes a tuple type and the assignment stops compiling.
+const _styleVariableCoverage: [UncoveredStyleVariableKey] extends [never]
+  ? true
+  : ["style variable rows missing spec keys", UncoveredStyleVariableKey] = true;
+void _styleVariableCoverage;
+
+function readStyleVariable(
+  cfg: HostConfigDtoV2,
+  key: McpUiStyleVariableKey
+): boolean {
+  const styles = (cfg.hostContext as { styles?: unknown } | undefined)?.styles;
+  const variables = (styles as { variables?: unknown } | undefined)?.variables;
+  if (variables === null || typeof variables !== "object") return false;
+  return typeof (variables as Record<string, unknown>)[key] === "string";
+}
+
+/**
+ * Apps · Styles — one row per spec variable, chipped on presence.
+ *
+ * Presence rather than value: the matrix renders a support chip for
+ * boolean-shaped rows and plain text for everything else, and a raw
+ * `light-dark(rgba(...))` cannot be a chip. What a widget author needs from a
+ * comparison is "can I rely on this variable existing here?", which is exactly
+ * what presence answers; the values themselves stay in the host config.
+ */
+const APPS_STYLE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
+  MCP_UI_STYLE_VARIABLE_KEYS.map((key) => ({
+    id: `styles.${key}`,
+    section: "apps",
+    subsection: "Styles",
+    label: key,
+    path: `hostContext.styles.variables.${key}`,
+    description: `Whether the host sends ${key} to widgets.`,
+    kind: { kind: "boolean" },
+    read: (cfg) => readStyleVariable(cfg, key),
+  }));
+
 const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "appsCap.availableDisplayModes",
@@ -221,17 +352,6 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description: "Policy for honoring widget display-mode change requests.",
     kind: { kind: "enum", support: DISPLAY_MODE_SUPPORT },
     read: (cfg) => effMcpApps(cfg).widgetDisplayModeRequests,
-  },
-  {
-    id: "hostContext.styles",
-    section: "apps",
-    subsection: "MCP Apps capabilities",
-    label: "Host styles",
-    path: "hostContext.styles",
-    description:
-      "CSS variables (and any font CSS) the host sends widgets for theming.",
-    kind: { kind: "capability" },
-    read: (cfg) => cfg.hostContext?.styles,
   },
   ...MCP_APPS_DIMENSIONS.map(
     ({ key, description }): HostConfigFieldDef => ({
@@ -668,6 +788,11 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   // Apps · OpenAI compat shim (effective window.openai surface)
   // ============================================================
   ...OPENAI_SHIM_FIELDS,
+
+  // ============================================================
+  // Apps · Styles (host theming variables)
+  // ============================================================
+  ...APPS_STYLE_FIELDS,
 
   // ============================================================
   // Apps · MCP Apps spec bridge (config)

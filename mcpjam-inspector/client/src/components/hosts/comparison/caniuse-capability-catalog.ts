@@ -62,6 +62,12 @@ function slugForField(field: HostConfigFieldDef): string {
   if (field.id.startsWith("sandboxPerm.")) {
     return `sandbox-permission-${toKebab(field.label)}`;
   }
+  // Labels are the raw custom-property names, so kebab-casing alone would
+  // yield bare slugs like `color-text-primary` that could collide with a
+  // future capability label. Namespace them.
+  if (field.id.startsWith("styles.")) {
+    return `style-${toKebab(field.label)}`;
+  }
   return toKebab(field.label);
 }
 
