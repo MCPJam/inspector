@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { generateAndPersistEvalTests } from "../generate-and-persist-tests";
+import { isOpaqueId } from "@mcpjam/sdk/contract";
 
 vi.mock("@/lib/apis/evals-api", () => ({
   generateEvalTests: vi.fn(),
@@ -65,6 +66,78 @@ describe("generateAndPersistEvalTests", () => {
     expect(result.createdTestCaseIds).toEqual(["new-case-id"]);
     expect(generateEvalTests).toHaveBeenCalled();
     expect(mockCreateTestCase).toHaveBeenCalledTimes(1);
+  });
+
+  it("mints a declared id for every generated case it persists", async () => {
+    mockQuery.mockResolvedValue([]);
+    vi.mocked(generateEvalTests).mockResolvedValue({
+      success: true,
+      tests: [
+        { title: "A", query: "a", runs: 1, expectedToolCalls: [] },
+        { title: "B", query: "b", runs: 1, expectedToolCalls: [] },
+      ],
+    });
+    mockCreateTestCase.mockResolvedValue("new-case-id");
+
+    await generateAndPersistEvalTests({
+      convex,
+      getAccessToken: mockGetAccessToken,
+      projectId: "ws",
+      suiteId: "suite",
+      serverIds: ["srv"],
+      createTestCase: mockCreateTestCase,
+    });
+
+    const ids = mockCreateTestCase.mock.calls.map((c) => c[0].caseId);
+    expect(ids).toHaveLength(2);
+    for (const id of ids) expect(isOpaqueId(id)).toBe(true);
+    // Distinct per case — a shared id would collide on the second write.
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("persists a Wave-0 case's authored steps instead of rebuilding them", async () => {
+    mockQuery.mockResolvedValue([]);
+    // A `toolCall` step has no legacy spelling: rebuilding from query /
+    // expectedToolCalls / promptTurns could only ever produce a prompt case, so
+    // this step is exactly what a rebuild would lose.
+    const authored = [
+      {
+        id: "s1",
+        kind: "toolCall",
+        serverName: "Excalidraw",
+        toolName: "new_tool",
+        arguments: { keep: 1 },
+      },
+      {
+        id: "s2",
+        kind: "assert",
+        assertion: { type: "widgetRendered", toolName: "new_tool" },
+      },
+    ];
+    vi.mocked(generateEvalTests).mockResolvedValue({
+      success: true,
+      tests: [
+        {
+          title: "renders the widget",
+          query: "",
+          runs: 1,
+          expectedToolCalls: [],
+          steps: authored,
+        },
+      ],
+    } as any);
+    mockCreateTestCase.mockResolvedValue("new-case-id");
+
+    await generateAndPersistEvalTests({
+      convex,
+      getAccessToken: mockGetAccessToken,
+      projectId: "ws",
+      suiteId: "suite",
+      serverIds: ["srv"],
+      createTestCase: mockCreateTestCase,
+    });
+
+    expect(mockCreateTestCase.mock.calls[0][0].steps).toEqual(authored);
   });
 
   it("persists steps for generated multi-turn cases", async () => {
