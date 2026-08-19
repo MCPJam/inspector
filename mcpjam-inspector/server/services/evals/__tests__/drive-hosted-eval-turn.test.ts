@@ -139,9 +139,11 @@ describe("harness execution options reach the engine", () => {
     let captured: Record<string, unknown> = {};
     runAssistantTurnMock.mockImplementationOnce(async (...args: unknown[]) => {
       captured = args[0] as Record<string, unknown>;
-      // Enough of a result for the turn to finish without exercising the
-      // engine's own behaviour, which these tests are not about.
-      return { messages: [], usage: {}, spans: [] } as never;
+      // The engine result's shape as the caller reads it — `spans` hang off
+      // `turnTrace`, and omitting the trace would send the turn down its
+      // cycle-failure branch. What happens after capture does not matter to
+      // these tests, which assert on the options handed IN.
+      return { messages: [], usage: {}, turnTrace: { spans: [] } } as never;
     });
     await driveHostedEvalTurn(baseParams(overrides)).catch(() => {});
     return captured;
@@ -173,6 +175,20 @@ describe("harness execution options reach the engine", () => {
     // only `tools` would silently give the runtime none.
     expect(options.builtInTools).toEqual({ web_search: {} });
     expect(options.harness).toBe("claude-code");
+  });
+
+  it("forwards a PRESENT-BUT-EMPTY runtimeSkillsOverride — the A/B arm", async () => {
+    // The one harness field gated on `!== undefined` rather than truthiness,
+    // and deliberately so: an empty array is how `skillsOverride: "exclude"`
+    // says "this arm runs with NO skills". A truthiness regression would drop
+    // it, the harness would fall back to its own project-wide skill fetch, and
+    // the skill-free arm would quietly run with skills — while every other
+    // assertion in this file still passed.
+    const options = await engineOptionsFor({
+      ...HARNESS_OPTIONS,
+      runtimeSkillsOverride: [],
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+    expect(options.runtimeSkillsOverride).toEqual([]);
   });
 
   it("keeps an EMULATED turn byte-identical — none of it leaks through", async () => {

@@ -832,62 +832,12 @@ Start an asynchronous eval run of an existing suite. Responds immediately with a
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only) |
-| `--environment <id-or-name...>` | No | Attached project environment(s) to run. Several values start one **paid run each**. |
-| `--host <id-or-name...>` | No | Attached host(s) to run, so the run is stamped with that host's config. Several values start one **paid run each**. |
-| `--all-targets` | No | Run **every** attached environment (or, if none, every attached host) — one **paid run per target** |
-| `--iterations <n>` | No | Run each case this many times (1-10), for this run only |
-| `--case <id-or-title...>` | No | Run only these cases instead of the whole suite |
-| `--exclude-skills` | No | Run the "without skills" A/B arm: nothing is pinned, and the run is labelled as excluded |
-| `--refresh-snapshot` | No | **Persists a new host-config snapshot on the suite** (see below). Single-target runs only. |
-| `--notes <text>` | No | Free-text note stored on the run |
-| `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
-| `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
-| `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
-| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Appends** the composed environment to the suite. |
-| `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
-| `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
-| `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
-| `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
+| `--environment <id-or-name...>` | No | Attached project environment(s) to run — several start one **paid run each** |
+| `--host <id-or-name...>` | No | Attached host(s) to run — several start one **paid run each** |
+| `--all-targets` | No | Run **every** attached environment (or, if none, every attached host) |
 
-#### Which target runs
-
-**Fan-out is explicit and never inferred.** Choosing for you would be choosing
-how much to spend, so:
-
-- **nothing attached** → the suite's saved server selection runs (unchanged);
-- **exactly one** attached environment or host → that one runs automatically,
-  and the run is stamped with its configuration;
-- **several attached** → the run fails with `TARGET_REQUIRED`, listing every
-  choice. Name one with `--environment` / `--host`, several by repeating the
-  flag, or run all of them with `--all-targets`.
-
-`--all-targets` expands **one axis**: attached environments if the suite has
-any, otherwise attached hosts — never a cross product, because an environment
-already resolves a host. It starts **one paid run per target**, launched as a
-single group that occupies one concurrency slot rather than N.
-
-`--environment` / `--host` and `--server` are mutually exclusive: an
-environment or host supplies a closed server set that an override cannot
-change.
-
-<Warning>
-  `--refresh-snapshot` **changes the suite**, not just this run: it re-derives
-  and stores the suite's host-config snapshot, so every future run uses the new
-  one. It is rejected on any multi-target launch — several runs racing to write
-  one snapshot would leave the suite pinned to whichever finished last.
-</Warning>
-
-#### Output and exit codes
-
-With `--format json`, stdout is **exactly one JSON document** — the launch
-receipt, with nothing appended — so CI can parse it directly. In human format
-the CLI prints a `View:` link per started run, a `Started N/M runs (group …)`
-summary when several launched, and a `Failed: <target> — <code>: <message>`
-line per failure.
-
-A partial or wholly failed fan-out **exits 1**. A per-target failure does not
-abort its siblings, so exiting 0 would let a pipeline read "1 of 3 runs never
-started" as a clean launch.
+Every remaining flag, the target-selection rules, and the exit codes are
+documented once under [Which target runs](#which-target-runs).
 
 ### `eval status`
 
@@ -1279,12 +1229,18 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--server <id-or-name...>` | No | Override the suite's saved servers for this run |
 | `--environment <id-or-name>` | No | Project environment to run against (must be attached to the suite) |
 | `--host <id-or-name>` | No | Attached host to run against, so the run is stamped with that host's config |
-| `--compose-host <id-or-name>` | No | Compose a stack to run instead (see [`eval run`](#eval-run)); appends the composed environment to the suite |
+| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment; appends the composed environment to the suite |
+| `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
+| `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
+| `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
+| `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 | `--iterations <n>` | No | Run the case this many times (1-10) |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 
-Target selection works exactly as it does for [`eval run`](#eval-run), except
-that a single case run targets ONE thing — there is no `--all-targets` here.
+Every `--compose-*` flag behaves exactly as it does for `eval run` — see
+[Composing a target instead of naming one](#composing-a-target-instead-of-naming-one).
+Target selection follows the same rules ([Which target runs](#which-target-runs)),
+except that a single case run targets ONE thing — there is no `--all-targets` here.
 
 #### `eval cases create`
 

@@ -345,7 +345,10 @@ async function freezeEvalRunTargets(
       return { ...rest, environments: environmentIds };
     }
     const hostIds = (detail.hosts ?? []).map((host) => host.id);
-    return hostIds.length > 0 ? { ...rest, hosts: hostIds } : rest;
+    // Nothing attached: there is no set to freeze. Returning `rest` here would
+    // strip `allAttached` and leave a proposal that no longer says what the
+    // describer announced, so leave the request exactly as written.
+    return hostIds.length > 0 ? { ...rest, hosts: hostIds } : input;
   }
 
   const next: Record<string, unknown> = { ...rest };
@@ -354,6 +357,22 @@ async function freezeEvalRunTargets(
       (detail.hosts ?? []).map((host) => [host.name.toLocaleLowerCase(), host.id]),
     );
     next.hosts = namedHosts.map(
+      (selector) => byName.get(selector.toLocaleLowerCase()) ?? selector,
+    );
+  }
+  if (namedEnvironments.length > 0) {
+    // Same reason as hosts, one axis over: an environment name is a pointer,
+    // and the row it points at can be renamed or replaced between the proposal
+    // and the click. Unresolvable selectors pass through untouched so the
+    // operation reports the miss with its own message.
+    const environments = await client.listEnvironments({ projectId });
+    const byName = new Map(
+      environments.items.map((environment) => [
+        environment.name.toLocaleLowerCase(),
+        environment.id,
+      ]),
+    );
+    next.environments = namedEnvironments.map(
       (selector) => byName.get(selector.toLocaleLowerCase()) ?? selector,
     );
   }

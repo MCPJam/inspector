@@ -477,7 +477,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         ...(options.project !== undefined ? { project: options.project } : {}),
         environment: options.environment,
         name: options.name,
-        expectedRevision: Number(options.expectedRevision),
+        expectedRevision: parseRevision(options.expectedRevision),
         ...(options.description !== undefined
           ? { description: options.description }
           : {}),

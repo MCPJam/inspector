@@ -182,7 +182,7 @@ function makeClient(fixture: Fixture = {}) {
   });
   const client = new PlatformApiClient({
     baseUrl: "https://api.test/api/v1",
-    getAuth: () => ({ token: "t" }),
+    getAuth: () => "t",
     fetch: fetchMock as unknown as typeof fetch,
   });
   return { client, fetchMock };
@@ -258,6 +258,24 @@ describe("computeRunTargets", () => {
         selectedEnvironments: [{ id: "e1" }, { id: "e1" }],
       }),
     ).toEqual({ kind: "single", target: { kind: "environment", id: "e1" } });
+  });
+
+  it("REFUSES two named axes rather than silently picking one", () => {
+    // Reachable only by a direct caller — the operations reject this pair
+    // first — and a direct caller must not get a winner. Two named axes are
+    // two different launches, and dropping one drops runs that were asked for.
+    expect(
+      computeRunTargets({
+        attachedEnvironments: [{ id: "e1" }],
+        attachedHosts: [{ id: "h1" }],
+        selectedEnvironments: [{ id: "e1" }],
+        selectedHosts: [{ id: "h1" }],
+      }),
+    ).toEqual({
+      kind: "target-required",
+      attachedEnvironments: [{ kind: "environment", id: "e1" }],
+      attachedHosts: [{ kind: "host", id: "h1" }],
+    });
   });
 
   it("treats an explicit server override as a single legacy run", () => {
@@ -466,6 +484,26 @@ describe("run_eval_suite target selection", () => {
       .catch((caught: unknown) => caught);
     expect((error as PlatformApiError).message).toContain("refreshSnapshot");
     expect(bodiesTo(fetchMock, "/eval-run-groups")).toHaveLength(0);
+  });
+
+  it("rejects a server override against the PLURAL environment selector too", async () => {
+    // The singular guard covered `environment`; without the plural rule this
+    // pair cleared every check, and the override then suppressed the
+    // suite-detail read — so the caller was told the suite "has no
+    // environments at all" about a suite that has the named one attached.
+    const { client, fetchMock } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg"] }),
+    });
+    const error = await runEvalSuiteOperation
+      .execute(
+        { suite: "Smoke", environments: ["Staging"], servers: ["alpha"] },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).message).toContain(
+      "environment or servers",
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("rejects allAttached combined with an explicit selector", async () => {

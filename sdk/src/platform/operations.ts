@@ -1186,6 +1186,19 @@ function assertRunTargetSelectorsCoherent(input: {
       "Pass environments or hosts, not both — a run targets ONE axis, and an environment already resolves a host, so combining them would describe a configuration the suite never had.",
     );
   }
+  if (hasEnvironmentAxis && (input.servers?.length ?? 0) > 0) {
+    // The singular case is also caught by
+    // `assertNoServerOverrideWithEnvironment` (which the ops without a plural
+    // selector still use); this covers the PLURAL axis with the identical
+    // message, so a caller sees one rule however they spelled the selector.
+    // Without it, `environments` + `servers` cleared every guard and the
+    // server override then suppressed the suite-detail read — so the caller
+    // was told the suite "has no environments at all" about a suite that has
+    // the named one attached.
+    throw operationInputError(
+      "Pass either environment or servers, not both — a project environment supplies its own closed server set, which servers cannot override.",
+    );
+  }
   if (hasHostAxis && (input.servers?.length ?? 0) > 0) {
     throw operationInputError(
       "Pass either a host or servers, not both — running an attached host uses that host's own configured server set, which servers cannot override.",
@@ -2173,6 +2186,10 @@ export const runEvalCaseOperation: PlatformOperation<
           ...(overrideServers
             ? { serverIds: overrideServers.map((server) => server.id) }
             : {}),
+          // MUTUALLY EXCLUSIVE, and enforced above by
+          // `assertRunTargetSelectorsCoherent`: `compose` with `environment`
+          // is refused before this point, so the repeated key can never
+          // resolve silently to whichever spread came last.
           ...(composed ? { environmentId: composed.environment.id } : {}),
           ...(environment ? { environmentId: environment.id } : {}),
           ...(host ? { namedHostId: host.id } : {}),

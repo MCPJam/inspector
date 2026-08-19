@@ -31,6 +31,10 @@ beforeEach(() => {
   process.env.INSPECTOR_SERVICE_TOKEN = "test-svc-token";
   process.env.COMPUTERS_TERMINAL_TOKEN_SECRET = "terminal-secret-16+";
   process.env.E2B_API_KEY = "e2b-test";
+  // Explicit rather than inherited: the shared gate reads this key and treats
+  // an unset value as enabled, so leaving it ambient would make every verdict
+  // below depend on the machine the suite happens to run on.
+  process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "true";
 });
 
 afterEach(() => {

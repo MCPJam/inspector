@@ -123,6 +123,19 @@ export function computeRunTargets(
     asEnvironmentTargets(input.selectedEnvironments ?? []),
   );
   const selectedHosts = dedupe(asHostTargets(input.selectedHosts ?? []));
+  // Two NAMED axes describe two different launches, and picking one silently
+  // would drop targets the caller asked for and paid to think about. The SDK's
+  // own callers are rejected upstream by `assertRunTargetSelectorsCoherent`,
+  // but this function is exported, so a direct caller must get the refusal
+  // rather than a winner. Deliberately unlike `allAttached` below, where the
+  // caller asked for "everything" and one axis is the honest answer.
+  if (selectedEnvironments.length > 0 && selectedHosts.length > 0) {
+    return {
+      kind: "target-required",
+      attachedEnvironments: selectedEnvironments,
+      attachedHosts: selectedHosts,
+    };
+  }
   if (selectedEnvironments.length > 0) return planFor(selectedEnvironments);
   if (selectedHosts.length > 0) return planFor(selectedHosts);
 

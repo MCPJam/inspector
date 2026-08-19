@@ -155,7 +155,7 @@ function makeClient(fixture: Fixture = {}) {
   });
   const client = new PlatformApiClient({
     baseUrl: "https://api.test/api/v1",
-    getAuth: () => ({ token: "t" }),
+    getAuth: () => "t",
     fetch: fetchMock as unknown as typeof fetch,
   });
   return { client, fetchMock };

@@ -2648,7 +2648,13 @@ const createEvalRunGroupSchema = z.object({
   notes: z.string().optional(),
   passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
   idempotencyKey: z.string().min(1).max(256).optional(),
-});
+})
+  // STRICT, like every other v1 write body: the published contract says an
+  // unknown key is invalid, and the two knobs this route deliberately omits
+  // (`serverIds`, `refreshSnapshot`) are exactly the ones a caller is most
+  // likely to try. Stripping them would answer 202 while silently discarding
+  // the knob the caller asked for.
+  .strict();
 
 /**
  * Deterministic group id for a keyed launch.
@@ -2677,8 +2683,15 @@ function deriveRunGroupId(
 evals.post("/projects/:projectId/eval-run-groups", async (c) => {
   const projectId = c.req.param("projectId");
   const headerIdempotencyKey = readIdempotencyKey(c);
+  // `synthesizeServerBody` merges the PATH params over the JSON body for the
+  // web schemas that expect them. This route reads `projectId` off the path
+  // directly and has no `serverId` at all, so both are dropped again here —
+  // otherwise the schema's `.strict()` would reject every request over two
+  // keys the caller never sent.
+  const { projectId: _pathProjectId, serverId: _pathServerId, ...jsonBody } =
+    await synthesizeServerBody(c);
   const body = parseWithSchema(createEvalRunGroupSchema, {
-    ...(await synthesizeServerBody(c)),
+    ...jsonBody,
     // Same precedence as the single-run route: the header is the
     // transport-level channel unattended clients control, and a body key could
     // be shaped by model output.
@@ -2800,9 +2813,13 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     const hostConfig = await loadSuiteHostConfig(
       createConvexReadClient(convexAuthToken),
       body.suiteId,
-      // An environment target resolves its OWN host; the suite-level named
-      // host only applies to a host target.
-      target.namedHostId,
+      // An environment target resolves its OWN host, so judge THAT host's
+      // config — falling through to the suite default would admit an
+      // environment pinned to a harness this server cannot drive, and refuse
+      // one whose environment host is fine because the suite default is not.
+      // `ResolvedEnvironmentForLaunch.hostId` is the same host the run row
+      // will freeze, so the dry run and the launch judge one configuration.
+      target.namedHostId ?? servers.environmentLaunch?.hostId,
     );
     const admission = checkEvalHarnessStaticAdmission({
       hostConfig,

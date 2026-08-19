@@ -313,6 +313,57 @@ describe("agent op registry", () => {
     ).toEqual({ suite: "smoke", hosts: ["host_a", "host_b"] });
   });
 
+  it("resolves environment NAMES to ids for the same reason as hosts", async () => {
+    // An environment name is a pointer too. Reading the selectors only as a
+    // gate — resolving hosts and storing environment names verbatim — would
+    // let a rename between the proposal and the click point an approved spend
+    // at a different environment.
+    const client = {
+      listEvalSuites: async () => ({ items: [{ id: "ts_1", name: "smoke" }] }),
+      getEvalSuite: async () => ({
+        id: "ts_1",
+        environmentIds: ["env_stg", "env_prod"],
+        hosts: [],
+      }),
+      listEnvironments: async () => ({
+        items: [
+          { id: "env_stg", name: "Staging" },
+          { id: "env_prod", name: "Prod" },
+        ],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        { suite: "smoke", environments: ["staging", "env_prod"] },
+        { projectId: "p1", client }
+      )
+      // An id already IS the frozen form; an unresolvable selector passes
+      // through so the operation reports the miss with its own message.
+    ).toEqual({ suite: "smoke", environments: ["env_stg", "env_prod"] });
+  });
+
+  it("leaves allAttached ALONE when the suite has nothing attached", async () => {
+    // There is no set to freeze, so stripping `allAttached` would store a
+    // proposal that no longer says what the describer announced — and approval
+    // would run the operation's default targeting instead.
+    const client = {
+      listEvalSuites: async () => ({ items: [{ id: "ts_1", name: "smoke" }] }),
+      getEvalSuite: async () => ({ id: "ts_1", environmentIds: [], hosts: [] }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        { suite: "smoke", allAttached: true },
+        { projectId: "p1", client }
+      )
+    ).toEqual({ suite: "smoke", allAttached: true });
+  });
+
   it("keeps the proposal when normalization cannot reach the platform", async () => {
     // A failed resolution must cost the caller a frozen target list, never the
     // proposal itself — the worst case is the pre-existing behaviour.

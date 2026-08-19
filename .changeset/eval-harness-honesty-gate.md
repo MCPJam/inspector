@@ -22,10 +22,11 @@ mixing hosted and BYOK models names the cases that cannot run rather than
 saying "some model is ineligible", and a model-free (pinned-only) case is never
 gated on a model it does not use.
 
-Until eval runs can actually drive a harness, an otherwise eligible harness
-host is refused explicitly — today's silent emulation becomes an honest "not
-yet". A suite that wants emulated execution keeps a non-harness host, the same
-choice a chat user has.
+What was silent emulation is now one of two honest answers, never a green run
+on an engine nobody asked for: an eligible configuration executes on the
+harness (see "Run a harness eval on the iteration's own box"), and everything
+else is refused by name. A suite that wants emulated execution keeps a
+non-harness host, the same choice a chat user has.
 
 Runs also record which engine they executed on. `configSnapshot.executionEngine`
 is derived server-side from the run's own host config — never sent by a caller,

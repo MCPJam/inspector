@@ -233,8 +233,18 @@ function composeField(options: {
   };
 }
 
-/** `--iterations 3` → 3, and anything else → a usage error rather than NaN. */
+/**
+ * `--iterations 3` → 3, and anything else → a usage error rather than NaN.
+ *
+ * The emptiness guard is not decoration: `Number("")` and `Number(" ")` are
+ * both `0`, and `0` passes `isInteger` and `isFinite` alike. Without it
+ * `--min-pass-rate ""` would become a threshold of 0 — inside the documented
+ * range, so nothing downstream objects, and every run passes.
+ */
 function parseIntOption(raw: string, flag: string): number {
+  if (raw.trim() === "") {
+    throw usageError(`${flag} requires a value.`);
+  }
   const parsed = Number(raw);
   if (!Number.isInteger(parsed)) {
     throw usageError(`${flag} must be a whole number (got "${raw}").`);
@@ -243,6 +253,9 @@ function parseIntOption(raw: string, flag: string): number {
 }
 
 function parseNumberOption(raw: string, flag: string): number {
+  if (raw.trim() === "") {
+    throw usageError(`${flag} requires a value.`);
+  }
   const parsed = Number(raw);
   if (!Number.isFinite(parsed)) {
     throw usageError(`${flag} must be a number (got "${raw}").`);

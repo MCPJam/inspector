@@ -243,7 +243,7 @@ export interface PlatformEvalRun {
    * those are different claims, and the runs whose engine was never recorded
    * are exactly the ones a reader must not vouch for.
    */
-  executionEngine?: string;
+  executionEngine?: "emulated" | `harness:${string}`;
   /**
    * Whether the run's score evidence verified at ingest.
    *

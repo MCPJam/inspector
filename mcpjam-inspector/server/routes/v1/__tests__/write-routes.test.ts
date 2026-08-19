@@ -156,6 +156,7 @@ describe("v1 write routes", () => {
     CONVEX_URL: process.env.CONVEX_URL,
     CONVEX_HTTP_URL: process.env.CONVEX_HTTP_URL,
     INSPECTOR_SERVICE_TOKEN: process.env.INSPECTOR_SERVICE_TOKEN,
+    MCPJAM_HARNESS_BROKER_DELIVERY: process.env.MCPJAM_HARNESS_BROKER_DELIVERY,
   };
   const originalFetch = global.fetch;
 
@@ -1717,6 +1718,12 @@ describe("v1 write routes", () => {
       // The static half of the harness admission gate, run during the group's
       // dry pass. Without it target 1 would already be spending when target 2
       // failed a check that needed no run row.
+      //
+      // The unavailability is stated by the FIXTURE, not inherited from the
+      // machine: switching broker delivery off makes the shared runtime check
+      // fail for a reason this test controls, so a CI box that happens to
+      // carry harness credentials still exercises the refusal.
+      process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
       hostSuiteQueries({
         "hosts:getHost": () => ({ config: { harness: "claude-code" } }),
       });
@@ -1737,6 +1744,82 @@ describe("v1 write routes", () => {
       const body = (await res.json()) as any;
       expect(body.details.reason).toBe("HARNESS_UNAVAILABLE");
       expect(body.message).toContain("Claude");
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("judges an ENVIRONMENT target against its OWN host, not the suite default", async () => {
+      // An environment pins a `hostId`, and that is the host whose config the
+      // run row freezes. Judging the suite's default host instead would admit
+      // an environment pinned to a harness this server cannot drive — the
+      // exact mis-attribution the gate exists to stop.
+      process.env.MCPJAM_HARNESS_BROKER_DELIVERY = "false";
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => ({
+          ...SUITE_DOC,
+          environmentIds: ["env_1", "env_2"],
+        }),
+        "projectEnvironments:listEnvironments": () => [
+          { environmentId: "env_1", name: "Staging" },
+          { environmentId: "env_2", name: "Prod" },
+        ],
+        "projectEnvironments:resolveEnvironmentForLaunch": () => ({
+          environmentRef: { environmentId: "env_1", name: "Staging", revision: 1 },
+          hostId: "host_harness",
+          selectedServerIds: ["s_env"],
+        }),
+        "testSuites:getSuiteRunServerSelection": () => ({
+          serverIds: ["s_env"],
+          serverNames: ["env server"],
+          source: "environment",
+        }),
+        // The SUITE default is a plain host; only the environment's own host
+        // carries the harness. A gate reading the wrong one answers 202.
+        "hostConfigsV2:getSuiteConfig": () => ({ hostStyle: "mcpjam" }),
+        "hosts:getHost": (args: any) =>
+          args?.hostId === "host_harness"
+            ? { config: { harness: "claude-code" } }
+            : { config: { hostStyle: "mcpjam" } },
+      });
+      mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [{ environmentId: "env_1" }, { environmentId: "env_2" }],
+        }
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "HARNESS_UNAVAILABLE" },
+      });
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
+    it("REJECTS a knob this route does not carry instead of dropping it", async () => {
+      // `serverIds` and `refreshSnapshot` are single-run-only, and they are
+      // precisely what a caller adapting a working single-run body will try.
+      // Stripping them would answer 202 while discarding the thing asked for.
+      hostSuiteQueries();
+      mockPendingLaunches();
+      for (const knob of [{ serverIds: ["s_alpha"] }, { refreshSnapshot: true }]) {
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-run-groups",
+          {
+            suiteId: "suite_1",
+            targets: [{ namedHostId: "host_claude" }],
+            ...knob,
+          }
+        );
+        expect(res.status).toBe(400);
+        expect((await res.json()) as any).toMatchObject({
+          code: "VALIDATION_ERROR",
+        });
+      }
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
     });
 
