@@ -629,7 +629,45 @@ export function runClaudeAppsChecks(
   // ── Design guideline lints ───────────────────────────────────────────
   findings.push(...runDesignLints(evidence, resources, stamp));
 
-  return findings;
+  return withholdPassesOnPartialEvidence(findings, unread);
+}
+
+/**
+ * Required checks that read the RESOURCE SET rather than one resource.
+ *
+ * A pass on either is a statement about every widget the connector advertises,
+ * so it cannot be made from a subset — one unread widget serving the wrong MIME
+ * type is the whole finding.
+ */
+const RESOURCE_SET_REQUIREMENTS = new Set([
+  HTML_MIME_PROFILE.id,
+  UI_DOMAIN_DERIVATION.id,
+]);
+
+/**
+ * Downgrade a pass that partial evidence cannot support.
+ *
+ * A VIOLATION SURVIVES: a widget in the subset that broke the rule broke it,
+ * and no unread widget makes that untrue. Only the pass direction is affected,
+ * which is the same one-directional shape the runner's capability gate has —
+ * for the same reason. Reporting `ready` off three of forty widgets is exactly
+ * the failure the coverage numbers exist to make visible.
+ */
+function withholdPassesOnPartialEvidence(
+  findings: ClaudeReadinessFinding[],
+  unread: string[],
+): ClaudeReadinessFinding[] {
+  if (unread.length === 0) return findings;
+  return findings.map((finding) => {
+    if (!RESOURCE_SET_REQUIREMENTS.has(finding.id)) return finding;
+    if (finding.status === "violated") return finding;
+    return {
+      ...finding,
+      status: "not-evaluated" as const,
+      notEvaluatedReason: `${unread.length} referenced widget resource(s) were not read, so this cannot be established for every widget the connector advertises`,
+      details: { ...finding.details, unreadResourceUris: unread },
+    };
+  });
 }
 
 function runDesignLints(

@@ -94,6 +94,27 @@ export interface ClaudeReadinessRunConfig {
 const MAX_WIDGET_RESOURCE_READS = 25;
 const WIDGET_RESOURCE_BUDGET_MS = 30_000;
 
+/**
+ * Reject once the budget is spent, whatever the underlying call is doing.
+ *
+ * `readResource` takes its timeout from the connection, which is per REQUEST;
+ * this bounds the phase. The pending read is abandoned rather than cancelled —
+ * the connection is torn down with the ephemeral client moments later.
+ */
+function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    work,
+    new Promise<never>((_resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("widget resource read budget exhausted")),
+        ms
+      );
+      // Never hold the process open for a timer whose race already settled.
+      timer.unref?.();
+    }),
+  ]);
+}
+
 /** What one MCP connection yielded, or why it yielded nothing. */
 interface ConnectionEvidence {
   tools?: Tool[];
@@ -156,15 +177,20 @@ async function gatherFromConnection(
         const unreadResourceUris: string[] = [];
         const readsDeadline = Date.now() + WIDGET_RESOURCE_BUDGET_MS;
         for (const [index, uri] of uris.entries()) {
-          if (
-            index >= MAX_WIDGET_RESOURCE_READS ||
-            Date.now() >= readsDeadline
-          ) {
+          const remainingMs = readsDeadline - Date.now();
+          if (index >= MAX_WIDGET_RESOURCE_READS || remainingMs <= 0) {
             unreadResourceUris.push(uri);
             continue;
           }
           try {
-            const contents = await manager.readResource(serverId, { uri });
+            // BOUNDED BY WHAT IS LEFT, not by the per-request timeout. Checking
+            // the deadline only before the call let a read that started one
+            // millisecond inside the budget run for a whole `timeoutMs` past
+            // it, which is a budget the last resource always gets to overrun.
+            const contents = await withTimeout(
+              manager.readResource(serverId, { uri }),
+              remainingMs
+            );
             for (const content of contents.contents ?? []) {
               appResources.push(
                 claudeAppResourceEvidenceFrom({
@@ -179,9 +205,13 @@ async function gatherFromConnection(
               );
             }
           } catch {
-            // A widget resource that cannot be read is graded by the apps
-            // suite, whose verdict this run composes. Failing the whole run
-            // over it would lose every other lane.
+            // UNREAD IS UNREAD, whether the budget ran out or the server
+            // refused: dropping the URI here made the coverage finding report
+            // a complete pass over a widget nobody managed to look at.
+            unreadResourceUris.push(uri);
+            // Not fatal. A widget resource that cannot be read is graded by
+            // the apps suite, whose verdict this run composes, and failing the
+            // whole run over it would lose every other lane.
           }
         }
 

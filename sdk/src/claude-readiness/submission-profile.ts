@@ -68,9 +68,20 @@ export const CLAUDE_ATTESTATIONS = [
 const httpsUrl = z
   .string()
   .url()
-  .refine((value) => value.startsWith("https://"), {
-    message: "must be an https:// URL",
-  });
+  // PARSED, not prefix-matched. `startsWith("https://")` is the wrong tool for
+  // a scheme test in both directions: it rejects the perfectly valid
+  // `HTTPS://example.com`, and prefix tests on URLs are how host checks get
+  // written that `https://good.example.attacker.test` satisfies.
+  .refine(
+    (value) => {
+      try {
+        return new URL(value).protocol === "https:";
+      } catch {
+        return false;
+      }
+    },
+    { message: "must be an https:// URL" },
+  );
 
 const screenshotSchema = z.object({
   /** Absolute URL or a data URI the caller has already resolved. */

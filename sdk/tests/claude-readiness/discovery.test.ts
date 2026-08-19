@@ -536,12 +536,20 @@ describe("the caller's credentials go to the connector and nowhere else", () => 
     // A STUB transport rather than a socket: an authorization server on
     // another origin has to be `https` to be dialled at all, and what this
     // proves is about headers, not TLS.
-    const seen: Array<{ url: string; authorization: string | null }> = [];
+    // ORIGIN, never a string prefix: `"https://auth.example".startsWith` also
+    // matches `https://auth.example.attacker.test`, and a test that routes on
+    // one teaches the pattern that lets a real check be bypassed.
+    const seen: Array<{ origin: string; url: string; authorization: string | null }> =
+      [];
     const fetchFn: typeof fetch = async (input, init) => {
       const url = String(input);
       const headers = new Headers(init?.headers);
-      seen.push({ url, authorization: headers.get("authorization") });
-      if (url.endsWith("/.well-known/oauth-protected-resource/mcp")) {
+      seen.push({
+        origin: new URL(url).origin,
+        url,
+        authorization: headers.get("authorization"),
+      });
+      if (new URL(url).pathname === "/.well-known/oauth-protected-resource/mcp") {
         return Response.json({
           resource: "https://connector.example/mcp",
           // A DIFFERENT origin, which is entirely legitimate for an
@@ -550,7 +558,7 @@ describe("the caller's credentials go to the connector and nowhere else", () => 
           authorization_servers: ["https://auth.example"],
         });
       }
-      if (url.startsWith("https://auth.example")) {
+      if (new URL(url).origin === "https://auth.example") {
         return Response.json({
           issuer: "https://auth.example",
           authorization_endpoint: "https://auth.example/authorize",
@@ -569,8 +577,8 @@ describe("the caller's credentials go to the connector and nowhere else", () => 
       headers: { authorization: "Bearer super-secret" },
     });
 
-    const authRequests = seen.filter((entry) =>
-      entry.url.startsWith("https://auth.example"),
+    const authRequests = seen.filter(
+      (entry) => entry.origin === "https://auth.example",
     );
     expect(authRequests.length).toBeGreaterThan(0);
     expect(authRequests.every((entry) => entry.authorization === null)).toBe(
@@ -581,7 +589,7 @@ describe("the caller's credentials go to the connector and nowhere else", () => 
     expect(
       seen.some(
         (entry) =>
-          entry.url.startsWith("https://connector.example") &&
+          entry.origin === "https://connector.example" &&
           entry.authorization === "Bearer super-secret",
       ),
     ).toBe(true);
