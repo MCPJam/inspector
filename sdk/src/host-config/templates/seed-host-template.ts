@@ -588,7 +588,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
           // `initialize`. Matches what real claude.ai publishes.
           clientInfo: { name: "claude-ai", version: "0.1.0" },
@@ -759,7 +759,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Verbatim from the same probe. `title` / `description` /
           // `websiteUrl` land in the pass-through
           // `Record<string, unknown>` per host-config-v2 (backend
@@ -767,7 +767,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.176",
+            version: "2.1.235",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -845,7 +845,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         mcpProtocolVersion: "auto",
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Stored in the established connection-profile envelope. The
           // runtime sends initialize only when a 2025 protocol is selected.
           clientInfo: { name: "openai-mcp", version: "1.0.0" },
@@ -1398,14 +1398,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
-          supportedProtocolVersions: ["2025-06-18"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Verbatim from a real Codex CLI probe. `title` lands in the
           // pass-through `Record<string, unknown>` per host-config-v2
           // (backend soft-validates name/version only).
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            version: "0.131.0-alpha.9",
+            version: "0.148.0-alpha.9",
           },
         },
       };

@@ -184,6 +184,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
@@ -302,6 +304,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "1.0.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
@@ -342,10 +346,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.176",
+          "version": "2.1.235",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
@@ -385,10 +391,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.176",
+          "version": "2.1.235",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
@@ -686,6 +694,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "0.1.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
@@ -984,6 +994,8 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "version": "0.1.0",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
+          "2025-06-18",
           "2025-11-25",
         ],
       },
@@ -1092,10 +1104,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "clientInfo": {
           "name": "codex-mcp-client",
           "title": "Codex",
-          "version": "0.131.0-alpha.9",
+          "version": "0.148.0-alpha.9",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
           "2025-06-18",
+          "2025-11-25",
         ],
       },
       "profileVersion": 1,
@@ -1132,10 +1146,12 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "clientInfo": {
           "name": "codex-mcp-client",
           "title": "Codex",
-          "version": "0.131.0-alpha.9",
+          "version": "0.148.0-alpha.9",
         },
         "supportedProtocolVersions": [
+          "2025-03-26",
           "2025-06-18",
+          "2025-11-25",
         ],
       },
       "profileVersion": 1,
