@@ -62,6 +62,9 @@ export function buildPresetCompareEntries(
       supportedProtocolVersions: host.supportedProtocolVersions,
       // Lets a row distinguish "probed and absent" from "never probed".
       provenance: host.provenance,
+      // Lets the display-mode rows stay blank for a host that shows no
+      // widgets at all, instead of printing the no-claims filler.
+      rendersMcpApps: host.rendersMcpApps,
       // Both style themes for hosts that resolve their tokens per theme;
       // hostContext.styles can only carry the one the host announces.
       styleVariablesByTheme: host.styleVariablesByTheme,
