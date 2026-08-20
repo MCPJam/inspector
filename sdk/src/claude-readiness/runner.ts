@@ -44,6 +44,10 @@ import {
   runClaudeToolChecks,
 } from "./checks/tools.js";
 import {
+  runClaudeExperienceChecks,
+  type ClaudeBrowserEvidence,
+} from "./checks/experience.js";
+import {
   gradeClaudeIntrusiveObservations,
   resolveClaudeIntrusiveMode,
   type ClaudeIntrusiveConfig,
@@ -107,6 +111,15 @@ export interface ClaudeReadinessInput {
 
   intrusive?: ClaudeIntrusiveConfig;
   intrusiveObservations?: ClaudeIntrusiveObservations;
+
+  /**
+   * What a browser harness observed, when the run had one.
+   *
+   * Absent on every wire-only run, which is why the browser checks report
+   * `not-evaluated` rather than being skipped: a lane that silently omitted
+   * them would count as fully covered.
+   */
+  browser?: ClaudeBrowserEvidence;
 
   /** Suite results consumed as evidence, named for the report. */
   evidenceSources?: string[];
@@ -265,6 +278,14 @@ export function gradeClaudeReadiness(
       stamp,
     ),
     ...optional.findings,
+    // ADVISORY BY CONSTRUCTION — every finding this returns is `heuristic` or
+    // `manual-review`, and `decideLaneStatus` reads neither. It is placed in
+    // the same list as the required checks because coverage is counted over
+    // one list; what keeps it out of the verdict is the class, not the order.
+    ...runClaudeExperienceChecks(
+      { tools: input.tools, browser: input.browser },
+      stamp,
+    ),
     ...gradeClaudeIntrusiveObservations(
       intrusiveMode,
       input.intrusiveObservations ?? {},

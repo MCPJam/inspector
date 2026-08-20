@@ -189,6 +189,69 @@ describe("the rollup", () => {
     expect(result.status).toBe("ready");
   });
 
+  it("stays ready with every experience heuristic firing at once", () => {
+    // The strongest form of the guarantee, at the run level: a connector that
+    // trips EVERY advisory check in the lane — undescribed tools, colliding
+    // names, unguided required parameters — is still ready to submit, because
+    // none of those is a published requirement. If this ever goes red, a
+    // heuristic gained a class it must not have.
+    const result = gradeClaudeReadiness({
+      ...fullyCapable(),
+      tools: [
+        {
+          name: "get_user",
+          title: "Get user",
+          description: "get user",
+          annotations: { readOnlyHint: true },
+          inputSchema: {
+            type: "object",
+            required: ["query"],
+            properties: { query: { type: "string" } },
+          },
+        },
+        {
+          name: "getUser",
+          title: "Get user again",
+          description: "getUser",
+          annotations: { readOnlyHint: true },
+          inputSchema: { type: "object" },
+        },
+      ] as never,
+    });
+
+    const advisory = result.findings.filter(
+      (finding) =>
+        finding.lane === "experience-insights" && finding.status === "violated",
+    );
+    expect(advisory.length).toBeGreaterThanOrEqual(3);
+    expect(result.status).toBe("ready");
+  });
+
+  it("counts the browser checks as coverage a headless run is missing", () => {
+    // The reason the browser checks are DEFINED before a harness exists: a
+    // lane that omitted them would report as fully covered, and "we did not
+    // look" would be indistinguishable from "there was nothing to see".
+    const result = gradeClaudeReadiness(input());
+    const lane = result.lanes.find(
+      (entry) => entry.lane === "experience-insights",
+    )!;
+    expect(lane.coverage.notEvaluated).toBeGreaterThan(0);
+    // Scoped to the checks whose evidence a browser WOULD have supplied. A
+    // browser-capability check that is `not-applicable` stays that way — that
+    // is a verdict about the server (no supersession contract to honour), and
+    // no capability could make an absent contract present.
+    const browserChecks = result.findings.filter(
+      (finding) =>
+        finding.requiresCapabilities?.includes("browser") &&
+        finding.status !== "not-applicable",
+    );
+    expect(browserChecks.length).toBeGreaterThan(0);
+    for (const finding of browserChecks) {
+      expect(finding.status, finding.id).toBe("not-evaluated");
+      expect(finding.notEvaluatedReason, finding.id).toBeTruthy();
+    }
+  });
+
   it("is not-ready on a runtime blocker", () => {
     const result = gradeClaudeReadiness(
       input({ endpoint: { enteredUrl: "http://mcp.example.com/mcp" } }),
