@@ -874,9 +874,14 @@ describe("cross-source connect", () => {
   // talk to a backend that predates `endpointUrl`. Falling back to the card's
   // URL there is the precise bug the field exists to prevent, and it would be
   // silent — so the click has to fail instead.
+  // `null` is in the table beside the other two because the mutation result is
+  // CAST to `DirectoryConnectResult`, not validated — the type says what the
+  // current backend returns, not what an older one across the wire actually
+  // sends. `!result.endpointUrl` already covers it; this pins that it does.
   it.each([
     ["omits it", {}],
     ["sends it empty", { endpointUrl: "" }],
+    ["sends it null", { endpointUrl: null }],
   ])(
     "refuses to connect when an existing_endpoint result %s",
     async (_label, extra) => {
