@@ -672,8 +672,20 @@ export type HostConfigOAuthProfile =
 // uses (docs/project-computers.md in mcpjam-backend). The hash describes
 // intent, not environment: two hosts with the same `computer` value hash
 // identically even though each member resolves their own machine.
+//
+// `kind` is a closed union. `"personal"` is the only kind an AUTHOR can write
+// (see `HostComputerInput` / `HostInit.computer` in public-types.ts, both
+// narrowed to it). `"ephemeral"` is RUNTIME-MINTED: the platform stamps it at
+// a snapshot boundary for a per-run box (an eval run boots one box per
+// iteration from the run's frozen environment image). The image never rides
+// this field — it comes from the run's frozen environment pin — and an
+// ephemeral computer carries no `workdir`, because provisioning supplies the
+// box's working directory. Naming a personal workdir on a per-run box would
+// name a path on the author's own machine.
+export type HostConfigComputerKind = "personal" | "ephemeral";
+
 export type HostConfigComputer = {
-  kind: "personal";
+  kind: HostConfigComputerKind;
   // Optional initial working directory for shell/terminal sessions. Trimmed
   // during canonicalization; empty-after-trim collapses to absent.
   workdir?: string;
@@ -685,7 +697,10 @@ export type HostConfigComputer = {
 // it (it never shipped in a UI, so this is belt-and-suspenders for old
 // programmatic callers).
 export type HostConfigComputerInput = {
-  kind: "personal";
+  // INTERNAL input type — carries the full canonical kind union so a platform
+  // snapshot boundary can hand `{ kind: "ephemeral" }` to the canonicalizer.
+  // The PUBLIC authoring alias (`HostComputerInput`) stays personal-only.
+  kind: HostConfigComputerKind;
   toolset?: "bash";
   workdir?: string;
 };

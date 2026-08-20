@@ -235,6 +235,8 @@ describe("canonicalizeHostConfigV2 — computer", () => {
   const personal = { kind: "personal" } as const;
   // Original MVP input shape — still accepted, dropped from canonical.
   const legacy = { kind: "personal", toolset: "bash" } as const;
+  // Runtime-minted at a run-snapshot boundary; never authored.
+  const ephemeral = { kind: "ephemeral" } as const;
 
   it("omits the key entirely when absent (pre-feature byte shape)", () => {
     const c = canonicalizeHostConfigV2(base());
@@ -289,7 +291,52 @@ describe("canonicalizeHostConfigV2 — computer", () => {
       canonicalizeHostConfigV2(
         base({ computer: { kind: "shared", toolset: "bash" } as never })
       )
-    ).toThrow(/computer\.kind must be "personal"/);
+    ).toThrow(/computer\.kind must be "personal" or "ephemeral"/);
+  });
+
+  // ── The runtime-minted `ephemeral` kind ────────────────────────────────
+  // Platform-only: minted at a run-snapshot boundary (one box per eval
+  // iteration, booted from the run's frozen environment image), never
+  // authored. Persisted and content-addressed, so it canonicalizes like any
+  // other kind.
+
+  it("accepts the runtime-minted ephemeral kind and preserves it", () => {
+    expect(canonicalizeHostConfigV2(base({ computer: ephemeral })).computer)
+      .toEqual({ kind: "ephemeral" });
+  });
+
+  it("hashes ephemeral distinctly from personal and from absent", async () => {
+    const e = await hash(base({ computer: ephemeral }));
+    expect(e).not.toBe(await hash(base({ computer: personal })));
+    expect(e).not.toBe(await hash(base()));
+  });
+
+  it("drops the legacy toolset key on ephemeral too", async () => {
+    // The backend runs one `shimLegacyComputerToolset` pipeline for every
+    // kind; if `toolset` survived on ephemeral the two canonicalizers would
+    // diverge on a shape the backend can produce.
+    expect(
+      canonicalizeHostConfigV2(
+        base({ computer: { kind: "ephemeral", toolset: "bash" } })
+      ).computer
+    ).toEqual({ kind: "ephemeral" });
+    expect(
+      await hash(base({ computer: { kind: "ephemeral", toolset: "bash" } }))
+    ).toBe(await hash(base({ computer: ephemeral })));
+  });
+
+  it("applies the same workdir rules to ephemeral", async () => {
+    // Ephemeral rows are minted without a workdir (provisioning supplies the
+    // box's cwd), but the field is not kind-gated — the canonicalizer must
+    // stay one code path.
+    expect(
+      canonicalizeHostConfigV2(
+        base({ computer: { ...ephemeral, workdir: "  /w  " } })
+      ).computer
+    ).toEqual({ kind: "ephemeral", workdir: "/w" });
+    expect(
+      await hash(base({ computer: { ...ephemeral, workdir: "   " } }))
+    ).toBe(await hash(base({ computer: ephemeral })));
   });
 
   it("rejects an unknown legacy toolset value", () => {
