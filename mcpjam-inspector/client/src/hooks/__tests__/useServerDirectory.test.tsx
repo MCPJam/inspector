@@ -21,6 +21,7 @@ import {
   isConnectableDirectoryRow,
   normalizeDirectoryConnectError,
   requiresEndpointChoice,
+  resolveConnectedEndpointUrl,
   resolveDirectoryEndpointUrl,
   sourceHasTiers,
   useServerDirectory,
@@ -795,6 +796,9 @@ describe("cross-source connect", () => {
       serverId: "srv_1",
       serverName: "Linear",
       outcome: "existing_endpoint",
+      // Every `existing_endpoint` result carries the URL that connection
+      // holds; a result without one is refused, which the two cases below pin.
+      endpointUrl: "https://mcp.linear.app/mcp",
       existing: {
         catalogServerId: "cat_9",
         source: "anthropic-directory",
@@ -864,5 +868,58 @@ describe("cross-source connect", () => {
     expect(onConnect).toHaveBeenCalledWith(
       expect.objectContaining({ url: "https://mcp.acme.example/mcp" })
     );
+  });
+
+  // The two halves deploy separately, so an inspector carrying this code can
+  // talk to a backend that predates `endpointUrl`. Falling back to the card's
+  // URL there is the precise bug the field exists to prevent, and it would be
+  // silent — so the click has to fail instead.
+  it.each([
+    ["omits it", {}],
+    ["sends it empty", { endpointUrl: "" }],
+  ])(
+    "refuses to connect when an existing_endpoint result %s",
+    async (_label, extra) => {
+      mockConnectMutation.mockResolvedValue({
+        serverId: "srv_1",
+        serverName: "Linear",
+        outcome: "existing_endpoint",
+        ...extra,
+        existing: {
+          catalogServerId: "cat_9",
+          source: "anthropic-directory",
+          displayName: "Linear",
+        },
+      });
+      const server = directoryServer({
+        source: "chatgpt-directory",
+        remoteUrl: "https://MCP.linear.app/mcp/",
+      });
+      setPage([server]);
+      const { result, onConnect } = renderDirectory();
+
+      await act(async () => {
+        await expect(result.current.connect(server)).rejects.toMatchObject({
+          code: "existing_connection_missing_endpoint",
+        });
+      });
+      // The card's spelling never reaches the connect path.
+      expect(onConnect).not.toHaveBeenCalled();
+    }
+  );
+
+  it("resolves the card's URL for outcomes that are about THIS card", () => {
+    // The refusal is scoped to `existing_endpoint`. A created/reconnected
+    // result is this card's own server, so its own URL is the right one and
+    // a missing `endpointUrl` is not a contract violation there.
+    const server = {
+      endpointKind: "fixed" as const,
+      remoteUrl: "https://a/mcp",
+    };
+    for (const outcome of ["created", "reconnected"] as const) {
+      expect(resolveConnectedEndpointUrl(server, { outcome })).toBe(
+        "https://a/mcp"
+      );
+    }
   });
 });

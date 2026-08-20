@@ -244,6 +244,12 @@ export type DirectoryConnectErrorCode =
   | "server_name_conflict"
   /** No project selected — nothing to install into. */
   | "project_required"
+  /**
+   * Raised HERE, never sent by the backend: an `existing_endpoint` result
+   * arrived without the URL that connection holds, so there is no
+   * authoritative endpoint to connect with. See `resolveConnectedEndpointUrl`.
+   */
+  | "existing_connection_missing_endpoint"
   /** Anything the backend did not tag, including a plain network failure. */
   | "unknown";
 
@@ -385,7 +391,19 @@ export function resolveConnectedEndpointUrl(
   result: Pick<DirectoryConnectResult, "outcome" | "endpointUrl">,
   requestedUrl?: string
 ): string | undefined {
-  if (result.outcome === "existing_endpoint" && result.endpointUrl) {
+  if (result.outcome === "existing_endpoint") {
+    // REFUSE rather than fall through. The fallback below is this card's own
+    // spelling — the one value that must never be used for this outcome, since
+    // connecting with it rewrites the stored endpoint of a server this click
+    // did not create. A result that omits the URL is a backend predating the
+    // field, and the two deploy separately, so that window is real rather than
+    // theoretical. A refusal is visible; the wrong connect would not be.
+    if (!result.endpointUrl) {
+      throw new DirectoryConnectError(
+        "existing_connection_missing_endpoint",
+        "This endpoint is already connected, but the existing connection did not report its URL — it has been left unchanged."
+      );
+    }
     return result.endpointUrl;
   }
   return resolveDirectoryEndpointUrl(server, requestedUrl);
