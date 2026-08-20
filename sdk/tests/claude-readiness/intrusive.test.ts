@@ -220,6 +220,68 @@ describe("registration cleanup", () => {
     });
   });
 
+  it("never dials a management URI off the registration endpoint's origin", async () => {
+    // The one URL in this probe the SERVER chooses, and it is dialled with the
+    // registration access token attached. A hostile connector answering
+    // `http://169.254.169.254/…` would otherwise have this reach into the
+    // operator's own network carrying a credential.
+    const calls: string[] = [];
+    const fetchFn = vi.fn<typeof fetch>(async (input) => {
+      calls.push(String(input));
+      return new Response(
+        JSON.stringify({
+          client_id: "generated",
+          registration_client_uri: "http://169.254.169.254/latest/meta-data/",
+          registration_access_token: "rat",
+        }),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
+    });
+
+    const observation = await probeDynamicRegistration(armed(), {
+      fetchFn,
+      registrationEndpoint: "https://auth.example.com/register",
+      redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
+    });
+
+    // Exactly one request: the registration itself. No DELETE went out.
+    expect(calls).toEqual(["https://auth.example.com/register"]);
+    expect(observation.cleanedUp).toBe(false);
+    // The refusal is REPORTED, not swallowed — a client we declined to delete
+    // is still a client left behind, and the reason is a metadata defect the
+    // server's owner has to hear about.
+    expect(observation.cleanupError).toMatch(/must be on the registration/);
+    expect(observation.cleanupError).toMatch(/169\.254\.169\.254/);
+  });
+
+  it("treats a same-host port or scheme hop as off-origin too", async () => {
+    // Origin, not hostname. `http://auth.example.com` and
+    // `https://auth.example.com:9000` are both somewhere the registration
+    // access token has no business going.
+    for (const uri of [
+      "http://auth.example.com/register/generated",
+      "https://auth.example.com:9000/register/generated",
+    ]) {
+      const calls: string[] = [];
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        calls.push(String(input));
+        return new Response(
+          JSON.stringify({ client_id: "generated", registration_client_uri: uri }),
+          { status: 201, headers: { "content-type": "application/json" } },
+        );
+      });
+
+      const observation = await probeDynamicRegistration(armed(), {
+        fetchFn,
+        registrationEndpoint: "https://auth.example.com/register",
+        redirectUris: ["https://claude.ai/api/mcp/auth_callback"],
+      });
+
+      expect(calls, uri).toHaveLength(1);
+      expect(observation.cleanedUp, uri).toBe(false);
+    }
+  });
+
   it("reports a client it could not remove rather than hiding it", async () => {
     // A registration we cannot delete is a client left behind on someone
     // else's server. Silence there would make this tool a slow leak.
