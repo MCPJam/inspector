@@ -336,7 +336,15 @@ export interface OpenAIImportedSkillEvidence {
   /** Frontmatter parsed out of the fetched markdown. */
   frontmatter?: Record<string, unknown>;
   pages?: { uri: string; bytes: number }[];
-  /** Markdown plus every page. */
+  /**
+   * How many of this skill's pages had no size anyone could establish.
+   *
+   * Recorded rather than folded into `totalBytes` as a zero, because those two
+   * say different things: a page of zero bytes is a measurement, and a page
+   * nobody could measure is a gap. When this is set, `totalBytes` is absent.
+   */
+  unmeasuredPages?: number;
+  /** Markdown plus every page. Absent when any page could not be sized. */
   totalBytes?: number;
   fetchError?: string;
 }
@@ -460,7 +468,8 @@ async function fetchImportedSkillBody(
   // MEASURED IN BYTES, not characters. The limit this feeds is a byte limit,
   // and a skill whose markdown is mostly non-ASCII would otherwise be measured
   // as comfortably inside a limit it exceeds.
-  const markdownBytes = new TextEncoder().encode(markdown).length;
+  const encoder = new TextEncoder();
+  const markdownBytes = encoder.encode(markdown).length;
   skill.markdownBytes = markdownBytes;
   skill.observedDigest = await sha256HexOfText(markdown);
 
@@ -478,6 +487,7 @@ async function fetchImportedSkillBody(
       ? body.resources
       : [];
   const pages: { uri: string; bytes: number }[] = [];
+  let unmeasuredPages = 0;
   for (const entry of listed.slice(
     0,
     OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill,
@@ -488,20 +498,39 @@ async function fetchImportedSkillBody(
     const text =
       asString(page.content) ?? asString(page.markdown) ?? asString(page.text);
     if (!uri) continue;
-    pages.push({
-      uri,
-      bytes:
-        text === undefined
-          ? typeof page.bytes === "number"
-            ? page.bytes
-            : 0
-          : new TextEncoder().encode(text).length,
-    });
+
+    // A SERVED page is measured. A page that only DECLARES its size is taken
+    // at the server's word, and only when that word is a real byte count:
+    // `typeof x === "number"` admits `NaN`, `Infinity` and negatives, all of
+    // which come straight off the submitted server's own response. `NaN` is
+    // the dangerous one — it propagates into the total, and a `NaN` total
+    // compares `false` against every limit, so the size check this fetch
+    // exists to feed would report a pass having measured nothing.
+    let bytes: number | undefined;
+    if (text !== undefined) {
+      bytes = encoder.encode(text).length;
+    } else if (
+      typeof page.bytes === "number" &&
+      Number.isInteger(page.bytes) &&
+      page.bytes >= 0
+    ) {
+      bytes = page.bytes;
+    }
+
+    if (bytes === undefined) unmeasuredPages += 1;
+    pages.push({ uri, bytes: bytes ?? 0 });
   }
   if (pages.length > 0) skill.pages = pages;
+  if (unmeasuredPages > 0) skill.unmeasuredPages = unmeasuredPages;
 
+  // ABSENT rather than understated. A total that silently omits the pages
+  // nobody could size is a number below the real one, and the check that reads
+  // it would pass a skill that is over its limit. Absence is what the check
+  // already knows how to report.
   skill.totalBytes =
-    markdownBytes + pages.reduce((sum, page) => sum + page.bytes, 0);
+    unmeasuredPages > 0
+      ? undefined
+      : markdownBytes + pages.reduce((sum, page) => sum + page.bytes, 0);
 }
 
 /**

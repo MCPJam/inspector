@@ -330,6 +330,12 @@ describe("collectFolderArchiveObservations", () => {
     ]);
   });
 
+  it("reports an empty selection as an empty list, not as absence", () => {
+    // `[]` says the selection was read and held nothing; absence would say
+    // nobody looked. The reader turns those into different report lines.
+    expect(collectFolderArchiveObservations([]).rawEntryNames).toEqual([]);
+  });
+
   it("leaves every archive-only fact ABSENT rather than zero", () => {
     // An extracted tree genuinely has no compressed size and no encryption
     // flags. Reporting `0` and `[]` would tell the reader those were measured

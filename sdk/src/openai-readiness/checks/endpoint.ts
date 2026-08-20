@@ -102,7 +102,16 @@ export function runOpenAIEndpointChecks(
   }
 
   const findings: OpenAIReadinessFinding[] = [];
-  const secure = isHttps(evidence.enteredUrl);
+  // PARSED ONCE. Two checks below ask about this URL — is it HTTPS, is it on
+  // the documented path — and both need the same answer to "does it parse at
+  // all". Deciding that twice is two places for it to be decided differently.
+  let parsed: URL | undefined;
+  try {
+    parsed = new URL(evidence.enteredUrl);
+  } catch {
+    parsed = undefined;
+  }
+  const secure = parsed ? parsed.protocol === "https:" : undefined;
 
   if (secure === undefined) {
     findings.push(
@@ -178,17 +187,11 @@ export function runOpenAIEndpointChecks(
 
   // A URL THAT DOES NOT PARSE HAS NO PATH TO GRADE. Reporting it as a path
   // violation would print `path: undefined` and send the submitter to fix a
-  // path when the URL itself is the problem — which the reachability checks
-  // above already say, in the right words.
-  let path: string | undefined;
-  let pathReadable = true;
-  try {
-    path = new URL(evidence.enteredUrl).pathname.replace(/\/$/, "");
-  } catch {
-    pathReadable = false;
-  }
+  // path when the URL itself is the problem — which the HTTPS check above
+  // already says, in the right words.
+  const path = parsed?.pathname.replace(/\/$/, "");
   findings.push(
-    !pathReadable
+    parsed === undefined
       ? notEvaluated(
           EXPECTED_PATH,
           stamp,

@@ -572,6 +572,10 @@ describe("app guidelines", () => {
     "Guaranteed delivery by Friday for orders placed before noon.",
     "Ships to #10 Downing Street and 4,100 other addresses.",
     "Track the best route between any two stations.",
+    // `#1` bound to nothing is an issue reference, not a rank claim, and this
+    // check is `required` — blocking a submission on a changelog line is the
+    // same false positive as blocking one on a money-back guarantee.
+    "Fixes issue #1 and closes #1 in the tracker.",
   ]) {
     it(`does not read "${copy.slice(0, 32)}…" as a promotional claim`, () => {
       const findings = runOpenAIPolicyChecks(
@@ -590,7 +594,7 @@ describe("app guidelines", () => {
   // `The #1 plugin`.
   for (const copy of [
     "The #1 weather plugin for ChatGPT.",
-    "#1 for forecasts.",
+    "#1 rated forecast tool.",
     "Guaranteed results or your money back.",
     "100% guaranteed savings on every trip.",
   ]) {

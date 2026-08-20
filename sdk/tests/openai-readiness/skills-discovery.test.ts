@@ -159,6 +159,60 @@ describe("discoverOpenAIImportedSkills", () => {
     );
   });
 
+  for (const [label, declared] of [
+    ["NaN", Number.NaN],
+    ["Infinity", Number.POSITIVE_INFINITY],
+    ["a negative", -1],
+    ["a fraction", 1.5],
+    ["a string", "12"],
+  ] as const) {
+    it(`refuses ${label} as a declared page size`, async () => {
+      // `page.bytes` comes off the SUBMITTED server's own response, and
+      // `typeof x === "number"` admits NaN, Infinity and negatives. NaN is the
+      // dangerous one: it propagates into the total, and a NaN total compares
+      // `false` against every limit — so the size check this fetch exists to
+      // feed would report a pass having measured nothing.
+      const { url } = await start((method) =>
+        method === "skills/list"
+          ? { skills: [{ name: "forecast" }] }
+          : {
+              skill: {
+                content: SKILL_MARKDOWN,
+                pages: [{ uri: "skill://forecast/detail", bytes: declared }],
+              },
+            },
+      );
+      const [skill] = (
+        await discoverOpenAIImportedSkills({ enteredUrl: url, fetchFn: fetch })
+      ).skills;
+      expect(skill.unmeasuredPages).toBe(1);
+      // ABSENT rather than understated: a total that silently omits the page
+      // nobody could size is below the real one, and the check reading it
+      // would pass a skill that is over its limit.
+      expect(skill.totalBytes).toBeUndefined();
+    });
+  }
+
+  it("accepts a declared size that is a real byte count", async () => {
+    const { url } = await start((method) =>
+      method === "skills/list"
+        ? { skills: [{ name: "forecast" }] }
+        : {
+            skill: {
+              content: SKILL_MARKDOWN,
+              pages: [{ uri: "skill://forecast/detail", bytes: 4096 }],
+            },
+          },
+    );
+    const [skill] = (
+      await discoverOpenAIImportedSkills({ enteredUrl: url, fetchFn: fetch })
+    ).skills;
+    expect(skill.unmeasuredPages).toBeUndefined();
+    expect(skill.totalBytes).toBe(
+      new TextEncoder().encode(SKILL_MARKDOWN).length + 4096,
+    );
+  });
+
   it("walks pagination before fetching any body", async () => {
     // A server with six skills and a page size of five returns the sixth on
     // page two. A reader that stopped at page one would report five — under

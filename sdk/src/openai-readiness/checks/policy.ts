@@ -179,15 +179,22 @@ const PRIVACY_CONSISTENCY: OpenAICheckDefinition = {
  */
 const PROMOTIONAL_PHRASES = [
   /\bbest\b.{0,20}\b(app|plugin|tool)\b/i,
-  // NO LEADING `\b`. `#` is not a word character, so `\b#` demands a word
-  // character immediately before the hash — which means it matched `app#1` and
-  // never `The #1 plugin`, the only spelling anyone writes. The trailing `\b`
-  // stays, so `#10` is a quantity rather than a rank.
-  /#\s*1\b/,
+  // NO LEADING `\b`, and BOUND TO A RANK CLAIM. `#` is not a word character, so
+  // `\b#` demanded a word character immediately before the hash — which meant
+  // the old pattern matched `app#1` and never `The #1 plugin`, the only
+  // spelling anyone writes. Removing that anchor alone swings too far the
+  // other way: this check is `required`, so a bare `#1` blocks a submission
+  // whose description says "fixes issue #1". What makes it promotional is the
+  // RANK, so the hash has to reach one — a thing being ranked within a couple
+  // of words, or a rating word straight after. The repetition is BOUNDED, so
+  // this cannot be the quadratic pattern its neighbours were. `1\b` still
+  // spares `#10`.
+  /#\s*1\b(?:\s+[\w'-]+){0,2}\s+(?:app|apps|plugin|tool|choice|assistant)\b|#\s*1\s+(?:rated|ranked|selling)\b/i,
   /\bnumber one\b/i,
   /\bworld'?s (?:best|leading|first)\b/i,
   /\bguaranteed\s+(?:results?|success|accurate|accuracy|profits?|savings|rankings?)\b/i,
-  /\b100\s*%\s+guarantee(?:d)?\b/i,
+  // `\s*`, not `\s+`: "100%guaranteed" is the same claim as "100% guaranteed".
+  /\b100\s*%\s*guarantee(?:d)?\b/i,
   /\bunlimited free\b/i,
   /\bofficial(?:ly)? (?:endorsed|approved) by openai\b/i,
   /\bmost popular\b/i,

@@ -166,9 +166,26 @@ const DOMAIN_TOKEN: OpenAICheckDefinition = {
   intrusiveness: "passive",
 };
 
+/**
+ * WHAT THIS CHECK CLAIMS, and what it deliberately does not.
+ *
+ * It used to be titled "the draft's tool scan is CURRENT" while testing only
+ * that a timestamp exists — so a scan from six months ago passed a `required`
+ * check about currency. The title has been brought down to what the profile
+ * can actually establish.
+ *
+ * Currency in the real sense means the scan postdates the server contract it
+ * describes, and deciding that needs BOTH the scan time and the contract's —
+ * which is the release-contract lane's evidence, not this one's. Rather than
+ * invent a staleness window and present the number as OpenAI's, this grades the
+ * two things the profile does settle: that a scan happened at all, and that its
+ * timestamp is not in the future — a value that postdates the run cannot
+ * describe a scan that has already happened, so it is a clock or a
+ * copy-paste, and either way the date is not evidence of anything.
+ */
 const SCAN_CURRENCY: OpenAICheckDefinition = {
   id: "openai.submission.scan-currency",
-  title: "The draft's tool scan is current",
+  title: "A tool scan is recorded for the draft, dated no later than this run",
   lane: "submission-artifacts",
   class: "required",
   source: openaiPolicySource("deploy/submission", "§Scan tools"),
@@ -288,6 +305,12 @@ export function runOpenAISubmissionChecks(
     }),
   );
   findings.push(
+    // As above: the profile schema types both fields as `httpsUrl`, which
+    // refines a parsed URL down to an `https://` prefix, so a profile carrying
+    // an `http://` support URL never reaches this function — it fails to parse
+    // and the whole lane reports the schema error instead. Reaching here IS
+    // the pass; the values are recorded so it is auditable rather than
+    // asserted.
     satisfied(LISTING_URLS, stamp, {
       privacyPolicyUrl: profile.privacyPolicyUrl,
       supportUrl: profile.supportUrl,
@@ -441,9 +464,31 @@ export function runOpenAISubmissionChecks(
           "Record the domain-verification token the portal issued, so the well-known challenge can be checked.",
         ),
   );
+  const scannedAt = profile.lastScanAt
+    ? Date.parse(profile.lastScanAt)
+    : undefined;
+  const runAt = Date.parse(stamp.evaluatedAt);
   findings.push(
     profile.lastScanAt
-      ? satisfied(SCAN_CURRENCY, stamp, { lastScanAt: profile.lastScanAt })
+      ? scannedAt !== undefined &&
+        Number.isFinite(scannedAt) &&
+        Number.isFinite(runAt) &&
+        scannedAt > runAt
+        ? violated(
+            SCAN_CURRENCY,
+            stamp,
+            "The recorded scan time is later than this run, so it cannot describe a scan that has already happened; rescan and record the new timestamp.",
+            { lastScanAt: profile.lastScanAt, evaluatedAt: stamp.evaluatedAt },
+          )
+        : satisfied(SCAN_CURRENCY, stamp, {
+            lastScanAt: profile.lastScanAt,
+            // The age, so a reader can judge staleness this check does not
+            // decide — see the definition's note on why it does not.
+            ageMs:
+              Number.isFinite(scannedAt) && Number.isFinite(runAt)
+                ? runAt - (scannedAt as number)
+                : undefined,
+          })
       : notEvaluated(
           SCAN_CURRENCY,
           stamp,

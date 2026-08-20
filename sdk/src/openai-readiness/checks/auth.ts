@@ -326,14 +326,30 @@ export function runOpenAIAuthChecks(
     `authorization servers, so ${untested} were never fetched and the ` +
     `remainder could change this answer`;
 
+  // A FETCHED ISSUER THAT PUBLISHED NOTHING IS ALSO UNREAD. Every feature check
+  // below filters to `server.document` before deciding, so an issuer whose
+  // metadata never arrived silently leaves the sample — and "no fetched issuer
+  // is missing S256", said over a sample of one when three were advertised, is
+  // not the claim the check's title makes. `ALL_ISSUERS_RESOLVE` reports those
+  // issuers separately, but a reader reads findings, and this one must not say
+  // `satisfied` about an issuer nobody read.
+  const documentless = servers.filter((server) => !server.document);
+  const unreadReason = `${documentless.length} of the fetched authorization servers published no metadata, so they were never graded: ${documentless
+    .map((server) => server.issuer)
+    .join(", ")}`;
+
   const overFetchedIssuers = (
     definition: OpenAICheckDefinition,
     conclusive: OpenAIReadinessFinding,
     overturnable: boolean,
-  ): OpenAIReadinessFinding =>
-    overturnable && untested > 0
-      ? notEvaluated(definition, stamp, untestedReason)
-      : conclusive;
+  ): OpenAIReadinessFinding => {
+    if (!overturnable) return conclusive;
+    if (untested > 0) return notEvaluated(definition, stamp, untestedReason);
+    if (documentless.length > 0) {
+      return notEvaluated(definition, stamp, unreadReason);
+    }
+    return conclusive;
+  };
 
   if (advertised === 0) {
     for (const definition of [

@@ -202,6 +202,7 @@ export function runOpenAIMcpSkillChecks(
   }
 
   let combinedBytes = 0;
+  const unmeasured: string[] = [];
   for (const skill of evidence.skills) {
     const subject = skill.name ?? skill.resourceUri ?? "(unnamed skill)";
     if (
@@ -249,6 +250,15 @@ export function runOpenAIMcpSkillChecks(
       );
     }
     combinedBytes += skill.totalBytes ?? skill.markdownBytes ?? 0;
+    // A skill whose pages could not all be sized contributes an UNDERSTATED
+    // amount above, so the combined figure below is a floor rather than a
+    // measurement. Tracked so a clean result can say which it is.
+    if (
+      skill.totalBytes === undefined &&
+      (skill.unmeasuredPages ?? 0) > 0
+    ) {
+      unmeasured.push(skill.name ?? "(unnamed skill)");
+    }
   }
 
   if (combinedBytes > OPENAI_MCP_SKILL_LIMITS.maxImportedTotalBytes) {
@@ -262,11 +272,23 @@ export function runOpenAIMcpSkillChecks(
 
   findings.push(
     issues.length === 0
-      ? satisfied(WITHIN_CAPS, stamp, {
-          skills: evidence.skills.length,
-          combinedBytes,
-          portalIssues: [],
-        })
+      ? // A LIMIT NOBODY MEASURED IS NOT A LIMIT ANYBODY MET. When a skill's
+        // pages could not all be sized, `combinedBytes` is a floor, and a
+        // submission over the cap would sit under it — so the honest answer is
+        // that this run could not decide, not that the caps were respected.
+        // Confirmed violations above are unaffected: a floor already over the
+        // limit settles the question whichever way the missing pages go.
+        unmeasured.length > 0
+        ? notEvaluated(
+            WITHIN_CAPS,
+            stamp,
+            `these skills report pages with no size this run could establish, so the combined total is a floor rather than a measurement: ${unmeasured.join(", ")}`,
+          )
+        : satisfied(WITHIN_CAPS, stamp, {
+            skills: evidence.skills.length,
+            combinedBytes,
+            portalIssues: [],
+          })
       : violated(
           WITHIN_CAPS,
           stamp,

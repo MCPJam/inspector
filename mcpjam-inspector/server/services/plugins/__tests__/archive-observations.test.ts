@@ -16,7 +16,10 @@
 import { describe, expect, it } from "vitest";
 import JSZip from "jszip";
 
-import { collectZipArchiveObservations } from "../bundle-file-sources.js";
+import {
+  DIRECTORY_ARCHIVE_OBSERVATIONS,
+  collectZipArchiveObservations,
+} from "../bundle-file-sources.js";
 
 const encoder = new TextEncoder();
 
@@ -50,6 +53,24 @@ describe("collectZipArchiveObservations", () => {
     });
     const observed = await collectZipArchiveObservations(bytes);
     expect(observed.rawEntryNames).toContain("skills\\weather\\SKILL.md");
+  });
+
+  it("distinguishes an EMPTY archive from an unread one", async () => {
+    // The boundary this whole module is about: `[]` is a measurement — the
+    // archive was read and held nothing — and absence is a gap. An empty
+    // archive is the case where those two are easiest to swap by accident.
+    const observed = await collectZipArchiveObservations(await zipOf({}));
+    expect(observed.rawEntryNames).toEqual([]);
+    expect(observed.compressedBytes).toBeGreaterThan(0);
+  });
+
+  it("states every archive fact as absent for a directory source", () => {
+    // An extracted tree has no compressed size, no encryption flags and no
+    // pre-normalization names. Every field absent is the honest report, and
+    // the reader turns each one into a named gap.
+    expect(DIRECTORY_ARCHIVE_OBSERVATIONS.compressedBytes).toBeUndefined();
+    expect(DIRECTORY_ARCHIVE_OBSERVATIONS.rawEntryNames).toBeUndefined();
+    expect(DIRECTORY_ARCHIVE_OBSERVATIONS.encryptedEntryPaths).toBeUndefined();
   });
 
   it("leaves encryption flags ABSENT rather than empty", async () => {

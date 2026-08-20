@@ -278,4 +278,39 @@ describe("scan currency", () => {
     );
     expect(finding.status).toBe("not-evaluated");
   });
+
+  it("passes a scan dated before the run, and records its age", () => {
+    const finding = byId(
+      grade({ lastScanAt: "2026-08-19T11:00:00.000Z" }),
+      "openai.submission.scan-currency",
+    );
+    expect(finding.status).toBe("satisfied");
+    // The age is for a reader to judge staleness with; this check does not
+    // decide staleness, because deciding it needs the contract's age too.
+    expect((finding.details as { ageMs?: number }).ageMs).toBe(60 * 60 * 1000);
+  });
+
+  it("fails a scan timestamp that postdates the run", () => {
+    // A time later than the run cannot describe a scan that has already
+    // happened, so it is a clock or a copy-paste — either way the date is not
+    // evidence of anything, and passing on it would be the presence of a field
+    // standing in for the fact it claims.
+    const finding = byId(
+      grade({ lastScanAt: "2027-01-01T00:00:00.000Z" }),
+      "openai.submission.scan-currency",
+    );
+    expect(finding.status).toBe("violated");
+    expect(finding.remediation).toContain("later than this run");
+  });
+
+  it("claims only what the profile settles", () => {
+    // The title used to say the scan was CURRENT while the code tested only
+    // that a timestamp existed — a six-month-old scan passed a `required`
+    // check about freshness.
+    const finding = byId(
+      grade({ lastScanAt: "2026-08-19T11:00:00.000Z" }),
+      "openai.submission.scan-currency",
+    );
+    expect(finding.title).not.toContain("current");
+  });
 });

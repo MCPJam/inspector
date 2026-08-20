@@ -272,7 +272,12 @@ describe("auth", () => {
     ]) {
       const finding = byId(findings, id);
       expect(finding.status, id).toBe("not-evaluated");
-      expect(finding.notEvaluatedReason, id).toContain("200");
+      // The phrase that carries the meaning, not the bare number: "200" alone
+      // would equally match a reason mentioning an HTTP 200 or a byte count,
+      // so a rewording that dropped the advertised count would still pass.
+      expect(finding.notEvaluatedReason, id).toMatch(
+        /of the 200 advertised authorization servers/,
+      );
     }
   });
 
@@ -315,6 +320,36 @@ describe("auth", () => {
     );
     expect(byId(findings, "openai.auth.client-acquisition").status).toBe(
       "not-evaluated",
+    );
+  });
+
+  it("will not pass a feature check over an issuer that published nothing", () => {
+    // Every feature check filters to issuers with a document before deciding,
+    // so an issuer whose metadata never arrived silently leaves the sample.
+    // "No fetched issuer is missing S256", said over a sample of one when two
+    // were advertised, is not the claim the check's title makes.
+    const findings = runOpenAIAuthChecks(
+      authEvidence({
+        advertisedAuthorizationServerCount: 2,
+        authorizationServers: [
+          ...authEvidence().authorizationServers!,
+          {
+            issuer: "https://auth2.example.com",
+            metadataUrl: "https://auth2.example.com/.well-known/x",
+            fetchError: "404",
+          },
+        ],
+      }),
+      STAMP,
+    );
+    for (const id of ["openai.auth.pkce-s256", "openai.auth.unsupported-flows"]) {
+      const finding = byId(findings, id);
+      expect(finding.status, id).toBe("not-evaluated");
+      expect(finding.notEvaluatedReason, id).toContain("auth2.example.com");
+    }
+    // And the check whose whole job is to report those issuers still does.
+    expect(byId(findings, "openai.auth.issuers-resolve").status).toBe(
+      "violated",
     );
   });
 
