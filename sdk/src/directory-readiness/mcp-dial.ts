@@ -208,13 +208,52 @@ async function callJsonRpc(
 }
 
 /**
- * Open a session with `initialize`.
+ * Send `notifications/initialized`, the half of the handshake that has no reply.
  *
- * The `notifications/initialized` follow-up is deliberately NOT sent. It is a
- * notification, so nothing depends on it for a read-only listing pass, and
- * skipping it keeps this dial to requests whose answers are evidence. A server
- * that refuses to list without it is a finding for the runtime lane, not a
- * reason for this helper to start managing session state.
+ * IT IS NOT OPTIONAL. The lifecycle says the client MUST send it once
+ * `initialize` returns, and server frameworks enforce that literally — the
+ * Python SDK errors any request that arrives before it. Skipping it because
+ * "nothing depends on a notification" would leave every server built on one
+ * refusing to list, and the refusal would arrive here as a listing gap: the
+ * grade would read "we could not read this server's tools", which is
+ * indistinguishable from a server that really is unreachable and is wrong
+ * about a server that is perfectly conformant.
+ *
+ * Failures are swallowed on purpose. Whether the notification landed is not
+ * evidence about the target — a notification has no answer to grade — and the
+ * listings that follow report their own reachability. What matters is that it
+ * was sent before them.
+ */
+async function sendInitializedNotification(
+  options: DirectoryDialOptions,
+  sessionId: string | undefined,
+): Promise<void> {
+  try {
+    await fetchDiscoveryJson(options.enteredUrl, options, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
+        "mcp-protocol-version": DIRECTORY_DIAL_PROTOCOL_VERSION,
+        ...(sessionId ? { "mcp-session-id": sessionId } : {}),
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        method: "notifications/initialized",
+      }),
+    });
+  } catch {
+    // See above: the listings that follow are what report reachability.
+  }
+}
+
+/**
+ * Open a session with `initialize`, then complete the handshake.
+ *
+ * The `notifications/initialized` follow-up is sent for the reason
+ * `sendInitializedNotification` documents: a server entitled to refuse every
+ * request until it arrives would otherwise be graded on answers it was never
+ * going to give.
  */
 export async function dialInitialize(
   options: DirectoryDialOptions,
@@ -258,6 +297,12 @@ export async function dialInitialize(
 
   const serverInfo = asRecord(result.serverInfo);
   const instructions = asString(result.instructions);
+  const sessionId = call.headers?.get("mcp-session-id") ?? undefined;
+
+  // Before anything else is asked of the server, and awaited so it cannot
+  // arrive after the listing it was supposed to unlock.
+  await sendInitializedNotification(options, sessionId);
+
   return {
     ok: true,
     status: call.status,
@@ -269,7 +314,7 @@ export async function dialInitialize(
         }
       : undefined,
     capabilities: asRecord(result.capabilities),
-    sessionId: call.headers?.get("mcp-session-id") ?? undefined,
+    sessionId,
     instructions:
       instructions === undefined
         ? undefined
@@ -385,22 +430,30 @@ async function walkListing<Entry>(
     if (page === maxPages - 1) paginationCapHit = true;
   }
 
+  // "THE METHOD IS NOT IMPLEMENTED" is only an answer to the whole question
+  // when it is the answer to the FIRST page. A server that served a page, gave
+  // us a cursor, and then answered -32601 has not told us there is nothing
+  // here; it has told us something is broken, over a listing we now hold half
+  // of. Reading that as complete would let the half we have stand in for the
+  // set — the one substitution this module exists to prevent.
+  const unsupportedIsTheAnswer =
+    unsupported && pagesWalked === 1 && entries.length === 0;
+
   return {
     entries,
     pagesWalked,
     paginationCapHit: paginationCapHit || undefined,
     entryCapHit: entryCapHit || undefined,
-    unsupported: unsupported || undefined,
+    unsupported: unsupportedIsTheAnswer || undefined,
     unreachable: unreachable || undefined,
     error,
-    // `unsupported` IS complete: the server answered the question, and the
-    // answer was "none". Everything else that set a flag left the listing
-    // partial, and a partial listing is not a set anyone may grade.
+    // Everything that set a flag left the listing partial, and a partial
+    // listing is not a set anyone may grade.
     complete:
       !paginationCapHit &&
       !entryCapHit &&
       !unreachable &&
-      (unsupported || !error),
+      (unsupportedIsTheAnswer || !error),
   };
 }
 

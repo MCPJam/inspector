@@ -286,3 +286,121 @@ describe("dialMcpServer", () => {
     expect(seen["tools/list"]).toBe("sess-9");
   });
 });
+
+describe("the handshake a server is entitled to insist on", () => {
+  it("sends notifications/initialized before it asks for anything", async () => {
+    const { fetchFn, calls } = routedFetch({
+      initialize: [INITIALIZE_OK],
+      "notifications/initialized": [{}],
+      "tools/list": [{ tools: [{ name: "search", description: "Search." }] }],
+    });
+
+    await dialMcpServer({ enteredUrl: URL_UNDER_TEST, fetchFn });
+
+    // Server frameworks enforce the lifecycle literally — the Python SDK
+    // errors any request that arrives before this notification. Skipping it
+    // would make every server built on one report an unreadable tool listing,
+    // which grades as a coverage gap and reads as "we could not see this
+    // server" about a server that is perfectly conformant.
+    const order = calls.map((call) => call.method);
+    expect(order[0]).toBe("initialize");
+    expect(order[1]).toBe("notifications/initialized");
+    expect(order.indexOf("tools/list")).toBeGreaterThan(1);
+  });
+
+  it("carries the session id on the notification", async () => {
+    const seen: (string | null)[] = [];
+    const fetchFn = vi.fn(async (_url: any, init?: any) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      if (body.method === "notifications/initialized") {
+        seen.push(new Headers(init?.headers).get("mcp-session-id"));
+        return jsonResponse({});
+      }
+      return new Response(
+        JSON.stringify({ jsonrpc: "2.0", id: body.id, result: INITIALIZE_OK }),
+        {
+          status: 200,
+          headers: {
+            "content-type": "application/json",
+            "mcp-session-id": "sess-9",
+          },
+        },
+      );
+    }) as unknown as typeof fetch;
+
+    await dialInitialize({ enteredUrl: URL_UNDER_TEST, fetchFn });
+    expect(seen).toEqual(["sess-9"]);
+  });
+
+  it("does not fail the dial when the notification itself fails", async () => {
+    // Whether a notification landed is not evidence about the target — it has
+    // no answer to grade. The listings that follow report their own
+    // reachability.
+    const fetchFn = vi.fn(async (_url: any, init?: any) => {
+      const body = JSON.parse(String(init?.body ?? "{}"));
+      if (body.method === "notifications/initialized") {
+        throw new Error("connection reset");
+      }
+      return jsonResponse({ jsonrpc: "2.0", id: body.id, result: INITIALIZE_OK });
+    }) as unknown as typeof fetch;
+
+    const evidence = await dialInitialize({
+      enteredUrl: URL_UNDER_TEST,
+      fetchFn,
+    });
+    expect(evidence.ok).toBe(true);
+  });
+});
+
+describe("a listing that stopped halfway is not a listing", () => {
+  it("refuses to call a part-walked listing complete when a later page 404s the method", async () => {
+    const { fetchFn } = routedFetch({
+      initialize: [INITIALIZE_OK],
+      "notifications/initialized": [{}],
+      "tools/list": [
+        { tools: [{ name: "one", description: "First." }], nextCursor: "p2" },
+        new Response(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: 99,
+            error: { code: -32601, message: "method not found" },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ],
+    });
+
+    const listing = await dialToolListing({
+      enteredUrl: URL_UNDER_TEST,
+      fetchFn,
+    });
+
+    // "The method is not implemented" answers the whole question only when it
+    // answers the FIRST page. Here the server served a page, handed over a
+    // cursor, and then broke — so what we hold is half a listing, and a half
+    // that reads as whole would stand in for the set.
+    expect(listing.entries).toHaveLength(1);
+    expect(listing.complete).toBe(false);
+    expect(listing.unsupported).toBeUndefined();
+  });
+
+  it("still reads a first-page -32601 as the answer it is", async () => {
+    // `routedFetch` answers an unrouted method with -32601, so omitting
+    // `tools/list` is a server that does not implement it at all.
+    const { fetchFn } = routedFetch({
+      initialize: [INITIALIZE_OK],
+      "notifications/initialized": [{}],
+    });
+
+    const listing = await dialToolListing({
+      enteredUrl: URL_UNDER_TEST,
+      fetchFn,
+    });
+
+    // A server with no such method answered the question. Grading that as a
+    // gap would report it as one nobody could reach.
+    expect(listing.entries).toHaveLength(0);
+    expect(listing.unsupported).toBe(true);
+    expect(listing.complete).toBe(true);
+  });
+});

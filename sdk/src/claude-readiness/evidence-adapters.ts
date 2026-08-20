@@ -24,8 +24,10 @@
  * Pure data reasoning. No transport.
  */
 
+import type { OutcomeCheckLike } from "../conformance-outcome.js";
 import {
   checkEvidenceReuse,
+  conformanceRunIsComplete,
   type AttributableEvidenceSource,
   type EvidenceReuse,
   type EvidenceReuseExpectation,
@@ -45,13 +47,20 @@ export const CLAUDE_APPS_EVIDENCE_KIND = "apps-conformance";
 export interface AdaptableAppsConformanceResult {
   target: string;
   /**
-   * The run's own verdict on whether it FINISHED.
-   *
-   * `"incomplete"` is the one that matters: a run whose checks could not run
-   * carries no statement about the widgets it never reached, and its evidence
-   * would report those as clean.
+   * The run's own verdict. Carried for the citation, NOT consulted for
+   * completeness — see `checks`.
    */
   outcome: string;
+  /**
+   * The run's checks, which are what say whether it finished.
+   *
+   * Required, because the outcome cannot answer this: `"failed"` is returned
+   * on the first violation without counting the checks that never ran, so a
+   * run that looked at almost nothing can carry it. A run whose checks could
+   * not run holds no statement about the widgets it never reached, and
+   * adopting its evidence would report those as clean.
+   */
+  checks: readonly OutcomeCheckLike[];
 }
 
 export interface AdaptAppsResultToClaudeOptions {
@@ -93,11 +102,13 @@ export function adaptAppsResultToClaudeEvidence(
     runId: options.runId,
     target: options.result.target,
     configFingerprint: options.configFingerprint,
-    // `passed` is not the question and never was. A suite run that FAILED
-    // still looked at everything it selected, and its findings are exactly
-    // what readiness wants to cite; a run that could not finish is the one
-    // whose silence would be mistaken for a clean bill of health.
-    complete: options.result.outcome !== "incomplete",
+    // `passed` is not the question and never was. A suite run that FAILED may
+    // still have looked at everything it selected, and its findings are
+    // exactly what readiness wants to cite; a run that could not finish is the
+    // one whose silence would be mistaken for a clean bill of health. Which of
+    // those it is comes from the checks, because the outcome cannot tell them
+    // apart.
+    complete: conformanceRunIsComplete(options.result.checks),
   };
 
   const verdict = checkEvidenceReuse(source, options.expectation);

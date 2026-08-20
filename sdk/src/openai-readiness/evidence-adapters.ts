@@ -16,8 +16,10 @@
  * Pure data reasoning. No transport.
  */
 
+import type { OutcomeCheckLike } from "../conformance-outcome.js";
 import {
   checkEvidenceReuse,
+  conformanceRunIsComplete,
   type AttributableEvidenceSource,
   type EvidenceReuse,
   type EvidenceReuseExpectation,
@@ -32,7 +34,14 @@ export const OPENAI_APPS_EVIDENCE_KIND = "apps-conformance";
 
 export interface AdaptableAppsConformanceResult {
   target: string;
+  /** Carried for the citation, NOT consulted for completeness — see `checks`. */
   outcome: string;
+  /**
+   * The run's checks, which are what say whether it finished. The outcome
+   * cannot: `"failed"` is returned on the first violation without counting the
+   * checks that never ran.
+   */
+  checks: readonly OutcomeCheckLike[];
 }
 
 export interface AdaptAppsResultToOpenAIOptions {
@@ -105,7 +114,7 @@ export function adaptAppsResultToOpenAIUiEvidence(
     runId: options.runId,
     target: options.result.target,
     configFingerprint: options.configFingerprint,
-    complete: options.result.outcome !== "incomplete",
+    complete: conformanceRunIsComplete(options.result.checks),
   };
 
   const verdict = checkEvidenceReuse(source, options.expectation);

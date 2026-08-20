@@ -202,9 +202,17 @@ export async function gatherClaudeReadinessEvidence(
   // when it FINISHED: a truncated listing would let a server's non-conforming
   // widget fall off the end and read as a server with no widgets, which grades
   // `not-applicable` — a clean bill of health for a page nobody read.
+  //
+  // BOTH LISTINGS HAVE TO HAVE FINISHED, because the apps checks read both. A
+  // truncated TOOL listing is the same hazard wearing the other hat: the
+  // widget tool that fell off the end takes its `_meta` with it, and a lane
+  // that saw no widget tools reports `not-applicable` over a page nobody
+  // finished reading. The tools lane reporting its own gap does not repair
+  // this one — they are different claims, and only one of them was hedged.
   const dialledApps = dialled?.appResources;
+  const toolListingUsable = hasSuppliedTools || dialled?.tools?.complete === true;
   const appsFromDial: ClaudeAppsEvidence | undefined =
-    dialledApps && dialledApps.listing.complete
+    dialledApps && dialledApps.listing.complete && toolListingUsable
       ? {
           enteredUrl: options.enteredUrl,
           appsSuiteRan: true,

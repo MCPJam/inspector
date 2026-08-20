@@ -29,6 +29,8 @@
  * Pure data reasoning. No transport.
  */
 
+import { isUnrunCheck, type OutcomeCheckLike } from "../conformance-outcome.js";
+
 /** What a reused result was, and what it looked at. */
 export interface AttributableEvidenceSource {
   /** Suite kind, e.g. `"apps-conformance"`. Names the provenance in reports. */
@@ -132,6 +134,26 @@ export function sameReadinessTarget(left: string, right: string): boolean {
     }
   };
   return normalize(left) === normalize(right);
+}
+
+/**
+ * Whether a suite run actually exercised everything it selected.
+ *
+ * NOT `outcome !== "incomplete"`, which is the tempting one-liner and is
+ * wrong. `decideConformanceOutcome` returns `"failed"` the moment any check
+ * violates, WITHOUT looking at how many others never ran — so a run with one
+ * violation and five checks that could not run is `"failed"`, and reading that
+ * as "it looked at everything" adopts the silence of the five as evidence.
+ * Only `"passed"` and `"incomplete"` are decided by counting unrun checks, and
+ * the first of those is not the question either: a failing run looked at
+ * plenty and its findings are exactly what readiness wants to cite.
+ *
+ * A run with no checks establishes nothing, whatever its outcome says.
+ */
+export function conformanceRunIsComplete(
+  checks: readonly OutcomeCheckLike[],
+): boolean {
+  return checks.length > 0 && !checks.some(isUnrunCheck);
 }
 
 /**

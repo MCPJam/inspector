@@ -25,6 +25,7 @@
 import {
   gatherClaudeReadinessEvidence,
   gatherOpenAIReadinessEvidence,
+  DIRECTORY_OBSERVATION_REASONS,
   gradeClaudeReadiness,
   gradeOpenAIReadiness,
   parseClaudeExperienceObservations,
@@ -252,6 +253,14 @@ async function resolveObservations<Kind extends string, Id extends string>(
     };
   }
 
+  const knownObservationReason = (
+    reason: unknown,
+  ): DirectoryObservationReason =>
+    typeof reason === "string" &&
+    (DIRECTORY_OBSERVATION_REASONS as readonly string[]).includes(reason)
+      ? (reason as DirectoryObservationReason)
+      : "provider_error";
+
   let answer: ObservationBrokerAnswer;
   try {
     answer = await options.requestObservations({
@@ -279,8 +288,11 @@ async function resolveObservations<Kind extends string, Id extends string>(
       status: answer.status,
       // The backend's reason is carried through rather than re-derived. It is
       // what three surfaces branch on, and a second derivation here would be a
-      // second chance to spell `billing_limit_reached` differently.
-      reason: (answer.reason ?? "provider_error") as DirectoryObservationReason,
+      // second chance to spell `billing_limit_reached` differently. CHECKED
+      // against the union all the same, for the reason the status is: a
+      // backend deployed ahead of this build could otherwise persist a value
+      // the SDK never defined, into the one field readers switch on.
+      reason: knownObservationReason(answer.reason),
       detail: answer.detail,
     };
   }

@@ -179,6 +179,32 @@ describe("gatherClaudeReadinessEvidence", () => {
     expect(evidence.apps.appsSuiteRan).toBe(false);
   });
 
+  it("refuses to grade the apps lane from a truncated TOOL listing", async () => {
+    // The same hazard wearing the other hat. The apps checks read tools too,
+    // so a widget tool that fell off the end takes its `_meta` with it — and a
+    // lane that saw no widget tools grades `not-applicable`, over a page
+    // nobody finished reading. The tools lane reporting its own gap does not
+    // repair this one: they are different claims, and only one was hedged.
+    const evidence = await gatherClaudeReadinessEvidence({
+      enteredUrl: TARGET,
+      fetchFn: wireFetch({
+        initialize: [INITIALIZE],
+        "tools/list": [{ tools: [WIDGET_TOOL], nextCursor: "more" }],
+        "resources/list": [{ resources: [] }],
+      }),
+      maxListPages: 2,
+      now: () => new Date("2026-08-20T00:00:00.000Z"),
+    });
+
+    expect(evidence.toolListingComplete).toBe(false);
+    expect(evidence.apps.appsSuiteRan).toBe(false);
+    const finding = findingById(
+      gradeClaudeReadiness(evidence),
+      "claude.apps.resource-uri-modern",
+    );
+    expect(finding.status).toBe("not-evaluated");
+  });
+
   it("does not dial a listing the caller already holds", async () => {
     const fetchFn = vi.fn(wireFetch({ initialize: [INITIALIZE] }));
     await gatherClaudeReadinessEvidence({
@@ -271,7 +297,22 @@ describe("gatherClaudeReadinessEvidence", () => {
 });
 
 describe("attributable evidence adapters", () => {
-  const RESULT = { target: TARGET, outcome: "passed" };
+  /** Every selected check ran. */
+  const RAN = [
+    { id: "apps.ui.resource-uri", status: "passed" as const },
+    { id: "apps.ui.csp", status: "passed" as const },
+  ];
+  /** One violated, one never ran — the shape `outcome` cannot describe. */
+  const PARTLY_RAN = [
+    { id: "apps.ui.resource-uri", status: "failed" as const },
+    {
+      id: "apps.ui.csp",
+      status: "skipped" as const,
+      skipReason: "could-not-run" as const,
+      error: { message: "the widget resource could not be read" },
+    },
+  ];
+  const RESULT = { target: TARGET, outcome: "passed", checks: RAN };
   const CONTENTS = [
     {
       uri: "ui://chart",
@@ -299,7 +340,11 @@ describe("attributable evidence adapters", () => {
 
   it("refuses a result that graded a different server", () => {
     const adapted = adaptAppsResultToClaudeEvidence({
-      result: { target: "https://staging.example.com/mcp", outcome: "passed" },
+      result: {
+        target: "https://staging.example.com/mcp",
+        outcome: "passed",
+        checks: RAN,
+      },
       expectation: { target: TARGET },
       resourceContents: CONTENTS,
     });
@@ -322,7 +367,7 @@ describe("attributable evidence adapters", () => {
 
   it("refuses a source run that never finished", () => {
     const adapted = adaptAppsResultToClaudeEvidence({
-      result: { target: TARGET, outcome: "incomplete" },
+      result: { target: TARGET, outcome: "incomplete", checks: PARTLY_RAN },
       expectation: { target: TARGET },
       resourceContents: CONTENTS,
     });
@@ -331,18 +376,52 @@ describe("attributable evidence adapters", () => {
     expect(adapted.refusal).toBe("source_incomplete");
   });
 
-  it("accepts a source run that FAILED, which still looked at everything", () => {
+  it("accepts a FAILED run that did look at everything", () => {
+    // A violation is not a reason to refuse the evidence: the run exercised
+    // every check it selected, and its findings are what readiness wants.
     const adapted = adaptAppsResultToClaudeEvidence({
-      result: { target: TARGET, outcome: "failed" },
+      result: {
+        target: TARGET,
+        outcome: "failed",
+        checks: [{ id: "apps.ui.csp", status: "failed" as const }],
+      },
       expectation: { target: TARGET },
       resourceContents: CONTENTS,
     });
     expect(adapted.ok).toBe(true);
   });
 
+  it("refuses a FAILED run that stopped looking", () => {
+    // `decideConformanceOutcome` returns "failed" on the FIRST violation
+    // without counting what never ran, so "failed" cannot mean "finished".
+    // Reading it that way adopts the silence of every check that never ran —
+    // and an unread widget renders exactly like a compliant one.
+    const adapted = adaptAppsResultToClaudeEvidence({
+      result: { target: TARGET, outcome: "failed", checks: PARTLY_RAN },
+      expectation: { target: TARGET },
+      resourceContents: CONTENTS,
+    });
+    expect(adapted.ok).toBe(false);
+    if (adapted.ok) return;
+    expect(adapted.refusal).toBe("source_incomplete");
+  });
+
+  it("refuses a run that selected no checks at all", () => {
+    const adapted = adaptAppsResultToClaudeEvidence({
+      result: { target: TARGET, outcome: "passed", checks: [] },
+      expectation: { target: TARGET },
+      resourceContents: CONTENTS,
+    });
+    expect(adapted.ok).toBe(false);
+  });
+
   it("leaves the apps lane a named gap when the adaptation is refused", async () => {
     const refused = adaptAppsResultToClaudeEvidence({
-      result: { target: "https://other.example.com/mcp", outcome: "passed" },
+      result: {
+        target: "https://other.example.com/mcp",
+        outcome: "passed",
+        checks: RAN,
+      },
       expectation: { target: TARGET },
     });
     const evidence = await gatherClaudeReadinessEvidence({
