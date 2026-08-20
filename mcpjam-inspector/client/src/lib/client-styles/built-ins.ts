@@ -566,6 +566,17 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
       ...MCP_APPS_FULL_SURFACE,
       serverResources: false,
       logging: false,
+      // Same CSP answers as ChatGPT (2026-08-19 probe): widget-declared
+      // domains buy nothing except a WebSocket. Carried here as well as on
+      // the catalog row so the built-in style emulates them too.
+      cspConnectDomains: { fetch: false, xhr: false, websocket: true },
+      cspResourceDomains: {
+        script: false,
+        stylesheet: false,
+        image: false,
+        font: false,
+        media: false,
+      },
     },
     resolveStyleVariables: getChatGPTStyleVariables,
     // Codex is a CLI (no widget rendering surface), so the `window.openai`
