@@ -39,6 +39,7 @@ import App, {
   TracingRoute,
   XAAFlowRoute,
 } from "./App";
+import { LoginInitiationRoute } from "./components/auth/login-initiation-route";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import {
   buildHostsPath,
@@ -222,6 +223,10 @@ const ROUTE_ELEMENTS: Record<
   "ci-evals": { loader: ciEvalsRedirect },
   "ci-evals/*": { loader: ciEvalsRedirect },
   billing: { element: <ServersRoute /> },
+  // The WorkOS Initiate Login URL. Unlike the entries around it this renders a
+  // component of its own rather than Servers: it must call `signIn()` so
+  // authkit-js writes a PKCE verifier before the code lands on `/callback`.
+  login: { element: <LoginInitiationRoute /> },
   callback: { element: <ServersRoute /> },
   "oauth/callback/*": { element: <ServersRoute /> },
   "*": { element: <ServersRoute /> },
