@@ -2876,12 +2876,6 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     const admission = checkEvalHarnessStaticAdmission({
       hostConfig,
       serverIds: servers.serverIds,
-      // RESOLVED, not omitted: the dry run above already resolved this
-      // target's environment, so the pin is a fact we hold. `null` is the
-      // honest answer for a target with no environment at all — there is
-      // nowhere for a pin to live — and a harness needs one either way.
-      pinnedComputerImageId:
-        servers.environmentLaunch?.computerEnvironmentId ?? null,
     });
     if (!admission.ok) {
       throw new WebRouteError(
