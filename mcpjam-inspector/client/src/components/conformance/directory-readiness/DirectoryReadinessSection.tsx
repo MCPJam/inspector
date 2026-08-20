@@ -292,12 +292,19 @@ export function DirectoryReadinessSection({
                 <ReadinessLaneList
                   lanes={
                     state.report
-                      ? state.report.lanes.map((lane) => ({
-                          lane: lane.lane,
-                          status: lane.status,
-                          ...lane.coverage,
+                      ? // FIELD BY FIELD rather than spreading `coverage`.
+                        // Coverage carries its own `lane`, so a spread after
+                        // `lane:` writes the same key twice — harmless at
+                        // runtime, and a `tsc` error that fails the build.
+                        state.report.lanes.map((entry) => ({
+                          lane: entry.lane,
+                          status: entry.status,
+                          evaluated: entry.coverage.evaluated,
+                          notEvaluated: entry.coverage.notEvaluated,
+                          notApplicable: entry.coverage.notApplicable,
+                          missingInputs: entry.coverage.missingInputs,
                         }))
-                      : state.run?.lanes ?? []
+                      : (state.run?.lanes ?? [])
                   }
                   stages={
                     state.report && isOpenAIReadinessResult(state.report)
