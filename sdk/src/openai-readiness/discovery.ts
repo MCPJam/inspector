@@ -366,6 +366,17 @@ export interface OpenAISkillsEvidence {
   pagesWalked: number;
   /** Set when the listing was still paginating at the page cap. */
   paginationCapHit?: boolean;
+  /**
+   * Set when `skills/list` produced no answer this run could read at all —
+   * a transport failure, a timeout, or a status carrying no JSON body.
+   *
+   * SEPARATE FROM `listError`, which is also set when the server answered
+   * perfectly well and said "no". Whether the extension is advertised is
+   * unestablished in the first case and answered in the second, and the check
+   * that grades it has to be able to tell them apart: an unreachable host is a
+   * gap in this run, not a fault in the submission.
+   */
+  listUnreachable?: boolean;
   listError?: string;
   /**
    * When the listing was read.
@@ -404,7 +415,11 @@ async function callJsonRpc(
   id: number,
   method: string,
   params: Record<string, unknown>,
-): Promise<Record<string, unknown> | undefined> {
+): Promise<{
+  document?: Record<string, unknown>;
+  status?: number;
+  transportError?: string;
+}> {
   const result = await fetchDiscoveryJson(options.enteredUrl, options, {
     method: "POST",
     headers: {
@@ -413,7 +428,18 @@ async function callJsonRpc(
     },
     body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
   });
-  return result.document;
+  // THE STATUS AND THE ERROR RIDE ALONG, because "the server answered, and its
+  // answer was not a result" and "nothing answered at all" are different facts
+  // and only one of them is the server's fault. Returning the document alone
+  // collapsed them: a timeout and a 401 both arrived at the caller as
+  // `undefined`, which it read as "this server does not implement the
+  // extension" — a class-`required` violation raised against a host nobody
+  // reached.
+  return {
+    document: result.document,
+    status: result.status,
+    transportError: result.error,
+  };
 }
 
 /**
@@ -447,20 +473,31 @@ async function fetchImportedSkillBody(
     return;
   }
 
-  const document = await callJsonRpc(
-    options,
-    id,
-    OPENAI_MCP_SKILLS_METHODS.get,
-    { name },
-  );
+  const call = await callJsonRpc(options, id, OPENAI_MCP_SKILLS_METHODS.get, {
+    name,
+  });
+  const document = call.document;
 
-  const error = asRecord(document?.error);
+  // The transport's own failure, named. Every check that reads a derived field
+  // treats a skill carrying `fetchError` as unfetched, so the text here only
+  // ever has to explain the gap to a human — but "skills/get returned no
+  // result" explains the wrong gap when what happened was a timeout.
+  if (!document) {
+    skill.fetchError =
+      call.transportError ??
+      (call.status !== undefined
+        ? `skills/get answered ${call.status} with no readable JSON body`
+        : "skills/get returned no result");
+    return;
+  }
+
+  const error = asRecord(document.error);
   if (error) {
     skill.fetchError =
       asString(error.message) ?? "skills/get returned an error";
     return;
   }
-  const result = asRecord(document?.result);
+  const result = asRecord(document.result);
   if (!result) {
     skill.fetchError = "skills/get returned no result";
     return;
@@ -578,23 +615,40 @@ export async function discoverOpenAIImportedSkills(
   let pagesWalked = 0;
   let paginationCapHit = false;
   let listError: string | undefined;
+  let listUnreachable = false;
   let sawResult = false;
 
   for (let page = 0; page < MAX_SKILL_LIST_PAGES; page += 1) {
-    const document = await callJsonRpc(
+    const call = await callJsonRpc(
       options,
       100 + page,
       OPENAI_MCP_SKILLS_METHODS.list,
       cursor ? { cursor } : {},
     );
+    const document = call.document;
     pagesWalked += 1;
 
-    const error = asRecord(document?.error);
+    // NOTHING ANSWERED. Not the same as a server that answered without a
+    // result: this run never established anything about the extension, so the
+    // grade owes a coverage gap rather than a verdict. Recorded as its own
+    // field because `listError` alone cannot carry the distinction — it is set
+    // on both paths, and the check has to know which one it is reading.
+    if (!document) {
+      listUnreachable = true;
+      listError =
+        call.transportError ??
+        (call.status !== undefined
+          ? `skills/list answered ${call.status} with no readable JSON body`
+          : "skills/list could not be reached");
+      break;
+    }
+
+    const error = asRecord(document.error);
     if (error) {
       listError = asString(error.message) ?? "skills/list returned an error";
       break;
     }
-    const result = asRecord(document?.result);
+    const result = asRecord(document.result);
     if (!result) {
       listError = "skills/list returned no result";
       break;
@@ -641,6 +695,7 @@ export async function discoverOpenAIImportedSkills(
     skills,
     pagesWalked,
     paginationCapHit: paginationCapHit || undefined,
+    listUnreachable: listUnreachable || undefined,
     listError,
     scannedAt: now().toISOString(),
   };

@@ -72,7 +72,17 @@ export function parseLlmsIndex(body, baseUrl) {
   const slugs = new Set();
   for (const match of body.matchAll(/\]\(([^)\s]+)/g)) {
     let target = match[1];
-    if (target.startsWith(baseUrl)) {
+    // A PREFIX IS NOT A SEGMENT. `startsWith(baseUrl)` alone matches
+    // `https://developers.openai.com/plugins-legacy/x` against a base of
+    // `.../plugins` and slices it into the slug `-legacy/x` — a page the corpus
+    // can never pin, reported as drift forever. The boundary check is what
+    // makes the prefix mean "inside this docs tree".
+    if (
+      target === baseUrl ||
+      target.startsWith(`${baseUrl}/`) ||
+      target.startsWith(`${baseUrl}?`) ||
+      target.startsWith(`${baseUrl}#`)
+    ) {
       target = target.slice(baseUrl.length);
     } else if (/^https?:\/\//.test(target)) {
       continue;
@@ -87,8 +97,29 @@ export function parseLlmsIndex(body, baseUrl) {
     // The `plugins` prefix is matched as a whole SEGMENT for the same reason:
     // an unanchored `/^\/?plugins\/?/` would turn `plugins-guide/x` into
     // `-guide/x`.
-    const slug = target
-      .replace(/[#?].*$/, "")
+    const withoutFragment = target.replace(/[#?].*$/, "");
+
+    // THE DOCUMENTATION SETS ARE NOT PAGES. `llms.txt` links its own combined
+    // export, `llms-full.txt`, alongside the pages it indexes. Pinning that
+    // would mean fetching `llms-full.txt.md`, which 404s — so the phantom
+    // could never be reconciled and the weekly drift check would stay red,
+    // which is the failure that teaches maintainers to ignore the one alarm
+    // that means OpenAI changed the rules.
+    //
+    // The rule is about the EXTENSION, not about requiring `.md`: the index
+    // writes page links both ways (`/plugins/reference` and
+    // `/plugins/reference.md`), so demanding the twin would drop half the
+    // corpus. A path with no extension is a page; one ending `.md` is a page's
+    // twin; anything else is a file that is not a page.
+    const lastSegment = withoutFragment.split("/").filter(Boolean).pop() ?? "";
+    const extension = /\.([a-z0-9]+)$/i.exec(lastSegment)?.[1]?.toLowerCase();
+    if (extension && extension !== "md") continue;
+
+    const slug = withoutFragment
+      // `./build/skills.md` and `build/skills.md` are the same page. Dropped
+      // BEFORE the `plugins` segment strip, so a relative link cannot smuggle
+      // a `./` into the slug and read as a page the corpus does not pin.
+      .replace(/^\.\/+/, "")
       .replace(/^\/+/, "")
       .replace(/^plugins(?:\/|$)/, "")
       .replace(/\.md$/, "")

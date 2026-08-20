@@ -261,15 +261,37 @@ export function runOpenAIAuthChecks(
     return findings;
   }
 
+  // FETCHED AND ABSENT, or never fetched. `discoveredVia: "not-found"` is set
+  // for both — the well-known path answered 404, and the host answered nothing
+  // at all — and only the first is a missing document. The endpoint's own
+  // unauthenticated probe is the tell: when THAT never landed, the PRM requests
+  // went to the same host over the same transport and failed for the same
+  // reason, so this run established nothing to grade. Reporting a `violated`
+  // runtime-blocker there would tell a submitter to publish a document they may
+  // already have published, and would do it on the strength of a network event.
+  const endpointUnreached = !unauth || unauth.status === 0;
+
   if (!prm || prm.discoveredVia === "not-found") {
-    findings.push(
-      violated(
-        PRM_DISCOVERABLE,
-        stamp,
-        "Publish a Protected Resource Metadata document at the well-known path for the endpoint.",
-        { fetchError: prm?.fetchError },
-      ),
-    );
+    if (endpointUnreached || prm?.fetchError) {
+      findings.push(
+        notEvaluated(
+          PRM_DISCOVERABLE,
+          stamp,
+          prm?.fetchError
+            ? `the resource metadata document could not be fetched: ${prm.fetchError}`
+            : "the endpoint could not be reached, so its resource metadata was never fetched",
+        ),
+      );
+    } else {
+      findings.push(
+        violated(
+          PRM_DISCOVERABLE,
+          stamp,
+          "Publish a Protected Resource Metadata document at the well-known path for the endpoint.",
+          { fetchError: prm?.fetchError },
+        ),
+      );
+    }
   } else {
     findings.push(
       derivedFrom(

@@ -54,6 +54,16 @@ export interface OpenAISubmissionEvidence {
   annotatedTools?: string[];
   /** UI frame domains observed on the wire. */
   frameDomains?: string[];
+  /**
+   * Whether a version is already published, as the RUNNER resolved it.
+   *
+   * Threaded in rather than read off `profile.hasPublishedVersion`, because the
+   * profile is only one of the two places that fact can come from — a caller
+   * with no profile may state it directly — and the lane gate already resolves
+   * both. Reading the profile field here would let this module call a run a
+   * first submission while the release-contract lane grades it as an update.
+   */
+  hasPublishedVersion?: boolean;
 }
 
 const LISTING_FIELDS: OpenAICheckDefinition = {
@@ -405,7 +415,7 @@ export function runOpenAISubmissionChecks(
   // would fail every plugin's first attempt on a field that has nothing to
   // describe.
   findings.push(
-    !profile.hasPublishedVersion
+    !(evidence.hasPublishedVersion ?? profile.hasPublishedVersion)
       ? notApplicable(
           RELEASE_NOTES,
           stamp,

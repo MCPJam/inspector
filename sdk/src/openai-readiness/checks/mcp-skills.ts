@@ -144,6 +144,23 @@ export function runOpenAIMcpSkillChecks(
   const issues: OpenAIPortalIssue[] = [];
 
   if (!evidence.extensionAdvertised) {
+    // REACHED AND REFUSED, or never reached at all. Only the first is the
+    // submission's fault. A timeout or a 401 on this unauthenticated probe says
+    // nothing about whether the server implements the extension, and grading it
+    // `violated` — a class-`required` finding — would fail a submission on the
+    // strength of a network event.
+    if (evidence.listUnreachable) {
+      return ALL.map((definition) =>
+        notEvaluated(
+          definition,
+          stamp,
+          `this run could not read a skills listing from the server: ${
+            evidence.listError ?? "the request produced no readable answer"
+          }`,
+        ),
+      );
+    }
+
     findings.push(
       violated(
         EXTENSION_ADVERTISED,

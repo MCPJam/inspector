@@ -206,6 +206,44 @@ describe("auth", () => {
     }
   });
 
+  it("does not demand a PRM document from a host it never reached", () => {
+    // `discoveredVia: "not-found"` is recorded both when the well-known path
+    // answered 404 and when nothing answered at all, and only the first is a
+    // missing document. The endpoint's own probe is the tell: status 0 means
+    // the PRM requests went to the same host over the same transport and failed
+    // the same way, so this run established nothing. Telling a submitter to
+    // publish a document they may already have published — as a `violated`
+    // runtime-blocker, no less — is the cardinal sin this lane names in its own
+    // comments.
+    const findings = runOpenAIAuthChecks(
+      authEvidence({
+        unauthenticated: { status: 0, error: "connect ECONNREFUSED" },
+        prm: { discoveredVia: "not-found" },
+        authorizationServers: [],
+      }),
+      STAMP,
+    );
+    const prm = byId(findings, "openai.auth.prm-discoverable");
+    expect(prm.status).toBe("not-evaluated");
+    expect(prm.status).not.toBe("violated");
+  });
+
+  it("still reports a genuinely missing PRM document as a violation", () => {
+    // The other side of the same branch: the host answered its 401 perfectly
+    // well and simply publishes no metadata. That IS the submission's fault,
+    // and softening it would trade one lie for another.
+    const findings = runOpenAIAuthChecks(
+      authEvidence({
+        prm: { discoveredVia: "not-found" },
+        authorizationServers: [],
+      }),
+      STAMP,
+    );
+    expect(byId(findings, "openai.auth.prm-discoverable").status).toBe(
+      "violated",
+    );
+  });
+
   it("cites the conformance suite rather than re-deciding a shared rule", () => {
     // Two implementations of "a 401 carries a challenge" are two opinions about
     // the same server, and the first question about a disagreement is which to

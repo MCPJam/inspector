@@ -366,6 +366,32 @@ describe("mcp skills", () => {
     // vacuous pass over zero skills.
     expect(byId(findings, "openai.skills.caps").status).toBe("not-evaluated");
   });
+
+  it("does not blame the submission for a listing this run never reached", () => {
+    // A timeout or a 401 on this unauthenticated probe establishes nothing
+    // about whether the server implements the extension. Grading it `violated`
+    // — a class-`required` finding — fails a submission on a network event and
+    // flips the headline verdict to not-ready.
+    const findings = runOpenAIMcpSkillChecks(
+      {
+        mode: "mcp-imported-skills",
+        evidence: skills({
+          extensionAdvertised: false,
+          skills: [],
+          listUnreachable: true,
+          listError: "readiness discovery timed out",
+        }),
+      },
+      STAMP,
+    );
+    const extension = byId(findings, "openai.skills.extension");
+    expect(extension.status).toBe("not-evaluated");
+    expect(extension.notEvaluatedReason).toContain("timed out");
+    // And nothing downstream quietly passes over the listing nobody read.
+    expect(
+      findings.every((finding) => finding.status === "not-evaluated"),
+    ).toBe(true);
+  });
 });
 
 // ------------------------------------------------------------------ ui

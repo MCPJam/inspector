@@ -31,6 +31,95 @@ async function zipOf(entries: Record<string, string>): Promise<Uint8Array> {
   return zip.generateAsync({ type: "uint8array" });
 }
 
+const CRC32_TABLE = (() => {
+  const table = new Uint32Array(256);
+  for (let n = 0; n < 256; n += 1) {
+    let c = n;
+    for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    table[n] = c >>> 0;
+  }
+  return table;
+})();
+
+function crc32(bytes: Uint8Array): number {
+  let c = 0xffffffff;
+  for (const byte of bytes) c = CRC32_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/**
+ * A zip built from raw bytes, because the cases that matter cannot be written
+ * any other way.
+ *
+ * JSZip's WRITER normalizes on the way in — it collapses `//` and `./`, and its
+ * name-keyed store cannot hold the same name twice. Those are exactly the
+ * conditions the portal rejects, so a fixture built through JSZip can only
+ * produce archives that are already clean. This writes the local headers, the
+ * central directory and the EOCD directly, storing each entry uncompressed, so
+ * a test can put any name it likes in the directory — including the same one
+ * twice.
+ *
+ * `entries` is a LIST of pairs rather than a record, so duplicates survive.
+ */
+function rawZipOf(entries: [string, string][]): Uint8Array {
+  const local: Uint8Array[] = [];
+  const central: Uint8Array[] = [];
+  let offset = 0;
+
+  for (const [name, content] of entries) {
+    const nameBytes = encoder.encode(name);
+    const body = encoder.encode(content);
+    const sum = crc32(body);
+
+    const header = new Uint8Array(30 + nameBytes.byteLength);
+    const headerView = new DataView(header.buffer);
+    headerView.setUint32(0, 0x04034b50, true);
+    headerView.setUint16(4, 20, true);
+    headerView.setUint16(8, 0, true); // stored
+    headerView.setUint32(14, sum, true);
+    headerView.setUint32(18, body.byteLength, true);
+    headerView.setUint32(22, body.byteLength, true);
+    headerView.setUint16(26, nameBytes.byteLength, true);
+    header.set(nameBytes, 30);
+    local.push(header, body);
+
+    const entry = new Uint8Array(46 + nameBytes.byteLength);
+    const entryView = new DataView(entry.buffer);
+    entryView.setUint32(0, 0x02014b50, true);
+    entryView.setUint16(4, 20, true);
+    entryView.setUint16(6, 20, true);
+    entryView.setUint16(10, 0, true); // stored
+    entryView.setUint32(16, sum, true);
+    entryView.setUint32(20, body.byteLength, true);
+    entryView.setUint32(24, body.byteLength, true);
+    entryView.setUint16(28, nameBytes.byteLength, true);
+    entryView.setUint32(42, offset, true);
+    entry.set(nameBytes, 46);
+    central.push(entry);
+
+    offset += header.byteLength + body.byteLength;
+  }
+
+  const centralSize = central.reduce((sum, part) => sum + part.byteLength, 0);
+  const eocd = new Uint8Array(22);
+  const eocdView = new DataView(eocd.buffer);
+  eocdView.setUint32(0, 0x06054b50, true);
+  eocdView.setUint16(8, entries.length, true);
+  eocdView.setUint16(10, entries.length, true);
+  eocdView.setUint32(12, centralSize, true);
+  eocdView.setUint32(16, offset, true);
+
+  const parts = [...local, ...central, eocd];
+  const total = parts.reduce((sum, part) => sum + part.byteLength, 0);
+  const out = new Uint8Array(total);
+  let cursor = 0;
+  for (const part of parts) {
+    out.set(part, cursor);
+    cursor += part.byteLength;
+  }
+  return out;
+}
+
 describe("collectZipArchiveObservations", () => {
   it("reports the uploaded byte length, which is what the size limit measures", async () => {
     const bytes = await zipOf({ "plugin.json": "{}" });
@@ -62,6 +151,38 @@ describe("collectZipArchiveObservations", () => {
     const observed = await collectZipArchiveObservations(await zipOf({}));
     expect(observed.rawEntryNames).toEqual([]);
     expect(observed.compressedBytes).toBeGreaterThan(0);
+  });
+
+  it("keeps BOTH records of a duplicated name, which the loader collapses", async () => {
+    // The zip-confusion case, and the reason these names cannot come from the
+    // loader. JSZip's `files` is name-keyed, so two central-directory records
+    // for `dup.txt` arrive as one — last one wins. The reader would then grade
+    // whichever copy the loader kept while an extractor taking the FIRST gets
+    // different bytes, and the duplicate-path rule could never fire because
+    // there was no longer a duplicate to see.
+    const bytes = rawZipOf([
+      ["plugin.json", "{}"],
+      ["dup.txt", "first"],
+      ["dup.txt", "second"],
+    ]);
+    const observed = await collectZipArchiveObservations(bytes);
+    expect(observed.rawEntryNames).toEqual(["plugin.json", "dup.txt", "dup.txt"]);
+  });
+
+  it("reports traversal and empty segments as the directory spelled them", async () => {
+    // The other half of what the loader repairs: `..` is resolved and `//` and
+    // `./` are collapsed while it builds its tree. Each is a portal rejection,
+    // and each would reach the reader already fixed.
+    const bytes = rawZipOf([
+      ["plugin.json", "{}"],
+      ["../evil.txt", "x"],
+      ["a//b.txt", "y"],
+      ["./c.txt", "z"],
+    ]);
+    const observed = await collectZipArchiveObservations(bytes);
+    expect(observed.rawEntryNames).toContain("../evil.txt");
+    expect(observed.rawEntryNames).toContain("a//b.txt");
+    expect(observed.rawEntryNames).toContain("./c.txt");
   });
 
   it("states every archive fact as absent for a directory source", () => {

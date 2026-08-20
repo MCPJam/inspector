@@ -177,8 +177,19 @@ export const openaiSubmissionProfileSchema = z.object({
    * because nobody rescanned an unchanged server would be noise.
    */
   lastScanAt: z.string().datetime().optional(),
-  /** Whether a version of this plugin is already published. */
-  hasPublishedVersion: z.boolean().default(false),
+  /**
+   * Whether a version of this plugin is already published.
+   *
+   * OPTIONAL, NOT `.default(false)`. A default here answers a question the
+   * submitter never answered, and the runner is written to fall back to the
+   * gathered evidence (`?? evidence.hasPublishedVersion`) precisely when the
+   * profile is silent — a default makes that fallback unreachable. The cost is
+   * specific: an update whose profile omits this field would grade as a first
+   * submission, the release-contract lane would drop out of the stage as
+   * `not-applicable`, and a change that breaks the published tool contract
+   * would roll up `ready`.
+   */
+  hasPublishedVersion: z.boolean().optional(),
 
   /**
    * Attestation → whether the submitter affirmed it.

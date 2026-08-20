@@ -260,6 +260,31 @@ describe("the release-contract lane", () => {
       "release-contract",
     );
   });
+
+  it("falls back to the evidence when the profile is SILENT about publication", () => {
+    // The most expensive shape of "did not run reads as conformed" in this
+    // product. `hasPublishedVersion` was `.default(false)`, so a profile that
+    // simply omitted the field arrived at the runner asserting "not published"
+    // — indistinguishable from a submitter who said so. The documented
+    // fallback to the gathered evidence became unreachable, the lane dropped
+    // out of the stage as `not-applicable`, and an update that breaks the
+    // published tool contract rolled up `ready`.
+    const profile = completeSubmissionProfile({
+      releaseNotes: "Fixed a thing.",
+    });
+    delete (profile as { hasPublishedVersion?: boolean }).hasPublishedVersion;
+
+    const result = gradeOpenAIReadiness(
+      evidence({
+        mode: "mcp-only",
+        hasPublishedVersion: true,
+        submissionProfile: profile,
+      }),
+    );
+    expect(stage(result, "submission-ready").lanes).toContain(
+      "release-contract",
+    );
+  });
 });
 
 describe("a malformed profile is a caller's mistake, reported as one", () => {

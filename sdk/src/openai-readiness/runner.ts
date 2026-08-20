@@ -435,6 +435,7 @@ export function gradeOpenAIReadiness(
           profileIssues: parsedProfile.issues,
           annotatedTools,
           frameDomains: evidence.frameDomains,
+          hasPublishedVersion,
         },
         stamp,
       ),

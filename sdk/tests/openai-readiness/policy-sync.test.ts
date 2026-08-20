@@ -115,6 +115,44 @@ describe("parseLlmsIndex", () => {
     ).toEqual(new Set(["app-guidelines", "reference"]));
   });
 
+  it("ignores the index's own combined export, which is not a page", () => {
+    // `llms.txt` links `llms-full.txt` alongside the pages it indexes. Read as
+    // a slug it becomes one the corpus can never pin — the fetch would ask for
+    // `llms-full.txt.md` and get a 404 — so the drift check would report an
+    // added page every week with no way to reconcile it, which is precisely
+    // how a maintainer learns to stop reading this alarm.
+    expect(
+      parse(
+        [
+          "[full](https://developers.openai.com/plugins/llms-full.txt)",
+          "[page](https://developers.openai.com/plugins/reference.md)",
+        ].join("\n"),
+      ),
+    ).toEqual(new Set(["reference"]));
+  });
+
+  it("treats the base as a path SEGMENT, not a string prefix", () => {
+    // `plugins-legacy` starts with `plugins`. Slicing on the bare prefix turns
+    // it into the slug `-legacy/x`: a page that cannot be pinned and is
+    // therefore permanent drift.
+    expect(
+      parse(
+        [
+          "[legacy](https://developers.openai.com/plugins-legacy/reference.md)",
+          "[real](https://developers.openai.com/plugins/reference.md)",
+        ].join("\n"),
+      ),
+    ).toEqual(new Set(["reference"]));
+  });
+
+  it("reads a relative link as the same page as an absolute one", () => {
+    // `./build/skills.md` and `/plugins/build/skills.md` are one page. Leaving
+    // the `./` on makes them two, and the second is drift that never resolves.
+    expect(parse("[a](./build/skills.md) [b](/plugins/build/skills.md)")).toEqual(
+      new Set(["build/skills"]),
+    );
+  });
+
   it("does not mistake the index's own title for a page", () => {
     expect(parse("# Plugins\n\nSome prose with no links.")).toEqual(new Set());
   });
