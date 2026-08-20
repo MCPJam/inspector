@@ -229,3 +229,70 @@ describe("POST /api/mcp/conformance/oauth/complete", () => {
     expect(res.status).toBe(404);
   });
 });
+
+// ── Directory readiness (local, deterministic, free) ────────────────────
+
+describe("POST /api/mcp/conformance/readiness/:publisher", () => {
+  it("refuses a publisher outside the two vocabulary words", async () => {
+    const app = createTestApp(createMockManager());
+    const res = await postJson(app, "/api/mcp/conformance/readiness/gemini", {
+      serverId: "s1",
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("refuses an OpenAI run that declares no submission mode", async () => {
+    // Never inferred: inference reads a forgotten package as "MCP-only", which
+    // reports the package lane `not-applicable` — a missing input becoming a
+    // clean bill of health.
+    const app = createTestApp(createMockManager());
+    const res = await postJson(app, "/api/mcp/conformance/readiness/openai", {
+      serverId: "s1",
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("submissionModeRequired");
+  });
+
+  it("reports a server that is not connected", async () => {
+    const app = createTestApp(createMockManager());
+    const res = await postJson(app, "/api/mcp/conformance/readiness/claude", {
+      serverId: "s1",
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("notConnected");
+  });
+
+  it("refuses a stdio server, which no directory can list", async () => {
+    const manager = createMockManager({
+      getServerConfig: vi.fn().mockReturnValue({ command: "node" }),
+    });
+    const app = createTestApp(manager);
+    const res = await postJson(app, "/api/mcp/conformance/readiness/claude", {
+      serverId: "s1",
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json();
+    expect(body.code).toBe("unsupportedTransport");
+  });
+
+  it("has no way to ask for model observations", async () => {
+    // The flag is ABSENT from the schema rather than accepted and refused: a
+    // local run has no lease, no payer and no broker, so the honest surface is
+    // one that cannot ask. A flag here would suggest the capability exists on
+    // this path and is merely switched off.
+    const manager = createMockManager({
+      getServerConfig: vi.fn().mockReturnValue({ command: "node" }),
+    });
+    const app = createTestApp(manager);
+    const res = await postJson(app, "/api/mcp/conformance/readiness/claude", {
+      serverId: "s1",
+      includeLlmObservations: true,
+    });
+    // Rejected on the transport, NOT on the unknown key — the schema drops it
+    // silently, which is the point: there is nothing for it to switch on.
+    const body = await res.json();
+    expect(body.code).toBe("unsupportedTransport");
+  });
+});

@@ -562,6 +562,24 @@ export interface GatherOpenAIReadinessEvidenceOptions {
    * default would make the unguarded case the easy one to reach.
    */
   fetchFn?: typeof fetch;
+  /**
+   * Per-request budget for the wire half. The caller owns the run deadline.
+   *
+   * Threaded through rather than left to the discovery default because a
+   * hosted run and a local one have different ceilings: a hosted node is
+   * holding a lease with a heartbeat, and a probe that outran the lease would
+   * be swept mid-run.
+   */
+  timeoutMs?: number;
+  /**
+   * Headers the target needs, e.g. a saved server's credential.
+   *
+   * Without these a credentialed server answers `401` to every probe and the
+   * whole run reports an auth wall — a true observation about an
+   * unauthenticated dial, and the wrong one for a submitter grading their own
+   * server with a token they supplied.
+   */
+  headers?: Record<string, string>;
   /** A package source to read, when the submission shape uploads one. */
   packageSource?: PluginFileSource;
   /**
@@ -640,7 +658,12 @@ export async function gatherOpenAIReadinessEvidence(
   const wantsServer = OPENAI_SUBMISSION_MODE_SHAPES[options.mode].hasMcpServer;
   const discovery =
     options.fetchFn && wantsServer
-      ? { enteredUrl: options.target, fetchFn: options.fetchFn }
+      ? {
+          enteredUrl: options.target,
+          fetchFn: options.fetchFn,
+          timeoutMs: options.timeoutMs,
+          headers: options.headers,
+        }
       : undefined;
 
   const [endpoint, auth, domainVerification] = discovery
