@@ -86,22 +86,25 @@ export function harnessOfHostConfig(
 }
 
 /**
- * A harness eval iteration runs on ONE disposable box, and that box comes from
- * the environment's pinned computer image.
+ * A harness eval iteration runs on ONE disposable box — and a SUITE RUN is the
+ * only surface that boots one.
  *
- * REQUIRED, with no fallback to the acting member's personal computer. Falling
- * back would make eval runs stateful across runs — the point of a per-iteration
- * box is that every iteration starts from the same frozen image — and it would
- * quietly put a shared computer to work for a run nobody pointed at it.
+ * A single-case run passes `runId: null`, and both provisioning sites require a
+ * run, so no box is ever booted for it. Without one, `runHarnessTurn` falls
+ * through to `resolveHarnessSandbox` and runs on the acting member's PERSONAL
+ * computer — stateful, shared, and belonging to a person rather than to the run.
+ * That fallback is exactly what eval execution must never take, so the surface
+ * is refused instead. Pinning an image would not help: the surface itself is
+ * the constraint.
  */
-function harnessNeedsPinnedComputerReason(harness: Harness): string {
+function harnessNeedsSuiteRunReason(harness: Harness): string {
   const name = getHarnessAdapter(harness).displayName;
   return (
-    `the ${name} harness runs each eval iteration on a fresh computer, so this ` +
-    "run's environment must pin a computer image — pin one on the environment " +
-    "(or attach an environment that does) and retry. There is deliberately no " +
-    "fallback to your personal computer: eval iterations are disposable, and " +
-    "reusing a shared box would carry state between them."
+    `the ${name} harness runs each eval iteration on a fresh, disposable ` +
+    "computer, and a single-case run never provisions one. Run this case as " +
+    "part of a suite. There is deliberately no fallback to your personal " +
+    "computer: it is shared and stateful, and a run nobody pointed at it " +
+    "must not put it to work."
   );
 }
 
@@ -191,16 +194,6 @@ export function checkEvalHarnessStaticAdmission(args: {
    *  COUNT: a host whose MCP servers come solely from a plugin would otherwise
    *  slip the approval gate this exists to close. */
   pluginServerIds?: readonly string[];
-  /**
-   * The environment's pinned computer image, when the caller knows it.
-   *
-   * OMITTED means "not resolved here", NOT "absent", so a caller that never
-   * looked cannot refuse a run over a fact it does not hold. An explicit
-   * `null` is a RESOLVED absence and does refuse — which is what both callers
-   * pass today: the batch route resolves each target's environment during its
-   * dry run, and the prepare path reads the run's frozen environment.
-   */
-  pinnedComputerImageId?: string | null;
 }): EvalHarnessAdmission {
   const harness = harnessOfHostConfig(args.hostConfig);
   if (!harness) return { ok: true };
@@ -240,25 +233,11 @@ export function checkEvalHarnessStaticAdmission(args: {
     // empty probe id and not about anything the caller configured. Suppress it
     // here; the full check re-runs the same gate with real case models.
     if (!hostModelId && isModelKind(availability.kind)) {
-      return staticVerdict(harness, args.pinnedComputerImageId);
+      return { ok: true, harness };
     }
     return { ok: false, harness, reason: availability.reason };
   }
-  return staticVerdict(harness, args.pinnedComputerImageId);
-}
-
-/**
- * The static half's verdict. A pin the caller did not look up is not evidence
- * of a missing pin, so `undefined` admits and leaves the decision to the full
- * check; an explicit `null` is a resolved absence and refuses here.
- */
-function staticVerdict(
-  harness: Harness,
-  pinnedComputerImageId: string | null | undefined
-): EvalHarnessAdmission {
-  return pinnedComputerImageId === undefined
-    ? { ok: true, harness }
-    : admitHarness(harness, { pinnedComputerImageId });
+  return { ok: true, harness };
 }
 
 /**
@@ -274,8 +253,6 @@ export function checkEvalHarnessAdmission(args: {
   pluginServerIds?: readonly string[];
   /** The run's snapshotted cases (the recorder's `config.tests`). */
   cases: ReadonlyArray<EvalHarnessCase>;
-  /** The environment's pinned computer image; `null`/absent means none. */
-  pinnedComputerImageId?: string | null;
   /**
    * Titles of cases asserting `widgetRendered`. A harness reaches MCP through
    * the signed proxy, so the inspector's widget manager never sees those calls.
@@ -409,21 +386,15 @@ export function checkEvalHarnessAdmission(args: {
       ...(args.pluginServerIds
         ? { pluginServerIds: args.pluginServerIds }
         : {}),
-      // Explicitly `null` when absent: the FULL check has resolved the run's
-      // environment, so "no pin" here is a fact rather than "not looked up".
-      pinnedComputerImageId: args.pinnedComputerImageId ?? null,
     });
     if (!staticOnly.ok) return staticOnly;
   }
 
   return admitHarness(harness, {
-    pinnedComputerImageId: args.pinnedComputerImageId ?? null,
-    // Passed THROUGH, not coerced to null like the image above. The two are
-    // not symmetric: every caller of this check has resolved the run's
-    // environment (so "no pin" is a fact), but a caller may legitimately not
-    // know the project, and refusing over a fact we do not hold is the same
-    // mistake as admitting over one we do. The route passes an explicit `null`
-    // for an org-level suite, which is what refuses.
+    // Passed THROUGH, never coerced: a caller may legitimately not know the
+    // project, and refusing over a fact we do not hold is the same mistake as
+    // admitting over one we do. The route passes an explicit `null` for an
+    // org-level suite, which is what refuses.
     ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
     ...(args.widgetAssertingCaseTitles
       ? { widgetAssertingCaseTitles: args.widgetAssertingCaseTitles }
@@ -467,9 +438,12 @@ const COMPUTER_BACKED_BUILT_IN_TOOL_IDS: ReadonlySet<string> = new Set([
  * NOT part of the harness checks. `checkEvalHarnessAdmission` and its static
  * half both return `{ ok: true }` on their first line when no harness is
  * selected, so a rule placed there would never fire for an emulated run — and
- * emulated runs are precisely the ones this is about. (A harness run reaches
- * the same conclusion by a different route: `admitHarness` already requires a
- * pinned image outright.)
+ * emulated runs are precisely the ones this is about.
+ *
+ * A HARNESS run is exempt on the run surface: it provisions its own disposable
+ * box whether or not an image is pinned, so the premise of the rule ("there
+ * will be no computer") is simply false for it. It is refused on the
+ * single-case surface instead, where no box is booted at all.
  */
 export function checkEvalExecutionAdmission(args: {
   hostConfig: Record<string, unknown> | null | undefined;
@@ -498,11 +472,23 @@ export function checkEvalExecutionAdmission(args: {
    */
   surface?: "run" | "single-case";
 }): { ok: true } | { ok: false; reason: string } {
+  const singleCase = args.surface === "single-case";
+  const harness = harnessOfHostConfig(args.hostConfig);
+
+  // Checked BEFORE the built-in tool rule, and regardless of it: a harness on
+  // this surface would run on the acting member's personal computer no matter
+  // which tools the host grants.
+  if (singleCase && harness) {
+    return { ok: false, reason: harnessNeedsSuiteRunReason(harness) };
+  }
+
   const ids = args.hostConfig?.builtInToolIds;
   if (!Array.isArray(ids) || ids.length === 0) return { ok: true };
-  const singleCase = args.surface === "single-case";
-  // A pinned image only helps the surface that can actually boot from it.
-  if (!singleCase && args.pinnedComputerImageId) return { ok: true };
+  // A pinned image only helps the surface that can actually boot from it — and
+  // a harness run boots a box with or without one.
+  if (!singleCase && (args.pinnedComputerImageId || harness)) {
+    return { ok: true };
+  }
 
   const offending = ids.filter(
     (id): id is string =>
@@ -556,13 +542,21 @@ function isModelKind(kind: HarnessUnavailableKind): boolean {
 
 /**
  * The last two rules, applied after every shared-gate rule has passed: the run
- * needs a pinned computer image, and none of its cases may assert something a
- * harness run cannot observe.
+ * needs a project to provision and bill against, and none of its cases may
+ * assert something a harness run cannot observe.
+ *
+ * A pinned computer image is deliberately NOT among them. It used to be
+ * required outright, which on a deployment whose image builder is the inert
+ * `stub` left harness evals with no working road at all — the only permitted
+ * road was a custom image, and every image such a deployment can build boots a
+ * template the model broker then refuses to lease against. An unpinned run now
+ * boots the deployment-default template instead: still a fresh, disposable box
+ * per iteration, just not a custom one. The invariant that survives is the one
+ * that mattered — never the acting member's personal computer.
  */
 function admitHarness(
   harness: Harness,
   args: {
-    pinnedComputerImageId?: string | null;
     widgetAssertingCaseTitles?: readonly string[];
     /** `undefined` ⇒ the caller did not resolve one (the static half), so the
      *  rule is deferred to the full check rather than decided without evidence.
@@ -570,21 +564,11 @@ function admitHarness(
     projectId?: string | null;
   }
 ): EvalHarnessAdmission {
-  // Checked before the pinned-image rule: an org-level suite has neither, and
-  // "pin a computer image" would send the author to a setting that cannot fix
-  // a run with no project to pin it on.
   if (args.projectId === null) {
     return {
       ok: false,
       harness,
       reason: harnessNeedsProjectReason(harness),
-    };
-  }
-  if (!args.pinnedComputerImageId) {
-    return {
-      ok: false,
-      harness,
-      reason: harnessNeedsPinnedComputerReason(harness),
     };
   }
   const widgetCases = args.widgetAssertingCaseTitles ?? [];
