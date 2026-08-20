@@ -208,6 +208,7 @@ Each eval suite has a **Default Execution Config** section that controls the mod
 
 - **Model and prompt** — Set the default model ID, system prompt, and temperature for all runs in the suite. When running evals against MCP Apps that render widgets, the eval harness automatically enables browser interaction (screenshot, click, type) for any model that supports both vision and tool calling — not just Claude. Models that lack vision or tool calling run without browser interaction.
 - **Tool approval** — Toggle `requireToolApproval` to pause before each tool call during a run.
+- **Minimum iterations** — Set a floor on how many times each case runs. Every case runs at least this many times, regardless of its own iteration count. Use `mcpjam eval update --suite <name> --min-iterations <1-10>` to set this from the CLI; `off` removes the floor.
 - **Server selection** — Servers are not configured here. They come from the suite's environment. The server picker is intentionally hidden in this editor.
 - **Save / Reset** — Click **Save config** to persist changes. Click **Reset** to revert to the last saved state. Unsaved edits are preserved if the page refreshes the config from the server, but are discarded when you switch to a different suite.
 
