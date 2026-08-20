@@ -1874,6 +1874,10 @@ describe("operation catalog consistency", () => {
     list_eval_run_iterations: { project: "p", runId: "r" },
     get_eval_iteration_trace: { project: "p", runId: "r", iterationId: "i" },
     cancel_eval_run: { project: "p", runId: "r" },
+    request_claude_readiness_run: { project: "p", serverId: "s" },
+    list_claude_readiness_runs: { project: "p" },
+    get_claude_readiness_run: { project: "p", runId: "r" },
+    cancel_claude_readiness_run: { project: "p", runId: "r" },
     request_eval_run_judge: { project: "p", runId: "r" },
     list_eval_check_repos: {},
     connect_eval_check_repo: {
@@ -2024,6 +2028,10 @@ describe("operation catalog consistency", () => {
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
+      // Queuing a readiness grade creates a run row and dials a third party's
+      // server; cancelling terminates one in flight. Neither is a read.
+      "request_claude_readiness_run",
+      "cancel_claude_readiness_run",
       "request_eval_run_judge",
       "connect_eval_check_repo",
       "create_eval_suite",

@@ -36,7 +36,11 @@
  */
 import {
   callServerToolOperation,
+  cancelClaudeReadinessRunOperation,
   cancelEvalRunOperation,
+  getClaudeReadinessRunOperation,
+  listClaudeReadinessRunsOperation,
+  requestClaudeReadinessRunOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
@@ -834,6 +838,36 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Generate eval cases for ${named(input, "suite") ?? "(unnamed)"}`,
       buttonLabel: "Generate them",
       kind: "generate",
+    },
+  },
+  // ── CLAUDE DIRECTORY READINESS ────────────────────────────────────────
+  //
+  // Tiers derived from `operation.risk`, like everything else here. The reads
+  // are direct; starting a run is `spend` (hosted execution, and traffic to
+  // somebody else's server) so a person approves it; cancelling derives
+  // `excluded` from `destructive` and is deliberately gated instead — see the
+  // named exception in agent-op-registry.test.ts, for the same reason
+  // `cancel_journey_run` has one.
+  { operation: listClaudeReadinessRunsOperation, tier: "direct" },
+  { operation: getClaudeReadinessRunOperation, tier: "direct" },
+  {
+    operation: requestClaudeReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade server ${named(input, "serverId") ?? "(unnamed)"} against Claude's directory requirements`,
+      buttonLabel: "Grade it",
+      kind: "generate",
+    },
+  },
+  {
+    operation: cancelClaudeReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Cancel readiness run ${named(input, "runId") ?? "(unnamed)"}`,
+      buttonLabel: "Cancel the run",
+      kind: "cancel",
     },
   },
   {

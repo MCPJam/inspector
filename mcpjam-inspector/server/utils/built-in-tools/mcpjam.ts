@@ -35,6 +35,10 @@ import {
   diagnoseServerOperation,
   getProjectServerConnectionStatusOperation,
   cancelEvalRunOperation,
+  requestClaudeReadinessRunOperation,
+  listClaudeReadinessRunsOperation,
+  getClaudeReadinessRunOperation,
+  cancelClaudeReadinessRunOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   getScenarioOperation,
@@ -127,6 +131,13 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
+  // Claude directory readiness. The reads are plain; the two writes sit in
+  // APPROVAL_REQUIRED_IDS below — starting a run spends and dials somebody
+  // else's server, and cancelling one terminates work in flight.
+  requestClaudeReadinessRunOperation,
+  listClaudeReadinessRunsOperation,
+  getClaudeReadinessRunOperation,
+  cancelClaudeReadinessRunOperation,
   listScenariosOperation,
   getScenarioOperation,
   listChatSessionsOperation,
@@ -381,6 +392,11 @@ const CONNECTION_OPENING_IDS = new Set([
 const APPROVAL_REQUIRED_IDS = new Set([
   ...CONNECTION_OPENING_IDS,
   cancelEvalRunOperation.name,
+  // Starting a readiness run spends hosted execution and sends traffic to a
+  // third party's server; cancelling one terminates work in flight. Both are
+  // the user's to approve, for the same reasons their eval siblings are.
+  requestClaudeReadinessRunOperation.name,
+  cancelClaudeReadinessRunOperation.name,
   // SPENDS the organization's model budget, on a run the chat can name from
   // a list. Advertised rather than excluded because reading grades is only
   // useful if you can ask for them — but the spend is the user's to approve,

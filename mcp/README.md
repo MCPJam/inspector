@@ -113,6 +113,10 @@ so results respect the caller's project access.
 | `get_wave_insights` | The model's analysis of a whole wave, if one has been requested. Poll after requesting. | — |
 | `request_wave_insights` | Ask a model to analyze a whole wave. Spends against the organization's shared daily insights budget. | — |
 | `cancel_wave_insights` | Stop an in-flight insights generation — the recovery path for a wave stuck pending. | — |
+| `request_claude_readiness_run` | Queue a Claude directory-readiness grade for a saved MCP server. Asynchronous — poll `get_claude_readiness_run` for the verdict. Nothing here submits anything to Anthropic; it reports what a submission would be graded on. | — |
+| `list_claude_readiness_runs` | List recent Claude directory-readiness runs for a project, newest first, with each run's lane statuses and the coverage behind them. | — |
+| `get_claude_readiness_run` | Read one readiness run: its lifecycle `status`, the `overallStatus` verdict once it finishes, and per-lane coverage including what input would close a gap. | — |
+| `cancel_claude_readiness_run` | Stop a readiness run that is still queued or executing. It ends `cancelled` and is never reported as a failure of the connector. | — |
 | `publish_scenario` | Publish a project environment for user testing, returning its share link and access mode. | — |
 | `unpublish_scenario` | Take a live user-testing scenario down. Every guest session on it dies with it. | — |
 | `get_user_testing_scenario` | Scenario detail plus its actionable-insights envelope — aggregated findings with exemplar evidence over the latest analyzed window. | — |

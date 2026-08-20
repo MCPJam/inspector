@@ -885,6 +885,16 @@ describe("tier derives from operation.risk", () => {
   const TIER_EXCEPTIONS: Readonly<
     Record<string, { tier: Placement; reason: string }>
   > = {
+    cancel_claude_readiness_run: {
+      tier: "gated",
+      reason:
+        "Destructive would derive excluded, and that is the wrong answer for " +
+        "the same reason it was wrong for `cancel_journey_run`: this is the " +
+        "spend-STOPPER. Excluding it would let the agent propose starting a " +
+        "run that dials a third party's server and then have no way to " +
+        "propose stopping it. Nothing is removed — the run reaches a terminal " +
+        "`cancelled` status and stays in the project's history.",
+    },
     cancel_journey_run: {
       tier: "gated",
       reason:

@@ -135,6 +135,17 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_eval_suite_runs: { command: "eval runs" },
   run_eval_suite: { command: "eval run" },
   cancel_eval_run: { command: "eval cancel" },
+
+  // ── Claude directory readiness ──────────────────────────────────────────
+  // The LOCAL grade is `claude readiness --url`, which is a different command
+  // with no operation behind it: it runs the engine on this machine, against
+  // any URL, and exits on the verdict. These four are the HOSTED half — they
+  // grade a saved server and record the run in the project's history, which is
+  // what the product surfaces render and what a local run cannot do.
+  request_claude_readiness_run: { command: "claude runs start" },
+  list_claude_readiness_runs: { command: "claude runs list" },
+  get_claude_readiness_run: { command: "claude runs status" },
+  cancel_claude_readiness_run: { command: "claude runs cancel" },
   request_eval_run_judge: { command: "eval judge" },
   list_eval_check_repos: { command: "eval checks list" },
   connect_eval_check_repo: { command: "eval checks connect" },

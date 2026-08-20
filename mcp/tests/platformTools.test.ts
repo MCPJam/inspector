@@ -182,6 +182,11 @@ const PLAIN_TOOLS = [
   "get_wave_insights",
   "request_wave_insights",
   "cancel_wave_insights",
+  // Claude directory readiness: agent-oriented payloads, no widget view.
+  "request_claude_readiness_run",
+  "list_claude_readiness_runs",
+  "get_claude_readiness_run",
+  "cancel_claude_readiness_run",
   "publish_scenario",
   "unpublish_scenario",
   "get_user_testing_scenario",
@@ -394,6 +399,10 @@ describe("platform tool registration", () => {
       "get_wave_insights",
       "request_wave_insights",
       "cancel_wave_insights",
+      "request_claude_readiness_run",
+      "list_claude_readiness_runs",
+      "get_claude_readiness_run",
+      "cancel_claude_readiness_run",
       "publish_scenario",
       "unpublish_scenario",
       "get_user_testing_scenario",
@@ -504,6 +513,10 @@ describe("platform tool registration", () => {
       "cancel_wave_insights",
       // Launching spends across a fan-out, but it does not destroy anything.
       "launch_journey_run",
+      // Same shape for readiness: queuing a grade spends hosted execution and
+      // sends traffic to a third party's server, and creates a run row. It
+      // removes nothing.
+      "request_claude_readiness_run",
       // Publishing exposes an environment. Additive: it creates a scenario.
       "publish_scenario",
       // User testing writes that change state without removing anything.
@@ -533,6 +546,7 @@ describe("platform tool registration", () => {
       "delete_eval_case",
       // Cancelling a run terminates in-flight work, so it announces destructive.
       "cancel_eval_run",
+      "cancel_claude_readiness_run",
       "delete_project_server",
       // The swarm soft deletes: history survives, but the resource leaves the
       // roster and a second call answers not-found. From the caller's side

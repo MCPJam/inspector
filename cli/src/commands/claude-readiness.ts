@@ -3,6 +3,20 @@ import {
   type ClaudeReadinessResult,
   type ClaudeRunnerCapability,
 } from "@mcpjam/sdk";
+import {
+  cancelClaudeReadinessRunOperation,
+  getClaudeReadinessRunOperation,
+  listClaudeReadinessRunsOperation,
+  requestClaudeReadinessRunOperation,
+  type PlatformOperation,
+} from "@mcpjam/sdk/platform";
+import {
+  addPlatformOptions,
+  runPlatformCommand,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
+import { getGlobalOptions } from "../lib/server-config.js";
+import { writeResult } from "../lib/output.js";
 import { Command } from "commander";
 import { readFile } from "node:fs/promises";
 
@@ -138,6 +152,31 @@ function render(
   return format === "human" ? renderHuman(result) : JSON.stringify(result);
 }
 
+/**
+ * The hosted half: run a platform operation and print its result.
+ *
+ * Separate from the local grade above because they answer different questions.
+ * `claude readiness` grades a URL from THIS machine and exits on the verdict —
+ * that is the CI shape. `claude runs …` asks the platform to grade a SAVED
+ * server and records the result in the project's history, which is what the
+ * product surfaces render. A local run cannot do the second, and a hosted run
+ * cannot grade a URL nobody saved.
+ */
+async function executeOp<TInput, TOutput>(
+  op: PlatformOperation<TInput, TOutput>,
+  input: TInput,
+  options: PlatformOptions,
+  command: Command,
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  const result = await runPlatformCommand(
+    options,
+    globalOptions.timeout,
+    ({ client, signal }) => op.execute(input, { client, signal }),
+  );
+  writeResult(result, globalOptions.format);
+}
+
 export function registerClaudeReadinessCommands(program: Command): void {
   const claude = program
     .command("claude")
@@ -264,4 +303,127 @@ export function registerClaudeReadinessCommands(program: Command): void {
       process.stdout.write(`${render(result, reporter, format)}\n`);
       setProcessExitCode(claudeReadinessExitCode(result));
     });
+
+  // ── Hosted runs ────────────────────────────────────────────────────────
+  //
+  // A sibling group rather than subcommands of `readiness`: that command is a
+  // leaf with its own action, and hanging `start`/`status` off it would make
+  // `claude readiness --url …` and `claude readiness status …` look like the
+  // same operation with a flag.
+  const runs = claude
+    .command("runs")
+    .description("Readiness runs recorded on the MCPJam platform");
+
+  addPlatformOptions(
+    runs
+      .command("start")
+      .description(
+        "Queue a readiness grade for a saved server. Returns as soon as the run is queued — poll `claude runs status`.",
+      )
+      .requiredOption("--server <id>", "Saved server ID. Its URL is graded.")
+      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option(
+        "--idempotency-key <key>",
+        "Replay protection. A retry with the same key joins the run it already started instead of dialling the target twice.",
+      ),
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        server: string;
+        idempotencyKey?: string;
+      },
+      command: Command,
+    ) => {
+      await executeOp(
+        requestClaudeReadinessRunOperation,
+        {
+          project: options.project,
+          serverId: options.server,
+          ...(options.idempotencyKey !== undefined
+            ? { idempotencyKey: options.idempotencyKey }
+            : {}),
+        },
+        options,
+        command,
+      );
+    },
+  );
+
+  addPlatformOptions(
+    runs
+      .command("list")
+      .description("List recent readiness runs, newest first")
+      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--server <id>", "Only runs for this saved server")
+      .option(
+        "--limit <n>",
+        "How many runs to return (1–100)",
+        (value: string) => parsePositiveInteger(value, "Limit"),
+      ),
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        server?: string;
+        limit?: number;
+      },
+      command: Command,
+    ) => {
+      await executeOp(
+        listClaudeReadinessRunsOperation,
+        {
+          project: options.project,
+          ...(options.server !== undefined ? { serverId: options.server } : {}),
+          ...(options.limit !== undefined ? { limit: options.limit } : {}),
+        },
+        options,
+        command,
+      );
+    },
+  );
+
+  addPlatformOptions(
+    runs
+      .command("status")
+      .description(
+        "Read one readiness run. `status` is the run's lifecycle; `overallStatus` is the verdict, and is absent until it finishes.",
+      )
+      .requiredOption("--run <id>", "Readiness run ID (from `claude runs start`)")
+      .requiredOption("--project <id-or-name>", "Project name or ID"),
+  ).action(
+    async (
+      options: PlatformOptions & { project: string; run: string },
+      command: Command,
+    ) => {
+      await executeOp(
+        getClaudeReadinessRunOperation,
+        { project: options.project, runId: options.run },
+        options,
+        command,
+      );
+    },
+  );
+
+  addPlatformOptions(
+    runs
+      .command("cancel")
+      .description(
+        "Stop a run that is still queued or executing. It ends `cancelled` and is never reported as a failure of the connector.",
+      )
+      .requiredOption("--run <id>", "Readiness run ID")
+      .requiredOption("--project <id-or-name>", "Project name or ID"),
+  ).action(
+    async (
+      options: PlatformOptions & { project: string; run: string },
+      command: Command,
+    ) => {
+      await executeOp(
+        cancelClaudeReadinessRunOperation,
+        { project: options.project, runId: options.run },
+        options,
+        command,
+      );
+    },
+  );
 }
