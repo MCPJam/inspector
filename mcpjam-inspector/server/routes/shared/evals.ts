@@ -21,6 +21,7 @@ import { isTerminalRunStatus } from "../../services/evals/run-status.js";
 import {
   checkEvalExecutionAdmission,
   checkEvalHarnessAdmission,
+  harnessOfHostConfig,
 } from "../../services/evals/harness-admission";
 import {
   applyVisibilityPolicyAndCountSignals,
@@ -2072,6 +2073,12 @@ export async function prepareEvalRun(
   // For reruns, projectId may not be in the request — derive it from the
   // suite record so org BYOK keeps working.
   let projectIdForOrgConfig: string | undefined = projectId;
+  // "We asked and the suite has none" and "we could not ask" are different
+  // facts, and the harness gate below reads an absent project as the FORMER.
+  // Kept apart so a transient Convex failure is never reported as "this suite
+  // is org-level", which would send the author to change a setting that was
+  // never wrong.
+  let suiteProjectLookupFailed = false;
   if (!projectIdForOrgConfig && resolvedSuiteId) {
     try {
       const suite = await convexClient.query("testSuites:getTestSuite" as any, {
@@ -2081,11 +2088,30 @@ export async function prepareEvalRun(
         projectIdForOrgConfig = String(suite.projectId);
       }
     } catch (error) {
+      suiteProjectLookupFailed = true;
       logger.warn("[evals] Failed to load suite for projectId fallback", {
         suiteId: resolvedSuiteId,
         error: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  // Only a HARNESS run turns an unresolved project into a refusal — an
+  // emulated run merely loses its org-BYOK fallback, which is the behavior
+  // this lookup has always had on failure.
+  if (
+    !projectIdForOrgConfig &&
+    suiteProjectLookupFailed &&
+    harnessOfHostConfig(suiteHostConfig)
+  ) {
+    const reason =
+      "this run could not look up the suite's project, so the computer its " +
+      "harness iterations run on cannot be provisioned or billed. This is " +
+      "usually transient — retry the run.";
+    await failRunBeforeExecution(convexClient, recorder, runId, { reason });
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, reason, {
+      reason: "HARNESS_UNAVAILABLE",
+    });
   }
 
   // GENERAL EXECUTION GATE — every eval run, harness or emulated.

@@ -36,6 +36,7 @@
  */
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
+import { getCanonicalModelId } from "@/shared/types";
 import {
   checkHarnessRuntimeAvailable,
   type HarnessUnavailableKind,
@@ -120,6 +121,33 @@ function harnessNeedsProjectReason(harness: Harness): string {
     "against a project, and this suite is scoped to the organization rather " +
     "than to a project. Move the suite into a project (or run it on a " +
     "non-harness host) and retry."
+  );
+}
+
+/**
+ * A harness lease is authorized against the model the run PINNED, matched
+ * byte-exact — so the pinned spelling has to be the one the runtime will ask
+ * for.
+ *
+ * Names both forms, because the author's next action is a one-field edit and
+ * guessing which of their models is wrong is the expensive part.
+ */
+function harnessNeedsCanonicalModelReason(
+  harness: Harness,
+  byRaw: ReadonlyMap<string, string>
+): string {
+  const name = getHarnessAdapter(harness).displayName;
+  const pairs = [...byRaw.entries()]
+    .slice(0, 10)
+    .map(([raw, canonical]) => `"${raw}" → "${canonical}"`)
+    .join(", ");
+  const more = byRaw.size > 10 ? `, +${byRaw.size - 10} more` : "";
+  return (
+    `the ${name} harness leases model credentials against the model id this ` +
+    "run pinned, and these cases pin a short form that the runtime resolves " +
+    "to a different string — the lease would be refused mid-run, after the " +
+    "iteration's box had already started. Save the case with the full id " +
+    `instead: ${pairs}${more}`
   );
 }
 
@@ -336,6 +364,39 @@ export function checkEvalHarnessAdmission(args: {
       reason: `${ineligible[0]!.reason}. Ineligible cases: ${names
         .slice(0, 10)
         .join(", ")}${names.length > 10 ? `, +${names.length - 10} more` : ""}`,
+    };
+  }
+
+  // ── The pinned model must ALREADY be canonical ─────────────────────────
+  //
+  // The backend pins each iteration's host config from the case's model string
+  // VERBATIM, while `runHarnessTurn` canonicalizes before asking the broker for
+  // a lease (a bare `claude-sonnet-4-6` becomes `anthropic/claude-sonnet-4-6`,
+  // which is the form the adapter's native mapping and the pricing table
+  // understand). The broker's eval authorizer then compares the two BYTE-EXACT
+  // — deliberately, because a lease is a spending authorization and a loose
+  // match would let a box authorize a model its run never pinned.
+  //
+  // So a case whose stored model is not already canonical passes every check
+  // above, boots a PAID box, and only then dies at broker start with a
+  // deliberately opaque 403. Refuse it here instead, and name the id to store:
+  // the two spellings are the same model, so the fix is a re-save, not a
+  // different suite.
+  //
+  // Harness-only, and only until the case write paths normalize on save (the
+  // durable fix). An emulated run never asks for a lease, so a non-canonical id
+  // there is harmless and must not be refused.
+  const nonCanonical = new Map<string, string>();
+  for (const test of modelCases) {
+    const raw = String(test.model);
+    const canonical = getCanonicalModelId(raw, test.provider);
+    if (canonical !== raw) nonCanonical.set(raw, canonical);
+  }
+  if (nonCanonical.size > 0) {
+    return {
+      ok: false,
+      harness,
+      reason: harnessNeedsCanonicalModelReason(harness, nonCanonical),
     };
   }
 

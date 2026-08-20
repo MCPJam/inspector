@@ -331,6 +331,81 @@ describe("checkEvalHarnessAdmission — org-level suites", () => {
   });
 });
 
+describe("checkEvalHarnessAdmission — the pinned model must be canonical", () => {
+  // The backend pins the case's model string VERBATIM and the broker's eval
+  // authorizer matches it byte-exact against what the runtime asks for — and
+  // the runtime canonicalizes first. A short form therefore passes every other
+  // check, boots a paid box, and dies at broker start on an opaque 403.
+  const args = {
+    hostConfig: harnessHost(),
+    serverIds: ["srv-1"],
+    pinnedComputerImageId: "env-1",
+    projectId: "proj-1",
+  };
+  // Same model as HOSTED_MODEL, written the short way — which is what the
+  // public case-create API accepts and stores today.
+  const SHORT = { model: "claude-haiku-4.5", provider: "anthropic" };
+
+  it("refuses a case pinning a short model id, naming both spellings", () => {
+    const verdict = checkEvalHarnessAdmission({
+      ...args,
+      cases: [{ title: "a", ...SHORT }],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain('"claude-haiku-4.5"');
+    expect(verdict.reason).toContain('"anthropic/claude-haiku-4.5"');
+  });
+
+  it("admits the same model written canonically", () => {
+    expect(
+      checkEvalHarnessAdmission({
+        ...args,
+        cases: [{ title: "a", ...HOSTED_MODEL }],
+      }).ok
+    ).toBe(true);
+  });
+
+  it("reports an INELIGIBLE model first when a suite has both problems", () => {
+    // Ordering, not just refusal: a BYOK model cannot run the harness at ALL,
+    // so telling the author to re-spell a different case's id would send them
+    // to fix the smaller thing and hit the wall again.
+    const verdict = checkEvalHarnessAdmission({
+      ...args,
+      cases: [
+        { title: "byok", ...BYOK_MODEL },
+        { title: "short", ...SHORT },
+      ],
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("byok");
+    expect(verdict.reason).not.toContain("Save the case with the full id");
+  });
+
+  it("does not fire for an EMULATED host — no lease is ever requested", () => {
+    expect(
+      checkEvalHarnessAdmission({
+        hostConfig: { hostStyle: "mcpjam" },
+        cases: [{ title: "a", ...SHORT }],
+        pinnedComputerImageId: null,
+      }).ok
+    ).toBe(true);
+  });
+
+  it("ignores model-free cases, whose sentinel is not a model", () => {
+    expect(
+      checkEvalHarnessAdmission({
+        ...args,
+        cases: [
+          { title: "probe", model: "widget-probe", provider: "none" },
+          { title: "a", ...HOSTED_MODEL },
+        ],
+      }).ok
+    ).toBe(true);
+  });
+});
+
 describe("checkEvalExecutionAdmission", () => {
   // Runs for EVERY eval, harness or emulated. It cannot live in the harness
   // checks above, which return admitted on their first line when no harness is
