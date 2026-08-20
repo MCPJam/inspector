@@ -8246,15 +8246,6 @@
           "type": "string"
         }
       },
-      "scenarioId": {
-        "name": "scenarioId",
-        "in": "path",
-        "required": true,
-        "description": "Scenario ID, as returned by the project's scenario list.",
-        "schema": {
-          "type": "string"
-        }
-      },
       "hostId": {
         "name": "hostId",
         "in": "path",
@@ -11806,7 +11797,7 @@
           }
         }
       },
-      "Scenario": {
+      "ScenarioSummary": {
         "type": "object",
         "description": "Summary of a published scenario, as returned by the list endpoint.",
         "required": [
@@ -12037,7 +12028,7 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Scenario"
+              "$ref": "#/components/schemas/ScenarioSummary"
             }
           }
         }
