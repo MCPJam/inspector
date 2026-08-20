@@ -100,6 +100,12 @@ async function postServiceRoute(
     SERVICE_ROUTE_TIMEOUT_MS,
   );
   let response: Response;
+  // Parsed INSIDE the timeout. Clearing the timer when the headers arrive left
+  // the body read with no deadline at all, so a peer that answers and then
+  // stalls mid-body holds this open forever — and both the claim and the
+  // heartbeat wait on it, so one slow body wedges the loop the timeout exists
+  // to protect.
+  let parsed: any = null;
   try {
     response = await fetch(`${env.convexUrl}${path}`, {
       method: "POST",
@@ -114,14 +120,13 @@ async function postServiceRoute(
       // service token to another origin. Refuse to follow.
       redirect: "manual",
     });
+    try {
+      parsed = await response.json();
+    } catch {
+      // tolerated; status carries the signal
+    }
   } finally {
     clearTimeout(timeout);
-  }
-  let parsed: any = null;
-  try {
-    parsed = await response.json();
-  } catch {
-    // tolerated; status carries the signal
   }
   return { status: response.status, body: parsed };
 }
@@ -199,15 +204,27 @@ function startHeartbeat(
   return { stop: () => clearInterval(timer) };
 }
 
-/** Reject once `ms` has passed, so one stuck stage cannot hold the lease. */
-function withDeadline<T>(work: Promise<T>, ms: number): Promise<T> {
+/**
+ * Reject once `ms` has passed, and STOP the work rather than merely leaving it.
+ *
+ * A race alone abandons the run: nothing tells it to stop, so it keeps its MCP
+ * connection open and keeps dialling the connector with nobody left to read
+ * the answer. That is the same mistake cancellation was fixed for — "we
+ * stopped waiting" is not "we stopped asking" — so the deadline trips the same
+ * controller.
+ */
+function withDeadline<T>(
+  work: Promise<T>,
+  ms: number,
+  onExpiry: () => void,
+): Promise<T> {
   return Promise.race([
     work,
     new Promise<never>((_resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error("readiness run exceeded its time budget")),
-        ms,
-      );
+      const timer = setTimeout(() => {
+        onExpiry();
+        reject(new Error("readiness run exceeded its time budget"));
+      }, ms);
       timer.unref?.();
     }),
   ]);
@@ -261,6 +278,8 @@ export async function executeClaimedRun(
         signal: abort.signal,
       }),
       RUN_TIMEOUT_MS,
+      () =>
+        abort.abort(new Error("the readiness run exceeded its time budget")),
     );
 
     if (leaseLost) {
@@ -287,6 +306,17 @@ export async function executeClaimedRun(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (leaseLost) {
+      // Cancelled or swept, and the abort above is why this threw. Posting
+      // `runner_error` would file a deliberate stop as evidence against a
+      // connector that did nothing wrong — the exact confusion the cancel
+      // endpoint's own semantics exist to prevent. `return` still runs the
+      // `finally` below, so the heartbeat stops either way.
+      logger.info("[claude-readiness] stopped a run whose lease moved", {
+        runId: claim.runId,
+      });
+      return;
+    }
     // A FAILURE IS A RESULT. Left unreported, the row sits `running` until the
     // lease expires and recovery re-queues it — which re-dials a third party's
     // server for a run that already told us why it cannot work.

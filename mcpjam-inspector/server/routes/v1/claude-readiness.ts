@@ -37,6 +37,9 @@ import {
 
 const claudeReadiness = new Hono();
 
+/** Matches the ceiling the Convex query clamps to, and the OpenAPI schema. */
+const MAX_RUN_PAGE_SIZE = 100;
+
 /** What a caller may say about a run they are asking for. */
 const requestRunSchema = z
   .strictObject({
@@ -182,11 +185,17 @@ claudeReadiness.get("/projects/:projectId/claude-readiness-runs", async (c) => {
   const serverId = c.req.query("serverId");
   const limitRaw = c.req.query("limit");
   const limit = limitRaw === undefined ? undefined : Number(limitRaw);
-  if (limit !== undefined && (!Number.isInteger(limit) || limit < 1)) {
+  // Bounded here as well as upstream. Convex clamps silently, which is the
+  // right behaviour for a query and the wrong one for a documented API: a
+  // caller who asked for 500 and got 100 has no way to tell.
+  if (
+    limit !== undefined &&
+    (!Number.isInteger(limit) || limit < 1 || limit > MAX_RUN_PAGE_SIZE)
+  ) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "limit must be a positive integer",
+      `limit must be an integer between 1 and ${MAX_RUN_PAGE_SIZE}`,
     );
   }
 
@@ -206,41 +215,56 @@ claudeReadiness.get("/projects/:projectId/claude-readiness-runs", async (c) => {
   }
 });
 
+/**
+ * The run, if it belongs to the project in the path.
+ *
+ * `getReadinessRun` authorizes against the run's OWN project, which need not be
+ * the one the URL names — a member of two projects can reach a run from one of
+ * them under a URL naming the other, and a client that trusts its own URL then
+ * files it in the wrong place.
+ *
+ * ABSENT `projectId` means an older backend that does not return it yet, and
+ * this deliberately allows it rather than 404ing every read during a deploy.
+ * The caller is already authorized — Convex said so — and the residual harm is
+ * a client filing the run under the wrong project, which is smaller than the
+ * surface being unusable until both sides ship.
+ */
+async function requireRunInProject(
+  client: ConvexHttpClient,
+  projectId: string,
+  runId: string,
+): Promise<Record<string, unknown>> {
+  let run: Record<string, unknown> | null;
+  try {
+    run = (await client.query(
+      "claudeReadinessRuns:getReadinessRun" as never,
+      { runId } as never,
+    )) as Record<string, unknown> | null;
+  } catch (error) {
+    throw translateConvexReadError(error, { scope: "v1.claudeReadiness" });
+  }
+  if (
+    !run ||
+    (run.projectId !== undefined && String(run.projectId) !== projectId)
+  ) {
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Readiness run not found");
+  }
+  return run;
+}
+
 // GET /v1/projects/:projectId/claude-readiness-runs/:runId — one run.
 claudeReadiness.get(
   "/projects/:projectId/claude-readiness-runs/:runId",
   async (c) => {
-    const projectId = c.req.param("projectId");
-    const runId = c.req.param("runId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
-
-    let run: Record<string, unknown> | null;
-    try {
-      run = (await client.query(
-        "claudeReadinessRuns:getReadinessRun" as never,
-        { runId } as never,
-      )) as Record<string, unknown> | null;
-    } catch (error) {
-      throw translateConvexReadError(error, { scope: "v1.claudeReadiness" });
-    }
-    if (!run) {
-      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Readiness run not found");
-    }
-    // The Convex query authorizes against the run's OWN project, which need
-    // not be the one in the path. Without this a caller could read a run from
-    // any project they belong to under a URL naming a different one, and a
-    // client that trusts its own URL would file it in the wrong place.
-    //
-    // ABSENT means an older backend that does not return `projectId` yet, and
-    // this deliberately allows it rather than 404ing every read during a
-    // deploy. The caller is already authorized to read this run — Convex said
-    // so — and the residual harm is a client filing it under the wrong
-    // project, which is smaller than the surface being unusable until both
-    // sides ship.
-    if (run.projectId !== undefined && String(run.projectId) !== projectId) {
-      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Readiness run not found");
-    }
-    return v1Resource(c, run);
+    return v1Resource(
+      c,
+      await requireRunInProject(
+        client,
+        c.req.param("projectId"),
+        c.req.param("runId"),
+      ),
+    );
   },
 );
 
@@ -251,8 +275,16 @@ claudeReadiness.get(
 claudeReadiness.post(
   "/projects/:projectId/claude-readiness-runs/:runId/cancel",
   async (c) => {
+    const projectId = c.req.param("projectId");
     const runId = c.req.param("runId");
     const client = createConvexClient(await getConvexBearerForRequest(c));
+
+    // SCOPED LIKE THE READ BESIDE IT. Convex authorizes the write against the
+    // run's own project, so this is not an authorization gap — but without it
+    // a run can be cancelled through a URL naming an unrelated project, and
+    // the two sibling routes disagree about what the path means.
+    await requireRunInProject(client, projectId, runId);
+
     try {
       const result = (await client.mutation(
         "claudeReadinessRuns:cancelReadinessRun" as never,

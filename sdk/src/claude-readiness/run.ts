@@ -20,7 +20,7 @@
 import type { Tool } from "@modelcontextprotocol/client";
 
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
-import { listTools, withEphemeralClient } from "../operations.js";
+import { withEphemeralClient } from "../operations.js";
 import {
   claudeAppResourceEvidenceFrom,
   claudeAppToolEvidenceFrom,
@@ -111,24 +111,41 @@ const MAX_WIDGET_RESOURCE_READS = 25;
 const WIDGET_RESOURCE_BUDGET_MS = 30_000;
 
 /**
- * Reject once the budget is spent, whatever the underlying call is doing.
+ * A signal that fires when the caller cancels OR when this read's slice of the
+ * budget runs out, whichever comes first.
  *
- * `readResource` takes its timeout from the connection, which is per REQUEST;
- * this bounds the phase. The pending read is abandoned rather than cancelled —
- * the connection is torn down with the ephemeral client moments later.
+ * CANCELLING THE REQUEST, not racing it. A `Promise.race` leaves the read
+ * running: the connection stays open and the target keeps being asked for a
+ * resource nobody will read. `readResource` takes an MCP `RequestOptions`, so
+ * the abort reaches the request itself.
+ *
+ * `AbortSignal.any` is not available on every runtime this SDK ships to, hence
+ * the explicit composition — and `release()` removes the listener, because a
+ * run-length signal accumulating one per read is a leak that only shows up on
+ * a server with many widgets.
  */
-function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    work,
-    new Promise<never>((_resolve, reject) => {
-      const timer = setTimeout(
-        () => reject(new Error("widget resource read budget exhausted")),
-        ms
-      );
-      // Never hold the process open for a timer whose race already settled.
-      timer.unref?.();
-    }),
-  ]);
+function readDeadline(
+  runSignal: AbortSignal | undefined,
+  ms: number
+): { signal: AbortSignal; release: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error("widget resource read budget exhausted")),
+    ms
+  );
+  timer.unref?.();
+  const forward = () => controller.abort(runSignal?.reason);
+  if (runSignal) {
+    if (runSignal.aborted) forward();
+    else runSignal.addEventListener("abort", forward, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    release: () => {
+      clearTimeout(timer);
+      runSignal?.removeEventListener("abort", forward);
+    },
+  };
 }
 
 /** What one MCP connection yielded, or why it yielded nothing. */
@@ -173,7 +190,13 @@ async function gatherFromConnection(
     return await withEphemeralClient(
       serverConfig,
       async (manager, serverId) => {
-        const { tools } = await listTools(manager, { serverId });
+        // The manager directly rather than the `listTools` helper, which has
+        // no way to pass a signal: a cancelled run must not sit waiting on a
+        // tool listing it will discard.
+        const listed = await manager.listTools(serverId, undefined, {
+          signal: config.signal,
+        });
+        const tools = listed.tools ?? [];
         const appTools = tools
           .map((tool) => claudeAppToolEvidenceFrom(tool))
           .filter(
@@ -194,18 +217,24 @@ async function gatherFromConnection(
         const readsDeadline = Date.now() + WIDGET_RESOURCE_BUDGET_MS;
         for (const [index, uri] of uris.entries()) {
           const remainingMs = readsDeadline - Date.now();
-          if (index >= MAX_WIDGET_RESOURCE_READS || remainingMs <= 0) {
+          if (
+            index >= MAX_WIDGET_RESOURCE_READS ||
+            remainingMs <= 0 ||
+            config.signal?.aborted
+          ) {
             unreadResourceUris.push(uri);
             continue;
           }
+          // BOUNDED BY WHAT IS LEFT, not by the per-request timeout. Checking
+          // the deadline only before the call let a read that started one
+          // millisecond inside the budget run for a whole `timeoutMs` past it,
+          // which is a budget the last resource always gets to overrun.
+          const deadline = readDeadline(config.signal, remainingMs);
           try {
-            // BOUNDED BY WHAT IS LEFT, not by the per-request timeout. Checking
-            // the deadline only before the call let a read that started one
-            // millisecond inside the budget run for a whole `timeoutMs` past
-            // it, which is a budget the last resource always gets to overrun.
-            const contents = await withTimeout(
-              manager.readResource(serverId, { uri }),
-              remainingMs
+            const contents = await manager.readResource(
+              serverId,
+              { uri },
+              { signal: deadline.signal }
             );
             for (const content of contents.contents ?? []) {
               appResources.push(
@@ -228,6 +257,8 @@ async function gatherFromConnection(
             // Not fatal. A widget resource that cannot be read is graded by
             // the apps suite, whose verdict this run composes, and failing the
             // whole run over it would lose every other lane.
+          } finally {
+            deadline.release();
           }
         }
 

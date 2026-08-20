@@ -94,6 +94,9 @@ describe("executeClaimedRun", () => {
   });
   afterEach(() => {
     vi.unstubAllEnvs();
+    // NOT covered by `restoreAllMocks`: a `stubGlobal` fetch survives it and
+    // leaks into the loop tests below.
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
     runClaudeReadiness.mockReset();
     createStreamingPinnedFetch.mockClear();
@@ -192,6 +195,7 @@ describe("startClaudeReadinessWorker loop", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
 
@@ -226,7 +230,7 @@ describe("startClaudeReadinessWorker loop", () => {
 
     const handle = startClaudeReadinessWorker({ claim, execute });
     await flushLoop();
-    handle.stop();
+    await handle.stop();
     await vi.advanceTimersByTimeAsync(30_000);
 
     expect(execute).toHaveBeenCalledTimes(1);
@@ -242,7 +246,7 @@ describe("startClaudeReadinessWorker loop", () => {
 
     const handle = startClaudeReadinessWorker({ claim, execute });
     await flushLoop(3);
-    handle.stop();
+    await handle.stop();
     await vi.advanceTimersByTimeAsync(70_000);
 
     expect(claim.mock.calls.length).toBeLessThan(3);
@@ -258,10 +262,122 @@ describe("startClaudeReadinessWorker loop", () => {
 
     const handle = startClaudeReadinessWorker({ claim, execute });
     await flushLoop(10);
-    handle.stop();
+    await handle.stop();
     await vi.advanceTimersByTimeAsync(70_000);
 
     expect(claim.mock.calls.length).toBeGreaterThan(1);
     expect(execute).not.toHaveBeenCalled();
+  });
+});
+
+describe("a run whose lease moved", () => {
+  beforeEach(() => {
+    vi.stubEnv("CONVEX_HTTP_URL", "https://convex.test");
+    vi.stubEnv("INSPECTOR_SERVICE_TOKEN", "service-token");
+  });
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+    runClaudeReadiness.mockReset();
+    createStreamingPinnedFetch.mockClear();
+  });
+
+  /** A heartbeat that reports the lease gone, and everything else as normal. */
+  function mockLeaseLostFetch() {
+    const calls: Array<{ path: string; body: any }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: any) => {
+        const path = new URL(url).pathname;
+        calls.push({ path, body: JSON.parse(init.body) });
+        return {
+          status: 200,
+          json: async () =>
+            path.endsWith("/heartbeat")
+              ? { ok: true, alive: false }
+              : { ok: true, applied: true },
+        } as Response;
+      }),
+    );
+    return calls;
+  }
+
+  it("aborts the run rather than letting it keep dialling", async () => {
+    vi.useFakeTimers();
+    try {
+      mockLeaseLostFetch();
+      let observed: AbortSignal | undefined;
+      runClaudeReadiness.mockImplementation(async (config: any) => {
+        observed = config.signal;
+        // Never resolves on its own: the abort is what has to end this.
+        await new Promise((_resolve, reject) => {
+          config.signal.addEventListener("abort", () =>
+            reject(new Error("aborted")),
+          );
+        });
+      });
+
+      const run = executeClaimedRun(CLAIM);
+      // Past the first heartbeat, which answers `alive: false`.
+      await vi.advanceTimersByTimeAsync(61_000);
+      await run;
+
+      expect(observed?.aborted).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never files a cancellation as a connector failure", async () => {
+    vi.useFakeTimers();
+    try {
+      const calls = mockLeaseLostFetch();
+      runClaudeReadiness.mockImplementation(async (config: any) => {
+        await new Promise((_resolve, reject) => {
+          config.signal.addEventListener("abort", () =>
+            reject(new Error("aborted")),
+          );
+        });
+      });
+
+      const run = executeClaimedRun(CLAIM);
+      await vi.advanceTimersByTimeAsync(61_000);
+      await run;
+
+      // `runner_error` here would say the connector broke, when in fact
+      // somebody pressed cancel.
+      expect(calls.some((call) => call.body?.outcome === "failed")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("discards a result that finished into a moved lease", async () => {
+    vi.useFakeTimers();
+    try {
+      const calls = mockLeaseLostFetch();
+      runClaudeReadiness.mockImplementation(async () => {
+        // Outlives the first heartbeat, then succeeds anyway.
+        await new Promise((resolve) => setTimeout(resolve, 90_000));
+        return readinessResult("ready");
+      });
+
+      const run = executeClaimedRun(CLAIM);
+      await vi.advanceTimersByTimeAsync(120_000);
+      await run;
+
+      // Storing a report for a row that will never read it is a blob nothing
+      // frees; the backend would reject the write on the job id regardless.
+      expect(
+        calls.some(
+          (call) =>
+            call.path === "/internal/v1/claude-readiness/runs" &&
+            call.body?.report !== undefined,
+        ),
+      ).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

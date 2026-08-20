@@ -256,6 +256,7 @@ describe("GET …/claude-readiness-runs", () => {
 
 describe("POST …/claude-readiness-runs/:runId/cancel", () => {
   it("cancels through Convex, which clears the lease", async () => {
+    queryMock.mockResolvedValue({ id: RUN, projectId: PROJECT });
     mutationMock.mockResolvedValue({ cancelled: true });
 
     const response = await request(
@@ -271,6 +272,7 @@ describe("POST …/claude-readiness-runs/:runId/cancel", () => {
   });
 
   it("reports a run that had already stopped as a conflict, not bad input", async () => {
+    queryMock.mockResolvedValue({ id: RUN, projectId: PROJECT });
     const error = Object.assign(new Error("This readiness run is not in progress"), {
       data: { code: "CONFLICT", message: "This readiness run is not in progress" },
     });
@@ -281,5 +283,53 @@ describe("POST …/claude-readiness-runs/:runId/cancel", () => {
       { method: "POST" },
     );
     expect(response.status).toBe(409);
+  });
+});
+
+describe("the bounds a documented API owes its callers", () => {
+  it("rejects a limit above the page ceiling instead of silently clamping", async () => {
+    // Convex clamps, which is right for a query and wrong for a documented
+    // API: a caller who asked for 500 and got 100 has no way to tell.
+    const response = await request(
+      `/projects/${PROJECT}/claude-readiness-runs?limit=101`,
+    );
+    expect(response.status).toBe(400);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts the ceiling itself", async () => {
+    queryMock.mockResolvedValue([]);
+    const response = await request(
+      `/projects/${PROJECT}/claude-readiness-runs?limit=100`,
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it("rejects a body that is not JSON", async () => {
+    queryMock.mockResolvedValue(savedServer());
+    const response = await request(
+      `/projects/${PROJECT}/servers/${SERVER}/claude-readiness-runs`,
+      {
+        method: "POST",
+        body: "{not json",
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(response.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("refuses to cancel a run belonging to another project", async () => {
+    // The sibling GET already refuses this. Without the same check here, a run
+    // can be stopped through a URL naming a project it has nothing to do with.
+    queryMock.mockResolvedValue({ id: RUN, projectId: "proj_b" });
+
+    const response = await request(
+      `/projects/${PROJECT}/claude-readiness-runs/${RUN}/cancel`,
+      { method: "POST" },
+    );
+
+    expect(response.status).toBe(404);
+    expect(mutationMock).not.toHaveBeenCalled();
   });
 });
