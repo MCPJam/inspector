@@ -64,6 +64,34 @@ test("caniuse compare table fills the viewport and keeps its header pinned", asy
     ).toBe(true);
   }).toPass({ timeout: 30_000 });
 
+  // Everything below drives real pointer input, which a signed-out hosted
+  // deployment will not accept. `HostedShellGate` (App.tsx) wraps the whole
+  // app, and under `MCPJAM_NONPROD_LOCKDOWN` — which staging runs with — a
+  // signed-out visitor gets an overlay plus `inert` + `pointer-events-none`
+  // on the content. `scroller.hover()` then never resolves: Playwright's
+  // actionability check keeps landing on the gate's Sign in button and
+  // retries until the enclosing `toPass` gives up, which surfaces as a bare
+  // "Timeout exceeded while waiting on the predicate" with no assertion
+  // behind it. The geometry above is unaffected (the gate changes input, not
+  // layout) and still measures the real deployed table, so only this half is
+  // skipped. The un-gated local build in the `Tests` workflow runs it in
+  // full. Same reasoning as nux.spec.ts's hosted-auth skip.
+  //
+  // Only paid against a deployed target; a local build is never hosted.
+  const gated =
+    !!process.env.PLAYWRIGHT_BASE_URL &&
+    (await page
+      .getByTestId("hosted-shell-gate-overlay")
+      .waitFor({ state: "visible", timeout: 5_000 })
+      .then(
+        () => true,
+        () => false
+      ));
+  test.skip(
+    gated,
+    "signed-out hosted lockdown makes the page inert; pointer-driven scrolling can't be exercised there"
+  );
+
   // The header row stays at a fixed spot in the viewport across a real,
   // physical scroll (not just a single before/after snapshot — a
   // transform-vs-sticky mismatch can let it drift partway through). Hover the
