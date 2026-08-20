@@ -1,0 +1,64 @@
+---
+title: "Registry"
+description: "Browse and connect pre-configured MCP servers from curated and public directories"
+icon: "package"
+---
+
+The Registry tab lets you browse and connect MCP servers from two sources: a curated catalog of pre-configured servers and mirrored public connector directories.
+
+## Curated catalog
+
+The top section shows a curated grid of pre-configured MCP servers. Each card displays the server name, publisher, authentication type, and a **Connect** button.
+
+- **OAuth** badge — the server uses OAuth 2.0 for authentication. Clicking **Connect** starts the OAuth flow.
+- **No auth** badge — the server does not require authentication.
+- **App** / **Text** badges — servers that offer both an MCP App (widget) variant and a plain text variant show both badges. Use the **Connect** dropdown to choose which variant to install.
+
+Star a server with the star button to save it for quick access.
+
+## Connector directories
+
+Below the curated catalog, the **Connector directories** section mirrors public MCP server listings. Use the search box, source selector, and filters to find connectors.
+
+### Filters
+
+| Control | Description |
+|---------|-------------|
+| Search | Filter by server name or description |
+| Source | Switch between available public directories (Claude directory by default) |
+| Connectable only | Hide servers that cannot be connected directly |
+| Tier | Filter by verification tier (Anthropic, Partner, Community) — available on sources that publish tiers |
+
+### Directory server cards
+
+Each directory card shows the server name, source provenance, and one or more status badges. Click a card to open the detail dialog with the full description, tool list, and publisher information.
+
+#### Status badges
+
+| Badge | Meaning |
+|-------|---------|
+| **Anthropic** / **Partner** / **Community** | Verification tier assigned by the directory source |
+| **Choose endpoint** | The server publishes multiple regional or environment endpoints — you must pick one before connecting |
+| **Your instance** | The server runs on your own infrastructure — you must supply your instance URL before connecting |
+| **Requires pre-registered client** | MCPJam's nightly OAuth probe confirmed that this server's authorization server does not support Dynamic Client Registration (DCR) or Client ID Metadata Documents (CIMD). Connecting requires OAuth credentials issued directly by the vendor. |
+
+### "Requires pre-registered client" badge
+
+This badge is based on a probe fact, not the upstream directory listing. MCPJam periodically probes each connectable server's authorization server to determine its OAuth registration posture. The badge appears only when:
+
+- The probe **resolved** successfully (the authorization server responded with its metadata), and
+- The authorization server offers **neither DCR nor CIMD** — the two self-service registration paths.
+
+Servers that support DCR or CIMD do not show this badge. Servers that have not been probed yet, or whose probe was inconclusive (`no_metadata` or `unreachable`), also do not show this badge.
+
+When you see this badge, you need credentials (a client ID and optionally a client secret) issued by the vendor before you can complete the OAuth flow. Use the [OAuth Debugger](/inspector/guided-oauth) with the **Pre-registered** registration strategy and supply those credentials.
+
+## Connecting a server
+
+1. Find the server in the curated catalog or connector directories.
+2. Click **Connect**.
+   - If the server requires an endpoint choice, a dialog prompts you to select or enter a URL.
+   - If the server uses OAuth, the browser opens the authorization screen.
+3. After authorization, MCPJam adds the server to your active project and navigates to the Connect tab.
+
+If the server is already connected to your project, you see an info message and are taken to the Connect tab instead.
