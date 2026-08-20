@@ -562,40 +562,136 @@ function createOAuthReport(
  * of `checks`, and a `status` that is a three-value readiness verdict rather
  * than a pass/fail. Discriminating on `lanes` is enough — no suite has one.
  */
+/**
+ * What the generic readiness renderer needs to know about ONE publisher.
+ *
+ * `kind` alone is not enough, and assuming it was is what would break the
+ * moment a second publisher appeared. Two things vary per provider and neither
+ * is derivable from a string: how to RECOGNISE that provider's result among
+ * the union `toConformanceReport` accepts, and which of its findings are
+ * DISPOSITIVE. Claude's structural discriminator — lanes + findings + badges —
+ * matches OpenAI's result too, so a renderer that switched on shape alone
+ * would label an OpenAI grade "Claude Directory Readiness". Passing the type
+ * predicate in makes each provider responsible for identifying its own
+ * results, and passing the dispositive policy in keeps the renderer from
+ * baking in one publisher's idea of what fails a lane.
+ */
+export interface DirectoryReadinessRenderPolicy {
+  /** The report kind this provider stamps onto its reports. */
+  kind: ConformanceReportKind;
+  /** Human-readable report name. */
+  providerName: string;
+  /**
+   * Whether a finding can DECIDE a lane, and therefore renders as a testcase
+   * rather than an advisory. Supplied by the provider so the renderer and that
+   * provider's `decideLaneStatus` cannot drift into disagreeing about the same
+   * finding.
+   */
+  isDispositive: (finding: GenericReadinessFinding) => boolean;
+}
+
+export interface DirectoryReadinessReportProvider<
+  Result extends SupportedConformanceResult,
+> extends DirectoryReadinessRenderPolicy {
+  /** Recognise this provider's result within the accepted union. */
+  isResult: (result: SupportedConformanceResult) => result is Result;
+}
+
+/**
+ * The readiness result shape the renderer actually reads.
+ *
+ * Structural rather than a union of the concrete result types: the renderer
+ * touches lanes, findings and a target, and naming the fields it uses keeps a
+ * third publisher from having to edit this file to be renderable.
+ */
+interface GenericReadinessFinding {
+  id: string;
+  title: string;
+  lane: string;
+  class: string;
+  status: string;
+  remediation?: string;
+  source: unknown;
+  provenance: string;
+  intrusiveness: string;
+  requiresCapabilities?: string[];
+  notEvaluatedReason?: string;
+  details?: Record<string, unknown>;
+  derivedFrom?: string[];
+}
+
+interface GenericReadinessResult {
+  status: "ready" | "not-ready" | "incomplete";
+  summary: string;
+  context: { target: string };
+  lanes: { lane: string; status: string; summary: string }[];
+  findings: GenericReadinessFinding[];
+  durationMs: number;
+}
+
 function isClaudeReadinessResult(
   result: SupportedConformanceResult,
 ): result is ClaudeReadinessResult {
-  return "lanes" in result && "findings" in result && "badges" in result;
+  return (
+    "lanes" in result &&
+    "findings" in result &&
+    "badges" in result &&
+    // NOT structural alone. OpenAI's readiness result carries lanes, findings
+    // and badges too, so the shape test that used to be sufficient would now
+    // route an OpenAI grade into the Claude adapter and publish it under
+    // Anthropic's name. `readinessKind` is the explicit discriminator; its
+    // ABSENCE means Claude, because Claude's result predates the field and
+    // adding it would have been a breaking change to a published shape.
+    !("readinessKind" in result)
+  );
 }
 
 /**
  * Only findings that can DECIDE a lane become testcases; everything else is an
  * advisory. A CI job that fails on a heuristic teaches its owners to ignore the
  * job, and a capability badge is not a defect at all.
- *
- * The predicate itself is imported rather than restated, so the renderer and
- * `decideLaneStatus` cannot drift into disagreeing about the same finding.
  */
-const isDispositiveFinding = isDispositiveClaudeFinding;
+export const CLAUDE_READINESS_REPORT_PROVIDER: DirectoryReadinessReportProvider<ClaudeReadinessResult> =
+  {
+    kind: "claude-directory-readiness",
+    providerName: "Claude Directory Readiness",
+    isResult: isClaudeReadinessResult,
+    // The predicate itself is imported rather than restated, so the renderer
+    // and `decideLaneStatus` cannot drift into disagreeing about the same
+    // finding.
+    isDispositive: (finding) =>
+      isDispositiveClaudeFinding(
+        finding as unknown as Pick<ClaudeReadinessFinding, "class">,
+      ),
+  };
 
 function readinessCaseStatus(
-  finding: ClaudeReadinessFinding,
+  finding: GenericReadinessFinding,
 ): ConformanceReportCaseStatus {
   if (finding.status === "violated") return "failed";
   if (finding.status === "satisfied") return "passed";
   return "skipped";
 }
 
-function createClaudeReadinessReport(
-  result: ClaudeReadinessResult,
+/**
+ * Render any publisher's readiness result into the shared report shape.
+ *
+ * DELIBERATELY NO `score`, for any provider. Readiness grades a publisher's
+ * listing policy, not the MCP spec, and pooling it with the four conformance
+ * suites would put directory paperwork into a protocol-conformance number.
+ */
+function createDirectoryReadinessReport(
+  result: GenericReadinessResult,
+  provider: DirectoryReadinessRenderPolicy,
 ): ConformanceReport {
+  const isDispositiveFinding = provider.isDispositive;
   const advisories: ConformanceReportAdvisory[] = [];
   // `lanes` and `findings` are independent arrays on the result, so nothing in
   // the type says every finding's lane appears in `lanes`. When it does not,
   // an unconsumed finding — a VIOLATED requirement included — would vanish
   // from the report with no counter and no error. Tracking what was consumed
   // and sweeping the remainder into advisories keeps the report total.
-  const consumed = new Set<ClaudeReadinessFinding>();
+  const consumed = new Set<GenericReadinessFinding>();
   const groups: ConformanceReportGroup[] = result.lanes.map((lane) => {
     const laneFindings = result.findings.filter(
       (finding) => finding.lane === lane.lane,
@@ -687,8 +783,8 @@ function createClaudeReadinessReport(
 
   return {
     schemaVersion: 1,
-    kind: "claude-directory-readiness",
-    name: "Claude Directory Readiness",
+    kind: provider.kind,
+    name: provider.providerName,
     passed: result.status === "ready",
     outcome:
       result.status === "ready"
@@ -698,13 +794,49 @@ function createClaudeReadinessReport(
           : "incomplete",
     incompleteReason:
       result.status === "incomplete" ? result.summary : undefined,
-    // DELIBERATELY NO `score`. Readiness grades Anthropic's policy, not the
-    // MCP spec, and pooling it with the four conformance suites would put a
-    // publisher's listing requirements into a protocol-conformance number.
+    // DELIBERATELY NO `score` — see the docblock above.
     durationMs: result.durationMs,
     groups,
     advisories,
   };
+}
+
+/**
+ * Every readiness provider, in the order `toConformanceReport` tries them.
+ *
+ * A registry rather than a chain of `if`s so adding a publisher is one entry
+ * here plus its own module — and so the ONE thing that must stay true across
+ * providers, that exactly one recognises any given result, is visible in a
+ * single place.
+ */
+const READINESS_REPORT_PROVIDERS: DirectoryReadinessReportProvider<never>[] = [
+  CLAUDE_READINESS_REPORT_PROVIDER as unknown as DirectoryReadinessReportProvider<never>,
+];
+
+/**
+ * Register a readiness provider from outside this module.
+ *
+ * Exists so a publisher module owns its own descriptor instead of this file
+ * importing every publisher's result type — the import direction that would
+ * make `conformance-reporting` depend on every readiness product there will
+ * ever be.
+ */
+export function registerDirectoryReadinessProvider<
+  Result extends SupportedConformanceResult,
+>(provider: DirectoryReadinessReportProvider<Result>): void {
+  if (READINESS_REPORT_PROVIDERS.some((known) => known.kind === provider.kind)) {
+    return;
+  }
+  READINESS_REPORT_PROVIDERS.push(
+    provider as unknown as DirectoryReadinessReportProvider<never>,
+  );
+}
+
+/** The first provider that recognises this result, if any. */
+function matchReadinessProvider(
+  result: SupportedConformanceResult,
+): DirectoryReadinessReportProvider<never> | undefined {
+  return READINESS_REPORT_PROVIDERS.find((provider) => provider.isResult(result));
 }
 
 export function toConformanceReport(
@@ -739,8 +871,12 @@ export function toConformanceReport(
 ): ConformanceReport {
   // First: readiness is not a suite, and every discriminator below is written
   // for suite shapes.
-  if (isClaudeReadinessResult(result)) {
-    return createClaudeReadinessReport(result);
+  const readinessProvider = matchReadinessProvider(result);
+  if (readinessProvider) {
+    return createDirectoryReadinessReport(
+      result as unknown as GenericReadinessResult,
+      readinessProvider,
+    );
   }
 
   if (isMcpSingleResult(result) || isMcpSuiteResult(result)) {
