@@ -51,8 +51,10 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("claude")?.capabilities).toBeDefined();
     expect(profileFor("cursor")?.capabilities?.message).toBe(false);
     expect(profileFor("goose")?.capabilities?.serverTools).toBe(false);
+    // Codex gained a matrix with the 2026-08-19 probe: it renders MCP Apps
+    // via the same runtime as ChatGPT, so it is no longer headless.
+    expect(profileFor("codex")?.capabilities).toBeDefined();
     // Headless hosts render nothing → no matrix.
-    expect(profileFor("codex")?.capabilities).toBeUndefined();
     expect(profileFor("perplexity")?.capabilities).toBeUndefined();
   });
 
@@ -71,10 +73,16 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("goose")?.supportedProtocolVersions).toEqual([
       "2025-03-26",
     ]);
+    // Ladder-probed: both reach further back than the single version they
+    // happen to negotiate by default, and Codex does not reach 2026-07-28.
     expect(profileFor("codex")?.supportedProtocolVersions).toEqual([
+      "2025-03-26",
       "2025-06-18",
+      "2025-11-25",
     ]);
     expect(profileFor("claude")?.supportedProtocolVersions).toEqual([
+      "2025-03-26",
+      "2025-06-18",
       "2025-11-25",
       "2026-07-28",
     ]);
@@ -131,9 +139,15 @@ describe("evaluateMarketHosts (real catalog verdicts)", () => {
   const dualWidget = toolsWith({ w: { ...mcpAppsMeta, ...openaiMeta } });
   const clean = { widgetUsage: {} };
 
-  it("a dual-bridge widget works in Claude but degrades in Codex (headless)", () => {
+  it("a dual-bridge widget works in Claude and Codex, degrades headless", () => {
     expect(verdictFor("claude", dualWidget, clean)).toBe("works");
-    expect(verdictFor("codex", dualWidget, clean)).toBe("degraded");
+    // Was "degraded" until the 2026-08-19 probe showed Codex rendering MCP
+    // Apps on the ChatGPT runtime. Asserted explicitly because this verdict
+    // flip is the user-visible half of that catalog change.
+    expect(verdictFor("codex", dualWidget, clean)).toBe("works");
+    // Codex used to be this case's headless example; keep the dual-bridge
+    // degrade path covered with a host that really is headless.
+    expect(verdictFor("perplexity", dualWidget, clean)).toBe("degraded");
   });
 
   it("headless hosts degrade an MCP Apps widget to text", () => {
