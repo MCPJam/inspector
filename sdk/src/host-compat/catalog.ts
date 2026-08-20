@@ -203,10 +203,29 @@ function hostConfigFromCatalogHost(
     verifiedAt: _verifiedAt,
     imageSupport: _imageSupport,
     compatibilityEvidence: _compatibilityEvidence,
+    styleVariablesByTheme: _styleVariablesByTheme,
     ...config
   } = host;
+  // The rest object is a real host config that callers save back through
+  // `hosts:updateHost`, whose validator rejects unknown fields. So every
+  // metadata-only key has to be named above: miss one and the leak only shows
+  // up as a server-side ArgumentValidationError at save time. This assignment
+  // stops compiling the moment `HostCatalogMetadata` gains a key that is not
+  // destructured out.
+  const _noMetadataLeak: [
+    Extract<keyof typeof config, MetadataOnlyKey>,
+  ] extends [never]
+    ? true
+    : ["metadata key leaks into host config", keyof typeof config] = true;
+  void _noMetadataLeak;
   return config;
 }
+
+/** Catalog facts that describe a host but are not part of its saved config. */
+type MetadataOnlyKey = Exclude<
+  keyof HostCatalogMetadata,
+  keyof SeededHostConfigInput
+>;
 
 function templateRendersOpenAiApps(
   host: HostCompatCatalogHost | undefined
