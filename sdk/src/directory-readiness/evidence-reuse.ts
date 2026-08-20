@@ -115,8 +115,18 @@ export function sameReadinessTarget(left: string, right: string): boolean {
       url.hash = "";
       url.searchParams.sort();
       const path = url.pathname.replace(/\/+$/, "");
+      // USERINFO IS PART OF THE IDENTITY. `url.host` drops it, so
+      // `https://tenant-a@example.com/mcp` and `https://tenant-b@example.com/mcp`
+      // would compare equal — and with no config fingerprint on either side,
+      // one tenant's evidence would be adopted as the other's. Case-SENSITIVE,
+      // unlike the host beside it: a username is not a hostname.
+      const userinfo = url.username
+        ? `${url.username}${url.password ? `:${url.password}` : ""}@`
+        : "";
       const authority = `${url.protocol}//${url.host}`.toLowerCase();
-      return `${authority}${path}${url.search}`;
+      return `${url.protocol}//${userinfo}${authority.slice(
+        url.protocol.length + 2,
+      )}${path}${url.search}`;
     } catch {
       return value.trim();
     }

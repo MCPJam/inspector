@@ -151,6 +151,15 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+/** A cap that is a positive, finite, safe integer — or the default. */
+function boundedCap(value: number | undefined, fallback: number): number {
+  return typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value > 0
+    ? value
+    : fallback;
+}
+
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -283,9 +292,22 @@ async function walkListing<Entry>(
   sessionId: string | undefined,
   read: (entry: Record<string, unknown>) => Entry | undefined,
 ): Promise<DirectoryListingEvidence<Entry>> {
-  const maxPages = options.maxListPages ?? DIRECTORY_DIAL_DEFAULTS.maxListPages;
-  const maxEntries =
-    options.maxListEntries ?? DIRECTORY_DIAL_DEFAULTS.maxListEntries;
+  // CAPS ARE SANITISED BEFORE THE WALK, and the reason is specific: a
+  // `maxListPages` of `0`, `-1` or `NaN` makes the loop body never run, and
+  // the walk then returns zero entries with `complete: true` — an unread
+  // listing graded as "this server advertises nothing", which is the single
+  // worst thing this module can produce. `Infinity` fails the other way, by
+  // removing the bound entirely. Neither is worth propagating as an error: a
+  // nonsense cap is a caller bug, and falling back to the default keeps the
+  // run honest while it is fixed.
+  const maxPages = boundedCap(
+    options.maxListPages,
+    DIRECTORY_DIAL_DEFAULTS.maxListPages,
+  );
+  const maxEntries = boundedCap(
+    options.maxListEntries,
+    DIRECTORY_DIAL_DEFAULTS.maxListEntries,
+  );
   const headers = sessionId ? { "mcp-session-id": sessionId } : undefined;
 
   const entries: Entry[] = [];

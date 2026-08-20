@@ -2422,3 +2422,141 @@ export interface PlatformServerConnectionCreateBody {
   name?: string;
   reauthorize?: boolean;
 }
+
+// ── Directory readiness ─────────────────────────────────────────────────
+
+/**
+ * The two words the public vocabulary uses.
+ *
+ * Never `anthropic`/`chatgpt`: a caller writes what the product says, and the
+ * product says "Claude directory readiness" and "OpenAI plugin directory".
+ */
+export type PlatformReadinessKind = "claude" | "openai";
+
+/**
+ * The submission shapes a HOSTED run may grade.
+ *
+ * The package shapes are real and are deliberately absent here: they need an
+ * upload the API cannot receive, and they run on the local CLI. Listing them
+ * in this type would let a caller write a request the server refuses.
+ */
+export type PlatformReadinessSubmissionMode =
+  | "mcp-only"
+  | "mcp-imported-skills";
+
+export type PlatformReadinessLaneStatus = "ready" | "not-ready" | "incomplete";
+
+/**
+ * What one lane managed to look at, reported separately from what it found.
+ *
+ * A lane with zero violations and zero evaluated checks is not a pass, and
+ * publishing the denominator is the only way to keep those apart.
+ */
+export interface PlatformReadinessLaneCoverage {
+  lane: string;
+  status: PlatformReadinessLaneStatus;
+  evaluated: number;
+  notEvaluated: number;
+  notApplicable: number;
+  /** Named inputs the caller could supply to close the gap. */
+  missingInputs: string[];
+}
+
+export interface PlatformReadinessStageResult {
+  stage: "technical-preflight" | "submission-ready";
+  status: PlatformReadinessLaneStatus;
+  lanes: string[];
+}
+
+/**
+ * The model-observation axis, INDEPENDENT of the run's own status.
+ *
+ * `billing_limit_reached` is the value a client keys a top-up prompt on — it
+ * is machine-readable precisely so nobody has to string-match `detail`.
+ */
+export interface PlatformReadinessObservationState {
+  status:
+    | "not-requested"
+    | "pending"
+    | "completed"
+    | "billing-blocked"
+    | "provider-failed"
+    | "invalid-output";
+  reason?:
+    | "not_requested"
+    | "billing_limit_reached"
+    | "provider_error"
+    | "provider_timeout"
+    | "schema_invalid"
+    | "no_evidence"
+    | "cancelled";
+  detail?: string;
+}
+
+export interface PlatformReadinessRun {
+  id: string;
+  readinessKind: PlatformReadinessKind;
+  serverUrl: string;
+  submissionMode: PlatformReadinessSubmissionMode | null;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  overallStatus: PlatformReadinessLaneStatus | null;
+  lanes: PlatformReadinessLaneCoverage[];
+  stages: PlatformReadinessStageResult[];
+  authMode: "headless" | "interactive" | "provided-token" | null;
+  capabilities: string[];
+  attemptCount: number;
+  terminalReason: string | null;
+  errorMessage: string | null;
+  policySnapshotDate: string | null;
+  engineVersion: string | null;
+  sdkVersion: string | null;
+  includeLlmObservations: boolean;
+  llmObservations: PlatformReadinessObservationState;
+  hasReport: boolean;
+  reportUrl: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** The `202` receipt. Poll the run detail; do not re-POST. */
+export interface PlatformReadinessRunReceipt {
+  runId: string;
+  projectId: string;
+  serverId: string;
+  readinessKind: PlatformReadinessKind;
+  status: string;
+  deduped?: boolean;
+  includeLlmObservations: boolean;
+}
+
+/** Fields both start endpoints accept. */
+export interface PlatformReadinessStartBody {
+  /**
+   * Deduplicates a retried POST.
+   *
+   * More load-bearing here than usual: a readiness run dials a third party's
+   * server, and a retried start that created a second run would do that twice.
+   */
+  idempotencyKey?: string;
+  /**
+   * Add model-backed experience observations. CONSUMES MCPJam CREDITS.
+   *
+   * Off by default. Observations are non-dispositive — they can never make a
+   * server not-ready — and a refused reservation makes no provider call and
+   * completes the run with `llmObservations.reason` of
+   * `billing_limit_reached`.
+   */
+  includeLlmObservations?: boolean;
+}
+
+export interface PlatformOpenAIReadinessStartBody
+  extends PlatformReadinessStartBody {
+  /**
+   * The DECLARED submission shape. REQUIRED, and never inferred.
+   *
+   * Inference reads a forgotten package as `mcp-only`, which reports the
+   * package lane not-applicable — turning a missing input into a clean bill of
+   * health.
+   */
+  submissionMode: PlatformReadinessSubmissionMode;
+}

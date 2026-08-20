@@ -277,6 +277,52 @@ describe("POST /api/mcp/conformance/readiness/:publisher", () => {
     expect(body.code).toBe("unsupportedTransport");
   });
 
+  // `null` and `""` are the two shapes a hand-written client actually sends
+  // when it means "unset": a JSON serializer that emits nulls for absent
+  // fields, and a form control whose empty state is the empty string. Both
+  // must lose at the door with a code, because both are indistinguishable
+  // from a real value once past it — an empty `serverId` would resolve to
+  // nothing, and an empty `submissionMode` would satisfy the OpenAI
+  // required-mode check while grading against no declared shape at all.
+  const malformedBodies: Array<[string, Record<string, unknown>]> = [
+    ["serverId is null", { serverId: null }],
+    ["serverId is empty", { serverId: "" }],
+    ["submissionMode is null", { serverId: "s1", submissionMode: null }],
+    ["submissionMode is empty", { serverId: "s1", submissionMode: "" }],
+  ];
+
+  for (const [name, payload] of malformedBodies) {
+    it(`refuses a claude run whose ${name}`, async () => {
+      const app = createTestApp(createMockManager());
+      const res = await postJson(
+        app,
+        "/api/mcp/conformance/readiness/claude",
+        payload,
+      );
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.success).toBe(false);
+      expect(body.code).toBe("invalidRequest");
+    });
+
+    it(`refuses an openai run whose ${name}`, async () => {
+      // The schema runs BEFORE the required-mode check, so an empty or null
+      // mode reports as a malformed body rather than as a missing one — the
+      // distinction matters, because `submissionModeRequired` tells a caller
+      // to add a field it may believe it already sent.
+      const app = createTestApp(createMockManager());
+      const res = await postJson(
+        app,
+        "/api/mcp/conformance/readiness/openai",
+        payload,
+      );
+      expect(res.status).toBe(400);
+      const body = await res.json();
+      expect(body.success).toBe(false);
+      expect(body.code).toBe("invalidRequest");
+    });
+  }
+
   it("has no way to ask for model observations", async () => {
     // The flag is ABSENT from the schema rather than accepted and refused: a
     // local run has no lease, no payer and no broker, so the honest surface is

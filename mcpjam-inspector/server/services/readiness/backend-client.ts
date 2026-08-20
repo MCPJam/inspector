@@ -117,7 +117,12 @@ export async function heartbeatReadinessRun(
       HEARTBEAT_TIMEOUT_MS,
     );
     try {
-      if (!response.ok) return { alive: true };
+      if (!response.ok) {
+        // The body is never read on this path, and an unread body holds its
+        // keep-alive connection until GC. Cancelling hands it back now.
+        await response.body?.cancel().catch(() => undefined);
+        return { alive: true };
+      }
       const body = (await response.json().catch(() => null)) as {
         alive?: unknown;
       } | null;
@@ -255,6 +260,7 @@ export async function finalizeReadinessRun(
   );
   try {
     if (response.status === 413) {
+      await response.body?.cancel().catch(() => undefined);
       // A report over the ingestion cap is a FAILED run rather than a lost one:
       // recording the reason is what tells a reader why they have no report,
       // where silence reads as a node that vanished.

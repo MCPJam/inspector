@@ -163,9 +163,35 @@ export async function createZipPluginFileSource(
       });
       return out;
     },
+    /**
+     * Read one entry, refusing an oversized one BEFORE it is inflated.
+     *
+     * `entry.async` decompresses the whole thing into memory and only then
+     * could a caller measure it — which is the shape of a zip bomb: a few
+     * kilobytes on disk that expand to gigabytes in the heap, with the size
+     * check arriving after the damage. The central directory declares the
+     * uncompressed size, so the cheap refusal is available first.
+     *
+     * The post-read check STAYS. The declared size is the archive's own claim
+     * about itself, and an archive that lies about it is exactly the archive
+     * this guard is for; the second check measures what actually came out.
+     */
     async readBytes(path: string, maxBytes: number) {
       const entry = zip.file(path);
       if (!entry) throw new Error(`Bundle file "${path}" is missing`);
+
+      const declared = (entry as { _data?: { uncompressedSize?: unknown } })
+        ._data?.uncompressedSize;
+      if (
+        typeof declared === "number" &&
+        Number.isFinite(declared) &&
+        declared > maxBytes
+      ) {
+        throw new Error(
+          `Bundle file "${path}" declares ${declared} bytes, over the ${maxBytes} byte limit`
+        );
+      }
+
       const bytes = await entry.async("uint8array");
       if (bytes.byteLength > maxBytes) {
         throw new Error(

@@ -300,6 +300,11 @@ describe("the failure exits", () => {
         includeLlmObservations: false,
       }),
     ).resolves.toBeUndefined();
+    // Swallowing the throw is only half of it. The worker must still have
+    // ATTEMPTED the fallback write, or this test would pass identically
+    // against a worker that caught the finalize failure and gave up — which
+    // is the exact bug the case above is meant to be paired with.
+    expect(failReadinessRun).toHaveBeenCalledTimes(1);
   });
 });
 

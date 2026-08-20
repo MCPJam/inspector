@@ -437,10 +437,15 @@ conformance.post("/readiness/:publisher", async (c) => {
     const body = await readRequestJson(c);
     const parsed = readinessSchema.safeParse(body);
     if (!parsed.success) {
+      // One stable code for every shape rejection, so a caller can branch on
+      // "my request was malformed" without parsing the human sentence. The
+      // sentence names WHICH field; the code says only that the body lost at
+      // the door, before any server was resolved or dialled.
       return c.json(
         {
           success: false,
           error: parsed.error.issues[0]?.message ?? "Invalid request",
+          code: "invalidRequest",
         },
         400,
       );
