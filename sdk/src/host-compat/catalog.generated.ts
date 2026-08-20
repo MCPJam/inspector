@@ -625,7 +625,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.235",
+            version: "2.1.237",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -1026,7 +1026,16 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             csp: {
               mode: "declared",
               cspDirectives: {
-                "frame-src": ["'self'", "https:", "data:", "blob:"],
+                "connect-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                ],
+                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "frame-src": ["'self'", "data:", "blob:"],
               },
             },
             permissions: {
@@ -1059,16 +1068,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             cspFrameDomains: true,
             cspBaseUriDomains: true,
             cspConnectDomains: {
-              fetch: false,
-              xhr: false,
+              fetch: true,
+              xhr: true,
               websocket: true,
-            },
-            cspResourceDomains: {
-              script: false,
-              stylesheet: false,
-              image: false,
-              font: false,
-              media: false,
             },
             resourcePrefersBorder: true,
             downloadFile: false,
@@ -2053,6 +2055,11 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
         requestTimeout: 10000,
       },
       clientCapabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app", "text/html+skybridge"],
+          },
+        },
         elicitation: {
           form: {},
           url: {},
@@ -2187,16 +2194,9 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             cspFrameDomains: true,
             cspBaseUriDomains: true,
             cspConnectDomains: {
-              fetch: false,
-              xhr: false,
+              fetch: true,
+              xhr: true,
               websocket: true,
-            },
-            cspResourceDomains: {
-              script: false,
-              stylesheet: false,
-              image: false,
-              font: false,
-              media: false,
             },
             resourcePrefersBorder: true,
             toolCancelled: false,

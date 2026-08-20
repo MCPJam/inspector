@@ -106,6 +106,17 @@ describe("seedHostTemplate", () => {
     expect(config.computer).toEqual({ kind: "personal" });
     // Codex (like Claude Code) can't pause for interactive approval.
     expect(config.requireToolApproval).toBe(false);
+    expect(config.clientCapabilities).toMatchObject({
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: ["text/html;profile=mcp-app", "text/html+skybridge"],
+        },
+      },
+      elicitation: { form: {}, url: {} },
+    });
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
   });
 
   it("threads appVersion into the mcpjam template (and only it)", () => {
