@@ -9050,7 +9050,33 @@
         ],
         "responses": {
           "200": {
-            "description": "The run was cancelled."
+            "description": "The run was cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "runId",
+                    "projectId",
+                    "status"
+                  ],
+                  "properties": {
+                    "runId": {
+                      "type": "string"
+                    },
+                    "projectId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "cancelled"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
           },
           "409": {
             "description": "The run already reached a terminal status."
@@ -19572,7 +19598,16 @@
           "lanes": {
             "type": "array",
             "items": {
-              "type": "string"
+              "type": "string",
+              "enum": [
+                "runtime-compatibility",
+                "directory-policy",
+                "optional-features",
+                "submission-artifacts",
+                "experience-insights",
+                "plugin-package",
+                "release-contract"
+              ]
             },
             "description": "The lanes this stage rolled up, so the verdict is reproducible by hand."
           }
@@ -19621,10 +19656,25 @@
         "required": [
           "id",
           "readinessKind",
+          "serverId",
           "serverUrl",
+          "submissionMode",
           "status",
+          "overallStatus",
           "lanes",
+          "stages",
+          "authMode",
+          "capabilities",
+          "attemptCount",
+          "terminalReason",
+          "errorMessage",
+          "policySnapshotDate",
+          "engineVersion",
+          "sdkVersion",
+          "includeLlmObservations",
           "llmObservations",
+          "hasReport",
+          "reportUrl",
           "createdAt",
           "updatedAt"
         ],
@@ -19638,6 +19688,11 @@
               "claude",
               "openai"
             ]
+          },
+          "serverId": {
+            "type": "string",
+            "nullable": true,
+            "description": "The saved project server this run graded. Null only on rows written before the field existed."
           },
           "serverUrl": {
             "type": "string",
@@ -19755,7 +19810,9 @@
           "projectId",
           "serverId",
           "readinessKind",
-          "status"
+          "status",
+          "deduped",
+          "includeLlmObservations"
         ],
         "properties": {
           "runId": {
@@ -19775,7 +19832,15 @@
             ]
           },
           "status": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "description": "The run's status when the start returned. `pending` for a fresh start; for a deduped start, whatever the existing run is already at \u2014 which may be `completed`, because a replayed idempotency key can name a run that finished long ago."
           },
           "deduped": {
             "type": "boolean",

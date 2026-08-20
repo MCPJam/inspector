@@ -155,52 +155,135 @@ export async function createZipPluginFileSource(
         // WOULD be visible) before it is accepted.
         out.push({
           path: entry.dir ? path.replace(/\/+$/, "") : path,
-          size:
-            (entry as { _data?: { uncompressedSize?: number } })._data
-              ?.uncompressedSize ?? 0,
+          // A directory has no content, so 0 is a fact. For a FILE, an absent
+          // declaration is unknown rather than empty — but `size` is a
+          // required number, so the only honest fallback is the limit-free 0
+          // the parser already treats as "measure it yourself when you read
+          // it". `readBytes` is what actually bounds the read.
+          size: entry.dir ? 0 : (declaredUncompressedSize(entry) ?? 0),
           kind: entry.dir ? "directory" : "file",
         });
       });
       return out;
     },
     /**
-     * Read one entry, refusing an oversized one BEFORE it is inflated.
+     * Read one entry under a HARD output ceiling.
      *
-     * `entry.async` decompresses the whole thing into memory and only then
-     * could a caller measure it — which is the shape of a zip bomb: a few
-     * kilobytes on disk that expand to gigabytes in the heap, with the size
-     * check arriving after the damage. The central directory declares the
-     * uncompressed size, so the cheap refusal is available first.
+     * A zip bomb is a few kilobytes on disk that inflate to gigabytes in the
+     * heap. Two things have to be true to survive one, and only the second is
+     * load-bearing:
      *
-     * The post-read check STAYS. The declared size is the archive's own claim
-     * about itself, and an archive that lies about it is exactly the archive
-     * this guard is for; the second check measures what actually came out.
+     *   1. The central directory's declared uncompressed size is checked
+     *      first, because it is free and refuses the obvious case before a
+     *      single byte is inflated.
+     *   2. The inflation itself is STREAMED and counted, and aborts on the
+     *      first chunk that crosses `maxBytes`.
+     *
+     * Step 1 alone is not a guard: it reads a private JSZip field that a
+     * version bump can rename, and it trusts a number the archive supplies
+     * about itself — an archive that lies is exactly the archive this is for.
+     * `entry.async()` would accumulate the whole output before anyone could
+     * measure it, so the check would arrive after the damage.
+     *
+     * Deliberately NOT failing closed when the declaration is unavailable:
+     * step 2 bounds memory to `maxBytes` plus one chunk regardless, and
+     * refusing every archive whose private field moved would break real
+     * bundles to defend against something already defended.
      */
     async readBytes(path: string, maxBytes: number) {
       const entry = zip.file(path);
       if (!entry) throw new Error(`Bundle file "${path}" is missing`);
 
-      const declared = (entry as { _data?: { uncompressedSize?: unknown } })
-        ._data?.uncompressedSize;
-      if (
-        typeof declared === "number" &&
-        Number.isFinite(declared) &&
-        declared > maxBytes
-      ) {
+      const declared = declaredUncompressedSize(entry);
+      if (declared !== undefined && declared > maxBytes) {
         throw new Error(
-          `Bundle file "${path}" declares ${declared} bytes, over the ${maxBytes} byte limit`
+          `Bundle file "${path}" declares ${declared} bytes, over the ${maxBytes} byte limit`,
         );
       }
 
-      const bytes = await entry.async("uint8array");
-      if (bytes.byteLength > maxBytes) {
-        throw new Error(
-          `Bundle file "${path}" is ${bytes.byteLength} bytes, over the ${maxBytes} byte limit`,
-        );
-      }
-      return bytes;
+      return await readStreamBounded(entry, path, maxBytes);
     },
   };
+}
+
+/**
+ * The entry's declared uncompressed size, or `undefined` when there isn't one.
+ *
+ * `_data` is private to JSZip and has no public replacement. Every value that
+ * is not a non-negative safe integer reads as ABSENT rather than as a size:
+ * a `NaN`, a float or a value past `MAX_SAFE_INTEGER` compares unpredictably,
+ * and a comparison that silently does the wrong thing is worse than no
+ * comparison at all.
+ */
+function declaredUncompressedSize(entry: unknown): number | undefined {
+  const raw = (entry as { _data?: { uncompressedSize?: unknown } })._data
+    ?.uncompressedSize;
+  return typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0
+    ? raw
+    : undefined;
+}
+
+/**
+ * Inflate one entry, aborting the moment the output passes `maxBytes`.
+ *
+ * The stream is destroyed and the accumulated chunks are dropped on the
+ * failing path, so a refused bomb costs one chunk of memory rather than
+ * however much had already been inflated.
+ */
+async function readStreamBounded(
+  entry: JSZip.JSZipObject,
+  path: string,
+  maxBytes: number,
+): Promise<Uint8Array> {
+  const stream = entry.nodeStream("nodebuffer");
+  let chunks: Buffer[] = [];
+  let total = 0;
+
+  await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      // Free what was inflated before handing the error back: on a bomb this
+      // is the difference between one chunk held and everything up to the
+      // limit held for as long as the rejection takes to unwind.
+      chunks = [];
+      // JSZip types the return as `NodeJS.ReadableStream`, which declares no
+      // `destroy`; the object it actually hands back is a `Readable` and does
+      // have one. Pause first so the cast is belt-and-braces rather than the
+      // only thing stopping the inflation.
+      stream.pause();
+      try {
+        (stream as { destroy?: () => void }).destroy?.();
+      } catch {
+        // A stream that cannot be destroyed still stops mattering once it is
+        // paused, its chunks are dropped, and nothing reads it again.
+      }
+      reject(error);
+    };
+
+    stream.on("data", (chunk: Buffer) => {
+      if (settled) return;
+      total += chunk.length;
+      if (total > maxBytes) {
+        fail(
+          new Error(
+            `Bundle file "${path}" exceeds the ${maxBytes} byte limit`,
+          ),
+        );
+        return;
+      }
+      chunks.push(chunk);
+    });
+    stream.on("error", (error: Error) => fail(error));
+    stream.on("end", () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    });
+  });
+
+  return new Uint8Array(Buffer.concat(chunks, total));
 }
 
 /**

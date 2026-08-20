@@ -125,10 +125,11 @@ export function sameReadinessTarget(left: string, right: string): boolean {
       const userinfo = url.username
         ? `${url.username}${url.password ? `:${url.password}` : ""}@`
         : "";
-      const authority = `${url.protocol}//${url.host}`.toLowerCase();
-      return `${url.protocol}//${userinfo}${authority.slice(
-        url.protocol.length + 2,
-      )}${path}${url.search}`;
+      // The host alone is folded — not the whole authority string — so the
+      // fold cannot reach the userinfo beside it, and no index arithmetic has
+      // to stay in step with the length of the scheme.
+      const host = url.host.toLowerCase();
+      return `${url.protocol}//${userinfo}${host}${path}${url.search}`;
     } catch {
       return value.trim();
     }

@@ -137,6 +137,27 @@ type ServerScope = {
  * injected. Tolerant reader: unknown response fields pass through untouched,
  * and empty success bodies (204) resolve to `undefined`.
  */
+/**
+ * The two fields a readiness start body shares, and nothing else.
+ *
+ * Undefined entries are dropped rather than serialized as `null`: the
+ * endpoint's schema types both as optional, and an explicit `null` is a value
+ * it rejects rather than an absence it ignores.
+ */
+function pickReadinessStartBody(params: {
+  idempotencyKey?: string;
+  includeLlmObservations?: boolean;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (params.idempotencyKey !== undefined) {
+    body.idempotencyKey = params.idempotencyKey;
+  }
+  if (params.includeLlmObservations !== undefined) {
+    body.includeLlmObservations = params.includeLlmObservations;
+  }
+  return body;
+}
+
 export class PlatformApiClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
@@ -1285,13 +1306,20 @@ export class PlatformApiClient {
     params: { projectId: string; serverId: string } & PlatformReadinessStartBody,
     options?: RequestOptions,
   ): Promise<PlatformReadinessRunReceipt> {
-    const { projectId, serverId, ...body } = params;
+    // Explicit picks, not a rest spread. The endpoint's body schema is
+    // `strictObject`, and TypeScript's structural typing lets a caller hand a
+    // WIDER object to this parameter — so a spread would forward whatever else
+    // that object carries and turn a valid start into a 400. Worse, the
+    // rejected request never reaches the idempotency key, so the caller's
+    // retry dedupes against nothing. `publishScenario` picks for the same
+    // reason.
+    const { projectId, serverId } = params;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
         serverId,
       )}/readiness-runs/claude`,
-      { body },
+      { body: pickReadinessStartBody(params) },
       options,
     );
   }
@@ -1311,13 +1339,14 @@ export class PlatformApiClient {
     } & PlatformOpenAIReadinessStartBody,
     options?: RequestOptions,
   ): Promise<PlatformReadinessRunReceipt> {
-    const { projectId, serverId, ...body } = params;
+    // Explicit picks — see `startClaudeReadinessRun`.
+    const { projectId, serverId, submissionMode } = params;
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
         serverId,
       )}/readiness-runs/openai`,
-      { body },
+      { body: { ...pickReadinessStartBody(params), submissionMode } },
       options,
     );
   }

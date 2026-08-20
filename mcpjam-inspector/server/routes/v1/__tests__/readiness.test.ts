@@ -166,6 +166,11 @@ describe("v1 directory readiness", () => {
   });
 
   afterEach(() => {
+    // Globals too, not just the environment. A stubbed `fetch` restored on the
+    // last line of a test body leaks into every test after it the moment an
+    // assertion above that line fails — turning one failure into a cascade
+    // whose cause is nowhere near the test that reports it.
+    vi.unstubAllGlobals();
     for (const [key, value] of Object.entries(originalEnv)) {
       if (value) process.env[key] = value;
       else delete process.env[key];
@@ -301,6 +306,47 @@ describe("v1 directory readiness", () => {
       expect(res.status).toBe(202);
       expect(((await res.json()) as { deduped?: boolean }).deduped).toBe(true);
       expect(executeHostedReadinessRunMock).not.toHaveBeenCalled();
+    });
+
+    it("reports a replayed run's REAL status, not a decorative pending", async () => {
+      // A key replayed hours later names a run that finished long ago.
+      // Answering `pending` for it sends the caller into a poll loop for a
+      // result it could already read.
+      convexMutationMock.mockResolvedValue({
+        runId: "run_1",
+        jobId: "job_1",
+        reused: true,
+      });
+      convexQueryMock.mockResolvedValue({ id: "run_1", status: "completed" });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        { body: { idempotencyKey: "k1" } },
+      );
+      expect(res.status).toBe(202);
+      expect(((await res.json()) as { status?: string }).status).toBe(
+        "completed",
+      );
+    });
+
+    it("falls back to pending when the replayed run cannot be read", async () => {
+      // Failing to read the status is not failing to start. The caller polls,
+      // which is what it would have done anyway.
+      convexMutationMock.mockResolvedValue({
+        runId: "run_1",
+        jobId: "job_1",
+        reused: true,
+      });
+      convexQueryMock.mockRejectedValue(new Error("convex is down"));
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/servers/s1/readiness-runs/claude",
+        { body: { idempotencyKey: "k1" } },
+      );
+      expect(res.status).toBe(202);
+      const body = (await res.json()) as { status?: string; deduped?: boolean };
+      expect(body.status).toBe("pending");
+      expect(body.deduped).toBe(true);
     });
   });
 
@@ -449,7 +495,6 @@ describe("v1 directory readiness", () => {
       // could be used to read any blob in the deployment.
       expect(String(url)).toContain("runId=run_1");
       expect(init.headers["x-inspector-service-token"]).toBe("service-token");
-      vi.unstubAllGlobals();
     });
   });
 });
