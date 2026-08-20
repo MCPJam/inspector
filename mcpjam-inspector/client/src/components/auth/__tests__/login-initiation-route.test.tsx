@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const signInMock = vi.fn();
 const navigateMock = vi.fn();
@@ -72,5 +72,37 @@ describe("LoginInitiationRoute", () => {
     render(<LoginInitiationRoute />);
     expect(screen.getByTestId("login-initiation")).toBeInTheDocument();
     expect(screen.getByText(/Signing you in/)).toBeInTheDocument();
+  });
+
+  it("offers a way out when sign-in fails instead of spinning forever", async () => {
+    // A rejection means the browser is NOT leaving the page. Without this the
+    // visitor sits on the spinner with nothing to click — and this route IS the
+    // entry point an SSO user arrives on, so a dead end costs them the login.
+    signInMock.mockRejectedValueOnce(new Error("authorize failed"));
+    render(<LoginInitiationRoute />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("login-initiation-error")).toBeInTheDocument()
+    );
+    expect(screen.queryByTestId("login-initiation")).not.toBeInTheDocument();
+
+    // Retry re-initiates rather than reloading: the guard against a duplicate
+    // automatic sign-in must not also block a deliberate one.
+    fireEvent.click(screen.getByRole("button", { name: /Try again/i }));
+    await waitFor(() => expect(signInMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("login-initiation")).toBeInTheDocument();
+  });
+
+  it("recovers from a signIn() that throws before returning a promise", async () => {
+    // A synchronous throw is not a rejected promise; `.catch` alone misses it
+    // and the failure state never renders.
+    signInMock.mockImplementationOnce(() => {
+      throw new Error("client not initialized");
+    });
+    render(<LoginInitiationRoute />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("login-initiation-error")).toBeInTheDocument()
+    );
   });
 });

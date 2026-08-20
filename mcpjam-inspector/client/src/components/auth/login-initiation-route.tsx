@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
+import { Button } from "@mcpjam/design-system/button";
 import { useAppNavigate } from "@/lib/app-navigation";
 
 /**
@@ -40,6 +41,23 @@ export function LoginInitiationRoute() {
   // navigation — firing it twice races two authorize requests (and two
   // verifiers) against one another.
   const startedRef = useRef(false);
+  const [failed, setFailed] = useState(false);
+
+  const startSignIn = useCallback(() => {
+    setFailed(false);
+    // A rejection here means the browser is NOT leaving this page, so the
+    // spinner below would sit there forever. This is the whole entry point for
+    // an SSO user arriving from their dashboard: a dead end costs them the
+    // login with nothing to click. `/callback` guards the same hazard with its
+    // own recovery UI (see `callbackRecoveryExpired` in App.tsx).
+    // `try`/`catch` as well as `.catch`, because a throw before the promise is
+    // returned is not a rejected promise.
+    try {
+      void Promise.resolve(signIn()).catch(() => setFailed(true));
+    } catch {
+      setFailed(true);
+    }
+  }, [signIn]);
 
   useEffect(() => {
     if (isLoading || startedRef.current) return;
@@ -50,8 +68,25 @@ export function LoginInitiationRoute() {
       navigate("/", { replace: true });
       return;
     }
-    void signIn();
-  }, [isLoading, user, signIn, navigate]);
+    startSignIn();
+  }, [isLoading, user, startSignIn, navigate]);
+
+  if (failed) {
+    return (
+      <div
+        className="flex h-full min-h-[60vh] flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground"
+        data-testid="login-initiation-error"
+      >
+        <span className="max-w-md">
+          Couldn&apos;t start sign-in. Try again, or return to your identity
+          provider and reopen MCPJam.
+        </span>
+        <Button size="sm" onClick={startSignIn}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div

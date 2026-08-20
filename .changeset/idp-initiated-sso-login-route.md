@@ -30,6 +30,11 @@ already serve `index.html` for unmatched paths, so no server change is
 involved. An already-signed-in visitor (a second tile click) is sent into the
 app rather than back through WorkOS.
 
+A sign-in that fails to start renders a retry rather than an endless spinner.
+This route is the entry point an SSO user arrives on, so a dead end there costs
+them the login with nothing to click — the same hazard `/callback` already
+guards with its own recovery UI.
+
 Query parameters are ignored on purpose. The `context` hand-off the older
 examples forward is deprecated — the endpoint is expected only to start a fresh
 sign-in — and forwarding it could not work anyway, since authkit-js omits
