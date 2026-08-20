@@ -27,6 +27,12 @@
  *   - `checkEvalHarnessStaticAdmission` — everything knowable from the host
  *     config alone, so `POST /eval-run-groups` can reject a bad target during
  *     its all-target dry run BEFORE any sibling starts spending.
+ *
+ * ── And one gate that is NOT about harnesses ───────────────────────────────
+ * `checkEvalExecutionAdmission` runs for EVERY eval run, harness or emulated.
+ * It cannot live inside the two above: both return `{ ok: true }` immediately
+ * when the host selects no harness, which is the overwhelming majority of runs
+ * — exactly the ones its rule is about.
  */
 import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
@@ -95,6 +101,25 @@ function harnessNeedsPinnedComputerReason(harness: Harness): string {
     "(or attach an environment that does) and retry. There is deliberately no " +
     "fallback to your personal computer: eval iterations are disposable, and " +
     "reusing a shared box would carry state between them."
+  );
+}
+
+/**
+ * A harness run needs a PROJECT: the box it runs on is provisioned and billed
+ * against one.
+ *
+ * An org-level suite has no project, and `runHarnessTurn` discovers that only
+ * once it tries to resolve the computer — mid-iteration, after the sandbox has
+ * been booted and charged. Refusing at admission makes it a pre-flight failure
+ * that spends nothing and says what to change.
+ */
+function harnessNeedsProjectReason(harness: Harness): string {
+  const name = getHarnessAdapter(harness).displayName;
+  return (
+    `the ${name} harness runs each eval iteration on a computer provisioned ` +
+    "against a project, and this suite is scoped to the organization rather " +
+    "than to a project. Move the suite into a project (or run it on a " +
+    "non-harness host) and retry."
   );
 }
 
@@ -228,6 +253,19 @@ export function checkEvalHarnessAdmission(args: {
    * the signed proxy, so the inspector's widget manager never sees those calls.
    */
   widgetAssertingCaseTitles?: readonly string[];
+  /**
+   * The project this run bills and provisions against, when it has one.
+   *
+   * An ORG-LEVEL suite has none. `runHarnessTurn` needs a projectId to resolve
+   * the box and throws without one — mid-iteration, AFTER the box has already
+   * been booted and paid for. Refusing here turns that into a pre-flight
+   * refusal that costs nothing and names the reason.
+   *
+   * OMITTED means "not resolved here", NOT "absent" — the same discipline
+   * `pinnedComputerImageId` uses on the static half. An explicit `null` is a
+   * resolved absence and refuses; that is what the run route passes.
+   */
+  projectId?: string | null;
 }): EvalHarnessAdmission {
   const harness = harnessOfHostConfig(args.hostConfig);
   if (!harness) return { ok: true };
@@ -319,10 +357,89 @@ export function checkEvalHarnessAdmission(args: {
 
   return admitHarness(harness, {
     pinnedComputerImageId: args.pinnedComputerImageId ?? null,
+    // Passed THROUGH, not coerced to null like the image above. The two are
+    // not symmetric: every caller of this check has resolved the run's
+    // environment (so "no pin" is a fact), but a caller may legitimately not
+    // know the project, and refusing over a fact we do not hold is the same
+    // mistake as admitting over one we do. The route passes an explicit `null`
+    // for an org-level suite, which is what refuses.
+    ...(args.projectId !== undefined ? { projectId: args.projectId } : {}),
     ...(args.widgetAssertingCaseTitles
       ? { widgetAssertingCaseTitles: args.widgetAssertingCaseTitles }
       : {}),
   });
+}
+
+/**
+ * Built-in tool ids the inspector implements as COMPUTER-BACKED.
+ *
+ * The catalog's `requiresComputer` flag is authoritative for availability, but
+ * it omits disabled rows and is not readable from here without a Convex round
+ * trip that this synchronous gate has no business making. So this mirrors the
+ * server resolver's own hardcoded floor (`BASH_TOOL_NAME` in
+ * `utils/built-in-tools/registry.ts`) and the client's
+ * `KNOWN_COMPUTER_BACKED_TOOL_IDS`. Under-listing here is the safe direction:
+ * a tool we fail to name is admitted, which is today's behavior.
+ */
+const COMPUTER_BACKED_BUILT_IN_TOOL_IDS: ReadonlySet<string> = new Set(["bash"]);
+
+/**
+ * Admission for EVERY eval run — harness or emulated.
+ *
+ * ONE rule today: a host that asks for a computer-backed built-in (`bash`)
+ * cannot run when the environment pins no computer image.
+ *
+ * The failure it removes is a warn-and-skip. `resolveHostTools` logs
+ * "bash requested without a computer attached; skipping" and continues, so the
+ * run executes with the tool silently absent: the model never gets a shell, the
+ * cases that needed one fail for reasons that look like model behavior, and a
+ * suite whose cases do not depend on it reports GREEN for a host configuration
+ * that never existed. A server log is not a result — nobody reading the run
+ * sees it.
+ *
+ * Deliberately a REFUSAL rather than a degraded run, for the same reason the
+ * harness gate is: the honest answer to "I cannot give you what this host asks
+ * for" is to say so before spending, not to run something else and report on it.
+ *
+ * NOT part of the harness checks. `checkEvalHarnessAdmission` and its static
+ * half both return `{ ok: true }` on their first line when no harness is
+ * selected, so a rule placed there would never fire for an emulated run — and
+ * emulated runs are precisely the ones this is about. (A harness run reaches
+ * the same conclusion by a different route: `admitHarness` already requires a
+ * pinned image outright.)
+ */
+export function checkEvalExecutionAdmission(args: {
+  hostConfig: Record<string, unknown> | null | undefined;
+  /**
+   * The environment's pinned computer image; `null`/absent means none.
+   *
+   * Unlike the harness static half, absent is treated as ABSENT rather than
+   * "not looked up": every caller of this gate resolves the run's frozen
+   * environment first, so there is no "did not look" case to protect.
+   */
+  pinnedComputerImageId?: string | null;
+}): { ok: true } | { ok: false; reason: string } {
+  const ids = args.hostConfig?.builtInToolIds;
+  if (!Array.isArray(ids) || ids.length === 0) return { ok: true };
+  if (args.pinnedComputerImageId) return { ok: true };
+
+  const offending = ids.filter(
+    (id): id is string =>
+      typeof id === "string" && COMPUTER_BACKED_BUILT_IN_TOOL_IDS.has(id)
+  );
+  if (offending.length === 0) return { ok: true };
+
+  const named = [...new Set(offending)].join(", ");
+  return {
+    ok: false,
+    reason:
+      `this host grants the computer-backed built-in ${named}, which needs a ` +
+      "computer to run on, but this run's environment pins no computer image. " +
+      "Pin one on the environment (or attach an environment that does) and " +
+      `retry. The run was refused rather than executed with ${named} silently ` +
+      "missing, which would have reported a result for a host configuration " +
+      "that never ran.",
+  };
 }
 
 /**
@@ -362,8 +479,22 @@ function admitHarness(
   args: {
     pinnedComputerImageId?: string | null;
     widgetAssertingCaseTitles?: readonly string[];
+    /** `undefined` ⇒ the caller did not resolve one (the static half), so the
+     *  rule is deferred to the full check rather than decided without evidence.
+     *  An explicit `null` is a resolved absence and refuses. */
+    projectId?: string | null;
   }
 ): EvalHarnessAdmission {
+  // Checked before the pinned-image rule: an org-level suite has neither, and
+  // "pin a computer image" would send the author to a setting that cannot fix
+  // a run with no project to pin it on.
+  if (args.projectId === null) {
+    return {
+      ok: false,
+      harness,
+      reason: harnessNeedsProjectReason(harness),
+    };
+  }
   if (!args.pinnedComputerImageId) {
     return {
       ok: false,

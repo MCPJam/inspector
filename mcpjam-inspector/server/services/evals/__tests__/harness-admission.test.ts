@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  checkEvalExecutionAdmission,
   checkEvalHarnessAdmission,
   checkEvalHarnessStaticAdmission,
   executionEngineLabel,
@@ -282,5 +283,134 @@ describe("attribution helpers", () => {
     );
     expect(executionEngineLabel({ hostStyle: "mcpjam" })).toBe("emulated");
     expect(executionEngineLabel(null)).toBe("emulated");
+  });
+});
+
+describe("checkEvalHarnessAdmission — org-level suites", () => {
+  // `runHarnessTurn` needs a projectId to resolve the box and throws without
+  // one — MID-ITERATION, after the sandbox has been booted and charged. This
+  // turns that into a pre-flight refusal that spends nothing.
+  const args = {
+    hostConfig: harnessHost(),
+    serverIds: ["srv-1"],
+    cases: [HOSTED_MODEL],
+    pinnedComputerImageId: "env-1",
+  };
+
+  it("refuses a harness run with no resolved project", () => {
+    const verdict = checkEvalHarnessAdmission({ ...args, projectId: null });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("organization");
+  });
+
+  it("names the missing PROJECT, not the pinned image, when both are absent", () => {
+    // An org-level suite has neither. "Pin a computer image" would send the
+    // author to a setting that cannot fix a run with no project to pin it on.
+    const verdict = checkEvalHarnessAdmission({
+      ...args,
+      pinnedComputerImageId: null,
+      projectId: null,
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("organization");
+    expect(verdict.reason).not.toContain("pin a computer image");
+  });
+
+  it("admits a harness run that HAS a project", () => {
+    expect(
+      checkEvalHarnessAdmission({ ...args, projectId: "proj-1" }).ok
+    ).toBe(true);
+  });
+
+  it("does not refuse a harness run whose caller resolved no project field", () => {
+    // `undefined` is "not looked up" and must not be read as absence — the
+    // static half has no project to resolve.
+    expect(checkEvalHarnessAdmission(args).ok).toBe(true);
+  });
+});
+
+describe("checkEvalExecutionAdmission", () => {
+  // Runs for EVERY eval, harness or emulated. It cannot live in the harness
+  // checks above, which return admitted on their first line when no harness is
+  // selected — which is exactly the runs this rule is about.
+
+  it("refuses a bash-granting host when the environment pins no image", () => {
+    // `resolveHostTools` warn-and-SKIPS bash here, so the run would execute
+    // with the shell silently absent: cases needing one fail as if the model
+    // chose badly, and a suite that did not need one reports green for a host
+    // configuration that never existed.
+    const verdict = checkEvalExecutionAdmission({
+      hostConfig: { hostStyle: "mcpjam", builtInToolIds: ["bash"] },
+      pinnedComputerImageId: null,
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("bash");
+    expect(verdict.reason).toContain("computer image");
+  });
+
+  it("refuses on an EMULATED host — the harness gates never see this case", () => {
+    const emulated = { hostStyle: "mcpjam", builtInToolIds: ["bash"] };
+    expect(
+      checkEvalHarnessAdmission({
+        hostConfig: emulated,
+        cases: [HOSTED_MODEL],
+        pinnedComputerImageId: null,
+      }).ok
+    ).toBe(true);
+    expect(
+      checkEvalExecutionAdmission({
+        hostConfig: emulated,
+        pinnedComputerImageId: null,
+      }).ok
+    ).toBe(false);
+  });
+
+  it("admits the same host once an image is pinned", () => {
+    expect(
+      checkEvalExecutionAdmission({
+        hostConfig: { builtInToolIds: ["bash"] },
+        pinnedComputerImageId: "env-1",
+      }).ok
+    ).toBe(true);
+  });
+
+  it("admits non-computer built-ins with no image — they need no box", () => {
+    expect(
+      checkEvalExecutionAdmission({
+        hostConfig: { builtInToolIds: ["web_search"] },
+        pinnedComputerImageId: null,
+      }).ok
+    ).toBe(true);
+  });
+
+  it("admits a host that grants no built-ins at all", () => {
+    for (const hostConfig of [
+      null,
+      {},
+      { builtInToolIds: [] },
+      { builtInToolIds: "bash" },
+    ]) {
+      expect(
+        checkEvalExecutionAdmission({
+          hostConfig: hostConfig as Record<string, unknown> | null,
+          pinnedComputerImageId: null,
+        }).ok
+      ).toBe(true);
+    }
+  });
+
+  it("names every offending id, deduped", () => {
+    const verdict = checkEvalExecutionAdmission({
+      hostConfig: { builtInToolIds: ["bash", "web_search", "bash"] },
+      pinnedComputerImageId: null,
+    });
+    expect(verdict.ok).toBe(false);
+    if (verdict.ok) throw new Error("unreachable");
+    expect(verdict.reason).toContain("bash");
+    expect(verdict.reason).not.toContain("web_search");
+    expect(verdict.reason.match(/bash/g)).toHaveLength(2); // named twice in one sentence pair
   });
 });
