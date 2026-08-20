@@ -38,8 +38,24 @@ import {
   type OpenAIArchiveObservations,
   type OpenAIPluginPackageEvidence,
 } from "./package/reader.js";
+import {
+  annotatedToolNames,
+  runOpenAIAnnotationChecks,
+  type OpenAIToolEvidence,
+} from "./checks/annotations.js";
+import { runOpenAIAuthChecks } from "./checks/auth.js";
+import { runOpenAIDomainVerificationChecks } from "./checks/domain-verification.js";
+import { runOpenAIEndpointChecks } from "./checks/endpoint.js";
 import { runOpenAIPackageChecks } from "./checks/package.js";
 import { runOpenAISubmissionChecks } from "./checks/submission.js";
+import {
+  discoverOpenAIAuthEvidence,
+  fetchOpenAIDomainVerification,
+  traceOpenAIEndpoint,
+  type OpenAIAuthEvidence,
+  type OpenAIDomainVerificationEvidence,
+  type OpenAIEndpointEvidence,
+} from "./discovery.js";
 import {
   parseOpenAISubmissionProfile,
   type OpenAISubmissionProfile,
@@ -86,6 +102,14 @@ export interface OpenAIReadinessEvidence {
   evaluatedAt: string;
   durationMs: number;
 
+  /** The endpoint's redirect trace, when the run had an endpoint. */
+  endpoint?: OpenAIEndpointEvidence;
+  /** The authorization evidence, when the run had an endpoint. */
+  auth?: OpenAIAuthEvidence;
+  /** The domain-verification challenge, when the run had an endpoint. */
+  domainVerification?: OpenAIDomainVerificationEvidence;
+  /** The tool listing, read once by the gatherer and graded statically. */
+  tools?: OpenAIToolEvidence[];
   /** Read from a package source, when the run was given one. */
   package?: OpenAIPluginPackageEvidence;
   /** Raw submission profile, validated during grading so issues become findings. */
@@ -270,8 +294,37 @@ export function gradeOpenAIReadiness(
     evidence.hasPublishedVersion ??
     false;
 
+  const shape = OPENAI_SUBMISSION_MODE_SHAPES[evidence.mode];
+
+  // Server-side checks run only in a shape that HAS a server. In a shape that
+  // does not, the lane is reported `not-applicable` once by `laneResultFor`
+  // rather than as a page of inapplicable findings.
+  const serverFindings = shape.hasMcpServer
+    ? [
+        ...runOpenAIEndpointChecks(evidence.endpoint, stamp),
+        ...runOpenAIAuthChecks(evidence.auth, stamp),
+        ...runOpenAIAnnotationChecks(evidence.tools, stamp),
+        ...runOpenAIDomainVerificationChecks(
+          {
+            evidence: evidence.domainVerification,
+            declaredToken: parsedProfile.profile?.domainVerificationToken,
+          },
+          stamp,
+        ),
+      ]
+    : [];
+
+  // Observed annotations beat a caller's list: the submission check needs to
+  // know which tools ACTUALLY carry a destructive or open-world hint, and a
+  // caller-supplied list can only ever be a restatement of the same listing.
+  const annotatedTools =
+    evidence.tools !== undefined
+      ? annotatedToolNames(evidence.tools)
+      : evidence.annotatedTools;
+
   const findings: OpenAIReadinessFinding[] = enforceCapabilityGate(
     [
+      ...serverFindings,
       ...runOpenAIPackageChecks(
         { mode: evidence.mode, package: evidence.package },
         stamp,
@@ -280,7 +333,7 @@ export function gradeOpenAIReadiness(
         {
           profile: parsedProfile.profile,
           profileIssues: parsedProfile.issues,
-          annotatedTools: evidence.annotatedTools,
+          annotatedTools,
           frameDomains: evidence.frameDomains,
         },
         stamp,
@@ -352,8 +405,19 @@ export interface GatherOpenAIReadinessEvidenceOptions {
   mode: OpenAISubmissionMode;
   authMode?: OpenAIReadinessAuthMode;
   capabilities?: OpenAIRunnerCapability[];
+  /**
+   * The transport, REQUIRED to gather any wire evidence.
+   *
+   * With no `fetchFn` the gatherer dials nothing and the server lanes report
+   * their gaps — the honest outcome for a package-only run. There is no default
+   * on purpose: in a hosted run this must be the DNS-pinned transport, and a
+   * default would make the unguarded case the easy one to reach.
+   */
+  fetchFn?: typeof fetch;
   /** A package source to read, when the submission shape uploads one. */
   packageSource?: PluginFileSource;
+  /** The tool listing, when the caller already holds one. */
+  tools?: OpenAIToolEvidence[];
   /** Archive facts the source cannot report. See `OpenAIArchiveObservations`. */
   archive?: OpenAIArchiveObservations;
   /**
@@ -396,6 +460,23 @@ export async function gatherOpenAIReadinessEvidence(
       })
     : undefined;
 
+  // The wire half. Only when the caller supplied BOTH a transport and a shape
+  // that has a server: dialing a skills-only submission's non-existent endpoint
+  // would be a request nobody asked for.
+  const wantsServer = OPENAI_SUBMISSION_MODE_SHAPES[options.mode].hasMcpServer;
+  const discovery =
+    options.fetchFn && wantsServer
+      ? { enteredUrl: options.target, fetchFn: options.fetchFn }
+      : undefined;
+
+  const [endpoint, auth, domainVerification] = discovery
+    ? await Promise.all([
+        traceOpenAIEndpoint(discovery),
+        discoverOpenAIAuthEvidence(discovery),
+        fetchOpenAIDomainVerification(discovery),
+      ])
+    : [undefined, undefined, undefined];
+
   const finishedAt = now();
 
   return {
@@ -409,6 +490,10 @@ export async function gatherOpenAIReadinessEvidence(
       0,
       finishedAt.getTime() - new Date(startedAt).getTime(),
     ),
+    endpoint,
+    auth,
+    domainVerification,
+    tools: options.tools,
     package: packageEvidence,
     submissionProfile: options.submissionProfile,
     annotatedTools: options.annotatedTools,

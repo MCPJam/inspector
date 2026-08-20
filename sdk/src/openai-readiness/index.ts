@@ -199,3 +199,13 @@ export type {
   GatherOpenAIReadinessEvidenceOptions,
   OpenAIReadinessEvidence,
 } from "./runner.js";
+
+export {
+  annotatedToolNames,
+  runOpenAIAnnotationChecks,
+} from "./checks/annotations.js";
+export type { OpenAIToolEvidence } from "./checks/annotations.js";
+export { runOpenAIAuthChecks } from "./checks/auth.js";
+export { runOpenAIEndpointChecks } from "./checks/endpoint.js";
+export { runOpenAIDomainVerificationChecks } from "./checks/domain-verification.js";
+export type { OpenAIDomainVerificationInput } from "./checks/domain-verification.js";

@@ -468,6 +468,22 @@ export * from "./openai-readiness/index.js";
 // is banned from the browser entry's import graph, so the Node fallback lives
 // behind this entry and is passed in as `parseXml`.
 export { xmldomParseXml } from "./openai-readiness/package/svg-xml-node.js";
+
+// The OpenAI readiness modules that touch the network, exported only from the
+// Node entry. They are deliberately absent from `openai-readiness/index.ts` so
+// that importing the result model can never pull a transport in with it.
+export {
+  discoverOpenAIAuthEvidence,
+  fetchOpenAIDomainVerification,
+  traceOpenAIEndpoint,
+} from "./openai-readiness/discovery.js";
+export type {
+  OpenAIAuthEvidence,
+  OpenAIAuthorizationServerEvidence,
+  OpenAIDiscoveryOptions,
+  OpenAIDomainVerificationEvidence,
+  OpenAIEndpointEvidence,
+} from "./openai-readiness/discovery.js";
 export {
   buildOutcomeSummary,
   decideConformanceOutcome,
