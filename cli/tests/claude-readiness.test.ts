@@ -361,6 +361,60 @@ test("an empty --submission-profile is a usage error, not a silent skip", async 
   assert.match(`${run.stdout}${run.stderr}`, /submission-profile/);
 });
 
+test("bounds --limit locally instead of round-tripping an out-of-range page", async () => {
+  // The failure this replaces: `parsePositiveInteger` accepted 5000, the call
+  // reached the API, and the rejection came back naming `limit` — a field the
+  // person typed as `--limit`, on a request that had already resolved their
+  // project. Both ends of the range fail here, before anything is dialled.
+  for (const value of ["0", "5000"]) {
+    const run = await runCli([
+      "claude",
+      "runs",
+      "list",
+      "--project",
+      "proj_1",
+      "--limit",
+      value,
+    ]);
+    assert.equal(run.exitCode, 2, `--limit ${value} should be a usage error`);
+    assert.match(`${run.stdout}${run.stderr}`, /--limit/);
+  }
+});
+
+test("an empty --idempotency-key is a usage error, not a key", async () => {
+  // `""` is not "no key": it would travel as one, be refused by a bound two
+  // hops later, and report a field name nobody typed.
+  const run = await runCli([
+    "claude",
+    "runs",
+    "start",
+    "--project",
+    "proj_1",
+    "--server",
+    "srv_1",
+    "--idempotency-key",
+    "   ",
+  ]);
+  assert.equal(run.exitCode, 2);
+  assert.match(`${run.stdout}${run.stderr}`, /--idempotency-key/);
+});
+
+test("refuses an idempotency key longer than the operation accepts", async () => {
+  const run = await runCli([
+    "claude",
+    "runs",
+    "start",
+    "--project",
+    "proj_1",
+    "--server",
+    "srv_1",
+    "--idempotency-key",
+    "k".repeat(201),
+  ]);
+  assert.equal(run.exitCode, 2);
+  assert.match(`${run.stdout}${run.stderr}`, /--idempotency-key/);
+});
+
 test("the JUnit reporter carries advisories as properties, never as failures", async () => {
   const server = await startMockStreamableHttpServer();
   try {

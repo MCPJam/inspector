@@ -12,6 +12,7 @@ import {
 } from "@mcpjam/sdk/platform";
 import {
   addPlatformOptions,
+  parseIntegerOption,
   runPlatformCommand,
   type PlatformOptions,
 } from "../lib/platform-command.js";
@@ -35,6 +36,33 @@ import {
   resolveCredentialsFileAccessToken,
 } from "../lib/credentials-file.js";
 import { setProcessExitCode, usageError } from "../lib/output.js";
+
+/** The list operation's page cap, restated so `--limit` fails locally. */
+const MAX_LIST_LIMIT = 100;
+
+/** The request operation's key bound, restated for the same reason. */
+const MAX_IDEMPOTENCY_KEY_LENGTH = 200;
+
+/**
+ * Trim-and-bound `--idempotency-key` the way the operation does.
+ *
+ * `--idempotency-key ""` is the case that matters: an empty string is not
+ * "no key", so it would travel as a key, be rejected by a zod bound after the
+ * project lookup, and report a field name nobody typed. Trimming here also
+ * means a key pasted with a trailing newline matches the one sent before it.
+ */
+function parseIdempotencyKey(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed === "") {
+    throw usageError("--idempotency-key must not be empty");
+  }
+  if (trimmed.length > MAX_IDEMPOTENCY_KEY_LENGTH) {
+    throw usageError(
+      `--idempotency-key must be at most ${MAX_IDEMPOTENCY_KEY_LENGTH} characters`,
+    );
+  }
+  return trimmed;
+}
 
 export interface ClaudeReadinessOptions {
   url: string;
@@ -325,6 +353,7 @@ export function registerClaudeReadinessCommands(program: Command): void {
       .option(
         "--idempotency-key <key>",
         "Replay protection. A retry with the same key joins the run it already started instead of dialling the target twice.",
+        parseIdempotencyKey,
       ),
   ).action(
     async (
@@ -359,7 +388,11 @@ export function registerClaudeReadinessCommands(program: Command): void {
       .option(
         "--limit <n>",
         "How many runs to return (1–100)",
-        (value: string) => parsePositiveInteger(value, "Limit"),
+        // The operation's own bounds, restated so an out-of-range number is
+        // refused here rather than after a round trip that names a field the
+        // user never typed. `parsePositiveInteger` alone accepts 5000.
+        (value: string) =>
+          parseIntegerOption(value, "--limit", { min: 1, max: MAX_LIST_LIMIT }),
       ),
   ).action(
     async (

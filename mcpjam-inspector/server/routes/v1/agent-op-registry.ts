@@ -857,7 +857,12 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       describe: (input) =>
         `Grade server ${named(input, "serverId") ?? "(unnamed)"} against Claude's directory requirements`,
       buttonLabel: "Grade it",
-      kind: "generate",
+      // `start`, not `generate`: a run begins work that outlives the approval
+      // and is polled for, rather than authoring content. And the host must
+      // say it spends — the default prompt would let a run that costs hosted
+      // execution and dials somebody else's server read as a free lookup.
+      kind: "start",
+      confirmSeverity: "spend",
     },
   },
   {

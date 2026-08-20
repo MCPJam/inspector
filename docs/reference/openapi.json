@@ -8772,6 +8772,7 @@
                 "properties": {
                   "idempotencyKey": {
                     "type": "string",
+                    "minLength": 1,
                     "maxLength": 200,
                     "description": "Replay protection. A retried request that started a second run would dial the target twice; with a key, the second call joins the first."
                   }

@@ -218,16 +218,22 @@ function withDeadline<T>(
   ms: number,
   onExpiry: () => void,
 ): Promise<T> {
-  return Promise.race([
-    work,
-    new Promise<never>((_resolve, reject) => {
-      const timer = setTimeout(() => {
-        onExpiry();
-        reject(new Error("readiness run exceeded its time budget"));
-      }, ms);
-      timer.unref?.();
-    }),
-  ]);
+  // The timer is cleared in a `finally` rather than left to `unref`. A losing
+  // arm of a `Promise.race` is not cancelled by losing: without this, every
+  // completed run leaves a live timer that fires minutes later and aborts a
+  // controller belonging to a run that already finished.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      onExpiry();
+      reject(new Error("readiness run exceeded its time budget"));
+    }, ms);
+    timer.unref?.();
+  });
+
+  return Promise.race([work, expiry]).finally(() => {
+    if (timer !== undefined) clearTimeout(timer);
+  });
 }
 
 /** The small, indexed summary the row carries. The report goes to a blob. */

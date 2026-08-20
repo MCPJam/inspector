@@ -174,6 +174,32 @@ describe("executeClaimedRun", () => {
     expect(failure!.body.errorMessage).toMatch(/ECONNREFUSED/);
   });
 
+  it("drops its deadline the moment the run settles", async () => {
+    // The losing arm of a `Promise.race` is not cancelled by losing. Left
+    // running, each finished run kept a five-minute timer that later aborted a
+    // controller belonging to a run that had already posted its result — on a
+    // node that grades continuously, one live timer per completed run.
+    vi.useFakeTimers();
+    try {
+      mockServiceFetch();
+      let observed: AbortSignal | undefined;
+      runClaudeReadiness.mockImplementation(async (config: any) => {
+        observed = config.signal;
+        return readinessResult("ready");
+      });
+
+      await executeClaimedRun(CLAIM);
+      expect(observed?.aborted).toBe(false);
+
+      // Well past both the run budget and the heartbeat interval. A surviving
+      // timer would fire in here and abort the finished run's controller.
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      expect(observed?.aborted).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("never throws, so one bad run cannot stop the loop", async () => {
     runClaudeReadiness.mockRejectedValue(new Error("boom"));
     vi.stubGlobal(
