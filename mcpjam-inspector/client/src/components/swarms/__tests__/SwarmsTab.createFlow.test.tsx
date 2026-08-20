@@ -444,7 +444,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(
       within(screen.getByTestId("swarms-tab-header-chrome")).getByRole(
         "button",
-        { name: /^new swarm$/i }
+        { name: /^create new swarm$/i }
       )
     );
     expect(navigateMock).toHaveBeenCalledWith("/swarms/new");
