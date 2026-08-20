@@ -14,12 +14,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConvexError } from "convex/values";
 import {
   DirectoryConnectError,
+  describeExistingConnection,
+  describeUnavailable,
+  isConnectableDirectoryRow,
   normalizeDirectoryConnectError,
   requiresEndpointChoice,
   resolveDirectoryEndpointUrl,
-  useClaudeDirectory,
+  sourceHasTiers,
+  useServerDirectory,
   type DirectoryServer,
-} from "../useClaudeDirectory";
+} from "../useServerDirectory";
 
 const {
   mockUsePaginatedQuery,
@@ -78,11 +82,11 @@ function setPage(results: DirectoryServer[], status = "Exhausted") {
 }
 
 function renderDirectory(
-  props: Partial<Parameters<typeof useClaudeDirectory>[0]> = {}
+  props: Partial<Parameters<typeof useServerDirectory>[0]> = {}
 ) {
   const onConnect = vi.fn();
   const view = renderHook(() =>
-    useClaudeDirectory({
+    useServerDirectory({
       projectId: "proj_1",
       isAuthenticated: true,
       onConnect,
@@ -104,7 +108,7 @@ beforeEach(() => {
   });
 });
 
-describe("useClaudeDirectory — the feature gate", () => {
+describe("useServerDirectory — the feature gate", () => {
   it("skips BOTH queries when the caller disables it", () => {
     renderDirectory({ enabled: false });
     expect(mockUsePaginatedQuery).toHaveBeenCalledWith(
@@ -139,12 +143,12 @@ describe("useClaudeDirectory — the feature gate", () => {
   });
 });
 
-describe("useClaudeDirectory — query arguments", () => {
+describe("useServerDirectory — query arguments", () => {
   it("omits `q` entirely while the box is empty", () => {
     renderDirectory();
     expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
       "serverCatalogQueries:searchCatalogServers",
-      {},
+      { source: "anthropic-directory" },
       expect.anything()
     );
   });
@@ -155,7 +159,7 @@ describe("useClaudeDirectory — query arguments", () => {
     // Not sent yet — one query per word, not per keystroke.
     expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
       "serverCatalogQueries:searchCatalogServers",
-      {},
+      { source: "anthropic-directory" },
       expect.anything()
     );
 
@@ -165,7 +169,7 @@ describe("useClaudeDirectory — query arguments", () => {
     await waitFor(() => {
       expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
         "serverCatalogQueries:searchCatalogServers",
-        { q: "linear" },
+        { source: "anthropic-directory", q: "linear" },
         expect.anything()
       );
     });
@@ -188,7 +192,7 @@ describe("useClaudeDirectory — query arguments", () => {
     await waitFor(() => {
       expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
         "serverCatalogQueries:searchCatalogServers",
-        {},
+        { source: "anthropic-directory" },
         expect.anything()
       );
     });
@@ -200,7 +204,7 @@ describe("useClaudeDirectory — query arguments", () => {
     await waitFor(() => {
       expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
         "serverCatalogQueries:searchCatalogServers",
-        { verifiedTier: "partner" },
+        { source: "anthropic-directory", verifiedTier: "partner" },
         expect.anything()
       );
     });
@@ -209,7 +213,7 @@ describe("useClaudeDirectory — query arguments", () => {
     await waitFor(() => {
       expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
         "serverCatalogQueries:searchCatalogServers",
-        {},
+        { source: "anthropic-directory" },
         expect.anything()
       );
     });
@@ -232,7 +236,7 @@ describe("useClaudeDirectory — query arguments", () => {
   });
 });
 
-describe("useClaudeDirectory — curated overlap", () => {
+describe("useServerDirectory — curated overlap", () => {
   it("drops rows a curated card already covers", () => {
     setPage([
       directoryServer({ _id: "a", displayName: "Keep" }),
@@ -247,7 +251,7 @@ describe("useClaudeDirectory — curated overlap", () => {
   });
 });
 
-describe("useClaudeDirectory — connect ordering", () => {
+describe("useServerDirectory — connect ordering", () => {
   it("calls the mutation BEFORE onConnect, and passes back its name", async () => {
     const order: string[] = [];
     mockConnectMutation.mockImplementation(async () => {
@@ -493,7 +497,7 @@ describe("endpoint helpers", () => {
   });
 });
 
-describe("useClaudeDirectory — pending marker rollback", () => {
+describe("useServerDirectory — pending marker rollback", () => {
   it("rolls the marker back when onConnect itself throws", async () => {
     // The marker only makes sense beside a connect that actually started, and
     // the caller cannot tell a mutation refusal from an onConnect throw — so
@@ -529,5 +533,207 @@ describe("useClaudeDirectory — pending marker rollback", () => {
       sourceTab: "registry",
       catalogServerId: "cat_1",
     });
+  });
+});
+
+describe("useServerDirectory — the source facet", () => {
+  it("opens on the Claude directory, the daily and reliable one", () => {
+    const { result } = renderDirectory();
+    expect(result.current.source).toBe("anthropic-directory");
+    expect(result.current.hasTiers).toBe(true);
+  });
+
+  it("switching source re-scopes the query", async () => {
+    const { result } = renderDirectory();
+    act(() => result.current.setSource("chatgpt-directory"));
+    await waitFor(() => {
+      expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
+        "serverCatalogQueries:searchCatalogServers",
+        { source: "chatgpt-directory" },
+        expect.anything()
+      );
+    });
+  });
+
+  it("switching to a source without tiers CLEARS the tier", async () => {
+    // A tier that survived the switch would silently narrow a catalog that
+    // publishes no tiers at all — i.e. empty it, with a filter the UI is no
+    // longer even showing.
+    const { result } = renderDirectory();
+    act(() => result.current.setTier("partner"));
+    act(() => result.current.setSource("chatgpt-directory"));
+
+    expect(result.current.tier).toBe("all");
+    expect(result.current.hasTiers).toBe(false);
+    await waitFor(() => {
+      expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
+        "serverCatalogQueries:searchCatalogServers",
+        { source: "chatgpt-directory" },
+        expect.anything()
+      );
+    });
+  });
+
+  it("never sends a tier the current source does not publish", async () => {
+    const { result } = renderDirectory();
+    act(() => result.current.setSource("chatgpt-directory"));
+    act(() => result.current.setTier("partner"));
+    await waitFor(() => {
+      expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
+        "serverCatalogQueries:searchCatalogServers",
+        { source: "chatgpt-directory" },
+        expect.anything()
+      );
+    });
+  });
+
+  it("reports how fresh the SELECTED source is", () => {
+    mockUseQuery.mockImplementation((name: string) =>
+      name === "serverCatalogQueries:getCatalogSourceStatus"
+        ? [
+            {
+              source: "anthropic-directory",
+              lastSyncedAt: 1_000,
+              liveCount: 2000,
+              upstreamFetchedAt: null,
+            },
+            {
+              source: "chatgpt-directory",
+              lastSyncedAt: 9_000,
+              liveCount: 2900,
+              upstreamFetchedAt: 8_000,
+            },
+          ]
+        : []
+    );
+
+    const { result } = renderDirectory();
+    expect(result.current.lastSyncedAt).toBe(1_000);
+
+    act(() => result.current.setSource("chatgpt-directory"));
+    // The SCRAPE time, not the ingest time: uploading a Tuesday sweep on
+    // Friday makes the catalog Tuesday-fresh, and saying "Friday" would
+    // overstate it by three days.
+    expect(result.current.lastSyncedAt).toBe(8_000);
+  });
+
+  it("connectable-only becomes an endpointKind filter on the QUERY", async () => {
+    // Filtering the page after it arrives would return short pages and
+    // eventually blank ones: pagination counts rows the filter then discards.
+    const { result } = renderDirectory();
+    act(() => result.current.setConnectableOnly(true));
+    await waitFor(() => {
+      expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
+        "serverCatalogQueries:searchCatalogServers",
+        { source: "anthropic-directory", endpointKind: "fixed" },
+        expect.anything()
+      );
+    });
+  });
+
+  it("shows the whole census by default", () => {
+    const { result } = renderDirectory();
+    expect(result.current.connectableOnly).toBe(false);
+  });
+
+  it("sourceHasTiers is what the UI hides the filter on", () => {
+    expect(sourceHasTiers("anthropic-directory")).toBe(true);
+    expect(sourceHasTiers("chatgpt-directory")).toBe(false);
+  });
+});
+
+describe("connectability copy", () => {
+  const row = (overrides: Partial<DirectoryServer>) =>
+    directoryServer({ endpointKind: "none", ...overrides });
+
+  it("a hidden hosted endpoint is not called a desktop extension", () => {
+    const text = describeUnavailable(
+      row({ rowType: "remote", unavailableReason: "endpoint_hidden" })
+    );
+    expect(text).not.toMatch(/desktop extension/i);
+    expect(text).toMatch(/not published/i);
+  });
+
+  it("an unverified endpoint says what was actually tried", () => {
+    expect(
+      describeUnavailable(
+        row({ rowType: "remote", unavailableReason: "endpoint_unverified" })
+      )
+    ).toMatch(/unverified/i);
+  });
+
+  it("a genuine local extension still says so", () => {
+    expect(describeUnavailable(row({ rowType: "local" }))).toMatch(
+      /local desktop extension/i
+    );
+  });
+
+  it("only `none` rows are unconnectable", () => {
+    expect(isConnectableDirectoryRow(directoryServer())).toBe(true);
+    expect(isConnectableDirectoryRow(row({ rowType: "remote" }))).toBe(false);
+  });
+});
+
+describe("cross-source connect", () => {
+  it("names the directory a reused connection came from", () => {
+    expect(
+      describeExistingConnection({
+        serverId: "srv_1",
+        serverName: "Linear",
+        outcome: "existing_endpoint",
+        existing: {
+          catalogServerId: "cat_9",
+          source: "anthropic-directory",
+          displayName: "Linear",
+        },
+      })
+    ).toBe("Already connected via the Claude directory.");
+  });
+
+  it("degrades to a generic phrase rather than naming a source we do not know", () => {
+    expect(
+      describeExistingConnection({
+        serverId: "srv_1",
+        serverName: "Linear",
+        outcome: "existing_endpoint",
+        existing: {
+          catalogServerId: "cat_9",
+          source: "some-future-directory",
+          displayName: "Linear",
+        },
+      })
+    ).toBe("Already connected via another catalog.");
+  });
+
+  it("says nothing at all for an ordinary install", () => {
+    expect(
+      describeExistingConnection({
+        serverId: "srv_1",
+        serverName: "Linear",
+        outcome: "created",
+      })
+    ).toBeNull();
+  });
+
+  it("passes the backend outcome through to the caller", async () => {
+    mockConnectMutation.mockResolvedValue({
+      serverId: "srv_1",
+      serverName: "Linear",
+      outcome: "existing_endpoint",
+      existing: {
+        catalogServerId: "cat_9",
+        source: "anthropic-directory",
+        displayName: "Linear",
+      },
+    });
+    const server = directoryServer({ source: "chatgpt-directory" });
+    setPage([server]);
+    const { result } = renderDirectory();
+
+    let outcome: string | undefined;
+    await act(async () => {
+      outcome = (await result.current.connect(server)).outcome;
+    });
+    expect(outcome).toBe("existing_endpoint");
   });
 });

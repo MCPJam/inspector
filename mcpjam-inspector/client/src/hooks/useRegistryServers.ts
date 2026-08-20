@@ -33,7 +33,7 @@ const DEV_MOCK_REGISTRY =
 // mutations. Flip to true once the registry backend is ready for real use.
 //
 // EXPORTED so the Claude-directory half of the Registry tab
-// (`useClaudeDirectory`) reads the same switch. Two constants would let the
+// (`useServerDirectory`) reads the same switch. Two constants would let the
 // screen half-light: a directory that queries while the curated catalog is
 // dark is exactly the state this flag exists to prevent.
 export const REGISTRY_FEATURE_ENABLED = false;

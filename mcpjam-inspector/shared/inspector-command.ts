@@ -317,18 +317,23 @@ export interface ToggleRegistryStarInspectorCommand {
 }
 
 /**
- * Search the mirrored Claude connectors directory shown beneath the curated
- * catalog on the same screen.
+ * Search a mirrored connector directory shown beneath the curated catalog on
+ * the same screen.
  *
- * Read-only, and deliberately narrow: it DRIVES the screen's own search box,
- * so what the model sees is what the person sees. `query` is optional because
- * an absent one is a real request — browse the directory — not an error, and
- * a blank one means the same thing (see `searchCatalogServers`).
+ * Read-only, and deliberately narrow: it DRIVES the screen's own controls, so
+ * what the model sees is what the person sees. `query` is optional because an
+ * absent one is a real request — browse the directory — not an error, and a
+ * blank one means the same thing (see `searchCatalogServers`).
+ *
+ * `source` picks WHICH directory (`anthropic-directory` or
+ * `chatgpt-directory`); omitted leaves the one already on screen, so a model
+ * that does not know there are two cannot silently switch the user's view.
+ * `tier` only exists on the Claude source, and switching source clears it.
  */
 export interface SearchRegistryDirectoryInspectorCommand {
   id: string;
   type: "searchRegistryDirectory";
-  payload: { query?: string; tier?: string };
+  payload: { query?: string; tier?: string; source?: string };
   timeoutMs?: number;
 }
 
@@ -849,7 +854,7 @@ export type InspectorCommandResponse =
   | InspectorCommandErrorResponse;
 
 export function isInspectorCommandType(
-  value: unknown,
+  value: unknown
 ): value is InspectorCommandType {
   return (
     typeof value === "string" &&
@@ -860,7 +865,7 @@ export function isInspectorCommandType(
 export function buildInspectorCommandError(
   code: InspectorCommandErrorCode,
   message: string,
-  details?: unknown,
+  details?: unknown
 ): InspectorCommandError {
   return {
     code,

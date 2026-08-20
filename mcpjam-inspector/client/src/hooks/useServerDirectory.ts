@@ -10,12 +10,19 @@ import {
 } from "@/lib/quick-connect-pending";
 
 /**
- * The Claude connectors directory half of the Registry tab.
+ * The upstream-directory half of the Registry tab.
  *
- * This is a MIRROR of Anthropic's public directory (~2,000 entries), synced
- * daily into Convex and read here through `serverCatalogQueries`. It sits
- * beside — never instead of — the hand-curated catalog `useRegistryServers`
- * serves: those are cards MCPJam stands behind, these are upstream facts.
+ * Two mirrors, one surface: Anthropic's Claude connectors directory (~2,000
+ * entries, synced daily) and OpenAI's ChatGPT app directory (~2,900 entries,
+ * uploaded weekly). Both sit beside — never instead of — the hand-curated
+ * catalog `useRegistryServers` serves: those are cards MCPJam stands behind,
+ * these are upstream facts about somebody else's listing.
+ *
+ * ONE SOURCE AT A TIME, Claude by default. The backend's browse and search are
+ * source-scoped index reads, so a "both" mode would be a second query and a
+ * merge with no defensible ordering — and the facet is how a person says which
+ * catalog they are looking at, which is information the cards themselves
+ * cannot carry as clearly.
  *
  * Gated by the SAME `REGISTRY_FEATURE_ENABLED` switch as the curated half. A
  * directory that queries while the curated catalog is dark is precisely the
@@ -37,6 +44,46 @@ export const DIRECTORY_TIERS = [
 ] as const;
 export type DirectoryTier = (typeof DIRECTORY_TIERS)[number];
 
+export const DIRECTORY_SOURCES = [
+  "anthropic-directory",
+  "chatgpt-directory",
+] as const;
+export type DirectorySource = (typeof DIRECTORY_SOURCES)[number];
+
+/** Claude's directory is the daily, reliable one; it is what opens. */
+export const DEFAULT_DIRECTORY_SOURCE: DirectorySource = "anthropic-directory";
+
+export const DIRECTORY_SOURCE_LABELS: Record<DirectorySource, string> = {
+  "anthropic-directory": "Claude directory",
+  "chatgpt-directory": "ChatGPT directory",
+};
+
+/**
+ * The card badge. "Listed in ChatGPT" is PROVENANCE, deliberately not a
+ * quality claim: OpenAI accepting a submission is not a verification tier of
+ * ours, and their own docs distinguish connectors they maintain from
+ * third-party remote servers.
+ */
+export const DIRECTORY_SOURCE_BADGES: Record<DirectorySource, string> = {
+  "anthropic-directory": "From Claude directory",
+  "chatgpt-directory": "Listed in ChatGPT",
+};
+
+/**
+ * Verification tiers are a CLAUDE concept. The ChatGPT directory publishes no
+ * equivalent, so the facet is hidden there rather than shown filtering nothing
+ * — an always-empty filter reads as "no partners listed", which is false.
+ */
+export function sourceHasTiers(source: DirectorySource): boolean {
+  return source === "anthropic-directory";
+}
+
+/** Why a REMOTE row cannot be connected. See `catalogServers` in the schema. */
+export type DirectoryUnavailableReason =
+  | "endpoint_hidden"
+  | "endpoint_unverified"
+  | "oauth_no_resource";
+
 /** One row of `serverCatalogQueries:searchCatalogServers`. */
 export interface DirectoryServer {
   _id: string;
@@ -53,8 +100,51 @@ export interface DirectoryServer {
   remoteUrlOptions?: string[];
   remoteUrlRegex?: string;
   isAuthless?: boolean;
+  /** The published OAuth resource. NOT an endpoint — provenance only. */
+  oauthResourceUrl?: string;
+  endpointConfidence?: "explicit" | "resource_verified" | "probe_verified";
+  unavailableReason?: DirectoryUnavailableReason;
+  authPosture?: string;
   /** A curated card already covers this row; filtered out of `items`. */
   curatedOverlap: boolean;
+}
+
+/**
+ * Can this row be connected at all?
+ *
+ * Keyed on `endpointKind`, but the COPY beside it must not be — see
+ * `describeUnavailable`. A `none` row is a local desktop extension on one
+ * source and a hosted server with a hidden endpoint on the other.
+ */
+export function isConnectableDirectoryRow(
+  server: Pick<DirectoryServer, "endpointKind">
+): boolean {
+  return server.endpointKind !== "none";
+}
+
+/**
+ * Why this particular row cannot be connected, in words that are true of it.
+ *
+ * About 37% of the ChatGPT directory is a hosted SaaS server whose endpoint
+ * OpenAI proxies and never publishes. Telling someone that is a "local desktop
+ * extension" sends them looking for an installer that does not exist, so the
+ * text keys on `unavailableReason` first and `rowType` only as the fallback.
+ */
+export function describeUnavailable(
+  server: Pick<DirectoryServer, "rowType" | "unavailableReason">
+): string {
+  switch (server.unavailableReason) {
+    case "endpoint_hidden":
+      return "Endpoint not published by the directory that lists it.";
+    case "endpoint_unverified":
+      return "Endpoint unverified — nothing answered as an MCP server.";
+    case "oauth_no_resource":
+      return "No endpoint published for this listing yet.";
+    default:
+      return server.rowType === "local"
+        ? "Local desktop extension — not a remote MCP server."
+        : "No endpoint to connect to.";
+  }
 }
 
 /** One row of `serverCatalogQueries:getProjectCatalogConnections`. */
@@ -65,6 +155,40 @@ export interface DirectoryConnection {
   serverName: string | null;
   endpointUrl: string;
   endpointKind: "fixed" | "options" | "tenant";
+}
+
+/**
+ * What `connectCatalogServer` did.
+ *
+ * `existing_endpoint` is the cross-source case: this workspace already talks
+ * to the same URL through the OTHER directory's row, so the backend hands back
+ * that connection rather than installing a duplicate. The UI needs to say so —
+ * silently returning someone else's server would look like nothing happened.
+ */
+export interface DirectoryConnectResult {
+  serverId: string;
+  serverName: string;
+  outcome: "created" | "reconnected" | "existing_endpoint";
+  existing?: {
+    catalogServerId: string;
+    source: string;
+    displayName: string;
+  };
+}
+
+/** "Already connected via the Claude directory", for an `existing_endpoint`. */
+export function describeExistingConnection(
+  result: DirectoryConnectResult
+): string | null {
+  if (result.outcome !== "existing_endpoint") return null;
+  const source = result.existing?.source;
+  // A source we do not have a label for is still a real connection; naming it
+  // "the undefined directory" would be worse than being vague.
+  return source && source in DIRECTORY_SOURCE_LABELS
+    ? `Already connected via the ${
+        DIRECTORY_SOURCE_LABELS[source as DirectorySource]
+      }.`
+    : "Already connected via another catalog.";
 }
 
 /**
@@ -217,24 +341,39 @@ export function requiresEndpointChoice(
   return server.endpointKind === "options" || server.endpointKind === "tenant";
 }
 
-export interface UseClaudeDirectoryOptions {
+export interface UseServerDirectoryOptions {
   enabled?: boolean;
   projectId: string | null;
   isAuthenticated: boolean;
   onConnect: (formData: ServerFormData) => void;
 }
 
-export function useClaudeDirectory({
+/** One entry of `serverCatalogQueries:getCatalogSourceStatus`. */
+export interface DirectorySourceStatus {
+  source: string;
+  lastSyncedAt: number | null;
+  liveCount: number | null;
+  upstreamFetchedAt: number | null;
+}
+
+export function useServerDirectory({
   enabled: callerEnabled = true,
   projectId,
   isAuthenticated,
   onConnect,
-}: UseClaudeDirectoryOptions) {
+}: UseServerDirectoryOptions) {
   const enabled = REGISTRY_FEATURE_ENABLED && callerEnabled;
 
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [tier, setTier] = useState<DirectoryTier>("all");
+  const [source, setSource] = useState<DirectorySource>(
+    DEFAULT_DIRECTORY_SOURCE
+  );
+  // OFF by default. About 37% of the ChatGPT directory has no published
+  // endpoint, and hiding a third of a catalog before anyone asked would make
+  // the directory look smaller than it is — the full census is the point.
+  const [connectableOnly, setConnectableOnly] = useState(false);
 
   useEffect(() => {
     const handle = window.setTimeout(
@@ -250,10 +389,19 @@ export function useClaudeDirectory({
   // listing we already have.
   const searchArgs = useMemo(
     () => ({
+      source,
       ...(debouncedQuery ? { q: debouncedQuery } : {}),
-      ...(tier === "all" ? {} : { verifiedTier: tier }),
+      // A tier the current source does not publish is not sent at all — it
+      // would filter every row out and read as an empty directory.
+      ...(tier === "all" || !sourceHasTiers(source)
+        ? {}
+        : { verifiedTier: tier }),
+      // Pushed into the query rather than filtered client-side: filtering a
+      // page after it arrives returns short pages and eventually blank ones,
+      // because pagination counts rows the filter then throws away.
+      ...(connectableOnly ? { endpointKind: "fixed" as const } : {}),
     }),
-    [debouncedQuery, tier]
+    [connectableOnly, debouncedQuery, source, tier]
   );
 
   const {
@@ -270,6 +418,14 @@ export function useClaudeDirectory({
     "serverCatalogQueries:getProjectCatalogConnections" as any,
     enabled && isAuthenticated && projectId ? ({ projectId } as any) : "skip"
   ) as DirectoryConnection[] | undefined;
+
+  // Public, so a signed-out browser still sees how fresh each mirror is. One
+  // of the two is a manual weekly upload, which makes "as of" a real product
+  // fact rather than an operational detail.
+  const sourceStatuses = useQuery(
+    "serverCatalogQueries:getCatalogSourceStatus" as any,
+    enabled ? ({} as any) : "skip"
+  ) as DirectorySourceStatus[] | undefined;
 
   const connectMutation = useMutation(
     "serverCatalogConnect:connectCatalogServer" as any
@@ -294,6 +450,22 @@ export function useClaudeDirectory({
   );
 
   /**
+   * Switching source clears the tier, because tiers belong to one source and
+   * a filter that survives the switch would silently narrow a catalog that
+   * never had those tiers to begin with.
+   */
+  const selectSource = useCallback((next: DirectorySource) => {
+    setSource(next);
+    if (!sourceHasTiers(next)) setTier("all");
+  }, []);
+
+  const status_ = sourceStatuses?.find((entry) => entry.source === source);
+  const lastSyncedAt =
+    // For a snapshot source the SCRAPE time is the honest answer: ingesting on
+    // Friday a sweep taken on Tuesday makes the catalog Tuesday-fresh.
+    status_?.upstreamFetchedAt ?? status_?.lastSyncedAt ?? null;
+
+  /**
    * Install a directory entry, then hand it to the app's own connect.
    *
    * MUTATION FIRST, deliberately. The mutation validates the endpoint,
@@ -309,7 +481,12 @@ export function useClaudeDirectory({
    * never from this resolving.
    */
   const connect = useCallback(
-    async (server: DirectoryServer, endpointUrl?: string) => {
+    async (
+      server: DirectoryServer,
+      endpointUrl?: string
+    ): Promise<
+      DirectoryConnectResult & { pending: PendingQuickConnectState }
+    > => {
       // Inert while the feature is dark, not merely unrendered. Nothing can
       // reach this today (the agent handler resolves against `items`, which is
       // empty when gated), and that is exactly why it is cheap to guarantee:
@@ -327,13 +504,13 @@ export function useClaudeDirectory({
         );
       }
 
-      let result: { serverId: string; serverName: string };
+      let result: DirectoryConnectResult;
       try {
         result = (await connectMutation({
           catalogServerId: server._id,
           projectId,
           ...(endpointUrl ? { endpointUrl } : {}),
-        } as any)) as { serverId: string; serverName: string };
+        } as any)) as DirectoryConnectResult;
       } catch (error) {
         throw normalizeDirectoryConnectError(error);
       }
@@ -383,7 +560,7 @@ export function useClaudeDirectory({
 
       return { ...result, pending };
     },
-    [connectMutation, onConnect, projectId]
+    [connectMutation, enabled, onConnect, projectId]
   );
 
   const status = enabled ? paginationStatus : "Exhausted";
@@ -399,6 +576,14 @@ export function useClaudeDirectory({
     setQuery,
     tier,
     setTier,
+    source,
+    setSource: selectSource,
+    connectableOnly,
+    setConnectableOnly,
+    /** Whether the current source publishes verification tiers at all. */
+    hasTiers: sourceHasTiers(source),
+    /** When the current source's catalog was last refreshed upstream. */
+    lastSyncedAt,
     connect,
     connections: connections ?? [],
     connectedCatalogIds,

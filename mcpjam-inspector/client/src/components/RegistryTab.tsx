@@ -41,13 +41,21 @@ import {
   type RegistryConnectionStatus,
 } from "@/hooks/useRegistryServers";
 import {
-  useClaudeDirectory,
+  useServerDirectory,
   requiresEndpointChoice,
   normalizeDirectoryConnectError,
+  describeExistingConnection,
+  describeUnavailable,
+  isConnectableDirectoryRow,
+  sourceHasTiers,
+  DIRECTORY_SOURCES,
+  DIRECTORY_SOURCE_BADGES,
+  DIRECTORY_SOURCE_LABELS,
   DIRECTORY_TIERS,
   type DirectoryServer,
+  type DirectorySource,
   type DirectoryTier,
-} from "@/hooks/useClaudeDirectory";
+} from "@/hooks/useServerDirectory";
 import { DirectoryEndpointDialog } from "./registry/DirectoryEndpointDialog";
 import { toast } from "@/lib/toast";
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
@@ -198,6 +206,20 @@ function readDirectoryTier(value: unknown): DirectoryTier | undefined {
   );
 }
 
+function readDirectorySource(value: unknown): DirectorySource | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value === "string" &&
+    (DIRECTORY_SOURCES as readonly string[]).includes(value)
+  ) {
+    return value as DirectorySource;
+  }
+  throw createInspectorCommandClientError(
+    "invalid_request",
+    `'source' must be one of ${DIRECTORY_SOURCES.join(", ")} when provided.`
+  );
+}
+
 const TIER_LABELS: Record<DirectoryTier, string> = {
   all: "All tiers",
   anthropic: "Anthropic",
@@ -237,7 +259,7 @@ export function RegistryTab({
       onDisconnect,
     });
 
-  const directory = useClaudeDirectory({
+  const directory = useServerDirectory({
     projectId,
     isAuthenticated,
     onConnect,
@@ -363,13 +385,18 @@ export function RegistryTab({
     async (server: DirectoryServer, endpointUrl?: string) => {
       setConnectingDirectoryIds((prev) => new Set(prev).add(server._id));
       try {
-        const { pending } = await directory.connect(server, endpointUrl);
+        const result = await directory.connect(server, endpointUrl);
         // The hook wrote the marker to localStorage (it has to survive an
         // OAuth redirect); mirror it into state so THIS session's effects —
         // auto-navigate on connect, stale cleanup — see it too, exactly as
         // they do for a curated connect.
-        setPendingQuickConnect(pending);
+        setPendingQuickConnect(result.pending);
         setEndpointPrompt(null);
+        // The workspace already talks to this endpoint through the other
+        // directory's row. Saying so beats a silent no-op that looks like a
+        // click that did nothing.
+        const reused = describeExistingConnection(result);
+        if (reused) toast.info(reused);
         return { ok: true as const };
       } catch (rawError) {
         const error = normalizeDirectoryConnectError(rawError);
@@ -514,12 +541,16 @@ export function RegistryTab({
       if (!item) return null;
 
       const serverName = item.displayName;
-      if (item.endpointKind === "none") {
+      if (!isConnectableDirectoryRow(item)) {
+        // Keyed on the row, not on the kind: `none` means "a local desktop
+        // extension" on one source and "a hosted server whose endpoint the
+        // directory will not publish" on the other, and the model relays this
+        // text to a person who would go looking for an installer.
         return {
           status: "not_connectable",
           serverName,
-          message:
-            "This directory entry is a local desktop extension, not a remote MCP server.",
+          message: describeUnavailable(item),
+          ...(item.unavailableReason ? { reason: item.unavailableReason } : {}),
         };
       }
       const status = directoryStatusFor(item);
@@ -688,14 +719,20 @@ export function RegistryTab({
           );
         }
         const tier = readDirectoryTier(payload.tier);
+        const source = readDirectorySource(payload.source);
         // DRIVES the screen's own controls rather than running a private
         // query: what the model reads back is what the person is looking at,
         // and the follow-up connect resolves against the same rows.
         directory.setQuery(payload.query ?? "");
+        // Source first: it clears a tier the new source does not publish, so
+        // setting the tier afterwards is what makes an explicit tier survive
+        // an explicit source in the same call.
+        if (source) directory.setSource(source);
         if (tier) directory.setTier(tier);
         return {
           status: "searching",
           query: payload.query ?? "",
+          source: source ?? directory.source,
           tier: tier ?? directory.tier,
           note: "Results are debounced — read them from ui_snapshot_app's `directory` block.",
         };
@@ -729,9 +766,13 @@ export function RegistryTab({
       // model actually needs (whether a choice is required) without it.
       directory: {
         query: directory.query,
+        source: directory.source,
         tier: directory.tier,
         loadedCount: directory.items.length,
         hasMore: directory.canLoadMore,
+        ...(directory.lastSyncedAt
+          ? { asOf: new Date(directory.lastSyncedAt).toISOString() }
+          : {}),
         visible: directory.items
           .slice(0, AGENT_SNAPSHOT_MAX_DIRECTORY)
           .map((item) => ({
@@ -739,6 +780,17 @@ export function RegistryTab({
             ...(item.verifiedTier ? { tier: item.verifiedTier } : {}),
             status: directoryStatusFor(item),
             requiresEndpointChoice: requiresEndpointChoice(item),
+            // So the model does not offer to install something that cannot be
+            // installed. The REASON travels too: "endpoint not published" and
+            // "local extension" call for different things to say.
+            ...(isConnectableDirectoryRow(item)
+              ? {}
+              : {
+                  connectable: false as const,
+                  ...(item.unavailableReason
+                    ? { unavailableReason: item.unavailableReason }
+                    : {}),
+                }),
           })),
       },
     }),
@@ -752,7 +804,10 @@ export function RegistryTab({
   const directoryEmpty =
     !directory.isLoadingFirstPage && directory.items.length === 0;
   const directoryFiltered =
-    directory.query.trim().length > 0 || directory.tier !== "all";
+    directory.query.trim().length > 0 ||
+    directory.tier !== "all" ||
+    directory.connectableOnly ||
+    directory.source !== "anthropic-directory";
 
   if (isLoading && directory.isLoadingFirstPage) {
     return <LoadingSkeleton />;
@@ -804,7 +859,7 @@ export function RegistryTab({
           </div>
         ) : null}
 
-        <ClaudeDirectorySection
+        <ServerDirectorySection
           directory={directory}
           statusFor={directoryStatusFor}
           onConnect={handleDirectoryConnect}
@@ -832,23 +887,34 @@ export function RegistryTab({
 }
 
 /**
- * The mirrored Claude connectors directory, beneath the curated catalog.
+ * The mirrored upstream directories, beneath the curated catalog.
  *
- * ~2,000 entries, so it is search-first: no all-at-once grid, a debounced
- * query, a tier filter, and an explicit Load more. Rows a curated card already
- * covers are filtered out upstream in the hook — one connector, one card.
+ * Thousands of entries per source, so it is search-first: no all-at-once grid,
+ * a debounced query, a source facet, a tier filter, and an explicit Load more.
+ * Rows a curated card already covers are filtered out upstream in the hook —
+ * one connector, one card.
+ *
+ * ONE SOURCE AT A TIME (Claude by default). Cross-directory listing overlap
+ * stays visible when someone switches — a connector listed in both is a
+ * signal, not a duplicate to hide — and only CONNECT collapses the two, in the
+ * backend.
  */
-function ClaudeDirectorySection({
+function ServerDirectorySection({
   directory,
   statusFor,
   onConnect,
 }: {
-  directory: ReturnType<typeof useClaudeDirectory>;
+  directory: ReturnType<typeof useServerDirectory>;
   statusFor: (server: DirectoryServer) => RegistryConnectionStatus | "error";
   onConnect: (server: DirectoryServer) => void;
 }) {
-  const { items, query, setQuery, tier, setTier } = directory;
-  const filtering = query.trim().length > 0 || tier !== "all";
+  const { items, query, setQuery, tier, setTier, source, setSource } =
+    directory;
+  const filtering =
+    query.trim().length > 0 ||
+    tier !== "all" ||
+    directory.connectableOnly ||
+    source !== "anthropic-directory";
 
   // Nothing loaded and nothing asked for: the section stays out of the way
   // rather than advertising an empty directory (the gated-off case).
@@ -857,12 +923,21 @@ function ClaudeDirectorySection({
   }
 
   return (
-    <section className="space-y-4" data-testid="claude-directory-section">
+    <section className="space-y-4" data-testid="server-directory-section">
       <div>
-        <h3 className="text-sm font-semibold">Claude directory</h3>
+        <h3 className="text-sm font-semibold">Connector directories</h3>
         <p className="text-xs text-muted-foreground">
-          Connectors mirrored from Anthropic&rsquo;s public directory. Search to
-          find one, then connect it into this project.
+          Connectors mirrored from a public directory. Search to find one, then
+          connect it into this project.
+          {directory.lastSyncedAt ? (
+            <>
+              {" "}
+              <span data-testid="directory-as-of">
+                {DIRECTORY_SOURCE_LABELS[source]} as of{" "}
+                {new Date(directory.lastSyncedAt).toLocaleDateString()}.
+              </span>
+            </>
+          ) : null}
         </p>
       </div>
 
@@ -870,28 +945,64 @@ function ClaudeDirectorySection({
         <SearchInput
           value={query}
           onValueChange={setQuery}
-          placeholder="Search the Claude directory…"
+          placeholder={`Search the ${DIRECTORY_SOURCE_LABELS[source]}…`}
           className="w-full sm:w-72"
         />
         <Select
-          value={tier}
-          onValueChange={(value) => setTier(value as DirectoryTier)}
+          value={source}
+          onValueChange={(value) => setSource(value as DirectorySource)}
         >
           <SelectTrigger
-            data-testid="directory-tier-filter"
-            className="h-8 w-[min(100%,9rem)] text-xs"
-            aria-label="Filter the directory by tier"
+            data-testid="directory-source-filter"
+            className="h-8 w-[min(100%,11rem)] text-xs"
+            aria-label="Choose which directory to browse"
           >
-            <SelectValue placeholder="All tiers" />
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {DIRECTORY_TIERS.map((value) => (
+            {DIRECTORY_SOURCES.map((value) => (
               <SelectItem key={value} value={value}>
-                {TIER_LABELS[value]}
+                {DIRECTORY_SOURCE_LABELS[value]}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+        <Button
+          variant={directory.connectableOnly ? "default" : "outline"}
+          size="sm"
+          className="h-8 text-xs"
+          aria-pressed={directory.connectableOnly}
+          data-testid="directory-connectable-filter"
+          onClick={() =>
+            directory.setConnectableOnly(!directory.connectableOnly)
+          }
+        >
+          Connectable only
+        </Button>
+        {/* Verification tiers are a Claude concept. Rendering the filter for a
+            source that publishes none would offer a control that can only ever
+            empty the list. */}
+        {sourceHasTiers(source) && (
+          <Select
+            value={tier}
+            onValueChange={(value) => setTier(value as DirectoryTier)}
+          >
+            <SelectTrigger
+              data-testid="directory-tier-filter"
+              className="h-8 w-[min(100%,9rem)] text-xs"
+              aria-label="Filter the directory by tier"
+            >
+              <SelectValue placeholder="All tiers" />
+            </SelectTrigger>
+            <SelectContent>
+              {DIRECTORY_TIERS.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {TIER_LABELS[value]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       {directory.isLoadingFirstPage ? (
@@ -944,6 +1055,8 @@ function DirectoryServerCard({
 }) {
   const [iconFailed, setIconFailed] = useState(false);
   const showIcon = Boolean(server.iconUrl) && !iconFailed;
+  const connectable = isConnectableDirectoryRow(server);
+  const unavailable = connectable ? null : describeUnavailable(server);
 
   return (
     <Card className="px-4 py-3 flex flex-col gap-2">
@@ -971,10 +1084,28 @@ function DirectoryServerCard({
             <span className="truncate">{server.displayName}</span>
             {server.verifiedTier === "anthropic" && <VerifiedBadge />}
           </h4>
-          <p className="text-xs text-muted-foreground">From Claude directory</p>
+          {/* PROVENANCE, not endorsement: "Listed in ChatGPT" says OpenAI
+              accepted a submission, which is not a tier of ours. */}
+          <p className="text-xs text-muted-foreground">
+            {DIRECTORY_SOURCE_BADGES[
+              server.source as keyof typeof DIRECTORY_SOURCE_BADGES
+            ] ?? "From an upstream directory"}
+          </p>
         </div>
         <div className="flex-shrink-0">
-          <DirectoryAction status={status} onConnect={onConnect} />
+          {connectable ? (
+            <DirectoryAction status={status} onConnect={onConnect} />
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs cursor-default"
+              disabled
+              title={unavailable ?? undefined}
+            >
+              Not connectable
+            </Button>
+          )}
         </div>
       </div>
 
@@ -991,6 +1122,19 @@ function DirectoryServerCard({
           </Badge>
         )}
       </div>
+
+      {/* Why, in the row's own terms. A hidden hosted endpoint and a desktop
+          extension are different situations and were both `endpointKind:
+          'none'`; one line of wrong copy here sends someone hunting for an
+          installer that does not exist. */}
+      {unavailable && (
+        <p
+          className="text-xs text-muted-foreground italic"
+          data-testid="directory-unavailable-reason"
+        >
+          {unavailable}
+        </p>
+      )}
 
       {server.description && (
         <p className="text-xs text-muted-foreground line-clamp-2">

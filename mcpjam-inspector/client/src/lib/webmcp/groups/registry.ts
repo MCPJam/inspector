@@ -1,7 +1,7 @@
 /**
- * Registry-screen tools: search the mirrored Claude connectors directory, and
+ * Registry-screen tools: search the mirrored connector directories, and
  * install/connect, disconnect, and star servers from either catalog on the
- * screen — MCPJam's curated registry or that directory.
+ * screen — MCPJam's curated registry or one of those directories.
  *
  * The first mount-scoped group (the Connect-screen tools are "global"-kind
  * and self-navigate; these do not): `RegistryTab` owns the command handlers
@@ -21,7 +21,7 @@ import { asOptionalString, errorResult, fromActionResult } from "./shared";
 const SERVER_NAME_PROPERTY = {
   type: "string",
   description:
-    "Server as shown on its card: display name (e.g. 'Asana'), curated registry name (e.g. 'com.asana.mcp'), or a Claude-directory entry's catalog name.",
+    "Server as shown on its card: display name (e.g. 'Asana'), curated registry name (e.g. 'com.asana.mcp'), or a directory entry's catalog name.",
 } as const;
 
 const VARIANT_PROPERTY = {
@@ -170,7 +170,7 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
     {
       name: "ui_search_registry_directory",
       description:
-        "Search the Claude connectors directory beneath the curated catalog — ~2,000 mirrored entries, far more than the page lists at once. Matches names, descriptions and tool names, so 'invoice' and 'create_issue' work as well as 'Linear'. Omit 'query' to browse instead. This types into the screen's own search box, so results are what the user sees; they arrive shortly after — read them from ui_snapshot_app's `directory` block, then install one with ui_connect_registry_server.",
+        "Search a mirrored connector directory beneath the curated catalog — thousands of entries, far more than the page lists. Matches names, descriptions and tool/skill names, so 'invoice' and 'create_issue' work as well as 'Linear'. Omit 'query' to browse. Two directories, one at a time; 'source' switches, omit to keep the user's view. Drives the screen's own controls, so results are what the user sees — read them from ui_snapshot_app's `directory` block, then install with ui_connect_registry_server.",
       inputSchema: {
         type: "object",
         properties: {
@@ -179,11 +179,17 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
             description:
               "What to search for. Omit or leave empty to browse the directory.",
           },
+          source: {
+            type: "string",
+            enum: ["anthropic-directory", "chatgpt-directory"],
+            description:
+              "Which directory to browse. Omit to keep the one on screen.",
+          },
           tier: {
             type: "string",
             enum: ["all", "anthropic", "partner", "community"],
             description:
-              "Restrict to one verification tier. 'all' clears the filter.",
+              "Verification tier. Claude directory only; 'all' clears it.",
           },
         },
         required: [],
@@ -201,15 +207,22 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
       execute: async (args) => {
         const query = asOptionalString(args.query);
         const tier = asOptionalString(args.tier);
+        const source = asOptionalString(args.source);
         if (args.tier !== undefined && !tier) {
           return errorResult(
             "'tier' must be a non-empty string when provided."
+          );
+        }
+        if (args.source !== undefined && !source) {
+          return errorResult(
+            "'source' must be a non-empty string when provided."
           );
         }
         const response = await dispatchInspectorCommand({
           type: "searchRegistryDirectory",
           payload: {
             ...(query ? { query } : {}),
+            ...(source ? { source } : {}),
             ...(tier ? { tier } : {}),
           },
         });

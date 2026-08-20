@@ -15,7 +15,7 @@ import {
 import {
   DirectoryConnectError,
   type DirectoryServer,
-} from "@/hooks/useClaudeDirectory";
+} from "@/hooks/useServerDirectory";
 import {
   readPendingQuickConnect,
   writePendingQuickConnect,
@@ -77,6 +77,8 @@ const mockDirectoryConnect = vi.fn();
 const mockLoadMore = vi.fn();
 const mockSetQuery = vi.fn();
 const mockSetTier = vi.fn();
+const mockSetSource = vi.fn();
+const mockSetConnectableOnly = vi.fn();
 let mockDirectoryReturn: Record<string, unknown>;
 
 function directoryHookReturn(
@@ -92,6 +94,12 @@ function directoryHookReturn(
     setQuery: mockSetQuery,
     tier: "all",
     setTier: mockSetTier,
+    source: "anthropic-directory",
+    setSource: mockSetSource,
+    connectableOnly: false,
+    setConnectableOnly: mockSetConnectableOnly,
+    hasTiers: true,
+    lastSyncedAt: null,
     connect: mockDirectoryConnect,
     connections: [],
     connectedCatalogIds: new Set<string>(),
@@ -99,13 +107,13 @@ function directoryHookReturn(
   };
 }
 
-vi.mock("@/hooks/useClaudeDirectory", async (importOriginal) => {
+vi.mock("@/hooks/useServerDirectory", async (importOriginal) => {
   const actual = await importOriginal<
-    typeof import("@/hooks/useClaudeDirectory")
+    typeof import("@/hooks/useServerDirectory")
   >();
   return {
     ...actual,
-    useClaudeDirectory: () => mockDirectoryReturn,
+    useServerDirectory: () => mockDirectoryReturn,
   };
 });
 
@@ -454,7 +462,7 @@ describe("RegistryTab", () => {
     });
   });
 
-  describe("claude directory section", () => {
+  describe("upstream directory section", () => {
     it("renders a directory card with its tier and provenance", () => {
       mockDirectoryReturn = directoryHookReturn({
         items: [createDirectoryServer()],
@@ -541,7 +549,7 @@ describe("RegistryTab", () => {
 
       render(<RegistryTab {...defaultProps} />);
       expect(
-        screen.getByTestId("claude-directory-section")
+        screen.getByTestId("server-directory-section")
       ).toBeInTheDocument();
       expect(screen.getByText("Linear")).toBeInTheDocument();
     });
@@ -561,8 +569,136 @@ describe("RegistryTab", () => {
 
       render(<RegistryTab {...defaultProps} />);
       expect(
-        screen.queryByTestId("claude-directory-section")
+        screen.queryByTestId("server-directory-section")
       ).not.toBeInTheDocument();
+    });
+
+    it("offers the source facet", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      render(<RegistryTab {...defaultProps} />);
+      expect(screen.getByTestId("directory-source-filter")).toBeInTheDocument();
+    });
+
+    it("hides the tier filter on a source that publishes no tiers", () => {
+      // An always-empty filter is worse than no filter: it reads as "this
+      // directory has no partners", which is a claim we would be inventing.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer({ source: "chatgpt-directory" })],
+        source: "chatgpt-directory",
+        hasTiers: false,
+      });
+      render(<RegistryTab {...defaultProps} />);
+      expect(screen.getByTestId("directory-source-filter")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("directory-tier-filter")
+      ).not.toBeInTheDocument();
+    });
+
+    it("can hide the rows that cannot be installed", () => {
+      // Off by default — hiding a third of the ChatGPT directory before
+      // anyone asked would make it look smaller than it is.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      render(<RegistryTab {...defaultProps} />);
+      const toggle = screen.getByTestId("directory-connectable-filter");
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+      fireEvent.click(toggle);
+      expect(mockSetConnectableOnly).toHaveBeenCalledWith(true);
+    });
+
+    it("says how fresh the selected directory is", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+        lastSyncedAt: Date.parse("2026-08-14T00:00:00.000Z"),
+      });
+      render(<RegistryTab {...defaultProps} />);
+      expect(screen.getByTestId("directory-as-of")).toHaveTextContent(
+        /Claude directory as of/
+      );
+    });
+
+    it("badges a ChatGPT row as listed, never as verified", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [
+          createDirectoryServer({
+            source: "chatgpt-directory",
+            displayName: "Acme",
+            verifiedTier: undefined,
+          }),
+        ],
+        source: "chatgpt-directory",
+        hasTiers: false,
+      });
+      render(<RegistryTab {...defaultProps} />);
+      expect(screen.getByText("Listed in ChatGPT")).toBeInTheDocument();
+    });
+  });
+
+  describe("upstream directory — rows with no endpoint", () => {
+    const hiddenRow = () =>
+      createDirectoryServer({
+        source: "chatgpt-directory",
+        displayName: "Proxied App",
+        verifiedTier: undefined,
+        endpointKind: "none",
+        remoteUrl: undefined,
+        rowType: "remote",
+        unavailableReason: "endpoint_hidden",
+      });
+
+    it("shows the row, disabled, rather than hiding it", () => {
+      // Ingesting the full census is the point; a card that simply vanished
+      // would make the directory look smaller than it is.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [hiddenRow()],
+        source: "chatgpt-directory",
+        hasTiers: false,
+      });
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByText("Proxied App")).toBeInTheDocument();
+      const action = screen.getByRole("button", { name: "Not connectable" });
+      expect(action).toBeDisabled();
+      expect(
+        screen.queryByRole("button", { name: "Connect" })
+      ).not.toBeInTheDocument();
+    });
+
+    it("says WHY, in terms true of that row", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [hiddenRow()],
+        source: "chatgpt-directory",
+        hasTiers: false,
+      });
+      render(<RegistryTab {...defaultProps} />);
+
+      const reason = screen.getByTestId("directory-unavailable-reason");
+      expect(reason).toHaveTextContent(/not published/i);
+      // The copy this replaced. A hosted server OpenAI proxies is not a
+      // desktop extension, and saying so sends people hunting for an
+      // installer that does not exist.
+      expect(reason).not.toHaveTextContent(/desktop extension/i);
+    });
+
+    it("still calls a genuine local extension what it is", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [
+          createDirectoryServer({
+            displayName: "PDF Tools",
+            rowType: "local",
+            endpointKind: "none",
+            remoteUrl: undefined,
+          }),
+        ],
+      });
+      render(<RegistryTab {...defaultProps} />);
+      expect(
+        screen.getByTestId("directory-unavailable-reason")
+      ).toHaveTextContent(/local desktop extension/i);
     });
   });
 
@@ -1772,6 +1908,54 @@ describe("RegistryTab", () => {
       });
       expect(mockSetQuery).toHaveBeenCalledWith("invoice");
       expect(mockSetTier).toHaveBeenCalledWith("partner");
+    });
+
+    it("searchRegistryDirectory switches source, and the tier survives it", async () => {
+      // Order matters in the handler: source first (it clears a tier the new
+      // source does not publish), tier after — otherwise an explicit tier in
+      // the same call would be wiped by the source it was sent with.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      const response = await dispatch({
+        type: "searchRegistryDirectory",
+        payload: { query: "invoice", source: "chatgpt-directory" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: { status: "searching", source: "chatgpt-directory" },
+      });
+      expect(mockSetSource).toHaveBeenCalledWith("chatgpt-directory");
+    });
+
+    it("searchRegistryDirectory rejects an unknown source", async () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      const response = await dispatch({
+        type: "searchRegistryDirectory",
+        payload: { source: "bing-directory" },
+      });
+      expect(response).toMatchObject({ status: "error" });
+      expect(mockSetSource).not.toHaveBeenCalled();
+    });
+
+    it("leaves the source alone when the model does not name one", async () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      await dispatch({
+        type: "searchRegistryDirectory",
+        payload: { query: "invoice" },
+      });
+      expect(mockSetSource).not.toHaveBeenCalled();
     });
 
     it("searchRegistryDirectory with no query clears the box (browse)", async () => {
