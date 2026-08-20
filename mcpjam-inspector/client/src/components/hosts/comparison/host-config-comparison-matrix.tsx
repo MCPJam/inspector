@@ -169,20 +169,43 @@ export function HostConfigComparisonMatrix({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+      data-testid="compare-matrix"
       className={cn(
-        "overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]",
-        mobileOptimized && "min-w-0 max-w-full"
+        // framer-motion leaves a non-`none` `transform` on this element even at
+        // rest. The scroll box below MUST be a direct child of it (not several
+        // levels further out): some browsers mis-constrain `position: sticky`
+        // to the nearest *transformed* ancestor's box rather than the true
+        // scrolling ancestor when the two don't coincide, which un-pins the
+        // header. Keeping them coincident here is what the original PR shipped
+        // with.
+        //
+        // `max-h-full` (not `flex-1`): the parent div hands us the space left
+        // below the search/selector row as a definite height via its own
+        // flex-1, and we only want to cap ourselves at that — not force-fill
+        // it. `flex-1` always grows to the full available height regardless of
+        // content, so filtering the table down to a couple of rows left a
+        // dead band of `bg-card` the same size as the original page-gap bug,
+        // just moved inside the border. `max-h-full` lets a short result hug
+        // its own content and only claims the full height when the table
+        // actually needs it.
+        //
+        // No `min-h-*` either: it would re-floor the card at a fixed height and
+        // put the dead band back for a one- or two-row result. Nothing renders
+        // here that needs a floor — every empty case returns above this.
+        "flex max-h-full min-w-0 flex-col overflow-hidden rounded-xl border border-border bg-card shadow-[0_1px_0_rgba(0,0,0,0.02),0_12px_30px_-18px_rgba(0,0,0,0.18)]",
+        mobileOptimized && "max-w-full"
       )}
     >
-      {/* Bounded height so this div is a *real* scroll container (not just
-          page flow) — `sticky top-0`/`sticky left-0` on the header only take
-          effect when their nearest scrolling ancestor actually scrolls. */}
       <div
-        className={
-          mobileOptimized
-            ? "max-h-[70vh] max-w-full overflow-auto [-webkit-overflow-scrolling:touch]"
-            : "max-h-[70vh] overflow-auto"
-        }
+        data-testid="compare-matrix-scroll"
+        className={cn(
+          // No `flex-1` here either — this box shrinks to fit inside the
+          // card's (possibly content-hugged) height, which is what lets
+          // `overflow-auto` show a scrollbar only once the table actually
+          // exceeds that height, not unconditionally.
+          "min-h-0 overflow-auto",
+          mobileOptimized && "max-w-full [-webkit-overflow-scrolling:touch]"
+        )}
       >
         <table
           className={cn(
