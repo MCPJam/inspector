@@ -1,0 +1,147 @@
+---
+title: "Directory readiness check"
+description: "Grade a connector or plugin locally against Anthropic's and OpenAI's directory requirements, without a MCPJam account"
+icon: "circle-check"
+---
+
+Use `mcpjam readiness check` to grade an MCP server or plugin package against a publisher's directory requirements on your own machine, without a MCPJam account.
+
+This is not an offline fallback for the hosted readiness runs. It grades what only your machine can reach:
+
+- **Package-shaped OpenAI submissions** carry bytes on disk — there is no upload path, so those shapes can only be graded locally.
+- **Anthropic's intrusive probes** register an OAuth client on the target server, which is something to do from a machine you control, not from shared hosted infrastructure.
+
+The hosted `readiness start` commands grade the server as the platform reaches it. Both answers are worth having.
+
+## Grade against Anthropic's connector directory
+
+```bash
+mcpjam readiness check claude <url>
+```
+
+```bash
+# With a bearer token
+mcpjam readiness check claude https://mcp.example.com/mcp \
+  --access-token $TOKEN
+
+# With credentials from a prior oauth login
+mcpjam readiness check claude https://mcp.example.com/mcp \
+  --credentials-file ~/.mcpjam/credentials.json
+```
+
+## Grade against OpenAI's plugin directory
+
+`--submission-mode` is required and is never inferred. Inferring it from whichever inputs happen to be present would read a forgotten `--package` as `mcp-only`, report the package lane `not-applicable`, and hand you a clean bill of health for an artifact nobody looked at.
+
+```bash
+mcpjam readiness check openai <url> --submission-mode <mode>
+```
+
+### Submission modes
+
+| Mode | Grades | Requires |
+|------|--------|----------|
+| `mcp-only` | MCP server only | `<url>` |
+| `mcp-imported-skills` | MCP server + uploaded package | `<url>` and `--package` |
+| `skills-only` | Uploaded package only | `--package` (no URL) |
+
+<Note>
+  The modes above are the shapes currently supported by the hosted API. Pass `--submission-mode` with one of these values; the CLI rejects any unknown mode as a usage error.
+</Note>
+
+### Examples
+
+```bash
+# Wire-only submission
+mcpjam readiness check openai https://mcp.example.com/mcp \
+  --submission-mode mcp-only
+
+# Package-only submission (no server URL)
+mcpjam readiness check openai \
+  --submission-mode skills-only \
+  --package ./my-plugin
+
+# Server + package submission
+mcpjam readiness check openai https://mcp.example.com/mcp \
+  --submission-mode mcp-imported-skills \
+  --package ./my-plugin.zip
+```
+
+## Passing a package
+
+`--package` accepts a directory or a `.zip` file, decided by what exists on disk rather than by file extension.
+
+- **Directory** — archive-shaped checks (compressed size, entry table) report their gaps rather than inventing answers, because a directory is not an archive yet. This is the honest grade for something you are about to zip.
+- **Zip file** — the raw central directory is read before any normalization, so paths with `..`, backslashes, or duplicate names are caught exactly as the portal would reject them.
+
+```bash
+# Point at the folder you are about to zip
+mcpjam readiness check openai --submission-mode skills-only \
+  --package ./my-plugin-dir
+
+# Point at the archive itself
+mcpjam readiness check openai --submission-mode skills-only \
+  --package ./my-plugin.zip
+```
+
+## Output
+
+Structured reporter output goes to **stdout** and is pipeable:
+
+```bash
+# JSON summary (for CI)
+mcpjam readiness check claude https://mcp.example.com/mcp \
+  --reporter json-summary
+
+# JUnit XML (for CI test reporters)
+mcpjam readiness check claude https://mcp.example.com/mcp \
+  --reporter junit-xml
+```
+
+The verdict and gap list go to **stderr** and are suppressed by `--quiet`. Gaps name the input that would close each lane — an `incomplete` verdict without the next action is an adjective, not an answer.
+
+```
+NOT READY — directory-policy has unmet requirements.
+Gaps (2):
+  directory-policy: supply toolListing
+  optional-features: 3 check(s) could not run
+```
+
+## Exit codes
+
+| Code | Meaning |
+|------|---------|
+| `0` | Ready — every dispositive lane was evaluated and none failed |
+| `1` | Not ready — the target was graded and something disqualifying was found |
+| `2` | Usage error — invalid arguments |
+| `3` | Incomplete — the run did not establish enough to say either way |
+
+`3` (incomplete) is never collapsed into `1` (not ready). A run that could not reach the server, timed out, or was missing a required input teaches you nothing about the server itself — reporting it as a failure would make a connectivity problem look like a spec violation.
+
+## Flag reference
+
+### `readiness check claude`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `<url>` | Yes | MCP server URL |
+| `--access-token <token>` | No | Bearer access token for the server |
+| `--credentials-file <path>` | No | Load the access token from a file written by `oauth login --credentials-out` |
+| `--header <header>` | No | HTTP header in `Key: Value` format. Repeatable. |
+| `--timeout <ms>` | No | Per-request timeout in milliseconds |
+| `--reporter <reporter>` | No | `json-summary` or `junit-xml` structured reporter output |
+
+### `readiness check openai`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `[url]` | Depends on mode | MCP server URL. Omit for package-only submission shapes. |
+| `--submission-mode <mode>` | Yes | Declared submission shape. Never inferred. |
+| `--package <path>` | Depends on mode | Plugin package directory or `.zip` to grade |
+| `--access-token <token>` | No | Bearer access token for the server |
+| `--credentials-file <path>` | No | Load the access token from a file written by `oauth login --credentials-out` |
+| `--header <header>` | No | HTTP header in `Key: Value` format. Repeatable. |
+| `--timeout <ms>` | No | Per-request timeout in milliseconds |
+| `--reporter <reporter>` | No | `json-summary` or `junit-xml` structured reporter output |
+
+`--credentials-file` cannot be combined with `--access-token`. The CLI rejects conflicting auth sources upfront.
