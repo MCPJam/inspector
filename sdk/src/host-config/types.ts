@@ -395,6 +395,14 @@ export type McpAppsCapabilities = {
     xhr?: boolean;
     websocket?: boolean;
   };
+  cspResourceDomains?: {
+    script?: boolean;
+    stylesheet?: boolean;
+    image?: boolean;
+    font?: boolean;
+    media?: boolean;
+  };
+  resourceCacheTtl?: boolean;
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;

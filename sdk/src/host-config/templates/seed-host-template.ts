@@ -587,6 +587,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       base.mcpProfile = {
         profileVersion: 1,
         mcpProtocolVersion: "auto",
+        mrtrModes: {
+          requestState: false,
+          elicitation: false,
+        },
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
@@ -690,6 +694,42 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // claude.ai's outer-grants / inner-trims pattern.
             allowFeatures: { fullscreen: "*" },
           },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: true,
+            hostContextChanged: true,
+            resourceTeardown: true,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            // Claude advertises frameDomains and baseUriDomains and then
+            // blocks the origins it declared there (2026-08-19 probe), so
+            // neither is usable.
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            resourceCacheTtl: true,
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
         },
       };
       return base;
@@ -760,10 +800,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-          // Verbatim from the same probe. `title` / `description` /
-          // `websiteUrl` land in the pass-through
-          // `Record<string, unknown>` per host-config-v2 (backend
-          // soft-validates name/version only).
+          // Capability provenance above is from the v2.1.176 probe; this
+          // newer version is identity metadata only until a fresh probe updates
+          // both the version and the capability snapshot. `title` /
+          // `description` / `websiteUrl` land in the pass-through
+          // `Record<string, unknown>` per host-config-v2.
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
@@ -1130,7 +1171,18 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             sandboxPermissions: false,
             cspFrameDomains: false,
             cspBaseUriDomains: false,
-            resourcePrefersBorder: false,
+            cspConnectDomains: {
+              fetch: false,
+              xhr: false,
+            },
+            cspResourceDomains: {
+              script: false,
+              stylesheet: false,
+              image: false,
+              font: false,
+              media: false,
+            },
+            resourcePrefersBorder: true,
             downloadFile: false,
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
@@ -1337,9 +1389,24 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           uiInitialize: {
             // MCP Apps extension: hostInfo sent to the View iframe in
             // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
-            // need this to take that path. Version pinned to a real probed
-            // build; bump when capturing a fresh probe.
-            hostInfo: { name: "Cursor", version: "3.4.20" },
+            // need this to take that path. The 3.14.27 version is identity
+            // metadata only; the capability notes above remain attributed to
+            // their named probes until a fresh probe updates both.
+            hostInfo: { name: "Cursor", version: "3.14.27" },
+          },
+          mcpAppsOverrides: {
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
           },
           sandbox: {
             csp: {
@@ -1413,7 +1480,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            version: "0.148.0-alpha.9",
+            version: "0.148.0-alpha.15",
           },
         },
         apps: {

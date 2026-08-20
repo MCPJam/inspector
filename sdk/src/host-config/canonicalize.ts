@@ -103,6 +103,8 @@ const MCP_APPS_CAPABILITY_KEYS = [
   "cspFrameDomains",
   "cspBaseUriDomains",
   "cspConnectDomains",
+  "cspResourceDomains",
+  "resourceCacheTtl",
   "resourcePrefersBorder",
   "downloadFile",
   "requestTeardown",
@@ -844,19 +846,16 @@ function canonicalizeMcpProfile(
     }
   }
 
-  // A stateful pin must be one of the client's declared supported versions,
-  // and a missing list is derived from it because initialize needs one. A
-  // stateless pin skips initialize entirely, so it is exempt from the
-  // accept-list check (see the guard below) — legacy rows carry that shape.
+  // A legacy pin must be one of the versions accepted by initialize. Derive a
+  // missing list because initialize needs one. Modern pins use server/discover
+  // and are deliberately separate from the legacy initialize accept-list.
   if (
     out.mcpProtocolVersion !== undefined &&
-    out.mcpProtocolVersion !== "auto"
+    out.mcpProtocolVersion !== "auto" &&
+    !isStatelessProtocolVersion(out.mcpProtocolVersion)
   ) {
     const advertised = out.initialize?.supportedProtocolVersions;
-    if (
-      advertised === undefined &&
-      !isStatelessProtocolVersion(out.mcpProtocolVersion)
-    ) {
+    if (advertised === undefined) {
       const initBase = out.initialize ?? {};
       const initWithDerived: NonNullable<HostConfigMcpProfileV1["initialize"]> =
         {
@@ -870,15 +869,7 @@ function canonicalizeMcpProfile(
         )[k];
       }
       out.initialize = sortedInit;
-    } else if (
-      advertised !== undefined &&
-      // A stateless pin never runs `initialize`, so it has no business being
-      // in that legacy accept-list. Hosts saved this way predate the dual-era
-      // work and must keep saving; the UI already warns when a client is not
-      // verified for the selected revision.
-      !isStatelessProtocolVersion(out.mcpProtocolVersion) &&
-      !advertised.includes(out.mcpProtocolVersion)
-    ) {
+    } else if (!advertised.includes(out.mcpProtocolVersion)) {
       throw new Error(
         `hostConfigV2: ConflictingProtocolVersionPin — mcpProtocolVersion "${
           out.mcpProtocolVersion
@@ -1236,6 +1227,15 @@ function canonicalizeMcpProfile(
           if (Object.keys(domains).length > 0) {
             mcpAppsOverridesOut.cspConnectDomains = domains;
           }
+        } else if (key === "cspResourceDomains") {
+          const domains = canonicalBooleanCapabilityRecord(
+            "mcpProfile.apps.mcpAppsOverrides.cspResourceDomains",
+            value,
+            ["script", "stylesheet", "image", "font", "media"]
+          );
+          if (Object.keys(domains).length > 0) {
+            mcpAppsOverridesOut.cspResourceDomains = domains;
+          }
         } else if (key === "widgetDisplayModeRequests") {
           if (
             typeof value !== "string" ||
@@ -1588,7 +1588,9 @@ function readOAuthAuthModelValue(
   for (const [i, entry] of raw.entries()) {
     if (typeof entry !== "string" || !OAUTH_AUTH_MODEL_SET.has(entry)) {
       throw new Error(
-        `hostConfigV2: ${fieldName}[${i}] must be one of ${OAUTH_AUTH_MODELS.join(", ")}`
+        `hostConfigV2: ${fieldName}[${i}] must be one of ${OAUTH_AUTH_MODELS.join(
+          ", "
+        )}`
       );
     }
     // Reject rather than dedupe: a repeat makes the precedence list ambiguous,
@@ -1791,10 +1793,7 @@ function readOAuthScopeRequestValue(
     );
   }
   const mode = raw.mode;
-  if (
-    typeof mode !== "string" ||
-    !OAUTH_SCOPE_REQUEST_MODE_SET.has(mode)
-  ) {
+  if (typeof mode !== "string" || !OAUTH_SCOPE_REQUEST_MODE_SET.has(mode)) {
     throw new Error(
       `hostConfigV2: ${fieldName}.mode must be one of ${OAUTH_SCOPE_REQUEST_MODES.join(
         ", "
@@ -1836,7 +1835,11 @@ function readOAuthScopeRequestValue(
           `hostConfigV2: ${fieldName}.scopes is only valid when mode is "fixed"`
         );
       }
-      assertOnlyKnownKeys(raw, OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET, fieldName);
+      assertOnlyKnownKeys(
+        raw,
+        OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET,
+        fieldName
+      );
       return { mode: mode as "omit" | "challenge" | "all-supported" };
     }
     default: {
@@ -2233,7 +2236,9 @@ export function canonicalizeHostConfigV2(
   // normalizer.
   if (input.harness !== undefined && !isHarness(input.harness)) {
     throw new Error(
-      `hostConfigV2: harness must be one of ${HARNESS_IDS.map((h) => `"${h}"`).join(", ")} when set`
+      `hostConfigV2: harness must be one of ${HARNESS_IDS.map(
+        (h) => `"${h}"`
+      ).join(", ")} when set`
     );
   }
   const serverIds = sortUniqueServerIds(input.serverIds);

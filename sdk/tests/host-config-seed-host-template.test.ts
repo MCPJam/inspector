@@ -89,6 +89,37 @@ describe("seedHostTemplate", () => {
     expect(config.modelId).toBe("anthropic/claude-haiku-4.5");
   });
 
+  it("keeps Claude protocol and app capabilities faithful to the probe", () => {
+    const config = seedHostTemplate("claude", { theme: "dark" });
+    const profile = config.mcpProfile;
+
+    expect(profile).toMatchObject({
+      mcpProtocolVersion: "auto",
+      mrtrModes: { requestState: false, elicitation: false },
+      initialize: {
+        supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+        clientInfo: { name: "claude-ai", version: "0.1.0" },
+      },
+    });
+    expect(profile?.apps?.mcpAppsOverrides).toMatchObject({
+      availableDisplayModes: ["inline", "fullscreen"],
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      requestTeardown: false,
+      resourceCacheTtl: true,
+    });
+    expect(profile).not.toHaveProperty("toolCallCancellation");
+    expect(profile?.apps?.mcpAppsOverrides).not.toHaveProperty("toolCancelled");
+  });
+
   it("seeds the real Claude Code harness + a personal computer", () => {
     const config = seedHostTemplate("claude-code", { theme: "dark" });
     expect(config.hostStyle).toBe("claude-code");
@@ -166,6 +197,15 @@ describe("seedHostTemplate", () => {
       logging: {},
     });
     expect(config.hostCapabilitiesOverride).not.toHaveProperty("downloadFile");
+    expect(config.mcpProfile?.mcpProtocolVersion).toBe("auto");
+    expect(config.mcpProfile?.initialize?.supportedProtocolVersions).toEqual([
+      "2025-03-26",
+      "2025-06-18",
+      "2025-11-25",
+    ]);
+    // `connect-src` is one directive, so its subtypes cannot diverge: the
+    // declared wss endpoint connected while an undeclared one took a real
+    // violation, so the declared list is honored for fetch and XHR too.
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     });
@@ -173,13 +213,32 @@ describe("seedHostTemplate", () => {
     expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     });
+    // Unknown, not false — the probe's declared resource origin is also in
+    // ChatGPT's own baseline allowlist, so it separates nothing.
     expect(
-      config.mcpProfile?.apps?.mcpAppsOverrides?.cspResourceDomains
-    ).toBeUndefined();
+      config.mcpProfile?.apps?.mcpAppsOverrides
+    ).not.toHaveProperty("cspResourceDomains");
     expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toMatchObject({
       "connect-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
       "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
       "frame-src": ["'self'", "data:", "blob:"],
+    });
+  });
+
+  it("keeps Cursor CSP subtype findings in the SDK seed", () => {
+    const config = seedHostTemplate("cursor", { theme: "dark" });
+    expect(config.mcpProfile?.apps?.uiInitialize?.hostInfo.version).toBe(
+      "3.14.27"
+    );
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
     });
   });
 
@@ -229,10 +288,21 @@ describe("seedHostTemplate", () => {
       sandboxPermissions: false,
       cspFrameDomains: false,
       cspBaseUriDomains: false,
-      resourcePrefersBorder: false,
+      cspConnectDomains: { fetch: false, xhr: false },
+      cspResourceDomains: {
+        script: false,
+        stylesheet: false,
+        image: false,
+        font: false,
+        media: false,
+      },
+      resourcePrefersBorder: true,
       downloadFile: false,
       requestTeardown: false,
     });
+    expect(apps?.mcpAppsOverrides.cspConnectDomains).not.toHaveProperty(
+      "websocket"
+    );
   });
 
   it("keeps Slack HostContext and capabilities faithful to the raw probe", () => {

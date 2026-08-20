@@ -2174,7 +2174,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            version: "0.148.0-alpha.9",
+            version: "0.148.0-alpha.15",
           },
         },
         apps: {

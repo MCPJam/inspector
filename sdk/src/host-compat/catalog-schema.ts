@@ -61,6 +61,16 @@ export const mcpAppsCapabilitiesSchema = z.object({
       websocket: z.boolean().optional(),
     })
     .optional(),
+  cspResourceDomains: z
+    .object({
+      script: z.boolean().optional(),
+      stylesheet: z.boolean().optional(),
+      image: z.boolean().optional(),
+      font: z.boolean().optional(),
+      media: z.boolean().optional(),
+    })
+    .optional(),
+  resourceCacheTtl: z.boolean().optional(),
   resourcePrefersBorder: z.boolean().optional(),
   downloadFile: z.boolean().optional(),
   requestTeardown: z.boolean().optional(),

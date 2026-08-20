@@ -388,6 +388,35 @@ describe("canonicalizeHostConfigV2 — validation", () => {
     ).toThrow(/must contain at least one mode/);
   });
 
+  it("preserves partial CSP probe findings", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        mcpProfile: {
+          profileVersion: 1,
+          apps: {
+            mcpAppsOverrides: {
+              cspConnectDomains: { fetch: false, xhr: false },
+              cspResourceDomains: {
+                script: false,
+                stylesheet: false,
+                image: false,
+                font: false,
+                media: false,
+              },
+            },
+          },
+        },
+      })
+    );
+
+    expect(c.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: false, xhr: false },
+    });
+    expect(
+      c.mcpProfile?.apps?.mcpAppsOverrides?.cspConnectDomains
+    ).not.toHaveProperty("websocket");
+  });
+
   it("drops spec permission features from allowFeatures and blocks injection", () => {
     const c = canonicalizeHostConfigV2(
       base({
