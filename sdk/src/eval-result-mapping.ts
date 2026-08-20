@@ -20,6 +20,10 @@ import {
   type EvalMatchOptions,
 } from "./matchers.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
+import {
+  deriveStageResults,
+  stageDerivationToMetadata,
+} from "./contract/stage-derivation.js";
 
 /**
  * Per-iteration host-extras lookup:
@@ -787,6 +791,98 @@ export type EvalCaseIdentity = {
   expectedOutput?: string;
 };
 
+/**
+ * Adapt one SDK iteration into the stage analyzer's evidence shape.
+ *
+ * The load-bearing distinction is between the two span-less cases:
+ *
+ *   - `traceAbsent` — `iterationTraceFromPrompts` returned nothing at all, so
+ *     the iteration recorded no messages, no spans and no summaries. A retry
+ *     that died before the executor ever ran looks like this.
+ *   - `traceLacksSpanChannel` — a trace exists (messages survived) but carries
+ *     no `spans` key. That is the caller-supplied `HostExecutor` signature:
+ *     spans are not part of the `HostExecutor` contract, so an executor that
+ *     never populates `PromptResult.spans` produces exactly this. Reading it
+ *     as "nothing happened" is how an iteration whose every tool call failed
+ *     scores a vacuous pass.
+ */
+function buildSdkStageEvidence(
+  iteration: IterationResult,
+  trace: EvalResultInput["trace"]
+) {
+  const spans =
+    trace && typeof trace === "object" && !Array.isArray(trace) && trace.spans
+      ? trace.spans
+      : [];
+  const match = iteration.toolMatch;
+  return {
+    ...(spans.length > 0 ? { spans } : {}),
+    ...(match
+      ? {
+          prompts: [
+            {
+              promptIndex: 0,
+              missing: match.missing,
+              unexpected: match.extra,
+              argumentMismatches: match.argumentMismatches,
+            },
+          ],
+        }
+      : {}),
+    ...(iteration.predicateResults?.length
+      ? { predicateResults: iteration.predicateResults }
+      : {}),
+    traceAbsent: trace === undefined,
+    traceLacksSpanChannel: trace !== undefined && spans.length === 0,
+  };
+}
+
+/**
+ * Derive one SDK iteration's user-value chain.
+ *
+ * Shared by BOTH exported mappers. They build the same per-iteration shape from
+ * the same inputs, and a chain that appeared from one entry point and not the
+ * other would leave a reader unable to tell "no derivation ran" from "the
+ * derivation found nothing" — which is the exact ambiguity the `notMeasured`
+ * state exists to remove.
+ */
+function deriveSdkStageResults(args: {
+  iteration: IterationResult;
+  trace: EvalResultInput["trace"];
+  passed: boolean;
+  expectedToolCalls?: EvalExpectedToolCall[];
+  predicates?: Predicate[];
+  caseIdentity?: EvalCaseIdentity;
+}) {
+  const { iteration, trace, passed, expectedToolCalls, predicates } = args;
+  const caseIdentity = args.caseIdentity;
+  return deriveStageResults({
+    authored: {
+      // An SDK case always drives a HostExecutor with prompts, so there is
+      // always a model turn that could select a tool.
+      mode: "model_driven",
+      ...(caseIdentity?.isNegativeTest !== undefined
+        ? { isNegativeTest: caseIdentity.isNegativeTest }
+        : {}),
+      expectsToolCall:
+        (expectedToolCalls?.length ?? 0) > 0 ||
+        caseIdentity?.isNegativeTest === true,
+      // Render observations are not carried on the SDK path, so a case is
+      // never treated as asserting a widget render here — claiming otherwise
+      // would demand evidence this path cannot produce and report every SDK
+      // run's `response` as an evidence gap.
+      assertionCount:
+        (predicates?.length ?? 0) +
+        (caseIdentity?.expectedOutput !== undefined ? 1 : 0),
+    },
+    evidence: buildSdkStageEvidence(iteration, trace),
+    iteration: {
+      status: passed ? "completed" : "failed",
+      ...(iteration.error ? { error: iteration.error } : {}),
+    },
+  });
+}
+
 export function iterationsToEvalResultInputs(
   testName: string,
   iterations: IterationResult[],
@@ -818,6 +914,15 @@ export function iterationsToEvalResultInputs(
       iterationError: iteration.error,
       failOnToolError,
       predicateResults: iteration.predicateResults,
+    });
+
+    const stageDerivation = deriveSdkStageResults({
+      iteration,
+      trace,
+      passed,
+      expectedToolCalls,
+      predicates,
+      caseIdentity,
     });
 
     return {
@@ -862,6 +967,7 @@ export function iterationsToEvalResultInputs(
             ? { predicates: iteration.predicateResults }
             : {}),
           ...scoreMetadata(iteration, evaluationConfig),
+          ...stageDerivationToMetadata(stageDerivation),
         },
         resolveIterationHostExtras(iteration, hostExtras)
       ),
@@ -954,6 +1060,16 @@ export function suiteTestResultsToEvalResultInputs(
               ? { predicates: iteration.predicateResults }
               : {}),
             ...scoreMetadata(iteration, testResult.evaluationConfig),
+            ...stageDerivationToMetadata(
+              deriveSdkStageResults({
+                iteration,
+                trace,
+                passed,
+                expectedToolCalls,
+                predicates,
+                caseIdentity: identity,
+              })
+            ),
           },
           resolveIterationHostExtras(iteration, hostExtras)
         ),
