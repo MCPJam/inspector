@@ -5,6 +5,7 @@ import {
   screen,
   fireEvent,
   waitFor,
+  within,
 } from "@testing-library/react";
 import { RegistryTab } from "../RegistryTab";
 import {
@@ -106,8 +107,15 @@ vi.mock("@/hooks/useClaudeDirectory", async (importOriginal) => {
   return {
     ...actual,
     useClaudeDirectory: () => mockDirectoryReturn,
+    // The real hook is Convex-backed; the mock answers only once a card is
+    // actually open (a null id must stay `undefined`, like the real skip).
+    useDirectoryServerDetail: (catalogServerId: string | null) =>
+      catalogServerId ? mockDirectoryDetail : undefined,
   };
 });
+
+/** What the mocked detail hook serves once a card is open. */
+let mockDirectoryDetail: unknown;
 
 function createDirectoryServer(
   overrides: Partial<DirectoryServer> = {}
@@ -198,6 +206,7 @@ describe("RegistryTab", () => {
       serverName: "Linear",
     });
     mockDirectoryReturn = directoryHookReturn();
+    mockDirectoryDetail = null;
     mockHookReturn = {
       catalogCards: [],
       categories: [],
@@ -562,6 +571,70 @@ describe("RegistryTab", () => {
       render(<RegistryTab {...defaultProps} />);
       expect(
         screen.queryByTestId("claude-directory-section")
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  describe("claude directory detail dialog", () => {
+    it("clicking a card opens the detail dialog with the listing body", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      mockDirectoryDetail = {
+        description: "The long-form listing description.",
+        authorName: "Linear",
+        authorUrl: "https://linear.app",
+        categories: ["productivity"],
+        toolNames: ["create_issue", "list_issues"],
+        promptNames: [],
+        permissions: "Read and write",
+        sensitiveDataTypes: [],
+        links: [],
+        authPosture: "auth_required",
+        requiredFields: [],
+      };
+
+      render(<RegistryTab {...defaultProps} />);
+      fireEvent.click(screen.getByTestId("directory-server-card"));
+
+      expect(screen.getByTestId("directory-detail-dialog")).toBeInTheDocument();
+      expect(
+        screen.getByText("The long-form listing description.")
+      ).toBeInTheDocument();
+      expect(screen.getByText("Tools (2)")).toBeInTheDocument();
+      expect(screen.getByText("create_issue")).toBeInTheDocument();
+    });
+
+    it("the card's Connect button connects without opening the dialog", async () => {
+      const server = createDirectoryServer();
+      mockDirectoryReturn = directoryHookReturn({ items: [server] });
+
+      render(<RegistryTab {...defaultProps} />);
+      fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+
+      await waitFor(() => {
+        expect(mockDirectoryConnect).toHaveBeenCalledWith(server, undefined);
+      });
+      expect(
+        screen.queryByTestId("directory-detail-dialog")
+      ).not.toBeInTheDocument();
+    });
+
+    it("connecting from the dialog closes it and runs the connect flow", async () => {
+      const server = createDirectoryServer();
+      mockDirectoryReturn = directoryHookReturn({ items: [server] });
+
+      render(<RegistryTab {...defaultProps} />);
+      fireEvent.click(screen.getByTestId("directory-server-card"));
+      // Two Connects exist now (card + dialog); the dialog's is inside it.
+      const dialog = screen.getByTestId("directory-detail-dialog");
+      fireEvent.click(within(dialog).getByRole("button", { name: "Connect" }));
+
+      await waitFor(() => {
+        expect(mockDirectoryConnect).toHaveBeenCalledWith(server, undefined);
+      });
+      expect(
+        screen.queryByTestId("directory-detail-dialog")
       ).not.toBeInTheDocument();
     });
   });
