@@ -377,7 +377,7 @@ When you are signed in as a project member, the Playground gives the model a set
 
 Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
 
-When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, and `read_server_resource` (the operations that open a live connection) so you can approve or deny each one. Read-only listing tools (`list_project_servers`, `list_server_tools`, `list_server_prompts`, `list_server_resources`) never require approval.
+When **Tool Approval** is on, the model pauses before `diagnose_server`, `call_server_tool`, `read_server_resource`, `start_claude_readiness_run`, and `start_openai_readiness_run` so you can approve or deny each one. Read-only listing and polling tools never require approval. `cancel_readiness_run` is also direct — it stops traffic rather than starting it.
 
 <Note>
   These tools are only available when you are signed in as a project member. They are not shown to guests or in scenario sessions.
