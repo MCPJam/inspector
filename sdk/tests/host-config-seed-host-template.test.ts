@@ -7,6 +7,7 @@ import {
 } from "../src/host-config/templates/index.js";
 import { XAA_MCP_EXTENSION } from "../src/xaa/mcp-init.js";
 import { readXaaEnterprisePolicy } from "../src/xaa/enterprise-policy.js";
+import { canonicalizeHostConfigV2 } from "../src/host-config/internal.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
@@ -97,6 +98,7 @@ describe("seedHostTemplate", () => {
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
     expect(config.progressiveToolDiscovery).toBe(false);
+    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.237");
   });
 
   it("seeds the real Codex harness + a personal computer", () => {
@@ -106,6 +108,21 @@ describe("seedHostTemplate", () => {
     expect(config.computer).toEqual({ kind: "personal" });
     // Codex (like Claude Code) can't pause for interactive approval.
     expect(config.requireToolApproval).toBe(false);
+    expect(config.clientCapabilities).toMatchObject({
+      extensions: {
+        "io.modelcontextprotocol/ui": {
+          mimeTypes: ["text/html;profile=mcp-app", "text/html+skybridge"],
+        },
+      },
+      elicitation: { form: {}, url: {} },
+    });
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+    const effective = canonicalizeHostConfigV2(config);
+    expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
   });
 
   it("threads appVersion into the mcpjam template (and only it)", () => {
@@ -149,6 +166,21 @@ describe("seedHostTemplate", () => {
       logging: {},
     });
     expect(config.hostCapabilitiesOverride).not.toHaveProperty("downloadFile");
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+    const effective = canonicalizeHostConfigV2(config);
+    expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+    expect(
+      config.mcpProfile?.apps?.mcpAppsOverrides?.cspResourceDomains
+    ).toBeUndefined();
+    expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toMatchObject({
+      "connect-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+      "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+      "frame-src": ["'self'", "data:", "blob:"],
+    });
   });
 
   it("labels and persists the Copilot documented runtime surface", () => {

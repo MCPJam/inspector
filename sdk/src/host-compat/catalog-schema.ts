@@ -54,6 +54,13 @@ export const mcpAppsCapabilitiesSchema = z.object({
   sandboxPermissions: z.boolean().optional(),
   cspFrameDomains: z.boolean().optional(),
   cspBaseUriDomains: z.boolean().optional(),
+  cspConnectDomains: z
+    .object({
+      fetch: z.boolean().optional(),
+      xhr: z.boolean().optional(),
+      websocket: z.boolean().optional(),
+    })
+    .optional(),
   resourcePrefersBorder: z.boolean().optional(),
   downloadFile: z.boolean().optional(),
   requestTeardown: z.boolean().optional(),
