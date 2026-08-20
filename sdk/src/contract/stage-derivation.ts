@@ -286,7 +286,11 @@ function applicability(
     discovery: true,
     selection: authored.mode === "model_driven",
     call: callApplies,
-    response: callApplies,
+    // A case asserting a rendered widget has something for `response` to decide
+    // even when it authors no expected tool call — `deriveResponse` reads the
+    // render observations directly. Gating this on `callApplies` alone would
+    // make `renderFailed` unreachable for a pure render probe.
+    response: callApplies || authored.expectsWidgetRender === true,
     userValue:
       (authored.assertionCount ?? 0) > 0 ||
       authored.expectsWidgetRender === true,

@@ -59,6 +59,13 @@ function buildStageEvidence(args: {
   messages?: ModelMessage[];
   predicateResults?: unknown[];
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  /**
+   * Pinned (model-free) tool-call failures. These never enter the trace — the
+   * same blind spot `buildEvalIterationVerdict` compensates for when it applies
+   * `failOnToolError` to them explicitly — so without them a pinned tool
+   * failure would leave `call`/`response` looking unmeasured.
+   */
+  toolErrors?: unknown[];
   toolSignals?: ToolExposureSignals;
 }) {
   const hasSpans = (args.spans?.length ?? 0) > 0;
@@ -77,6 +84,14 @@ function buildStageEvidence(args: {
       : {}),
     ...(args.widgetRenderObservations?.length
       ? { renderObservations: args.widgetRenderObservations }
+      : {}),
+    ...(args.toolErrors?.length
+      ? {
+          toolErrors: args.toolErrors as ReadonlyArray<{
+            kind?: string;
+            toolName?: string;
+          }>,
+        }
       : {}),
     ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
     traceAbsent: !hasSpans && !hasPrompts && !hasMessages,
@@ -146,6 +161,12 @@ export function buildIterationFinishParams(args: {
    * `stageResults` is an array of rows.
    */
   stageCase?: StageAuthoredCase;
+  /**
+   * Pinned tool-call failures, for the stage derivation only (the verdict
+   * gates on them separately). Never enter the trace, so the chain is blind to
+   * them unless they are threaded here.
+   */
+  stageToolErrors?: unknown[];
   iterationMetadataBase: Record<string, string | number | boolean>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
@@ -172,6 +193,7 @@ export function buildIterationFinishParams(args: {
     skippedSteps,
     stepResults,
     stageCase,
+    stageToolErrors,
     iterationMetadataBase,
     hostPolicy,
     toolSignals,
@@ -186,6 +208,7 @@ export function buildIterationFinishParams(args: {
           messages,
           predicateResults,
           widgetRenderObservations,
+          toolErrors: stageToolErrors,
           toolSignals,
         }),
         iteration: { status, ...(error ? { error } : {}) },

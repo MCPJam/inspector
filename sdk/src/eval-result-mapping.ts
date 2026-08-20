@@ -837,6 +837,52 @@ function buildSdkStageEvidence(
   };
 }
 
+/**
+ * Derive one SDK iteration's user-value chain.
+ *
+ * Shared by BOTH exported mappers. They build the same per-iteration shape from
+ * the same inputs, and a chain that appeared from one entry point and not the
+ * other would leave a reader unable to tell "no derivation ran" from "the
+ * derivation found nothing" — which is the exact ambiguity the `notMeasured`
+ * state exists to remove.
+ */
+function deriveSdkStageResults(args: {
+  iteration: IterationResult;
+  trace: EvalResultInput["trace"];
+  passed: boolean;
+  expectedToolCalls?: EvalExpectedToolCall[];
+  predicates?: Predicate[];
+  caseIdentity?: EvalCaseIdentity;
+}) {
+  const { iteration, trace, passed, expectedToolCalls, predicates } = args;
+  const caseIdentity = args.caseIdentity;
+  return deriveStageResults({
+    authored: {
+      // An SDK case always drives a HostExecutor with prompts, so there is
+      // always a model turn that could select a tool.
+      mode: "model_driven",
+      ...(caseIdentity?.isNegativeTest !== undefined
+        ? { isNegativeTest: caseIdentity.isNegativeTest }
+        : {}),
+      expectsToolCall:
+        (expectedToolCalls?.length ?? 0) > 0 ||
+        caseIdentity?.isNegativeTest === true,
+      // Render observations are not carried on the SDK path, so a case is
+      // never treated as asserting a widget render here — claiming otherwise
+      // would demand evidence this path cannot produce and report every SDK
+      // run's `response` as an evidence gap.
+      assertionCount:
+        (predicates?.length ?? 0) +
+        (caseIdentity?.expectedOutput !== undefined ? 1 : 0),
+    },
+    evidence: buildSdkStageEvidence(iteration, trace),
+    iteration: {
+      status: passed ? "completed" : "failed",
+      ...(iteration.error ? { error: iteration.error } : {}),
+    },
+  });
+}
+
 export function iterationsToEvalResultInputs(
   testName: string,
   iterations: IterationResult[],
@@ -870,30 +916,13 @@ export function iterationsToEvalResultInputs(
       predicateResults: iteration.predicateResults,
     });
 
-    const stageDerivation = deriveStageResults({
-      authored: {
-        // An SDK case always drives a HostExecutor with prompts, so there is
-        // always a model turn that could select a tool.
-        mode: "model_driven",
-        ...(caseIdentity?.isNegativeTest !== undefined
-          ? { isNegativeTest: caseIdentity.isNegativeTest }
-          : {}),
-        expectsToolCall:
-          (expectedToolCalls?.length ?? 0) > 0 ||
-          caseIdentity?.isNegativeTest === true,
-        // Render observations are not carried on the SDK path, so a case is
-        // never treated as asserting a widget render here — claiming otherwise
-        // would demand evidence this path cannot produce and report every SDK
-        // run's `response` as an evidence gap.
-        assertionCount:
-          (predicates?.length ?? 0) +
-          (caseIdentity?.expectedOutput !== undefined ? 1 : 0),
-      },
-      evidence: buildSdkStageEvidence(iteration, trace),
-      iteration: {
-        status: passed ? "completed" : "failed",
-        ...(iteration.error ? { error: iteration.error } : {}),
-      },
+    const stageDerivation = deriveSdkStageResults({
+      iteration,
+      trace,
+      passed,
+      expectedToolCalls,
+      predicates,
+      caseIdentity,
     });
 
     return {
@@ -1031,6 +1060,16 @@ export function suiteTestResultsToEvalResultInputs(
               ? { predicates: iteration.predicateResults }
               : {}),
             ...scoreMetadata(iteration, testResult.evaluationConfig),
+            ...stageDerivationToMetadata(
+              deriveSdkStageResults({
+                iteration,
+                trace,
+                passed,
+                expectedToolCalls,
+                predicates,
+                caseIdentity: identity,
+              })
+            ),
           },
           resolveIterationHostExtras(iteration, hostExtras)
         ),

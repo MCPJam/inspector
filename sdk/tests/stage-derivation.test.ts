@@ -372,6 +372,30 @@ describe("call & response", () => {
     });
   });
 
+  test("a pure render probe reaches `response` without expecting a tool call", () => {
+    // A widget probe can assert a render while authoring no expected tool call.
+    // Gating `response` on the call stage alone would make `renderFailed`
+    // unreachable for exactly the case that most needs it.
+    const { stageResults } = derive({
+      authored: {
+        mode: "model_driven",
+        expectsToolCall: false,
+        expectsWidgetRender: true,
+        assertionCount: 0,
+      },
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        renderObservations: [{ status: "mount_failed" }],
+      },
+    });
+    expect(stateOf(stageResults, "call").state).toBe("notApplicable");
+    expect(stateOf(stageResults, "response")).toMatchObject({
+      state: "failed",
+      reason: "renderFailed",
+    });
+  });
+
   test("a case that expects no tool call has no call/response stages", () => {
     const { stageResults } = derive({
       authored: {

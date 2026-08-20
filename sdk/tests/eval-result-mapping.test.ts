@@ -950,6 +950,29 @@ describe("iterationsToEvalResultInputs", () => {
 // ---------------------------------------------------------------------------
 
 describe("suiteTestResultsToEvalResultInputs", () => {
+  it("derives the same stage chain as the sibling mapper", () => {
+    // Both exported mappers build the same per-iteration shape. A chain that
+    // appeared from one entry point and not the other would leave a reader
+    // unable to tell "no derivation ran" from "the derivation found nothing".
+    const iteration = makeIteration({ prompts: [makePrompt({})] });
+    const testResults = new Map<string, EvalRunResult>();
+    testResults.set("suite-case", makeRunResult([iteration]));
+
+    const viaSuite = suiteTestResultsToEvalResultInputs(testResults);
+    const viaIterations = iterationsToEvalResultInputs("suite-case", [
+      iteration,
+    ]);
+
+    const suiteMeta = viaSuite[0].metadata as Record<string, unknown>;
+    const iterationMeta = viaIterations[0].metadata as Record<string, unknown>;
+
+    expect(suiteMeta.stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
+    expect(
+      (suiteMeta.stageResults as StageResultRow[]).map((r) => r.stage)
+    ).toEqual([...USER_VALUE_STAGES]);
+    expect(suiteMeta.stageResults).toEqual(iterationMeta.stageResults);
+  });
+
   it("includes testName in metadata", () => {
     const testResults = new Map<string, EvalRunResult>();
     testResults.set(

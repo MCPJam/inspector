@@ -2953,10 +2953,16 @@ const runLocalIteration = async ({
       ...(stepResults.length ? { stepResults } : {}),
       stageCase: buildStageAuthoredCase({
         test,
-        ...(test.steps ? { steps: test.steps } : {}),
+        // The RESOLVED steps, not `test.steps`: `resolveSteps` bridges legacy
+        // `promptTurns`/probe cases into steps, and a legacy case carries no
+        // `steps` of its own. Reading the raw field would drop every authored
+        // assert step from `assertionCount` and report a widget-asserting case
+        // as asserting nothing.
+        ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
         turns: resolvedTest.promptTurns,
         caseNeedsModel,
       }),
+      stageToolErrors: acc.pinnedToolErrors,
       iterationMetadataBase,
       ...(hostPolicy ? { hostPolicy } : {}),
       ...(toolSignals ? { toolSignals } : {}),
@@ -3119,10 +3125,16 @@ const runLocalIteration = async ({
       ...(errorDetails ? { errorDetails } : {}),
       stageCase: buildStageAuthoredCase({
         test,
-        ...(test.steps ? { steps: test.steps } : {}),
+        // The RESOLVED steps, not `test.steps`: `resolveSteps` bridges legacy
+        // `promptTurns`/probe cases into steps, and a legacy case carries no
+        // `steps` of its own. Reading the raw field would drop every authored
+        // assert step from `assertionCount` and report a widget-asserting case
+        // as asserting nothing.
+        ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
         turns: resolvedTest.promptTurns,
         caseNeedsModel,
       }),
+      stageToolErrors: acc.pinnedToolErrors,
       iterationMetadataBase,
       ...(hostPolicy ? { hostPolicy } : {}),
       ...(toolSignals ? { toolSignals } : {}),
@@ -3822,10 +3834,11 @@ const runHostedIterationWithBrowser = async (
     // local runner), so the case always has a model turn that could select.
     stageCase: buildStageAuthoredCase({
       test,
-      ...(test.steps ? { steps: test.steps } : {}),
+      ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
       turns: resolvedTest.promptTurns,
       caseNeedsModel: true,
     }),
+    stageToolErrors: pinnedToolErrors,
     iterationMetadataBase,
     ...(hostPolicy ? { hostPolicy } : {}),
     ...(toolSignals ? { toolSignals } : {}),
