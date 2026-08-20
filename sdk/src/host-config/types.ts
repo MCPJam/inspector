@@ -685,8 +685,28 @@ export type HostConfigOAuthProfile =
 // uses (docs/project-computers.md in mcpjam-backend). The hash describes
 // intent, not environment: two hosts with the same `computer` value hash
 // identically even though each member resolves their own machine.
+//
+// `kind` is a closed union. `"personal"` is the only kind an AUTHOR can write
+// (see `HostComputerInput` / `HostInit.computer` in public-types.ts, both
+// narrowed to it). `"ephemeral"` is RUNTIME-MINTED: the platform stamps it at
+// a snapshot boundary for a per-run box (an eval run boots one box per
+// iteration from the run's frozen environment image). The image never rides
+// this field — it comes from the run's frozen environment pin — and the minting
+// site emits no `workdir`, because provisioning supplies the box's working
+// directory. Naming a personal workdir on a per-run box would name a path on
+// the author's own machine.
+//
+// That last rule is enforced where the kind is MINTED (the backend's
+// `toEvalComputer`, which returns `{ kind: 'ephemeral' }` and nothing else),
+// not here and not in the canonicalizer. This shape stays kind-agnostic on
+// purpose: it is a content-addressing type, and folding a cross-field rule into
+// it would mean a value that round-trips differently depending on a sibling
+// field. Since no writer can produce an ephemeral computer with a `workdir`,
+// there is nothing for such a rule to catch.
+export type HostConfigComputerKind = "personal" | "ephemeral";
+
 export type HostConfigComputer = {
-  kind: "personal";
+  kind: HostConfigComputerKind;
   // Optional initial working directory for shell/terminal sessions. Trimmed
   // during canonicalization; empty-after-trim collapses to absent.
   workdir?: string;
@@ -698,7 +718,10 @@ export type HostConfigComputer = {
 // it (it never shipped in a UI, so this is belt-and-suspenders for old
 // programmatic callers).
 export type HostConfigComputerInput = {
-  kind: "personal";
+  // INTERNAL input type — carries the full canonical kind union so a platform
+  // snapshot boundary can hand `{ kind: "ephemeral" }` to the canonicalizer.
+  // The PUBLIC authoring alias (`HostComputerInput`) stays personal-only.
+  kind: HostConfigComputerKind;
   toolset?: "bash";
   workdir?: string;
 };

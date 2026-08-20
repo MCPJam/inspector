@@ -2162,8 +2162,30 @@ const COMPUTER_KEYS = new Set(["kind", "toolset", "workdir"]);
  * Canonicalize the optional `computer` field. `null` collapses to undefined
  * ("cleared" hashes identically to "never set"); `workdir` is trimmed, with
  * empty-after-trim collapsing to absent; legacy `toolset` input is dropped
- * (so `{ kind, toolset: "bash" }` and `{ kind }` hash identically). Output
- * keys are built in sorted order (kind, workdir) for hash stability.
+ * for EVERY kind (so `{ kind, toolset: "bash" }` and `{ kind }` hash
+ * identically). Output keys are built in sorted order (kind, workdir) for
+ * hash stability.
+ *
+ * `kind` is a closed union of two values:
+ *   - `"personal"`  — the per-(project, user) cloud workstation. The only
+ *                     kind an author can ever write; every public authoring
+ *                     input (`HostComputerInput`, `HostInit.computer`) is
+ *                     narrowed to it.
+ *   - `"ephemeral"` — a per-run box minted by the platform at a snapshot
+ *                     boundary (eval runs pin one box per iteration and boot
+ *                     it from the run's frozen environment image). RUNTIME-
+ *                     MINTED ONLY: it appears on canonical/persisted rows,
+ *                     never on authored input. The image is NOT carried here
+ *                     — it comes from the run's frozen environment pin.
+ *
+ * `workdir` is handled identically for both kinds, deliberately. A per-run box
+ * takes its working directory from provisioning, so the platform's minting site
+ * emits no `workdir` — but that is a rule about what gets WRITTEN, enforced
+ * there, and this function does not re-check it. Canonicalization is pure
+ * content-addressing: making one field's treatment depend on another's value
+ * would mean the same input hashing differently for a reason no caller can see.
+ * Nothing can author an ephemeral computer (every input type is personal-only),
+ * so there is no shape here for such a rule to catch.
  */
 function canonicalizeComputer(
   computer: HostConfigInputV2["computer"]
@@ -2177,8 +2199,10 @@ function canonicalizeComputer(
       throw new Error(`hostConfigV2: computer has unknown key "${key}"`);
     }
   }
-  if (computer.kind !== "personal") {
-    throw new Error('hostConfigV2: computer.kind must be "personal"');
+  if (computer.kind !== "personal" && computer.kind !== "ephemeral") {
+    throw new Error(
+      'hostConfigV2: computer.kind must be "personal" or "ephemeral"'
+    );
   }
   // Legacy input only: when present it must be the one value that ever
   // existed, then it's dropped from the canonical form.
@@ -2194,7 +2218,7 @@ function canonicalizeComputer(
     workdir = trimmed === "" ? undefined : trimmed;
   }
   return {
-    kind: "personal",
+    kind: computer.kind,
     ...(workdir !== undefined ? { workdir } : {}),
   };
 }
