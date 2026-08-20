@@ -325,10 +325,12 @@ describe("canonicalizeHostConfigV2 — computer", () => {
     ).toBe(await hash(base({ computer: ephemeral })));
   });
 
-  it("applies the same workdir rules to ephemeral", async () => {
-    // Ephemeral rows are minted without a workdir (provisioning supplies the
-    // box's cwd), but the field is not kind-gated — the canonicalizer must
-    // stay one code path.
+  it("treats workdir identically for both kinds — no kind-gated field rules", async () => {
+    // The platform mints ephemeral rows WITHOUT a workdir (provisioning
+    // supplies the box's cwd), and that rule is enforced at the minting site.
+    // It is deliberately NOT re-checked here: canonicalization is pure
+    // content-addressing, so one field's treatment must not depend on another's
+    // value. This pins that the code path stays single.
     expect(
       canonicalizeHostConfigV2(
         base({ computer: { ...ephemeral, workdir: "  /w  " } })

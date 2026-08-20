@@ -2140,9 +2140,16 @@ const COMPUTER_KEYS = new Set(["kind", "toolset", "workdir"]);
  *                     it from the run's frozen environment image). RUNTIME-
  *                     MINTED ONLY: it appears on canonical/persisted rows,
  *                     never on authored input. The image is NOT carried here
- *                     — it comes from the run's frozen environment pin — and
- *                     `workdir` is expected to be absent, since provisioning
- *                     supplies the box's working directory.
+ *                     — it comes from the run's frozen environment pin.
+ *
+ * `workdir` is handled identically for both kinds, deliberately. A per-run box
+ * takes its working directory from provisioning, so the platform's minting site
+ * emits no `workdir` — but that is a rule about what gets WRITTEN, enforced
+ * there, and this function does not re-check it. Canonicalization is pure
+ * content-addressing: making one field's treatment depend on another's value
+ * would mean the same input hashing differently for a reason no caller can see.
+ * Nothing can author an ephemeral computer (every input type is personal-only),
+ * so there is no shape here for such a rule to catch.
  */
 function canonicalizeComputer(
   computer: HostConfigInputV2["computer"]

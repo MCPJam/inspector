@@ -269,6 +269,43 @@ export type EvalPinnedSkillSource =
       capabilities: import("./environments/effective-capabilities.js").EffectiveCapabilitySet;
     };
 
+/**
+ * How a run's FROZEN skills reach one case — both channels, together.
+ *
+ * There are two, and they are not interchangeable:
+ *   - `pinnedSkillSource` feeds the EMULATED path, where skills become
+ *     in-memory tool definitions.
+ *   - `pinnedHarnessSkills` feeds the HARNESS path, where they are materialized
+ *     as SKILL.md files on the box.
+ *
+ * They are bundled here because forwarding one without the other is a silent
+ * failure rather than a loud one: a case that receives no `pinnedHarnessSkills`
+ * does not error, it falls through to the harness's LIVE project-wide fetch —
+ * so a frozen run quietly stops being frozen, and the
+ * `skillsOverride: "exclude"` arm quietly runs with the whole project pool.
+ * That is exactly the bug this helper exists to make structurally impossible:
+ * one place decides, and both channels leave together or not at all.
+ *
+ * `pinnedHarnessSkills` is included when DEFINED rather than truthy — `[]` is
+ * the "this run delivers no skills" answer and must survive.
+ */
+export function runFrozenSkillOptions(run: {
+  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+}): {
+  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+} {
+  return {
+    ...(run.pinnedSkillSource
+      ? { pinnedSkillSource: run.pinnedSkillSource }
+      : {}),
+    ...(run.pinnedHarnessSkills !== undefined
+      ? { pinnedHarnessSkills: run.pinnedHarnessSkills }
+      : {}),
+  };
+}
+
 export type RunEvalSuiteOptions = {
   suiteId: string;
   runId: string | null; // null for quick runs
@@ -2004,7 +2041,10 @@ export const runEvalSuiteWithAiSdk = async ({
         toolSignals: resolvedToolSignals,
         suiteHostConfig,
         environment: config.environment,
-        ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
+        // BOTH frozen-skill channels, from one place — see
+        // `runFrozenSkillOptions`. Forwarding only the emulated one used to
+        // leave the harness path falling through to a live project-wide fetch.
+        ...runFrozenSkillOptions({ pinnedSkillSource, pinnedHarnessSkills }),
       });
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check

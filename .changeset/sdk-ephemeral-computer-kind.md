@@ -11,7 +11,9 @@ Host config: accept the runtime-minted `ephemeral` computer kind on the canonica
 - `"personal"` — the per-(project, user) cloud workstation. Unchanged.
 - `"ephemeral"` — a per-run box the platform mints at a snapshot boundary.
 
-The legacy `toolset` key is accepted-and-dropped for **both** kinds, so `{ kind, toolset: "bash" }` and `{ kind }` remain one identity. The image never rides this field — it comes from the run's frozen environment pin — and an ephemeral computer carries no `workdir`, since provisioning supplies the box's working directory.
+The legacy `toolset` key is accepted-and-dropped for **both** kinds, so `{ kind, toolset: "bash" }` and `{ kind }` remain one identity. The image never rides this field — it comes from the run's frozen environment pin.
+
+`workdir` is canonicalized identically for both kinds. A per-run box takes its working directory from provisioning, so the platform's minting site emits none — but that is a rule about what gets written, enforced there rather than here: canonicalization stays pure content-addressing, and nothing can author an ephemeral computer in the first place.
 
 `ephemeral` is **output-only**: it appears on canonical and persisted rows and can come back when you read a snapshot, but it is not authorable. Every authoring input stays personal-only — `HostComputerInput` is now its own personal-only type rather than an alias of the canonical shape, and `HostInit.computer` is typed to it. Treat an ephemeral computer as read-only snapshot data.
 
