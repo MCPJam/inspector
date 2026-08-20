@@ -22,7 +22,6 @@
  */
 
 import type { ConvexHttpClient } from "convex/browser";
-import type { OpenAISubmissionMode } from "@mcpjam/sdk";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
 import { executeHostedReadinessRun } from "../../services/readiness/worker.js";
@@ -67,8 +66,14 @@ export interface StartHostedReadinessRunInput {
   projectId: string;
   serverId: string;
   publisher: ReadinessPublisher;
-  /** Required for OpenAI, absent for Claude. Never inferred from the inputs. */
-  submissionMode?: OpenAISubmissionMode;
+  /**
+   * Required for OpenAI, absent for Claude. Never inferred from the inputs.
+   *
+   * Narrowed to the HOSTED modes rather than the SDK's full union: the package
+   * shapes cannot be graded here at all, and a parameter that accepted them
+   * would let a caller construct a request this function then has to refuse.
+   */
+  submissionMode?: HostedSubmissionMode;
   idempotencyKey?: string;
   /** The one field that can SPEND. Defaults off at every call site. */
   includeLlmObservations: boolean;

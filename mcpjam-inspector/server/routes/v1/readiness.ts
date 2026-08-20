@@ -43,14 +43,15 @@ import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { getInternalBackendConfig } from "../../services/internal-backend.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   HOSTED_SUBMISSION_MODES,
   READINESS_PUBLISHERS as PUBLISHERS,
   startHostedReadinessRun,
   toReadinessRunDto,
+  type HostedSubmissionMode,
   type ReadinessPublisher as Publisher,
 } from "../shared/readiness-runs.js";
-import type { OpenAISubmissionMode } from "@mcpjam/sdk";
 
 const readiness = new Hono();
 
@@ -139,7 +140,7 @@ function toRunDto(run: Record<string, any>, projectId: string) {
 async function startRun(
   c: any,
   publisher: Publisher,
-  submissionMode: OpenAISubmissionMode | undefined,
+  submissionMode: HostedSubmissionMode | undefined,
   body: { idempotencyKey?: string; includeLlmObservations?: boolean },
 ) {
   const projectId = c.req.param("projectId");
@@ -345,11 +346,26 @@ readiness.get(
           signal: AbortSignal.timeout(REPORT_FETCH_TIMEOUT_MS),
         },
       );
-    } catch {
+    } catch (error) {
       // A DNS failure, a refused connection or the deadline above. Uncaught,
-      // each of these surfaces as an opaque 500 — the same shape the two
-      // branches below take care to report as a 502, because none of them is
-      // the caller's fault.
+      // each of these surfaces as an opaque 500 — the same shape the branch
+      // below takes care to report as a 502, because none of them is the
+      // caller's fault.
+      //
+      // Reported before it is flattened, though: the three are operationally
+      // distinct — a misconfiguration, a backend that is down, and a report
+      // that is merely slow — and an operator reading only the 502 cannot tell
+      // them apart. `mcpjam_internal`, because none of them is the graded
+      // server's doing.
+      reportRouteFailure(
+        "[readiness] report blob read failed at the internal boundary",
+        error,
+        {
+          source: "readiness.report_fetch",
+          hop: "mcpjam_internal",
+          context: { runId },
+        },
+      );
       throw new WebRouteError(
         502,
         ErrorCode.INTERNAL_ERROR,

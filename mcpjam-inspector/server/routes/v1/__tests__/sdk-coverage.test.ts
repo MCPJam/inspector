@@ -267,6 +267,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Tunnels
   "post /projects/{projectId}/tunnels": "createTunnel",
   "post /projects/{projectId}/tunnels/{serverId}/close": "closeTunnel",
+
+  // Directory readiness
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
+    "startClaudeReadinessRun",
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
+    "startOpenAIReadinessRun",
+  "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
+  "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel":
+    "cancelReadinessRun",
+  "get /projects/{projectId}/readiness-runs/{runId}/report":
+    "getReadinessReport",
 };
 
 /**

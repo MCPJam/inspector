@@ -429,6 +429,41 @@ describe("v1 directory readiness", () => {
       );
     });
 
+    // The boundary, not the interior. A regression that dropped the ceiling —
+    // the bound whose stated job is to stop a caller asking for every run an
+    // organization ever recorded in one request — would leave a `limit=5`
+    // test perfectly green.
+    it.each([
+      ["0", "below the floor"],
+      ["-1", "negative"],
+      ["2.5", "not an integer"],
+      ["101", "past the ceiling"],
+      ["abc", "not a number"],
+      ["", "empty"],
+    ])("refuses limit=%s (%s) and asks the backend for nothing", async (limit) => {
+      const res = await request(
+        "GET",
+        `/api/v1/projects/p1/readiness-runs?limit=${limit}`,
+      );
+      expect(res.status).toBe(400);
+      expect(convexQueryMock).not.toHaveBeenCalled();
+    });
+
+    it("accepts the ceiling itself", async () => {
+      // Off-by-one in the other direction: a `<` where a `<=` belongs would
+      // reject the largest legal page and pass every test above.
+      convexQueryMock.mockResolvedValue([RUN_ROW]);
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/readiness-runs?limit=100",
+      );
+      expect(res.status).toBe(200);
+      expect(convexQueryMock).toHaveBeenCalledWith(
+        "claudeReadinessRuns:listReadinessRuns",
+        { projectId: "p1", limit: 100 },
+      );
+    });
+
     it("refuses a publisher outside the two vocabulary words", async () => {
       const res = await request(
         "GET",
