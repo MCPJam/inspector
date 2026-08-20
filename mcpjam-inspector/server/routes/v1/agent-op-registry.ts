@@ -333,6 +333,38 @@ function describeEvalSuiteRun(input: Record<string, unknown>): string {
  * a single target exactly as readily as it repoints several, and a guarantee
  * that depended on which form the caller used would be no guarantee.
  */
+/**
+ * Resolve a readiness proposal's `server` selector to an explicit ID.
+ *
+ * SAME HAZARD AS `freezeEvalRunTargets`, one axis over. A model writes a server
+ * NAME, the proposal sits until a person clicks, and a name is a pointer: rename
+ * the row in between, or point the name at a different server, and the approved
+ * run dials somebody the approver never saw. On an operation whose whole effect
+ * is traffic to a third party's server, "which server" is the entire content of
+ * the approval.
+ *
+ * BEST-EFFORT, like its sibling. A lookup that fails leaves the arguments as
+ * the model wrote them, which is exactly today's behaviour — losing the
+ * proposal to an offline platform would cost the user more than the narrow
+ * window this closes.
+ */
+async function freezeReadinessServer(
+  input: Record<string, unknown>,
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const selector = named(input, "server");
+  if (!selector) return input;
+  // Already an id? Then there is nothing to freeze and nothing to look up.
+  const page = await client.listProjectServers({ projectId });
+  const match = page.items.find(
+    (candidate) =>
+      candidate.id === selector ||
+      candidate.name?.toLocaleLowerCase() === selector.toLocaleLowerCase(),
+  );
+  if (!match) return input;
+  return { ...input, server: match.id };
+}
+
 async function freezeEvalRunTargets(
   input: Record<string, unknown>,
   { projectId, client }: { projectId: string; client: PlatformApiClient },
@@ -1142,6 +1174,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
       },
+      // The `server` selector is a POINTER; freeze it before a human is
+      // asked to approve what it points at. See `freezeReadinessServer`.
+      normalizeProposalArgs: freezeReadinessServer,
     },
     promptNotes: [
       "- Readiness grading is FREE and is the default. `includeLlmObservations` is the only field that spends, and what it buys is informational — observations can never change a lane's status or the run's verdict. Do not set it unless a person asked for the commentary.",
@@ -1166,6 +1201,9 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
       },
+      // The `server` selector is a POINTER; freeze it before a human is
+      // asked to approve what it points at. See `freezeReadinessServer`.
+      normalizeProposalArgs: freezeReadinessServer,
     },
     promptNotes: [
       "- `submissionMode` is REQUIRED and is never inferred. A run with no declared shape reports its package lane not-applicable, which turns a missing input into a clean bill of health. Ask which shape is being submitted rather than guessing.",

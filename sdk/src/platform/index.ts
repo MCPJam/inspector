@@ -472,6 +472,19 @@ export {
   type RequestWaveInsightsResult,
   type CancelWaveInsightsInput,
   type CancelWaveInsightsResult,
+  // Directory readiness. Exported beside the operations for the reason this
+  // barrel exists: without them a caller cannot type what an operation
+  // returns, and reaching into `operations.js` for the shape depends on a path
+  // this file is here to hide.
+  type StartClaudeReadinessRunInput,
+  type StartOpenAIReadinessRunInput,
+  type StartDirectoryReadinessResult,
+  type DirectoryReadinessRunSelectorInput,
+  type GetDirectoryReadinessRunResult,
+  type ListDirectoryReadinessRunsInput,
+  type ListDirectoryReadinessRunsResult,
+  type GetDirectoryReadinessReportResult,
+  type CancelDirectoryReadinessRunResult,
   type UpdateUserTestingScenarioInput,
   type UpdateUserTestingScenarioResult,
   type ListUserTestingSessionsInput,

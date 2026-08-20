@@ -8733,6 +8733,21 @@ export const getProjectServerConnectionStatusOperation: PlatformOperation<
  * poll `get_directory_readiness_run` in the same breath as the start.
  */
 
+/**
+ * The submission shapes a HOSTED run can grade.
+ *
+ * A strict subset of the SDK's `OPENAI_SUBMISSION_MODES`, which also names the
+ * package shapes — those need an uploaded archive the API has no way to
+ * receive, and they run on the local CLI. Spelled as its own tuple rather than
+ * filtered from the full list so `z.enum` and `PlatformReadinessSubmissionMode`
+ * come from the SAME source, and neither can drift into offering a mode the
+ * endpoint then refuses.
+ */
+const PLATFORM_READINESS_SUBMISSION_MODES = [
+  "mcp-only",
+  "mcp-imported-skills",
+] as const satisfies readonly PlatformReadinessSubmissionMode[];
+
 const readinessRunSelectorInput = z.object({
   project: z
     .string()
@@ -8786,7 +8801,7 @@ export type StartClaudeReadinessRunInput = z.infer<
 const startOpenAIReadinessInput = z.object({
   ...readinessStartFields,
   submissionMode: z
-    .enum(["mcp-only", "mcp-imported-skills"])
+    .enum(PLATFORM_READINESS_SUBMISSION_MODES)
     .describe(
       "The DECLARED submission shape. REQUIRED and never inferred: a run with no declared shape reads as MCP-only, which reports the package lane not-applicable and turns a missing input into a clean bill of health. The package shapes need an uploaded archive and run on the `mcpjam readiness` CLI, not here.",
     ),
@@ -8802,7 +8817,9 @@ export type StartDirectoryReadinessResult = {
 };
 
 async function startReadinessRun(
-  input: StartClaudeReadinessRunInput & { submissionMode?: string },
+  input: StartClaudeReadinessRunInput & {
+    submissionMode?: PlatformReadinessSubmissionMode;
+  },
   { client, signal }: PlatformOperationContext,
   publisher: "claude" | "openai",
 ): Promise<StartDirectoryReadinessResult> {
@@ -8830,11 +8847,7 @@ async function startReadinessRun(
     publisher === "claude"
       ? await client.startClaudeReadinessRun(params, { signal })
       : await client.startOpenAIReadinessRun(
-          {
-            ...params,
-            submissionMode:
-              input.submissionMode as PlatformReadinessSubmissionMode,
-          },
+          { ...params, submissionMode: input.submissionMode! },
           { signal },
         );
 

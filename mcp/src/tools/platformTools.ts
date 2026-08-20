@@ -294,8 +294,9 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // Directory readiness, all six. This is the PROGRAMMATIC surface — a caller
   // holding an API key, running in CI, asking "would this be listed and what
   // is missing". Deterministic grading is free and is the default; the two
-  // starts carry `readOnlyHint: false` and their own destructive default, and
-  // `includeLlmObservations` is off unless a caller asks for it.
+  // starts are annotated `readOnlyHint: false, destructiveHint: false` — they
+  // create a run and remove nothing — and `includeLlmObservations` is off
+  // unless a caller asks for it.
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   getDirectoryReadinessRunOperation,

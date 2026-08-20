@@ -266,4 +266,17 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "Model choice belongs to whatever runs an eval; the CLI never picks one on the user's behalf.",
   },
+
+  // ── Directory readiness ─────────────────────────────────────────────────
+  //
+  // The two starts are the commands a person types; `readiness runs …` is for
+  // the other shape of script — start in one CI job, read the verdict in
+  // another. `runs get` carries the verdict in its EXIT CODE too, so it works
+  // as a gate on a run some earlier job started.
+  start_claude_readiness_run: { command: "readiness claude" },
+  start_openai_readiness_run: { command: "readiness openai" },
+  get_directory_readiness_run: { command: "readiness runs get" },
+  list_directory_readiness_runs: { command: "readiness runs list" },
+  get_directory_readiness_report: { command: "readiness runs report" },
+  cancel_directory_readiness_run: { command: "readiness runs cancel" },
 };

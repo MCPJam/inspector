@@ -13,6 +13,7 @@ import { registerSessionsCommands } from "../src/commands/sessions.js";
 import { registerImagesCommands } from "../src/commands/images.js";
 import { registerOrganizationsCommands } from "../src/commands/organizations.js";
 import { registerProjectsCommands } from "../src/commands/projects.js";
+import { registerReadinessCommands } from "../src/commands/readiness.js";
 import { registerTunnelCommands } from "../src/commands/tunnel.js";
 import { registerSwarmAuthoringCommands } from "../src/commands/swarms.js";
 import { registerUserTestingCommands } from "../src/commands/user-testing.js";
@@ -46,6 +47,7 @@ function buildPlatformProgram(): Command {
   registerUserTestingCommands(program);
   registerImagesCommands(program);
   registerTunnelCommands(program);
+  registerReadinessCommands(program);
   return program;
 }
 
