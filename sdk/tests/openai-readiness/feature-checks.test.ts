@@ -78,6 +78,100 @@ describe("mcp skills", () => {
     }
   });
 
+  it("will not pass the dependent checks over a PARTIAL listing", () => {
+    // A cap hit means there are skills this run never saw. "One skill, within
+    // its limits, digest matching, frontmatter agreeing" is then a statement
+    // about the one it read and not about the submission — and the skills
+    // nobody listed are exactly where a violation would hide.
+    const findings = runOpenAIMcpSkillChecks(
+      {
+        mode: "mcp-imported-skills",
+        evidence: skills({ paginationCapHit: true, pagesWalked: 10 }),
+      },
+      STAMP,
+    );
+    expect(byId(findings, "openai.skills.listing-complete").status).toBe(
+      "violated",
+    );
+    for (const id of [
+      "openai.skills.caps",
+      "openai.skills.digests",
+      "openai.skills.frontmatter",
+    ]) {
+      expect(byId(findings, id).status, id).toBe("not-evaluated");
+    }
+  });
+
+  it("will not pass the digest check over a partly-fetched listing", () => {
+    // Two skills listed, one fetched. "Every declared digest matches" is not a
+    // claim one comparison supports.
+    const findings = runOpenAIMcpSkillChecks(
+      {
+        mode: "mcp-imported-skills",
+        evidence: skills({
+          skills: [
+            ...skills().skills,
+            { name: "alerts", declaredDigest: "def" },
+          ],
+        }),
+      },
+      STAMP,
+    );
+    const digests = byId(findings, "openai.skills.digests");
+    expect(digests.status).toBe("not-evaluated");
+    expect(digests.notEvaluatedReason).toContain("alerts");
+    // Frontmatter is in the same position for the same reason.
+    expect(byId(findings, "openai.skills.frontmatter").status).toBe(
+      "not-evaluated",
+    );
+  });
+
+  it("still reports a digest mismatch that the fetched subset proves", () => {
+    // Truncation only clouds the CLEAN answer. A mismatch among the skills
+    // that were read settles the question whatever the unread ones say.
+    const findings = runOpenAIMcpSkillChecks(
+      {
+        mode: "mcp-imported-skills",
+        evidence: skills({
+          paginationCapHit: true,
+          skills: [
+            {
+              name: "forecast",
+              declaredDigest: "abc",
+              observedDigest: "not-abc",
+            },
+          ],
+        }),
+      },
+      STAMP,
+    );
+    expect(byId(findings, "openai.skills.digests").status).toBe("violated");
+  });
+
+  it("grades the page-count limit against the DECLARED count", () => {
+    // Discovery caps how many pages it reads, so `pages.length` can never
+    // exceed the limit — grading against it made this check structurally
+    // incapable of firing however many pages the server declared.
+    const findings = runOpenAIMcpSkillChecks(
+      {
+        mode: "mcp-imported-skills",
+        evidence: skills({
+          skills: [
+            {
+              ...skills().skills[0],
+              declaredPageCount: 40,
+              pages: [{ uri: "skill://forecast/1", bytes: 10 }],
+            },
+          ],
+        }),
+      },
+      STAMP,
+    );
+    const caps = byId(findings, "openai.skills.caps");
+    expect(caps.status).toBe("violated");
+    expect(JSON.stringify(caps.details)).toContain("mcp-skill-too-many-pages");
+  });
+
   it("passes a clean single-page listing", () => {
     const findings = runOpenAIMcpSkillChecks(
       { mode: "mcp-imported-skills", evidence: skills() },

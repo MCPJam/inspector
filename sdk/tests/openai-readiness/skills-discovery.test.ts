@@ -213,6 +213,35 @@ describe("discoverOpenAIImportedSkills", () => {
     );
   });
 
+  it("records how many pages the server DECLARED, past the read cap", async () => {
+    // The read cap bounds what this run fetches; it is not a statement about
+    // the skill. Losing the declared count made the page-count limit check
+    // structurally incapable of firing — `pages.length` can never exceed a cap
+    // the loop enforces.
+    const { url } = await start((method) =>
+      method === "skills/list"
+        ? { skills: [{ name: "forecast" }] }
+        : {
+            skill: {
+              content: SKILL_MARKDOWN,
+              pages: Array.from({ length: 25 }, (_unused, index) => ({
+                uri: `skill://forecast/${index}`,
+                content: "detail",
+              })),
+            },
+          },
+    );
+    const [skill] = (
+      await discoverOpenAIImportedSkills({ enteredUrl: url, fetchFn: fetch })
+    ).skills;
+    expect(skill.declaredPageCount).toBe(25);
+    expect(skill.pages?.length).toBe(10);
+    // The 15 pages past the cap were never read, so the total is absent rather
+    // than a figure that silently omits them.
+    expect(skill.unmeasuredPages).toBe(15);
+    expect(skill.totalBytes).toBeUndefined();
+  });
+
   it("walks pagination before fetching any body", async () => {
     // A server with six skills and a page size of five returns the sixth on
     // page two. A reader that stopped at page one would report five — under

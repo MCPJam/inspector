@@ -290,6 +290,29 @@ describe("scan currency", () => {
     expect((finding.details as { ageMs?: number }).ageMs).toBe(60 * 60 * 1000);
   });
 
+  it("does not pass a scan timestamp it cannot read", () => {
+    // `Date.parse` answers NaN rather than throwing, and `NaN > runAt` is
+    // false — so an unreadable value would slide past the future-date test
+    // into `satisfied`, with the age it could not compute quietly absent.
+    //
+    // BYPASSING `grade` ON PURPOSE. The profile schema types this field as an
+    // ISO-8601 datetime and rejects every unparseable string, so the only way
+    // to reach the branch is the way a caller could: hand the exported
+    // function a profile that never met the schema. That is precisely the
+    // caller this guard is for, and a test that could not construct one would
+    // be testing the schema instead of the check.
+    const parsed = parseOpenAISubmissionProfile(completeSubmissionProfile());
+    const finding = runOpenAISubmissionChecks(
+      {
+        profile: { ...parsed.profile!, lastScanAt: "sometime last week" },
+        profileIssues: [],
+      },
+      STAMP,
+    ).find((entry) => entry.id === "openai.submission.scan-currency")!;
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.notEvaluatedReason).toContain("not a readable date");
+  });
+
   it("fails a scan timestamp that postdates the run", () => {
     // A time later than the run cannot describe a scan that has already
     // happened, so it is a clock or a copy-paste — either way the date is not

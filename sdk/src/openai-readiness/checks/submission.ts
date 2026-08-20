@@ -464,31 +464,47 @@ export function runOpenAISubmissionChecks(
           "Record the domain-verification token the portal issued, so the well-known challenge can be checked.",
         ),
   );
+  // A TIMESTAMP THAT DOES NOT PARSE IS NOT A TIMESTAMP. `Date.parse` answers
+  // `NaN` rather than throwing, and `NaN > runAt` is `false` — so an unreadable
+  // value would slide past the future-date test into `satisfied`, with the
+  // `ageMs` it could not compute quietly absent. The profile schema types this
+  // field as an ISO-8601 datetime and rejects every unparseable string I could
+  // find, so this is belt-and-braces rather than a live hole; it is here
+  // because the function is exported, its parameter says only `string`, and a
+  // caller who skips the schema should not get a pass out of it.
   const scannedAt = profile.lastScanAt
     ? Date.parse(profile.lastScanAt)
     : undefined;
   const runAt = Date.parse(stamp.evaluatedAt);
+  const datesReadable =
+    scannedAt !== undefined &&
+    Number.isFinite(scannedAt) &&
+    Number.isFinite(runAt);
+
   findings.push(
     profile.lastScanAt
-      ? scannedAt !== undefined &&
-        Number.isFinite(scannedAt) &&
-        Number.isFinite(runAt) &&
-        scannedAt > runAt
-        ? violated(
+      ? !datesReadable
+        ? notEvaluated(
             SCAN_CURRENCY,
             stamp,
-            "The recorded scan time is later than this run, so it cannot describe a scan that has already happened; rescan and record the new timestamp.",
-            { lastScanAt: profile.lastScanAt, evaluatedAt: stamp.evaluatedAt },
+            `the recorded scan time is not a readable date, so this run cannot tell when the scan happened: ${JSON.stringify(profile.lastScanAt)}`,
           )
-        : satisfied(SCAN_CURRENCY, stamp, {
-            lastScanAt: profile.lastScanAt,
-            // The age, so a reader can judge staleness this check does not
-            // decide — see the definition's note on why it does not.
-            ageMs:
-              Number.isFinite(scannedAt) && Number.isFinite(runAt)
-                ? runAt - (scannedAt as number)
-                : undefined,
-          })
+        : scannedAt > runAt
+          ? violated(
+              SCAN_CURRENCY,
+              stamp,
+              "The recorded scan time is later than this run, so it cannot describe a scan that has already happened; rescan and record the new timestamp.",
+              {
+                lastScanAt: profile.lastScanAt,
+                evaluatedAt: stamp.evaluatedAt,
+              },
+            )
+          : satisfied(SCAN_CURRENCY, stamp, {
+              lastScanAt: profile.lastScanAt,
+              // The age, so a reader can judge staleness this check does not
+              // decide — see the definition's note on why it does not.
+              ageMs: runAt - scannedAt,
+            })
       : notEvaluated(
           SCAN_CURRENCY,
           stamp,

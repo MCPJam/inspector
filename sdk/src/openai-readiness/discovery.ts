@@ -337,6 +337,15 @@ export interface OpenAIImportedSkillEvidence {
   frontmatter?: Record<string, unknown>;
   pages?: { uri: string; bytes: number }[];
   /**
+   * How many pages the server DECLARED, before the read cap.
+   *
+   * Separate from `pages.length`, which is capped: the cap is a bound on what
+   * this run will fetch, not a statement about the skill, and grading the
+   * page-count limit against the capped figure could never report a skill that
+   * exceeds it.
+   */
+  declaredPageCount?: number;
+  /**
    * How many of this skill's pages had no size anyone could establish.
    *
    * Recorded rather than folded into `totalBytes` as a zero, because those two
@@ -488,6 +497,15 @@ async function fetchImportedSkillBody(
       : [];
   const pages: { uri: string; bytes: number }[] = [];
   let unmeasuredPages = 0;
+
+  // THE COUNT BEFORE THE CAP. The loop below reads at most
+  // `maxPagesPerSkill` pages, which means `pages.length` can never exceed the
+  // cap — so the check that grades "this skill ships too many pages" could
+  // never fire from wire evidence, however many the server declared. Recording
+  // the declared count is what lets that check see the number it is about.
+  const declaredPageCount = listed.length;
+  if (declaredPageCount > 0) skill.declaredPageCount = declaredPageCount;
+
   for (const entry of listed.slice(
     0,
     OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill,
@@ -519,6 +537,14 @@ async function fetchImportedSkillBody(
 
     if (bytes === undefined) unmeasuredPages += 1;
     pages.push({ uri, bytes: bytes ?? 0 });
+  }
+
+  // The pages past the cap are unmeasured in the same sense as a page with no
+  // readable size: nobody read them, and a total that omits them silently is
+  // below the real one.
+  if (declaredPageCount > OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill) {
+    unmeasuredPages +=
+      declaredPageCount - OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill;
   }
   if (pages.length > 0) skill.pages = pages;
   if (unmeasuredPages > 0) skill.unmeasuredPages = unmeasuredPages;

@@ -191,6 +191,16 @@ export function runOpenAIMcpSkillChecks(
         }),
   );
 
+  // A PARTIAL LISTING MAKES EVERY CLEAN RESULT BELOW PROVISIONAL. The cap hit
+  // means there are skills this run never saw, so "five skills, all within
+  // their limits, all digests matching" is a statement about the five it read
+  // and not about the submission. Violations are unaffected — a limit already
+  // exceeded by what WAS read stays exceeded however many more there are.
+  const partialListing = evidence.paginationCapHit === true;
+  const partialListingReason =
+    `the skills listing was still paginating at the page limit after ` +
+    `${evidence.pagesWalked} page(s), so this run has not seen every skill`;
+
   // ------------------------------------------------------------------- caps
   if (evidence.skills.length > OPENAI_MCP_SKILL_LIMITS.maxSkills) {
     issues.push(
@@ -228,11 +238,15 @@ export function runOpenAIMcpSkillChecks(
         );
       }
     }
-    if ((skill.pages?.length ?? 0) > OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill) {
+    // THE DECLARED COUNT, not the fetched one. Discovery caps how many pages it
+    // will read, so `pages.length` can never exceed the limit — grading against
+    // it would make this check structurally incapable of firing.
+    const pageCount = skill.declaredPageCount ?? skill.pages?.length ?? 0;
+    if (pageCount > OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill) {
       issues.push(
         openaiPortalIssue("mcp-skill-too-many-pages", {
           subject,
-          observed: skill.pages?.length,
+          observed: pageCount,
           expected: OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill,
         }),
       );
@@ -253,10 +267,7 @@ export function runOpenAIMcpSkillChecks(
     // A skill whose pages could not all be sized contributes an UNDERSTATED
     // amount above, so the combined figure below is a floor rather than a
     // measurement. Tracked so a clean result can say which it is.
-    if (
-      skill.totalBytes === undefined &&
-      (skill.unmeasuredPages ?? 0) > 0
-    ) {
+    if (skill.totalBytes === undefined && (skill.unmeasuredPages ?? 0) > 0) {
       unmeasured.push(skill.name ?? "(unnamed skill)");
     }
   }
@@ -278,11 +289,13 @@ export function runOpenAIMcpSkillChecks(
         // that this run could not decide, not that the caps were respected.
         // Confirmed violations above are unaffected: a floor already over the
         // limit settles the question whichever way the missing pages go.
-        unmeasured.length > 0
+        partialListing || unmeasured.length > 0
         ? notEvaluated(
             WITHIN_CAPS,
             stamp,
-            `these skills report pages with no size this run could establish, so the combined total is a floor rather than a measurement: ${unmeasured.join(", ")}`,
+            partialListing
+              ? partialListingReason
+              : `these skills report pages with no size this run could establish, so the combined total is a floor rather than a measurement: ${unmeasured.join(", ")}`,
           )
         : satisfied(WITHIN_CAPS, stamp, {
             skills: evidence.skills.length,
@@ -324,12 +337,23 @@ export function runOpenAIMcpSkillChecks(
             ),
           },
         )
-      : unfetched.length === evidence.skills.length &&
-          evidence.skills.length > 0
+      : // ANY unfetched skill, not only all of them. "Every declared digest
+        // matches", said over the three skills that were read when five were
+        // listed, is not the claim the check's title makes — and the two
+        // skills nobody fetched are exactly where a mismatch would hide.
+        partialListing || (unfetched.length > 0 && evidence.skills.length > 0)
         ? notEvaluated(
             DIGESTS_MATCH,
             stamp,
-            "no skill resource was fetched, so no declared digest could be compared against its content",
+            partialListing
+              ? partialListingReason
+              : unfetched.length === evidence.skills.length
+                ? "no skill resource was fetched, so no declared digest could be compared against its content"
+                : `${unfetched.length} of ${evidence.skills.length} skill resources were not fetched, so their declared digests were never compared: ${unfetched
+                    .map(
+                      (skill) => skill.name ?? skill.resourceUri ?? "(unnamed)",
+                    )
+                    .join(", ")}`,
           )
         : satisfied(DIGESTS_MATCH, stamp, {
             compared: evidence.skills.length - unfetched.length,
@@ -372,11 +396,19 @@ export function runOpenAIMcpSkillChecks(
             ),
           },
         )
-      : withFrontmatter.length === 0 && evidence.skills.length > 0
+      : // As for digests: a clean comparison over the subset that was read is
+        // not a clean comparison over the submission.
+        partialListing ||
+          (withFrontmatter.length < evidence.skills.length &&
+            evidence.skills.length > 0)
         ? notEvaluated(
             FRONTMATTER_AGREES,
             stamp,
-            "no skill's markdown was fetched, so its frontmatter could not be compared with the listing",
+            partialListing
+              ? partialListingReason
+              : withFrontmatter.length === 0
+                ? "no skill's markdown was fetched, so its frontmatter could not be compared with the listing"
+                : `${evidence.skills.length - withFrontmatter.length} of ${evidence.skills.length} skills' markdown was not fetched, so their frontmatter was never compared with the listing`,
           )
         : satisfied(FRONTMATTER_AGREES, stamp, {
             compared: withFrontmatter.length,
