@@ -95,8 +95,38 @@ const ALL: OpenAICheckDefinition[] = [
 /** Names for a host other than the one this plugin is being submitted to. */
 const OTHER_HOST_NAMES = /\b(claude|anthropic|claude code|claude desktop)\b/i;
 
-/** A Claude plugin's user-configuration placeholder. */
-const USER_CONFIG_PLACEHOLDER = /\$\{\s*user_config\.[^}]*\}/;
+/**
+ * Whether `text` contains a `${user_config.…}` placeholder.
+ *
+ * A SCAN RATHER THAN A REGEX, and deliberately so. The obvious pattern —
+ * `/\$\{\s*user_config\.[^}]*\}/` — is quadratic on hostile input, which CodeQL
+ * flagged and was right about: it is unanchored, so the engine restarts at
+ * every position, and a manifest string of many repeated `${user_config.` with
+ * no closing brace makes each restart scan `[^}]*` to the end of the string.
+ * The input here is a submitted `plugin.json`, so "hostile input" is not
+ * hypothetical — it is the thing this module exists to inspect.
+ *
+ * The scan below is single-pass. The one search that could cost more than O(1)
+ * — finding the closing brace — runs at most once, because if no `}` follows
+ * the first `${user_config.` then none can follow a later one either: every
+ * later occurrence starts further right.
+ */
+function containsUserConfigPlaceholder(text: string): boolean {
+  let from = 0;
+  for (;;) {
+    const open = text.indexOf("${", from);
+    if (open === -1) return false;
+
+    let cursor = open + 2;
+    // Single-character tests: no backtracking is possible in either.
+    while (cursor < text.length && /\s/.test(text[cursor])) cursor += 1;
+
+    if (text.startsWith("user_config.", cursor)) {
+      return text.indexOf("}", cursor) !== -1;
+    }
+    from = open + 2;
+  }
+}
 
 function walkStrings(
   value: unknown,
@@ -168,7 +198,7 @@ export function runOpenAIMigrationChecks(
   const hostLanguage: string[] = [];
 
   walkStrings(evidence.manifest?.raw, (text, path) => {
-    if (USER_CONFIG_PLACEHOLDER.test(text)) placeholders.push(path);
+    if (containsUserConfigPlaceholder(text)) placeholders.push(path);
     if (/\.mcpb\b/i.test(text)) mcpb.push(path);
     if (OTHER_HOST_NAMES.test(text)) hostLanguage.push(path);
   });

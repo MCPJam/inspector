@@ -415,6 +415,61 @@ describe("migration", () => {
     );
   });
 
+  it("still detects the placeholder in every spelling", async () => {
+    for (const value of [
+      "Bearer ${user_config.api_key}",
+      "Bearer ${ user_config.api_key }",
+      "prefix ${user_config.a} suffix",
+    ]) {
+      const findings = runOpenAIMigrationChecks(
+        await packageWith({
+          ...cleanSkillsPackage(),
+          ".codex-plugin/plugin.json": manifestJson({ note: value }),
+        }),
+        STAMP,
+      );
+      expect(byId(findings, "openai.migration.user-config").status, value).toBe(
+        "violated",
+      );
+    }
+  });
+
+  it("does not fire on a placeholder that never closes", async () => {
+    const findings = runOpenAIMigrationChecks(
+      await packageWith({
+        ...cleanSkillsPackage(),
+        ".codex-plugin/plugin.json": manifestJson({
+          note: "${user_config.api_key",
+        }),
+      }),
+      STAMP,
+    );
+    expect(byId(findings, "openai.migration.user-config").status).toBe(
+      "satisfied",
+    );
+  });
+
+  it("stays linear on the input that made the regex quadratic", async () => {
+    // CodeQL flagged the original pattern for exactly this shape: many
+    // repetitions of `${user_config.` with no closing brace. Against the
+    // unanchored regex this was O(n^2); the scan that replaced it is one pass.
+    // The budget is loose on purpose — it is there to catch a return to
+    // quadratic behaviour, not to benchmark the machine.
+    const hostile = "${user_config.".repeat(40_000);
+    const started = Date.now();
+    const findings = runOpenAIMigrationChecks(
+      await packageWith({
+        ...cleanSkillsPackage(),
+        ".codex-plugin/plugin.json": manifestJson({ note: hostile }),
+      }),
+      STAMP,
+    );
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(byId(findings, "openai.migration.user-config").status).toBe(
+      "satisfied",
+    );
+  });
+
   it("keeps host-name language a non-dispositive note", async () => {
     // The word "Claude" in a description is not by itself a defect, and failing
     // on a string match is exactly the false positive that teaches people to

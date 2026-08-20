@@ -166,10 +166,20 @@ async function probeUnauthenticated(
   };
 }
 
-/** The `resource_metadata` pointer out of a `WWW-Authenticate` challenge. */
+/**
+ * The `resource_metadata` pointer out of a `WWW-Authenticate` challenge.
+ *
+ * The quantifier is BOUNDED. Unbounded — `[^"]+` — this has the same quadratic
+ * shape CodeQL flagged in the migration checks: the pattern is unanchored, and
+ * a header of many repeated `resource_metadata="` with no closing quote makes
+ * every restart scan to the end. The header comes from the server under test,
+ * so it is exactly as untrusted as a submitted manifest. No real pointer
+ * approaches this length, and one that did would be refused by the same-origin
+ * check anyway.
+ */
 function challengePointer(header: string | undefined): string | undefined {
   if (!header) return undefined;
-  const match = /resource_metadata\s*=\s*"([^"]+)"/i.exec(header);
+  const match = /resource_metadata\s*=\s*"([^"]{1,2048})"/i.exec(header);
   return match?.[1];
 }
 
