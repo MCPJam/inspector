@@ -748,16 +748,33 @@ export function RegistryTab({
         // query: what the model reads back is what the person is looking at,
         // and the follow-up connect resolves against the same rows.
         directory.setQuery(payload.query ?? "");
-        // Source first: it clears a tier the new source does not publish, so
-        // setting the tier afterwards is what makes an explicit tier survive
-        // an explicit source in the same call.
+
+        // A TIER ONLY MEANS SOMETHING ON A SOURCE THAT PUBLISHES ONE.
+        //
+        // Two ways that bites. Switching to a tier-less source clears the tier
+        // the screen was showing, so a response echoing `directory.tier` would
+        // report a filter that had just been dropped — this render's closure
+        // still holds the old value. And applying a tier to a tier-less source
+        // parks an inert value in state that springs back the moment the user
+        // switches to a source that does publish tiers, silently narrowing a
+        // view they never filtered.
+        //
+        // So the effective tier is computed once, from the source that will be
+        // in force, and it is what gets both applied and reported.
+        const nextSource = source ?? directory.source;
+        const sourceTakesTiers = sourceHasTiers(nextSource);
+        const nextTier = sourceTakesTiers ? tier ?? directory.tier : "all";
+
+        // Source first: on a source that DOES take tiers it clears nothing, and
+        // ordering it after `setTier` would let the switch wipe a tier that
+        // arrived in the same call.
         if (source) directory.setSource(source);
-        if (tier) directory.setTier(tier);
+        if (tier && sourceTakesTiers) directory.setTier(tier);
         return {
           status: "searching",
           query: payload.query ?? "",
-          source: source ?? directory.source,
-          tier: tier ?? directory.tier,
+          source: nextSource,
+          tier: nextTier,
           note: "Results are debounced — read them from ui_snapshot_app's `directory` block.",
         };
       },

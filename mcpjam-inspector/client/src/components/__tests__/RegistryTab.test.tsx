@@ -1936,11 +1936,14 @@ describe("RegistryTab", () => {
     });
 
     it("searchRegistryDirectory switches source, and the tier survives it", async () => {
-      // Order matters in the handler: source first (it clears a tier the new
-      // source does not publish), tier after — otherwise an explicit tier in
-      // the same call would be wiped by the source it was sent with.
+      // Switching TO a tier-publishing source with a tier in the same call is
+      // where the ordering is load-bearing: `setSource` runs first, and
+      // reversing the two statements would let the switch wipe the tier that
+      // arrived with it.
       mockDirectoryReturn = directoryHookReturn({
         items: [createDirectoryServer()],
+        source: "chatgpt-directory",
+        hasTiers: false,
       });
       renderWithCards([toCatalogCard([createMockServer()])]);
 
@@ -1948,7 +1951,7 @@ describe("RegistryTab", () => {
         type: "searchRegistryDirectory",
         payload: {
           query: "invoice",
-          source: "chatgpt-directory",
+          source: "anthropic-directory",
           tier: "partner",
         },
       });
@@ -1957,19 +1960,62 @@ describe("RegistryTab", () => {
         status: "success",
         result: {
           status: "searching",
-          source: "chatgpt-directory",
+          source: "anthropic-directory",
           tier: "partner",
         },
       });
-      expect(mockSetSource).toHaveBeenCalledWith("chatgpt-directory");
+      expect(mockSetSource).toHaveBeenCalledWith("anthropic-directory");
       expect(mockSetTier).toHaveBeenCalledWith("partner");
-      // The assertion the test's name is actually about: SOURCE FIRST. Swap
-      // the two statements in the handler and the source's tier-clearing wipes
-      // the tier that arrived with it — which the assertions above would not
-      // notice, because both calls still happened.
       expect(mockSetSource.mock.invocationCallOrder[0]).toBeLessThan(
         mockSetTier.mock.invocationCallOrder[0]
       );
+    });
+
+    it("searchRegistryDirectory reports the tier that will actually be in force", async () => {
+      // Switching to a tier-less source clears the tier the screen was
+      // showing. Echoing `directory.tier` here would report a filter that had
+      // just been dropped — this render's closure still holds the old value —
+      // and the model would tell the user it had narrowed a view it had not.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+        tier: "partner",
+      });
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      const response = await dispatch({
+        type: "searchRegistryDirectory",
+        payload: { source: "chatgpt-directory" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: {
+          status: "searching",
+          source: "chatgpt-directory",
+          tier: "all",
+        },
+      });
+    });
+
+    it("searchRegistryDirectory ignores a tier the target source cannot use", async () => {
+      // Applying it would park an inert value in state that springs back the
+      // moment the user returns to a source that DOES publish tiers, silently
+      // narrowing a view they never filtered.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      const response = await dispatch({
+        type: "searchRegistryDirectory",
+        payload: { source: "chatgpt-directory", tier: "partner" },
+      });
+
+      expect(mockSetSource).toHaveBeenCalledWith("chatgpt-directory");
+      expect(mockSetTier).not.toHaveBeenCalled();
+      expect(response).toMatchObject({
+        result: { source: "chatgpt-directory", tier: "all" },
+      });
     });
 
     it("searchRegistryDirectory rejects an unknown source", async () => {
