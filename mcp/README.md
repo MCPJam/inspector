@@ -48,7 +48,7 @@ so results respect the caller's project access.
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
 | `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
-| `run_eval_suite` | Start an asynchronous rerun of an existing eval suite. | — |
+| `run_eval_suite` | Start an asynchronous rerun of an existing eval suite, against one target or several. Fan-out is explicit: a suite with several attached targets refuses with TARGET_REQUIRED unless you name targets or pass allAttached, and each target is one PAID run. | — |
 | `create_eval_suite` | Create a runnable eval suite from authored test cases. | — |
 | `get_eval_suite` | Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule. | — |
 | `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge (`autoRun` is what makes grading happen; `enabled` alone only makes the judge available). | — |
@@ -182,9 +182,21 @@ can run against instead of a loose server selection. Attach them to a suite
 with `set_eval_suite_environments`; from then on `run_eval_suite` /
 `run_eval_case` take an `environment` (name or ID) naming which one to use.
 A suite with exactly one attached environment uses it automatically; a suite
-with several requires the argument, and the error names the candidates.
+with several refuses with `TARGET_REQUIRED` and names every candidate, rather
+than guessing how much to spend. `run_eval_suite` also takes `environments`
+(several, one paid run each), `host`/`hosts` for a suite with attached hosts,
+and `allAttached` to fan out across every attached target on ONE axis —
+environments if the suite has any, otherwise hosts, never a cross product.
 `environment` and `servers` are mutually exclusive — an environment supplies a
-closed server set that an override cannot change.
+closed server set that an override cannot change — and so are the environment
+and host axes.
+
+Instead of NAMING a target, `compose` builds one: a host plus an optional
+model, sandbox image, server group and pinned skills becomes an unnamed,
+content-addressed environment (the same row `ensure_adhoc_environment`
+returns), which is then APPENDED to the suite so the run stays reproducible
+from the app. Promote such a row to a named environment in place with
+`name_environment`.
 
 An environment-backed run records the environment and the exact revision it
 executed against, and `get_eval_run` reports that triple — so an agent can

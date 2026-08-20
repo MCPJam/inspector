@@ -45,7 +45,9 @@ import {
   createEvalSuiteOperation,
   diagnoseServerOperation,
   generateEvalCasesOperation,
+  ensureAdhocEnvironmentOperation,
   getEnvironmentOperation,
+  nameEnvironmentOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
@@ -120,7 +122,9 @@ import type {
   ProposedActionSeverity,
   ProposedActionTarget,
 } from "@mcpjam/sdk/public-api";
+import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
+import { logger } from "../../utils/logger.js";
 
 /** Any catalog operation, input type erased — the registry is heterogeneous. */
 export type AnyPlatformOperation = PlatformOperation<any, unknown>;
@@ -179,6 +183,27 @@ export interface GatedProposalMeta {
    * must treat as match-unknown.
    */
   target?(input: Record<string, unknown>): ProposedActionTarget | undefined;
+  /**
+   * FREEZE the arguments at PROPOSAL-MINT time, resolving anything whose
+   * meaning could change before a human clicks.
+   *
+   * A proposal is a contract about a specific action, and the approval route
+   * executes exactly the arguments stored with it. That is safe only while the
+   * stored arguments MEAN the same thing later — and `allAttached: true` does
+   * not: attaching a fourth environment between the proposal and the click
+   * silently widens an approved 3-run spend to 4. Resolving it to an explicit
+   * ID list here makes the approved set the frozen set, so a later attachment
+   * edit can add nothing to it.
+   *
+   * The ONE async hook in an otherwise synchronous registry, because resolving
+   * names to ids needs the platform. It runs best-effort at the call site: a
+   * failure leaves the arguments as the model wrote them rather than losing the
+   * proposal, so the worst case is today's behaviour and not a dropped action.
+   */
+  normalizeProposalArgs?(
+    input: Record<string, unknown>,
+    context: { projectId: string; client: PlatformApiClient },
+  ): Promise<Record<string, unknown>>;
 }
 
 /** Read a string off an unknown result, at a dotted path. */
@@ -214,19 +239,200 @@ function evalRunResource(
   result: unknown,
   { projectId }: { projectId: string },
 ): ExecutedActionResource | undefined {
-  const runId = readString(result, "runId");
   const suiteId =
     readString(result, "suite.id") ?? readString(result, "suiteId");
-  if (!runId || !suiteId) return undefined;
+  if (!suiteId) return undefined;
+  const suiteUrl =
+    `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}`;
+
+  // A GROUPED launch links to the group, not to one of its runs. The contract
+  // carries a single resource, and linking to the first run would hide the
+  // fact that a sibling failed — the one thing the approver most needs to see
+  // after approving N paid runs.
+  const runGroupId = readString(result, "runGroupId");
+  if (runGroupId) {
+    return {
+      type: "eval_run_group",
+      id: runGroupId,
+      url: `${suiteUrl}?view=runs&project=${encodeURIComponent(projectId)}`,
+    };
+  }
+
+  const runId = readString(result, "runId");
+  if (!runId) return undefined;
   return {
     type: "eval_run",
     id: runId,
     url:
-      `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}` +
-      `/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(
-        projectId,
-      )}`,
+      `${suiteUrl}/runs/${encodeURIComponent(runId)}` +
+      `?project=${encodeURIComponent(projectId)}`,
   };
+}
+
+/**
+ * The approval line for an eval-suite run, which must say HOW MANY paid runs a
+ * click starts.
+ *
+ * The count is honest because `freezeEvalRunTargets` has already resolved
+ * `allAttached` into an explicit list by the time this renders — so this is
+ * reading a decided set, not estimating one. When normalization could not run
+ * (an offline platform), the copy says the run fans out without claiming a
+ * number it does not have.
+ */
+function describeEvalSuiteRun(input: Record<string, unknown>): string {
+  const suite = named(input, "suite") ?? "(unnamed)";
+  // COMPOSE is the one target that also EDITS the suite: it creates an ad-hoc
+  // environment and appends it to the suite's attachments. An approver reading
+  // "Run eval suite smoke" would authorise a persistent change nobody
+  // mentioned, so the line says it.
+  const compose = input.compose;
+  if (compose && typeof compose === "object") {
+    const host = named(compose as Record<string, unknown>, "host");
+    return (
+      `Run eval suite ${suite} on a composed setup${host ? ` (${host})` : ""}` +
+      " — one paid run, and the composed environment is attached to the suite"
+    );
+  }
+  const targets = [
+    ...readStringList(input, "environments"),
+    ...readStringList(input, "hosts"),
+  ];
+  if (targets.length > 1) {
+    return `Start ${targets.length} paid eval runs of suite ${suite}: ${targets.join(", ")}`;
+  }
+  const single =
+    targets[0] ?? named(input, "environment") ?? named(input, "host");
+  if (input.allAttached === true) {
+    return `Run eval suite ${suite} against every attached target — one paid run each`;
+  }
+  return single
+    ? `Run eval suite ${suite} against ${single}`
+    : `Run eval suite ${suite}`;
+}
+
+/**
+ * Resolve a run proposal's targets to explicit IDs, so approval executes the
+ * set that was approved.
+ *
+ * `allAttached` is the whole reason this exists: it means "every target
+ * attached RIGHT NOW", and "right now" moves between the proposal and the
+ * click. Storing it verbatim would let an attachment edit widen an approved
+ * 3-run spend to 4 with nobody approving the fourth. Resolved here into an
+ * `environments`/`hosts` id list, and `allAttached` is DROPPED — leaving it
+ * would let the re-expansion happen anyway.
+ *
+ * Name selectors are resolved for the same reason: a name is a pointer, and
+ * the row it points at can be renamed or replaced. Every spelling of them —
+ * `environment`/`environments` and `host`/`hosts` — because a rename repoints
+ * a single target exactly as readily as it repoints several, and a guarantee
+ * that depended on which form the caller used would be no guarantee.
+ */
+async function freezeEvalRunTargets(
+  input: Record<string, unknown>,
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const suiteSelector = named(input, "suite");
+  if (!suiteSelector) return input;
+  const wantsAll = input.allAttached === true;
+  const namedEnvironments = readStringList(input, "environments");
+  const namedHosts = readStringList(input, "hosts");
+  const namedEnvironment = named(input, "environment");
+  const namedHost = named(input, "host");
+  if (
+    !wantsAll &&
+    namedEnvironments.length === 0 &&
+    namedHosts.length === 0 &&
+    !namedEnvironment &&
+    !namedHost
+  ) {
+    // Nothing to freeze: no target named at all.
+    return input;
+  }
+
+  const suites = await client.listEvalSuites({ projectId });
+  const suite = suites.items.find(
+    (candidate) =>
+      candidate.id === suiteSelector ||
+      candidate.name?.toLocaleLowerCase() === suiteSelector.toLocaleLowerCase(),
+  );
+  if (!suite) return input;
+  const detail = await client.getEvalSuite({ projectId, suiteId: suite.id });
+
+  const { allAttached: _dropped, ...rest } = input;
+  if (wantsAll) {
+    // ONE axis, environments first — the same precedence the operation itself
+    // applies, so the frozen set is the set that would have run.
+    const environmentIds = detail.environmentIds ?? [];
+    if (environmentIds.length > 0) {
+      return { ...rest, environments: environmentIds };
+    }
+    const hostIds = (detail.hosts ?? []).map((host) => host.id);
+    // Nothing attached: there is no set to freeze. Returning `rest` here would
+    // strip `allAttached` and leave a proposal that no longer says what the
+    // describer announced, so leave the request exactly as written.
+    return hostIds.length > 0 ? { ...rest, hosts: hostIds } : input;
+  }
+
+  const next: Record<string, unknown> = { ...rest };
+  if (namedHosts.length > 0 || namedHost) {
+    const byName = new Map(
+      (detail.hosts ?? []).map((host) => [host.name.toLocaleLowerCase(), host.id]),
+    );
+    const freeze = (selector: string) =>
+      byName.get(selector.toLocaleLowerCase()) ?? selector;
+    // Singular and plural alike. A rename repoints ONE target just as readily
+    // as it repoints several — the count is unchanged, but the run is not the
+    // run that was approved — so the guarantee cannot depend on which spelling
+    // the model happened to emit.
+    if (namedHosts.length > 0) next.hosts = namedHosts.map(freeze);
+    if (namedHost) next.host = freeze(namedHost);
+  }
+  if (namedEnvironments.length > 0 || namedEnvironment) {
+    // Same reason as hosts, one axis over: an environment name is a pointer,
+    // and the row it points at can be renamed or replaced between the proposal
+    // and the click. Narrowed to the suite's ATTACHED environments, so a name
+    // that matches some other environment in the project cannot be frozen into
+    // a target the suite could not have run anyway. Ids pass through untouched,
+    // and an unresolvable selector is left as-is for the operation to reject
+    // with its own (better) message.
+    const attached = new Set(detail.environmentIds ?? []);
+    let byName = new Map<string, string>();
+    try {
+      const environments = await client.listEnvironments({ projectId });
+      byName = new Map(
+        environments.items
+          .filter((environment) => attached.has(environment.id))
+          .map((environment) => [
+            (environment.name ?? "").toLocaleLowerCase(),
+            environment.id,
+          ]),
+      );
+    } catch {
+      // Same posture as the suite lookup above: freezing is a narrowing, and a
+      // platform that cannot answer must not cost the caller the proposal. The
+      // operation still resolves and validates these selectors on the click.
+    }
+    const freeze = (selector: string) =>
+      (attached.has(selector) ? selector : undefined) ??
+      byName.get(selector.toLocaleLowerCase()) ??
+      selector;
+    if (namedEnvironments.length > 0) {
+      next.environments = namedEnvironments.map(freeze);
+    }
+    if (namedEnvironment) next.environment = freeze(namedEnvironment);
+  }
+  return next;
+}
+
+/** Read a string array off validated input, dropping non-strings. */
+function readStringList(
+  input: Record<string, unknown>,
+  key: string,
+): string[] {
+  const value = input[key];
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
 }
 
 /**
@@ -567,6 +773,14 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
 
   // ── WRITE — persists, but spends nothing. Every one is picked up by the
   // derived idempotency set below and echoed in the response envelope.
+  {
+    operation: ensureAdhocEnvironmentOperation,
+    tier: "direct",
+    promptNotes: [
+      "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
+    ],
+  },
+  { operation: nameEnvironmentOperation, tier: "direct" },
   { operation: createEvalSuiteOperation, tier: "direct" },
   { operation: createEvalCaseOperation, tier: "direct" },
   { operation: createEvalCasesOperation, tier: "direct" },
@@ -585,12 +799,18 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: runEvalSuiteOperation,
     tier: "gated",
     proposal: {
-      describe: (input) =>
-        `Run eval suite ${named(input, "suite") ?? "(unnamed)"}`,
+      describe: describeEvalSuiteRun,
       buttonLabel: "Run it",
       kind: "start",
+      // Every eval run consumes credits, and a fan-out consumes them N times.
+      // Stated here rather than derived from the operation's `risk` facet:
+      // severity is not a function of risk (`external` has no risk value, and
+      // the schedule entry below decides per argument), so the two are
+      // deliberately separate fields that happen to agree here.
+      confirmSeverity: "spend",
       resource: evalRunResource,
       target: evalSuiteTarget,
+      normalizeProposalArgs: freezeEvalRunTargets,
     },
   },
   {
@@ -601,6 +821,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Run eval case ${named(input, "case") ?? "(unnamed)"}`,
       buttonLabel: "Run it",
       kind: "start",
+      confirmSeverity: "spend",
       resource: evalRunResource,
       target: evalSuiteTarget,
     },
@@ -1263,6 +1484,17 @@ export function proposalMetaFor(operationName: string): {
   targetFor: (
     input: Record<string, unknown>,
   ) => ProposedActionTarget | undefined;
+  /**
+   * Freeze the arguments before they are persisted, or return them unchanged.
+   *
+   * BEST-EFFORT BY CONSTRUCTION: a normalizer that throws leaves the arguments
+   * as the model wrote them, which is exactly today's behaviour — a failed
+   * resolution must not cost the user the proposal itself.
+   */
+  normalizeArgs: (
+    input: Record<string, unknown>,
+    context: { projectId: string; client: PlatformApiClient },
+  ) => Promise<Record<string, unknown>>;
 } {
   const entry = GATED_BY_NAME.get(operationName);
   if (!entry) {
@@ -1272,6 +1504,7 @@ export function proposalMetaFor(operationName: string): {
       kind: "start",
       severityFor: () => undefined,
       targetFor: () => undefined,
+      normalizeArgs: async (input) => input,
     };
   }
   const severity = entry.proposal.confirmSeverity;
@@ -1293,6 +1526,19 @@ export function proposalMetaFor(operationName: string): {
       ),
     buttonLabel: entry.proposal.buttonLabel,
     kind: entry.proposal.kind,
+    normalizeArgs: async (input, context) => {
+      const normalize = entry.proposal.normalizeProposalArgs;
+      if (!normalize) return input;
+      try {
+        return await normalize(input, context);
+      } catch (error) {
+        logger.warn("[v1/agent] could not normalize proposal arguments", {
+          operation: operationName,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return input;
+      }
+    },
   };
 }
 

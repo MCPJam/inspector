@@ -308,6 +308,10 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   get_project_environment: "Environments have their own tab.",
   resolve_project_environment: "Resolution detail with no chat-facing use.",
   create_project_environment: "Environment authoring has its own editor.",
+  ensure_adhoc_environment:
+    "Environment authoring has its own editor, and the composer is where a workspace user assembles a stack. The RUN path already carries it: run_eval_suite takes a `compose` object and ensures the environment itself.",
+  name_environment:
+    "Promoting a composed environment into the project's permanent list is an editor action, and the composer offers it in place.",
   update_project_environment: "Environment authoring has its own editor.",
   archive_project_environment: "Environment lifecycle has its own controls.",
   restore_project_environment: "Environment lifecycle has its own controls.",

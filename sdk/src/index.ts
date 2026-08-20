@@ -324,6 +324,39 @@ export type {
   PublicCheckOverride,
   PublicMatchOptions,
 } from "./corpus.js";
+
+// Suite files: read one, resolve its documented defaults in memory, write an
+// authored one back. Pure and browser-safe — the file I/O half lives in
+// @mcpjam/cli (`eval validate`, `eval export`).
+//
+// Deliberately NOT re-exported from `@mcpjam/sdk/contract`. That subpath is
+// dependency-light (zod only) and browser-bundled on purpose; routing the
+// loader through it would pull `yaml` into every client bundle that imports
+// the contract for its types.
+export {
+  MAX_SUITE_FILE_BYTES,
+  SUITE_FILE_DEFAULT_CAPTURE_LEVEL,
+  SUITE_FILE_FINDING_CODES,
+  SUITE_FILE_VALIDITY_DEFAULTS,
+  formatSuiteFileFindings,
+  loadEvalSuiteFile,
+  resolveEvalSuiteFile,
+  serializeEvalSuiteFile,
+  suiteFilePointer,
+} from "./suite-file-loader.js";
+export type {
+  LoadEvalSuiteFileOptions,
+  ResolvedEvalSuiteFile,
+  ResolvedEvalSuiteFileCase,
+  ResolvedEvalSuiteFileValidity,
+  SuiteFileFailureStage,
+  SuiteFileFinding,
+  SuiteFileFindingCode,
+  SuiteFileLoadFailure,
+  SuiteFileLoadResult,
+  SuiteFileLoadSuccess,
+  SuiteFileLocation,
+} from "./suite-file-loader.js";
 export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,
@@ -399,12 +432,32 @@ export {
 } from "./conformance-reporting.js";
 export type {
   ConformanceReport,
+  ConformanceReportAdvisory,
   ConformanceReportCase,
   ConformanceReportCaseStatus,
   ConformanceReportGroup,
   ConformanceReportKind,
   SupportedConformanceResult,
 } from "./conformance-reporting.js";
+
+// Claude directory readiness. Pure data and data reasoning only — the runner
+// and the dialing checks are deliberately not re-exported here, so importing
+// the result model never pulls a transport in with it.
+export * from "./claude-readiness/index.js";
+// The one readiness module that touches the network, exported only from the
+// Node entry. It is deliberately absent from `claude-readiness/index.ts` so
+// that importing the result model can never pull a transport in with it.
+export {
+  discoverClaudeAuthEvidence,
+  traceConnectorRedirects,
+} from "./claude-readiness/discovery.js";
+export type { ClaudeDiscoveryOptions } from "./claude-readiness/discovery.js";
+// The side-effecting intrusive probes, likewise Node-only. The gate that arms
+// them and the grading that reads them are pure and come from the barrel above.
+export {
+  probeDynamicRegistration,
+  probeRefreshRotation,
+} from "./claude-readiness/intrusive-probes.js";
 export {
   buildOutcomeSummary,
   decideConformanceOutcome,

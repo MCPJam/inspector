@@ -3,12 +3,40 @@
     {
       "releases": [
         {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Name the revoking user when an API key's org binding is removed.\n\nThe binding delete used to arrive at the backend carrying nothing but the key\nid, so the audit row it writes had to infer an actor — and the only identity\nthe row carries is the user who minted the key, which is not necessarily the\none revoking it. The revoke handler now resolves the caller's MCPJam user and\nsends it as `actorUserId`. That is the Convex document id, not the WorkOS\n`sub`; the backend validates it as such.\n\nAn unresolvable caller sends nothing rather than failing: by that point the\nWorkOS key is already destroyed, and the backend records the revocation as\nexplicitly unattributed instead of naming someone who may not have done it.\nThe session's existing ownership check remains the authorization — this is\nattribution, and defense in depth on a route reachable with the service token\nalone.\n\nMinting also stops flattening one backend answer into a bad one: a key id\nalready bound to a different organization now surfaces as `409 CONFLICT`\ninstead of `502`. The backend refuses to re-point a live key into another org,\nand that refusal is a conflict, not an unreachable service.",
+      "id": "api-key-revoke-names-its-actor"
+    },
+    {
+      "releases": [
+        {
           "name": "@mcpjam/sdk",
-          "type": "major"
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
         }
       ],
-      "summary": "The eval step union rejects unknown fields.\n\n`promptStepSchema`, `toolCallStepSchema`, `interactStepSchema`,\n`assertStepSchema`, `elementLocatorSchema` (including its nested `role` object),\nevery `interactActionSchema` member and every `widgetAssertionSchema` member are\nnow `.strict()`. A key none of them declares is an error rather than a silently\nstripped field.\n\n5.0.0 closed every object the suite file itself declares and left this union\nopen, which was a real asymmetry rather than a stylistic one. The Convex mirror\nof the union is built from `v.object` and has always rejected unknown fields, so\nthe same step payload was quietly trimmed by one validator and refused by the\nother — a disagreement that surfaced at ingest, far from whatever wrote the\nstep. Step level is also where a mis-mapped *import* field actually lands: an\nagent converting an upstream suite gets step fields wrong more often than\ntop-level ones, and \"succeeded, dropped half of what it read\" is the failure the\nclosed-schema rule exists to prevent.\n\nIf you generate steps programmatically, a step object carrying anything outside\nthe contract now fails to parse instead of being trimmed. Two things stay open,\ndeliberately:\n\n- `toolCallStep.arguments` — the tool's own argument object. Its keys come from\n  the server's input schema, not from this contract.\n- A `Predicate` inside an `assert` step. That union is a separate contract\n  module (`@mcpjam/sdk/predicates`) with its own Convex mirror, its own parity\n  fixtures and many more authoring surfaces. Closing it is a change made there,\n  with its own consumer audit.\n\nThe generated JSON Schema follows: step objects now carry\n`additionalProperties: false`, because that is the validator's real behaviour\nrather than an artifact of the output projection.\n\n## `externalCaseId` is normalized, and suggested when an `id` is missing\n\n`EvalTest` now trims `externalCaseId` at construction (dropping a\nwhitespace-only value entirely). The hosted key has always been derived from the\ntrimmed value — `external:` + `externalCaseId.trim()` — so a padded config\ncarried two spellings of one identity: the padded one on the wire and in the\n`[id]` grep suffix, the trimmed one as the actual join key.\n\nWith one spelling in play, the missing-`id` error can suggest it:\n\n```text\nEvalTest \"refunds a duplicate charge\" has no `id`. A case's identity is\ndeclared, not derived from its name — otherwise renaming the test forks its\nhosted history. This test already declares `externalCaseId`, which is the key\nits hosted history is joined on, so reuse it verbatim: id: \"case_123\"\n```\n\n`id := externalCaseId` is the migration rule for existing external-id users: the\ntwo are one identity, and a backend that accepts both requires them to agree, so\nminting a fresh id beside an existing `externalCaseId` is a conflict by\nconstruction. Mint-fresh remains the suggestion when there is no\n`externalCaseId`, and also when the one in hand falls outside the opaque-id\ncharset — suggesting a value the next line rejects would be worse than\nsuggesting a new one.",
-      "id": "close-the-step-union"
+      "summary": "Eval cases are authored in batches, and every case gets a declared identity.\n\nEvery first-party authoring path used to loop the platform's per-case create\nmutation: `authorEvalSuite` once per case, generation once per draft, the public\n`POST …/cases` route once per call. An agent converting a repo's 40 test files\nmade 40 sequential round trips, each its own transaction, with no way to say\n\"these 40 cases\" as one write. All of them now go through the platform's batch\nmutation, which validates every case before writing any of them and reports the\noutcome per case.\n\n## `create_eval_cases` / `POST …/cases/batch`\n\nThe bulk form of `create_eval_case`, taking up to 100 cases per call. Each entry\ntakes exactly the fields a single create takes, because it *is* the single\ncreate repeated — not a second contract with its own spelling of a case.\n\nThe response is a partial outcome by design, and says so rather than implying\nit:\n\n```jsonc\n{\n  \"created\": [{ \"index\": 0, \"id\": \"…\", \"declaredId\": \"c_…\", \"title\": \"lists files\", \"replayed\": false }],\n  \"failed\":  [{ \"index\": 1, \"code\": \"DUPLICATE_CONTENT\", \"message\": \"…\" }],\n  \"duplicatePolicy\": { \"requestedPolicy\": \"blcok\", \"effectivePolicy\": \"block\", \"coerced\": true }\n}\n```\n\nBoth arrays carry the `index` of the entry they describe, so a caller lines\nresults up against the list it sent. It is `201` even when `failed` is non-empty:\nthe cases in `created` really were written, and a `4xx` would tell the caller to\nretry writes that already landed. `duplicatePolicy` defaults to `block`; `warn`\nand `create_anyway` author a duplicate but require an `overrideReason`, which is\nrecorded on the case's revision. An unrecognized policy coerces to `block` and\nreports the coercion — a typo should not look like a platform that refuses cases\nfor no reason.\n\nThe 100-case cap is deliberately smaller than a suite file's 500-case limit. The\ntwo answer different questions — a file is an authored artifact, a call is bound\nby request size — so a maximal file uploads in several calls. Do not align them.\n\n## Cases carry a declared id\n\n`create_eval_case` and `POST …/cases` accept an optional `id`: the identity the\ncase answers to in a suite file, an import, or a CLI argument. Callers mint it\n(`mintCaseId` from `@mcpjam/sdk/contract`); the platform validates the charset\nand suite-scoped uniqueness and never derives one, because an id derived from a\ncase's content or position is the content-hash identity declared ids exist to\nretire. Omitting it still works — this server mints one — so no existing caller\nhas to change.\n\n`POST …/cases` now writes through the same batch mutation with a single entry,\nso the single and bulk paths cannot drift into two meanings of \"author a case\".\nOne consequence is worth knowing before you upgrade: that route now gets the\nbatch default `duplicatePolicy: block`, so creating a case whose definition\nalready exists in the suite returns `409 CONFLICT` instead of authoring a second\ncopy. To author one deliberately, send it through `…/cases/batch` with\n`duplicatePolicy` and an `overrideReason` — the reason is what gets recorded.\nThe hosted editor is unaffected; it writes through the platform mutation\ndirectly and keeps its existing behaviour.\n\nThe declared id reads back as `declaredId` on the case, deliberately NOT folded\ninto `id`:\nthat field is the platform row id every case route takes as its path parameter\nand every selector resolves against, and one name for two identities would break\neach of them. A declared id is also never written into a case's storage key,\nwhich stays the platform's own random `ui_*` value.\n\n## Generation reads both case shapes\n\n`generateTestCases` now accepts a versioned union from the backend: no\n`shapeVersion` is today's case, and `shapeVersion: \"wave0\"` is the converged\nshape where `steps[]` replaces `query`/`expectedToolCalls`/`promptTurns` and\n`repetitions` replaces `runs`. A Wave-0 case still persists the same legacy\ndisplay columns, derived from its steps, so equivalent authored intent stores\nequivalently whichever shape produced it.\n\nThis lands before the backend emits the new shape on purpose. A consumer that\nalready reads both is what makes the producer's change non-breaking, and lets\neither side roll back while both are deployed. The legacy branch is temporary\nand marked for removal once the compatibility window closes.",
+      "id": "batch-eval-case-authoring"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Claude and ChatGPT speak two protocol eras, and a host's protocol selection can\nsay \"negotiate\" instead of naming a revision.\n\nBoth catalog rows now list `[\"2025-11-25\", \"2026-07-28\"]` as supported and are\nmarked `provenance: \"probe\"` — captured from the real clients rather than\nassumed or read off a vendor page. The same capture corrected details that were\nguessed before: ChatGPT and Claude do not honour `requestTeardown`, Claude's\navailable display modes are inline and fullscreen (no PiP), Cursor's are inline\nonly, and every MCP Apps row now carries explicit `cspConnectDomains` and\n`cspResourceDomains` sets instead of leaving them unstated.\n\n## `mcpProtocolVersion: \"auto\"`\n\n`mcpProfile.mcpProtocolVersion` accepts `\"auto\"` alongside the concrete\nrevisions. It is a **stored selection policy, never a wire literal**: nothing\nputs the string on a request. `resolveEffectiveMcpProtocolVersion` and\n`hostConnectionProfile` both collapse it to `undefined`, which is exactly what\nan unpinned host resolved to before, so connect behaviour is unchanged for\nevery existing row.\n\nThe distinction it buys is between \"this client negotiates, deliberately\" and\n\"this field was never set\". Legacy rows keep the absent field and keep saving;\nthe dual-era presets ship `\"auto\"` explicitly, so a client whose default is\nnegotiation says so in its own config instead of being inferred from a hole.\nAbsent still canonicalizes to absent, so pre-feature rows continue to hash\nidentically.\n\n`ConflictingProtocolVersionPin` is now stated the way it actually behaves: a\nstateful pin must appear in `initialize.supportedProtocolVersions` (and derives\nthat list when the caller sent none), while a stateless pin skips the\nhandshake entirely and is exempt from the accept-list check. Hosts saved with a\nstateless pin outside their list predate this work and must keep saving.\n\n## Inspector\n\nThe Protocol tab's dropdown offers the union of the client's `initialize`\naccept-list and the eras its catalog row advertises. The handshake list only\never carries legacy revisions, so reading it alone made `2026-07-28`\nunselectable on the very clients that speak it. A row with no accept-list is a\nlegacy row and stays fully editable — the catalog only widens an existing list,\nnever creates one. Selecting Automatic now writes `\"auto\"` rather than deleting\nthe field, and the JSON editor round-trips it.\n\nThe unadvertised-pin warning fires for stateful pins only, matching the rule\nabove: warning on a stateless pin promised a Save failure that never came.\n\nCan-I-use gains a Protocol versions row. It reads the catalog's supported list\nrather than the preset's handshake list, so the matrix reports what each client\nspeaks instead of what it happens to advertise during `initialize`. It renders\nas a plain value, not a support chip — \"which eras\" is not a yes/no question.",
+      "id": "chatgpt-dual-era-protocol"
     },
     {
       "releases": [
@@ -17,8 +45,22 @@
           "type": "patch"
         }
       ],
-      "summary": "Pin the GitHub PR check sandbox's orphan backstop in tests. A dead worker's box is reaped by E2B's own TTL, so the `timeoutMs` and `lifecycle: { onTimeout: \"kill\" }` provisioning options are what actually guarantee teardown — and neither was asserted, so dropping `lifecycle`, or switching it to `pause` (which would snapshot a pull request's build rather than destroy it), would have passed CI. Also asserts that no MCPJam credential material reaches the box, that a missing dedicated template fails rather than falling back to the shared computer image, and that a failed kill stays best-effort.",
-      "id": "github-checks-teardown-pins"
+      "summary": "Update Electron 37.10.3 -> 43.4.0, clearing all 31 open Electron security advisories (7 high, 18 medium, 6 low). 43 is the current stable line; the minimum fix version (39.8.10) is already outside Electron's support window.",
+      "id": "electron-major-bump"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Publish the eval role-permission matrix as capabilities, and gate suite and\nrun deletion on it.\n\n`GET /v1/projects/:projectId/capabilities` gains six eval keys: `readEvals`,\n`writeEvalSuites`, `launchEvalRun`, `deleteAnyEvalSuite`, `deleteAnyEvalRun`\nand `exportEvalTraces`.\n\nThey are NOT derived like the swarm keys beside them, and the difference is\nthe point. Swarm writes rank the organization role alone (`requireProjectRole`),\nso a guest holding a project grant cannot author one. Eval writes resolve\nproject ACCESS, where the grant counts — so reporting org membership for both\nwould deny a grant-holding guest eval capabilities they actually hold. The\neval edit tier is satisfied by anyone whose access resolves, which is the same\ncondition under which this endpoint answers rather than 404s.\n\n`deleteAnyEvalSuite` and `deleteAnyEvalRun` carry \"any\" in the name on purpose.\nDeleting someone else's suite takes the project admin tier, but the creator of\na suite may always delete it whatever their role — the escape hatch that lets\nan interrupted import roll back the suite it just wrote. A key named\n`deleteEvalSuite` reading `false` would tell an ordinary member they cannot\ndelete the suite they just made.\n\nThe eval tab now applies that same rule instead of assuming it. Suite deletion\nwas pinned to `true` for every caller, which left the whole question to a\nmutation the user reached by clicking Delete and watching it fail; run deletion\nwas pinned to member-management rights, which hid deletion of your own runs.\nBoth are now per-row — the manage tier, or authorship of that particular suite\nor run — so the suite switcher offers delete on the rows a caller can act on\nand not the others. Batch run deletion stays visible but disables while the\nselection holds a run started by someone else, with the count in the tooltip,\nrather than silently deleting the subset it is allowed to.",
+      "id": "eval-role-matrix-capabilities"
     },
     {
       "releases": [
@@ -27,8 +69,28 @@
           "type": "patch"
         }
       ],
-      "summary": "Clone private repositories for GitHub PR checks, using a short-lived\ninstallation token that never touches disk.\n\nA claim now carries `repoPrivate`. When it is true — and only then — the worker\nasks the backend's `/internal/v1/github-checks/clone-token` route for a\nrepository-scoped `contents: read` installation token and threads it to the\nclone. Public repositories are cloned anonymously, byte-for-byte as before, and\nnever call the route at all: minting a credential nothing needs is blast radius\nbought for nothing.\n\nThe ordering is load-bearing in both directions. The token is minted **after**\n`/plan/begin` and **before** the first sandbox is provisioned, so a mint failure\nis reported as an ordinary ladder-level `clone` / `clone_failed` attempt on a\nplan that already exists — attributable, countable, and `infra_error` rather than\nthe pull request's fault — instead of needing the planless completion path. A\n`409` means this worker no longer holds the claim: the check is abandoned with no\ncompeting completion and no box provisioned, and a `502` or a null token for a\nprivate repository are the same `clone_failed` result, because an anonymous\nretry would 404 and read as the repository having vanished.\n\nWhere the credential goes is deliberately narrow. It rides on a command-line\n`git -c 'http.extraheader=AUTHORIZATION: basic <base64>'` for the clone and the\nfetch, and nothing else — not the checkout, not `rev-parse`, not the build. The\nURL stays the ordinary `https://github.com/owner/repo.git`, because a credential\nin the URL is written verbatim into `.git/config`, which is a file the pull\nrequest's own build would then be able to read. No credential helper, no\nenvironment variable, no file, and nothing persisted: `-c` is process-scoped, and\nclone and fetch both finish before any PR-controlled process runs.\n\nA new `redactCloneCredential` boundary removes the raw token, the\n`base64(x-access-token:<token>)` it is sent as, and any whole\n`AUTHORIZATION: basic …` header from every observable failure — a non-zero git\nexit, a deadline overrun, and in particular a thrown transport error, since an\nSDK error quotes the command it was running and that command carries the header.\nRedaction runs _before_ clamping, because clamping is a length and markdown\nboundary rather than a secret one. Token-derived values are removed by literal\nreplacement, never by a pattern built from the token.",
-      "id": "private-repo-clone-token"
+      "summary": "Ask for a GitHub check's outage policy when a repository is connected, and\nconnect through the server-verified action.\n\nConnecting now goes to `github/checkRepoConfigsNode:connectVerifiedRepo`, which\nproves the pinned installation can actually reach the repository before any\nconfig row is written and stamps the installation id server-side. Both connect\nsurfaces — Settings → Integrations → GitHub and the suite's own \"run this on\nevery pull request\" section — use it, so nothing in Inspector calls the\nunverified `github/checkRepoConfigs:connectRepo` mutation any more and it can be\nremoved in the follow-up backend deploy. The client never names an installation\nid: which installation can reach a repository is a server-side fact, and a\nclient that could name one is a client that could name the wrong one.\n\nThe outage policy is now an explicit onboarding choice rather than an assumed\ndefault. Neither value is preselected and Connect stays disabled until\nrepository, suite and policy are all chosen, because a preselected policy\nrecords a decision nobody made. Both options are described before the choice:\nfail open reports the check as neutral during an MCPJam outage or pause, fail\nclosed reports it as failed. Neither description promises a merge outcome —\nMCPJam decides the check's conclusion, and whether a failed or neutral check\nblocks merging is the repository's branch-protection setting, which MCPJam can\nneither read nor set.\n\nConnected rows gain a policy control and keep the distinction visible. A row\nconnected before the policy existed shows \"Policy not chosen\" and says that it\neffectively fails open, rather than rendering `fail_open` as though it had been\nselected — those two rows behave identically today and are not the same thing.\nChoosing a value on such a row records it. The control is disabled while its\nwrite is in flight and a duplicate change is dropped until it settles, tracked\nseparately from the enable toggle so one control never freezes the other.\n\nRows also show live repository visibility, joined case-insensitively to the\ninstallation listing. Only an explicit `private` boolean produces a badge:\na repository GitHub returned without the flag, one absent from the current\nlisting, a listing still loading and a listing that failed all render no badge\nat all, because none of them is evidence that a repository is public.\nVisibility is never persisted — it can change under a connected repository at\nany time — and a connected repository missing from the listing keeps its row.",
+      "id": "github-checks-outage-policy-ui"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Show the GitHub Checks settings refusal the backend actually wrote, instead of\n`Server Error`.\n\nConvex masks a plain thrown error as `Server Error` plus a request id before it\nreaches a browser; only a `ConvexError` arrives intact, carrying its message as\na payload on `data`. Both connect surfaces read `error.message`, so every\ncarefully-worded refusal on this page — the repository is not reachable by the\nApp, GitHub is down right now, that repository is already connected, this\norganization is at its limit — reached administrators as `Server Error`.\n\nLess visibly, the availability branch matched on the message text, so with a\nmasked message it never fired and the page could not substitute its own copy.\n\nBoth surfaces now shape write errors through one helper that reads `data` first\nand falls back to a de-prefixed `message`, which keeps plain throws from a dev\ndeployment readable. Requires the backend change that throws these refusals as\n`ConvexError`s (mcpjam-backend #1028).",
+      "id": "github-checks-refusal-copy"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Let a repository declare a build/start environment in `mcpjam.yaml`, and inject\nit into GitHub PR checks through E2B's `envs` command option.\n\n`checks.env` is a bounded map of `NAME: value` pairs — at most 20 entries, keys\nof at most 64 characters matching `^[A-Z][A-Z0-9_]*$`, values of at most 1,024\ncharacters. The bounds mirror the backend's, which already accepts and persists\nthe field. Anything outside them is **rejected, never truncated or coerced**: a\nshortened value, or an unquoted `8080` silently read as `\"8080\"`, is a different\nconfiguration from the one the author committed, and a check that started a\nserver with it would report a verdict about something nobody wrote. A value that\nis not a string, a map that is a list or a scalar, and an unknown sibling key\nunder `checks:` all fail the file — which, at an authoritative rung, means the\ncheck fails honestly rather than falling through to a heuristic guess. An empty\n`env: {}` normalizes to no environment at all, so it has the same runtime\nbehaviour and the same wire shape as omitting the field.\n\n**These are non-secret configuration literals. Do not put credentials in\n`mcpjam.yaml`.** The map comes out of a file committed to the repository —\nreadable by anyone who can read the repo — and it is persisted verbatim in\ndurable backend plan rows. Nothing redacts it and nothing expires it. It is for\nthe flags a server needs in order to boot, and for nothing that would matter if\nit were printed in public. The GitHub-checks clone token is the counter-example\nof how a secret is handled here: minted per check, carried on a single\ncommand-line git header, redacted out of every observable failure, and never an\nenvironment variable.\n\nOnly an authoritative rung produces one. `mcpjam.yaml` is the only real producer\n(the operator override table is empty on purpose), detection never invents an\nenvironment, and the backend refuses `env` on a cacheable `detected` or\n`agentic` recipe — so a cached recipe stays env-free. The Inspector reports the\ndeclared map to the plan, and executes back whatever the plan issues: the\nbackend still owns candidate ordering and selection.\n\nInjection happens at exactly two commands, the build and the background start,\nas E2B's `commands.run(..., { envs })` option. Nothing is ever written into a\ncommand string — no `export`, no assignment, no shell interpolation — so the\nbuild and start scripts stay byte-identical with and without an environment, and\nauthor-controlled values never enter a `bash -lc` quoting boundary or the\ncommand text that failure diagnostics quote into a check summary. Provisioning,\nclone and fetch, checkout and sha verification, `/proc` listener inspection,\nhealth probes, and the log tail all receive nothing. On a recipe with no\nenvironment the `envs` key is omitted entirely rather than passed as `undefined`\nor `{}`.\n\nError messages name `checks.env` or `checks.env.<key>` and the limit that was\nviolated. Keys are echoed, because the author needs to see which one is wrong,\nand are length-clamped through the same formatter every other echoed key uses.\nValues are never echoed.",
+      "id": "mcpjam-yaml-declared-env"
     },
     {
       "releases": [
@@ -45,18 +107,8 @@
           "type": "minor"
         }
       ],
-      "summary": "Release the latest Inspector, CLI, and SDK updates.\n\n- Offer the current Anthropic models — Fable 5, Opus 5, Opus 4.8/4.7/4.6, Sonnet 5/4.6 — to BYOK Anthropic keys, and stop sending a `temperature` to the ids that reject it.\n- Run GitHub PR checks against private repositories, cloning with a short-lived installation token that never touches disk.\n- Ship the closed eval step union and the declared `caseId` on upload, so a renamed test keeps its hosted history instead of forking it.\n- Clear the open critical dependency advisories.",
-      "id": "releases-2026-08-18"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "major"
-        }
-      ],
-      "summary": "The SDK sends the declared `caseId` on upload.\n\n`EvalResultInput` gains an optional `caseId` — the case's DECLARED identity\n(`EvalTestConfig.id`) — and it now rides the wire on every result an\n`EvalSuite` reports. 5.0.0 made `id` required but changed no payload byte; the\nfield was declared and inert. This connects it.\n\nThe backend resolves by `caseId` first, falls back to the content-hash key, and\nADOPTS: an id-bearing upload that resolves by hash to a case with no declared id\npatches the id on without touching the immutable `caseKey`. That is what lets a\nrenamed test keep its hosted history instead of forking it — the whole reason\nthe field exists.\n\n**Breaking: `id` and `externalCaseId` must agree.** A test that declares both,\nwith different values, now throws at construction:\n\n```ts\nnew EvalTest({\n  id: \"c_minted\",\n  externalCaseId: \"legacy_case_7\", // ← throws\n  name: \"refund flow\",\n  test: async (executor) => { ... },\n});\n```\n\nThey are two claims about which case this is, and picking a winner silently is\nhow one case's history gets cross-joined onto another's. The migration is always\n`id := externalCaseId`: the hosted case is keyed under `external:<externalCaseId>`,\nso declaring that same value as `id` lands the declared id in the join the case\nalready lives under and its history simply continues. A differing pair is\nrejected at ingest too, so shipping it would fail the upload rather than pick a\nwinner. An empty `externalCaseId` is absent, not a second claim, and is\nunaffected.\n\nThe one case the migration cannot fix is an `externalCaseId` outside the opaque-id\ncharset (`^[A-Za-z0-9_-]{1,128}$`) — that field was never charset-bound, so\nvalues exist that no `id` can equal. 5.0.0's missing-`id` error suggested a\nfreshly minted id for exactly those configs, and that pair now throws. Rename the\nexternal id itself to a conforming value and declare it in both fields; an\nexternal id that was never charset-valid has no hosted history for the rename to\nstrand. The error message says so at the line that is wrong.\n\n**Minimum reporting-backend contract.** Argument validation on the ingest\nsurface is strict: a backend that predates declared case ids rejects the WHOLE\nreport rather than dropping the unknown field. `@mcpjam/sdk` 6 therefore\nrequires a reporting backend that accepts `caseId`. MCPJam-hosted\n`app.mcpjam.com` does; a caller-supplied `baseUrl` pointing at an older or\ncustom deployment may not, and such a rejection is now surfaced as an actionable\ncompatibility error naming the required upgrade — flagged as\n`EvalReportingError.isReportingBackendIncompatible`, never retried, and never\nreported as an eval verdict. `reportEvalResultsSafely` keeps its existing\nstrict/non-strict behavior.\n\n`RunToEvalResultsOptions`, `IterationToEvalResultOptions` and\n`SuiteRunToEvalResultsOptions` gain an optional `caseId` (and `caseIdByTest` for\nthe suite variant, mirroring `expectedToolCallsByTest`). These converters\nreceive a `casePrefix` rather than an `EvalTest`, so they cannot know the\ndeclared identity — it is offered and never defaulted. Supplying one id across a\nrun groups its iterations as a single hosted case instead of one case per\niteration; that is the caller's choice to make. `runToEvalResults` also drops\nits per-iteration `-iter-N` `caseTitle` suffix when an id is given, since that\nsuffix is what made each iteration a separate case and a grouped case would\notherwise be titled after its first iteration. The iteration number still rides\n`metadata.iterationNumber`. Passing nothing produces the same payload as before,\nbyte for byte.\n\nThe low-level mappers stay permissive: `promptsToEvalResult` and\n`PromptResult.toEvalResult` forward whatever `caseId` the caller passes and do\nnot enforce the equality rule themselves. The construction-time check covers the\n`EvalTest` path and the backend's ingest preflight covers everyone else.\n\nNothing else about the payload changes. A config with no `externalCaseId` emits\nexactly what it emitted before, plus `caseId`.",
-      "id": "sdk-sends-declared-case-id"
+      "summary": "Release the latest Inspector, CLI, and SDK updates.\n\n- Model Claude and ChatGPT as dual-era clients — 2025-11-25 and 2026-07-28, probed rather than assumed — and let a host's protocol selection say \"negotiate\" instead of naming a revision.\n- Author eval cases in batches with declared ids, so an agent converting a repo's test files writes them as one validated call instead of one round trip each.\n- Publish the eval role-permission matrix as project capabilities, and gate suite and run deletion on it per row rather than pinning it for everyone.\n- Make GitHub PR checks answerable: an explicit outage policy chosen at connect, a build/start environment declared in `mcpjam.yaml`, and the backend's actual refusal instead of `Server Error`.\n- Name the user revoking an API key on the audit row, rather than inferring the one who minted it.",
+      "id": "releases-2026-08-19"
     },
     {
       "releases": [
@@ -65,42 +117,49 @@
           "type": "patch"
         }
       ],
-      "summary": "Clear the open critical dependency advisories: `tar` moves to 7.5.22 everywhere (runtime path via `e2b` 2.39.0, dev path via a root override), `protobufjs` to 7.6.5, `shell-quote` to 1.10.0, and `vitest` to 3.2.7. No product behavior changes.",
-      "id": "security-critical-deps"
+      "summary": "Keep toast text readable for anyone running the app in light mode on a\ndark-mode machine.\n\nThe Toaster read its theme from `next-themes`, which nothing in the app\nprovides. With no provider `useTheme()` fell back to `\"system\"`, so Sonner\nresolved the operating system's setting instead of the app's: on a dark-mode\nmachine viewing the light app it stamped `data-sonner-theme=\"dark\"` and\ncoloured the toast description near-white on the white background our own\ntokens supplied. The message was there and unreadable.\n\nThe theme now comes from the `.dark` class the design system already scopes its\ndark tokens under, read through `useSyncExternalStore` with a `MutationObserver`\non the document element so a theme switch updates a visible toast. Server-side\nand observer-less environments fall back to light rather than throwing.\n\nThe toast description is also pinned to `var(--foreground)` in CSS. Sonner\ncolours that one element from its own theme rather than from the variables it\nis handed, which is what made it the single part of a toast that could come out\nlight-on-light — pinning it keeps the text readable even if the two themes drift\nagain.",
+      "id": "toast-theme-from-document"
     }
   ],
   "releases": [
     {
-      "name": "@mcpjam/sdk",
-      "type": "major",
-      "oldVersion": "5.0.0",
-      "changesets": [
-        "close-the-step-union",
-        "releases-2026-08-18",
-        "sdk-sends-declared-case-id"
-      ],
-      "newVersion": "6.0.0"
-    },
-    {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.40.0",
+      "oldVersion": "2.41.0",
       "changesets": [
-        "github-checks-teardown-pins",
-        "private-repo-clone-token",
-        "releases-2026-08-18",
-        "security-critical-deps"
+        "api-key-revoke-names-its-actor",
+        "batch-eval-case-authoring",
+        "chatgpt-dual-era-protocol",
+        "electron-major-bump",
+        "eval-role-matrix-capabilities",
+        "github-checks-outage-policy-ui",
+        "github-checks-refusal-copy",
+        "mcpjam-yaml-declared-env",
+        "releases-2026-08-19",
+        "toast-theme-from-document"
       ],
-      "newVersion": "2.41.0"
+      "newVersion": "2.42.0"
+    },
+    {
+      "name": "@mcpjam/sdk",
+      "type": "minor",
+      "oldVersion": "6.0.0",
+      "changesets": [
+        "batch-eval-case-authoring",
+        "chatgpt-dual-era-protocol",
+        "eval-role-matrix-capabilities",
+        "releases-2026-08-19"
+      ],
+      "newVersion": "6.1.0"
     },
     {
       "name": "@mcpjam/cli",
       "type": "minor",
-      "oldVersion": "3.24.0",
+      "oldVersion": "3.25.0",
       "changesets": [
-        "releases-2026-08-18"
+        "releases-2026-08-19"
       ],
-      "newVersion": "3.25.0"
+      "newVersion": "3.26.0"
     },
     {
       "name": "@mcpjam/mcp",
@@ -108,20 +167,6 @@
       "oldVersion": "0.0.1",
       "changesets": [],
       "newVersion": "0.0.1"
-    },
-    {
-      "name": "@mcpjam/vitest",
-      "type": "patch",
-      "oldVersion": "0.1.0",
-      "changesets": [],
-      "newVersion": "0.1.1"
-    },
-    {
-      "name": "@mcpjam/widget-react",
-      "type": "patch",
-      "oldVersion": "0.1.6",
-      "changesets": [],
-      "newVersion": "0.1.7"
     }
   ]
 }

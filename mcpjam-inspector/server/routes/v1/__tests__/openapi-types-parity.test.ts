@@ -77,6 +77,7 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalRun: "PlatformEvalRun",
   EvalRunEnvironment: "PlatformEvalRunEnvironment",
   EvalRunCreated: "PlatformEvalRunCreated",
+  EvalRunGroupCreated: "PlatformEvalRunGroupCreated",
   EvalSuiteCreated: "PlatformEvalSuiteCreated",
   EvalSuite: "PlatformEvalSuite",
   EvalSuiteSchedule: "PlatformEvalSuiteSchedule",
@@ -90,6 +91,9 @@ const PAIRS: Readonly<Record<string, string>> = {
   HostDeleted: "PlatformHostDeleted",
   EnvironmentSkillSelection: "PlatformEnvironmentSkillSelection",
   ProjectEnvironment: "PlatformEnvironment",
+  AdhocEnvironment: "PlatformAdhocEnvironment",
+  AdhocEnvironmentEnsured: "PlatformAdhocEnvironmentEnsured",
+  EvalSuiteEnvironmentAttached: "PlatformEvalSuiteEnvironmentAttached",
   ProjectEnvironmentCapabilities: "PlatformEnvironmentCapabilities",
   ProjectEnvironmentResolved: "PlatformEnvironmentResolved",
   Plugin: "PlatformPlugin",
@@ -266,6 +270,18 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
     let nullable = false;
     const root = unwrapTypeNode(node);
     let members: ts.TypeNode[] = [root];
+
+    // A field typed EXACTLY `null` (not `X | null`) is nullable too. Without
+    // this the parser sees only the union form, so a field whose sole type is
+    // null reads as non-nullable and disagrees with a spec that correctly says
+    // it is — a false positive on the honest description.
+    if (
+      root.kind === ts.SyntaxKind.NullKeyword ||
+      (ts.isLiteralTypeNode(root) &&
+        root.literal.kind === ts.SyntaxKind.NullKeyword)
+    ) {
+      return { nullable: true, enumValues: null, refName: null, isArray: false };
+    }
 
     if (ts.isUnionTypeNode(root)) {
       members = root.types.map(unwrapTypeNode).filter((t) => {
