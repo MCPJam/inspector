@@ -1245,20 +1245,64 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(sandboxedIframePropsRef.current?.cspSubtypePolicy).toBeDefined();
       expect(mcpAppsModalPropsRef.current).not.toBeNull();
     });
+    // ChatGPT honors the declared connect list (one directive, proven by the
+    // declared wss endpoint connecting while an undeclared one was blocked)
+    // and its resource subtypes are unknown, so they never reach the proxy.
     const expected = {
-      cspConnectDomains: { fetch: false, xhr: false, websocket: true },
-      cspResourceDomains: {
-        script: false,
-        stylesheet: false,
-        image: false,
-        font: false,
-        media: false,
-      },
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: undefined,
     };
     expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toEqual(expected);
     expect(mcpAppsModalPropsRef.current?.widgetCspSubtypePolicy).toEqual(
       expected
     );
+  });
+
+  it("keeps a permissive replay permissive when the host's subtype policy allows everything", async () => {
+    // Claude and Cursor ship all-true subtype matrices. Those restrict
+    // nothing, so treating the policy's mere presence as a host restriction
+    // flipped `permissive` off and handed the proxy an undefined CSP — which
+    // falls back to the locked-down policy (`connect-src 'none'`,
+    // `img-src data:`) and breaks the replayed widget.
+    render(
+      <ScenarioHostStyleProvider value="claude">
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      </ScenarioHostStyleProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>"
+      );
+    });
+    expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toEqual({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    });
+    expect(sandboxedIframePropsRef.current.permissive).toBe(true);
+    expect(sandboxedIframePropsRef.current.csp).toBeUndefined();
+  });
+
+  it("locks a permissive replay down when the host actually blocks a subtype", async () => {
+    // Counter-test: Goose blocks every connect subtype, so the emulation MUST
+    // win over the widget's permissive flag. Guards against the fix above
+    // disabling the feature outright.
+    render(
+      <ScenarioHostStyleProvider value="goose">
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      </ScenarioHostStyleProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>"
+      );
+    });
+    expect(sandboxedIframePropsRef.current.permissive).toBe(false);
   });
 
   it("bypasses subtype emulation for the explicit Playground permissive toggle", async () => {

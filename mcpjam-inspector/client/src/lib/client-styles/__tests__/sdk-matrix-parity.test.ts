@@ -62,11 +62,17 @@ describe("SDK-sourced MCP Apps matrices are complete resolved surfaces", () => {
       xhr: true,
       websocket: true,
     });
+    // `connect-src` is one directive, so ChatGPT's three subtypes cannot
+    // diverge: the declared wss endpoint connected while an undeclared one
+    // took a real violation, so the declared list is honored throughout.
     expect(MCP_APPS_CHATGPT_SURFACE.cspConnectDomains).toEqual({
-      fetch: false,
-      xhr: false,
+      fetch: true,
+      xhr: true,
       websocket: true,
     });
+    // Unknown, not false: ChatGPT's own baseline allowlist covers the probe's
+    // declared resource origin, so no result separates honored from ignored.
+    expect(MCP_APPS_CHATGPT_SURFACE.cspResourceDomains).toBeUndefined();
     expect(MCP_APPS_CURSOR_SURFACE.cspResourceDomains?.media).toBe(true);
     expect(MCP_APPS_GOOSE_SURFACE.cspConnectDomains).toEqual({
       fetch: false,

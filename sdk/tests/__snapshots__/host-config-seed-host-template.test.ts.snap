@@ -148,16 +148,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         },
         "mcpAppsOverrides": {
           "cspConnectDomains": {
-            "fetch": false,
+            "fetch": true,
             "websocket": true,
-            "xhr": false,
-          },
-          "cspResourceDomains": {
-            "font": false,
-            "image": false,
-            "media": false,
-            "script": false,
-            "stylesheet": false,
+            "xhr": true,
           },
         },
         "sandbox": {
@@ -282,16 +275,9 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         },
         "mcpAppsOverrides": {
           "cspConnectDomains": {
-            "fetch": false,
+            "fetch": true,
             "websocket": true,
-            "xhr": false,
-          },
-          "cspResourceDomains": {
-            "font": false,
-            "image": false,
-            "media": false,
-            "script": false,
-            "stylesheet": false,
+            "xhr": true,
           },
         },
         "sandbox": {

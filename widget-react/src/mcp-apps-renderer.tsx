@@ -2640,6 +2640,19 @@ export function MCPAppsRendererSurface({
               earlyEffectiveMcpAppsCapabilities.cspResourceDomains,
           }
         : undefined;
+    // Only an explicit `false` leaf narrows what the proxy emits or arms the
+    // connect guard; `true` and absent leaves are both no-ops. Claude and
+    // Cursor ship all-true matrices, so treating the mere PRESENCE of a
+    // policy as a host restriction would force `permissive: false` on a
+    // widget the host does not restrict at all — and a permissive widget
+    // with no declared CSP (cached replay) would then get the proxy's
+    // locked-down fallback (`connect-src 'none'`, `img-src data:`).
+    const cspSubtypePolicyRestricts =
+      !!cspSubtypePolicy &&
+      [
+        ...Object.values(cspSubtypePolicy.cspConnectDomains ?? {}),
+        ...Object.values(cspSubtypePolicy.cspResourceDomains ?? {}),
+      ].some((allowed) => allowed === false);
     // Detect whether the host explicitly configured CSP hardening signals.
     // Hoisted above the permissive short-circuit so the permissive branch
     // can honor host-explicit `restrictTo` instead of silently dropping it;
@@ -2869,11 +2882,16 @@ export function MCPAppsRendererSurface({
     const effectiveCspSubtypePolicy = isPureRelaxedCsp
       ? undefined
       : cspSubtypePolicy;
+    // The policy still travels to the proxy and the debug store when it is a
+    // no-op — the CSP workbench reads it to explain guard-blocked calls — but
+    // only a real restriction counts as a host policy being applied.
+    const cspSubtypeRestrictionApplies =
+      !isPureRelaxedCsp && cspSubtypePolicyRestricts;
     const hostPolicyApplied =
       !!resolvedCsp ||
       !!resolvedPermissions ||
       isPureRelaxedCsp ||
-      !!effectiveCspSubtypePolicy;
+      cspSubtypeRestrictionApplies;
     return {
       // Pure relaxed → no CSP at all (caller's `permissive: true` below
       // tells SandboxedIframe to skip CSP injection). Otherwise pass
@@ -2886,7 +2904,7 @@ export function MCPAppsRendererSurface({
       csp: isPureRelaxedCsp
         ? undefined
         : resolvedCsp ??
-          (widgetPermissive && !effectiveCspSubtypePolicy
+          (widgetPermissive && !cspSubtypeRestrictionApplies
             ? undefined
             : matrixGatedWidgetCsp),
       permissions: resolvedPermissions ?? matrixGatedWidgetPermissions,
@@ -2908,7 +2926,7 @@ export function MCPAppsRendererSurface({
       // one must not reshape the other.
       permissive: isPureRelaxedCsp
         ? true
-        : resolvedCsp || effectiveCspSubtypePolicy
+        : resolvedCsp || cspSubtypeRestrictionApplies
         ? false
         : widgetPermissive,
       hostPolicyApplied,

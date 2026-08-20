@@ -344,3 +344,46 @@ describe("display-mode rows on a host that renders no MCP Apps", () => {
     }
   });
 });
+
+describe("CSP subtype rows", () => {
+  it("reads the preset's answers when the row stores no override", () => {
+    // The sandbox proxy enforces the RESOLVED matrix, so a Goose row with no
+    // stored override is still having every connect subtype blocked. Reading
+    // the raw `mcpAppsOverrides` here reported "unknown" for exactly the
+    // hosts this emulation targets.
+    const cfg = makeConfig({ hostStyle: "goose" });
+    expect(fieldById("appsCap.cspConnectDomains.fetch").read(cfg)).toBe(false);
+    expect(fieldById("appsCap.cspConnectDomains.xhr").read(cfg)).toBe(false);
+    expect(fieldById("appsCap.cspConnectDomains.websocket").read(cfg)).toBe(
+      false
+    );
+    expect(fieldById("appsCap.cspResourceDomains.script").read(cfg)).toBe(
+      false
+    );
+    // Counter-host: ChatGPT honors the whole connect directive.
+    const chatgpt = makeConfig({ hostStyle: "chatgpt" });
+    expect(fieldById("appsCap.cspConnectDomains.fetch").read(chatgpt)).toBe(
+      true
+    );
+  });
+
+  it("lets a stored override win over the preset", () => {
+    const cfg = makeConfig({
+      hostStyle: "goose",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { mcpAppsOverrides: { cspConnectDomains: { fetch: true } } },
+      },
+    } as Partial<HostConfigDtoV2>);
+    expect(fieldById("appsCap.cspConnectDomains.fetch").read(cfg)).toBe(true);
+    // Untouched leaves keep the preset rather than collapsing to unknown.
+    expect(fieldById("appsCap.cspConnectDomains.xhr").read(cfg)).toBe(false);
+  });
+
+  it("stays unknown on a preset with no subtype evidence", () => {
+    const cfg = makeConfig({ hostStyle: "mcpjam" });
+    expect(
+      fieldById("appsCap.cspConnectDomains.fetch").read(cfg)
+    ).toBeUndefined();
+  });
+});

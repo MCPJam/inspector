@@ -800,10 +800,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         profileVersion: 1,
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-          // Verbatim from the same probe. `title` / `description` /
-          // `websiteUrl` land in the pass-through
-          // `Record<string, unknown>` per host-config-v2 (backend
-          // soft-validates name/version only).
+          // Capability provenance above is from the v2.1.176 probe; this
+          // newer version is identity metadata only until a fresh probe updates
+          // both the version and the capability snapshot. `title` /
+          // `description` / `websiteUrl` land in the pass-through
+          // `Record<string, unknown>` per host-config-v2.
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
@@ -899,18 +900,18 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             hostInfo: { name: "chatgpt", version: "0.0.1" },
           },
           mcpAppsOverrides: {
+            // One directive, one answer: the declared wss endpoint connected
+            // while an undeclared one took a real connect-src violation
+            // (2026-08-19 probe). The fetch/xhr canary passed because it is in
+            // ChatGPT's own baseline allowlist, carried as `cspDirectives`.
             cspConnectDomains: {
-              fetch: false,
-              xhr: false,
+              fetch: true,
+              xhr: true,
               websocket: true,
             },
-            cspResourceDomains: {
-              script: false,
-              stylesheet: false,
-              image: false,
-              font: false,
-              media: false,
-            },
+            // cspResourceDomains stays unknown: the declared resource origin
+            // is in that same baseline, so the probe cannot tell honored from
+            // ignored. Re-probe with an origin the baseline misses first.
           },
           // Vendor compat-runtime shims. Real ChatGPT exposes the
           // OpenAI Apps SDK `window.openai` surface to widget HTML, so
@@ -1394,8 +1395,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           uiInitialize: {
             // MCP Apps extension: hostInfo sent to the View iframe in
             // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
-            // need this to take that path. Version pinned to a real probed
-            // build; bump when capturing a fresh probe.
+            // need this to take that path. The 3.14.27 version is identity
+            // metadata only; the capability notes above remain attributed to
+            // their named probes until a fresh probe updates both.
             hostInfo: { name: "Cursor", version: "3.14.27" },
           },
           mcpAppsOverrides: {

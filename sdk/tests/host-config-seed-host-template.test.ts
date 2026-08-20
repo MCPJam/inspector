@@ -186,16 +186,17 @@ describe("seedHostTemplate", () => {
       "2025-06-18",
       "2025-11-25",
     ]);
+    // `connect-src` is one directive, so its subtypes cannot diverge: the
+    // declared wss endpoint connected while an undeclared one took a real
+    // violation, so the declared list is honored for fetch and XHR too.
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
-      cspConnectDomains: { fetch: false, xhr: false, websocket: true },
-      cspResourceDomains: {
-        script: false,
-        stylesheet: false,
-        image: false,
-        font: false,
-        media: false,
-      },
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     });
+    // Unknown, not false — the probe's declared resource origin is also in
+    // ChatGPT's own baseline allowlist, so it separates nothing.
+    expect(
+      config.mcpProfile?.apps?.mcpAppsOverrides
+    ).not.toHaveProperty("cspResourceDomains");
   });
 
   it("keeps Cursor CSP subtype findings in the SDK seed", () => {

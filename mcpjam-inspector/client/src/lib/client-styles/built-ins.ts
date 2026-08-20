@@ -566,17 +566,13 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
       ...MCP_APPS_FULL_SURFACE,
       serverResources: false,
       logging: false,
-      // Same CSP answers as ChatGPT (2026-08-19 probe): widget-declared
-      // domains buy nothing except a WebSocket. Carried here as well as on
-      // the catalog row so the built-in style emulates them too.
-      cspConnectDomains: { fetch: false, xhr: false, websocket: true },
-      cspResourceDomains: {
-        script: false,
-        stylesheet: false,
-        image: false,
-        font: false,
-        media: false,
-      },
+      // Same CSP answers as ChatGPT (2026-08-19 probe), same app runtime.
+      // `connect-src` is one directive, so the three subtypes cannot diverge:
+      // the declared wss endpoint connected while an undeclared one took a
+      // real violation, so the declared list IS honored. Resource subtypes
+      // stay unknown — the probe's declared origin sits in ChatGPT's own
+      // baseline allowlist, so it proves nothing either way.
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     },
     resolveStyleVariables: getChatGPTStyleVariables,
     // Codex is a CLI (no widget rendering surface), so the `window.openai`

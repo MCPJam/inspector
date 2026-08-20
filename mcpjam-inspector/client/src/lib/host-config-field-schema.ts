@@ -433,17 +433,23 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       read: (cfg) => effMcpApps(cfg)[key],
     })
   ),
+  // Read the RESOLVED matrix, not the raw override, exactly like every
+  // sibling `appsCap` row above. A preset carries these subtypes (ChatGPT
+  // blocks fetch/xhr, Goose blocks all three) and the sandbox proxy enforces
+  // the resolved value, so reading `mcpAppsOverrides` directly would report
+  // "unknown" for a row whose preset is actively restricting the widget.
+  // `undefined` stays undefined: presets with no probe evidence for a
+  // subtype leave it absent, and unknown is the honest answer there.
   ...(["fetch", "xhr", "websocket"] as const).map(
     (key): HostConfigFieldDef => ({
       id: `appsCap.cspConnectDomains.${key}`,
       section: "apps",
       subsection: "MCP Apps capabilities",
       label: `cspConnectDomains.${key}`,
-      path: `mcpProfile.apps.mcpAppsOverrides.cspConnectDomains.${key}`,
+      path: `mcpProfile.apps.mcpAppsOverrides.cspConnectDomains.${key} (effective)`,
       description: `Allow widget ${key} connections to declared CSP connect domains.`,
       kind: { kind: "boolean" },
-      read: (cfg) =>
-        mcpProfile(cfg)?.apps?.mcpAppsOverrides?.cspConnectDomains?.[key],
+      read: (cfg) => effMcpApps(cfg).cspConnectDomains?.[key],
     })
   ),
   ...(["script", "stylesheet", "image", "font", "media"] as const).map(
@@ -452,11 +458,10 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       section: "apps",
       subsection: "MCP Apps capabilities",
       label: `cspResourceDomains.${key}`,
-      path: `mcpProfile.apps.mcpAppsOverrides.cspResourceDomains.${key}`,
+      path: `mcpProfile.apps.mcpAppsOverrides.cspResourceDomains.${key} (effective)`,
       description: `Allow widget ${key} resources from declared CSP resource domains.`,
       kind: { kind: "boolean" },
-      read: (cfg) =>
-        mcpProfile(cfg)?.apps?.mcpAppsOverrides?.cspResourceDomains?.[key],
+      read: (cfg) => effMcpApps(cfg).cspResourceDomains?.[key],
     })
   ),
 ];

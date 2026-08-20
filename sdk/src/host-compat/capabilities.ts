@@ -64,17 +64,25 @@ export const MCP_APPS_CLAUDE: McpAppsCapabilities = frozen({
   requestTeardown: false,
 });
 
-/** ChatGPT — full bridge surface with probe-captured CSP behavior. */
+/**
+ * ChatGPT — full bridge surface with probe-captured CSP behavior.
+ *
+ * `connect-src` is ONE directive, so its three subtypes cannot diverge. The
+ * 2026-08-19 probe declared `wss://ws.postman-echo.com` and it connected while
+ * the undeclared `wss://echo.websocket.org` took a real connect-src violation
+ * — no host baseline carries a Postman echo endpoint, so ChatGPT honors the
+ * declared connect list. The fetch/xhr canary that passed (`unpkg.com`) is in
+ * ChatGPT's own baseline allowlist, which the catalog row carries as
+ * `cspDirectives`; it is not evidence the declaration was ignored.
+ *
+ * `cspResourceDomains` is deliberately absent (unknown): the only declared
+ * resource origin was `cdn.jsdelivr.net`, which is in that same baseline, so
+ * nothing in the probe separates honored from ignored. Re-probe with a
+ * declared origin the baseline does not cover before writing `false`.
+ */
 export const MCP_APPS_CHATGPT: McpAppsCapabilities = frozen({
   ...MCP_APPS_FULL,
-  cspConnectDomains: { fetch: false, xhr: false, websocket: true },
-  cspResourceDomains: {
-    script: false,
-    stylesheet: false,
-    image: false,
-    font: false,
-    media: false,
-  },
+  cspConnectDomains: { fetch: true, xhr: true, websocket: true },
   downloadFile: false,
   requestTeardown: false,
 });
