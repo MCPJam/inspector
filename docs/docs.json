@@ -62,6 +62,7 @@
               "inspector/home",
               "inspector/clients",
               "inspector/connecting-servers",
+              "inspector/registry",
               "inspector/projects",
               "inspector/plugins",
               "inspector/protocol-versions",
