@@ -363,6 +363,40 @@ For a cloud authorization server, expose the inspector origin through a tunnel a
 
 ---
 
+## `readiness` commands
+
+Grade a server or plugin against a publisher's directory. See the [directory readiness check guide](/cli/readiness-check) for usage examples.
+
+### `readiness check claude`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `<url>` | Yes | | MCP server URL |
+| `--access-token <token>` | No | | Bearer access token for the server |
+| `--credentials-file <path>` | No | | Load the access token from a file written by `oauth login --credentials-out` |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--timeout <ms>` | No | | Per-request timeout in milliseconds |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
+
+### `readiness check openai`
+
+| Flag | Required | Default | Description |
+|------|----------|---------|-------------|
+| `[url]` | Depends on mode | | MCP server URL. Omit for package-only submission shapes. |
+| `--submission-mode <mode>` | Yes | | Declared submission shape. Never inferred. One of: `mcp-only`, `mcp-imported-skills`, `skills-only` |
+| `--package <path>` | Depends on mode | | Plugin package directory or `.zip` to grade |
+| `--access-token <token>` | No | | Bearer access token for the server |
+| `--credentials-file <path>` | No | | Load the access token from a file written by `oauth login --credentials-out` |
+| `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
+| `--timeout <ms>` | No | | Per-request timeout in milliseconds |
+| `--reporter <reporter>` | No | | `json-summary` or `junit-xml` CI report output |
+
+Use `--format json|human` for raw output and `--reporter json-summary|junit-xml` for CI reports.
+
+Exit codes: `0` ready · `1` not-ready · `3` incomplete · `2` usage.
+
+---
+
 ## `protocol` commands
 
 ### `protocol conformance`
