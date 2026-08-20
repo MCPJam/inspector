@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { DirectoryDetailDialog } from "../DirectoryDetailDialog";
-import type { DirectoryServer } from "@/hooks/useClaudeDirectory";
+import type { DirectoryServer } from "@/hooks/useServerDirectory";
 import type { DirectoryServerDetail } from "@/lib/claude-directory-detail";
 
 function server(overrides: Partial<DirectoryServer> = {}): DirectoryServer {
