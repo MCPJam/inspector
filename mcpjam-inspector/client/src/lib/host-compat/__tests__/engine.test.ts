@@ -73,8 +73,11 @@ describe("buildHostCompatProfiles (client logo join)", () => {
     // Apps and carries no matrix.
     expect(byId.claude?.rendersMcpApps).toBe(true);
     expect(byId.claude?.capabilities).toBeDefined();
-    expect(byId.codex?.rendersMcpApps).toBe(false);
-    expect(byId.codex?.capabilities).toBeUndefined();
+    // Codex renders MCP Apps as of the 2026-08-19 probe (it runs the ChatGPT
+    // app runtime), so Claude Code is the CLI example now.
+    expect(byId.codex?.rendersMcpApps).toBe(true);
+    expect(byId["claude-code"]?.rendersMcpApps).toBe(false);
+    expect(byId["claude-code"]?.capabilities).toBeUndefined();
   });
 });
 
@@ -83,14 +86,17 @@ describe("evaluateAllHosts (client presentation join)", () => {
     const { reports } = evaluateAllHosts(toolsWith({ w: mcpAppsMeta() }), {});
     const claude = reports.find((r) => r.hostId === "claude");
     const codex = reports.find((r) => r.hostId === "codex");
+    const claudeCode = reports.find((r) => r.hostId === "claude-code");
 
     // Logo joined from the client map.
     expect(claude?.logoSrc).toBe("/claude_logo.png");
     expect(codex?.logoSrc).toBe("/codex-logo.svg");
 
-    // A rendering host reports rendersWidgets true; a CLI host false.
+    // A rendering host reports rendersWidgets true; a CLI host false. Codex
+    // moved to the rendering side with the 2026-08-19 probe.
     expect(claude?.rendersWidgets).toBe(true);
-    expect(codex?.rendersWidgets).toBe(false);
+    expect(codex?.rendersWidgets).toBe(true);
+    expect(claudeCode?.rendersWidgets).toBe(false);
   });
 
   it("themed logos ride along on the joined reports", () => {

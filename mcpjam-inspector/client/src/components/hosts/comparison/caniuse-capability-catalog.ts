@@ -27,7 +27,6 @@ const PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS = new Set([
   "systemPrompt",
   "mcpProtocolVersion",
   "clientInfo.name",
-  "clientInfo.version",
   "connectionDefaults.requestTimeout",
   "connectionDefaults.headers",
   "uiInitialize.hostInfo",
@@ -63,19 +62,42 @@ function slugForField(field: HostConfigFieldDef): string {
   if (field.id.startsWith("sandboxPerm.")) {
     return `sandbox-permission-${toKebab(field.label)}`;
   }
+  // Labels are the raw custom-property names, so kebab-casing alone would
+  // yield bare slugs like `color-text-primary` that could collide with a
+  // future capability label. Namespace them.
+  if (field.id.startsWith("styles.")) {
+    return `style-${toKebab(field.label)}`;
+  }
   return toKebab(field.label);
 }
 
 // Fields that are not support-shaped but still answer a compatibility
 // question. They render as plain values (the matrix already knows how), so
 // keep this list tiny — a chip says "can I use this", a value does not.
-const PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS = new Set(["supportedProtocolVersions"]);
+const PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS = new Set([
+  "supportedProtocolVersions",
+  // Which build of the client the rest of the protocol rows were captured
+  // from. A value, not a support claim — hence plain rather than a chip.
+  "clientInfo.version",
+]);
+
+/**
+ * Style variables are plain-value rows too, but there are 76 of them and they
+ * arrive as a generated block, so they match by prefix rather than bloating the
+ * id set above. Each shows the actual value the host sends — the point of the
+ * subsection — which is why they are not support-shaped.
+ */
+const PUBLIC_CAN_I_USE_PLAIN_FIELD_PREFIXES = ["styles."];
 
 export function isPublicCaniuseCapabilityField(
   field: HostConfigFieldDef,
 ): boolean {
   if (PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS.has(field.id)) return false;
-  return isSupportField(field) || PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS.has(field.id);
+  if (isSupportField(field)) return true;
+  if (PUBLIC_CAN_I_USE_PLAIN_FIELD_IDS.has(field.id)) return true;
+  return PUBLIC_CAN_I_USE_PLAIN_FIELD_PREFIXES.some((prefix) =>
+    field.id.startsWith(prefix),
+  );
 }
 
 export const PUBLIC_CAN_I_USE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
