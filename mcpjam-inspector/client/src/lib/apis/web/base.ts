@@ -43,12 +43,32 @@ export async function webPost<TRequest, TResponse>(
   path: string,
   payload: TRequest,
 ): Promise<TResponse> {
-  const response = await authFetch(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+  return webRequest<TResponse>(
+    await authFetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    }),
+  );
+}
 
+/**
+ * The GET half of the same contract.
+ *
+ * Hand-rolling a GET is what callers did before this existed, and it cost them
+ * three things every time: the status, the error `code`, and the `normalized`
+ * block — so a caller could not tell a 404 "nothing stored" from a 502 storage
+ * fault, even when the route took care to separate them. It also skipped
+ * `stripHostedRpcLogs`, so hosted RPC and HTTP logs from those responses never
+ * reached the log panes.
+ */
+export async function webGet<TResponse>(path: string): Promise<TResponse> {
+  return webRequest<TResponse>(await authFetch(path, { method: "GET" }));
+}
+
+async function webRequest<TResponse>(
+  response: Response,
+): Promise<TResponse> {
   let body: any = null;
   try {
     body = await response.json();

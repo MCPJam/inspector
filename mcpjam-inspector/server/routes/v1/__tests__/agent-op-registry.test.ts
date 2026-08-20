@@ -161,6 +161,9 @@ describe("agent op registry", () => {
         "dismiss_user_testing_finding",
         "undismiss_user_testing_finding",
         "cancel_user_testing_insights",
+        // Direct, like `cancel_wave_insights` above: cancelling costs nothing,
+        // removes nothing, and STOPS traffic to somebody else's server.
+        "cancel_directory_readiness_run",
       ].sort()
     );
   });
@@ -1126,6 +1129,9 @@ const EXPECTED_PROMPT_NOTES = [
   "- `get_swarms_overview` is the right first read for 'how are our swarms doing'. Every rate in it is over GRADED sessions, never attempted ones, and `passRate: null` means nothing has been graded yet — it does not mean everything failed.",
   "- To explain why a run failed, read `get_journey_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
   "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
+  "- Readiness grading is FREE and is the default. `includeLlmObservations` is the only field that spends, and what it buys is informational — observations can never change a lane's status or the run's verdict. Do not set it unless a person asked for the commentary.",
+  "- A start returns a run ID, not a verdict. Poll `get_directory_readiness_run`; reporting `pending` as an outcome is wrong.",
+  "- `submissionMode` is REQUIRED and is never inferred. A run with no declared shape reports its package lane not-applicable, which turns a missing input into a clean bill of health. Ask which shape is being submitted rather than guessing.",
   "- `request_wave_insights` spends against a daily budget SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure without a model pass.",
   "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
   "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",

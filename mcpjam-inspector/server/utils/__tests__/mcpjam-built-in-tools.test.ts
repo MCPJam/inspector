@@ -197,6 +197,13 @@ describe("workspace tool catalog", () => {
       "get_user_testing_insights",
       "dismiss_user_testing_finding",
       "undismiss_user_testing_finding",
+      // Directory readiness: the READS only. "Is my server ready to submit,
+      // and what is missing" costs nothing to answer. The two starts dial a
+      // third party and can spend; cancel goes with them, because a surface
+      // that cannot start a run has no business stopping one by id.
+      "get_directory_readiness_run",
+      "list_directory_readiness_runs",
+      "get_directory_readiness_report",
     ]);
     for (const id of MCPJAM_TOOL_IDS) expect(isMcpjamToolId(id)).toBe(true);
     expect(isMcpjamToolId("web_search")).toBe(false);

@@ -27,9 +27,8 @@ import type {
 } from "@mcpjam/sdk/browser";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { buildServerRequest, getHostedProjectId } from "@/lib/apis/web/context";
-import { webPost } from "@/lib/apis/web/base";
+import { webGet, webPost } from "@/lib/apis/web/base";
 import { localPost } from "@/lib/apis/local-post";
-import { authFetch } from "@/lib/session-token";
 
 /** The two words the product vocabulary uses. Never `anthropic`/`chatgpt`. */
 export type ReadinessPublisher = "claude" | "openai";
@@ -147,13 +146,24 @@ export async function startDirectoryReadiness(
       return { mode: "local", result: body.result };
     },
     hosted: async () => {
+      // NARROWED before it goes on the wire. `submissionMode` is the SDK's
+      // full union, which includes the package shapes the hosted endpoint
+      // cannot grade. Forwarding one produces an opaque enum rejection; the
+      // route's own "must declare its submission mode" refusal at least names
+      // the problem. The local branch keeps the wider union, because a local
+      // run CAN read a package off the disk.
+      const hostedMode: HostedSubmissionMode | undefined =
+        submissionMode === "mcp-only" ||
+        submissionMode === "mcp-imported-skills"
+          ? submissionMode
+          : undefined;
       const request = buildServerRequest(input.serverNameOrId);
       const body = await webPost<
         Record<string, unknown>,
         { run: HostedReadinessReceipt }
       >(`/api/web/conformance/readiness/${publisher}`, {
         ...request,
-        ...(submissionMode ? { submissionMode } : {}),
+        ...(hostedMode ? { submissionMode: hostedMode } : {}),
         includeLlmObservations: input.includeLlmObservations === true,
       });
       return { mode: "hosted", receipt: body.run };
@@ -169,19 +179,10 @@ export async function getHostedReadinessRun(
   // id already names its server, and asking the context to resolve a server
   // name we do not have would throw on a lookup nobody needs.
   const projectId = getHostedProjectId();
-  const response = await authFetch(
-    `/api/web/conformance/readiness/runs/${encodeURIComponent(
-      runId,
-    )}?projectId=${encodeURIComponent(projectId)}`,
-    { method: "GET" },
+  const body = await webGet<{ run: HostedReadinessRun }>(
+    `/api/web/conformance/readiness/runs/${encodeURIComponent(runId)}?projectId=${encodeURIComponent(projectId)}`,
   );
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(
-      data?.message || data?.error || `Request failed (${response.status})`,
-    );
-  }
-  return (data as { run: HostedReadinessRun }).run;
+  return body.run;
 }
 
 /**
@@ -208,17 +209,9 @@ export async function cancelHostedReadinessRun(runId: string): Promise<void> {
 export async function getHostedReadinessReport(
   runId: string,
 ): Promise<ReadinessResult> {
-  const response = await authFetch(
+  return webGet<ReadinessResult>(
     `/api/web/conformance/readiness/runs/${encodeURIComponent(runId)}/report`,
-    { method: "GET" },
   );
-  const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    throw new Error(
-      data?.message || data?.error || `Request failed (${response.status})`,
-    );
-  }
-  return data as ReadinessResult;
 }
 
 /**

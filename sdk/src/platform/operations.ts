@@ -106,6 +106,9 @@ import type {
   PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
+  PlatformReadinessRun,
+  PlatformReadinessRunReceipt,
+  PlatformReadinessSubmissionMode,
   PlatformServerConnection,
   PlatformTunnelGrant,
 } from "./types.js";
@@ -8712,6 +8715,325 @@ export const getProjectServerConnectionStatusOperation: PlatformOperation<
   },
 };
 
+// ── Directory readiness ─────────────────────────────────────────────────────
+
+/**
+ * The six operations every agent surface gets, and the two rules they encode.
+ *
+ * DETERMINISTIC READINESS IS FREE AND IS THE DEFAULT. The lanes, the coverage
+ * and the verdict come from the SDK's own graders dialling the server; nothing
+ * about that spends. `includeLlmObservations` is the only field on either
+ * start that can, it defaults off, and what it buys is INFORMATIONAL — model
+ * observations can never make a server ready or not-ready. A caller that
+ * leaves it alone gets the whole grade.
+ *
+ * A START IS NOT A RESULT. Both starts answer with a run id and return; the
+ * run continues on a server. An agent that treats the receipt as a verdict
+ * will report `pending` as an outcome, which is why the descriptions say to
+ * poll `get_directory_readiness_run` in the same breath as the start.
+ */
+
+const readinessRunSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  run: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Readiness run ID, from a start or from list_directory_readiness_runs.",
+    ),
+});
+
+export type DirectoryReadinessRunSelectorInput = z.infer<
+  typeof readinessRunSelectorInput
+>;
+
+const readinessStartFields = {
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  server: z.string().trim().min(1).describe(SERVER_SELECTOR_DESCRIPTION),
+  includeLlmObservations: z
+    .boolean()
+    .optional()
+    .describe(
+      "Add model-written experience observations. SPENDS MCPJam credits, and buys nothing dispositive — observations are informational and can never change a lane's status or the run's verdict. Leave this off unless a human asked for the commentary; the grade is complete without it.",
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Deduplicates a retried start. Load-bearing here: a readiness run dials a third party's server, and a retry without this dials it twice.",
+    ),
+};
+
+const startClaudeReadinessInput = z.object(readinessStartFields);
+export type StartClaudeReadinessRunInput = z.infer<
+  typeof startClaudeReadinessInput
+>;
+
+const startOpenAIReadinessInput = z.object({
+  ...readinessStartFields,
+  submissionMode: z
+    .enum(["mcp-only", "mcp-imported-skills"])
+    .describe(
+      "The DECLARED submission shape. REQUIRED and never inferred: a run with no declared shape reads as MCP-only, which reports the package lane not-applicable and turns a missing input into a clean bill of health. The package shapes need an uploaded archive and run on the `mcpjam readiness` CLI, not here.",
+    ),
+});
+export type StartOpenAIReadinessRunInput = z.infer<
+  typeof startOpenAIReadinessInput
+>;
+
+export type StartDirectoryReadinessResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  run: PlatformReadinessRunReceipt;
+};
+
+async function startReadinessRun(
+  input: StartClaudeReadinessRunInput & { submissionMode?: string },
+  { client, signal }: PlatformOperationContext,
+  publisher: "claude" | "openai",
+): Promise<StartDirectoryReadinessResult> {
+  const { project } = await resolveProjectOrThrow(
+    client,
+    input.project,
+    signal,
+  );
+  // The same hosted-operability check every live server operation makes. A
+  // stdio server is not a connector either directory can list, so failing here
+  // names the reason instead of producing a run whose every lane is
+  // `incomplete` for an unexplained reason.
+  const server = await resolveLiveServer(client, project, input.server, signal);
+
+  const params = {
+    projectId: project.id,
+    serverId: server.id,
+    ...(input.includeLlmObservations !== undefined
+      ? { includeLlmObservations: input.includeLlmObservations }
+      : {}),
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+  };
+
+  const run =
+    publisher === "claude"
+      ? await client.startClaudeReadinessRun(params, { signal })
+      : await client.startOpenAIReadinessRun(
+          {
+            ...params,
+            submissionMode:
+              input.submissionMode as PlatformReadinessSubmissionMode,
+          },
+          { signal },
+        );
+
+  return {
+    project: toSelectedProjectInfo(project),
+    server: toServerInfo(server),
+    run,
+  };
+}
+
+export const startClaudeReadinessRunOperation: PlatformOperation<
+  StartClaudeReadinessRunInput,
+  StartDirectoryReadinessResult
+> = {
+  name: "start_claude_readiness_run",
+  title: "Start a Claude directory readiness run",
+  description:
+    "Grade a saved MCP server against Anthropic's directory requirements, lane by lane. Returns a run ID immediately — the run continues on a server, so poll get_directory_readiness_run for the verdict. The deterministic grade is FREE; only includeLlmObservations spends, and it buys informational commentary that never changes a lane's status.",
+  readOnly: false,
+  // `spend` describes the WORST case this operation can reach, because a
+  // surface reading static metadata has no arguments to look at. The agent
+  // registry narrows it per-call from the actual `includeLlmObservations`.
+  risk: "spend",
+  inputSchema: startClaudeReadinessInput,
+  execute: (input, context) => startReadinessRun(input, context, "claude"),
+};
+
+export const startOpenAIReadinessRunOperation: PlatformOperation<
+  StartOpenAIReadinessRunInput,
+  StartDirectoryReadinessResult
+> = {
+  name: "start_openai_readiness_run",
+  title: "Start an OpenAI plugin-directory readiness run",
+  description:
+    "Grade a saved MCP server against OpenAI's plugin-directory requirements across seven lanes and two staged rollups. Requires submissionMode, which is never inferred. Returns a run ID immediately — poll get_directory_readiness_run. The deterministic grade is FREE; only includeLlmObservations spends.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: startOpenAIReadinessInput,
+  execute: (input, context) => startReadinessRun(input, context, "openai"),
+};
+
+export type GetDirectoryReadinessRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformReadinessRun;
+};
+
+export const getDirectoryReadinessRunOperation: PlatformOperation<
+  DirectoryReadinessRunSelectorInput,
+  GetDirectoryReadinessRunResult
+> = {
+  name: "get_directory_readiness_run",
+  title: "Get an MCPJam directory readiness run",
+  description:
+    "Read one readiness run: per-lane status and coverage, the staged rollups, and the model-observation state. Readiness has no score — a lane is ready, not-ready or incomplete, and `incomplete` means something could not be evaluated rather than that it failed. llmObservations is a SEPARATE axis: a run can be completed with observations billing-blocked, and that is a complete, correct grade.",
+  readOnly: true,
+  inputSchema: readinessRunSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const run = await client.getReadinessRun(
+      { projectId: project.id, runId: input.run },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const listReadinessRunsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  readinessKind: z
+    .enum(["claude", "openai"])
+    .optional()
+    .describe("Restrict to one publisher's runs."),
+  server: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Restrict to one saved server, by name or ID."),
+  limit: z.number().int().min(1).max(100).optional(),
+});
+export type ListDirectoryReadinessRunsInput = z.infer<
+  typeof listReadinessRunsInput
+>;
+export type ListDirectoryReadinessRunsResult = {
+  project: SelectedProjectInfo;
+  runs: PlatformPage<PlatformReadinessRun>;
+};
+
+export const listDirectoryReadinessRunsOperation: PlatformOperation<
+  ListDirectoryReadinessRunsInput,
+  ListDirectoryReadinessRunsResult
+> = {
+  name: "list_directory_readiness_runs",
+  title: "List MCPJam directory readiness runs",
+  description:
+    "List a project's readiness runs, newest first, optionally narrowed to one publisher or one server. Use this before starting another run: a recent completed run answers the same question for free.",
+  readOnly: true,
+  inputSchema: listReadinessRunsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    // The server selector is a NAME or an id; the endpoint takes only an id.
+    // Resolving here means a caller can say what it means.
+    let serverId: string | undefined;
+    if (input.server) {
+      const server = await resolveLiveServer(
+        client,
+        project,
+        input.server,
+        signal,
+      );
+      serverId = server.id;
+    }
+    const runs = await client.listReadinessRuns(
+      {
+        projectId: project.id,
+        ...(input.readinessKind ? { readinessKind: input.readinessKind } : {}),
+        ...(serverId ? { serverId } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), runs };
+  },
+};
+
+export type GetDirectoryReadinessReportResult = {
+  project: SelectedProjectInfo;
+  report: unknown;
+};
+
+export const getDirectoryReadinessReportOperation: PlatformOperation<
+  DirectoryReadinessRunSelectorInput,
+  GetDirectoryReadinessReportResult
+> = {
+  name: "get_directory_readiness_report",
+  title: "Get an MCPJam directory readiness report",
+  description:
+    "Fetch the full report for a finished readiness run: every finding, its status, its evidence citation and its provenance. Large — read get_directory_readiness_run first for lane statuses, and come here only when a specific finding needs explaining.",
+  readOnly: true,
+  inputSchema: readinessRunSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const report = await client.getReadinessReport(
+      { projectId: project.id, runId: input.run },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), report };
+  },
+};
+
+export type CancelDirectoryReadinessRunResult = {
+  project: SelectedProjectInfo;
+  cancelled: { runId: string; projectId: string; status: string };
+};
+
+export const cancelDirectoryReadinessRunOperation: PlatformOperation<
+  DirectoryReadinessRunSelectorInput,
+  CancelDirectoryReadinessRunResult
+> = {
+  name: "cancel_directory_readiness_run",
+  title: "Cancel an MCPJam directory readiness run",
+  description:
+    "Stop an in-flight readiness run. The executing node learns about it on its next heartbeat and aborts — what is being stopped is traffic to somebody else's server, which matters more than the row's status.",
+  readOnly: false,
+  // Cancelling removes nothing that existed and frees a concurrency slot. The
+  // hazard of getting it wrong is a run you have to start again.
+  risk: "none",
+  inputSchema: readinessRunSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const cancelled = await client.cancelReadinessRun(
+      { projectId: project.id, runId: input.run },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), cancelled };
+  },
+};
+
 export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getMeOperation,
   listModelsOperation,
@@ -8854,4 +9176,12 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  // Directory readiness — deterministic grading is free and is the default;
+  // only the two starts can spend, and only when explicitly asked to.
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getDirectoryReadinessRunOperation,
+  listDirectoryReadinessRunsOperation,
+  getDirectoryReadinessReportOperation,
+  cancelDirectoryReadinessRunOperation,
 ];

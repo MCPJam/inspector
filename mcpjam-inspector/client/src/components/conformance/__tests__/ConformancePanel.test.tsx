@@ -209,6 +209,90 @@ function createStdioServer(
   };
 }
 
+/**
+ * The four suites, scored, exactly as the pooled-headline test needs them.
+ *
+ * Extracted so the readiness test can assert against the SAME inputs: proving
+ * that readiness does not move the headline means nothing unless both runs
+ * pool the identical suite results.
+ */
+function setupScoredRunMocks() {
+  setupSuccessfulRunMocks({
+    protocol: createProtocolResult({
+      checks: [
+        {
+          id: "ping",
+          category: "core",
+          title: "Ping",
+          description: "Ping.",
+          status: "passed",
+          durationMs: 1,
+        },
+        {
+          id: "tools-list",
+          category: "tools",
+          title: "Tools List",
+          description: "List tools.",
+          status: "skipped",
+          skipReason: "not-applicable",
+          durationMs: 0,
+        },
+      ],
+      protocolVersion: "2025-11-25",
+      readiness: [
+        {
+          id: "readiness-metadata-quality",
+          title: "Metadata Quality",
+          severity: "warning",
+          specStrength: "SHOULD",
+          message: "2 tool(s) have no description",
+        },
+      ],
+    } as Partial<MCPConformanceResult>),
+    apps: createAppsResult({
+      checks: [
+        {
+          id: "ui-tools-present",
+          category: "tools",
+          title: "UI Tools Present",
+          description: "ui",
+          status: "passed",
+          durationMs: 1,
+        },
+      ],
+    }),
+    oauth: createOAuthResult({
+      steps: [
+        {
+          step: "request_without_token",
+          title: "Initial MCP Request",
+          summary: "first",
+          status: "passed",
+          durationMs: 1,
+          logs: [],
+          httpAttempts: [],
+        },
+      ],
+    }),
+  });
+  mockRunTasks.mockResolvedValue({
+    success: true,
+    result: createTasksResult({
+      checks: [
+        {
+          id: "tasks-wire-resolvable",
+          category: "dispatch",
+          title: "Tasks Wire Resolvable",
+          description: "wire",
+          status: "passed",
+          durationMs: 1,
+        },
+      ],
+    }),
+  });
+
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // Reset explicitly rather than relying on `clearAllMocks`: the flag is a
@@ -219,79 +303,7 @@ beforeEach(() => {
 
 describe("ConformanceTab", () => {
   it("shows a pooled score headline with denominator, and readiness advice that costs points", async () => {
-    setupSuccessfulRunMocks({
-      protocol: createProtocolResult({
-        checks: [
-          {
-            id: "ping",
-            category: "core",
-            title: "Ping",
-            description: "Ping.",
-            status: "passed",
-            durationMs: 1,
-          },
-          {
-            id: "tools-list",
-            category: "tools",
-            title: "Tools List",
-            description: "List tools.",
-            status: "skipped",
-            skipReason: "not-applicable",
-            durationMs: 0,
-          },
-        ],
-        protocolVersion: "2025-11-25",
-        readiness: [
-          {
-            id: "readiness-metadata-quality",
-            title: "Metadata Quality",
-            severity: "warning",
-            specStrength: "SHOULD",
-            message: "2 tool(s) have no description",
-          },
-        ],
-      } as Partial<MCPConformanceResult>),
-      apps: createAppsResult({
-        checks: [
-          {
-            id: "ui-tools-present",
-            category: "tools",
-            title: "UI Tools Present",
-            description: "ui",
-            status: "passed",
-            durationMs: 1,
-          },
-        ],
-      }),
-      oauth: createOAuthResult({
-        steps: [
-          {
-            step: "request_without_token",
-            title: "Initial MCP Request",
-            summary: "first",
-            status: "passed",
-            durationMs: 1,
-            logs: [],
-            httpAttempts: [],
-          },
-        ],
-      }),
-    });
-    mockRunTasks.mockResolvedValue({
-      success: true,
-      result: createTasksResult({
-        checks: [
-          {
-            id: "tasks-wire-resolvable",
-            category: "dispatch",
-            title: "Tasks Wire Resolvable",
-            description: "wire",
-            status: "passed",
-            durationMs: 1,
-          },
-        ],
-      }),
-    });
+    setupScoredRunMocks();
 
     render(<ConformanceTab server={createHttpServer()} />);
     fireEvent.click(screen.getByRole("button", { name: /run available checks/i }));
@@ -372,14 +384,26 @@ describe("ConformanceTab", () => {
   it("keeps readiness out of the pooled score", async () => {
     // The headline pools four SUITE scores. Readiness has no numerator — it
     // answers "would this be listed" — so a lane verdict reaching the pool
-    // would invent one. The proof is that the headline is computed without
-    // readiness ever being asked for anything.
+    // would invent one.
+    //
+    // The SAME scored inputs as the pooled-headline test above, which
+    // documents why they come to 98. Mounting readiness must not move that by
+    // a point. A test that only asserted "readiness was not called" would pass
+    // just as well against a build that pooled a lane verdict it happened to
+    // already have.
     readinessFlagRef.current = true;
-    setupSuccessfulRunMocks();
+    setupScoredRunMocks();
     render(<ConformanceTab server={createHttpServer()} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /run available checks/i }),
+    );
 
-    fireEvent.click(screen.getByText("Run available checks"));
-    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+    await waitFor(() => expect(screen.getByText("98")).toBeInTheDocument());
+    expect(
+      screen.getByText(/4\/4 applicable checks passed/),
+    ).toBeInTheDocument();
+    // Both readiness sections are on screen while that headline is computed.
+    expect(screen.getByText(/Claude directory readiness/i)).toBeDefined();
     expect(startReadinessMock).not.toHaveBeenCalled();
   });
 

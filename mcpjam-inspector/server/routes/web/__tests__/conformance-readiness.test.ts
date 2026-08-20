@@ -71,6 +71,22 @@ vi.mock("convex/browser", () => ({
   },
 }));
 
+vi.mock("../../../services/evals/route-helpers.js", () => ({
+  createConvexClient: () => ({
+    setAuth() {},
+    query: convexQueryMock,
+    mutation: convexMutationMock,
+  }),
+  requireConvexHttpUrl: () => "https://convex.test",
+}));
+
+vi.mock("../../../services/internal-backend.js", () => ({
+  getInternalBackendConfig: () => ({
+    convexUrl: "https://convex.site.test",
+    serviceToken: "service-token",
+  }),
+}));
+
 vi.mock("../../../utils/hosted-egress-guard.js", () => ({
   assertAllowedHostedTargetUrl: vi.fn().mockResolvedValue(undefined),
   BlockedEgressTargetError: class extends Error {},
@@ -294,5 +310,88 @@ describe("POST /conformance/readiness/runs/:runId/cancel", () => {
     const res = await call("POST", "/readiness/runs/run_1/cancel", {});
     expect(res.status).toBe(403);
     expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The report route, which is the only one of the four that BYPASSES
+ * `handleRoute`.
+ *
+ * Its success path returns raw bytes rather than a JSON envelope, so its error
+ * path has to reach the same mapper by hand — exactly the kind of hand-wired
+ * seam that rots silently. It also double-gates: the caller's own identity
+ * resolves the blob id, and only then does a service token read the bytes.
+ */
+describe("GET /conformance/readiness/runs/:runId/report", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllGlobals();
+    guestIdRef.current = undefined;
+    process.env.CONVEX_URL = "https://convex.test";
+  });
+
+  it("refuses a guest before either gate runs", async () => {
+    guestIdRef.current = "guest_1";
+    const res = await call("GET", "/readiness/runs/run_1/report");
+    expect(res.status).toBe(403);
+    expect(convexQueryMock).not.toHaveBeenCalled();
+  });
+
+  it("404s when the run has no stored report", async () => {
+    // Not a missing RUN: it may be in flight, it may have failed, or its
+    // report may have aged past retention. Saying which is the run detail's
+    // job; this only says there is nothing to fetch.
+    convexQueryMock.mockResolvedValue(null);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await call("GET", "/readiness/runs/run_1/report");
+    expect(res.status).toBe(404);
+    // THE SECOND GATE NEVER OPENED. A blob read that happened anyway would
+    // mean the caller's authorization was decorative.
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("streams the bytes through when both gates pass", async () => {
+    convexQueryMock.mockResolvedValue("blob_1");
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ status: "ready" }), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const res = await call("GET", "/readiness/runs/run_1/report");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ status: "ready" });
+    const [, init] = fetchMock.mock.calls[0]!;
+    expect(init.headers["x-inspector-service-token"]).toBe("service-token");
+  });
+
+  it("maps a backend 404 to 404 rather than to a storage fault", async () => {
+    convexQueryMock.mockResolvedValue("blob_1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("", { status: 404 })),
+    );
+    const res = await call("GET", "/readiness/runs/run_1/report");
+    expect(res.status).toBe(404);
+  });
+
+  it("maps any other backend failure to 502, in an error envelope", async () => {
+    // The success path returns raw bytes, so this route serializes its own
+    // errors. A regression there would surface as an empty 200.
+    convexQueryMock.mockResolvedValue("blob_1");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response("", { status: 500 })),
+    );
+    const res = await call("GET", "/readiness/runs/run_1/report");
+    expect(res.status).toBe(502);
+    const body = (await res.json()) as { message?: string };
+    expect(String(body.message)).toMatch(/could not be read/i);
+  });
+
+  it("maps a transport failure to 502 too", async () => {
+    convexQueryMock.mockResolvedValue("blob_1");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ECONNREFUSED")));
+    const res = await call("GET", "/readiness/runs/run_1/report");
+    expect(res.status).toBe(502);
   });
 });

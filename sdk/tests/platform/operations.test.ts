@@ -1991,6 +1991,16 @@ describe("operation catalog consistency", () => {
     reset_computer: {},
     search_sessions: { query: "q" },
     delete_sandbox_image: { image: "i" },
+    // Directory readiness. `server` is required on both starts (the target is
+    // never inferred), and `submissionMode` on the OpenAI one (a run with no
+    // declared shape reports its package lane not-applicable, which turns a
+    // missing input into a clean bill of health).
+    start_claude_readiness_run: { server: "s" },
+    start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
+    get_directory_readiness_run: { run: "run_1" },
+    list_directory_readiness_runs: {},
+    get_directory_readiness_report: { run: "run_1" },
+    cancel_directory_readiness_run: { run: "run_1" },
   };
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
@@ -2111,6 +2121,12 @@ describe("operation catalog consistency", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      // Directory readiness. Both starts persist a leased run row and dial a
+      // third party; cancelling writes a terminal status. The three reads
+      // beside them cost nothing and stay reads.
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "cancel_directory_readiness_run",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));

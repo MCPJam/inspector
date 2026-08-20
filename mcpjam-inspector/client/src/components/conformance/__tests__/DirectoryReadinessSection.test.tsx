@@ -152,6 +152,18 @@ describe("DirectoryReadinessSection", () => {
 
     await screen.findByText(/0\/3 evaluated/);
     expect(screen.getByText(/Missing: toolListing/)).toBeInTheDocument();
+    // Both glyphs present at once: one lane passed, one could not be
+    // evaluated, and the panel must not collapse them into one verdict.
+    expect(screen.getByLabelText("Lane ready")).toBeInTheDocument();
+    expect(screen.getByLabelText("Lane incomplete")).toBeInTheDocument();
+    // Both glyphs present at once: one lane passed, one could not be
+    // evaluated, and the panel must not collapse them into one verdict.
+    expect(screen.getByLabelText("Lane ready")).toBeInTheDocument();
+    expect(screen.getByLabelText("Lane incomplete")).toBeInTheDocument();
+    // Both glyphs present at once: one lane passed, one could not be
+    // evaluated, and the panel must not collapse them into one verdict.
+    expect(screen.getByLabelText("Lane ready")).toBeInTheDocument();
+    expect(screen.getByLabelText("Lane incomplete")).toBeInTheDocument();
     // The suites above pool into "NN/100". Readiness must never render one.
     expect(screen.queryByText(/\d+\/100/)).toBeNull();
   });
@@ -239,6 +251,106 @@ describe("DirectoryReadinessSection", () => {
     await userEvent.click(await openAndFindRun("claude"));
     await screen.findByText("Ready");
     expect(getRunMock).not.toHaveBeenCalled();
+  });
+
+  it("carries a LOCAL result's lane status through to the row", async () => {
+    // The SDK separates a lane's VERDICT from its coverage: `status` lives on
+    // the lane, `evaluated`/`notEvaluated` on `coverage`. Reading only the
+    // coverage across drops the verdict, and every local lane then renders as
+    // the amber `incomplete` glyph — reporting a passing server as unfinished.
+    startMock.mockResolvedValue({
+      mode: "local",
+      result: {
+        status: "not-ready",
+        lanes: [
+          {
+            lane: "directory-policy",
+            status: "not-ready",
+            summary: "",
+            coverage: {
+              lane: "directory-policy",
+              evaluated: 3,
+              notEvaluated: 0,
+              notApplicable: 0,
+              missingInputs: [],
+            },
+          },
+        ],
+      },
+    });
+    render(<DirectoryReadinessSection server={SERVER} publisher="claude" />);
+    await userEvent.click(await openAndFindRun("claude"));
+
+    await screen.findByText(/3\/3 evaluated/);
+    // THE ASSERTION THAT CATCHES THE BUG. The headline badge reads the run's
+    // own status, so it says "Not ready" either way; only the LANE glyph
+    // depends on the status having survived the trip from lane to coverage
+    // row. Dropping it renders the amber `incomplete` glyph on a lane that
+    // definitively failed.
+    expect(screen.getByLabelText("Lane not ready")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Lane incomplete")).toBeNull();
+    // No missing-inputs line, because nothing was missing. Its presence would
+    // mean the coverage numbers came from somewhere other than the lane.
+    expect(screen.queryByText(/Missing:/)).toBeNull();
+  });
+
+  it("stops a running hosted run through the run id it was given", async () => {
+    startMock.mockResolvedValue({
+      mode: "hosted",
+      receipt: { runId: "run_1" },
+    });
+    getRunMock.mockResolvedValue(hostedRow({ status: "running" }));
+    render(<DirectoryReadinessSection server={SERVER} publisher="claude" />);
+    await userEvent.click(await openAndFindRun("claude"));
+
+    const cancelButton = await screen.findByRole("button", { name: "Cancel" });
+    await userEvent.click(cancelButton);
+    await waitFor(() => expect(cancelMock).toHaveBeenCalledWith("run_1"));
+  });
+
+  it("offers no Cancel for a LOCAL run, which has already returned", async () => {
+    startMock.mockResolvedValue({
+      mode: "local",
+      result: { status: "ready", lanes: [] },
+    });
+    render(<DirectoryReadinessSection server={SERVER} publisher="claude" />);
+    await userEvent.click(await openAndFindRun("claude"));
+    await screen.findByText("Ready");
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
+  });
+
+  it("reports a FAILED run's own message rather than a generic one", async () => {
+    startMock.mockResolvedValue({
+      mode: "hosted",
+      receipt: { runId: "run_1" },
+    });
+    getRunMock.mockResolvedValue(
+      hostedRow({
+        status: "failed",
+        overallStatus: null,
+        terminalReason: "deadline_exceeded",
+        errorMessage: "The run stopped responding after 15 minutes.",
+      }),
+    );
+    render(<DirectoryReadinessSection server={SERVER} publisher="claude" />);
+    await userEvent.click(await openAndFindRun("claude"));
+    await screen.findByText("The run stopped responding after 15 minutes.");
+  });
+
+  it("reports a CANCELLED run as cancelled, not as an error", async () => {
+    // A run the user stopped is not a failure, and colouring it as one would
+    // send them looking for a problem they created on purpose.
+    startMock.mockResolvedValue({
+      mode: "hosted",
+      receipt: { runId: "run_1" },
+    });
+    getRunMock.mockResolvedValue(hostedRow({ status: "cancelled" }));
+    render(<DirectoryReadinessSection server={SERVER} publisher="claude" />);
+    await userEvent.click(await openAndFindRun("claude"));
+    await screen.findByText("Cancelled");
+    expect(
+      screen.getByText(/Nothing further was sent to the server/i),
+    ).toBeInTheDocument();
   });
 
   it("surfaces a start failure as an error rather than an empty grade", async () => {

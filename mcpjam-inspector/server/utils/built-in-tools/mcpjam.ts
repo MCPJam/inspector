@@ -83,6 +83,9 @@ import {
   dismissSwarmFindingOperation,
   undismissSwarmFindingOperation,
   getWaveInsightsOperation,
+  getDirectoryReadinessRunOperation,
+  listDirectoryReadinessRunsOperation,
+  getDirectoryReadinessReportOperation,
   getUserTestingMetricsOperation,
   getUserTestingUsageOperation,
   listUserTestingFindingsOperation,
@@ -186,6 +189,18 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getUserTestingInsightsOperation,
   dismissUserTestingFindingOperation,
   undismissUserTestingFindingOperation,
+
+  // ── Directory readiness ─────────────────────────────────────────────────
+  //
+  // The READS, all three. "Is my server ready to submit, and what is missing"
+  // is the question this toolset exists for, and answering it costs nothing.
+  //
+  // The two starts are excluded — see below. Cancel is excluded with them: a
+  // chat surface that cannot start a run has no business stopping one, and
+  // cancelling by id with no run in front of you is how the wrong run stops.
+  getDirectoryReadinessRunOperation,
+  listDirectoryReadinessRunsOperation,
+  getDirectoryReadinessReportOperation,
 ];
 
 /**
@@ -200,6 +215,12 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  start_claude_readiness_run:
+    "Dials a third party's server from our infrastructure and, with includeLlmObservations, spends the organization's credits. The conformance panel puts the server, the publisher and the AI opt-in in front of you before any of that happens; a chat tool would start it from a name. The reads are exposed, so chat can still answer \"is my server ready\" from a run somebody started deliberately.",
+  start_openai_readiness_run:
+    "Same as the Claude start, plus a submission shape that is never inferred: a run with no declared shape reports its package lane not-applicable, turning a missing input into a clean bill of health. That is a question to answer at the panel, with the choice visible, not from a chat argument.",
+  cancel_directory_readiness_run:
+    "A surface that cannot START a readiness run has no business stopping one. Cancelling by id with no run in front of you is how the wrong run stops; the conformance panel has a Cancel control beside the run it belongs to.",
   connect_eval_check_repo:
     "Reaches OUTSIDE MCPJam and changes a shared repository for everyone who opens a pull request against it — with fail_closed it can block their merges. The suite settings sheet has this at the point of intent, next to the repository picker and the policy explainer, which is the context the decision needs. Available on the API, the CLI and the gated agent surfaces, where it goes through an approval proposal.",
   launch_journey_run:

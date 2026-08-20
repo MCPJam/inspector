@@ -15,6 +15,8 @@ import {
   webErrorFromRoute,
 } from "./errors.js";
 import { getInternalBackendConfig } from "../../services/internal-backend.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { createConvexClient } from "../../services/evals/route-helpers.js";
 import {
   OAuthConformanceSessionFailedError,
   OAuthConformanceSessionNotFoundError,
@@ -52,17 +54,20 @@ const conformanceWeb = new Hono();
  * itself and hand any signed-in user any organization's runs.
  */
 function createReadinessConvexClient(bearerToken: string): ConvexHttpClient {
-  const convexUrl = process.env.CONVEX_URL;
-  if (!convexUrl) {
+  try {
+    // The SHARED factory, not a second copy of the same three lines. It is the
+    // one place that decides which environment variable names the Convex
+    // CLIENT url — `.convex.cloud`, which is not the `.convex.site` HTTP-actions
+    // url the service-token fetch below uses, and confusing the two is a
+    // mistake worth having exactly one place to make.
+    return createConvexClient(bearerToken);
+  } catch (error) {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      error instanceof Error ? error.message : "Convex is not configured"
     );
   }
-  const client = new ConvexHttpClient(convexUrl);
-  client.setAuth(bearerToken);
-  return client;
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -694,7 +699,18 @@ conformanceWeb.get("/readiness/runs/:runId/report", async (c) => {
           signal: AbortSignal.timeout(REPORT_FETCH_TIMEOUT_MS),
         },
       );
-    } catch {
+    } catch (error) {
+      // Reported before it is flattened. A network fault, the 30-second
+      // deadline and a refused connection are operationally distinct — a
+      // misconfiguration, a report that is merely slow, and a backend that is
+      // down — and a user saying "the report could not be loaded" leaves no
+      // trace to tell them apart otherwise. `mcpjam_internal`, because none of
+      // them is the graded server's doing.
+      reportRouteFailure("[readiness] report blob read failed", error, {
+        source: "readiness.report_fetch",
+        hop: "mcpjam_internal",
+        context: { runId },
+      });
       throw new WebRouteError(
         502,
         ErrorCode.INTERNAL_ERROR,

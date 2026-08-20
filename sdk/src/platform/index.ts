@@ -301,6 +301,14 @@ export {
   getWaveInsightsOperation,
   requestWaveInsightsOperation,
   cancelWaveInsightsOperation,
+  // Directory readiness. Deterministic grading is free and is the default;
+  // only the two starts can spend, and only when explicitly asked to.
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getDirectoryReadinessRunOperation,
+  listDirectoryReadinessRunsOperation,
+  getDirectoryReadinessReportOperation,
+  cancelDirectoryReadinessRunOperation,
   // User testing.
   getUserTestingScenarioOperation,
   updateUserTestingScenarioOperation,

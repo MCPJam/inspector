@@ -133,6 +133,12 @@ so results respect the caller's project access.
 | `upsert_user_testing_member` | Grant one person access to a scenario by email. | — |
 | `remove_user_testing_member` | Revoke one person's access. | — |
 | `rebind_user_testing_scenario` | Swap the environment behind a scenario, keeping its link, members and history. | — |
+| `start_claude_readiness_run` | Grade a saved server against Anthropic's directory requirements. Returns a run ID; poll `get_directory_readiness_run`. Deterministic grading is free. | — |
+| `start_openai_readiness_run` | Grade a saved server against OpenAI's plugin-directory requirements. `submissionMode` is required and never inferred. | — |
+| `get_directory_readiness_run` | Per-lane status and coverage, the staged rollups, and the model-observation state, which is a separate axis from the run's own status. | — |
+| `list_directory_readiness_runs` | A project's readiness runs, newest first, optionally narrowed to one publisher or server. | — |
+| `get_directory_readiness_report` | Every finding for a finished run, with its evidence citation and provenance. Large — read the run first. | — |
+| `cancel_directory_readiness_run` | Stop an in-flight run. The executing node aborts on its next heartbeat. | — |
 
 <!-- The rows above are the CATALOG, not a hand-written summary: they are
      checked against `PLATFORM_CATALOG_OPERATIONS` by

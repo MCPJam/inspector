@@ -120,6 +120,12 @@ import {
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getDirectoryReadinessRunOperation,
+  listDirectoryReadinessRunsOperation,
+  getDirectoryReadinessReportOperation,
+  cancelDirectoryReadinessRunOperation,
   ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -285,6 +291,17 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  // Directory readiness, all six. This is the PROGRAMMATIC surface — a caller
+  // holding an API key, running in CI, asking "would this be listed and what
+  // is missing". Deterministic grading is free and is the default; the two
+  // starts carry `readOnlyHint: false` and their own destructive default, and
+  // `includeLlmObservations` is off unless a caller asks for it.
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getDirectoryReadinessRunOperation,
+  listDirectoryReadinessRunsOperation,
+  getDirectoryReadinessReportOperation,
+  cancelDirectoryReadinessRunOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */

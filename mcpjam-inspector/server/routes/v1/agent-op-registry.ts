@@ -96,6 +96,12 @@ import {
   getWaveInsightsOperation,
   requestWaveInsightsOperation,
   cancelWaveInsightsOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getDirectoryReadinessRunOperation,
+  listDirectoryReadinessRunsOperation,
+  getDirectoryReadinessReportOperation,
+  cancelDirectoryReadinessRunOperation,
   generatePersonasOperation,
   generateJourneysOperation,
   getUserTestingMetricsOperation,
@@ -1040,6 +1046,16 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getWaveInsightsOperation, tier: "direct" },
   { operation: cancelWaveInsightsOperation, tier: "direct" },
 
+  // ── Directory readiness — the reads are direct; the two starts are gated.
+  { operation: getDirectoryReadinessRunOperation, tier: "direct" },
+  { operation: listDirectoryReadinessRunsOperation, tier: "direct" },
+  { operation: getDirectoryReadinessReportOperation, tier: "direct" },
+  // Direct, like `cancel_wave_insights` beside it and for the same reason:
+  // cancelling costs nothing, removes nothing that existed, and STOPS traffic
+  // to somebody else's server. Making a person approve the brake is how a run
+  // nobody wants keeps dialling while the approval sits unread.
+  { operation: cancelDirectoryReadinessRunOperation, tier: "direct" },
+
   // ── GATED — the swarm operations that SPEND.
   {
     operation: launchJourneyRunOperation,
@@ -1102,6 +1118,58 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       kind: "generate",
       confirmSeverity: "spend",
     },
+  },
+  {
+    operation: startClaudeReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade ${
+          named(input, "server") ?? "a server"
+        } against Claude's directory requirements${
+          input.includeLlmObservations === true ? ", with AI observations" : ""
+        }`,
+      buttonLabel: "Run it",
+      kind: "start",
+      // The hazard depends on the ARGUMENTS, which is why this is a function.
+      // The deterministic grade spends nothing but does dial somebody else's
+      // server, so its honest warning is `external`. Only the AI opt-in makes
+      // it `spend`, and a fixed `spend` would cry wolf on the default path
+      // while a fixed `external` would understate the one that bills.
+      confirmSeverity: (input) =>
+        input.includeLlmObservations === true ? "spend" : "external",
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+    },
+    promptNotes: [
+      "- Readiness grading is FREE and is the default. `includeLlmObservations` is the only field that spends, and what it buys is informational — observations can never change a lane's status or the run's verdict. Do not set it unless a person asked for the commentary.",
+      "- A start returns a run ID, not a verdict. Poll `get_directory_readiness_run`; reporting `pending` as an outcome is wrong.",
+    ],
+  },
+  {
+    operation: startOpenAIReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade ${
+          named(input, "server") ?? "a server"
+        } against OpenAI's plugin-directory requirements${
+          input.includeLlmObservations === true ? ", with AI observations" : ""
+        }`,
+      buttonLabel: "Run it",
+      kind: "start",
+      confirmSeverity: (input) =>
+        input.includeLlmObservations === true ? "spend" : "external",
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `submissionMode` is REQUIRED and is never inferred. A run with no declared shape reports its package lane not-applicable, which turns a missing input into a clean bill of health. Ask which shape is being submitted rather than guessing.",
+    ],
   },
   {
     operation: requestWaveInsightsOperation,

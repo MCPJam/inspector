@@ -202,6 +202,15 @@ const PLAIN_TOOLS = [
   "upsert_user_testing_member",
   "remove_user_testing_member",
   "rebind_user_testing_scenario",
+  // Directory readiness. None is widget-backed: lanes and coverage are
+  // structured text, and a chart of a three-state verdict would be a
+  // decoration over three words.
+  "start_claude_readiness_run",
+  "start_openai_readiness_run",
+  "get_directory_readiness_run",
+  "list_directory_readiness_runs",
+  "get_directory_readiness_report",
+  "cancel_directory_readiness_run",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -414,6 +423,12 @@ describe("platform tool registration", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "get_directory_readiness_run",
+      "list_directory_readiness_runs",
+      "get_directory_readiness_report",
+      "cancel_directory_readiness_run",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {
@@ -518,6 +533,12 @@ describe("platform tool registration", () => {
       "set_user_testing_guest_execution",
       "upsert_user_testing_member",
       "rebind_user_testing_scenario",
+      // Directory readiness. Both starts persist a run row and dial a
+      // third party; neither removes anything, and cancelling frees a
+      // concurrency slot rather than destroying a result.
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "cancel_directory_readiness_run",
     ]);
     // Destructive AND not safe to repeat — for opposite reasons: the soft
     // deletes 404 on a retry, the rotation mints another link.

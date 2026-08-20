@@ -78,18 +78,34 @@ const SUBMISSION_MODES: Array<{
   { value: "mcp-imported-skills", label: "MCP server + imported skills" },
 ];
 
+/**
+ * The lane's verdict as a glyph — with a NAME, not only a colour.
+ *
+ * Three states distinguished by hue alone are three states a screen reader
+ * cannot tell apart, and the distinction that matters most here (`incomplete`
+ * is not a failure) is exactly the one colour is worst at carrying. The name
+ * goes on a WRAPPER rather than on the icon: lucide marks its own svg
+ * `aria-hidden`, so a label handed to it would be announced by nothing.
+ */
 function LaneIcon({ status }: { status: ReadinessLaneCoverage["status"] }) {
-  if (status === "ready") {
-    return (
-      <CheckCircle2 className="h-3.5 w-3.5 flex-shrink-0 text-green-500" />
-    );
-  }
-  if (status === "not-ready") {
-    return <XCircle className="h-3.5 w-3.5 flex-shrink-0 text-red-500" />;
-  }
-  // `incomplete` is deliberately NOT the same glyph as a failure: a lane
-  // nobody could evaluate and a lane that failed lead to different work.
-  return <CircleDashed className="h-3.5 w-3.5 flex-shrink-0 text-amber-500" />;
+  const { Glyph, label, tone } =
+    status === "ready"
+      ? { Glyph: CheckCircle2, label: "Lane ready", tone: "text-green-500" }
+      : status === "not-ready"
+        ? { Glyph: XCircle, label: "Lane not ready", tone: "text-red-500" }
+        : // `incomplete` is deliberately NOT the same glyph as a failure: a
+          // lane nobody could evaluate and a lane that failed lead to
+          // different work.
+          {
+            Glyph: CircleDashed,
+            label: "Lane incomplete",
+            tone: "text-amber-500",
+          };
+  return (
+    <span role="img" aria-label={label} className="flex-shrink-0">
+      <Glyph className={`h-3.5 w-3.5 ${tone}`} />
+    </span>
+  );
 }
 
 function laneTitle(lane: string): string {
@@ -236,11 +252,13 @@ export function DirectoryReadinessSection({
   const [override, setOverride] = useState<boolean | null>(null);
   const expanded = override ?? state.status !== "idle";
 
+  // A local result's lane STATUS lives on the lane, not on its coverage — the
+  // SDK deliberately separates the verdict from what was looked at. Casting the
+  // coverage across would have dropped `status` entirely and rendered every
+  // local lane amber, reporting a passing server as `incomplete`.
   const lanes: ReadinessLaneCoverage[] =
     state.run?.lanes ??
-    (state.result?.lanes.map((lane) => lane.coverage) as
-      | ReadinessLaneCoverage[]
-      | undefined) ??
+    state.result?.lanes.map((lane) => ({ ...lane.coverage, status: lane.status })) ??
     [];
 
   return (
