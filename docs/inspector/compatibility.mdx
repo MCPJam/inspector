@@ -49,6 +49,14 @@ Findings carry a provenance label that tells you how confident the data is:
 | **Observed** | Stamped by a live widget render run (see below). |
 | **Best-effort preset** | Unverified — the preset was authored without a live capture. |
 
+## Can I Use comparison matrix
+
+The **Can I Use** view (accessible from the Compatibility page) shows a per-field breakdown across all hosts. A few things to know about how values are displayed:
+
+- **Apps · Styles** — A subsection under Apps shows the actual CSS custom-property value each host sends for every MCP Apps style variable (colors, fonts, radii, shadows). For hosts that resolve their tokens per theme, the cell shows separate **LIGHT** and **DARK** values when they differ, or a single value when they agree. This lets you compare `light-dark(rgba(255,255,255,1), …)` against `#fff` directly.
+- **Client version** — Shown at the top of the Protocol section. Every protocol row below it describes facts captured from that specific build of the client.
+- **Not supported vs. —** — A cell showing an **unsupported** chip means a probe ran and the host sent nothing for that field. An em dash (—) means no probe has been run for that host yet. The distinction matters: absence of evidence is not evidence of absence.
+
 ## Live widget rendering
 
 For hosts that render MCP Apps widgets, a **Run live** button appears next to the host row. Clicking it invokes the server's widget tool inside an emulated version of that host and captures the result inline. A live run upgrades the finding provenance from `assumed` or `probe` to `observed`, giving you the highest-confidence verdict available.
