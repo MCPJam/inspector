@@ -34,6 +34,8 @@ import {
   type ShowServersPayload,
 } from "./show-servers.js";
 import type {
+  PlatformClaudeReadinessRun,
+  PlatformClaudeReadinessRunRequest,
   PlatformScenarioSummary,
   PlatformScenarioDetail,
   PlatformChatSession,
@@ -6174,6 +6176,184 @@ export const deleteProjectServerOperation: PlatformOperation<
   },
 };
 
+// ── Claude directory readiness ──────────────────────────────────────────────
+//
+// Grading a connector against Anthropic's connector-directory requirements.
+// NOT a fifth conformance suite: readiness carries no conformance score, never
+// enters the pooled number, and composes the existing protocol/apps verdicts
+// as evidence rather than re-deriving them.
+//
+// The URL is not an input on purpose. A run grades the connector as it is
+// SAVED, so it comes off the server record — an agent that could name a URL
+// here would file a grade against a connector the project never described.
+// Grading an arbitrary URL is what the CLI is for; it runs on the operator's
+// own machine.
+
+const claudeReadinessRequestInput = projectScopedInput.extend({
+  serverId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The saved server to grade. Its URL is what gets graded."),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Replay protection. A retried request that started a second run would dial the target twice; with a key, the second call joins the first.",
+    ),
+});
+
+export type RequestClaudeReadinessRunInput = z.infer<
+  typeof claudeReadinessRequestInput
+>;
+
+export const requestClaudeReadinessRunOperation: PlatformOperation<
+  RequestClaudeReadinessRunInput,
+  { project: SelectedProjectInfo; run: PlatformClaudeReadinessRunRequest }
+> = {
+  name: "request_claude_readiness_run",
+  title: "Grade a server for Claude's connector directory",
+  description:
+    "Queue a Claude directory-readiness grade for a saved MCP server. Asynchronous: this returns as soon as the run is queued — poll get_claude_readiness_run for the verdict. The run dials the connector, walks its redirects and auth metadata, and opens one MCP connection, so it takes tens of seconds. Nothing here submits anything to Anthropic; it reports what a submission would be graded on.",
+  readOnly: false,
+  // SPEND, not `none`: a run costs hosted execution and, more importantly,
+  // sends traffic to a third party's server. An agent should be able to see
+  // that this is not a free read before it fires.
+  risk: "spend",
+  inputSchema: claudeReadinessRequestInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const run = await client.requestClaudeReadinessRun(
+      {
+        projectId: project.id,
+        serverId: input.serverId,
+        ...(input.idempotencyKey !== undefined
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const claudeReadinessListInput = projectScopedInput.extend({
+  serverId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Only runs for this server."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("How many runs to return, newest first. Defaults to 25."),
+});
+
+export type ListClaudeReadinessRunsInput = z.infer<
+  typeof claudeReadinessListInput
+>;
+
+export const listClaudeReadinessRunsOperation: PlatformOperation<
+  ListClaudeReadinessRunsInput,
+  {
+    project: SelectedProjectInfo;
+    runs: PlatformPage<PlatformClaudeReadinessRun>;
+  }
+> = {
+  name: "list_claude_readiness_runs",
+  title: "List Claude readiness runs",
+  description:
+    "List recent Claude directory-readiness runs for a project, newest first. Each carries its lane statuses and the coverage behind them.",
+  readOnly: true,
+  inputSchema: claudeReadinessListInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const runs = await client.listClaudeReadinessRuns(
+      {
+        projectId: project.id,
+        ...(input.serverId !== undefined ? { serverId: input.serverId } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), runs };
+  },
+};
+
+const claudeReadinessRunScopedInput = projectScopedInput.extend({
+  runId: z.string().trim().min(1),
+});
+
+export type ClaudeReadinessRunScopedInput = z.infer<
+  typeof claudeReadinessRunScopedInput
+>;
+
+export const getClaudeReadinessRunOperation: PlatformOperation<
+  ClaudeReadinessRunScopedInput,
+  { project: SelectedProjectInfo; run: PlatformClaudeReadinessRun }
+> = {
+  name: "get_claude_readiness_run",
+  title: "Get a Claude readiness run",
+  description:
+    "Read one readiness run. `status` is the run's lifecycle (pending, running, completed, failed, cancelled); `overallStatus` is the verdict and is absent until the run finishes — which is what distinguishes 'still running' from 'ran, and the answer is incomplete'. Each lane reports how many checks were evaluated, and `missingInputs` names what would close a gap.",
+  readOnly: true,
+  inputSchema: claudeReadinessRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const run = await client.getClaudeReadinessRun(
+      { projectId: project.id, runId: input.runId },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+export const cancelClaudeReadinessRunOperation: PlatformOperation<
+  ClaudeReadinessRunScopedInput,
+  { project: SelectedProjectInfo; id: string; cancelled: boolean }
+> = {
+  name: "cancel_claude_readiness_run",
+  title: "Cancel a Claude readiness run",
+  description:
+    "Stop a run that is still queued or executing. It reaches a terminal `cancelled` status and stays in the project's history: someone who stopped a run has learned nothing about their server, so it is never reported as a failure of the connector. Errors if the run already finished.",
+  readOnly: false,
+  // Terminates in-flight work, same as cancelling an eval run. Declared here
+  // rather than added to the legacy list, so the surfaces derive it.
+  risk: "destructive",
+  inputSchema: claudeReadinessRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.cancelClaudeReadinessRun(
+      { projectId: project.id, runId: input.runId },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), ...result };
+  },
+};
+
 /** Any catalog operation with its input/output types erased. */
 export type AnyPlatformOperation = PlatformOperation<any, unknown>;
 
@@ -8756,6 +8936,10 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
+  requestClaudeReadinessRunOperation,
+  listClaudeReadinessRunsOperation,
+  getClaudeReadinessRunOperation,
+  cancelClaudeReadinessRunOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,

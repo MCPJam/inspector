@@ -28,6 +28,7 @@ import { AGENT_API_SYSTEM_PROMPT } from "../agent.js";
 import {
   ALL_OPERATIONS,
   callServerToolOperation,
+  cancelClaudeReadinessRunOperation,
   cancelEvalRunOperation,
   checkHostCompatibilityOperation,
   createEvalCaseOperation,
@@ -36,9 +37,12 @@ import {
   createEvalSuiteOperation,
   diagnoseServerOperation,
   generateEvalCasesOperation,
+  getClaudeReadinessRunOperation,
   getEnvironmentOperation,
   getEvalIterationTraceOperation,
   getServerPromptOperation,
+  listClaudeReadinessRunsOperation,
+  requestClaudeReadinessRunOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
@@ -844,6 +848,59 @@ describe("agent op registry", () => {
     );
   });
 
+  it("says a readiness run SPENDS, and that it starts rather than authors", () => {
+    // The default approval copy is worded around cost, so a run that consumes
+    // hosted execution and dials a third party's server must not inherit a
+    // prompt that leaves the cost unstated. `start`, not `generate`: approval
+    // begins work that outlives the click and is polled for afterwards.
+    const meta = proposalMetaFor(requestClaudeReadinessRunOperation.name);
+    expect(meta.kind).toBe("start");
+    expect(meta.severityFor({ serverId: "srv_1" })).toBe("spend");
+    expect(meta.description({ serverId: "srv_1" })).toBe(
+      "Grade server srv_1 against Claude's directory requirements"
+    );
+    // Same rule as every other gated op: severity is stated, not derived from
+    // `risk` — but where they agree, they must actually agree.
+    expect(requestClaudeReadinessRunOperation.risk).toBe("spend");
+  });
+
+  it("names no server when the input carries none", () => {
+    // `describe` runs on VALIDATED input, so `serverId` is always present in
+    // practice. The fallback exists so a schema change can never print
+    // "Grade server undefined" next to an approval button.
+    expect(
+      proposalMetaFor(requestClaudeReadinessRunOperation.name).description({})
+    ).toBe(
+      "Grade server (unnamed) against Claude's directory requirements"
+    );
+  });
+
+  it("proposes a readiness cancel without claiming it costs anything", () => {
+    // Cancelling spends nothing and produces nothing to link to, so it carries
+    // neither a severity nor a resource: the host's neutral copy is honest.
+    const meta = proposalMetaFor(cancelClaudeReadinessRunOperation.name);
+    expect(meta.kind).toBe("cancel");
+    expect(meta.severityFor({ runId: "ckr_1" })).toBeUndefined();
+    expect(meta.description({ runId: "ckr_1" })).toBe(
+      "Cancel readiness run ckr_1"
+    );
+  });
+
+  it("leaves both readiness READS ungated", () => {
+    // Reading a grade neither spends nor reaches the target server. Gating it
+    // would put an approval button in front of polling, which is how a person
+    // learns to approve without reading.
+    const direct = new Set(AGENT_API_OPERATIONS.map((op) => op.name));
+    for (const operation of [
+      listClaudeReadinessRunsOperation,
+      getClaudeReadinessRunOperation,
+    ]) {
+      expect(direct.has(operation.name), operation.name).toBe(true);
+      expect(gatedEntryFor(operation.name), operation.name).toBeUndefined();
+      expect(operation.readOnly, operation.name).toBe(true);
+    }
+  });
+
   it("de-duplicates prompt notes and preserves registry order", () => {
     expect(new Set(AGENT_OP_PROMPT_NOTES).size).toBe(
       AGENT_OP_PROMPT_NOTES.length
@@ -885,6 +942,16 @@ describe("tier derives from operation.risk", () => {
   const TIER_EXCEPTIONS: Readonly<
     Record<string, { tier: Placement; reason: string }>
   > = {
+    cancel_claude_readiness_run: {
+      tier: "gated",
+      reason:
+        "Destructive would derive excluded, and that is the wrong answer for " +
+        "the same reason it was wrong for `cancel_journey_run`: this is the " +
+        "spend-STOPPER. Excluding it would let the agent propose starting a " +
+        "run that dials a third party's server and then have no way to " +
+        "propose stopping it. Nothing is removed — the run reaches a terminal " +
+        "`cancelled` status and stays in the project's history.",
+    },
     cancel_journey_run: {
       tier: "gated",
       reason:

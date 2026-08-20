@@ -482,6 +482,25 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
+    id: "claude-readiness",
+    canonicalPath: "/claude-readiness",
+    routePatterns: ["claude-readiness"],
+    navSegments: ["claude-readiness"],
+    title: "Claude readiness",
+    purpose:
+      "Grade a connector against Anthropic's requirements for the Claude connectors directory, and see what would have to change before submitting it.",
+    userActivities: [
+      "Grade a connected server for directory readiness",
+      "Read the unmet requirements and what each one cites",
+    ],
+    agentTools: {
+      kind: "none",
+      reason:
+        "The readiness OPERATIONS are already exposed on the platform surface (request/list/get/cancel a hosted run), so an agent reaches this capability there rather than by driving this screen. Adding screen tools would give it a second, weaker path to the same thing.",
+    },
+    showInAtlas: true,
+  },
+  {
     id: "compatibility",
     canonicalPath: "/compatibility",
     routePatterns: ["compatibility"],

@@ -526,6 +526,102 @@ describe("the JWT audience is evidence, never a verdict", () => {
   });
 });
 
+describe("an unreachable host is not a connector that broke a rule", () => {
+  // Both statuses are `not-found`; only one of them is the server's fault.
+  const unreachable: ClaudeAuthEvidence = {
+    enteredUrl: URL_UNDER_TEST,
+    // No probe completed — the transport never got an answer.
+    prm: {
+      discoveredVia: "not-found",
+      fetchError: "fetch failed",
+      reachedServer: false,
+    },
+  };
+
+  it("reports PRM discovery unevaluated when nothing answered", () => {
+    const output = runClaudeAuthChecks(unreachable, STAMP);
+    const discoverable = byId(output, "claude.auth.prm-discoverable");
+    expect(discoverable.status).toBe("not-evaluated");
+    // The reason has to carry the transport error, or the reader is left to
+    // guess whether the host is down, firewalled, or simply misspelled.
+    expect(discoverable.notEvaluatedReason).toMatch(/fetch failed/);
+    expect(
+      byId(output, "claude.auth.prm-resource-matches-entered-url").status,
+    ).toBe("not-evaluated");
+  });
+
+  it("still fails a server that answered and published nothing", () => {
+    const answered = runClaudeAuthChecks(
+      {
+        ...unreachable,
+        prm: {
+          discoveredVia: "not-found",
+          fetchError: "https://mcp.example.com/.well-known/… answered 404",
+          reachedServer: true,
+        },
+      },
+      STAMP,
+    );
+    expect(byId(answered, "claude.auth.prm-discoverable").status).toBe(
+      "violated",
+    );
+  });
+
+  it("grades evidence that predates the field by the stricter reading", () => {
+    // `reachedServer: undefined` means the evidence did not record it. Treating
+    // that as "unreachable" would turn every hand-built fixture into a pass.
+    const legacy = runClaudeAuthChecks(
+      { enteredUrl: URL_UNDER_TEST, prm: { discoveredVia: "not-found" } },
+      STAMP,
+    );
+    expect(byId(legacy, "claude.auth.prm-discoverable").status).toBe("violated");
+  });
+});
+
+describe("a refused issuer is reported as a metadata defect, not an outage", () => {
+  it("names the refusal in the remediation", () => {
+    const finding = byId(
+      runClaudeAuthChecks(
+        {
+          ...HEALTHY,
+          firstAuthorizationServer: {
+            issuer: "http://169.254.169.254/",
+            reachable: false,
+            fetchError: "issuer must be an https URL",
+            rejected: "issuer must be an https URL",
+          },
+        },
+        STAMP,
+      ),
+      "claude.auth.first-authorization-server-usable",
+    );
+    expect(finding.status).toBe("violated");
+    // "Unreachable" would send the submitter to look at DNS and firewalls for
+    // a problem with what their own metadata says.
+    expect(finding.remediation).toMatch(/no conforming client will fetch/);
+    expect(finding.details?.rejected).toBe("issuer must be an https URL");
+  });
+
+  it("keeps the plain wording when the fetch was tried and failed", () => {
+    const finding = byId(
+      runClaudeAuthChecks(
+        {
+          ...HEALTHY,
+          firstAuthorizationServer: {
+            issuer: "https://auth.example.com",
+            reachable: false,
+            fetchError: "connect ETIMEDOUT",
+          },
+        },
+        STAMP,
+      ),
+      "claude.auth.first-authorization-server-usable",
+    );
+    expect(finding.status).toBe("violated");
+    expect(finding.remediation).not.toMatch(/no conforming client/);
+  });
+});
+
 describe("capturing the resource indicators a flow actually sent", () => {
   const TARGET = "https://mcp.example.com/mcp";
 

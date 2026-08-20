@@ -37,6 +37,12 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          # `actions/checkout` writes the job token into `.git/config` unless
+          # told not to. This job reads the tree and fetches public docs; it
+          # never pushes, so a stored credential has no user and every later
+          # step in the job can read it.
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@v4

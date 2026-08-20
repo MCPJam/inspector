@@ -158,6 +158,12 @@ describe("workspace tool catalog", () => {
       // The GitHub Checks READ. Its connect sibling is in
       // EXCLUDED_FROM_WORKSPACE: it reaches a shared repository.
       "list_eval_check_repos",
+      // Claude directory readiness. Both writes require approval; see
+      // APPROVAL_REQUIRED_IDS.
+      "request_claude_readiness_run",
+      "list_claude_readiness_runs",
+      "get_claude_readiness_run",
+      "cancel_claude_readiness_run",
       "list_scenarios",
       "get_scenario",
       "list_chat_sessions",

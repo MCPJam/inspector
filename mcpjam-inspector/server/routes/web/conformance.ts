@@ -19,6 +19,7 @@ import {
   UnsupportedTransportError,
   completeOAuthConformance,
   runAppsConformance,
+  runClaudeDirectoryReadiness,
   runProtocolConformance,
   runTasksConformance,
   startOAuthConformance,
@@ -237,6 +238,47 @@ conformanceWeb.post("/protocol", async (c) =>
       const { result } = await runProtocolConformance({
         ...resolved,
         protocolVersion: parsed.protocolVersion,
+      });
+      return { success: true, result };
+    } catch (error) {
+      throw toWebError(error);
+    }
+  })
+);
+
+// ── POST /claude-readiness ──────────────────────────────────────────────
+//
+// NOT a fifth suite — see the note on `runClaudeDirectoryReadiness`. Mounted
+// beside the four because it resolves the same hosted server config and needs
+// the same guarded transport, which matters more here than for any of them:
+// readiness follows the TARGET's own metadata, so every URL after the first is
+// chosen by the server being graded.
+
+const claudeReadinessSchema = z
+  .object({
+    /**
+     * The listing metadata a submission would carry. Optional, and its absence
+     * is reported as a missing input rather than a failure — a developer who
+     * has not written their listing yet still wants to know about their
+     * transport.
+     */
+    submissionProfile: z.unknown().optional(),
+  })
+  .passthrough(); // project/guest fields pass through to the config resolver
+
+conformanceWeb.post("/claude-readiness", async (c) =>
+  handleRoute(c, async () => {
+    const bearerToken = assertBearerToken(c);
+    const body = await readJsonBody<Record<string, unknown>>(c);
+    const resolved = await resolveHostedHttpConfig(c, bearerToken, body);
+    const parsed = parseWithSchema(claudeReadinessSchema, body);
+
+    try {
+      const { result } = await runClaudeDirectoryReadiness({
+        ...resolved,
+        ...(parsed.submissionProfile !== undefined
+          ? { submissionProfile: parsed.submissionProfile }
+          : {}),
       });
       return { success: true, result };
     } catch (error) {

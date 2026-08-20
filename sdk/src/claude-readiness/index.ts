@@ -112,6 +112,14 @@ export {
   CLAUDE_TOOL_LISTING_INPUT,
   runClaudeToolChecks,
 } from "./checks/tools.js";
+export {
+  CLAUDE_EXPERIENCE_BUDGETS,
+  runClaudeExperienceChecks,
+} from "./checks/experience.js";
+export type {
+  ClaudeBrowserEvidence,
+  ClaudeExperienceEvidence,
+} from "./checks/experience.js";
 export { runClaudeEndpointChecks } from "./checks/endpoint.js";
 export type {
   ClaudeEndpointEvidence,

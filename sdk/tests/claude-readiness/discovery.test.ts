@@ -24,16 +24,23 @@ const servers: http.Server[] = [];
 
 async function start(
   handler: http.RequestListener,
-): Promise<{ origin: string; hits: string[] }> {
+): Promise<{
+  origin: string;
+  hits: string[];
+  /** Request headers, index-aligned with `hits`. */
+  headers: Array<Record<string, string | undefined>>;
+}> {
   const hits: string[] = [];
+  const headers: Array<Record<string, string | undefined>> = [];
   const server = http.createServer((req, res) => {
     hits.push(`${req.method} ${req.url}`);
+    headers.push({ ...req.headers } as Record<string, string | undefined>);
     handler(req, res);
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
-  return { origin: `http://127.0.0.1:${port}`, hits };
+  return { origin: `http://127.0.0.1:${port}`, hits, headers };
 }
 
 /** An origin nothing listens on: opened to claim a port, then closed. */
@@ -472,5 +479,336 @@ describe("the transport is the caller's", () => {
     for (const [input] of spy.mock.calls) {
       expect(String(input)).toContain("mcp.example.com");
     }
+  });
+});
+
+describe("whether anything answered is recorded separately from what it said", () => {
+  // `discoveredVia: "not-found"` covers two different worlds, and the checks
+  // grade them differently: a server that answered 404 publishes no metadata,
+  // a host that never answered was never asked.
+  it("records reachedServer: false when nothing on the origin answers", async () => {
+    const origin = await closedLoopbackOrigin();
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+      timeoutMs: 2_000,
+    });
+    expect(evidence.prm?.discoveredVia).toBe("not-found");
+    expect(evidence.prm?.reachedServer).toBe(false);
+  });
+
+  it("records reachedServer: true when the server answers 404", async () => {
+    const { origin } = await start((_req, res) => {
+      res.writeHead(404);
+      res.end();
+    });
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+    });
+    expect(evidence.prm?.discoveredVia).toBe("not-found");
+    expect(evidence.prm?.reachedServer).toBe(true);
+  });
+
+  it("records reachedServer: true alongside a successful discovery", async () => {
+    const { origin } = await start((req, res) => {
+      if (req.url === "/.well-known/oauth-protected-resource/mcp") {
+        json(res, 200, { resource: "x", authorization_servers: [] });
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+    });
+    expect(evidence.prm?.discoveredVia).toBe("well-known-path-suffixed");
+    expect(evidence.prm?.reachedServer).toBe(true);
+  });
+});
+
+describe("the caller's credentials go to the connector and nowhere else", () => {
+  // A `--header "Authorization: …"` is a credential for the SERVER UNDER TEST.
+  // Every other host discovery dials is named by that server's own documents,
+  // so replaying the header onto them would let any target collect it.
+  it("never sends caller headers to the authorization server's origin", async () => {
+    // A STUB transport rather than a socket: an authorization server on
+    // another origin has to be `https` to be dialled at all, and what this
+    // proves is about headers, not TLS.
+    // ORIGIN, never a string prefix: `"https://auth.example".startsWith` also
+    // matches `https://auth.example.attacker.test`, and a test that routes on
+    // one teaches the pattern that lets a real check be bypassed.
+    const seen: Array<{ origin: string; url: string; authorization: string | null }> =
+      [];
+    const fetchFn: typeof fetch = async (input, init) => {
+      const url = String(input);
+      const headers = new Headers(init?.headers);
+      seen.push({
+        origin: new URL(url).origin,
+        url,
+        authorization: headers.get("authorization"),
+      });
+      if (new URL(url).pathname === "/.well-known/oauth-protected-resource/mcp") {
+        return Response.json({
+          resource: "https://connector.example/mcp",
+          // A DIFFERENT origin, which is entirely legitimate for an
+          // authorization server and is exactly why same-origin cannot be the
+          // rule for reaching one.
+          authorization_servers: ["https://auth.example"],
+        });
+      }
+      if (new URL(url).origin === "https://auth.example") {
+        return Response.json({
+          issuer: "https://auth.example",
+          authorization_endpoint: "https://auth.example/authorize",
+          token_endpoint: "https://auth.example/token",
+        });
+      }
+      return new Response(null, {
+        status: 401,
+        headers: { "www-authenticate": "Bearer" },
+      });
+    };
+
+    await discoverClaudeAuthEvidence({
+      enteredUrl: "https://connector.example/mcp",
+      fetchFn,
+      headers: { authorization: "Bearer super-secret" },
+    });
+
+    const authRequests = seen.filter(
+      (entry) => entry.origin === "https://auth.example",
+    );
+    expect(authRequests.length).toBeGreaterThan(0);
+    expect(authRequests.every((entry) => entry.authorization === null)).toBe(
+      true,
+    );
+    // And the connector's own well-known DID carry it, so this is scoping
+    // rather than a header that stopped being sent at all.
+    expect(
+      seen.some(
+        (entry) =>
+          entry.origin === "https://connector.example" &&
+          entry.authorization === "Bearer super-secret",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not send them on the unauthenticated probe either", async () => {
+    // The probe's whole question is "what does this server do for a client
+    // with no credentials". Answering it with a credentialed request produced
+    // a 200 that `servedWithoutCredentials` recorded as "authless".
+    const connector = await start((_req, res) => {
+      json(res, 200, { jsonrpc: "2.0", id: 1, result: {} });
+    });
+
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${connector.origin}/mcp`,
+      fetchFn: fetch,
+      headers: { authorization: "Bearer super-secret" },
+    });
+
+    const probe = connector.headers[0];
+    expect(probe?.authorization).toBeUndefined();
+    // And the classification stands on a request that really had none.
+    expect(evidence.unauthenticated?.servedWithoutCredentials).toBe(true);
+  });
+
+  it("still sends them to the connector's own well-known path", async () => {
+    // Same origin as the connector: no third party sees it, and a connector
+    // that gates its own metadata behind a header stays reachable.
+    const connector = await start((req, res) => {
+      if (req.url === "/.well-known/oauth-protected-resource/mcp") {
+        json(res, 200, { resource: "x", authorization_servers: [] });
+        return;
+      }
+      res.writeHead(401, { "www-authenticate": "Bearer" });
+      res.end();
+    });
+
+    await discoverClaudeAuthEvidence({
+      enteredUrl: `${connector.origin}/mcp`,
+      fetchFn: fetch,
+      headers: { "x-tenant": "acme" },
+    });
+
+    const wellKnown = connector.headers.find(
+      (_entry, index) =>
+        connector.hits[index] ===
+        "GET /.well-known/oauth-protected-resource/mcp",
+    );
+    expect(wellKnown?.["x-tenant"]).toBe("acme");
+  });
+});
+
+describe("an authorization server issuer is validated before it is dialled", () => {
+  async function evidenceForIssuer(issuer: string) {
+    const connector = await start((req, res) => {
+      if (req.url === "/.well-known/oauth-protected-resource/mcp") {
+        json(res, 200, { resource: "x", authorization_servers: [issuer] });
+        return;
+      }
+      res.writeHead(401, { "www-authenticate": "Bearer" });
+      res.end();
+    });
+    return {
+      connector,
+      evidence: await discoverClaudeAuthEvidence({
+        enteredUrl: `${connector.origin}/mcp`,
+        fetchFn: fetch,
+      }),
+    };
+  }
+
+  it.each([
+    ["a plaintext third-party host", "http://169.254.169.254/"],
+    ["a non-http scheme", "file:///etc/passwd"],
+    ["credentials in the URL", "https://user:pw@auth.example.com"],
+    ["a query string", "https://auth.example.com/?next=x"],
+  ])("refuses %s without fetching it", async (_label, issuer) => {
+    const { evidence } = await evidenceForIssuer(issuer);
+    expect(evidence.firstAuthorizationServer?.reachable).toBe(false);
+    // `rejected` rather than only `fetchError`: "we would not fetch this" is a
+    // different problem from "we fetched it and it failed", and reporting the
+    // second sends the submitter to look at DNS.
+    expect(evidence.firstAuthorizationServer?.rejected).toBeTruthy();
+    expect(evidence.firstAuthorizationServer?.metadataUrl).toBeUndefined();
+  });
+
+  it("allows plaintext when the issuer IS the connector's own origin", async () => {
+    // A developer testing their own server over loopback http. Nothing leaves
+    // the origin the caller already typed, so refusing it would only break
+    // local development without protecting anything.
+    let origin = "";
+    const connector = await start((req, res) => {
+      if (req.url === "/.well-known/oauth-protected-resource/mcp") {
+        json(res, 200, { resource: "x", authorization_servers: [origin] });
+        return;
+      }
+      if (req.url?.startsWith("/.well-known/oauth-authorization-server")) {
+        json(res, 200, {
+          issuer: origin,
+          authorization_endpoint: `${origin}/authorize`,
+          token_endpoint: `${origin}/token`,
+          code_challenge_methods_supported: ["S256"],
+        });
+        return;
+      }
+      res.writeHead(401, { "www-authenticate": "Bearer" });
+      res.end();
+    });
+    origin = connector.origin;
+
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${connector.origin}/mcp`,
+      fetchFn: fetch,
+    });
+    expect(evidence.firstAuthorizationServer?.rejected).toBeUndefined();
+    expect(evidence.firstAuthorizationServer?.reachable).toBe(true);
+  });
+
+  it("refuses plaintext on a different port of the same host", async () => {
+    // Origin, not host: a scheme or port change is a different origin, and a
+    // credential that travels between them has left the place it belongs.
+    const { evidence } = await evidenceForIssuer("http://127.0.0.1:9/");
+    expect(evidence.firstAuthorizationServer?.rejected).toBeTruthy();
+  });
+});
+
+describe("a body that fails to read is still a server that answered", () => {
+  it("keeps the response status when the body read throws", async () => {
+    // `reachedServer` is decided on this exact difference. Reporting 0 for a
+    // body-read failure turned a PRM failure into "we never asked".
+    const fetchFn: typeof fetch = async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new Error("connection reset mid-body"));
+          },
+        }),
+        { status: 404, headers: { "content-type": "application/json" } },
+      );
+
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: "https://mcp.example.com/mcp",
+      fetchFn,
+    });
+    expect(evidence.prm?.discoveredVia).toBe("not-found");
+    expect(evidence.prm?.reachedServer).toBe(true);
+  });
+});
+
+describe("a cancelled run stops dialling the target", () => {
+  // The point is the TARGET, not our bookkeeping. A run that keeps probing
+  // after the person who started it pressed cancel is traffic nobody asked
+  // for and nobody will read.
+  it("issues nothing once the signal is already aborted", async () => {
+    const { origin, hits } = await start((_req, res) => {
+      res.writeHead(200);
+      res.end();
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    const evidence = await traceConnectorRedirects({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+      signal: controller.signal,
+    });
+
+    expect(hits).toEqual([]);
+    expect(evidence.redirectChain).toEqual([]);
+  });
+
+  it("stops walking a redirect chain mid-way", async () => {
+    // Aborted after the first hop COMPLETED: the trace returns what it has
+    // rather than following the rest, and the endpoint checks read a short
+    // chain the same way they read any other partial evidence.
+    const controller = new AbortController();
+    const { origin, hits } = await start((_req, res) => {
+      res.writeHead(302, { location: "/next" });
+      res.end();
+    });
+    // Aborting from the client side, once the hop is recorded, so the test
+    // turns on the loop's own check rather than on a server-side race.
+    const fetchFn: typeof fetch = async (input, init) => {
+      const response = await fetch(input as never, init as never);
+      controller.abort();
+      return response;
+    };
+
+    const evidence = await traceConnectorRedirects({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn,
+      signal: controller.signal,
+    });
+
+    expect(hits).toEqual(["HEAD /mcp"]);
+    expect(evidence.redirectChain).toHaveLength(1);
+  });
+
+  it("aborts a request in flight rather than waiting out its timeout", async () => {
+    // The per-request timeout is the ceiling, not the mechanism: a cancel that
+    // only stopped scheduling would still hold a socket open on somebody
+    // else's server for the rest of the budget.
+    const controller = new AbortController();
+    const { origin } = await start((_req, res) => {
+      // Never answers. The abort below is the only thing that ends this.
+      setTimeout(() => controller.abort(), 10).unref?.();
+      void res;
+    });
+
+    const started = Date.now();
+    const evidence = await discoverClaudeAuthEvidence({
+      enteredUrl: `${origin}/mcp`,
+      fetchFn: fetch,
+      // Far longer than the abort, so finishing fast proves the abort ended it.
+      timeoutMs: 30_000,
+      signal: controller.signal,
+    });
+
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(evidence.unauthenticated).toBeUndefined();
   });
 });

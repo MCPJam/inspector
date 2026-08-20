@@ -34,6 +34,7 @@ import swarms from "./swarms.js";
 import swarmInsights from "./swarm-insights.js";
 import swarmGenerateV1 from "./swarm-generate.js";
 import scenarios from "./scenarios.js";
+import claudeReadiness from "./claude-readiness.js";
 import userTesting from "./user-testing.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
@@ -143,6 +144,7 @@ v1.route("/", swarmInsights);
 // and the existing scenario guest GETs (which share-link flows depend on) stay
 // exactly as they are until a guest security review says otherwise.
 v1.route("/", scenarios);
+v1.route("/", claudeReadiness);
 // User testing — everything you do with a scenario ONCE IT EXISTS: read what
 // it produced, and control who can reach it. `scenarios.ts` above owns
 // publishing (keyed by environment, because the scenario does not exist yet);

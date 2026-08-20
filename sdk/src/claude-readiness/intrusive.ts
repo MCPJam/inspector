@@ -539,6 +539,38 @@ export interface ClaudeIntrusiveProbeOptions {
 }
 
 /**
+ * Why a `registration_client_uri` must not be dialled, or `undefined` when it
+ * is fine.
+ *
+ * Returns the reason rather than a boolean so the caller can report WHY the
+ * cleanup did not happen. "We refused to fetch this" and "the DELETE failed"
+ * are different facts about the server under test, and collapsing them would
+ * hide a metadata defect behind an apparent network error.
+ */
+function rejectOffOriginManagementUri(
+  managementUri: string,
+  registrationEndpoint: string,
+): string | undefined {
+  let candidate: URL;
+  let registration: URL;
+  try {
+    candidate = new URL(managementUri);
+    registration = new URL(registrationEndpoint);
+  } catch {
+    return "the server issued an unparseable `registration_client_uri`";
+  }
+  if (candidate.username || candidate.password) {
+    return "`registration_client_uri` must not carry credentials in the URL";
+  }
+  // Origin, not hostname: a downgrade to http, or a hop to another port on the
+  // same host, is still somewhere the registration access token should not go.
+  if (candidate.origin !== registration.origin) {
+    return `refused to delete at ${candidate.origin}: \`registration_client_uri\` must be on the registration endpoint's own origin (${registration.origin})`;
+  }
+  return undefined;
+}
+
+/**
  * Register a throwaway client and delete it again.
  *
  * The `authorization` parameter is the armed mode itself: the probe cannot be
@@ -612,6 +644,29 @@ export async function probeDynamicRegistration(
       status: response.status,
       cleanedUp: false,
       cleanupError: "the server issued no `registration_client_uri`",
+    };
+  }
+
+  // The one URL in this probe the SERVER chooses. Everything else is an
+  // operator-supplied endpoint; `registration_client_uri` arrives in the
+  // registration response body, and we are about to send it a DELETE carrying
+  // the registration access token. Unbound, a hostile server answers
+  // `http://169.254.169.254/…` and this dials the operator's link-local
+  // metadata service with a credential attached. RFC 7592 §3 has the client
+  // configuration endpoint issued BY the authorization server, so it belongs
+  // on that server's origin — and refusing is reported rather than skipped,
+  // because a client we could not delete is one we left behind.
+  const offOrigin = rejectOffOriginManagementUri(
+    registrationClientUri,
+    options.registrationEndpoint,
+  );
+  if (offOrigin) {
+    return {
+      attempted: true,
+      status: response.status,
+      registrationClientUri,
+      cleanedUp: false,
+      cleanupError: offOrigin,
     };
   }
 

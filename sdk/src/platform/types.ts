@@ -2354,6 +2354,73 @@ export interface PlatformUserTestingInsightsRequested {
  * dead end on every surface that is not a browser: the caller is told to
  * re-send with a `serverId` and has no way to discover which ids exist.
  */
+/**
+ * One lane of a readiness grade, as the run row carries it.
+ *
+ * Coverage travels beside the status because a lane with no violations and
+ * nothing evaluated is not a pass, and the numbers are what say so.
+ */
+export interface PlatformClaudeReadinessLane {
+  lane: string;
+  status: "ready" | "not-ready" | "incomplete";
+  evaluated: number;
+  notEvaluated: number;
+  notApplicable: number;
+  /** Named inputs that would let this lane be graded, e.g. `submissionProfile`. */
+  missingInputs: string[];
+}
+
+/**
+ * A Claude directory-readiness run.
+ *
+ * `status` is the RUN's lifecycle (queued, executing, finished); `overallStatus`
+ * is the GRADE, and is absent until a run finishes. Keeping them apart is what
+ * lets a caller tell "still running" from "ran, and the answer is incomplete".
+ */
+export interface PlatformClaudeReadinessRun {
+  id: string;
+  serverUrl: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  overallStatus?: "ready" | "not-ready" | "incomplete";
+  lanes: PlatformClaudeReadinessLane[];
+  authMode?: "headless" | "interactive" | "provided-token";
+  capabilities: string[];
+  intrusive: boolean;
+  attemptCount: number;
+  terminalReason?: string;
+  errorMessage?: string;
+  /** The date the graded policy corpus was pinned at. */
+  policySnapshotDate?: string;
+  engineVersion?: string;
+  /** Whether the full report blob is available for this run. */
+  hasReport: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/**
+ * The full report for a finished run: every finding, with its provenance.
+ *
+ * Typed as `unknown` rather than mirrored here, and deliberately. The findings
+ * are written by the readiness ENGINE and grow with every check added to it;
+ * the platform stores them as an opaque blob it never parses, precisely so
+ * that adding a check is not a backend migration. Restating that shape in this
+ * file would put a second definition of it behind an API version, and the two
+ * would drift the first time a check gained a field.
+ *
+ * A caller that wants it typed should parse it with the engine's own
+ * `ClaudeReadinessResult` from `@mcpjam/sdk`, which is the one definition.
+ */
+export type PlatformClaudeReadinessReport = unknown;
+
+/** The acknowledgement for a run that was just requested. */
+export interface PlatformClaudeReadinessRunRequest {
+  id: string;
+  status: "pending";
+  /** True when an idempotency key matched a run that already existed. */
+  reused: boolean;
+}
+
 export interface PlatformServerConnectionCandidate {
   id: string;
   name: string;

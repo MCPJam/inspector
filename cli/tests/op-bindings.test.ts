@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { ALL_OPERATIONS } from "@mcpjam/sdk/platform";
 import { CLI_BINDINGS } from "../src/lib/op-bindings.js";
 import { registerChatCommands } from "../src/commands/chat.js";
+import { registerClaudeReadinessCommands } from "../src/commands/claude-readiness.js";
 import { registerEnvironmentsCommands } from "../src/commands/environments.js";
 import { registerEvalCommands } from "../src/commands/eval.js";
 import { registerHostsCommands } from "../src/commands/hosts.js";
@@ -44,6 +45,7 @@ function buildPlatformProgram(): Command {
   // does not have.
   registerSwarmAuthoringCommands(program, journeys);
   registerUserTestingCommands(program);
+  registerClaudeReadinessCommands(program);
   registerImagesCommands(program);
   registerTunnelCommands(program);
   return program;

@@ -596,3 +596,129 @@ describe("CSP shape", () => {
     ).toBe("satisfied");
   });
 });
+
+describe("the report says when the design lints graded a subset", () => {
+  // The widget URI list comes from the target's tool metadata, so a run bounds
+  // how many it reads. Grading fewer widgets without saying so looks identical
+  // to a server that has fewer widgets.
+  const base = {
+    enteredUrl: "https://mcp.example.com/mcp",
+    appsSuiteRan: true,
+    tools: [
+      {
+        name: "show",
+        resourceUri: "ui://widget/show.html",
+        hasNestedField: true,
+        hasLegacyField: false,
+      },
+    ],
+    resources: [
+      {
+        uri: "ui://widget/show.html",
+        mimeType: "text/html+skybridge",
+        html: "<button>Go</button>",
+      },
+    ],
+  };
+
+  it("is satisfied when every referenced resource was read", () => {
+    const finding = runClaudeAppsChecks(base, STAMP).find(
+      (entry) => entry.id === "claude.apps.widget-resource-coverage",
+    );
+    expect(finding?.status).toBe("satisfied");
+  });
+
+  it("names the resources it did not read, without failing anything", () => {
+    const findings = runClaudeAppsChecks(
+      { ...base, unreadResourceUris: ["ui://widget/a.html", "ui://widget/b.html"] },
+      STAMP,
+    );
+    const finding = findings.find(
+      (entry) => entry.id === "claude.apps.widget-resource-coverage",
+    );
+    // Informational, and in the insights lane: a run that read three of forty
+    // widgets is a coverage fact, not a policy violation by the connector.
+    expect(finding?.status).toBe("informational");
+    expect(finding?.lane).toBe("experience-insights");
+    expect(finding?.details?.unreadResourceUris).toEqual([
+      "ui://widget/a.html",
+      "ui://widget/b.html",
+    ]);
+    expect(finding?.remediation).toMatch(/1 of 3/);
+  });
+});
+
+describe("partial widget coverage cannot produce a pass", () => {
+  // A pass on the MIME profile or the domain derivation is a statement about
+  // EVERY widget the connector advertises. One unread widget serving
+  // `text/html` is the whole finding, so a clean subset establishes nothing.
+  const base = {
+    enteredUrl: "https://mcp.example.com/mcp",
+    appsSuiteRan: true,
+    tools: [
+      {
+        name: "show",
+        resourceUri: "ui://widget/show.html",
+        hasNestedField: true,
+        hasLegacyField: false,
+      },
+    ],
+    resources: [
+      {
+        uri: "ui://widget/show.html",
+        mimeType: "text/html;profile=mcp-app",
+        html: "<button>Go</button>",
+      },
+    ],
+  };
+
+  /**
+   * A widget the connector ADVERTISES and the run did not read — which is the
+   * only way a URI reaches `unreadResourceUris` in a real run. A fixture that
+   * skipped the tool would be testing an unread resource nobody asked for.
+   */
+  const unreadWidget = {
+    name: "other",
+    resourceUri: "ui://widget/other.html",
+    hasNestedField: true,
+    hasLegacyField: false,
+  };
+
+  function byId(evidence: typeof base & { unreadResourceUris?: string[] }) {
+    const findings = runClaudeAppsChecks(evidence, STAMP);
+    return (id: string) => findings.find((finding) => finding.id === id)!;
+  }
+
+  it("passes when every referenced resource was read", () => {
+    const find = byId(base);
+    expect(find("claude.apps.html-mime-profile").status).toBe("satisfied");
+  });
+
+  it.each([
+    ["claude.apps.html-mime-profile"],
+    ["claude.apps.ui-domain-derivation"],
+  ])("withholds %s when a resource went unread", (id) => {
+    const finding = byId({
+      ...base,
+      tools: [...base.tools, unreadWidget],
+      unreadResourceUris: ["ui://widget/other.html"],
+    })(id);
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.notEvaluatedReason).toMatch(/were not read/);
+    expect(finding.details?.unreadResourceUris).toEqual([
+      "ui://widget/other.html",
+    ]);
+  });
+
+  it("leaves a violation found in the subset alone", () => {
+    // One-directional, like the runner's capability gate: an unread widget
+    // cannot make a widget that DID break the rule stop having broken it.
+    const finding = byId({
+      ...base,
+      tools: [...base.tools, unreadWidget],
+      resources: [{ uri: "ui://widget/show.html", mimeType: "text/plain" }],
+      unreadResourceUris: ["ui://widget/other.html"],
+    })("claude.apps.html-mime-profile");
+    expect(finding.status).toBe("violated");
+  });
+});

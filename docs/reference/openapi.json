@@ -1959,7 +1959,7 @@
           "Eval runs"
         ],
         "summary": "Compare a run against a baseline",
-        "description": "Compare this run against a baseline run: per-case status (`regressed`, `fixed`, `new_case`, `removed_case`, `changed`), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. Omit `baseRunId` to compare against the nearest earlier **completed** run in the same suite. Returns `404` with `details.reason` = `BASELINE_NOT_FOUND` when there is no comparable predecessor — that is an incomplete comparison, not a failing one. A scorer whose `definitionChanged` is `true` was graded by a different definition on each side, so its delta is not a regression.",
+        "description": "Compare this run against a baseline run: per-case status (`regressed`, `fixed`, `new_case`, `removed_case`, `changed`), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. Omit `baseRunId` to compare against the nearest earlier **completed** run in the same suite. Returns `404` with `details.reason` = `BASELINE_NOT_FOUND` when there is no comparable predecessor \u2014 that is an incomplete comparison, not a failing one. A scorer whose `definitionChanged` is `true` was graded by a different definition on each side, so its delta is not a regression.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -2522,7 +2522,7 @@
           "Catalog"
         ],
         "summary": "List organizations",
-        "description": "The organizations the caller belongs to — the source of the `organizationId` that `GET /projects` filters by and `POST /projects` accepts. An API key is bound to one organization and only ever sees that one. Read-only: organization, member, role and billing changes are not part of the public API.",
+        "description": "The organizations the caller belongs to \u2014 the source of the `organizationId` that `GET /projects` filters by and `POST /projects` accepts. An API key is bound to one organization and only ever sees that one. Read-only: organization, member, role and billing changes are not part of the public API.",
         "responses": {
           "200": {
             "description": "The caller's organizations.",
@@ -2922,7 +2922,7 @@
           "Eval runs"
         ],
         "summary": "Launch one run per target as a group (async)",
-        "description": "Launches ONE run per target — attached project environments, or attached named hosts — under a single **server-minted** `runGroupId`, then detaches execution and responds `202` with a per-target receipt.\n\nThis is the only endpoint with grouped-launch semantics. `POST /eval-runs` also accepts a `runGroupId`, but purely as a display label: it groups sibling rows in the UI and gives N separate launches no group treatment. Here the server bounds the fan-out (max 10 targets), validates EVERY target before launching any of them (an unattached target, a heterogeneous target list, or a target whose host selects an unavailable harness returns `400` with zero runs started), and holds exactly ONE organization concurrency slot for the whole group — released only when the last sibling finishes.\n\nTargets fan out along ONE axis: all `environmentId` or all `namedHostId`, never a mix. Duplicates are deduplicated by id, preserving order.\n\nA per-target failure does NOT abort its siblings, so read `outcome` rather than treating the `202` as \"everything started\": `started` means every target launched, `partial` means some did, `failed` means none did.\n\nSend `Idempotency-Key` (or `idempotencyKey`) to make the launch replayable: the group id is DERIVED from the key, and each target carries a run key derived from that, so a retry after a crash mid-launch returns the original run ids instead of double-launching the targets that already started.",
+        "description": "Launches ONE run per target \u2014 attached project environments, or attached named hosts \u2014 under a single **server-minted** `runGroupId`, then detaches execution and responds `202` with a per-target receipt.\n\nThis is the only endpoint with grouped-launch semantics. `POST /eval-runs` also accepts a `runGroupId`, but purely as a display label: it groups sibling rows in the UI and gives N separate launches no group treatment. Here the server bounds the fan-out (max 10 targets), validates EVERY target before launching any of them (an unattached target, a heterogeneous target list, or a target whose host selects an unavailable harness returns `400` with zero runs started), and holds exactly ONE organization concurrency slot for the whole group \u2014 released only when the last sibling finishes.\n\nTargets fan out along ONE axis: all `environmentId` or all `namedHostId`, never a mix. Duplicates are deduplicated by id, preserving order.\n\nA per-target failure does NOT abort its siblings, so read `outcome` rather than treating the `202` as \"everything started\": `started` means every target launched, `partial` means some did, `failed` means none did.\n\nSend `Idempotency-Key` (or `idempotencyKey`) to make the launch replayable: the group id is DERIVED from the key, and each target carries a run key derived from that, so a retry after a crash mid-launch returns the original run ids instead of double-launching the targets that already started.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -3447,7 +3447,7 @@
           "Eval runs"
         ],
         "summary": "Create several eval cases",
-        "description": "Adds up to 100 cases to the suite in one call — the bulk form of the single create, and the way to import a suite or convert a repo's test files without a round trip per case. Every entry needs a `title` and a non-empty `steps` array. Cases are validated together and reported individually: a `failed` entry does not roll back its committed siblings, so the response is `201` even when some entries were refused — read `failed` rather than branching on the status alone. Send an `Idempotency-Key` header to make a retry land on the same rows.",
+        "description": "Adds up to 100 cases to the suite in one call \u2014 the bulk form of the single create, and the way to import a suite or convert a repo's test files without a round trip per case. Every entry needs a `title` and a non-empty `steps` array. Cases are validated together and reported individually: a `failed` entry does not roll back its committed siblings, so the response is `201` even when some entries were refused \u2014 read `failed` rather than branching on the status alone. Send an `Idempotency-Key` header to make a retry land on the same rows.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -8745,6 +8745,321 @@
           }
         }
       }
+    },
+    "/projects/{projectId}/servers/{serverId}/claude-readiness-runs": {
+      "post": {
+        "operationId": "requestClaudeReadinessRun",
+        "tags": [
+          "Claude readiness"
+        ],
+        "summary": "Grade a server against Claude's directory requirements",
+        "description": "Queue a readiness run for a saved server. Asynchronous: the run dials the connector, traces its redirects and opens an MCP connection, so it answers `202` as soon as the run is queued \u2014 poll the run for the grade. The URL is not a request field; the run grades the connector as it is saved.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "idempotencyKey": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200,
+                    "description": "Replay protection. A retried request that started a second run would dial the target twice; with a key, the second call joins the first."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The run was queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaudeReadinessRunRequest"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "An idempotency key matched a run that already existed.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaudeReadinessRunRequest"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/claude-readiness-runs": {
+      "get": {
+        "operationId": "listClaudeReadinessRuns",
+        "tags": [
+          "Claude readiness"
+        ],
+        "summary": "List readiness runs",
+        "description": "Most recent first. Filter to one server with `serverId`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "name": "serverId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ClaudeReadinessRun"
+                      }
+                    }
+                  },
+                  "required": [
+                    "items"
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/claude-readiness-runs/{runId}": {
+      "get": {
+        "operationId": "getClaudeReadinessRun",
+        "tags": [
+          "Claude readiness"
+        ],
+        "summary": "Get one readiness run",
+        "description": "Poll this for the grade. `status` reaches `completed` when the run finished; `overallStatus` is the verdict.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaudeReadinessRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/claude-readiness-runs/{runId}/report": {
+      "get": {
+        "operationId": "getClaudeReadinessReport",
+        "tags": [
+          "Claude readiness"
+        ],
+        "summary": "Get a finished run's full report",
+        "description": "Every finding the grade was built from, with its source URL, evidence provenance and policy snapshot. A separate call from the run itself, because a listing that inlined every finding would be one nobody could afford to poll — `hasReport` on the run says whether this will return one. The response body is the readiness engine's own report document, which is deliberately not restated in this schema: it grows with every check added to the engine, and a second definition of it behind an API version would drift the first time a check gained a field. Parse it with `ClaudeReadinessResult` from `@mcpjam/sdk`. 404s once retention has swept the blob, which is a normal answer about an old run and distinct from a report with no findings.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The readiness engine's report document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "description": "The engine's report. See `ClaudeReadinessResult` in @mcpjam/sdk for the authoritative shape."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/claude-readiness-runs/{runId}/cancel": {
+      "post": {
+        "operationId": "cancelClaudeReadinessRun",
+        "tags": [
+          "Claude readiness"
+        ],
+        "summary": "Cancel a readiness run",
+        "description": "Stop a run that is still queued or executing. It reaches a terminal `cancelled` status and stays in the project's history: someone who stopped a run has learned nothing about their server, so collapsing it into `failed` would make a deliberate stop read as evidence against the connector.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run was cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "cancelled": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "cancelled"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -9012,10 +9327,10 @@
           "id": {
             "type": "string"
           },
-        "declaredId": {
-          "type": "string",
-          "description": "The case's effective declared id. Absent on cases authored before declared identity existed."
-        },
+          "declaredId": {
+            "type": "string",
+            "description": "The case's effective declared id. Absent on cases authored before declared identity existed."
+          },
           "title": {
             "type": "string"
           },
@@ -9109,11 +9424,11 @@
             "type": "string",
             "minLength": 1
           },
-        "id": {
-          "type": "string",
-          "pattern": "^[A-Za-z0-9_-]{1,128}$",
-          "description": "Stable declared id for the case — the id it answers to in a suite file, an import or a CLI argument. Minted for you when omitted, and unique within the suite. Distinct from the `id` on the response, which is the case's platform row id."
-        },
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "description": "Stable declared id for the case \u2014 the id it answers to in a suite file, an import or a CLI argument. Minted for you when omitted, and unique within the suite. Distinct from the `id` on the response, which is the case's platform row id."
+          },
           "steps": {
             "type": "array",
             "minItems": 1,
@@ -9260,7 +9575,7 @@
                 },
                 "id": {
                   "type": "string",
-                  "description": "Platform case id — the path parameter for the per-case routes."
+                  "description": "Platform case id \u2014 the path parameter for the per-case routes."
                 },
                 "declaredId": {
                   "type": "string",
@@ -11166,7 +11481,7 @@
               "string",
               "null"
             ],
-            "description": "Whether the run's score evidence verified at ingest. TRI-STATE, and the third state matters: `valid` means the backend checked and definitions and results agree; `invalid` means they do not; `null` (or absent) means NO VERDICT was produced, on a deployment that predates integrity checking. A score gate must treat `null` exactly like `invalid` — absent evidence is not valid evidence.",
+            "description": "Whether the run's score evidence verified at ingest. TRI-STATE, and the third state matters: `valid` means the backend checked and definitions and results agree; `invalid` means they do not; `null` (or absent) means NO VERDICT was produced, on a deployment that predates integrity checking. A score gate must treat `null` exactly like `invalid` \u2014 absent evidence is not valid evidence.",
             "enum": [
               "valid",
               "invalid",
@@ -11623,7 +11938,7 @@
               "invalid",
               null
             ],
-            "description": "`null` means no verdict was produced. A gate must treat it exactly like `invalid` — absent evidence is not valid evidence."
+            "description": "`null` means no verdict was produced. A gate must treat it exactly like `invalid` \u2014 absent evidence is not valid evidence."
           },
           "scoredIterations": {
             "type": "integer"
@@ -11654,7 +11969,7 @@
           },
           "definitionChanged": {
             "type": "boolean",
-            "description": "The same scorer id was graded under a different definition hash on each side. Its delta is NOT a regression — the two runs did not measure the same thing."
+            "description": "The same scorer id was graded under a different definition hash on each side. Its delta is NOT a regression \u2014 the two runs did not measure the same thing."
           },
           "passRate": {
             "$ref": "#/components/schemas/NumericDiff"
@@ -11963,7 +12278,7 @@
             "$ref": "#/components/schemas/EvalRunCompareSide"
           },
           "passSummary": {
-            "description": "Run-summary counters. Named `passSummary`, not `scores`, so it cannot be confused with `scoreContract` — the two answer different questions.",
+            "description": "Run-summary counters. Named `passSummary`, not `scores`, so it cannot be confused with `scoreContract` \u2014 the two answer different questions.",
             "type": "object",
             "properties": {
               "passRatePercent": {
@@ -12177,7 +12492,7 @@
               "array",
               "null"
             ],
-            "description": "Per-scorer verdicts for this iteration. `null` when the run predates scoring, or when the stored payload failed validation at the boundary — partially-trusted score data is never projected.",
+            "description": "Per-scorer verdicts for this iteration. `null` when the run predates scoring, or when the stored payload failed validation at the boundary \u2014 partially-trusted score data is never projected.",
             "items": {
               "$ref": "#/components/schemas/ScoreResult"
             }
@@ -12208,7 +12523,7 @@
       },
       "ScoreResult": {
         "type": "object",
-        "description": "One scorer's verdict for one iteration. `passed` is DERIVED as `value >= passThreshold` — never asserted by the scorer or the model.",
+        "description": "One scorer's verdict for one iteration. `passed` is DERIVED as `value >= passThreshold` \u2014 never asserted by the scorer or the model.",
         "required": [
           "scorerId",
           "scorerVersion",
@@ -12231,7 +12546,7 @@
           },
           "status": {
             "type": "string",
-            "description": "`error` is never a low score — a crashed judge is not a disagreeing judge. `not_applicable` never gates and is excluded from aggregation denominators, which is what distinguishes it from `skipped`.",
+            "description": "`error` is never a low score \u2014 a crashed judge is not a disagreeing judge. `not_applicable` never gates and is excluded from aggregation denominators, which is what distinguishes it from `skipped`.",
             "enum": [
               "scored",
               "error",
@@ -12319,7 +12634,7 @@
           },
           "implementationHash": {
             "type": "string",
-            "description": "Digest of what the scorer actually does — the canonicalized predicate, or the judge prompt plus template version. Required so two judges with different prompts cannot hash identically."
+            "description": "Digest of what the scorer actually does \u2014 the canonicalized predicate, or the judge prompt plus template version. Required so two judges with different prompts cannot hash identically."
           },
           "label": {
             "type": "string",
@@ -12368,7 +12683,7 @@
       },
       "EvaluationConfigSnapshot": {
         "type": "object",
-        "description": "The scorer definitions a run graded with, plus their hash. Changing scorer configuration changes this hash but NOT the case identity — a threshold edit must not fork a scenario's history.",
+        "description": "The scorer definitions a run graded with, plus their hash. Changing scorer configuration changes this hash but NOT the case identity \u2014 a threshold edit must not fork a scenario's history.",
         "required": [
           "hash",
           "definitions"
@@ -12376,7 +12691,7 @@
         "properties": {
           "hash": {
             "type": "string",
-            "description": "`evaluationConfigHash` over the resolved definitions. Order-independent — the hash sorts internally."
+            "description": "`evaluationConfigHash` over the resolved definitions. Order-independent \u2014 the hash sorts internally."
           },
           "definitions": {
             "type": "array",
@@ -14381,7 +14696,7 @@
           },
           "modelId": {
             "type": "string",
-            "description": "The environment's model override. ABSENT means the environment INHERITS the model pinned on its host — not that it has no model. Resolve the environment and read `effectiveModelId` to learn what will actually run."
+            "description": "The environment's model override. ABSENT means the environment INHERITS the model pinned on its host \u2014 not that it has no model. Resolve the environment and read `effectiveModelId` to learn what will actually run."
           },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
@@ -14820,7 +15135,7 @@
             "type": "string",
             "minLength": 1,
             "pattern": ".*\\S.*",
-            "description": "Model to run instead of the host's; omit to inherit the host's. Stored verbatim — no alias canonicalization — so pass exactly the id the provider request should carry."
+            "description": "Model to run instead of the host's; omit to inherit the host's. Stored verbatim \u2014 no alias canonicalization \u2014 so pass exactly the id the provider request should carry."
           },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
@@ -14875,7 +15190,7 @@
             "minLength": 1,
             "pattern": ".*\\S.*",
             "nullable": true,
-            "description": "New model override, or `null` to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear."
+            "description": "New model override, or `null` to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected \u2014 it is not a way to clear."
           },
           "skillSelection": {
             "allOf": [
@@ -14971,7 +15286,7 @@
           },
           "effectiveModelId": {
             "type": "string",
-            "description": "The model this environment WILL RUN — the override if it has one, else the host config's. Always present on a successful resolve: an environment with no model anywhere cannot be resolved for launch and fails with 409 `details.reason: \"environment_model_required\"`."
+            "description": "The model this environment WILL RUN \u2014 the override if it has one, else the host config's. Always present on a successful resolve: an environment with no model anywhere cannot be resolved for launch and fails with 409 `details.reason: \"environment_model_required\"`."
           },
           "modelSource": {
             "type": "string",
@@ -19096,7 +19411,7 @@
               },
               "writeEvalSuites": {
                 "type": "boolean",
-                "description": "Authoring suites and cases — every eval write short of deleting. Unlike the swarm keys this counts a project GRANT, not organization rank alone."
+                "description": "Authoring suites and cases \u2014 every eval write short of deleting. Unlike the swarm keys this counts a project GRANT, not organization rank alone."
               },
               "launchEvalRun": {
                 "type": "boolean",
@@ -19104,7 +19419,7 @@
               },
               "deleteAnyEvalSuite": {
                 "type": "boolean",
-                "description": "Deleting a suite SOMEONE ELSE created — the project admin tier. The creator of a suite may always delete it whatever their role, so `false` here does not mean you cannot delete your own."
+                "description": "Deleting a suite SOMEONE ELSE created \u2014 the project admin tier. The creator of a suite may always delete it whatever their role, so `false` here does not mean you cannot delete your own."
               },
               "deleteAnyEvalRun": {
                 "type": "boolean",
@@ -19117,6 +19432,169 @@
             }
           }
         }
+      },
+      "ClaudeReadinessLane": {
+        "type": "object",
+        "description": "One lane of the grade, with the coverage behind it. A lane with no violations and nothing evaluated is not a pass, which is why the counts travel beside the status.",
+        "properties": {
+          "lane": {
+            "type": "string",
+            "example": "runtime-compatibility"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not-ready",
+              "incomplete"
+            ]
+          },
+          "evaluated": {
+            "type": "integer"
+          },
+          "notEvaluated": {
+            "type": "integer"
+          },
+          "notApplicable": {
+            "type": "integer"
+          },
+          "missingInputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Named inputs that would let this lane be graded, e.g. `submissionProfile`."
+          }
+        },
+        "required": [
+          "lane",
+          "status",
+          "evaluated",
+          "notEvaluated",
+          "notApplicable",
+          "missingInputs"
+        ]
+      },
+      "ClaudeReadinessRun": {
+        "type": "object",
+        "description": "A Claude directory-readiness run. `status` is the run's lifecycle; `overallStatus` is the grade and is absent until the run finishes \u2014 which is what lets a caller tell \"still running\" from \"ran, and the answer is incomplete\".",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "serverId": {
+            "type": "string"
+          },
+          "serverUrl": {
+            "type": "string",
+            "description": "The connector URL exactly as saved. Never canonicalized: the grade compares against the string a submitter would enter."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "overallStatus": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not-ready",
+              "incomplete"
+            ]
+          },
+          "lanes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClaudeReadinessLane"
+            }
+          },
+          "authMode": {
+            "type": "string",
+            "enum": [
+              "headless",
+              "interactive",
+              "provided-token"
+            ]
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the executing runner could do. Recorded so the coverage numbers are legible rather than mysterious."
+          },
+          "intrusive": {
+            "type": "boolean"
+          },
+          "attemptCount": {
+            "type": "integer"
+          },
+          "terminalReason": {
+            "type": "string"
+          },
+          "errorMessage": {
+            "type": "string"
+          },
+          "policySnapshotDate": {
+            "type": "string",
+            "description": "The date the graded policy corpus was pinned at."
+          },
+          "engineVersion": {
+            "type": "string"
+          },
+          "hasReport": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "serverUrl",
+          "status",
+          "lanes",
+          "capabilities",
+          "intrusive",
+          "attemptCount",
+          "hasReport",
+          "createdAt",
+          "updatedAt"
+        ]
+      },
+      "ClaudeReadinessRunRequest": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending"
+            ]
+          },
+          "reused": {
+            "type": "boolean",
+            "description": "True when an idempotency key matched a run that already existed."
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "reused"
+        ]
       }
     },
     "responses": {

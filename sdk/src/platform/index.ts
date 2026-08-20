@@ -164,6 +164,10 @@ export type {
   PlatformPluginVersion,
   PlatformProject,
   PlatformProjectServer,
+  PlatformClaudeReadinessLane,
+  PlatformClaudeReadinessReport,
+  PlatformClaudeReadinessRun,
+  PlatformClaudeReadinessRunRequest,
   PlatformServerConnection,
   PlatformServerConnectionCandidate,
   PlatformServerConnectionCreateBody,
@@ -213,6 +217,10 @@ export {
   createHostOperation,
   createTunnelOperation,
   cancelEvalRunOperation,
+  requestClaudeReadinessRunOperation,
+  listClaudeReadinessRunsOperation,
+  getClaudeReadinessRunOperation,
+  cancelClaudeReadinessRunOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
@@ -384,6 +392,12 @@ export {
   type ListProjectPluginsInput,
   type ListProjectPluginsResult,
   type GetPluginVersionInput,
+  // Claude directory readiness. The operations above cannot be called from
+  // outside without these: `PlatformOperation` is generic in its input, so a
+  // caller that cannot name the input type cannot type the argument it passes.
+  type RequestClaudeReadinessRunInput,
+  type ListClaudeReadinessRunsInput,
+  type ClaudeReadinessRunScopedInput,
   // Journeys (Swarms) and scenarios (user testing). The operations above are
   // useless from outside without these — a caller cannot type the value an
   // operation returns, and reaching into `operations.js` for it would depend on

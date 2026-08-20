@@ -71,6 +71,9 @@ import type {
   PlatformMe,
   PlatformModel,
   PlatformOrganization,
+  PlatformClaudeReadinessReport,
+  PlatformClaudeReadinessRun,
+  PlatformClaudeReadinessRunRequest,
   PlatformPage,
   PlatformPlugin,
   PlatformPluginVersion,
@@ -351,6 +354,120 @@ export class PlatformApiClient {
         params.projectId,
       )}/servers/${encodeURIComponent(params.serverId)}`,
       { body: {} },
+      options,
+    );
+  }
+
+  /**
+   * Ask for a Claude directory-readiness grade of a saved server.
+   *
+   * ASYNCHRONOUS: the run dials the connector, traces its redirects and opens
+   * an MCP connection, which is tens of seconds on a healthy target. This
+   * returns as soon as the run is queued; poll {@link getClaudeReadinessRun}.
+   *
+   * The URL is NOT a parameter — the run grades the connector as it is saved,
+   * so it comes off the server record. Grading an arbitrary URL is what the
+   * CLI's `mcpjam claude readiness` is for.
+   */
+  requestClaudeReadinessRun(
+    params: {
+      projectId: string;
+      serverId: string;
+      /**
+       * Replay protection. A retried request that started a second run would
+       * dial the target twice; with a key, the second call joins the first.
+       */
+      idempotencyKey?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformClaudeReadinessRunRequest> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/servers/${encodeURIComponent(
+        params.serverId,
+      )}/claude-readiness-runs`,
+      {
+        body:
+          params.idempotencyKey === undefined
+            ? {}
+            : { idempotencyKey: params.idempotencyKey },
+      },
+      options,
+    );
+  }
+
+  listClaudeReadinessRuns(
+    params: { projectId: string; serverId?: string; limit?: number },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformClaudeReadinessRun>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/claude-readiness-runs`,
+      { query: { serverId: params.serverId, limit: params.limit } },
+      options,
+    );
+  }
+
+  getClaudeReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformClaudeReadinessRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/claude-readiness-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * The finished run's full report — every finding, with its provenance.
+   *
+   * A SEPARATE CALL from {@link getClaudeReadinessRun} rather than a field on
+   * it: the run row carries lane statuses and coverage counts because listing
+   * reads them, and a listing that inlined every finding would be a listing
+   * nobody could afford to poll. `hasReport` on the run says whether this will
+   * return one.
+   *
+   * 404s once retention has swept the blob. That is a normal answer about an
+   * old run, and distinct from a report with no findings in it.
+   */
+  getClaudeReadinessReport(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformClaudeReadinessReport> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/claude-readiness-runs/${encodeURIComponent(params.runId)}/report`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Stop a run that is still queued or executing.
+   *
+   * The run reaches a terminal `cancelled` status and stays in the project's
+   * history: a person who stopped a run has learned nothing about their
+   * server, and collapsing that into `failed` would make a deliberate stop
+   * read as evidence against the connector.
+   */
+  cancelClaudeReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<{ id: string; cancelled: boolean }> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/claude-readiness-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
       options,
     );
   }

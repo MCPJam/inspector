@@ -54,6 +54,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /organizations": "listOrganizations",
   "get /chat-sessions": "listChatSessions",
 
+  // Claude directory readiness
+  "post /projects/{projectId}/servers/{serverId}/claude-readiness-runs":
+    "requestClaudeReadinessRun",
+  "get /projects/{projectId}/claude-readiness-runs":
+    "listClaudeReadinessRuns",
+  "get /projects/{projectId}/claude-readiness-runs/{runId}":
+    "getClaudeReadinessRun",
+  "get /projects/{projectId}/claude-readiness-runs/{runId}/report":
+    "getClaudeReadinessReport",
+  "post /projects/{projectId}/claude-readiness-runs/{runId}/cancel":
+    "cancelClaudeReadinessRun",
+
   // Server connections
   "post /server-connections": "createServerConnection",
   "get /server-connections/{requestId}": "getServerConnection",

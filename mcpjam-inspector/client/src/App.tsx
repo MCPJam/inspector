@@ -49,6 +49,7 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
+import { ClaudeReadinessTab } from "./components/claude-readiness/ClaudeReadinessPanel";
 import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
@@ -557,6 +558,8 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <LearningRoute />;
     case "conformance":
       return <ConformanceRoute />;
+    case "claude-readiness":
+      return <ClaudeReadinessRoute />;
     case "compatibility":
       return <CompatibilityRoute />;
     case "oauth-flow":
@@ -1367,6 +1370,11 @@ export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
 export function ConformanceRoute() {
   const { selectedServerEntry } = useAppRouteContext();
   return <ConformanceTab server={selectedServerEntry ?? null} />;
+}
+
+export function ClaudeReadinessRoute() {
+  const { selectedServerEntry } = useAppRouteContext();
+  return <ClaudeReadinessTab server={selectedServerEntry ?? null} />;
 }
 
 export function CompatibilityRoute() {
@@ -3975,6 +3983,14 @@ export default function App() {
     } else if (activeTab === "client-config") {
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (activeTab === "conformance" && conformanceEnabled !== true) {
+      navigateToTarget(defaultHubRoute, { replace: true });
+    } else if (
+      activeTab === "claude-readiness" &&
+      conformanceEnabled !== true
+    ) {
+      // The SAME flag as conformance, not one of its own. The two roll out
+      // together, and a second flag would let this ship to somebody who cannot
+      // see the tab it sits beside.
       navigateToTarget(defaultHubRoute, { replace: true });
     } else if (
       activeTab === "compatibility" &&

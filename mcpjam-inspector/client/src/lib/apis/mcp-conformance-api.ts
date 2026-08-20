@@ -1,4 +1,5 @@
 import type {
+  ClaudeReadinessResult,
   MCPConformanceResult,
   MCPAppsConformanceResult,
   MCPTasksConformanceResult,
@@ -62,6 +63,35 @@ export async function runProtocolConformance(
         ...versionFields,
       });
     },
+  });
+}
+
+/**
+ * Grade a connector for Claude's connector directory.
+ *
+ * NOT a conformance suite — it produces no score and never enters the pooled
+ * number. It lives in this module because it shares the transport, the server
+ * resolution, and the local/hosted split with the four that are.
+ */
+export async function runClaudeReadinessGrade(
+  serverNameOrId: string,
+  options?: { submissionProfile?: unknown },
+): Promise<{ success: boolean; result: ClaudeReadinessResult }> {
+  const profileFields =
+    options?.submissionProfile !== undefined
+      ? { submissionProfile: options.submissionProfile }
+      : {};
+  return runByMode({
+    local: () =>
+      localPost("/api/mcp/conformance/claude-readiness", {
+        serverId: serverNameOrId,
+        ...profileFields,
+      }),
+    hosted: () =>
+      webPost("/api/web/conformance/claude-readiness", {
+        ...buildServerRequest(serverNameOrId),
+        ...profileFields,
+      }),
   });
 }
 

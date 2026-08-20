@@ -14,6 +14,7 @@ import {
   assertHttpSupported,
   completeOAuthConformance,
   runAppsConformance,
+  runClaudeDirectoryReadiness,
   runProtocolConformance,
   runTasksConformance,
   startOAuthConformance,
@@ -379,6 +380,76 @@ conformance.post("/oauth/complete", async (c) => {
       // Conformance probes EXIST to make a user's server misbehave. Paging
       // on that would be paging on the feature working.
       source: "mcp.conformance.oauth.complete",
+      hop: "user_server_hop",
+    });
+    return c.json(
+      {
+        success: false,
+        error: error instanceof Error ? error.message : "Unknown error",
+      },
+      500,
+    );
+  }
+});
+
+// ── POST /claude-readiness ──────────────────────────────────────────────
+//
+// NOT a fifth suite. Readiness grades a connector against Anthropic's
+// directory requirements, carries no conformance score, and never enters the
+// pooled number — it is mounted here because it needs the same guarded
+// transport and the same resolved server config, not because it is one of the
+// four.
+
+const claudeReadinessSchema = z.object({
+  serverId: z.string().min(1),
+  /**
+   * The listing metadata a submission would carry. OPTIONAL, and its absence
+   * is reported as a missing input rather than a failure: a developer who has
+   * not written their listing yet still wants to know about their transport.
+   */
+  submissionProfile: z.unknown().optional(),
+});
+
+conformance.post("/claude-readiness", async (c) => {
+  try {
+    const body = await readRequestJson(c);
+    const parsed = claudeReadinessSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json(
+        {
+          success: false,
+          error: parsed.error.issues[0]?.message ?? "Invalid request",
+        },
+        400,
+      );
+    }
+
+    const resolved = resolveServerConfig(
+      c.mcpClientManager,
+      parsed.data.serverId,
+    );
+    if ("error" in resolved) {
+      return c.json({ success: false, ...resolved }, 400);
+    }
+
+    // The same HTTP gate the protocol suite uses. A stdio server has no URL to
+    // submit to a directory, so this is a real "not applicable", not a gap.
+    assertHttpSupported("protocol", resolved.config);
+    const { result } = await runClaudeDirectoryReadiness({
+      ...toHttpResolved(resolved.config as HttpServerConfig),
+      ...(parsed.data.submissionProfile !== undefined
+        ? { submissionProfile: parsed.data.submissionProfile }
+        : {}),
+    });
+    return c.json({ success: true, result });
+  } catch (error) {
+    const unsupported = handleUnsupportedTransport(c, error);
+    if (unsupported) return unsupported;
+    reportRouteFailure("[Claude Readiness]", error, {
+      // Same reasoning as the conformance suites: this probes a user's server
+      // in order to grade it, so a target that misbehaves is the feature
+      // working rather than something to page on.
+      source: "mcp.conformance.claudeReadiness",
       hop: "user_server_hop",
     });
     return c.json(

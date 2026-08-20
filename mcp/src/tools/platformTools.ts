@@ -25,6 +25,10 @@ import {
   updateProjectOperation,
   generateEvalCasesOperation,
   cancelEvalRunOperation,
+  requestClaudeReadinessRunOperation,
+  listClaudeReadinessRunsOperation,
+  getClaudeReadinessRunOperation,
+  cancelClaudeReadinessRunOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
@@ -265,6 +269,17 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getWaveInsightsOperation,
   requestWaveInsightsOperation,
   cancelWaveInsightsOperation,
+  // ── Claude directory readiness ─────────────────────────────────────────
+  //
+  // The whole product is here, reads and writes: an agent asked to "check
+  // whether this connector is ready for Claude's directory" needs to start a
+  // run, poll it, and stop one it started by mistake. The write is
+  // idempotency-keyed and the backend caps concurrency per organization, so
+  // an agent that retries cannot fan out into somebody else's server.
+  requestClaudeReadinessRunOperation,
+  listClaudeReadinessRunsOperation,
+  getClaudeReadinessRunOperation,
+  cancelClaudeReadinessRunOperation,
   publishScenarioOperation,
   unpublishScenarioOperation,
   getUserTestingScenarioOperation,

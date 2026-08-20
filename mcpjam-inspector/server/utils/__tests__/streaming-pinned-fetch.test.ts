@@ -10,7 +10,9 @@
  * outcome its bookkeeping exists to prevent.
  */
 
-import { describe, expect, it, vi } from "vitest";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 /**
  * DNS is stubbed for the whole file, and that is safe: every other case here
@@ -47,6 +49,20 @@ const { createStreamingPinnedFetch } = await import("../pinned-fetch.js");
 const { BlockedEgressTargetError, EgressResolutionError } = await import(
   "../hosted-egress-guard.js"
 );
+
+const servers: http.Server[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    servers.splice(0).map(
+      (server) =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections?.();
+          server.close(() => resolve());
+        }),
+    ),
+  );
+});
 
 describe("createStreamingPinnedFetch", () => {
   it("is the untouched global fetch outside hosted mode", async () => {
@@ -93,6 +109,41 @@ describe("createStreamingPinnedFetch", () => {
     expect(refusal).toBeInstanceOf(BlockedEgressTargetError);
     expect((refusal as Error).message).toMatch(/plaintext/i);
     expect((refusal as Error).message).toMatch(/https/i);
+    expect((refusal as Error).message).not.toMatch(/publicly routable/i);
+  });
+
+  it("classifies a runaway redirect chain as terminal, in the transport's words", async () => {
+    // The classification is by MESSAGE, across a package boundary: the SDK
+    // authors the wording and this file matches it with a regex. Nothing in
+    // either package fails if the transport rewords the refusal — it would
+    // simply stop matching, become a generic `Error`, and go back on a retry
+    // schedule, which is the outcome the taxonomy exists to prevent. So the
+    // wording is pinned here, where the coupling actually lives.
+    const server = http.createServer((_req, res) => {
+      res.writeHead(302, { location: "/again" });
+      res.end();
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
+    servers.push(server);
+    const { port } = server.address() as AddressInfo;
+
+    const guarded = createStreamingPinnedFetch({
+      hosted: true,
+      // Loopback is the only address this file can dial for real; the ceiling
+      // it is testing is transport behavior, not an address decision.
+      allowLoopback: true,
+      maxRedirects: 2,
+    });
+    const refusal = await guarded(`http://127.0.0.1:${port}/start`).catch(
+      (error: unknown) => error,
+    );
+
+    // Terminal, not retryable: no number of retries shortens a redirect loop.
+    expect(refusal).toBeInstanceOf(BlockedEgressTargetError);
+    expect((refusal as Error).message).toMatch(/too many redirects/i);
+    // And NOT reworded into the address refusal — the chain's hosts were fine.
     expect((refusal as Error).message).not.toMatch(/publicly routable/i);
   });
 

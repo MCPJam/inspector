@@ -25,6 +25,7 @@ import type { ClaudeEndpointEvidence } from "./checks/endpoint.js";
 import {
   discoverProtectedResourceMetadata as discoverPrm,
   fetchDiscoveryJson,
+  rejectIssuerUrl,
   traceRedirects,
   type DirectoryDiscoveryOptions,
 } from "../directory-readiness/discovery.js";
@@ -58,23 +59,37 @@ export async function traceConnectorRedirects(
 async function probeUnauthenticated(
   options: ClaudeDiscoveryOptions,
 ): Promise<ClaudeAuthEvidence["unauthenticated"]> {
-  const result = await fetchDiscoveryJson(options.enteredUrl, options, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify({
-      jsonrpc: "2.0",
-      id: 1,
-      method: "initialize",
-      params: {
-        protocolVersion: "2025-06-18",
-        capabilities: {},
-        clientInfo: { name: "mcpjam-claude-readiness", version: "1" },
+  const result = await fetchDiscoveryJson(
+    options.enteredUrl,
+    options,
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json, text/event-stream",
       },
-    }),
-  });
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method: "initialize",
+        params: {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "mcpjam-claude-readiness", version: "1" },
+        },
+      }),
+    },
+    // NO CALLER HEADERS, which is what makes this probe's name true. With them
+    // merged in, a `--header "Authorization: …"` produced a 200 that
+    // `servedWithoutCredentials` recorded as "this connector needs no
+    // authentication at all" — a connector graded authless because the person
+    // grading it was logged in.
+    //
+    // The cost is real and accepted: a server that needs a routing header to
+    // answer at all reports no 401 challenge here. That is a finding a
+    // submitter can act on, and the alternative is a verdict nobody can trust.
+    { credentials: "none" },
+  );
 
   if (result.status === 0) return undefined;
 
@@ -134,6 +149,22 @@ async function fetchFirstAuthorizationServer(
       issuer,
       reachable: false,
       fetchError: "issuer is not a valid URL",
+    };
+  }
+
+  // The issuer is whatever the connector wrote into its own PRM document, and
+  // unlike the `resource_metadata` pointer it legitimately names another
+  // origin — so it is validated against RFC 8414 §2 before any socket rather
+  // than trusted to whichever `fetchFn` the caller supplied.
+  const rejection = rejectIssuerUrl(base, options.enteredUrl);
+  if (rejection) {
+    return {
+      issuer,
+      reachable: false,
+      fetchError: rejection,
+      // A connector Claude cannot use, reported as such rather than as an
+      // outage: "unreachable" would send its owner to look at DNS.
+      rejected: rejection,
     };
   }
 

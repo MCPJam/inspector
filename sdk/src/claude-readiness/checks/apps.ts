@@ -34,6 +34,7 @@ import {
 import type { ClaudeReadinessFinding } from "../types.js";
 import {
   derivedFrom,
+  informational,
   notApplicable,
   notEvaluated,
   satisfied,
@@ -92,6 +93,15 @@ export interface ClaudeAppsEvidence {
    * on it must say so rather than claim a browser observation it did not make.
    */
   renderEngine?: "webkit" | "chromium" | "node-approximation";
+  /**
+   * Widget URIs the run referenced but did not read, because its read budget
+   * ran out. The list is the target's own metadata, so its LENGTH is the
+   * target's choice — which is why a budget exists at all.
+   *
+   * Carried so the report can say the design lints graded a subset. Silently
+   * grading fewer widgets looks identical to a server with fewer widgets.
+   */
+  unreadResourceUris?: string[];
 }
 
 // ── Definitions ─────────────────────────────────────────────────────────
@@ -104,6 +114,19 @@ export interface ClaudeAppsEvidence {
  * round trip the caller may not have made.
  */
 export const CLAUDE_APPS_RESULT_INPUT = "appsResult";
+
+const WIDGET_RESOURCE_COVERAGE: ClaudeCheckDefinition = {
+  id: "claude.apps.widget-resource-coverage",
+  title: "Every referenced widget resource was read",
+  lane: "experience-insights",
+  // COVERAGE, not a requirement. Nothing Anthropic publishes says a connector
+  // may advertise at most N widgets; this reports what the run managed to look
+  // at, so a reader can tell a clean design pass over three widgets from a
+  // clean pass over three of forty.
+  class: "manual-review",
+  source: claudePolicySource("mcp-apps/design-guidelines", "§Widgets"),
+  provenance: "wire",
+};
 
 const RESOURCE_URI_MODERNITY: ClaudeCheckDefinition = {
   id: "claude.apps.resource-uri-modern",
@@ -392,6 +415,7 @@ export function runClaudeAppsChecks(
     ...staticDefinitions,
     RESULT_SIZE,
     INSTANCE_SUPERSESSION,
+    WIDGET_RESOURCE_COVERAGE,
     ...DESIGN_LINTS.map((lint) => lint.definition),
   ];
 
@@ -415,6 +439,23 @@ export function runClaudeAppsChecks(
     }
     return findings;
   }
+
+  const unread = evidence.unreadResourceUris ?? [];
+  findings.push(
+    unread.length === 0
+      ? satisfied(WIDGET_RESOURCE_COVERAGE, stamp, {
+          resourcesRead: resources.length,
+        })
+      : informational(
+          WIDGET_RESOURCE_COVERAGE,
+          stamp,
+          {
+            resourcesRead: resources.length,
+            unreadResourceUris: unread,
+          },
+          `${unread.length} referenced widget resource(s) were not read, so the design findings below cover ${resources.length} of ${resources.length + unread.length}. Re-run against fewer widgets, or read the remaining ones directly, before treating a clean design pass as complete.`,
+        ),
+  );
 
   // ── resourceUri modernity ────────────────────────────────────────────
   // The modern field ALONE is correct and complete. Only a tool that declares
@@ -599,7 +640,45 @@ export function runClaudeAppsChecks(
   // ── Design guideline lints ───────────────────────────────────────────
   findings.push(...runDesignLints(evidence, resources, stamp));
 
-  return findings;
+  return withholdPassesOnPartialEvidence(findings, unread);
+}
+
+/**
+ * Required checks that read the RESOURCE SET rather than one resource.
+ *
+ * A pass on either is a statement about every widget the connector advertises,
+ * so it cannot be made from a subset — one unread widget serving the wrong MIME
+ * type is the whole finding.
+ */
+const RESOURCE_SET_REQUIREMENTS = new Set([
+  HTML_MIME_PROFILE.id,
+  UI_DOMAIN_DERIVATION.id,
+]);
+
+/**
+ * Downgrade a pass that partial evidence cannot support.
+ *
+ * A VIOLATION SURVIVES: a widget in the subset that broke the rule broke it,
+ * and no unread widget makes that untrue. Only the pass direction is affected,
+ * which is the same one-directional shape the runner's capability gate has —
+ * for the same reason. Reporting `ready` off three of forty widgets is exactly
+ * the failure the coverage numbers exist to make visible.
+ */
+function withholdPassesOnPartialEvidence(
+  findings: ClaudeReadinessFinding[],
+  unread: string[],
+): ClaudeReadinessFinding[] {
+  if (unread.length === 0) return findings;
+  return findings.map((finding) => {
+    if (!RESOURCE_SET_REQUIREMENTS.has(finding.id)) return finding;
+    if (finding.status === "violated") return finding;
+    return {
+      ...finding,
+      status: "not-evaluated" as const,
+      notEvaluatedReason: `${unread.length} referenced widget resource(s) were not read, so this cannot be established for every widget the connector advertises`,
+      details: { ...finding.details, unreadResourceUris: unread },
+    };
+  });
 }
 
 function runDesignLints(

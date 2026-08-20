@@ -70,6 +70,11 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "skills", kind: "screen", surfaceId: "skills" },
   { path: "learning", kind: "screen", surfaceId: "learning" },
   { path: "conformance", kind: "screen", surfaceId: "conformance" },
+  {
+    path: "claude-readiness",
+    kind: "screen",
+    surfaceId: "claude-readiness",
+  },
   { path: "compatibility", kind: "screen", surfaceId: "compatibility" },
   { path: "oauth-flow", kind: "screen", surfaceId: "oauth-flow" },
   { path: "xaa-flow", kind: "screen", surfaceId: "xaa-flow" },

@@ -283,6 +283,18 @@ export const navigationSections: NavSection[] = [
         featureFlag: "mcpjam-conformance",
       },
       {
+        title: "Claude readiness",
+        url: "/claude-readiness",
+        icon: ShieldCheck,
+        // The SAME flag as Conformance, deliberately. The two roll out
+        // together, and a separate flag would let this appear for somebody who
+        // cannot see the tab it sits beside. It is a SEPARATE ENTRY rather
+        // than a section inside Conformance because it is not a fifth suite:
+        // it grades against Anthropic's listing policy, carries no score, and
+        // never enters the pooled number.
+        featureFlag: "mcpjam-conformance",
+      },
+      {
         title: "Compatibility",
         url: "/compatibility",
         icon: Boxes,

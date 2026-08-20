@@ -18,7 +18,10 @@
  *   - a transport that follows redirects itself reports only where it landed, so
  *     a chain that downgrades in the middle and recovers is invisible;
  *   - a `resource_metadata` pointer is ATTACKER-CONTROLLED and `new URL()` will
- *     happily accept `http://169.254.169.254/…`.
+ *     happily accept `http://169.254.169.254/…`;
+ *   - the caller's headers are a credential for the TARGET, and merging them
+ *     into every request hands that credential to whatever host the target's
+ *     own documents and redirects name.
  *
  * A second copy of this would eventually get one of them wrong, and the wrong
  * version would look fine.
@@ -41,8 +44,21 @@ export interface DirectoryDiscoveryOptions {
   timeoutMs?: number;
   /** Redirect hops to walk while tracing the endpoint. */
   maxRedirects?: number;
-  /** Headers the target needs, e.g. a static credential under test. */
+  /**
+   * Headers the target needs, e.g. a static credential under test.
+   *
+   * Sent ONLY to the target's own origin — see `callerHeadersFor`.
+   */
   headers?: Record<string, string>;
+  /**
+   * Stops the run from issuing anything further.
+   *
+   * The point is the TARGET, not our bookkeeping: a cancelled run that keeps
+   * probing is still dialling somebody else's server after the person who
+   * started it asked it to stop, and "we stopped waiting for the answer" is
+   * not the same as "we stopped asking".
+   */
+  signal?: AbortSignal;
 }
 
 export const DIRECTORY_DISCOVERY_DEFAULTS = {
@@ -51,6 +67,113 @@ export const DIRECTORY_DISCOVERY_DEFAULTS = {
   /** Body cap for documents we only ever parse as small JSON. */
   maxMetadataBytes: 512 * 1024,
 } as const;
+
+/**
+ * One controller that fires on the caller's abort or on the timeout.
+ *
+ * `AbortSignal.any` is not available on every runtime this SDK ships to, so
+ * the composition is explicit — and the listener is removed on the way out,
+ * because a long-lived run signal accumulating one listener per request is a
+ * leak that only shows up under load.
+ */
+function requestAbort(
+  options: DirectoryDiscoveryOptions,
+  timeoutMessage: string,
+): { signal: AbortSignal; release: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(timeoutMessage)),
+    options.timeoutMs ?? DIRECTORY_DISCOVERY_DEFAULTS.timeoutMs,
+  );
+  const external = options.signal;
+  const forward = () => controller.abort(external?.reason);
+  if (external) {
+    if (external.aborted) forward();
+    else external.addEventListener("abort", forward, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    release: () => {
+      clearTimeout(timer);
+      external?.removeEventListener("abort", forward);
+    },
+  };
+}
+
+/**
+ * The caller's headers, but only for a request that stays on the target's own
+ * origin.
+ *
+ * A `--header "Authorization: …"` is a credential for the SERVER UNDER TEST.
+ * Protected Resource Metadata names an authorization server that is routinely
+ * on somebody else's domain, and a redirect can point anywhere at all — so
+ * merging the caller's headers into every request meant handing their bearer
+ * token to whatever host the target's own documents named. The target chooses
+ * those hosts, which makes it an exfiltration primitive rather than a leak.
+ *
+ * Same-origin is the whole rule, and it is deliberately not "same host": a
+ * scheme or port change is a different origin, and a token that travels from
+ * `https://` to `http://` is a token on the wire.
+ */
+export function callerHeadersFor(
+  url: string,
+  options: DirectoryDiscoveryOptions,
+): Record<string, string> | undefined {
+  if (!options.headers) return undefined;
+  try {
+    return new URL(url).origin === new URL(options.enteredUrl).origin
+      ? options.headers
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Why an issuer named by the target's own metadata must not be dialled, or
+ * `undefined` when it is fine.
+ *
+ * THE ISSUER COMES OUT OF THE TARGET'S OWN DOCUMENT, and unlike a
+ * `resource_metadata` pointer it legitimately names another origin — so
+ * same-origin is not available as a rule here, and the URL is otherwise
+ * whatever the server under test chose to write down. Left unchecked, a target
+ * could point a run at `http://169.254.169.254/` and have it dialled. In a
+ * hosted run the pinned transport refuses that; this module accepts any
+ * `fetchFn`, and the CLI passes the plain global one.
+ *
+ * RFC 8414 §2 settles what an issuer may be, so the check is the spec's rather
+ * than an invention: an https URL with no query and no fragment. Loopback over
+ * http is allowed only when it is the target's own origin, which is a developer
+ * testing their own server, not a redirection to a metadata service.
+ *
+ * Returns the reason rather than a boolean: the caller reports it, and "we
+ * refused to fetch this" is a different finding from "we fetched it and it was
+ * broken".
+ */
+export function rejectIssuerUrl(
+  issuer: URL,
+  enteredUrl: string,
+): string | undefined {
+  if (issuer.username || issuer.password) {
+    return "issuer must not carry credentials in the URL";
+  }
+  if (issuer.search || issuer.hash) {
+    return "issuer must have no query or fragment (RFC 8414 §2)";
+  }
+  if (issuer.protocol === "https:") return undefined;
+  if (issuer.protocol !== "http:") {
+    return `issuer must be an https URL, not ${issuer.protocol}`;
+  }
+  let entered: URL;
+  try {
+    entered = new URL(enteredUrl);
+  } catch {
+    return "issuer must be an https URL";
+  }
+  return issuer.origin === entered.origin
+    ? undefined
+    : "issuer must be an https URL (plaintext is accepted only on the target's own origin)";
+}
 
 /**
  * Read a response body, stopping at the cap.
@@ -172,26 +295,39 @@ export interface FetchedDiscoveryJson {
   error?: string;
 }
 
+export interface DiscoveryRequestOptions {
+  /**
+   * `"none"` suppresses the caller's headers even on the target's own origin.
+   * An unauthenticated probe uses it: a request that carries a credential
+   * cannot answer the question "what does this server do for a client that has
+   * none", and a 200 obtained WITH one would be recorded as evidence the
+   * target is authless.
+   */
+  credentials?: "caller" | "none";
+}
+
 export async function fetchDiscoveryJson(
   url: string,
   options: DirectoryDiscoveryOptions,
   init?: RequestInit,
+  request: DiscoveryRequestOptions = {},
 ): Promise<FetchedDiscoveryJson> {
   const maxBytes = DIRECTORY_DISCOVERY_DEFAULTS.maxMetadataBytes;
-  const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(new Error("readiness discovery timed out")),
-    options.timeoutMs ?? DIRECTORY_DISCOVERY_DEFAULTS.timeoutMs,
-  );
+  const { credentials = "caller" } = request;
+  const abort = requestAbort(options, "readiness discovery timed out");
+  // Hoisted so the catch below can tell "the request never got an answer" from
+  // "the answer arrived and reading its body failed". Only the first is a
+  // status of 0, and `reachedServer` is decided on exactly that difference.
+  let response: Response | undefined;
   try {
-    const response = await options.fetchFn(url, {
+    response = await options.fetchFn(url, {
       ...init,
       headers: {
         accept: "application/json",
-        ...options.headers,
+        ...(credentials === "caller" ? callerHeadersFor(url, options) : {}),
         ...init?.headers,
       },
-      signal: controller.signal,
+      signal: abort.signal,
     });
     // REFUSE BEFORE READING when the server tells us the size. `await
     // response.text()` materializes the whole body first, so a cap applied
@@ -246,12 +382,15 @@ export async function fetchDiscoveryJson(
     return { status: response.status, headers: response.headers, document };
   } catch (error) {
     return {
-      status: 0,
-      headers: new Headers(),
+      // A body that failed to read is still a server that ANSWERED. Reporting
+      // 0 here would tell `reachedServer` nothing was reachable, and a PRM
+      // failure would come back as "never asked" instead of as a finding.
+      status: response?.status ?? 0,
+      headers: response?.headers ?? new Headers(),
       error: error instanceof Error ? error.message : String(error),
     };
   } finally {
-    clearTimeout(timer);
+    abort.release();
   }
 }
 
@@ -283,18 +422,22 @@ export async function traceRedirects(
   let current = options.enteredUrl;
 
   for (let hop = 0; hop <= maxRedirects; hop += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(
-      () => controller.abort(new Error("readiness redirect trace timed out")),
-      options.timeoutMs ?? DIRECTORY_DISCOVERY_DEFAULTS.timeoutMs,
-    );
+    // A cancelled run stops walking the chain rather than finishing it.
+    if (options.signal?.aborted) {
+      return { enteredUrl: options.enteredUrl, redirectChain: chain };
+    }
+    const abort = requestAbort(options, "readiness redirect trace timed out");
     let response: Response;
     try {
       response = await options.fetchFn(current, {
         method: "HEAD",
         redirect: "manual",
-        headers: options.headers,
-        signal: controller.signal,
+        // Dropped the moment the chain leaves the target's origin. A redirect
+        // target is chosen by the server under test, so replaying the caller's
+        // credential onto it would let any target collect it by answering
+        // `302 Location: https://attacker.example/`.
+        headers: callerHeadersFor(current, options),
+        signal: abort.signal,
       });
     } catch {
       // A refused or unreachable hop ends the trace. It is not itself a
@@ -302,7 +445,7 @@ export async function traceRedirects(
       // reporting a partial chain is better than reporting none.
       return { enteredUrl: options.enteredUrl, redirectChain: chain };
     } finally {
-      clearTimeout(timer);
+      abort.release();
     }
 
     const location = response.headers.get("location") ?? undefined;
@@ -379,6 +522,13 @@ export interface PrmDiscoveryResult {
    * never published one.
    */
   rejectedPointer?: string;
+  /**
+   * Whether anything on that host answered AT ALL. A 404 counts: it is the
+   * server saying "no document here", which is a finding. A transport failure
+   * does not, and the difference is what keeps an unreachable host from being
+   * graded as a target that publishes no metadata.
+   */
+  reachedServer?: boolean;
 }
 
 /**
@@ -425,6 +575,7 @@ export async function discoverProtectedResourceMetadata(
       discoveredVia: "not-found",
       fetchError: "target URL is not parseable",
       rejectedPointer,
+      reachedServer: false,
     };
   }
 
@@ -436,8 +587,10 @@ export async function discoverProtectedResourceMetadata(
     ? `the challenge's resource_metadata pointer was refused (it must be an http(s) URL on the target's own origin)`
     : undefined;
   let lastError: string | undefined;
+  let reachedServer = false;
   for (const attempt of attempts) {
     const result = await fetchDiscoveryJson(attempt.url, options);
+    if (result.status !== 0) reachedServer = true;
     if (result.status >= 200 && result.status < 300 && result.document) {
       // `rejectedPointer` rides along on SUCCESS too: the fallback worked, and
       // the server still published a pointer no conforming client can follow.
@@ -446,6 +599,7 @@ export async function discoverProtectedResourceMetadata(
         url: attempt.url,
         document: result.document,
         rejectedPointer,
+        reachedServer: true,
       };
     }
     lastError = result.error ?? `${attempt.url} answered ${result.status}`;
@@ -455,5 +609,6 @@ export async function discoverProtectedResourceMetadata(
     fetchError:
       [rejectionNote, lastError].filter(Boolean).join("; ") || undefined,
     rejectedPointer,
+    reachedServer,
   };
 }

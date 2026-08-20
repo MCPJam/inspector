@@ -458,6 +458,10 @@ export {
   probeDynamicRegistration,
   probeRefreshRotation,
 } from "./claude-readiness/intrusive-probes.js";
+// The end-to-end run: URL in, graded result out. Node-only — it opens a real
+// MCP connection, which is exactly why it is not in the pure barrel.
+export { runClaudeReadiness } from "./claude-readiness/run.js";
+export type { ClaudeReadinessRunConfig } from "./claude-readiness/run.js";
 
 // OpenAI plugin-directory readiness. Same rule as the Claude barrel above:
 // pure data and data reasoning only, so importing the result model or the

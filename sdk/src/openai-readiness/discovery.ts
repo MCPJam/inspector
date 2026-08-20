@@ -31,6 +31,7 @@ import {
   discoverProtectedResourceMetadata,
   fetchDiscoveryJson,
   readBoundedText,
+  rejectIssuerUrl,
   traceRedirects,
   type DirectoryDiscoveryOptions,
   type DirectoryRedirectHop,
@@ -212,6 +213,16 @@ async function fetchAuthorizationServers(
         metadataUrl: issuer,
         fetchError: "issuer is not a parseable URL",
       });
+      continue;
+    }
+    // Every entry here came out of the target's own PRM document, so each one
+    // is checked against RFC 8414 §2 before a socket is opened for it. The
+    // refusal is recorded per issuer rather than aborting the loop: a document
+    // listing one unusable issuer alongside working ones is a finding about
+    // that entry, not a reason to stop reading the rest.
+    const rejection = rejectIssuerUrl(base, options.enteredUrl);
+    if (rejection) {
+      out.push({ issuer, metadataUrl: issuer, fetchError: rejection });
       continue;
     }
     const path = base.pathname.replace(/\/$/, "");
