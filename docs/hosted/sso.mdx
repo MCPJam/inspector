@@ -70,8 +70,13 @@ immediately.
 
 <Step title="Assign users and test">
 Assign users or groups to the MCPJam app in Okta. Assigned users can now sign
-in — from the Okta dashboard, or by entering their work email on the MCPJam
-sign-in page, which redirects them to Okta.
+in two ways:
+
+- **From the Okta dashboard** — click the MCPJam tile. Okta posts the SAML
+  assertion to WorkOS, which redirects the browser to MCPJam to complete
+  sign-in automatically (IdP-initiated SSO).
+- **From the MCPJam sign-in page** — enter a work email address and MCPJam
+  redirects to Okta (SP-initiated SSO).
 
 Accounts are created automatically on first sign-in, with membership in your
 MCPJam organization. Nobody needs to be invited by hand.
