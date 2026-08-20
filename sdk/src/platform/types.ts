@@ -2398,6 +2398,21 @@ export interface PlatformClaudeReadinessRun {
   updatedAt: number;
 }
 
+/**
+ * The full report for a finished run: every finding, with its provenance.
+ *
+ * Typed as `unknown` rather than mirrored here, and deliberately. The findings
+ * are written by the readiness ENGINE and grow with every check added to it;
+ * the platform stores them as an opaque blob it never parses, precisely so
+ * that adding a check is not a backend migration. Restating that shape in this
+ * file would put a second definition of it behind an API version, and the two
+ * would drift the first time a check gained a field.
+ *
+ * A caller that wants it typed should parse it with the engine's own
+ * `ClaudeReadinessResult` from `@mcpjam/sdk`, which is the one definition.
+ */
+export type PlatformClaudeReadinessReport = unknown;
+
 /** The acknowledgement for a run that was just requested. */
 export interface PlatformClaudeReadinessRunRequest {
   id: string;

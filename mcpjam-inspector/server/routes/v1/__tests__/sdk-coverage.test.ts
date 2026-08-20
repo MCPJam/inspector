@@ -61,6 +61,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "listClaudeReadinessRuns",
   "get /projects/{projectId}/claude-readiness-runs/{runId}":
     "getClaudeReadinessRun",
+  "get /projects/{projectId}/claude-readiness-runs/{runId}/report":
+    "getClaudeReadinessReport",
   "post /projects/{projectId}/claude-readiness-runs/{runId}/cancel":
     "cancelClaudeReadinessRun",
 

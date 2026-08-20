@@ -70,6 +70,10 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  // NOT covered by the mock resets: the report tests stub the global `fetch`,
+  // and a stub that survives into the next test silently answers a request
+  // that was meant to reach nothing.
+  vi.unstubAllGlobals();
   queryMock.mockReset();
   mutationMock.mockReset();
 });
@@ -225,6 +229,126 @@ describe("GET …/claude-readiness-runs/:runId", () => {
       `/projects/${PROJECT}/claude-readiness-runs/${RUN}`,
     );
     expect(response.status).toBe(404);
+  });
+});
+
+describe("GET …/claude-readiness-runs/:runId/report", () => {
+  /** Route the two Convex queries this endpoint makes, by name. */
+  function mockReport(args: {
+    run?: Record<string, unknown> | null;
+    located?: { url: string } | null;
+  }) {
+    queryMock.mockImplementation(async (name: string) =>
+      String(name).endsWith("getReadinessReportUrl")
+        ? (args.located ?? null)
+        : args.run === undefined
+          ? { id: RUN, projectId: PROJECT }
+          : args.run,
+    );
+  }
+
+  it("streams the stored report through rather than the storage URL", async () => {
+    // The URL is a bearer capability for as long as it lives. Handing one back
+    // would turn an authorized read into a link that outlives the
+    // authorization — and one that does not go through this route's guards.
+    const report = { status: "not-ready", findings: [{ id: "a" }] };
+    mockReport({ located: { url: "https://storage.test/blob-1" } });
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify(report), { status: 200 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await request(
+      `/projects/${PROJECT}/claude-readiness-runs/${RUN}/report`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual(report);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    // Nothing in the response names where the bytes came from.
+    expect(JSON.stringify(response.headers)).not.toContain("storage.test");
+  });
+
+  it("never lets a shared cache hold one project's report", async () => {
+    mockReport({ located: { url: "https://storage.test/blob-1" } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 200 })),
+    );
+    const response = await request(
+      `/projects/${PROJECT}/claude-readiness-runs/${RUN}/report`,
+    );
+    expect(response.headers.get("cache-control")).toMatch(/private/);
+    expect(response.headers.get("cache-control")).toMatch(/no-store/);
+  });
+
+  it("404s a swept report rather than serving an empty one", async () => {
+    // Retention drops the blob and keeps the row, so this is a normal answer
+    // about an old run. Returning `{}` would let a caller read "no findings"
+    // out of "the findings are gone".
+    mockReport({ located: null });
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const response = await request(
+      `/projects/${PROJECT}/claude-readiness-runs/${RUN}/report`,
+    );
+    expect(response.status).toBe(404);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("checks the project BEFORE asking for a URL", async () => {
+    // The Convex query authorizes on the run's own project. Without this guard
+    // a report is readable through a URL naming an unrelated project — and
+    // asking for the URL first would mint a capability for a request that is
+    // about to 404 anyway.
+    const located = vi.fn();
+    queryMock.mockImplementation(async (name: string) => {
+      if (String(name).endsWith("getReadinessReportUrl")) return located();
+      return { id: RUN, projectId: "proj_b" };
+    });
+
+    const response = await request(
+      `/projects/${PROJECT}/claude-readiness-runs/${RUN}/report`,
+    );
+    expect(response.status).toBe(404);
+    expect(located).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body larger than it will serve", async () => {
+    // This streams into the caller's response. An unbounded read of an
+    // unbounded object is how one request takes a node's memory with it.
+    mockReport({ located: { url: "https://storage.test/blob-1" } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response("x".repeat(5 * 1024 * 1024), { status: 200 }),
+      ),
+    );
+    const response = await request(
+      `/projects/${PROJECT}/claude-readiness-runs/${RUN}/report`,
+    );
+    expect(response.status).toBe(500);
+  });
+
+  it("reports a storage outage as OURS, not as the connector's", async () => {
+    // 500, not the 502 SERVER_UNREACHABLE this file's other failures use.
+    // That code means the graded connector could not be reached; storage is
+    // our own infrastructure, and saying 502 would send someone to go and
+    // look at a server that is working fine.
+    mockReport({ located: { url: "https://storage.test/blob-1" } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("connection reset");
+      }),
+    );
+    const response = await request(
+      `/projects/${PROJECT}/claude-readiness-runs/${RUN}/report`,
+    );
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ code: "INTERNAL_ERROR" });
   });
 });
 

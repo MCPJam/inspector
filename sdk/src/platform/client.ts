@@ -71,6 +71,7 @@ import type {
   PlatformMe,
   PlatformModel,
   PlatformOrganization,
+  PlatformClaudeReadinessReport,
   PlatformClaudeReadinessRun,
   PlatformClaudeReadinessRunRequest,
   PlatformPage,
@@ -418,6 +419,32 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId,
       )}/claude-readiness-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * The finished run's full report — every finding, with its provenance.
+   *
+   * A SEPARATE CALL from {@link getClaudeReadinessRun} rather than a field on
+   * it: the run row carries lane statuses and coverage counts because listing
+   * reads them, and a listing that inlined every finding would be a listing
+   * nobody could afford to poll. `hasReport` on the run says whether this will
+   * return one.
+   *
+   * 404s once retention has swept the blob. That is a normal answer about an
+   * old run, and distinct from a report with no findings in it.
+   */
+  getClaudeReadinessReport(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformClaudeReadinessReport> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/claude-readiness-runs/${encodeURIComponent(params.runId)}/report`,
       {},
       options,
     );

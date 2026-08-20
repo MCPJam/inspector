@@ -8951,6 +8951,53 @@
         }
       }
     },
+    "/projects/{projectId}/claude-readiness-runs/{runId}/report": {
+      "get": {
+        "operationId": "getClaudeReadinessReport",
+        "tags": [
+          "Claude readiness"
+        ],
+        "summary": "Get a finished run's full report",
+        "description": "Every finding the grade was built from, with its source URL, evidence provenance and policy snapshot. A separate call from the run itself, because a listing that inlined every finding would be one nobody could afford to poll — `hasReport` on the run says whether this will return one. The response body is the readiness engine's own report document, which is deliberately not restated in this schema: it grows with every check added to the engine, and a second definition of it behind an API version would drift the first time a check gained a field. Parse it with `ClaudeReadinessResult` from `@mcpjam/sdk`. 404s once retention has swept the blob, which is a normal answer about an old run and distinct from a report with no findings.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The readiness engine's report document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "description": "The engine's report. See `ClaudeReadinessResult` in @mcpjam/sdk for the authoritative shape."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/claude-readiness-runs/{runId}/cancel": {
       "post": {
         "operationId": "cancelClaudeReadinessRun",

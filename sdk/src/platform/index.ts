@@ -165,6 +165,7 @@ export type {
   PlatformProject,
   PlatformProjectServer,
   PlatformClaudeReadinessLane,
+  PlatformClaudeReadinessReport,
   PlatformClaudeReadinessRun,
   PlatformClaudeReadinessRunRequest,
   PlatformServerConnection,

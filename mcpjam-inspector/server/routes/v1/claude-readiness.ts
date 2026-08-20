@@ -40,6 +40,12 @@ const claudeReadiness = new Hono();
 /** Matches the ceiling the Convex query clamps to, and the OpenAPI schema. */
 const MAX_RUN_PAGE_SIZE = 100;
 
+/** A report is small; anything near this is not one. */
+const MAX_REPORT_BYTES = 4 * 1024 * 1024;
+
+/** Storage is fast or it is broken — this is not a third party's server. */
+const REPORT_FETCH_TIMEOUT_MS = 10_000;
+
 /** What a caller may say about a run they are asking for. */
 const requestRunSchema = z
   .strictObject({
@@ -267,6 +273,105 @@ claudeReadiness.get(
     );
   },
 );
+
+// GET /v1/projects/:projectId/claude-readiness-runs/:runId/report
+//
+// The findings, which the run row deliberately does not carry: lane statuses
+// and coverage counts are columns because listing reads them, and the findings
+// live in a blob the backend never parses — so adding a check to the engine is
+// not a backend migration.
+//
+// The bytes are streamed through rather than the storage URL being handed back.
+// That URL is a bearer capability for as long as it lives, and forwarding one
+// would turn an authorized read into a link that outlives the authorization.
+claudeReadiness.get(
+  "/projects/:projectId/claude-readiness-runs/:runId/report",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const runId = c.req.param("runId");
+    const client = createConvexClient(await getConvexBearerForRequest(c));
+
+    // Scoped like every other read here, and BEFORE asking for a URL: the
+    // Convex query authorizes on the run's own project, so without this a
+    // report is readable through a URL naming an unrelated project.
+    await requireRunInProject(client, projectId, runId);
+
+    let located: { url: string } | null;
+    try {
+      located = (await client.query(
+        "claudeReadinessRuns:getReadinessReportUrl" as never,
+        { runId } as never,
+      )) as { url: string } | null;
+    } catch (error) {
+      throw translateConvexReadError(error, { scope: "v1.claudeReadiness" });
+    }
+    // Retention drops the blob and keeps the row, so this is a normal answer
+    // about an old run. 404 rather than an empty report: a caller must not be
+    // able to read "no findings" out of "the findings were swept".
+    if (!located) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "This run has no stored report. Reports are kept for a limited window.",
+      );
+    }
+
+    const response = await fetchReport(located.url);
+    // Served as an opaque body rather than parsed and re-serialized. Parsing
+    // here would make every engine change a change to this route too, which is
+    // the coupling the blob exists to avoid.
+    return c.body(response, 200, {
+      "content-type": "application/json; charset=utf-8",
+      // The report is per-project and authorized per request; a shared cache
+      // holding it would serve it to the next caller.
+      "cache-control": "private, no-store",
+    });
+  },
+);
+
+/**
+ * Read the stored report, bounded.
+ *
+ * The size ceiling and the timeout are here rather than trusted from storage:
+ * this streams into the caller's response, and an unbounded read of an
+ * unbounded object is how one request takes a node's memory with it.
+ */
+async function fetchReport(url: string): Promise<string> {
+  // 500 / INTERNAL_ERROR, deliberately, and NOT the 502 SERVER_UNREACHABLE
+  // this file's other failures use. That code means the GRADED CONNECTOR could
+  // not be reached; storage is our own infrastructure, so reporting its outage
+  // that way would send a caller to go and look at their server.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), REPORT_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "The stored report could not be read.",
+      );
+    }
+    const body = await response.text();
+    if (body.length > MAX_REPORT_BYTES) {
+      throw new WebRouteError(
+        500,
+        ErrorCode.INTERNAL_ERROR,
+        "The stored report is larger than this endpoint will serve.",
+      );
+    }
+    return body;
+  } catch (error) {
+    if (error instanceof WebRouteError) throw error;
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "The stored report could not be read.",
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 // POST /v1/projects/:projectId/claude-readiness-runs/:runId/cancel
 //
