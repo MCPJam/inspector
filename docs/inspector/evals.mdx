@@ -188,6 +188,8 @@ The tooltip shows a headline figure and a per-model or per-component breakdown. 
 
 The first run of a suite saves the set of MCP servers used as a frozen snapshot; reruns reuse it, so connecting new servers can't silently change what a suite runs against. Click **Update snapshot** in the suite header to re-save the current servers and start a new run.
 
+For harness runs, the run's pinned skills are also frozen at run start and delivered to each iteration from that snapshot — not re-fetched from the live project pool. This means editing a project skill mid-run does not affect iterations already in progress, and the "without skills" A/B arm (configured via `skillsOverride: "exclude"`) runs with no skills regardless of what the project currently holds.
+
 ## Computer environment
 
 <Note>
