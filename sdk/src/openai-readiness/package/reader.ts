@@ -48,9 +48,11 @@ import {
   OPENAI_SKILL_METADATA_PATH,
 } from "../profile.js";
 import {
+  NO_XML_PARSER_REASON,
   readImageDimensions,
   sniffImageMimeType,
   type ImageDimensions,
+  type XmlParseFn,
 } from "./image-dimensions.js";
 import {
   parseOpenAIAgentMetadata,
@@ -86,6 +88,15 @@ export interface OpenAIArchiveObservations {
 
 export interface ReadOpenAIPluginPackageOptions {
   archive?: OpenAIArchiveObservations;
+  /**
+   * How to parse an SVG, for runtimes with no `DOMParser`.
+   *
+   * A browser has one natively and needs nothing here. Node does not, so a Node
+   * caller passes `xmldomParseXml` from the Node entry — kept an argument
+   * rather than an import so `@xmldom/xmldom` never enters the browser entry's
+   * graph. Without it, SVG assets are recorded as a GAP rather than graded.
+   */
+  parseXml?: XmlParseFn;
 }
 
 /** Where the manifest was found, and whether that required an assumption. */
@@ -802,7 +813,9 @@ export async function readOpenAIPluginPackage(
     }
 
     asset.contentHash = await sha256HexBytes(bytes);
-    asset.sniffedMimeType = sniffImageMimeType(bytes);
+    asset.sniffedMimeType = sniffImageMimeType(bytes, {
+      parseXml: options.parseXml,
+    });
 
     const effectiveMimeType = asset.sniffedMimeType ?? declaredMimeType;
     if (
@@ -818,9 +831,22 @@ export async function readOpenAIPluginPackage(
       );
     }
 
-    const decoded = readImageDimensions(bytes);
+    const decoded = readImageDimensions(bytes, { parseXml: options.parseXml });
     if (!decoded.ok) {
       asset.undecodableReason = decoded.reason;
+
+      // A runtime with no XML parser is OUR limitation, not the submitter's
+      // defect. Reporting it as a malformed SVG would send them to fix a file
+      // that is fine, so it is recorded as a gap and no portal code is raised.
+      if (decoded.reason.includes(NO_XML_PARSER_REASON)) {
+        gaps.push({
+          subject: path,
+          reason: `${NO_XML_PARSER_REASON}; this SVG's dimensions were not checked`,
+        });
+        assets.push(asset);
+        continue;
+      }
+
       // SVG gets its own two codes because the remediation differs: a
       // malformed document and a document with no dimensions are different
       // mistakes, and "could not decode" would tell the submitter neither.

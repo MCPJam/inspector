@@ -11,9 +11,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  readImageDimensions,
-  sniffImageMimeType,
+  readImageDimensions as readImageDimensionsRaw,
+  sniffImageMimeType as sniffImageMimeTypeRaw,
 } from "../../src/openai-readiness/package/image-dimensions.js";
+import { xmldomParseXml } from "../../src/openai-readiness/package/svg-xml-node.js";
+
+// Node has no `DOMParser`, so the SVG path needs the parser this runtime's
+// entry supplies. Passing it here is the same thing a server-side caller does;
+// a browser needs neither the import nor the argument.
+const readImageDimensions = (bytes: Uint8Array) =>
+  readImageDimensionsRaw(bytes, { parseXml: xmldomParseXml });
+const sniffImageMimeType = (bytes: Uint8Array) =>
+  sniffImageMimeTypeRaw(bytes, { parseXml: xmldomParseXml });
 
 const bytes = (...values: number[]): Uint8Array => Uint8Array.from(values);
 

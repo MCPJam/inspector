@@ -19,7 +19,49 @@
  * from the browser entry.
  */
 
-import { DOMParser } from "@xmldom/xmldom";
+/**
+ * The XML surface an SVG dimension read needs — two properties, no more.
+ *
+ * Deliberately structural rather than a DOM type. The whole point of injecting
+ * a parser is that `@xmldom/xmldom` must never appear in the browser entry's
+ * import graph (the SDK guards that: it is Node-only credential machinery that
+ * drags crypto into a client bundle), while a browser already ships a `DOMParser`
+ * that does the job natively. Naming the two properties this module reads keeps
+ * both implementations honest and neither of them imported here.
+ */
+export interface XmlElementLike {
+  nodeName: string;
+  getAttribute(name: string): string | null;
+}
+
+export interface XmlDocumentLike {
+  documentElement: XmlElementLike | null | undefined;
+}
+
+/**
+ * Parse XML into something with a root element, or say why not.
+ *
+ * Returns a RESULT rather than throwing, and rather than returning a
+ * half-built tree: "not well-formed" is one of the portal's own SVG rejections,
+ * so it has to be data this module can report, not an exception a caller may or
+ * may not catch.
+ */
+export type XmlParseResult =
+  | { ok: true; document: XmlDocumentLike }
+  | { ok: false; reason: string };
+
+export type XmlParseFn = (source: string) => XmlParseResult;
+
+export interface ReadImageDimensionsOptions {
+  /**
+   * How to parse an SVG. Defaults to the platform `DOMParser`, which every
+   * browser has and Node does not — so a Node caller that wants SVG support
+   * passes `xmldomParseXml` from the Node entry. Absent both, an SVG is
+   * REFUSED with a reason naming the missing parser, never graded as malformed:
+   * a runtime with no XML parser is our limitation, not the submitter's defect.
+   */
+  parseXml?: XmlParseFn;
+}
 
 export interface ImageDimensions {
   widthPx: number;
@@ -247,52 +289,67 @@ function parseSvgLength(value: string | null | undefined): number | undefined {
  * only a percentage width falls through to the viewBox rather than being
  * accepted with a meaningless dimension.
  */
-/** The first line of an xmldom diagnostic — the rest is a position banner. */
-function firstLine(message: unknown): string {
-  return String(message)
-    .split("\n")[0]
-    .replace(/^\[xmldom [a-z]+\]\s*/, "");
+/**
+ * The platform parser, when the runtime has one.
+ *
+ * A browser's native `DOMParser` reports a malformed document by returning a
+ * tree whose root (or first child) is a `parsererror` element rather than by
+ * throwing, so that has to be tested for explicitly — without it, a malformed
+ * SVG would present as "an element that is not `svg`", which is a different
+ * remediation.
+ */
+export const NO_XML_PARSER_REASON =
+  "no XML parser is available in this runtime; pass `parseXml` (the Node entry exports `xmldomParseXml`)";
+
+function platformParseXml(source: string): XmlParseResult {
+  const Parser = (globalThis as { DOMParser?: new () => unknown }).DOMParser;
+  if (!Parser) {
+    return { ok: false, reason: NO_XML_PARSER_REASON };
+  }
+  try {
+    const document = new (Parser as new () => {
+      parseFromString(text: string, type: string): XmlDocumentLike;
+    })().parseFromString(source, "image/svg+xml");
+    const root = document.documentElement;
+    if (root && localName(root.nodeName) === "parsererror") {
+      return { ok: false, reason: "the document is not well-formed XML" };
+    }
+    return { ok: true, document };
+  } catch (error) {
+    return { ok: false, reason: String(error) };
+  }
 }
 
-function decodeSvg(source: string): ImageDimensionsResult {
-  let document;
-  let parseError: string | undefined;
-  try {
-    document = new DOMParser({
-      // EVERY severity counts as malformed, not just `fatalError`.
-      //
-      // The parser is recovering by design: handed `<svg width="10">` with no
-      // end tag it reports a WARNING and hands back a usable tree, and handed
-      // an undefined entity it reports an ERROR and does the same. Listening
-      // only for `fatalError` therefore accepts documents that are not
-      // well-formed XML — which is the exact thing the portal rejects — and
-      // reads dimensions off a tree the parser guessed at. Well-formed SVGs,
-      // including ones with a doctype, CDATA, namespaces and nested groups,
-      // produce no diagnostics at all, so nothing legitimate is caught here.
-      errorHandler: {
-        warning: (message: unknown) => {
-          parseError ??= firstLine(message);
-        },
-        error: (message: unknown) => {
-          parseError ??= firstLine(message);
-        },
-        fatalError: (message: unknown) => {
-          parseError ??= firstLine(message);
-        },
-      },
-    }).parseFromString(source, "image/svg+xml");
-  } catch (error) {
+/** `svg` out of `svg`, `SVG` or `svg:svg`. */
+function localName(nodeName: string): string {
+  return nodeName.toLowerCase().replace(/^.*:/, "");
+}
+
+/**
+ * SVG: parsed as XML, never with a regex.
+ *
+ * A regex over `width="…"` matches inside a comment, inside a nested element,
+ * and inside a CDATA block, and misses an attribute written across a newline.
+ *
+ * The rule the portal states is a disjunction — a numeric `width`/`height` pair
+ * OR a numeric `viewBox` — so both are tried, in that order, and a file with
+ * only a percentage width falls through to the viewBox rather than being
+ * accepted with a meaningless dimension.
+ */
+function decodeSvg(
+  source: string,
+  parseXml: XmlParseFn,
+): ImageDimensionsResult {
+  const parsed = parseXml(source);
+  if (!parsed.ok) {
     return {
       ok: false,
-      reason: `SVG is not well-formed XML: ${String(error)}`,
+      reason: `SVG is not well-formed XML: ${parsed.reason}`,
     };
   }
-  if (parseError) {
-    return { ok: false, reason: `SVG is not well-formed XML: ${parseError}` };
-  }
 
-  const root = document?.documentElement;
-  if (!root || root.nodeName.toLowerCase().replace(/^.*:/, "") !== "svg") {
+  const root = parsed.document.documentElement;
+  if (!root || localName(root.nodeName) !== "svg") {
     return { ok: false, reason: "SVG has no `svg` root element" };
   }
 
@@ -353,13 +410,21 @@ function looksLikeSvg(bytes: Uint8Array): boolean {
  * trusting the label would make this decoder report "truncated PNG" for a
  * perfectly good JPEG — sending them to fix the wrong thing.
  */
-export function readImageDimensions(bytes: Uint8Array): ImageDimensionsResult {
+export function readImageDimensions(
+  bytes: Uint8Array,
+  options: ReadImageDimensionsOptions = {},
+): ImageDimensionsResult {
   if (bytes.length === 0) return { ok: false, reason: "the file is empty" };
 
   if (looksLikePng(bytes)) return decodePng(bytes);
   if (bytes[0] === 0xff && bytes[1] === 0xd8) return decodeJpeg(bytes);
   if (ascii(bytes, 0, 4) === "RIFF") return decodeWebp(bytes);
-  if (looksLikeSvg(bytes)) return decodeSvg(textDecoder.decode(bytes));
+  if (looksLikeSvg(bytes)) {
+    return decodeSvg(
+      textDecoder.decode(bytes),
+      options.parseXml ?? platformParseXml,
+    );
+  }
 
   return {
     ok: false,
@@ -368,8 +433,11 @@ export function readImageDimensions(bytes: Uint8Array): ImageDimensionsResult {
 }
 
 /** The MIME type these bytes actually are, for contradicting a declared one. */
-export function sniffImageMimeType(bytes: Uint8Array): string | undefined {
-  const result = readImageDimensions(bytes);
+export function sniffImageMimeType(
+  bytes: Uint8Array,
+  options: ReadImageDimensionsOptions = {},
+): string | undefined {
+  const result = readImageDimensions(bytes, options);
   if (!result.ok) return undefined;
   return {
     png: "image/png",

@@ -170,3 +170,32 @@ export type {
   OpenAICheckDefinition,
   OpenAICheckStamp,
 } from "./checks/helpers.js";
+
+export {
+  OPENAI_ATTESTATIONS,
+  OPENAI_DATA_TYPES,
+  OPENAI_DEMO_CREDENTIAL_DELIVERY,
+  openaiSubmissionProfileSchema,
+  parseOpenAISubmissionProfile,
+  summarizeTestCases,
+} from "./submission-profile.js";
+export type {
+  OpenAIAttestation,
+  OpenAIDataType,
+  OpenAISubmissionProfile,
+  OpenAISubmissionProfileParse,
+} from "./submission-profile.js";
+
+export { runOpenAIPackageChecks } from "./checks/package.js";
+export type { OpenAIPackageEvidenceInput } from "./checks/package.js";
+export { runOpenAISubmissionChecks } from "./checks/submission.js";
+export type { OpenAISubmissionEvidence } from "./checks/submission.js";
+
+export {
+  gatherOpenAIReadinessEvidence,
+  gradeOpenAIReadiness,
+} from "./runner.js";
+export type {
+  GatherOpenAIReadinessEvidenceOptions,
+  OpenAIReadinessEvidence,
+} from "./runner.js";

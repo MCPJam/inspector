@@ -1,0 +1,510 @@
+/**
+ * Submission-artifact checks.
+ *
+ * THE LANE IS DISPOSITIVE, AND THAT IS THE POINT. A submission missing its test
+ * cases, its attestations or its domain verification is not ready, and grading
+ * those as non-blocking suggestions would misrepresent the directory. But a
+ * submitter running a quick technical check on their server has supplied no
+ * profile, and failing that run on paperwork they have not written yet would
+ * make the quick check useless.
+ *
+ * The staged rollup is what resolves it. This lane belongs to
+ * `submission-ready` and not to `technical-preflight`, so a profile-less run is
+ * honestly `ready` at the narrow stage and `incomplete` at the broad one — both
+ * statements true, neither one softened.
+ *
+ * THE OTHER SPLIT, inside the lane:
+ *
+ *   - DETERMINISTIC — presence, counts, lengths, URL shapes, enum membership.
+ *     `required`, and they pass or fail on what was declared.
+ *   - MANUAL — whether a failure case really fails GRACEFULLY, whether the
+ *     submitter owns the domain, whether an attestation is true. These are
+ *     `manual-review` with `declared` provenance, so no reader can mistake
+ *     "the submitter said so" for "we checked".
+ *
+ * Pure data. No transport.
+ */
+
+import { openaiPolicySource } from "../manifest.js";
+import { OPENAI_SUBMISSION_TEST_CASES } from "../profile.js";
+import {
+  OPENAI_ATTESTATIONS,
+  summarizeTestCases,
+  type OpenAISubmissionProfile,
+} from "../submission-profile.js";
+import {
+  OPENAI_READINESS_INPUTS,
+  type OpenAIReadinessFinding,
+} from "../types.js";
+import {
+  missingInput,
+  notApplicable,
+  notEvaluated,
+  satisfied,
+  violated,
+  type OpenAICheckDefinition,
+  type OpenAICheckStamp,
+} from "./helpers.js";
+
+export interface OpenAISubmissionEvidence {
+  profile?: OpenAISubmissionProfile;
+  /** Validation issues from a profile that was supplied and was malformed. */
+  profileIssues: string[];
+  /** Tool names observed with a destructive or open-world annotation. */
+  annotatedTools?: string[];
+  /** UI frame domains observed on the wire. */
+  frameDomains?: string[];
+}
+
+const LISTING_FIELDS: OpenAICheckDefinition = {
+  id: "openai.submission.listing-fields",
+  title: "Listing name, descriptions and categories are within limits",
+  lane: "submission-artifacts",
+  class: "required",
+  source: openaiPolicySource("deploy/submission", "§Listing details"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const LISTING_URLS: OpenAICheckDefinition = {
+  id: "openai.submission.urls",
+  title: "Privacy policy and support URLs are HTTPS",
+  lane: "submission-artifacts",
+  class: "required",
+  source: openaiPolicySource("deploy/submission", "§Listing details → Links"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const TEST_CASES: OpenAICheckDefinition = {
+  id: "openai.submission.test-cases",
+  title: `${OPENAI_SUBMISSION_TEST_CASES.successCount} successful and ${OPENAI_SUBMISSION_TEST_CASES.failureCount} graceful-failure test cases are supplied`,
+  lane: "submission-artifacts",
+  class: "required",
+  source: openaiPolicySource("deploy/submission", "§Test cases"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const TEST_CASE_QUALITY: OpenAICheckDefinition = {
+  id: "openai.submission.test-case-quality",
+  title: "The failure cases actually degrade gracefully",
+  lane: "experience-insights",
+  class: "manual-review",
+  source: openaiPolicySource("app-guidelines", "§Predictable behaviour"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const DEMO_ACCESS: OpenAICheckDefinition = {
+  id: "openai.submission.demo-access",
+  title: "Reviewer demo credentials and a demo recording are provided",
+  lane: "submission-artifacts",
+  class: "required",
+  source: openaiPolicySource("deploy/submission", "§Demo access"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const ACCOUNT: OpenAICheckDefinition = {
+  id: "openai.submission.account",
+  title: "The submitting account is identity-verified and holds app-write",
+  lane: "submission-artifacts",
+  class: "required",
+  source: openaiPolicySource("deploy/submission", "§Account requirements"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const GEOGRAPHY: OpenAICheckDefinition = {
+  id: "openai.submission.geography",
+  title: "Country availability is declared",
+  lane: "submission-artifacts",
+  class: "required",
+  source: openaiPolicySource("deploy/submission", "§Availability"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const RELEASE_NOTES: OpenAICheckDefinition = {
+  id: "openai.submission.release-notes",
+  title: "An updated submission supplies release notes",
+  lane: "submission-artifacts",
+  class: "required",
+  source: openaiPolicySource("deploy/submission", "§Release notes"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const ATTESTATIONS: OpenAICheckDefinition = {
+  id: "openai.submission.attestations",
+  title: "Every policy attestation is affirmed",
+  lane: "submission-artifacts",
+  class: "required",
+  source: openaiPolicySource("deploy/submission", "§Attestations"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const ATTESTATION_TRUTH: OpenAICheckDefinition = {
+  id: "openai.submission.attestation-truth",
+  title: "The attestations are true",
+  lane: "experience-insights",
+  class: "manual-review",
+  source: openaiPolicySource("app-guidelines", "§Trust"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const DOMAIN_TOKEN: OpenAICheckDefinition = {
+  id: "openai.submission.domain-token",
+  title: "A domain-verification token is on file",
+  lane: "submission-artifacts",
+  class: "required",
+  source: openaiPolicySource("deploy/submission", "§Domain verification"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const SCAN_CURRENCY: OpenAICheckDefinition = {
+  id: "openai.submission.scan-currency",
+  title: "The draft's tool scan is current",
+  lane: "submission-artifacts",
+  class: "required",
+  source: openaiPolicySource("deploy/submission", "§Scan tools"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const PRIVACY_DISCLOSURE: OpenAICheckDefinition = {
+  id: "openai.submission.privacy-disclosure",
+  title: "Declared data types are consistent with the privacy policy",
+  lane: "experience-insights",
+  class: "manual-review",
+  source: openaiPolicySource("app-guidelines", "§Privacy"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const ANNOTATION_JUSTIFICATIONS: OpenAICheckDefinition = {
+  id: "openai.submission.annotation-justifications",
+  title: "Destructive and open-world tools carry a justification for review",
+  lane: "submission-artifacts",
+  class: "recommended",
+  source: openaiPolicySource("deploy/submission", "§Test cases"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const FRAME_DOMAIN_EXPLANATIONS: OpenAICheckDefinition = {
+  id: "openai.submission.frame-domain-explanations",
+  title: "Every embedded frame domain is explained",
+  lane: "submission-artifacts",
+  class: "recommended",
+  source: openaiPolicySource("concepts/ui-guidelines", "§Embedded content"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+const PROFILE_VALID: OpenAICheckDefinition = {
+  id: "openai.submission.profile-valid",
+  title: "The supplied submission profile is well-formed",
+  lane: "submission-artifacts",
+  class: "required",
+  source: openaiPolicySource("deploy/submission", "§Submission form"),
+  provenance: "declared",
+  intrusiveness: "passive",
+};
+
+/** Every check in this module, so a profile-less run reports all of them. */
+const ALL_CHECKS: OpenAICheckDefinition[] = [
+  LISTING_FIELDS,
+  LISTING_URLS,
+  TEST_CASES,
+  TEST_CASE_QUALITY,
+  DEMO_ACCESS,
+  ACCOUNT,
+  GEOGRAPHY,
+  RELEASE_NOTES,
+  ATTESTATIONS,
+  ATTESTATION_TRUTH,
+  DOMAIN_TOKEN,
+  SCAN_CURRENCY,
+  PRIVACY_DISCLOSURE,
+  ANNOTATION_JUSTIFICATIONS,
+  FRAME_DOMAIN_EXPLANATIONS,
+];
+
+const REQUIRED_ACCOUNT_PERMISSION = "api.apps.write";
+
+export function runOpenAISubmissionChecks(
+  evidence: OpenAISubmissionEvidence,
+  stamp: OpenAICheckStamp,
+): OpenAIReadinessFinding[] {
+  const findings: OpenAIReadinessFinding[] = [];
+  const { profile } = evidence;
+
+  // A malformed profile is a caller's mistake, reported as one. Routing it down
+  // the "no input" branch would hide it behind a status that reads like our
+  // limitation.
+  if (evidence.profileIssues.length > 0) {
+    findings.push(
+      violated(
+        PROFILE_VALID,
+        stamp,
+        `The submission profile did not validate: ${evidence.profileIssues.slice(0, 3).join("; ")}${
+          evidence.profileIssues.length > 3 ? "…" : ""
+        }`,
+        { issues: evidence.profileIssues },
+      ),
+    );
+  } else if (profile) {
+    findings.push(satisfied(PROFILE_VALID, stamp));
+  }
+
+  if (!profile) {
+    for (const definition of ALL_CHECKS) {
+      findings.push(
+        notEvaluated(
+          definition,
+          stamp,
+          "no submission profile was supplied, and none of this can be observed from the server or the package",
+          missingInput(OPENAI_READINESS_INPUTS.submissionProfile),
+        ),
+      );
+    }
+    return findings;
+  }
+
+  // ------------------------------------------------------------ the listing
+  findings.push(
+    satisfied(LISTING_FIELDS, stamp, {
+      // The schema already enforced the bounds, so reaching here IS the pass.
+      // Recording the values makes the pass auditable rather than asserted.
+      name: profile.name.length,
+      shortDescription: profile.shortDescription.length,
+      description: profile.description.length,
+      categories: profile.categories,
+    }),
+  );
+  findings.push(
+    satisfied(LISTING_URLS, stamp, {
+      privacyPolicyUrl: profile.privacyPolicyUrl,
+      supportUrl: profile.supportUrl,
+    }),
+  );
+
+  // --------------------------------------------------------- review materials
+  const tests = summarizeTestCases(profile);
+  if (tests.meetsSuccessMinimum && tests.meetsFailureMinimum) {
+    findings.push(satisfied(TEST_CASES, stamp, tests));
+  } else {
+    findings.push(
+      violated(
+        TEST_CASES,
+        stamp,
+        `Supply at least ${OPENAI_SUBMISSION_TEST_CASES.successCount} successful and ` +
+          `${OPENAI_SUBMISSION_TEST_CASES.failureCount} graceful-failure test cases; ` +
+          `this profile has ${tests.successful} and ${tests.gracefulFailure}.`,
+        tests,
+      ),
+    );
+  }
+  findings.push(
+    notEvaluated(
+      TEST_CASE_QUALITY,
+      stamp,
+      "whether a case degrades gracefully is a judgement about the response, which this run cannot make from a declared prompt and expectation",
+      { declaredFailureCases: profile.testCases.gracefulFailure.length },
+    ),
+  );
+
+  const needsCredentials =
+    profile.demoCredentials.delivery !== "not-required-authless";
+  const demoProblems: string[] = [];
+  if (needsCredentials && !profile.demoCredentials.provided) {
+    demoProblems.push("reviewer demo credentials are not provided");
+  }
+  if (!profile.demoRecordingProvided) {
+    demoProblems.push("no demo recording is provided");
+  }
+  findings.push(
+    demoProblems.length === 0
+      ? satisfied(DEMO_ACCESS, stamp, {
+          delivery: profile.demoCredentials.delivery,
+          recording: profile.demoRecordingProvided,
+        })
+      : violated(
+          DEMO_ACCESS,
+          stamp,
+          `Reviewers cannot exercise the plugin: ${demoProblems.join(", ")}.`,
+          {
+            delivery: profile.demoCredentials.delivery,
+            recording: profile.demoRecordingProvided,
+          },
+        ),
+  );
+
+  // -------------------------------------------------------------- the account
+  const accountProblems: string[] = [];
+  if (!profile.identityVerified) {
+    accountProblems.push("the account is not identity-verified");
+  }
+  if (!profile.accountPermissions.includes(REQUIRED_ACCOUNT_PERMISSION)) {
+    accountProblems.push(`the account lacks ${REQUIRED_ACCOUNT_PERMISSION}`);
+  }
+  findings.push(
+    accountProblems.length === 0
+      ? satisfied(ACCOUNT, stamp, {
+          permissions: profile.accountPermissions,
+        })
+      : violated(ACCOUNT, stamp, `${accountProblems.join("; ")}.`, {
+          permissions: profile.accountPermissions,
+        }),
+  );
+
+  // ------------------------------------------------------------- availability
+  findings.push(
+    profile.availableCountries.length > 0
+      ? satisfied(GEOGRAPHY, stamp, {
+          countries: profile.availableCountries.length,
+        })
+      : violated(
+          GEOGRAPHY,
+          stamp,
+          "Declare the countries this listing will be available in.",
+        ),
+  );
+
+  // ------------------------------------------------------------ release notes
+  //
+  // Only an UPDATE needs them. Requiring release notes on a first submission
+  // would fail every plugin's first attempt on a field that has nothing to
+  // describe.
+  findings.push(
+    !profile.hasPublishedVersion
+      ? notApplicable(
+          RELEASE_NOTES,
+          stamp,
+          "this is a first submission, so there is no previous version for release notes to describe",
+        )
+      : profile.releaseNotes
+        ? satisfied(RELEASE_NOTES, stamp)
+        : violated(
+            RELEASE_NOTES,
+            stamp,
+            "An update to a published plugin must supply release notes.",
+          ),
+  );
+
+  // ------------------------------------------------------------ attestations
+  const missing = OPENAI_ATTESTATIONS.filter(
+    (attestation) => profile.attestations[attestation] !== true,
+  );
+  findings.push(
+    missing.length === 0
+      ? satisfied(ATTESTATIONS, stamp, {
+          affirmed: OPENAI_ATTESTATIONS.length,
+        })
+      : violated(
+          ATTESTATIONS,
+          stamp,
+          `Affirm the remaining attestation(s): ${missing.join(", ")}.`,
+          {
+            // Which ones, not how many: "3 missing" sends a submitter back to
+            // read the whole form.
+            missing,
+            // A key that is present and `false` is a REFUSAL; an absent key is
+            // an unfinished form. Different problems, so they are recorded
+            // apart even though both fail the check.
+            refused: missing.filter(
+              (attestation) => profile.attestations[attestation] === false,
+            ),
+          },
+        ),
+  );
+  findings.push(
+    notEvaluated(
+      ATTESTATION_TRUTH,
+      stamp,
+      "an attestation is a claim about the world; this run can see that it was affirmed and nothing more",
+    ),
+  );
+
+  // ------------------------------------------------------- domain and scanning
+  findings.push(
+    profile.domainVerificationToken
+      ? satisfied(DOMAIN_TOKEN, stamp)
+      : violated(
+          DOMAIN_TOKEN,
+          stamp,
+          "Record the domain-verification token the portal issued, so the well-known challenge can be checked.",
+        ),
+  );
+  findings.push(
+    profile.lastScanAt
+      ? satisfied(SCAN_CURRENCY, stamp, { lastScanAt: profile.lastScanAt })
+      : notEvaluated(
+          SCAN_CURRENCY,
+          stamp,
+          "the profile records no scan timestamp, so this run cannot tell whether the draft's scan predates the current server contract",
+          missingInput(OPENAI_READINESS_INPUTS.submissionProfile, {
+            field: "lastScanAt",
+          }),
+        ),
+  );
+
+  // -------------------------------------------------------------- disclosures
+  findings.push(
+    notEvaluated(
+      PRIVACY_DISCLOSURE,
+      stamp,
+      "whether the declared data types match what the privacy policy says needs a person to read both",
+      { declaredDataTypes: profile.privacyPolicyDataTypes },
+    ),
+  );
+
+  const annotated = evidence.annotatedTools ?? [];
+  const unjustified = annotated.filter(
+    (tool) => !profile.annotationJustifications[tool],
+  );
+  findings.push(
+    annotated.length === 0
+      ? notApplicable(
+          ANNOTATION_JUSTIFICATIONS,
+          stamp,
+          "no tool was observed carrying a destructive or open-world annotation",
+        )
+      : unjustified.length === 0
+        ? satisfied(ANNOTATION_JUSTIFICATIONS, stamp, { annotated })
+        : violated(
+            ANNOTATION_JUSTIFICATIONS,
+            stamp,
+            `Explain why these tools are destructive or open-world: ${unjustified.join(", ")}.`,
+            { annotated, unjustified },
+          ),
+  );
+
+  const frameDomains = evidence.frameDomains ?? [];
+  const unexplained = frameDomains.filter(
+    (domain) => !profile.frameDomainExplanations[domain],
+  );
+  findings.push(
+    frameDomains.length === 0
+      ? notApplicable(
+          FRAME_DOMAIN_EXPLANATIONS,
+          stamp,
+          "this submission embeds no frame domains",
+        )
+      : unexplained.length === 0
+        ? satisfied(FRAME_DOMAIN_EXPLANATIONS, stamp, { frameDomains })
+        : violated(
+            FRAME_DOMAIN_EXPLANATIONS,
+            stamp,
+            `Explain why these frame domains are embedded: ${unexplained.join(", ")}.`,
+            { frameDomains, unexplained },
+          ),
+  );
+
+  return findings;
+}

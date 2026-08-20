@@ -36,6 +36,10 @@ import {
   type ClaudeReadinessFinding,
   type ClaudeReadinessResult,
 } from "./claude-readiness/types.js";
+import {
+  isOpenAIReadinessResult,
+  type OpenAIReadinessResult,
+} from "./openai-readiness/types.js";
 
 export type ConformanceReportKind =
   | "protocol-conformance"
@@ -48,7 +52,11 @@ export type ConformanceReportKind =
   // the adapter below simply never sets the field. Consumers that switch on
   // this union must treat it as an advisory-bearing report rather than a
   // conformance verdict they can pool.
-  | "claude-directory-readiness";
+  | "claude-directory-readiness"
+  // Likewise not a suite. Same reasoning as the Claude entry above: it grades a
+  // publisher's listing policy, carries no `score`, and is excluded from
+  // `pooledConformanceScore` by construction.
+  | "openai-directory-readiness";
 
 export type ConformanceReportCaseStatus = "passed" | "failed" | "skipped";
 
@@ -138,7 +146,8 @@ type SupportedSingleConformanceResult =
   | OAuthConformanceResult
   | MCPAppsConformanceResult
   | MCPTasksConformanceResult
-  | ClaudeReadinessResult;
+  | ClaudeReadinessResult
+  | OpenAIReadinessResult;
 
 type SupportedSuiteConformanceResult =
   | MCPConformanceSuiteResult
@@ -295,7 +304,11 @@ function outcomeFields(result: {
   incompleteReason?: string;
 }): Pick<ConformanceReport, "outcome" | "incompleteReason"> {
   const outcome = result.outcome;
-  if (outcome !== "passed" && outcome !== "failed" && outcome !== "incomplete") {
+  if (
+    outcome !== "passed" &&
+    outcome !== "failed" &&
+    outcome !== "incomplete"
+  ) {
     return {};
   }
   return {
@@ -471,7 +484,9 @@ function createProtocolReport(
       name: result.name,
       passed: result.passed,
       ...suiteOutcomeFields(result.results),
-      score: pooledConformanceScore(result.results.map(scoreFromProtocolResult)),
+      score: pooledConformanceScore(
+        result.results.map(scoreFromProtocolResult),
+      ),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         mcpGroupFromResult(entry, entry.label, index),
@@ -809,7 +824,33 @@ function createDirectoryReadinessReport(
  * providers, that exactly one recognises any given result, is visible in a
  * single place.
  */
+/**
+ * OpenAI's descriptor.
+ *
+ * `isResult` tests the explicit `readinessKind` rather than the shape, because
+ * the shape is IDENTICAL to Claude's — lanes, findings, badges — and a
+ * structural test would route whichever result was tried first.
+ *
+ * `isDispositive` is the shared predicate rather than a publisher-specific one:
+ * both products agree that `required` and `runtime-blocker` decide a lane, and
+ * a second copy of that rule would be a second place for the renderer and the
+ * grader to disagree about the same finding.
+ */
+export const OPENAI_READINESS_REPORT_PROVIDER: DirectoryReadinessReportProvider<OpenAIReadinessResult> =
+  {
+    kind: "openai-directory-readiness",
+    providerName: "OpenAI Plugin Directory Readiness",
+    isResult: (result): result is OpenAIReadinessResult =>
+      isOpenAIReadinessResult(result),
+    isDispositive: (finding) =>
+      finding.class === "required" || finding.class === "runtime-blocker",
+  };
+
 const READINESS_REPORT_PROVIDERS: DirectoryReadinessReportProvider<never>[] = [
+  // OpenAI first: its `readinessKind` test is exact, while Claude's recognises
+  // "a readiness result with no kind". Ordering the exact test first means
+  // neither provider depends on the other's negative case.
+  OPENAI_READINESS_REPORT_PROVIDER as unknown as DirectoryReadinessReportProvider<never>,
   CLAUDE_READINESS_REPORT_PROVIDER as unknown as DirectoryReadinessReportProvider<never>,
 ];
 
@@ -824,7 +865,9 @@ const READINESS_REPORT_PROVIDERS: DirectoryReadinessReportProvider<never>[] = [
 export function registerDirectoryReadinessProvider<
   Result extends SupportedConformanceResult,
 >(provider: DirectoryReadinessReportProvider<Result>): void {
-  if (READINESS_REPORT_PROVIDERS.some((known) => known.kind === provider.kind)) {
+  if (
+    READINESS_REPORT_PROVIDERS.some((known) => known.kind === provider.kind)
+  ) {
     return;
   }
   READINESS_REPORT_PROVIDERS.push(
@@ -836,7 +879,9 @@ export function registerDirectoryReadinessProvider<
 function matchReadinessProvider(
   result: SupportedConformanceResult,
 ): DirectoryReadinessReportProvider<never> | undefined {
-  return READINESS_REPORT_PROVIDERS.find((provider) => provider.isResult(result));
+  return READINESS_REPORT_PROVIDERS.find((provider) =>
+    provider.isResult(result),
+  );
 }
 
 export function toConformanceReport(
@@ -862,6 +907,9 @@ export function toConformanceReport(
 ): ConformanceReport;
 export function toConformanceReport(
   result: ClaudeReadinessResult,
+): ConformanceReport;
+export function toConformanceReport(
+  result: OpenAIReadinessResult,
 ): ConformanceReport;
 export function toConformanceReport(
   result: SupportedConformanceResult,
@@ -892,7 +940,9 @@ export function toConformanceReport(
       ...outcomeFields(result),
       score: scoreFromTasksResult(result),
       durationMs: result.durationMs,
-      groups: [appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks")],
+      groups: [
+        appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks"),
+      ],
     };
   }
 
@@ -970,8 +1020,12 @@ function renderConformanceTestSuite(
 ): string {
   const name = escapeXml(group.title);
   const tests = group.cases.length;
-  const failures = group.cases.filter((entry) => entry.status === "failed").length;
-  const skipped = group.cases.filter((entry) => entry.status === "skipped").length;
+  const failures = group.cases.filter(
+    (entry) => entry.status === "failed",
+  ).length;
+  const skipped = group.cases.filter(
+    (entry) => entry.status === "skipped",
+  ).length;
   const time = (group.durationMs / 1000).toFixed(3);
   const classname = group.target || `mcpjam.${sanitizeToken(group.id)}`;
 
@@ -1034,7 +1088,9 @@ export function renderConformanceReportJUnitXml(
   // An advisory whose `group` names no rendered testsuite would otherwise be
   // filtered away in silence — present in the JSON report, absent from the
   // JUnit output, with nothing saying so. It gets its own suite instead.
-  const renderedGroups = new Set(redactedReport.groups.map((group) => group.id));
+  const renderedGroups = new Set(
+    redactedReport.groups.map((group) => group.id),
+  );
   const orphanedAdvisories = advisories.filter(
     (advisory) => !renderedGroups.has(advisory.group),
   );

@@ -12,6 +12,7 @@
 import { describe, expect, it } from "vitest";
 
 import { readOpenAIPluginPackage } from "../../src/openai-readiness/package/reader.js";
+import { xmldomParseXml } from "../../src/openai-readiness/package/svg-xml-node.js";
 import { OPENAI_HOST_PROFILE } from "../../src/openai-readiness/profile.js";
 import {
   CANONICAL_MANIFEST_PATH,
@@ -25,10 +26,16 @@ import {
   squarePng,
 } from "./package-fixtures.js";
 
+// Node has no `DOMParser`; without the parser an SVG is recorded as a gap
+// rather than graded, which is honest but not what these tests are about.
 const read = (
   files: Record<string, string | Uint8Array>,
   archive?: Parameters<typeof readOpenAIPluginPackage>[1],
-) => readOpenAIPluginPackage(new InMemoryOpenAIPackageSource(files), archive);
+) =>
+  readOpenAIPluginPackage(new InMemoryOpenAIPackageSource(files), {
+    ...archive,
+    parseXml: xmldomParseXml,
+  });
 
 const codes = (evidence: { issues: { id: string }[] }): string[] =>
   evidence.issues.map((issue) => issue.id);
