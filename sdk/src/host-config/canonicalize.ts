@@ -102,6 +102,7 @@ const MCP_APPS_CAPABILITY_KEYS = [
   "sandboxPermissions",
   "cspFrameDomains",
   "cspBaseUriDomains",
+  "cspConnectDomains",
   "resourcePrefersBorder",
   "downloadFile",
   "requestTeardown",
@@ -519,6 +520,29 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   // or `null` (Object.create(null)).
   const proto = Object.getPrototypeOf(value);
   return proto === Object.prototype || proto === null;
+}
+
+function canonicalBooleanCapabilityRecord(
+  path: string,
+  value: unknown,
+  allowedKeys: readonly string[]
+): Record<string, boolean> {
+  if (!isPlainObject(value)) {
+    throw new Error(`hostConfigV2: ${path} must be a plain object`);
+  }
+  const out: Record<string, boolean> = {};
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.includes(key)) {
+      throw new Error(`hostConfigV2: ${path} has unknown key "${key}"`);
+    }
+    if (typeof value[key] !== "boolean") {
+      throw new Error(`hostConfigV2: ${path}.${key} must be a boolean`);
+    }
+  }
+  for (const key of allowedKeys) {
+    if (value[key] !== undefined) out[key] = value[key] as boolean;
+  }
+  return out;
 }
 
 // Canonicalize a CSP domain list as a SET: trim, drop empty, dedupe, sort.
@@ -1203,6 +1227,15 @@ function canonicalizeMcpProfile(
             MCP_APPS_DISPLAY_MODE_VALUES.filter((m) =>
               seen.has(m)
             ) as McpAppsCapabilities["availableDisplayModes"];
+        } else if (key === "cspConnectDomains") {
+          const domains = canonicalBooleanCapabilityRecord(
+            "mcpProfile.apps.mcpAppsOverrides.cspConnectDomains",
+            value,
+            ["fetch", "xhr", "websocket"]
+          );
+          if (Object.keys(domains).length > 0) {
+            mcpAppsOverridesOut.cspConnectDomains = domains;
+          }
         } else if (key === "widgetDisplayModeRequests") {
           if (
             typeof value !== "string" ||

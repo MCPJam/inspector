@@ -7,6 +7,7 @@ import {
 } from "../src/host-config/templates/index.js";
 import { XAA_MCP_EXTENSION } from "../src/xaa/mcp-init.js";
 import { readXaaEnterprisePolicy } from "../src/xaa/enterprise-policy.js";
+import { canonicalizeHostConfigV2 } from "../src/host-config/internal.js";
 
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
@@ -118,6 +119,10 @@ describe("seedHostTemplate", () => {
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     });
+    const effective = canonicalizeHostConfigV2(config);
+    expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
   });
 
   it("threads appVersion into the mcpjam template (and only it)", () => {
@@ -162,6 +167,10 @@ describe("seedHostTemplate", () => {
     });
     expect(config.hostCapabilitiesOverride).not.toHaveProperty("downloadFile");
     expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+    const effective = canonicalizeHostConfigV2(config);
+    expect(effective.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
       cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     });
     expect(
