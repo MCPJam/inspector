@@ -73,7 +73,7 @@ import {
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
-import type { PinnableSkill } from "@/shared/skill-types";
+import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
@@ -269,6 +269,62 @@ export type EvalPinnedSkillSource =
       capabilities: import("./environments/effective-capabilities.js").EffectiveCapabilitySet;
     };
 
+/**
+ * How a run's FROZEN skills reach one case — both channels, together.
+ *
+ * There are two, and they are not interchangeable:
+ *   - `pinnedSkillSource` feeds the EMULATED path, where skills become
+ *     in-memory tool definitions.
+ *   - `pinnedHarnessSkills` feeds the HARNESS path, where they are materialized
+ *     as SKILL.md files on the box.
+ *
+ * They are bundled here because forwarding one without the other is a silent
+ * failure rather than a loud one: a case that receives no `pinnedHarnessSkills`
+ * does not error, it falls through to the harness's LIVE project-wide fetch —
+ * so a frozen run quietly stops being frozen, and the
+ * `skillsOverride: "exclude"` arm quietly runs with the whole project pool.
+ * That is exactly the bug this helper exists to make structurally impossible:
+ * one place decides, and both channels leave together or not at all.
+ *
+ * `pinnedHarnessSkills` is included when DEFINED rather than truthy — `[]` is
+ * the "this run delivers no skills" answer and must survive.
+ */
+export function runFrozenSkillOptions(run: {
+  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+}): {
+  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+} {
+  // Presence selects the pinned source at every hop below, so a non-array that
+  // is not `undefined` would sail through all of them and only fail inside
+  // `pinnedArtifactsToRuntimeSkills`'s `.map` — deep in the harness turn, after
+  // a sandbox has been provisioned and paid for. The type forbids it, but the
+  // value crosses a route boundary and a persisted-data conversion on the way
+  // here, so it is worth one loud check at the seam rather than a confusing
+  // crash later. `undefined` stays legal: it means "this run pinned nothing".
+  if (
+    run.pinnedHarnessSkills !== undefined &&
+    !Array.isArray(run.pinnedHarnessSkills)
+  ) {
+    throw new Error(
+      `runFrozenSkillOptions: pinnedHarnessSkills must be an array or undefined (got ${
+        run.pinnedHarnessSkills === null
+          ? "null"
+          : typeof run.pinnedHarnessSkills
+      })`
+    );
+  }
+  return {
+    ...(run.pinnedSkillSource
+      ? { pinnedSkillSource: run.pinnedSkillSource }
+      : {}),
+    ...(run.pinnedHarnessSkills !== undefined
+      ? { pinnedHarnessSkills: run.pinnedHarnessSkills }
+      : {}),
+  };
+}
+
 export type RunEvalSuiteOptions = {
   suiteId: string;
   runId: string | null; // null for quick runs
@@ -332,6 +388,22 @@ export type RunEvalSuiteOptions = {
    * not a per-iteration choice — see {@link EvalPinnedSkillSource}.
    */
   pinnedSkillSource?: EvalPinnedSkillSource;
+  /**
+   * The run's frozen skills in HARNESS shape, materialized ON BOX.
+   *
+   * A separate channel from {@link RunEvalSuiteOptions.pinnedSkillSource}, and
+   * deliberately so: `pinnedSkillSource` feeds the EMULATED path, where skills
+   * become in-memory tool definitions; a harness turn writes SKILL.md files
+   * into the runtime's skills root instead, so it needs complete artifacts
+   * (identity, complete-envelope hash, preserved frontmatter, inline file
+   * bodies) rather than the body-only projection that path takes.
+   *
+   * Presence, not length, is what selects the pinned source in the harness. An
+   * empty list says "this run delivers no skills"; ABSENT falls through to a
+   * live project-wide fetch, which would unfreeze the run. So the boundary sets
+   * this for every runId-bearing run, empty included.
+   */
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -1110,6 +1182,9 @@ type RunIterationBaseParams = {
    * skills (decision 10) — the runner passes this or `skillsSource: none`.
    */
   pinnedSkillSource?: EvalPinnedSkillSource;
+  /** The run's frozen skills in harness shape (see
+   *  {@link RunEvalSuiteOptions.pinnedHarnessSkills}). */
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1469,6 +1544,9 @@ const executeTestCase = async (params: {
   environment?: RunEvalSuiteOptions["config"]["environment"];
   /** Pinned skill delivery for this run (see RunEvalSuiteOptions.pinnedSkillSource). */
   pinnedSkillSource?: EvalPinnedSkillSource;
+  /** The run's frozen skills in harness shape (see
+   *  RunEvalSuiteOptions.pinnedHarnessSkills). */
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
 }) => {
   const {
     test,
@@ -1495,6 +1573,7 @@ const executeTestCase = async (params: {
     suiteHostConfig,
     environment,
     pinnedSkillSource,
+    pinnedHarnessSkills,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -1577,6 +1656,7 @@ const executeTestCase = async (params: {
         suiteHostConfig,
         environment,
         pinnedSkillSource,
+        pinnedHarnessSkills,
       };
       outcomes.push(
         await runSingleIteration(
@@ -1700,6 +1780,7 @@ const executeTestCase = async (params: {
         suiteHostConfig,
         environment,
         pinnedSkillSource,
+        pinnedHarnessSkills,
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -1748,6 +1829,7 @@ const executeTestCase = async (params: {
         suiteHostConfig,
         environment,
         pinnedSkillSource,
+        pinnedHarnessSkills,
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -1793,6 +1875,7 @@ const executeTestCase = async (params: {
       environment,
       convexAuthToken,
       pinnedSkillSource,
+      pinnedHarnessSkills,
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -1834,6 +1917,7 @@ export const runEvalSuiteWithAiSdk = async ({
   hostExecutionPolicy,
   suiteHostConfig,
   pinnedSkillSource,
+  pinnedHarnessSkills,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -1976,7 +2060,10 @@ export const runEvalSuiteWithAiSdk = async ({
         toolSignals: resolvedToolSignals,
         suiteHostConfig,
         environment: config.environment,
-        ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
+        // BOTH frozen-skill channels, from one place — see
+        // `runFrozenSkillOptions`. Forwarding only the emulated one used to
+        // leave the harness path falling through to a live project-wide fetch.
+        ...runFrozenSkillOptions({ pinnedSkillSource, pinnedHarnessSkills }),
       });
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
@@ -3182,6 +3269,7 @@ const runHostedIterationWithBrowser = async (
     // the local runner).
     environment,
     pinnedSkillSource,
+    pinnedHarnessSkills,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
@@ -3375,17 +3463,24 @@ const runHostedIterationWithBrowser = async (
   const harnessMcpProxy = resolvedExecution.harness
     ? resolveWebAuthorizedHarnessStrategy()
     : undefined;
-  // NOT wired yet, deliberately: the run's pinned skills.
+  // The run's PINNED skills, in the shape the harness materializes on box.
   //
-  // The eval run pins `PinnableSkill`s (name/description/content/contentHash),
-  // while the harness `runtimeSkillsOverride` takes `CloudSkillRuntimeItem`s,
-  // which additionally require a `skillId` and an `aggregateHash` that the eval
-  // pin simply does not carry. Synthesizing those would put invented identity
-  // and an invented integrity hash on the box — and the whole point of a pinned
-  // skill is that its hash is the thing you can trust. So a harness eval turn
-  // currently falls through to the harness's own skill delivery rather than
-  // being handed a fabricated set. Closing this needs the eval pin to carry the
-  // runtime identity, not a conversion here.
+  // Built once at the run boundary (`prepareEvalRun` → `runPinnedSkillsToHarnessArtifacts`),
+  // where the full pin rows and their signed file URLs are in hand, so the
+  // supporting-file download happens before any model call rather than N times
+  // mid-run. Nothing is synthesized here: identity, the complete-envelope hash,
+  // preserved frontmatter and file bodies all come off the pin.
+  //
+  // Rides `pinnedHarnessSkills` — the FROZEN-RUN channel — and not
+  // `runtimeSkillsOverride`, which is the live-environment channel one rank
+  // below it in `selectHarnessSkillSource`. The distinction is the whole point:
+  // an eval run must deliver exactly what it pinned, and must not consult
+  // anything live.
+  //
+  // Forwarded when DEFINED rather than truthy: `[]` is a real answer ("this run
+  // delivers no skills", which is what `skillsOverride: "exclude"` means), and
+  // dropping it would fall through to the live project-wide fetch and hand the
+  // without-skills arm every skill in the project.
 
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
@@ -3619,6 +3714,12 @@ const runHostedIterationWithBrowser = async (
     // `runHarnessTurn` throws without one whenever servers are selected, which
     // for an eval suite is always.
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // The run's FROZEN skills, materialized on box. Forwarded when DEFINED,
+    // not when truthy: `[]` says "this run delivers no skills" (the
+    // `skillsOverride: "exclude"` arm), while absent falls through to the
+    // harness's live project-wide fetch — which would let a project skill
+    // edited mid-run change what a running iteration sees.
+    ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
     // Passed EXPLICITLY: `runHarnessTurn` reads built-ins off this field and
     // nowhere else, so supplying only `tools` would hand the runtime a turn
     // with no built-ins and no way to notice.

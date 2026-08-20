@@ -246,6 +246,14 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     note: "Post-checkout landing; renders Servers.",
   },
   {
+    // WorkOS Initiate Login URL for IdP-initiated SSO (the Okta app tile).
+    // Not a destination anyone navigates to: it starts a fresh, app-originated
+    // sign-in so authkit-js writes the PKCE verifier `/callback` needs.
+    path: "login",
+    kind: "special",
+    note: "WorkOS Initiate Login URL for IdP-initiated SSO; starts a fresh app-originated sign-in.",
+  },
+  {
     path: "callback",
     kind: "special",
     note: "Auth callback landing; renders Servers.",

@@ -332,6 +332,11 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   "/api/mcp/computers/local-consent",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
+  // Registry catalog/star routes are Convex HTTP actions called via absolute
+  // URL, and every one of them requires an identity (the catalog resolves
+  // per-viewer `isStarred`). Without this prefix the bearer is never attached
+  // and they all 401 with "Missing or invalid bearer token".
+  "/web/registry/",
 ];
 
 /**

@@ -18,7 +18,11 @@ import {
 } from "../../services/evals/route-helpers";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
 import { isTerminalRunStatus } from "../../services/evals/run-status.js";
-import { checkEvalHarnessAdmission } from "../../services/evals/harness-admission";
+import {
+  checkEvalExecutionAdmission,
+  checkEvalHarnessAdmission,
+  harnessOfHostConfig,
+} from "../../services/evals/harness-admission";
 import {
   applyVisibilityPolicyAndCountSignals,
   extractHostExecutionPolicy,
@@ -69,6 +73,8 @@ import {
   runNeedsEffectiveSkillSurface,
   type RunPinnedSkill,
 } from "../../services/evals/run-plugin-snapshot.js";
+import { runPinnedSkillsToHarnessArtifacts } from "../../services/evals/run-pinned-harness-skills.js";
+import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import {
   countModelSteps,
   isModelFree,
@@ -1030,9 +1036,7 @@ export function shouldSkipExecution(prepared: {
   deduped?: boolean;
   status?: string;
 }): boolean {
-  return (
-    prepared.deduped === true && isTerminalRunStatus(prepared.status)
-  );
+  return prepared.deduped === true && isTerminalRunStatus(prepared.status);
 }
 
 /**
@@ -2064,6 +2068,79 @@ export async function prepareEvalRun(
     runHostConfigSnapshot ??
     (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
 
+  // For reruns, projectId may not be in the request — derive it from the
+  // suite record so org BYOK keeps working.
+  let projectIdForOrgConfig: string | undefined = projectId;
+  // "We asked and the suite has none" and "we could not ask" are different
+  // facts, and the harness gate below reads an absent project as the FORMER.
+  // Kept apart so a transient Convex failure is never reported as "this suite
+  // is org-level", which would send the author to change a setting that was
+  // never wrong.
+  let suiteProjectLookupFailed = false;
+  if (!projectIdForOrgConfig && resolvedSuiteId) {
+    try {
+      const suite = await convexClient.query("testSuites:getTestSuite" as any, {
+        suiteId: resolvedSuiteId,
+      });
+      if (suite?.projectId) {
+        projectIdForOrgConfig = String(suite.projectId);
+      }
+    } catch (error) {
+      suiteProjectLookupFailed = true;
+      logger.warn("[evals] Failed to load suite for projectId fallback", {
+        suiteId: resolvedSuiteId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // Only a HARNESS run turns an unresolved project into a refusal — an
+  // emulated run merely loses its org-BYOK fallback, which is the behavior
+  // this lookup has always had on failure.
+  if (
+    !projectIdForOrgConfig &&
+    suiteProjectLookupFailed &&
+    harnessOfHostConfig(suiteHostConfig)
+  ) {
+    const reason =
+      "this run could not look up the suite's project, so the computer its " +
+      "harness iterations run on cannot be provisioned or billed. This is " +
+      "usually transient — retry the run.";
+    await failRunBeforeExecution(convexClient, recorder, runId, { reason });
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, reason, {
+      reason: "HARNESS_UNAVAILABLE",
+    });
+  }
+
+  // GENERAL EXECUTION GATE — every eval run, harness or emulated.
+  //
+  // `resolveHostTools` warn-and-SKIPS a computer-backed built-in when no
+  // computer is attached, so a `bash` host with no pinned image runs with the
+  // tool silently absent: cases that needed a shell fail as if the model chose
+  // badly, and a suite that did not need one reports green for a host
+  // configuration that never existed. A server log is not a result.
+  //
+  // Deliberately NOT inside the harness checks below: those return admitted on
+  // their first line when no harness is selected, which is exactly the runs
+  // this rule is about.
+  const executionAdmission = checkEvalExecutionAdmission({
+    hostConfig: suiteHostConfig ?? null,
+    pinnedComputerImageId:
+      (config.environment as { computerEnvironmentId?: string } | undefined)
+        ?.computerEnvironmentId ?? null,
+  });
+  if (!executionAdmission.ok) {
+    await failRunBeforeExecution(convexClient, recorder, runId, {
+      reason: executionAdmission.reason,
+    });
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      executionAdmission.reason,
+      { reason: "EVAL_EXECUTION_UNAVAILABLE" }
+    );
+  }
+
   // HARNESS HONESTY GATE. A host config carrying `harness` runs the REAL
   // runtime in chat and swarms; eval runs used to forward the selector into
   // `prepareChatV2` and then quietly execute on the emulated engine, reporting
@@ -2098,6 +2175,10 @@ export async function prepareEvalRun(
       (config.environment as { computerEnvironmentId?: string } | undefined)
         ?.computerEnvironmentId ?? null,
     widgetAssertingCaseTitles: casesAssertingWidgetRender(config.tests),
+    // Explicitly `null` when the suite is org-level. `runHarnessTurn` needs a
+    // project to resolve the box and throws without one — mid-iteration, after
+    // the box was booted and paid for. This makes it a pre-flight refusal.
+    projectId: projectIdForOrgConfig ?? null,
   });
   if (!harnessAdmission.ok) {
     await failRunBeforeExecution(convexClient, recorder, runId, {
@@ -2142,28 +2223,13 @@ export async function prepareEvalRun(
 
   // Resolve org model config: prefer client-sent keys, fall back to org config.
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
-  // For reruns, projectId may not be in the request — derive it from the
-  // suite record so org BYOK keeps working.
   const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
   let resolvedOrgModelConfig = orgModelConfig;
   let resolvedOrgModelConfigTarget: { projectId: string } | undefined;
-  let projectIdForOrgConfig: string | undefined = projectId;
-  if (!projectIdForOrgConfig && resolvedSuiteId) {
-    try {
-      const suite = await convexClient.query("testSuites:getTestSuite" as any, {
-        suiteId: resolvedSuiteId,
-      });
-      if (suite?.projectId) {
-        projectIdForOrgConfig = String(suite.projectId);
-      }
-    } catch (error) {
-      logger.warn("[evals] Failed to load suite for projectId fallback", {
-        suiteId: resolvedSuiteId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+  // `projectIdForOrgConfig` is resolved ABOVE, before the admission gates —
+  // the harness gate needs it to refuse an org-level suite before a box is
+  // booted, and resolving it twice could disagree.
   const orgConfigTarget = projectIdForOrgConfig
     ? { projectId: projectIdForOrgConfig }
     : undefined;
@@ -2202,6 +2268,19 @@ export async function prepareEvalRun(
   // setup failure must precede model execution and name the component that
   // caused it.
   let pinnedSkillSource: EvalPinnedSkillSource | undefined;
+  /**
+   * The run's frozen skills in HARNESS shape (materialized on box), built here
+   * rather than per iteration because the supporting-file download is I/O that
+   * belongs in run preparation — where a failure fails the run cleanly, before
+   * any model call, naming the skill and path.
+   *
+   * Set for EVERY runId-bearing run, empty included. The harness selects its
+   * pinned source by PRESENCE, so `[]` says "this run delivers no skills" while
+   * `undefined` falls through to a live project-wide fetch of whatever the
+   * project holds right now — which would unfreeze a frozen run, and would hand
+   * the `skillsOverride: "exclude"` arm every skill in the project.
+   */
+  let pinnedHarnessSkills: PinnedSkillArtifact[] | undefined;
   if (runId) {
     // The run row already exists (startSuiteRunWithRecorder created it), so a
     // persistent setup failure would otherwise strand the run as
@@ -2235,11 +2314,21 @@ export async function prepareEvalRun(
         }
       );
 
+      // A pinned supporting file whose blob is gone fails the run BEFORE the
+      // model runs, attributed to the skill and the path. `url: null` is an
+      // unreachable blob, never "no file" — see the assertion's own note.
+      // Hoisted above the `length` guard so it also runs ahead of the harness
+      // adaptation below, which downloads those same blobs: an unreachable one
+      // should report through this assertion's wording, not a fetch failure's.
+      assertPinnedSkillFilesReachable(runPinnedSkills ?? []);
+
+      // Empty is a real answer for the harness (see `pinnedHarnessSkills`), so
+      // this is assigned outside the `length` guard below.
+      pinnedHarnessSkills = await runPinnedSkillsToHarnessArtifacts(
+        runPinnedSkills ?? []
+      );
+
       if (runPinnedSkills?.length) {
-        // A pinned supporting file whose blob is gone fails the run BEFORE the
-        // model runs, attributed to the skill and the path. `url: null` is an
-        // unreachable blob, never "no file" — see the assertion's own note.
-        assertPinnedSkillFilesReachable(runPinnedSkills);
         pinnedSkillSource = runNeedsEffectiveSkillSurface(runPinnedSkills)
           ? {
               kind: "pinned-effective",
@@ -2291,6 +2380,9 @@ export async function prepareEvalRun(
       // is the POLICY subset extracted upstream; this is the rest.
       suiteHostConfig,
       ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
+      // Presence is meaningful (empty ⇒ "no skills", absent ⇒ live fetch), so
+      // this checks for undefined rather than truthiness.
+      ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
     });
   };
 
@@ -2392,6 +2484,29 @@ export async function runEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
+
+  // The same honesty gate the suite path applies, with the surface named: a
+  // single-case run passes `runId: null`, and both sandbox-provisioning sites
+  // require `runId !== null`, so no box is ever booted for it. A host granting
+  // a computer-backed built-in would therefore execute with the tool silently
+  // skipped by `resolveHostTools`. Refused instead — and the message points at
+  // running the case inside a suite rather than at pinning an image, which
+  // would change nothing here.
+  const singleCaseAdmission = checkEvalExecutionAdmission({
+    hostConfig:
+      (hostConfigOverride as Record<string, unknown> | undefined) ??
+      suiteHostConfig ??
+      null,
+    surface: "single-case",
+  });
+  if (!singleCaseAdmission.ok) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      singleCaseAdmission.reason,
+      { reason: "EVAL_EXECUTION_UNAVAILABLE" }
+    );
+  }
   const suiteEnvironment = await loadSuiteEnvironment(
     convexClient,
     testCase.evalTestSuiteId
@@ -2774,6 +2889,29 @@ export async function streamEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
+
+  // The same honesty gate the suite path applies, with the surface named: a
+  // single-case run passes `runId: null`, and both sandbox-provisioning sites
+  // require `runId !== null`, so no box is ever booted for it. A host granting
+  // a computer-backed built-in would therefore execute with the tool silently
+  // skipped by `resolveHostTools`. Refused instead — and the message points at
+  // running the case inside a suite rather than at pinning an image, which
+  // would change nothing here.
+  const singleCaseAdmission = checkEvalExecutionAdmission({
+    hostConfig:
+      (hostConfigOverride as Record<string, unknown> | undefined) ??
+      suiteHostConfig ??
+      null,
+    surface: "single-case",
+  });
+  if (!singleCaseAdmission.ok) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      singleCaseAdmission.reason,
+      { reason: "EVAL_EXECUTION_UNAVAILABLE" }
+    );
+  }
   const suiteEnvironment = await loadSuiteEnvironment(
     convexClient,
     testCase.evalTestSuiteId

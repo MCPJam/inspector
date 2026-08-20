@@ -7,11 +7,14 @@ import type { Tool } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 
 import {
-  enforceCapabilityGate,
   CLAUDE_GATED_INPUTS,
   gradeClaudeReadiness,
   type ClaudeReadinessInput,
 } from "../../src/claude-readiness/runner.js";
+// The gate is publisher-neutral and lives in the shared core; the assertions
+// below are still written against Claude's findings, because Claude's lanes
+// are what would be misreported if it ever stopped holding.
+import { enforceCapabilityGate } from "../../src/directory-readiness/types.js";
 import type {
   ClaudeFindingStatus,
   ClaudeReadinessFinding,
@@ -314,16 +317,21 @@ describe("coverage and context", () => {
     // without anyone remembering to extend it.
     const result = gradeClaudeReadiness(input({ capabilities: ["dns"] }));
     const held = new Set(result.context.capabilities);
-    // A VERDICT is what the gate exists to prevent. `not-applicable` is not
-    // one: it says the requirement does not apply to this SERVER, which no
-    // amount of capability could change, and rewriting it would trade a true
-    // statement for a false one.
-    const verdicts = new Set(["satisfied", "violated", "informational"]);
+    // A VERDICT is what the gate is about. `not-applicable` says the rule does
+    // not apply to this submission and `informational` carries no verdict at
+    // all, so neither is a claim a missing capability could have supported —
+    // and rewriting them would put "nobody checked" in a report where "there
+    // is nothing to check" is the truth.
+    const settled = new Set([
+      "not-evaluated",
+      "not-applicable",
+      "informational",
+    ]);
     const overreaching = result.findings.filter(
       (finding) =>
         (finding.requiresCapabilities ?? []).some(
           (capability) => !held.has(capability),
-        ) && verdicts.has(finding.status),
+        ) && !settled.has(finding.status),
     );
     expect(overreaching).toEqual([]);
     // And the gate is reached at all — a run where nothing declares a missing
@@ -413,7 +421,7 @@ describe("the capability gate itself", () => {
     };
   }
 
-  it.each(["satisfied", "violated", "informational"] as const)(
+  it.each(["satisfied", "violated"] as const)(
     "downgrades a %s verdict the run could not have observed",
     (status) => {
       const [gated] = enforceCapabilityGate([finding(status)], ["dns"]);
@@ -422,7 +430,12 @@ describe("the capability gate itself", () => {
     },
   );
 
-  it.each(["not-evaluated", "not-applicable"] as const)(
+  // `informational` sits with the settled statuses rather than the verdicts:
+  // badges and heuristics are excluded from lane rollups by construction, so
+  // gating one changes no verdict and only makes the report read as less
+  // complete than it is. The experience lane depends on it — its tool-surface
+  // badge is `informational` and would otherwise vanish from every hosted run.
+  it.each(["not-evaluated", "not-applicable", "informational"] as const)(
     "leaves a %s finding exactly as the check reported it",
     (status) => {
       const original = finding(status, {

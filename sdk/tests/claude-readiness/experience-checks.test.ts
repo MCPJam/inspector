@@ -15,7 +15,7 @@ import {
   runClaudeExperienceChecks,
   type ClaudeBrowserEvidence,
 } from "../../src/claude-readiness/checks/experience.js";
-import { enforceCapabilityGate } from "../../src/claude-readiness/runner.js";
+import { enforceCapabilityGate } from "../../src/directory-readiness/types.js";
 
 const STAMP = { evaluatedAt: new Date(0).toISOString() };
 
