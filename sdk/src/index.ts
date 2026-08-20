@@ -474,6 +474,7 @@ export { xmldomParseXml } from "./openai-readiness/package/svg-xml-node.js";
 // that importing the result model can never pull a transport in with it.
 export {
   discoverOpenAIAuthEvidence,
+  discoverOpenAIImportedSkills,
   fetchOpenAIDomainVerification,
   traceOpenAIEndpoint,
 } from "./openai-readiness/discovery.js";

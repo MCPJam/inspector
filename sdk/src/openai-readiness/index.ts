@@ -209,3 +209,19 @@ export { runOpenAIAuthChecks } from "./checks/auth.js";
 export { runOpenAIEndpointChecks } from "./checks/endpoint.js";
 export { runOpenAIDomainVerificationChecks } from "./checks/domain-verification.js";
 export type { OpenAIDomainVerificationInput } from "./checks/domain-verification.js";
+
+export { runOpenAIAppsUiChecks } from "./checks/apps-ui.js";
+export type {
+  OpenAIAppsUiEvidence,
+  OpenAIUiResourceEvidence,
+} from "./checks/apps-ui.js";
+export { runOpenAIMcpSkillChecks } from "./checks/mcp-skills.js";
+export type { OpenAISkillsCheckInput } from "./checks/mcp-skills.js";
+export { runOpenAIMigrationChecks } from "./checks/migration.js";
+export { runOpenAIPolicyChecks } from "./checks/policy.js";
+export type { OpenAIPolicyEvidence } from "./checks/policy.js";
+export { runOpenAIOptionalFeatureChecks } from "./checks/optional-features.js";
+export type {
+  OpenAIOptionalFeatureEvidence,
+  OpenAIOptionalFeatureOutput,
+} from "./checks/optional-features.js";

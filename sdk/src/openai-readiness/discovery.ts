@@ -36,7 +36,10 @@ import {
   type DirectoryRedirectHop,
   type PrmDiscoveryResult,
 } from "../directory-readiness/discovery.js";
-import { OPENAI_DOMAIN_VERIFICATION_PATH } from "./profile.js";
+import {
+  OPENAI_DOMAIN_VERIFICATION_PATH,
+  OPENAI_MCP_SKILLS_METHODS,
+} from "./profile.js";
 
 export interface OpenAIDiscoveryOptions extends DirectoryDiscoveryOptions {
   /**
@@ -299,4 +302,159 @@ export async function fetchOpenAIDomainVerification(
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Imported skills.
+// ---------------------------------------------------------------------------
+
+/** One skill the server advertises for import, as the scan saw it. */
+export interface OpenAIImportedSkillEvidence {
+  name?: string;
+  description?: string;
+  /** The digest the listing declares for the skill's markdown. */
+  declaredDigest?: string;
+  /** The resource the skill's markdown is served from. */
+  resourceUri?: string;
+  /** Bytes of the markdown actually fetched. */
+  markdownBytes?: number;
+  /** SHA-256 of the markdown actually fetched, when it was fetched. */
+  observedDigest?: string;
+  /** Frontmatter parsed out of the fetched markdown. */
+  frontmatter?: Record<string, unknown>;
+  pages?: { uri: string; bytes: number }[];
+  /** Markdown plus every page. */
+  totalBytes?: number;
+  fetchError?: string;
+}
+
+export interface OpenAISkillsEvidence {
+  /** Whether the server advertised the skills extension at all. */
+  extensionAdvertised: boolean;
+  skills: OpenAIImportedSkillEvidence[];
+  /** How many `skills/list` pages were walked. */
+  pagesWalked: number;
+  /** Set when the listing was still paginating at the page cap. */
+  paginationCapHit?: boolean;
+  listError?: string;
+  /**
+   * When the listing was read.
+   *
+   * Imported skills are a SUBMISSION-TIME SNAPSHOT, not a live resource, so
+   * this timestamp is what a later drift comparison is against. Recording it
+   * here rather than deriving it at grade time is what keeps a replayed
+   * evidence object honest about when it was gathered.
+   */
+  scannedAt?: string;
+}
+
+/** Pages of `skills/list` to walk before giving up. */
+const MAX_SKILL_LIST_PAGES = 10;
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * One JSON-RPC call against the endpoint.
+ *
+ * Ids increment across a run so a server that echoes them can be seen to; the
+ * caller passes the id rather than this closing over a counter, because a
+ * gatherer that mutated hidden state would make two runs over the same server
+ * produce different evidence.
+ */
+async function callJsonRpc(
+  options: OpenAIDiscoveryOptions,
+  id: number,
+  method: string,
+  params: Record<string, unknown>,
+): Promise<Record<string, unknown> | undefined> {
+  const result = await fetchDiscoveryJson(options.enteredUrl, options, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    },
+    body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+  });
+  return result.document;
+}
+
+/**
+ * Read the server's advertised skills, walking `skills/list` pagination.
+ *
+ * PAGINATION IS NOT OPTIONAL HERE. A server with six skills and a page size of
+ * five returns the sixth on page two, and a reader that stopped at the first
+ * page would report five — under the cap, passing a limit the submission
+ * actually exceeds. The page walk is bounded so a server with a broken cursor
+ * cannot spin, and hitting that bound is RECORDED rather than silently treated
+ * as the end of the list.
+ */
+export async function discoverOpenAIImportedSkills(
+  options: OpenAIDiscoveryOptions,
+  now: () => Date = () => new Date(),
+): Promise<OpenAISkillsEvidence> {
+  const skills: OpenAIImportedSkillEvidence[] = [];
+  let cursor: string | undefined;
+  let pagesWalked = 0;
+  let paginationCapHit = false;
+  let listError: string | undefined;
+  let sawResult = false;
+
+  for (let page = 0; page < MAX_SKILL_LIST_PAGES; page += 1) {
+    const document = await callJsonRpc(
+      options,
+      100 + page,
+      OPENAI_MCP_SKILLS_METHODS.list,
+      cursor ? { cursor } : {},
+    );
+    pagesWalked += 1;
+
+    const error = asRecord(document?.error);
+    if (error) {
+      listError = asString(error.message) ?? "skills/list returned an error";
+      break;
+    }
+    const result = asRecord(document?.result);
+    if (!result) {
+      listError = "skills/list returned no result";
+      break;
+    }
+    sawResult = true;
+
+    const listed = Array.isArray(result.skills) ? result.skills : [];
+    for (const entry of listed) {
+      const skill = asRecord(entry);
+      if (!skill) continue;
+      skills.push({
+        name: asString(skill.name),
+        description: asString(skill.description),
+        declaredDigest:
+          asString(skill.digest) ?? asString(skill.sha256) ?? undefined,
+        resourceUri: asString(skill.resourceUri) ?? asString(skill.uri),
+      });
+    }
+
+    cursor = asString(result.nextCursor);
+    if (!cursor) break;
+    if (page === MAX_SKILL_LIST_PAGES - 1) paginationCapHit = true;
+  }
+
+  return {
+    // A server that answered `skills/list` with a result advertises the
+    // extension, whatever it listed. A server that errored does not — and the
+    // difference decides whether the absence of skills is a badge or a fault.
+    extensionAdvertised: sawResult,
+    skills,
+    pagesWalked,
+    paginationCapHit: paginationCapHit || undefined,
+    listError,
+    scannedAt: now().toISOString(),
+  };
 }

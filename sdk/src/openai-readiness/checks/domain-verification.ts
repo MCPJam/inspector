@@ -41,10 +41,20 @@ const CHALLENGE_SERVED: OpenAICheckDefinition = {
   provenance: "wire",
 };
 
+/**
+ * In `submission-artifacts`, not `directory-policy`.
+ *
+ * The token is issued by the portal DURING a submission, so a submitter running
+ * a technical preflight before starting one does not have it and could not have
+ * deployed it. Grading this in the narrow stage would report every pre-
+ * submission run as incomplete on a step that cannot have happened yet.
+ * Serving the path at all stays technical; matching a portal-issued value is
+ * paperwork.
+ */
 const CHALLENGE_MATCHES: OpenAICheckDefinition = {
   id: "openai.domain.challenge-matches",
   title: "The served challenge matches the declared verification token",
-  lane: "directory-policy",
+  lane: "submission-artifacts",
   class: "required",
   // `declared`, not `wire`: one side of this comparison is the submitter's own
   // statement about what the portal issued, and the provenance has to say so.

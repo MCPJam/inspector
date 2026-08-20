@@ -43,18 +43,28 @@ import {
   runOpenAIAnnotationChecks,
   type OpenAIToolEvidence,
 } from "./checks/annotations.js";
+import {
+  runOpenAIAppsUiChecks,
+  type OpenAIAppsUiEvidence,
+} from "./checks/apps-ui.js";
 import { runOpenAIAuthChecks } from "./checks/auth.js";
+import { runOpenAIMcpSkillChecks } from "./checks/mcp-skills.js";
+import { runOpenAIMigrationChecks } from "./checks/migration.js";
+import { runOpenAIOptionalFeatureChecks } from "./checks/optional-features.js";
+import { runOpenAIPolicyChecks } from "./checks/policy.js";
 import { runOpenAIDomainVerificationChecks } from "./checks/domain-verification.js";
 import { runOpenAIEndpointChecks } from "./checks/endpoint.js";
 import { runOpenAIPackageChecks } from "./checks/package.js";
 import { runOpenAISubmissionChecks } from "./checks/submission.js";
 import {
   discoverOpenAIAuthEvidence,
+  discoverOpenAIImportedSkills,
   fetchOpenAIDomainVerification,
   traceOpenAIEndpoint,
   type OpenAIAuthEvidence,
   type OpenAIDomainVerificationEvidence,
   type OpenAIEndpointEvidence,
+  type OpenAISkillsEvidence,
 } from "./discovery.js";
 import {
   parseOpenAISubmissionProfile,
@@ -110,6 +120,12 @@ export interface OpenAIReadinessEvidence {
   domainVerification?: OpenAIDomainVerificationEvidence;
   /** The tool listing, read once by the gatherer and graded statically. */
   tools?: OpenAIToolEvidence[];
+  /** Skills advertised for import, when the run read them. */
+  importedSkills?: OpenAISkillsEvidence;
+  /** UI resources the server serves, and the screenshots that go with them. */
+  appsUi?: OpenAIAppsUiEvidence;
+  /** Whether the plugin sells anything, for the commerce rules. */
+  hasCommerce?: boolean;
   /** Read from a package source, when the run was given one. */
   package?: OpenAIPluginPackageEvidence;
   /** Raw submission profile, validated during grading so issues become findings. */
@@ -267,6 +283,36 @@ function describeStage(
 }
 
 /**
+ * Everything a package says about ITSELF, for the guideline metadata rules.
+ *
+ * Collected here rather than in the check so the check stays a pure function of
+ * named strings: it grades copy, and it should not have to know the shape of a
+ * package to find it.
+ */
+function packageSelfDescription(
+  evidence: OpenAIPluginPackageEvidence | undefined,
+): { field: string; text: string }[] {
+  if (!evidence) return [];
+  const out: { field: string; text: string }[] = [];
+  const push = (field: string, text: string | undefined) => {
+    if (text) out.push({ field, text });
+  };
+  push("manifest.description", evidence.manifest?.description);
+  push(
+    "interface.display_name",
+    evidence.agentMetadata?.metadata?.interface.displayName,
+  );
+  push(
+    "interface.short_description",
+    evidence.agentMetadata?.metadata?.interface.shortDescription,
+  );
+  for (const skill of evidence.skills) {
+    push(`skills/${skill.directoryName}.description`, skill.description);
+  }
+  return out;
+}
+
+/**
  * Grade gathered evidence. Pure — no network, no clock, no randomness.
  */
 export function gradeOpenAIReadiness(
@@ -311,8 +357,32 @@ export function gradeOpenAIReadiness(
           },
           stamp,
         ),
+        ...runOpenAIAppsUiChecks(
+          evidence.appsUi
+            ? {
+                ...evidence.appsUi,
+                screenshotCount:
+                  evidence.appsUi.screenshotCount ??
+                  parsedProfile.profile?.screenshots.length,
+              }
+            : undefined,
+          stamp,
+        ),
       ]
     : [];
+
+  const optional = runOpenAIOptionalFeatureChecks(
+    {
+      importedSkills: evidence.importedSkills?.extensionAdvertised,
+      uiResourceCount: evidence.appsUi?.resources?.length,
+      clientIdMetadataDocuments: evidence.auth?.authorizationServers?.some(
+        (server) =>
+          server.document?.client_id_metadata_document_supported === true,
+      ),
+      checkout: evidence.hasCommerce,
+    },
+    stamp,
+  );
 
   // Observed annotations beat a caller's list: the submission check needs to
   // know which tools ACTUALLY carry a destructive or open-world hint, and a
@@ -325,10 +395,26 @@ export function gradeOpenAIReadiness(
   const findings: OpenAIReadinessFinding[] = enforceCapabilityGate(
     [
       ...serverFindings,
+      ...runOpenAIMcpSkillChecks(
+        { mode: evidence.mode, evidence: evidence.importedSkills },
+        stamp,
+      ),
       ...runOpenAIPackageChecks(
         { mode: evidence.mode, package: evidence.package },
         stamp,
       ),
+      ...(shape.hasUploadedPackage
+        ? runOpenAIMigrationChecks(evidence.package, stamp)
+        : []),
+      ...runOpenAIPolicyChecks(
+        {
+          profile: parsedProfile.profile,
+          packageMetadata: packageSelfDescription(evidence.package),
+          hasCommerce: evidence.hasCommerce,
+        },
+        stamp,
+      ),
+      ...optional.findings,
       ...runOpenAISubmissionChecks(
         {
           profile: parsedProfile.profile,
@@ -342,7 +428,7 @@ export function gradeOpenAIReadiness(
     evidence.capabilities,
   );
 
-  const badges: OpenAICapabilityBadge[] = [];
+  const badges: OpenAICapabilityBadge[] = optional.badges;
 
   const lanes = OPENAI_READINESS_LANES.map((lane) =>
     laneResultFor(lane, evidence.mode, findings),
@@ -418,6 +504,12 @@ export interface GatherOpenAIReadinessEvidenceOptions {
   packageSource?: PluginFileSource;
   /** The tool listing, when the caller already holds one. */
   tools?: OpenAIToolEvidence[];
+  /** Imported skills, when the caller already holds them. */
+  importedSkills?: OpenAISkillsEvidence;
+  /** UI resources, typically adapted from an apps-conformance result. */
+  appsUi?: OpenAIAppsUiEvidence;
+  /** Whether the plugin sells anything. */
+  hasCommerce?: boolean;
   /** Archive facts the source cannot report. See `OpenAIArchiveObservations`. */
   archive?: OpenAIArchiveObservations;
   /**
@@ -477,6 +569,14 @@ export async function gatherOpenAIReadinessEvidence(
       ])
     : [undefined, undefined, undefined];
 
+  // Skills are read only in the shape that imports them. Calling `skills/list`
+  // against a server that does not advertise the extension would turn a
+  // legitimate absence into an error in the log.
+  const importedSkills =
+    discovery && OPENAI_SUBMISSION_MODE_SHAPES[options.mode].hasImportedSkills
+      ? await discoverOpenAIImportedSkills(discovery, now)
+      : options.importedSkills;
+
   const finishedAt = now();
 
   return {
@@ -494,6 +594,9 @@ export async function gatherOpenAIReadinessEvidence(
     auth,
     domainVerification,
     tools: options.tools,
+    importedSkills,
+    appsUi: options.appsUi,
+    hasCommerce: options.hasCommerce,
     package: packageEvidence,
     submissionProfile: options.submissionProfile,
     annotatedTools: options.annotatedTools,

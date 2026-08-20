@@ -1,0 +1,375 @@
+/**
+ * Checks over skills imported from the MCP server.
+ *
+ * THE SNAPSHOT SEMANTICS ARE THE POINT. Imported skills are a SUBMISSION-TIME
+ * COPY: the portal reads them when the submitter runs Scan Tools and stores
+ * what it read. A skill that changes on the server afterwards does not change
+ * the submission, and it does not "drift" in any sense this lane can grade —
+ * whether the DRAFT still matches the PUBLISHED contract is the
+ * release-contract lane's question, against two snapshots, not this one's
+ * against a live server.
+ *
+ * So everything here grades one scan: the extension answered, the listing
+ * paginated to the end, the sizes and counts are under the caps, each digest
+ * matches the resource it names, and the listing metadata agrees EXACTLY with
+ * the frontmatter of the markdown it points at.
+ *
+ * WHEN THE LANE APPLIES. Only in `mcp-imported-skills`. In the other three
+ * shapes the absence of imported skills is a BADGE — a capability the
+ * submission does not use — and grading it as a defect would fail three
+ * perfectly valid submission shapes for not being a fourth.
+ *
+ * Pure data. No transport.
+ */
+
+import { openaiPolicySource } from "../manifest.js";
+import { OPENAI_MCP_SKILL_LIMITS } from "../profile.js";
+import { openaiPortalIssue, type OpenAIPortalIssue } from "../portal-errors.js";
+import {
+  OPENAI_READINESS_INPUTS,
+  OPENAI_SUBMISSION_MODE_SHAPES,
+  type OpenAIReadinessFinding,
+  type OpenAISubmissionMode,
+} from "../types.js";
+import type { OpenAISkillsEvidence } from "../discovery.js";
+import {
+  missingInput,
+  notApplicable,
+  notEvaluated,
+  satisfied,
+  violated,
+  type OpenAICheckDefinition,
+  type OpenAICheckStamp,
+} from "./helpers.js";
+
+const EXTENSION_ADVERTISED: OpenAICheckDefinition = {
+  id: "openai.skills.extension",
+  title: "The server advertises the skills extension",
+  lane: "directory-policy",
+  class: "required",
+  source: openaiPolicySource("build/skills", "§Importing from MCP"),
+  provenance: "wire",
+};
+
+const LISTING_COMPLETE: OpenAICheckDefinition = {
+  id: "openai.skills.listing-complete",
+  title: "The skills listing was read to the end of its pagination",
+  lane: "directory-policy",
+  class: "required",
+  source: openaiPolicySource("build/skills", "§Importing from MCP"),
+  provenance: "wire",
+};
+
+const WITHIN_CAPS: OpenAICheckDefinition = {
+  id: "openai.skills.caps",
+  title: "Imported skills are within the count and size caps",
+  lane: "directory-policy",
+  class: "required",
+  source: openaiPolicySource("deploy/submission-errors", "§Skills"),
+  provenance: "wire",
+};
+
+const DIGESTS_MATCH: OpenAICheckDefinition = {
+  id: "openai.skills.digests",
+  title: "Each skill's declared digest matches the resource it names",
+  lane: "directory-policy",
+  class: "required",
+  source: openaiPolicySource("build/skills", "§Importing from MCP"),
+  provenance: "wire",
+};
+
+const FRONTMATTER_AGREES: OpenAICheckDefinition = {
+  id: "openai.skills.frontmatter",
+  title: "Listing metadata agrees exactly with each skill's frontmatter",
+  lane: "directory-policy",
+  class: "required",
+  source: openaiPolicySource("build/skills", "§Importing from MCP"),
+  provenance: "wire",
+};
+
+const SNAPSHOT_SEMANTICS: OpenAICheckDefinition = {
+  id: "openai.skills.snapshot",
+  title: "Imported skills are a scan-time snapshot, not a live resource",
+  lane: "experience-insights",
+  class: "manual-review",
+  source: openaiPolicySource("deploy/submission", "§Scan tools"),
+  provenance: "wire",
+};
+
+const ALL: OpenAICheckDefinition[] = [
+  EXTENSION_ADVERTISED,
+  LISTING_COMPLETE,
+  WITHIN_CAPS,
+  DIGESTS_MATCH,
+  FRONTMATTER_AGREES,
+  SNAPSHOT_SEMANTICS,
+];
+
+export interface OpenAISkillsCheckInput {
+  mode: OpenAISubmissionMode;
+  evidence?: OpenAISkillsEvidence;
+}
+
+export function runOpenAIMcpSkillChecks(
+  input: OpenAISkillsCheckInput,
+  stamp: OpenAICheckStamp,
+): OpenAIReadinessFinding[] {
+  const shape = OPENAI_SUBMISSION_MODE_SHAPES[input.mode];
+
+  // Only dispositive in the shape that IMPORTS skills. Elsewhere their absence
+  // is a capability the submission does not use, reported as a badge.
+  if (!shape.hasImportedSkills) {
+    return ALL.map((definition) =>
+      notApplicable(
+        definition,
+        stamp,
+        `a ${input.mode} submission does not import skills from the server`,
+      ),
+    );
+  }
+
+  if (!input.evidence) {
+    return ALL.map((definition) =>
+      notEvaluated(
+        definition,
+        stamp,
+        "this run read no skills listing from the server",
+        missingInput(OPENAI_READINESS_INPUTS.importedSkills),
+      ),
+    );
+  }
+
+  const evidence = input.evidence;
+  const findings: OpenAIReadinessFinding[] = [];
+  const issues: OpenAIPortalIssue[] = [];
+
+  if (!evidence.extensionAdvertised) {
+    findings.push(
+      violated(
+        EXTENSION_ADVERTISED,
+        stamp,
+        "This submission imports skills from the server, and the server does not answer `skills/list`.",
+        { listError: evidence.listError },
+      ),
+    );
+    // Nothing below can be graded without a listing, and each says so rather
+    // than reporting a vacuous pass over zero skills.
+    for (const definition of [
+      LISTING_COMPLETE,
+      WITHIN_CAPS,
+      DIGESTS_MATCH,
+      FRONTMATTER_AGREES,
+      SNAPSHOT_SEMANTICS,
+    ]) {
+      findings.push(
+        notEvaluated(
+          definition,
+          stamp,
+          "the server advertised no skills extension, so there was no listing to grade",
+        ),
+      );
+    }
+    return findings;
+  }
+
+  findings.push(
+    satisfied(EXTENSION_ADVERTISED, stamp, { skills: evidence.skills.length }),
+  );
+
+  // A cap hit is NOT the end of the list. Treating it as one would report a
+  // count under the limit for a server that has more.
+  findings.push(
+    evidence.paginationCapHit
+      ? violated(
+          LISTING_COMPLETE,
+          stamp,
+          "The skills listing was still paginating at the page limit, so this run has not seen every skill.",
+          { pagesWalked: evidence.pagesWalked },
+        )
+      : satisfied(LISTING_COMPLETE, stamp, {
+          pagesWalked: evidence.pagesWalked,
+        }),
+  );
+
+  // ------------------------------------------------------------------- caps
+  if (evidence.skills.length > OPENAI_MCP_SKILL_LIMITS.maxSkills) {
+    issues.push(
+      openaiPortalIssue("mcp-skill-too-many", {
+        observed: evidence.skills.length,
+        expected: OPENAI_MCP_SKILL_LIMITS.maxSkills,
+      }),
+    );
+  }
+
+  let combinedBytes = 0;
+  for (const skill of evidence.skills) {
+    const subject = skill.name ?? skill.resourceUri ?? "(unnamed skill)";
+    if (
+      skill.markdownBytes !== undefined &&
+      skill.markdownBytes > OPENAI_MCP_SKILL_LIMITS.maxSkillMarkdownBytes
+    ) {
+      issues.push(
+        openaiPortalIssue("mcp-skill-markdown-too-large", {
+          subject,
+          observed: skill.markdownBytes,
+          expected: OPENAI_MCP_SKILL_LIMITS.maxSkillMarkdownBytes,
+        }),
+      );
+    }
+    for (const page of skill.pages ?? []) {
+      if (page.bytes > OPENAI_MCP_SKILL_LIMITS.maxPageBytes) {
+        issues.push(
+          openaiPortalIssue("mcp-skill-page-too-large", {
+            subject: `${subject} → ${page.uri}`,
+            observed: page.bytes,
+            expected: OPENAI_MCP_SKILL_LIMITS.maxPageBytes,
+          }),
+        );
+      }
+    }
+    if ((skill.pages?.length ?? 0) > OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill) {
+      issues.push(
+        openaiPortalIssue("mcp-skill-too-many-pages", {
+          subject,
+          observed: skill.pages?.length,
+          expected: OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill,
+        }),
+      );
+    }
+    if (
+      skill.totalBytes !== undefined &&
+      skill.totalBytes > OPENAI_MCP_SKILL_LIMITS.maxSkillTotalBytes
+    ) {
+      issues.push(
+        openaiPortalIssue("mcp-skill-total-too-large", {
+          subject,
+          observed: skill.totalBytes,
+          expected: OPENAI_MCP_SKILL_LIMITS.maxSkillTotalBytes,
+        }),
+      );
+    }
+    combinedBytes += skill.totalBytes ?? skill.markdownBytes ?? 0;
+  }
+
+  if (combinedBytes > OPENAI_MCP_SKILL_LIMITS.maxImportedTotalBytes) {
+    issues.push(
+      openaiPortalIssue("mcp-skills-total-too-large", {
+        observed: combinedBytes,
+        expected: OPENAI_MCP_SKILL_LIMITS.maxImportedTotalBytes,
+      }),
+    );
+  }
+
+  findings.push(
+    issues.length === 0
+      ? satisfied(WITHIN_CAPS, stamp, {
+          skills: evidence.skills.length,
+          combinedBytes,
+          portalIssues: [],
+        })
+      : violated(
+          WITHIN_CAPS,
+          stamp,
+          `${issues.length} imported-skill limit(s) exceeded.`,
+          { portalIssues: issues, combinedBytes },
+        ),
+  );
+
+  // ---------------------------------------------------------------- digests
+  const unfetched = evidence.skills.filter(
+    (skill) => skill.observedDigest === undefined,
+  );
+  const mismatched = evidence.skills.filter(
+    (skill) =>
+      skill.declaredDigest !== undefined &&
+      skill.observedDigest !== undefined &&
+      skill.declaredDigest !== skill.observedDigest,
+  );
+
+  findings.push(
+    mismatched.length > 0
+      ? violated(
+          DIGESTS_MATCH,
+          stamp,
+          `These skills declare a digest that does not match the resource they name: ${mismatched
+            .map((skill) => skill.name ?? skill.resourceUri)
+            .join(", ")}.`,
+          {
+            portalIssues: mismatched.map((skill) =>
+              openaiPortalIssue("mcp-skill-digest-mismatch", {
+                subject: skill.name ?? skill.resourceUri,
+              }),
+            ),
+          },
+        )
+      : unfetched.length === evidence.skills.length &&
+          evidence.skills.length > 0
+        ? notEvaluated(
+            DIGESTS_MATCH,
+            stamp,
+            "no skill resource was fetched, so no declared digest could be compared against its content",
+          )
+        : satisfied(DIGESTS_MATCH, stamp, {
+            compared: evidence.skills.length - unfetched.length,
+          }),
+  );
+
+  // ------------------------------------------------------------ frontmatter
+  //
+  // EXACT agreement, not "close enough". The listing is what a user browses and
+  // the frontmatter is what the model reads, and a plugin whose two descriptions
+  // differ is telling two different stories about the same skill.
+  const disagreeing = evidence.skills.filter((skill) => {
+    if (!skill.frontmatter) return false;
+    const name = skill.frontmatter.name;
+    const description = skill.frontmatter.description;
+    return (
+      (typeof name === "string" &&
+        skill.name !== undefined &&
+        name !== skill.name) ||
+      (typeof description === "string" &&
+        skill.description !== undefined &&
+        description !== skill.description)
+    );
+  });
+  const withFrontmatter = evidence.skills.filter((skill) => skill.frontmatter);
+
+  findings.push(
+    disagreeing.length > 0
+      ? violated(
+          FRONTMATTER_AGREES,
+          stamp,
+          `These skills' listing metadata disagrees with their SKILL.md frontmatter: ${disagreeing
+            .map((skill) => skill.name ?? skill.resourceUri)
+            .join(", ")}.`,
+          {
+            portalIssues: disagreeing.map((skill) =>
+              openaiPortalIssue("mcp-skill-frontmatter-mismatch", {
+                subject: skill.name ?? skill.resourceUri,
+              }),
+            ),
+          },
+        )
+      : withFrontmatter.length === 0 && evidence.skills.length > 0
+        ? notEvaluated(
+            FRONTMATTER_AGREES,
+            stamp,
+            "no skill's markdown was fetched, so its frontmatter could not be compared with the listing",
+          )
+        : satisfied(FRONTMATTER_AGREES, stamp, {
+            compared: withFrontmatter.length,
+          }),
+  );
+
+  // -------------------------------------------------------------- the snapshot
+  findings.push(
+    notEvaluated(
+      SNAPSHOT_SEMANTICS,
+      stamp,
+      "imported skills are copied at scan time, so what the portal holds is whatever the last Scan Tools read — this run cannot tell whether that scan is the one that was submitted",
+      { scannedAt: evidence.scannedAt, skills: evidence.skills.length },
+    ),
+  );
+
+  return findings;
+}
