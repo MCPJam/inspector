@@ -423,26 +423,134 @@ document.addEventListener('securitypolicyviolation', function(e) {
         return `<script>
 (function() {
   var config = ${configJson};
+  var protectedBaseUrl = (function() {
+    try { return new URL(document.baseURI); }
+    catch (_) {
+      try { return new URL(window.location.href); }
+      catch (_) { return null; }
+    }
+  })();
   function absoluteUrl(value) {
-    try { return new URL(String(value), window.location.href); }
+    try {
+      return new URL(
+        String(value),
+        protectedBaseUrl ? protectedBaseUrl.href : window.location.href
+      );
+    }
     catch (_) { return null; }
   }
-  function sourceMatches(source, url) {
-    if (!url || source === "'none'") return false;
-    if (source === "*") return true;
-    if (source === "'self'") return url.origin === window.location.origin;
-    if (/^[a-z][a-z0-9+.-]*:$/i.test(source)) {
-      return url.protocol.toLowerCase() === source.toLowerCase();
+  // Scheme/origin of the document the emulated policy protects. A srcdoc frame's
+  // location is about:srcdoc, but its baseURI inherits the embedding proxy
+  // document; that is the origin CSP would evaluate against. Falling back to
+  // "" makes schemeless expressions match nothing, which fails closed.
+  var protectedScheme = protectedBaseUrl
+    ? protectedBaseUrl.protocol.slice(0, -1).toLowerCase()
+    : "";
+  var protectedOrigin = protectedBaseUrl ? protectedBaseUrl.origin : "";
+  function schemeOf(url) {
+    return url.protocol.slice(0, -1).toLowerCase();
+  }
+  function defaultPortFor(scheme) {
+    if (scheme === "http" || scheme === "ws") return 80;
+    if (scheme === "https" || scheme === "wss") return 443;
+    return null;
+  }
+  // CSP3 6.7.2.9. Deliberately asymmetric: an insecure expression is upgraded
+  // to its secure variant, never the reverse ("https:" does NOT cover "wss:").
+  function schemeMatches(a, b) {
+    if (a === b) return true;
+    if (a === "http") return b === "https";
+    if (a === "ws") return b === "wss" || b === "http" || b === "https";
+    if (a === "wss") return b === "https";
+    return false;
+  }
+  // CSP3 6.7.2.11. A URL on its scheme's default port reports an empty port,
+  // so "https://h:443" and "https://h" describe the same endpoint — and an
+  // expression with NO port matches only the default port.
+  function portMatches(expected, url) {
+    if (expected === "*") return true;
+    var wanted = expected === null ? null : parseInt(expected, 10);
+    var actual = url.port === "" ? null : parseInt(url.port, 10);
+    if (wanted === actual) return true;
+    if (actual === null) return wanted === defaultPortFor(schemeOf(url));
+    return false;
+  }
+  function decodePiece(piece) {
+    try { return decodeURIComponent(piece); } catch (_) { return piece; }
+  }
+  // CSP3 6.7.2.12. A trailing "/" makes the expression a directory prefix
+  // ("/a/" covers "/a/b"); without one it must match the path exactly.
+  function pathMatches(expected, actual) {
+    if (expected === "") return true;
+    if (expected === "/" && actual === "") return true;
+    var exact = expected.charAt(expected.length - 1) !== "/";
+    var a = expected.split("/");
+    var b = actual.split("/");
+    if (a.length > b.length) return false;
+    if (exact && a.length !== b.length) return false;
+    if (!exact) a.pop();
+    for (var i = 0; i < a.length; i++) {
+      if (decodePiece(a[i]) !== decodePiece(b[i])) return false;
     }
-    var match = source.match(/^(?:([a-z][a-z0-9+.-]*):\\/\\/)?(\\*\\.)?([^/:]+)(?::(\\*|\\d+))?(?:\\/.*)?$/i);
-    if (!match) return false;
-    if (match[1] && url.protocol.toLowerCase() !== match[1].toLowerCase() + ":") return false;
-    var expectedHost = match[3].toLowerCase();
-    var actualHost = url.hostname.toLowerCase();
-    if (match[2]) {
-      if (!actualHost.endsWith("." + expectedHost)) return false;
-    } else if (actualHost !== expectedHost) return false;
-    if (match[4] && match[4] !== "*" && url.port !== match[4]) return false;
+    return true;
+  }
+  function hostMatches(expected, actual) {
+    if (expected === "*") return true;
+    if (expected.indexOf("*.") === 0) {
+      var suffix = expected.slice(1);
+      return suffix.length > 1 && actual.length > suffix.length &&
+        actual.slice(-suffix.length) === suffix;
+    }
+    return actual === expected;
+  }
+  // CSP3 6.7.2.7, restricted to what a connect-src allowlist can hold. This
+  // decides whether a call the host would ALLOW escapes the guard, so every
+  // ambiguity resolves to "no match" rather than waving the request through.
+  function sourceMatches(source, url) {
+    if (!url) return false;
+    var expr = String(source).trim();
+    if (!expr || expr === "'none'") return false;
+    if (expr === "*") return true;
+    // Keywords never name an origin except 'self'.
+    if (expr.charAt(0) === "'") {
+      return expr === "'self'" && url.origin === protectedOrigin;
+    }
+    var urlScheme = schemeOf(url);
+    // scheme-source, e.g. "https:" — nothing after the colon.
+    if (/^[a-z][a-z0-9+.-]*:$/i.test(expr)) {
+      return schemeMatches(expr.slice(0, -1).toLowerCase(), urlScheme);
+    }
+    var rest = expr;
+    var exprScheme = null;
+    var sep = rest.indexOf("://");
+    if (sep > 0) {
+      exprScheme = rest.slice(0, sep).toLowerCase();
+      rest = rest.slice(sep + 3);
+    }
+    if (exprScheme !== null) {
+      if (!schemeMatches(exprScheme, urlScheme)) return false;
+    } else if (!schemeMatches(protectedScheme, urlScheme)) {
+      return false;
+    }
+    var pathIdx = rest.indexOf("/");
+    var exprPath = "";
+    if (pathIdx >= 0) {
+      exprPath = rest.slice(pathIdx);
+      rest = rest.slice(0, pathIdx);
+    }
+    var exprPort = null;
+    var portIdx = rest.lastIndexOf(":");
+    if (portIdx > 0) {
+      exprPort = rest.slice(portIdx + 1);
+      rest = rest.slice(0, portIdx);
+    }
+    if (!rest) return false;
+    if (exprPort !== null && exprPort !== "*" && !/^[0-9]+$/.test(exprPort)) {
+      return false;
+    }
+    if (!hostMatches(rest.toLowerCase(), url.hostname.toLowerCase())) return false;
+    if (!portMatches(exprPort, url)) return false;
+    if (!pathMatches(exprPath, url.pathname)) return false;
     return true;
   }
   function allowedByHost(url) {

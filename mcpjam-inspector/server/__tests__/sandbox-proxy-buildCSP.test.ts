@@ -562,3 +562,234 @@ describe("sandbox-proxy connect subtype guards", () => {
     expect(postMessage).not.toHaveBeenCalled();
   });
 });
+
+describe("sandbox-proxy host baseline allowlist", () => {
+  const ALL_CONNECT_ALLOWED = {
+    cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+  };
+
+  it("keeps the host's own connect origins when the widget declares none", () => {
+    // ChatGPT's catalog row carries the two CDNs its 2026-08-19 probe loaded
+    // WITHOUT a declaration. With the row empty the proxy emitted
+    // `connect-src 'none'` and blocked every fetch a real widget can make.
+    const out = buildCSP(
+      {},
+      { "connect-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"] },
+      ALL_CONNECT_ALLOWED
+    );
+    expect(out).toContain(
+      "connect-src https://cdn.jsdelivr.net https://unpkg.com"
+    );
+    expect(out).not.toContain("connect-src 'none'");
+  });
+
+  it("unions the host baseline with the widget's declared origins", () => {
+    const out = buildCSP(
+      { connectDomains: ["https://api.example.com"] },
+      { "connect-src": ["https://unpkg.com"] },
+      ALL_CONNECT_ALLOWED
+    );
+    expect(out).toContain(
+      "connect-src https://api.example.com https://unpkg.com"
+    );
+  });
+
+  it("keeps the host baseline on resource directives too", () => {
+    const out = buildCSP(
+      {},
+      { "img-src": ["https://cdn.jsdelivr.net"] },
+      ALL_CONNECT_ALLOWED
+    );
+    expect(out).toContain("img-src data: blob: https://cdn.jsdelivr.net");
+  });
+});
+
+/**
+ * The guard's `sourceMatches` decides whether a call the HOST would allow
+ * escapes an otherwise-blocked subtype, so it has to follow real CSP source
+ * matching rather than approximate it. Ignoring paths or ports makes it
+ * fail OPEN, which is the direction that actually costs something.
+ *
+ * Rules under test: CSP3 §6.7.2.9 (scheme-part), §6.7.2.11 (port-part),
+ * §6.7.2.12 (path-part), and the schemeless-host rule in §6.7.2.7 step 3.2.
+ */
+describe("sandbox-proxy connect guard — CSP source matching", () => {
+  /**
+   * Run one fetch through a guard that blocks fetch and allows exactly
+   * `sources`. Resolves true when the call reached the network (the host
+   * allowlist matched), false when the guard refused it.
+   */
+  async function fetchAllowed(
+    sources: string[],
+    target: string,
+    documentUrl = "https://widget.example.test/",
+    baseHref?: string
+  ): Promise<boolean> {
+    const response = new Response("ok");
+    const nativeFetch = vi.fn(() => Promise.resolve(response));
+    const script = buildConnectGuardScript(
+      { cspConnectDomains: { fetch: false } },
+      { "connect-src": sources }
+    );
+    const base = baseHref ? `<base href="${baseHref}">` : "";
+    const dom = new JSDOM(
+      `<!doctype html><html><head>${base}${script}</head></html>`,
+      {
+        runScripts: "dangerously",
+        url: documentUrl,
+        beforeParse(window) {
+          Object.defineProperty(window, "fetch", {
+            value: nativeFetch,
+            configurable: true,
+            writable: true,
+          });
+          window.postMessage = vi.fn() as typeof window.postMessage;
+        },
+      }
+    );
+    try {
+      await dom.window.fetch(target);
+    } catch {
+      return false;
+    }
+    return nativeFetch.mock.calls.length === 1;
+  }
+
+  describe("srcdoc base URL", () => {
+    it("resolves relative requests against document.baseURI", async () => {
+      await expect(
+        fetchAllowed(
+          ["https://widget.example.test"],
+          "/api/data",
+          "about:srcdoc",
+          "https://widget.example.test/app/"
+        )
+      ).resolves.toBe(true);
+    });
+
+    it("matches 'self' against document.baseURI origin", async () => {
+      await expect(
+        fetchAllowed(
+          ["'self'"],
+          "https://widget.example.test/api/data",
+          "about:srcdoc",
+          "https://widget.example.test/app/"
+        )
+      ).resolves.toBe(true);
+    });
+  });
+
+  describe("path-part", () => {
+    it("treats a trailing slash as a directory prefix", async () => {
+      await expect(
+        fetchAllowed(["https://h.test/api/"], "https://h.test/api/items")
+      ).resolves.toBe(true);
+      await expect(
+        fetchAllowed(["https://h.test/api/"], "https://h.test/api/")
+      ).resolves.toBe(true);
+    });
+
+    it("refuses a sibling path outside the prefix", async () => {
+      await expect(
+        fetchAllowed(["https://h.test/api/"], "https://h.test/admin")
+      ).resolves.toBe(false);
+    });
+
+    it("requires an exact match with no trailing slash", async () => {
+      await expect(
+        fetchAllowed(["https://h.test/api/v1"], "https://h.test/api/v1")
+      ).resolves.toBe(true);
+      await expect(
+        fetchAllowed(["https://h.test/api/v1"], "https://h.test/api/v2")
+      ).resolves.toBe(false);
+      // Deeper than the expression: exact matching compares segment counts.
+      await expect(
+        fetchAllowed(["https://h.test/api/v1"], "https://h.test/api/v1/x")
+      ).resolves.toBe(false);
+    });
+
+    it("still allows any path when the expression carries none", async () => {
+      await expect(
+        fetchAllowed(["https://h.test"], "https://h.test/anything/at/all")
+      ).resolves.toBe(true);
+    });
+  });
+
+  describe("port-part", () => {
+    it("matches a spelled-out default port against an implicit one", async () => {
+      // `URL.port` is "" for 443, so a naive string compare rejects this.
+      await expect(
+        fetchAllowed(["https://h.test:443"], "https://h.test/x")
+      ).resolves.toBe(true);
+    });
+
+    it("refuses a non-default port when the expression names none", async () => {
+      await expect(
+        fetchAllowed(["https://h.test"], "https://h.test:8443/x")
+      ).resolves.toBe(false);
+    });
+
+    it("matches an explicit non-default port", async () => {
+      await expect(
+        fetchAllowed(["https://h.test:8443"], "https://h.test:8443/x")
+      ).resolves.toBe(true);
+    });
+
+    it("accepts any port behind the port wildcard", async () => {
+      await expect(
+        fetchAllowed(["https://h.test:*"], "https://h.test:8443/x")
+      ).resolves.toBe(true);
+    });
+  });
+
+  describe("host-part", () => {
+    it("matches a subdomain against a wildcard host", async () => {
+      await expect(
+        fetchAllowed(["https://*.h.test"], "https://api.h.test/x")
+      ).resolves.toBe(true);
+    });
+
+    it("does not let a wildcard cover the bare domain", async () => {
+      await expect(
+        fetchAllowed(["https://*.h.test"], "https://h.test/x")
+      ).resolves.toBe(false);
+    });
+
+    it("refuses a host that merely ends with the expression", async () => {
+      await expect(
+        fetchAllowed(["https://h.test"], "https://evil-h.test/x")
+      ).resolves.toBe(false);
+    });
+  });
+
+  describe("scheme-part", () => {
+    it("upgrades an insecure expression to its secure variant", async () => {
+      await expect(
+        fetchAllowed(["http://h.test"], "https://h.test/x")
+      ).resolves.toBe(true);
+    });
+
+    it("never downgrades a secure expression", async () => {
+      await expect(
+        fetchAllowed(["https://h.test"], "http://h.test/x")
+      ).resolves.toBe(false);
+    });
+
+    it("reads a schemeless host against the protected document's scheme", async () => {
+      await expect(fetchAllowed(["h.test"], "https://h.test/x")).resolves.toBe(
+        true
+      );
+      // The document is https, so an http target is not the same endpoint.
+      await expect(fetchAllowed(["h.test"], "http://h.test/x")).resolves.toBe(
+        false
+      );
+    });
+  });
+
+  it("refuses anything outside the host allowlist", async () => {
+    await expect(
+      fetchAllowed(["https://h.test"], "https://other.test/x")
+    ).resolves.toBe(false);
+    await expect(fetchAllowed([], "https://h.test/x")).resolves.toBe(false);
+  });
+});
