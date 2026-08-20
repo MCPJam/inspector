@@ -114,6 +114,22 @@ export type DirectoryUnavailableReason =
   | "endpoint_unverified"
   | "oauth_no_resource";
 
+/**
+ * The OAuth-registration probe verdict on a summary row — OUR derivation
+ * from the server's public authorization metadata, never part of the
+ * upstream listing. Written only by the backend's nightly sweep.
+ */
+export interface DirectoryOAuthProbe {
+  probedAt: number;
+  /** The URL the verdict is about; a changed endpoint voids it. */
+  endpointUrl: string;
+  outcome: "resolved" | "no_metadata" | "unreachable";
+  /** Present only when `outcome` is `resolved`. */
+  supportsDcr?: boolean;
+  supportsCimd?: boolean;
+  authorizationServerUrl?: string;
+}
+
 /** One row of `serverCatalogQueries:searchCatalogServers`. */
 export interface DirectoryServer {
   _id: string;
@@ -135,8 +151,42 @@ export interface DirectoryServer {
   endpointConfidence?: "explicit" | "resource_verified" | "probe_verified";
   unavailableReason?: DirectoryUnavailableReason;
   authPosture?: string;
+  oauthProbe?: DirectoryOAuthProbe;
   /** A curated card already covers this row; filtered out of `items`. */
   curatedOverlap: boolean;
+}
+
+/**
+ * Should this row carry the "Requires pre-registered client" badge?
+ *
+ * `resolved` verdicts ONLY. A `no_metadata` or `unreachable` outcome is
+ * indistinguishable from a server that does not do OAuth discovery at all,
+ * so those render nothing rather than an accusation the probe cannot back.
+ *
+ * The verdict is about ONE URL (`probe.endpointUrl`), and the ETL never
+ * touches `oauthProbe` — so between an endpoint move and the next sweep
+ * (≤1 day) a row can hold a verdict about a URL it no longer points at.
+ * Badging that would present a fact about the wrong server, so the check
+ * mirrors the backend's `probeTargetFor`: `fixed` rows probe `remoteUrl`,
+ * `options` rows probe their first published endpoint, and anything else
+ * has no probe target and never badges.
+ */
+export function requiresPreregisteredClient(
+  server: Pick<
+    DirectoryServer,
+    "oauthProbe" | "endpointKind" | "remoteUrl" | "remoteUrlOptions"
+  >
+): boolean {
+  const probe = server.oauthProbe;
+  if (probe?.outcome !== "resolved") return false;
+  if (probe.supportsDcr || probe.supportsCimd) return false;
+  const target =
+    server.endpointKind === "fixed"
+      ? server.remoteUrl
+      : server.endpointKind === "options"
+        ? server.remoteUrlOptions?.[0]
+        : undefined;
+  return target !== undefined && probe.endpointUrl === target;
 }
 
 /**

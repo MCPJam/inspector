@@ -44,6 +44,7 @@ import {
   useServerDirectory,
   useDirectoryServerDetail,
   requiresEndpointChoice,
+  requiresPreregisteredClient,
   normalizeDirectoryConnectError,
   describeExistingConnection,
   describeUnavailable,
@@ -1242,6 +1243,19 @@ function DirectoryBadges({ server }: { server: DirectoryServer }) {
           {server.endpointKind === "options"
             ? "Choose endpoint"
             : "Your instance"}
+        </Badge>
+      )}
+      {/* A probe FACT, not upstream metadata: this server's authorization
+          server answered and offers neither DCR nor CIMD, so connecting will
+          need credentials issued by the vendor. Only `resolved` verdicts
+          badge — see `requiresPreregisteredClient`. */}
+      {requiresPreregisteredClient(server) && (
+        <Badge
+          variant="outline"
+          className="text-[11px] px-1.5 py-0.5 gap-1 border-warning/30 text-warning"
+        >
+          <KeyRound className="h-3 w-3" />
+          Requires pre-registered client
         </Badge>
       )}
     </>
