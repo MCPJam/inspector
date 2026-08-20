@@ -596,6 +596,31 @@ describe("RegistryTab", () => {
       ).not.toBeInTheDocument();
     });
 
+    it("keeps an options row on screen while Connectable only is on", () => {
+      // The toggle hides what cannot be installed, not what needs a dialog
+      // first. A regional connector is connectable.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [
+          createDirectoryServer({
+            displayName: "Braze",
+            endpointKind: "options",
+            remoteUrl: undefined,
+            remoteUrlOptions: ["https://mcp.braze.com/mcp"],
+          }),
+        ],
+        connectableOnly: true,
+      });
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByText("Braze")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Connect" })
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Not connectable" })
+      ).not.toBeInTheDocument();
+    });
+
     it("can hide the rows that cannot be installed", () => {
       // Off by default — hiding a third of the ChatGPT directory before
       // anyone asked would make it look smaller than it is.
@@ -1921,14 +1946,30 @@ describe("RegistryTab", () => {
 
       const response = await dispatch({
         type: "searchRegistryDirectory",
-        payload: { query: "invoice", source: "chatgpt-directory" },
+        payload: {
+          query: "invoice",
+          source: "chatgpt-directory",
+          tier: "partner",
+        },
       });
 
       expect(response).toMatchObject({
         status: "success",
-        result: { status: "searching", source: "chatgpt-directory" },
+        result: {
+          status: "searching",
+          source: "chatgpt-directory",
+          tier: "partner",
+        },
       });
       expect(mockSetSource).toHaveBeenCalledWith("chatgpt-directory");
+      expect(mockSetTier).toHaveBeenCalledWith("partner");
+      // The assertion the test's name is actually about: SOURCE FIRST. Swap
+      // the two statements in the handler and the source's tier-clearing wipes
+      // the tier that arrived with it — which the assertions above would not
+      // notice, because both calls still happened.
+      expect(mockSetSource.mock.invocationCallOrder[0]).toBeLessThan(
+        mockSetTier.mock.invocationCallOrder[0]
+      );
     });
 
     it("searchRegistryDirectory rejects an unknown source", async () => {

@@ -49,8 +49,9 @@ import {
   isConnectableDirectoryRow,
   sourceHasTiers,
   DIRECTORY_SOURCES,
-  DIRECTORY_SOURCE_BADGES,
   DIRECTORY_SOURCE_LABELS,
+  DEFAULT_DIRECTORY_SOURCE,
+  directorySourceBadge,
   DIRECTORY_TIERS,
   type DirectoryServer,
   type DirectorySource,
@@ -169,6 +170,29 @@ function resolveConnectVariant(
   throw createInspectorCommandClientError(
     "invalid_request",
     `"${card.variants[0].displayName}" has both Text and App variants — pass variant: "text" or "app".`
+  );
+}
+
+/**
+ * Is the directory showing anything other than its default view?
+ *
+ * ONE definition, used by both the section (which hides itself when nothing is
+ * loaded and nothing was asked) and the screen-level empty state. Two copies
+ * drifted apart the moment a fourth control was added, and the drift is
+ * invisible: the section would vanish while the empty state insisted the
+ * screen was filtered, or the reverse.
+ */
+function isDirectoryFiltered(
+  directory: Pick<
+    ReturnType<typeof useServerDirectory>,
+    "query" | "tier" | "connectableOnly" | "source"
+  >
+): boolean {
+  return (
+    directory.query.trim().length > 0 ||
+    directory.tier !== "all" ||
+    directory.connectableOnly ||
+    directory.source !== DEFAULT_DIRECTORY_SOURCE
   );
 }
 
@@ -803,11 +827,7 @@ export function RegistryTab({
   const curatedEmpty = !isLoading && catalogCards.length === 0;
   const directoryEmpty =
     !directory.isLoadingFirstPage && directory.items.length === 0;
-  const directoryFiltered =
-    directory.query.trim().length > 0 ||
-    directory.tier !== "all" ||
-    directory.connectableOnly ||
-    directory.source !== "anthropic-directory";
+  const directoryFiltered = isDirectoryFiltered(directory);
 
   if (isLoading && directory.isLoadingFirstPage) {
     return <LoadingSkeleton />;
@@ -910,11 +930,7 @@ function ServerDirectorySection({
 }) {
   const { items, query, setQuery, tier, setTier, source, setSource } =
     directory;
-  const filtering =
-    query.trim().length > 0 ||
-    tier !== "all" ||
-    directory.connectableOnly ||
-    source !== "anthropic-directory";
+  const filtering = isDirectoryFiltered(directory);
 
   // Nothing loaded and nothing asked for: the section stays out of the way
   // rather than advertising an empty directory (the gated-off case).
@@ -1087,9 +1103,7 @@ function DirectoryServerCard({
           {/* PROVENANCE, not endorsement: "Listed in ChatGPT" says OpenAI
               accepted a submission, which is not a tier of ours. */}
           <p className="text-xs text-muted-foreground">
-            {DIRECTORY_SOURCE_BADGES[
-              server.source as keyof typeof DIRECTORY_SOURCE_BADGES
-            ] ?? "From an upstream directory"}
+            {directorySourceBadge(server.source)}
           </p>
         </div>
         <div className="flex-shrink-0">

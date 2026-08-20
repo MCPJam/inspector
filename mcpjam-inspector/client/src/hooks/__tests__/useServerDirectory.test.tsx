@@ -15,6 +15,8 @@ import { ConvexError } from "convex/values";
 import {
   DirectoryConnectError,
   describeExistingConnection,
+  directorySourceBadge,
+  directorySourceLabel,
   describeUnavailable,
   isConnectableDirectoryRow,
   normalizeDirectoryConnectError,
@@ -617,15 +619,67 @@ describe("useServerDirectory — the source facet", () => {
     expect(result.current.lastSyncedAt).toBe(8_000);
   });
 
-  it("connectable-only becomes an endpointKind filter on the QUERY", async () => {
-    // Filtering the page after it arrives would return short pages and
-    // eventually blank ones: pagination counts rows the filter then discards.
+  it("connectable-only asks the backend, and does NOT narrow to `fixed`", async () => {
+    // The bug this guards: `endpointKind: 'fixed'` looks like "connectable"
+    // and is not. `options` (pick a region) and `tenant` (supply your own
+    // instance URL) rows connect fine — they just ask a question first — so
+    // filtering to `fixed` would hide every regional and BYO-instance
+    // connector behind a toggle that claims to hide only the unusable ones.
     const { result } = renderDirectory();
     act(() => result.current.setConnectableOnly(true));
     await waitFor(() => {
       expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
         "serverCatalogQueries:searchCatalogServers",
-        { source: "anthropic-directory", endpointKind: "fixed" },
+        { source: "anthropic-directory", connectableOnly: true },
+        expect.anything()
+      );
+    });
+
+    const [, args] = mockUsePaginatedQuery.mock.calls.at(-1) as [
+      string,
+      Record<string, unknown>
+    ];
+    expect(args.endpointKind).toBeUndefined();
+  });
+
+  it("keeps every connectable kind visible while the toggle is on", () => {
+    // The hook does not drop rows itself — the query does — so an `options`
+    // or `tenant` row that comes back stays on screen and stays connectable.
+    const rows = [
+      directoryServer({ _id: "a", endpointKind: "fixed" }),
+      directoryServer({
+        _id: "b",
+        endpointKind: "options",
+        remoteUrl: undefined,
+        remoteUrlOptions: ["https://mcp.braze.com/mcp"],
+      }),
+      directoryServer({
+        _id: "c",
+        endpointKind: "tenant",
+        remoteUrl: undefined,
+        remoteUrlRegex: "https://.*\\.acme\\.com/mcp",
+      }),
+    ];
+    setPage(rows);
+    const { result } = renderDirectory();
+    act(() => result.current.setConnectableOnly(true));
+
+    expect(result.current.items.map((item) => item._id)).toEqual([
+      "a",
+      "b",
+      "c",
+    ]);
+    expect(rows.every(isConnectableDirectoryRow)).toBe(true);
+  });
+
+  it("stops asking for the filter when the toggle goes off", async () => {
+    const { result } = renderDirectory();
+    act(() => result.current.setConnectableOnly(true));
+    act(() => result.current.setConnectableOnly(false));
+    await waitFor(() => {
+      expect(mockUsePaginatedQuery).toHaveBeenLastCalledWith(
+        "serverCatalogQueries:searchCatalogServers",
+        { source: "anthropic-directory" },
         expect.anything()
       );
     });
@@ -703,6 +757,27 @@ describe("cross-source connect", () => {
         },
       })
     ).toBe("Already connected via another catalog.");
+  });
+
+  it("an inherited property name is NOT a known source", () => {
+    // `in` would say `toString` is a source and render the function itself
+    // into the sentence. `Object.hasOwn` is what keeps the fallback reachable.
+    expect(
+      describeExistingConnection({
+        serverId: "srv_1",
+        serverName: "Linear",
+        outcome: "existing_endpoint",
+        existing: {
+          catalogServerId: "cat_9",
+          source: "toString",
+          displayName: "Linear",
+        },
+      })
+    ).toBe("Already connected via another catalog.");
+    expect(directorySourceLabel("toString")).toBe("another catalog");
+    expect(directorySourceBadge("constructor")).toBe(
+      "From an upstream directory"
+    );
   });
 
   it("says nothing at all for an ordinary install", () => {

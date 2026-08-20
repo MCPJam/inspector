@@ -78,6 +78,32 @@ export function sourceHasTiers(source: DirectorySource): boolean {
   return source === "anthropic-directory";
 }
 
+/**
+ * Is this string one of the sources we have copy for?
+ *
+ * `Object.hasOwn`, not `in`: a row's `source` is a plain string off the wire,
+ * and `in` walks the prototype chain — a source named `toString` would "match"
+ * and index to a function, rendering "the function toString() { [native code]
+ * }" into the UI. Own-property is the check the fallbacks below assume.
+ */
+function isKnownSource(source: string): source is DirectorySource {
+  return Object.hasOwn(DIRECTORY_SOURCE_LABELS, source);
+}
+
+/** The directory's name, or a generic phrase for a source we do not know. */
+export function directorySourceLabel(source: string): string {
+  return isKnownSource(source)
+    ? DIRECTORY_SOURCE_LABELS[source]
+    : "another catalog";
+}
+
+/** The card's provenance line, same rule. */
+export function directorySourceBadge(source: string): string {
+  return isKnownSource(source)
+    ? DIRECTORY_SOURCE_BADGES[source]
+    : "From an upstream directory";
+}
+
 /** Why a REMOTE row cannot be connected. See `catalogServers` in the schema. */
 export type DirectoryUnavailableReason =
   | "endpoint_hidden"
@@ -181,14 +207,16 @@ export function describeExistingConnection(
   result: DirectoryConnectResult
 ): string | null {
   if (result.outcome !== "existing_endpoint") return null;
+  // A source we have no label for is still a real connection; naming it "the
+  // undefined directory" would be worse than being vague. The article moves
+  // with the phrase — "via the Claude directory" but "via another catalog" —
+  // so the helper owns both halves rather than the sentence assuming one.
   const source = result.existing?.source;
-  // A source we do not have a label for is still a real connection; naming it
-  // "the undefined directory" would be worse than being vague.
-  return source && source in DIRECTORY_SOURCE_LABELS
-    ? `Already connected via the ${
-        DIRECTORY_SOURCE_LABELS[source as DirectorySource]
-      }.`
-    : "Already connected via another catalog.";
+  const phrase =
+    source && isKnownSource(source)
+      ? `the ${DIRECTORY_SOURCE_LABELS[source]}`
+      : "another catalog";
+  return `Already connected via ${phrase}.`;
 }
 
 /**
@@ -396,10 +424,15 @@ export function useServerDirectory({
       ...(tier === "all" || !sourceHasTiers(source)
         ? {}
         : { verifiedTier: tier }),
-      // Pushed into the query rather than filtered client-side: filtering a
-      // page after it arrives returns short pages and eventually blank ones,
-      // because pagination counts rows the filter then throws away.
-      ...(connectableOnly ? { endpointKind: "fixed" as const } : {}),
+      // `connectableOnly`, NOT `endpointKind: 'fixed'`. `options` (pick a
+      // region) and `tenant` (supply your own instance URL) rows are
+      // connectable too — they just ask a question first — and filtering to
+      // `fixed` would hide every one of them behind a toggle that claims to
+      // hide only what cannot be installed.
+      //
+      // Server-side rather than over `items`, so `canLoadMore` keeps agreeing
+      // with what is on screen; filtering in the hook desyncs the two.
+      ...(connectableOnly ? { connectableOnly: true } : {}),
     }),
     [connectableOnly, debouncedQuery, source, tier]
   );
