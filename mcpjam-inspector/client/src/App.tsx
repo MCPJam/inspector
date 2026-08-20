@@ -2313,6 +2313,15 @@ export default function App() {
     barePathname === routePaths.embedScore ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
+  // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
+  // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
+  // fresh sign-in. `/login` is not a known tab segment, so it resolves to the
+  // `servers` fallback — which is a first-run-eligible route, and a hosted
+  // guest session is Convex-authenticated. Without this the onboarding redirect
+  // below can fire on the very commit that mounts the route and navigate the
+  // visitor to Playground mid-sign-in, stranding exactly the enterprise entry
+  // point this route exists to fix.
+  const isLoginInitiationRoute = barePathname === routePaths.login;
 
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
@@ -2920,6 +2929,7 @@ export default function App() {
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
+    !isLoginInitiationRoute &&
     !hasHostTemplateVerifyParam &&
     !hasProjectSwitchDeepLinkParam &&
     !isWorkOsLoading &&

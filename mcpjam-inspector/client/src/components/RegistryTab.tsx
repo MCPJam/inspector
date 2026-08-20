@@ -42,6 +42,7 @@ import {
 } from "@/hooks/useRegistryServers";
 import {
   useServerDirectory,
+  useDirectoryServerDetail,
   requiresEndpointChoice,
   normalizeDirectoryConnectError,
   describeExistingConnection,
@@ -58,6 +59,7 @@ import {
   type DirectoryTier,
 } from "@/hooks/useServerDirectory";
 import { DirectoryEndpointDialog } from "./registry/DirectoryEndpointDialog";
+import { DirectoryDetailDialog } from "./registry/DirectoryDetailDialog";
 import { toast } from "@/lib/toast";
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
 import type { ServerFormData } from "@/shared/types.js";
@@ -302,6 +304,16 @@ export function RegistryTab({
   const [connectingDirectoryIds, setConnectingDirectoryIds] = useState<
     Set<string>
   >(new Set());
+
+  // The directory card whose detail dialog is open. The body (tool names,
+  // publisher, permissions) is fetched only while a card is open — the list
+  // stays blob-free.
+  const [detailServer, setDetailServer] = useState<DirectoryServer | null>(
+    null
+  );
+  const detailServerDetail = useDirectoryServerDetail(
+    detailServer?._id ?? null
+  );
 
   // Auto-redirect to App Builder when a pending server becomes connected.
   // We persist in localStorage to survive OAuth redirects (page remounts).
@@ -900,9 +912,35 @@ export function RegistryTab({
           directory={directory}
           statusFor={directoryStatusFor}
           onConnect={handleDirectoryConnect}
+          onOpenDetail={setDetailServer}
         />
       </div>
 
+      {detailServer && (
+        <DirectoryDetailDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setDetailServer(null);
+          }}
+          server={detailServer}
+          detail={detailServerDetail}
+          badges={<DirectoryBadges server={detailServer} />}
+          action={
+            <DirectoryAction
+              status={directoryStatusFor(detailServer)}
+              onConnect={() => {
+                // Hand off to the card's connect flow — and get out of its
+                // way: the endpoint dialog (or an OAuth redirect) may be
+                // about to take over, and a detail dialog underneath it
+                // would fight for focus.
+                const server = detailServer;
+                setDetailServer(null);
+                void handleDirectoryConnect(server);
+              }}
+            />
+          }
+        />
+      )}
       {endpointPrompt && (
         <DirectoryEndpointDialog
           open
@@ -940,10 +978,12 @@ function ServerDirectorySection({
   directory,
   statusFor,
   onConnect,
+  onOpenDetail,
 }: {
   directory: ReturnType<typeof useServerDirectory>;
   statusFor: (server: DirectoryServer) => RegistryConnectionStatus | "error";
   onConnect: (server: DirectoryServer) => void;
+  onOpenDetail: (server: DirectoryServer) => void;
 }) {
   const { items, query, setQuery, tier, setTier, source, setSource } =
     directory;
@@ -1056,6 +1096,7 @@ function ServerDirectorySection({
               server={item}
               status={statusFor(item)}
               onConnect={() => onConnect(item)}
+              onOpenDetail={() => onOpenDetail(item)}
             />
           ))}
         </div>
@@ -1081,10 +1122,12 @@ function DirectoryServerCard({
   server,
   status,
   onConnect,
+  onOpenDetail,
 }: {
   server: DirectoryServer;
   status: RegistryConnectionStatus | "error";
   onConnect: () => void;
+  onOpenDetail: () => void;
 }) {
   const [iconFailed, setIconFailed] = useState(false);
   const showIcon = Boolean(server.iconUrl) && !iconFailed;
@@ -1092,7 +1135,24 @@ function DirectoryServerCard({
   const unavailable = connectable ? null : describeUnavailable(server);
 
   return (
-    <Card className="px-4 py-3 flex flex-col gap-2">
+    <Card
+      className="px-4 py-3 flex flex-col gap-2 cursor-pointer transition-colors hover:border-muted-foreground/30"
+      // The whole card opens the detail dialog; the Connect button inside
+      // stops propagation so the two targets never fight. A real <button>
+      // cannot wrap another button, hence the ARIA affordance.
+      role="button"
+      tabIndex={0}
+      aria-label={`View details for ${server.displayName}`}
+      data-testid="directory-server-card"
+      onClick={onOpenDetail}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onOpenDetail();
+        }
+      }}
+    >
       <div className="flex items-center gap-3">
         {showIcon ? (
           <img
@@ -1123,7 +1183,10 @@ function DirectoryServerCard({
             {directorySourceBadge(server.source)}
           </p>
         </div>
-        <div className="flex-shrink-0">
+        <div
+          className="flex-shrink-0"
+          onClick={(event) => event.stopPropagation()}
+        >
           {connectable ? (
             <DirectoryAction status={status} onConnect={onConnect} />
           ) : (
@@ -1141,17 +1204,7 @@ function DirectoryServerCard({
       </div>
 
       <div className="flex items-center gap-1.5 flex-wrap">
-        <TierBadge tier={server.verifiedTier} />
-        {requiresEndpointChoice(server) && (
-          <Badge
-            variant="outline"
-            className="text-[11px] px-1.5 py-0.5 gap-1 border-muted-foreground/30 text-muted-foreground"
-          >
-            {server.endpointKind === "options"
-              ? "Choose endpoint"
-              : "Your instance"}
-          </Badge>
-        )}
+        <DirectoryBadges server={server} />
       </div>
 
       {/* Why, in the row's own terms. A hidden hosted endpoint and a desktop
@@ -1173,6 +1226,25 @@ function DirectoryServerCard({
         </p>
       )}
     </Card>
+  );
+}
+
+/** The tier + endpoint chips, identical on the card and the detail dialog. */
+function DirectoryBadges({ server }: { server: DirectoryServer }) {
+  return (
+    <>
+      <TierBadge tier={server.verifiedTier} />
+      {requiresEndpointChoice(server) && (
+        <Badge
+          variant="outline"
+          className="text-[11px] px-1.5 py-0.5 gap-1 border-muted-foreground/30 text-muted-foreground"
+        >
+          {server.endpointKind === "options"
+            ? "Choose endpoint"
+            : "Your instance"}
+        </Badge>
+      )}
+    </>
   );
 }
 

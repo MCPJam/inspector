@@ -4,6 +4,7 @@ import {
   bundledHostCompatCatalog,
   evaluateMarketHosts,
   MCP_APPS_FULL,
+  MCP_APPS_CLAUDE,
   type HostCompatToolsInput,
 } from "../src/host-compat/index";
 import {
@@ -51,8 +52,10 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("claude")?.capabilities).toBeDefined();
     expect(profileFor("cursor")?.capabilities?.message).toBe(false);
     expect(profileFor("goose")?.capabilities?.serverTools).toBe(false);
+    // Codex gained a matrix with the 2026-08-19 probe: it renders MCP Apps
+    // via the same runtime as ChatGPT, so it is no longer headless.
+    expect(profileFor("codex")?.capabilities).toBeDefined();
     // Headless hosts render nothing → no matrix.
-    expect(profileFor("codex")?.capabilities).toBeUndefined();
     expect(profileFor("perplexity")?.capabilities).toBeUndefined();
   });
 
@@ -62,8 +65,42 @@ describe("buildMarketHostProfiles", () => {
       logging: true,
       toolInputPartial: true,
       toolCancelled: true,
-      downloadFile: false,
       resourceTeardown: true,
+      downloadFile: false,
+    });
+  });
+
+  it("keeps Claude app capabilities faithful to the raw probe", () => {
+    expect(profileFor("claude")?.capabilities).toMatchObject({
+      availableDisplayModes: ["inline", "fullscreen"],
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      requestTeardown: false,
+      toolCancelled: true,
+    });
+  });
+
+  it("keeps Goose CSP findings faithful to the raw probe", () => {
+    expect(profileFor("goose")?.capabilities).toMatchObject({
+      cspConnectDomains: { fetch: false, xhr: false, websocket: false },
+      cspResourceDomains: {
+        script: false,
+        stylesheet: false,
+        image: false,
+        font: false,
+        media: false,
+      },
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      resourcePrefersBorder: true,
     });
   });
 
@@ -71,10 +108,16 @@ describe("buildMarketHostProfiles", () => {
     expect(profileFor("goose")?.supportedProtocolVersions).toEqual([
       "2025-03-26",
     ]);
+    // Ladder-probed: both reach further back than the single version they
+    // happen to negotiate by default, and Codex does not reach 2026-07-28.
     expect(profileFor("codex")?.supportedProtocolVersions).toEqual([
+      "2025-03-26",
       "2025-06-18",
+      "2025-11-25",
     ]);
     expect(profileFor("claude")?.supportedProtocolVersions).toEqual([
+      "2025-03-26",
+      "2025-06-18",
       "2025-11-25",
       "2026-07-28",
     ]);
@@ -105,6 +148,8 @@ describe("buildMarketHostProfiles", () => {
   it("exports deeply frozen capability matrices (can't poison verdicts)", () => {
     expect(Object.isFrozen(MCP_APPS_FULL)).toBe(true);
     expect(Object.isFrozen(MCP_APPS_FULL.availableDisplayModes)).toBe(true);
+    expect(Object.isFrozen(MCP_APPS_CLAUDE.cspConnectDomains)).toBe(true);
+    expect(Object.isFrozen(MCP_APPS_CLAUDE.cspResourceDomains)).toBe(true);
     expect(() => {
       (MCP_APPS_FULL as { message?: boolean }).message = false;
     }).toThrow();
@@ -115,6 +160,7 @@ describe("buildMarketHostProfiles", () => {
     a.sort((x, y) => x.id.localeCompare(y.id));
     const claudeA = a.find((p) => p.id === "claude")!;
     claudeA.capabilities!.message = false;
+    claudeA.capabilities!.cspConnectDomains!.fetch = false;
     claudeA.supportedProtocolVersions?.push("mutated");
 
     const b = buildMarketHostProfiles();
@@ -123,6 +169,9 @@ describe("buildMarketHostProfiles", () => {
       Object.keys(bundledHostCompatCatalog().hostsById)
     );
     expect(b.find((p) => p.id === "claude")?.capabilities?.message).toBe(true);
+    expect(
+      b.find((p) => p.id === "claude")?.capabilities?.cspConnectDomains?.fetch
+    ).toBe(true);
   });
 });
 
@@ -131,9 +180,15 @@ describe("evaluateMarketHosts (real catalog verdicts)", () => {
   const dualWidget = toolsWith({ w: { ...mcpAppsMeta, ...openaiMeta } });
   const clean = { widgetUsage: {} };
 
-  it("a dual-bridge widget works in Claude but degrades in Codex (headless)", () => {
+  it("a dual-bridge widget works in Claude and Codex, degrades headless", () => {
     expect(verdictFor("claude", dualWidget, clean)).toBe("works");
-    expect(verdictFor("codex", dualWidget, clean)).toBe("degraded");
+    // Was "degraded" until the 2026-08-19 probe showed Codex rendering MCP
+    // Apps on the ChatGPT runtime. Asserted explicitly because this verdict
+    // flip is the user-visible half of that catalog change.
+    expect(verdictFor("codex", dualWidget, clean)).toBe("works");
+    // Codex used to be this case's headless example; keep the dual-bridge
+    // degrade path covered with a host that really is headless.
+    expect(verdictFor("perplexity", dualWidget, clean)).toBe("degraded");
   });
 
   it("headless hosts degrade an MCP Apps widget to text", () => {

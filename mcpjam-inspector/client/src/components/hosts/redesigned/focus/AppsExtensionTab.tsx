@@ -520,6 +520,31 @@ export function applyJsonToDraft(
         (out as Record<string, unknown>)[key] = value;
       }
     }
+    // cspConnectDomains / cspResourceDomains are the only object-valued
+    // override keys. They are NOT in `booleanKeys`, so without this pass an
+    // apply would silently drop them — and seeded ChatGPT / Claude / Cursor
+    // rows carry them, so the user would lose their subtype policy by
+    // touching anything else in the editor. Soft-validate per leaf the same
+    // way the boolean rows do: keep known keys with boolean values, drop the
+    // rest, and only emit the object when at least one leaf survived.
+    for (const [key, leafKeys] of [
+      ["cspConnectDomains", ["fetch", "xhr", "websocket"]],
+      [
+        "cspResourceDomains",
+        ["script", "stylesheet", "image", "font", "media"],
+      ],
+    ] as const) {
+      const incomingMap = incoming[key];
+      if (!isPlainObject(incomingMap)) continue;
+      const leaves: Record<string, boolean> = {};
+      for (const leaf of leafKeys) {
+        const value = incomingMap[leaf];
+        if (typeof value === "boolean") leaves[leaf] = value;
+      }
+      if (Object.keys(leaves).length > 0) {
+        (out as Record<string, unknown>)[key] = leaves;
+      }
+    }
     const modes = incoming.availableDisplayModes;
     if (Array.isArray(modes)) {
       const filtered = modes.filter(
