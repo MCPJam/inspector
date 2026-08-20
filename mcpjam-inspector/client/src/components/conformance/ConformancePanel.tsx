@@ -43,6 +43,9 @@ import {
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
 import { ScoreHeadline } from "./ScoreHeadline";
+import { DirectoryReadinessSection } from "./DirectoryReadinessSection";
+import { useDirectoryReadinessEnabled } from "@/hooks/useDirectoryReadinessEnabled";
+import { isHttpServer } from "@/hooks/use-conformance-run";
 import {
   useConformanceRun,
   type ProtocolVersionPin,
@@ -510,6 +513,12 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
     [versionPin]
   );
 
+  // Readiness grades what a HOST would see, and every directory in question
+  // reaches a server over HTTP. A stdio server is not a connector either
+  // directory can list, so the sections are absent rather than present and
+  // permanently failing.
+  const readinessEnabled = useDirectoryReadinessEnabled() && isHttpServer(server);
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="space-y-1 border-b border-border/50 pb-4">
@@ -678,6 +687,18 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
             </div>
           ) : null}
         </SuiteSection>
+
+        {readinessEnabled && (
+          // DELIBERATELY OUTSIDE the pooled score and outside "Run available
+          // checks". Readiness answers "would this be listed", which has no
+          // numerator to pool, and its hosted half can spend credits — so it
+          // is started on its own, per publisher, never as a side effect of
+          // the button above.
+          <>
+            <DirectoryReadinessSection server={server} publisher="claude" />
+            <DirectoryReadinessSection server={server} publisher="openai" />
+          </>
+        )}
       </div>
     </div>
   );

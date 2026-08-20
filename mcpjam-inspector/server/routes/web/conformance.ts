@@ -12,7 +12,9 @@ import {
   assertBearerToken,
   readJsonBody,
   parseWithSchema,
+  webErrorFromRoute,
 } from "./errors.js";
+import { getInternalBackendConfig } from "../../services/internal-backend.js";
 import {
   OAuthConformanceSessionFailedError,
   OAuthConformanceSessionNotFoundError,
@@ -31,8 +33,37 @@ import {
   EgressResolutionError,
   assertAllowedHostedTargetUrl,
 } from "../../utils/hosted-egress-guard.js";
+import { ConvexHttpClient } from "convex/browser";
+import {
+  HOSTED_SUBMISSION_MODES,
+  startHostedReadinessRun,
+  toReadinessRunDto,
+  type ReadinessPublisher,
+} from "../shared/readiness-runs.js";
 
 const conformanceWeb = new Hono();
+
+/**
+ * A Convex client speaking as the CALLER, not as this node.
+ *
+ * The readiness mutations and queries all run `requireProjectRole` internally,
+ * which only means anything if the identity reaching Convex is the user's. A
+ * service-token client here would authorize every request as the inspector
+ * itself and hand any signed-in user any organization's runs.
+ */
+function createReadinessConvexClient(bearerToken: string): ConvexHttpClient {
+  const convexUrl = process.env.CONVEX_URL;
+  if (!convexUrl) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "Server missing CONVEX_URL configuration"
+    );
+  }
+  const client = new ConvexHttpClient(convexUrl);
+  client.setAuth(bearerToken);
+  return client;
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
@@ -424,5 +455,276 @@ conformanceWeb.post("/oauth/complete", async (c) =>
     }
   })
 );
+
+// ── Directory readiness (hosted, durable, optionally billed) ────────────
+
+/**
+ * The conformance panel's readiness surface.
+ *
+ * These are the SAME runs `/api/v1` starts, against the same table and the
+ * same lease — the shared starter in `routes/shared/readiness-runs.ts` is what
+ * guarantees that, rather than a comment promising it. What differs here is
+ * only the credential: the panel holds a session bearer, not an API key.
+ *
+ * WHY A START RETURNS A RUN ID INSTEAD OF A RESULT. Every other route in this
+ * file finishes inside the hosted budget and answers with a grade. A readiness
+ * run cannot: it walks a redirect chain, discovers authorization metadata,
+ * lists tools, and — when the caller asked — waits on a model. Holding the
+ * request open would make the browser's timeout the run's timeout, and a tab
+ * closed at the wrong moment would strand a lease nobody reclaims until the
+ * recovery cron notices.
+ *
+ * GUESTS ARE REFUSED, and not for rate-limiting reasons. A hosted run bills to
+ * a project's organization and writes a durable row that organization owns; a
+ * guest identity is free to mint and belongs to no organization, so there is
+ * no honest answer to "who pays for this and who owns the result".
+ */
+
+/** How long the service-token read of a report blob may take. */
+const REPORT_FETCH_TIMEOUT_MS = 30_000;
+
+/** Refuse a guest before anything is created, charged or dialled. */
+function assertNotGuest(c: any): void {
+  if (c.get("guestId")) {
+    throw new WebRouteError(
+      403,
+      ErrorCode.FORBIDDEN,
+      "Directory readiness runs belong to a project and bill to its organization. Sign in to run one.",
+    );
+  }
+}
+
+const readinessStartSchema = z
+  .object({
+    /**
+     * Opt in to model-backed observations, which SPEND MCPJam credits.
+     *
+     * Defaults to false here and everywhere else. Defaulting it on would make
+     * every existing caller start paying on the day this shipped, which is the
+     * one behaviour a billed opt-in may not have.
+     */
+    includeLlmObservations: z.boolean().optional(),
+    /**
+     * The DECLARED submission shape. Required for OpenAI, never inferred.
+     *
+     * Inference reads a forgotten package as "MCP-only", which reports the
+     * package lane `not-applicable` — turning a missing input into a clean
+     * bill of health, which is the exact failure `incomplete` exists to
+     * prevent.
+     */
+    submissionMode: z.enum(HOSTED_SUBMISSION_MODES).optional(),
+    idempotencyKey: z.string().trim().min(1).max(200).optional(),
+  })
+  .passthrough(); // project/server fields pass through to authorizeServer
+
+function readinessPublisher(c: any): ReadinessPublisher {
+  const publisher = c.req.param("publisher");
+  if (publisher !== "claude" && publisher !== "openai") {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "publisher must be claude or openai",
+    );
+  }
+  return publisher;
+}
+
+conformanceWeb.post("/readiness/:publisher", async (c) =>
+  handleRoute(
+    c,
+    async () => {
+      assertNotGuest(c);
+      const publisher = readinessPublisher(c);
+      const bearerToken = assertBearerToken(c);
+      const body = await readJsonBody<Record<string, unknown>>(c);
+      const parsed = parseWithSchema(readinessStartSchema, body);
+
+      if (publisher === "openai" && !parsed.submissionMode) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "An OpenAI readiness run must declare its submission mode; it is never inferred from the inputs supplied.",
+        );
+      }
+
+      const wsBody = parseWithSchema(projectServerSchema, body);
+      const authorized = await authorizeServer(
+        c,
+        bearerToken,
+        wsBody.projectId,
+        wsBody.serverId,
+        {
+          accessScope: wsBody.accessScope,
+          scenarioId: wsBody.scenarioId,
+          accessVersion: wsBody.accessVersion,
+        },
+      );
+
+      // The same egress guard every other hosted conformance target passes.
+      // The URL came from the saved row rather than the body, but "we picked
+      // it" is not "it is safe": a row can name a private address, and this is
+      // the only place that is checked before a socket is opened.
+      if (authorized.serverConfig.url) {
+        await assertConformanceTarget(authorized.serverConfig.url, "Server URL");
+      }
+
+      const receipt = await startHostedReadinessRun({
+        convex: createReadinessConvexClient(bearerToken),
+        projectId: wsBody.projectId,
+        serverId: wsBody.serverId,
+        publisher,
+        submissionMode: parsed.submissionMode,
+        idempotencyKey: parsed.idempotencyKey,
+        includeLlmObservations: parsed.includeLlmObservations === true,
+        authorized,
+        translateError: (error) => toWebError(error),
+      });
+      return { success: true, run: receipt };
+    },
+    202,
+  ),
+);
+
+conformanceWeb.get("/readiness/runs/:runId", async (c) =>
+  handleRoute(c, async () => {
+    assertNotGuest(c);
+    const bearerToken = assertBearerToken(c);
+    const runId = c.req.param("runId");
+    const projectId = c.req.query("projectId");
+    if (!projectId) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "projectId is required",
+      );
+    }
+
+    // Authorization is the QUERY's job, not ours: `getReadinessRun` runs
+    // `requireProjectRole` under the caller's own identity against the run's
+    // real project. Checking the caller-supplied `projectId` here instead
+    // would be checking a claim against itself.
+    let run: Record<string, any> | null;
+    try {
+      run = await createReadinessConvexClient(bearerToken).query(
+        "claudeReadinessRuns:getReadinessRun" as any,
+        { runId },
+      );
+    } catch (error) {
+      throw toWebError(error);
+    }
+    if (!run) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Readiness run not found");
+    }
+    return { success: true, run: toReadinessRunDto(run, { projectId }) };
+  }),
+);
+
+conformanceWeb.post("/readiness/runs/:runId/cancel", async (c) =>
+  handleRoute(c, async () => {
+    assertNotGuest(c);
+    const bearerToken = assertBearerToken(c);
+    const runId = c.req.param("runId");
+    try {
+      await createReadinessConvexClient(bearerToken).mutation(
+        "claudeReadinessRuns:cancelReadinessRun" as any,
+        { runId },
+      );
+    } catch (error) {
+      throw toWebError(error);
+    }
+    // The executing node learns about this on its next heartbeat, which
+    // answers `alive: false` and aborts the run in flight. That matters more
+    // than the row's status: the thing being stopped is traffic to somebody
+    // else's server.
+    return { success: true, runId, status: "cancelled" as const };
+  }),
+);
+
+/**
+ * The stored report, double-gated.
+ *
+ * The panel needs per-finding detail, and the run row deliberately does not
+ * carry it — a row that inlined every finding would be a document, not a row,
+ * and listing ten runs would ship ten documents.
+ *
+ * TWO GATES, not one. The query below runs `requireProjectRole` under the
+ * CALLER's identity, so reaching the fetch already proves access; the blob
+ * itself can only be read from inside Convex, so the bytes come back over the
+ * service-token route — which takes a RUN id rather than a blob id, precisely
+ * so this node cannot use it to read blobs belonging to other features. A
+ * single service-token read keyed on a caller-supplied id would serve any
+ * organization's report to any signed-in user.
+ */
+conformanceWeb.get("/readiness/runs/:runId/report", async (c) => {
+  try {
+    assertNotGuest(c);
+    const bearerToken = assertBearerToken(c);
+    const runId = c.req.param("runId");
+
+    let blobId: string | null;
+    try {
+      blobId = await createReadinessConvexClient(bearerToken).query(
+        "claudeReadinessRuns:getReadinessReportBlobId" as any,
+        { runId },
+      );
+    } catch (error) {
+      throw toWebError(error);
+    }
+    if (!blobId) {
+      // A run with no report is not a missing run: it may be in flight, it may
+      // have failed, or its report may have aged past retention. Saying which
+      // is the run detail's job; this only says there is nothing to fetch.
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        "This readiness run has no stored report.",
+      );
+    }
+
+    const { convexUrl, serviceToken } = getInternalBackendConfig();
+    let response: Response;
+    try {
+      response = await fetch(
+        `${convexUrl}/internal/v1/claude-readiness/runs/report?runId=${encodeURIComponent(runId)}`,
+        {
+          headers: { "x-inspector-service-token": serviceToken },
+          // Without a deadline this fetch inherits none: a backend that
+          // accepts the socket and then stalls holds the browser's request
+          // open indefinitely.
+          signal: AbortSignal.timeout(REPORT_FETCH_TIMEOUT_MS),
+        },
+      );
+    } catch {
+      throw new WebRouteError(
+        502,
+        ErrorCode.INTERNAL_ERROR,
+        "The readiness report could not be read from storage.",
+      );
+    }
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => undefined);
+      throw new WebRouteError(
+        response.status === 404 ? 404 : 502,
+        response.status === 404
+          ? ErrorCode.NOT_FOUND
+          : ErrorCode.INTERNAL_ERROR,
+        response.status === 404
+          ? "This readiness run's report is no longer stored."
+          : "The readiness report could not be read from storage.",
+      );
+    }
+    // Streamed rather than buffered: a readiness report carries per-finding
+    // evidence and can reach megabytes, and holding one in memory per
+    // concurrent reader is a cost with no upside.
+    return new Response(response.body, {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  } catch (error) {
+    // Not `handleRoute`: the success path returns raw bytes rather than a JSON
+    // envelope, so the error path has to reach the same mapper on its own.
+    return webErrorFromRoute(c, toWebError(error));
+  }
+});
 
 export default conformanceWeb;

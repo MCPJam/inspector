@@ -25,6 +25,22 @@ vi.mock("@/lib/apis/mcp-conformance-api", () => ({
   completeOAuthConformance: (...args: unknown[]) => mockCompleteOAuth(...args),
 }));
 
+const readinessFlagRef = { current: false };
+const startReadinessMock = vi.fn();
+
+vi.mock("@/hooks/useDirectoryReadinessEnabled", () => ({
+  useDirectoryReadinessEnabled: () => readinessFlagRef.current,
+  DIRECTORY_READINESS_FEATURE_FLAG: "mcpjam-directory-readiness",
+}));
+
+vi.mock("@/lib/apis/mcp-readiness-api", () => ({
+  startDirectoryReadiness: (...args: unknown[]) => startReadinessMock(...args),
+  getHostedReadinessRun: vi.fn(),
+  getHostedReadinessReport: vi.fn(),
+  cancelHostedReadinessRun: vi.fn(),
+  canRequestModelObservations: () => false,
+}));
+
 vi.mock("@/components/oauth/utils", () => ({
   deriveOAuthProfileFromServer: () => ({
     serverUrl: "https://test.com",
@@ -195,6 +211,10 @@ function createStdioServer(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // Reset explicitly rather than relying on `clearAllMocks`: the flag is a
+  // plain ref, and a test that turned it on would otherwise leak readiness
+  // into every test declared after it.
+  readinessFlagRef.current = false;
 });
 
 describe("ConformanceTab", () => {
@@ -318,6 +338,49 @@ describe("ConformanceTab", () => {
     expect(
       screen.getByText(/Run Protocol, Apps, Tasks, and OAuth checks against/),
     ).toBeDefined();
+  });
+
+  it("hides readiness behind its flag", () => {
+    // Fail-closed. The hosted half of this surface can spend an organization's
+    // credits, so a flag that defaulted open during a PostHog outage would
+    // expose a billed control to a build never meant to have it.
+    readinessFlagRef.current = false;
+    render(<ConformanceTab server={createHttpServer()} />);
+    expect(screen.queryByText(/Claude directory readiness/i)).toBeNull();
+    expect(screen.queryByText(/OpenAI plugin directory readiness/i)).toBeNull();
+  });
+
+  it("mounts both publishers when the flag is on, and keeps them OUT of the run-all button", async () => {
+    // "Run available checks" runs the deterministic conformance suites. It
+    // must not start readiness: readiness is per-publisher, its hosted half
+    // can spend credits, and a button that quietly did both would make
+    // spending a side effect of a free action.
+    readinessFlagRef.current = true;
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    expect(screen.getByText(/Claude directory readiness/i)).toBeDefined();
+    expect(
+      screen.getByText(/OpenAI plugin directory readiness/i),
+    ).toBeDefined();
+
+    fireEvent.click(screen.getByText("Run available checks"));
+    await waitFor(() => expect(mockRunTasks).toHaveBeenCalled());
+    expect(startReadinessMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps readiness out of the pooled score", async () => {
+    // The headline pools four SUITE scores. Readiness has no numerator — it
+    // answers "would this be listed" — so a lane verdict reaching the pool
+    // would invent one. The proof is that the headline is computed without
+    // readiness ever being asked for anything.
+    readinessFlagRef.current = true;
+    setupSuccessfulRunMocks();
+    render(<ConformanceTab server={createHttpServer()} />);
+
+    fireEvent.click(screen.getByText("Run available checks"));
+    await waitFor(() => expect(mockRunProtocol).toHaveBeenCalled());
+    expect(startReadinessMock).not.toHaveBeenCalled();
   });
 
   it("shows an empty state when no server is selected", () => {
