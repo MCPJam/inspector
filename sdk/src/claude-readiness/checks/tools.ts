@@ -251,9 +251,30 @@ function behaviorHints(tool: Tool): {
  * is nothing to grade, and reporting five satisfied requirements over an empty
  * list would be five statements about nothing.
  */
+/**
+ * How the run came by its listing, and whether the listing is the whole one.
+ *
+ * A SECOND ARGUMENT rather than a field on each tool, because completeness is
+ * a property of the LISTING and there is nowhere on an array to put it. The
+ * distinction only became reachable when the gatherer started dialling
+ * `tools/list` itself: a run can now hold five of forty tools, and every check
+ * below is universally quantified over "every tool".
+ */
+export interface ClaudeToolListingCompleteness {
+  /**
+   * `false` only when the run KNOWS the listing is partial. `undefined` means
+   * no claim was made — a caller-supplied listing, which the caller has
+   * already decided about — and is treated as complete.
+   */
+  complete?: boolean;
+  /** Why it is partial, for the gap's own sentence. */
+  error?: string;
+}
+
 export function runClaudeToolChecks(
   tools: Tool[] | undefined,
   stamp: ClaudeCheckStamp,
+  listing?: ClaudeToolListingCompleteness,
 ): ClaudeReadinessFinding[] {
   const definitions = [
     TOOL_NAME_LENGTH,
@@ -286,6 +307,26 @@ export function runClaudeToolChecks(
       ),
     );
   }
+  // A PARTIAL LISTING GRADES NOTHING — not even the entries that did arrive.
+  // Every check here is universally quantified ("every tool declares a
+  // title"), and a universal claim over a subset is not a weaker claim, it is
+  // a different one. The tools that arrived stay in the evidence for anyone
+  // who wants to look; what they must not do is earn a pass for the ones that
+  // did not.
+  if (listing?.complete === false) {
+    const why =
+      listing.error ??
+      "the tool listing was truncated before the whole set was read";
+    return definitions.map((definition) =>
+      notEvaluated(
+        definition,
+        stamp,
+        `${why}, so a requirement about every tool cannot be graded`,
+        { missingInput: CLAUDE_TOOL_LISTING_INPUT, toolsRead: tools.length },
+      ),
+    );
+  }
+
   if (tools.length === 0) {
     return definitions.map((definition) =>
       notApplicable(

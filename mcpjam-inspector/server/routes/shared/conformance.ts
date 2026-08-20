@@ -27,6 +27,7 @@ import {
   type MCPTasksConformanceResult,
   type OAuthConformanceConfig,
   type OAuthConformanceProfile,
+  type OpenAISubmissionMode,
 } from "@mcpjam/sdk";
 import {
   createSession,
@@ -37,6 +38,11 @@ import {
   type OAuthConformanceSession,
 } from "../../services/conformance-oauth-sessions.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
+import {
+  runDirectoryReadiness,
+  type DirectoryReadinessResult,
+  type ReadinessPublisher,
+} from "../../services/readiness/runner.js";
 
 /**
  * DNS + connect + response headers, across every hop of one request.
@@ -183,6 +189,42 @@ export async function runAppsConformance(
     baseFetch: serverConfig.baseFetch ?? createConformanceFetch("MCP server"),
   });
   const result = await test.run();
+  return { result };
+}
+
+// ── Directory readiness ─────────────────────────────────────────────────
+
+/**
+ * Run a deterministic readiness grade against a connected server.
+ *
+ * SYNCHRONOUS AND FREE, and both halves are deliberate. A local run is not
+ * persisted, holds no lease and has no payer, so there is nothing for a
+ * durable queue to own — and no `requestObservations` is passed, which means
+ * this path structurally cannot spend. The hosted path is the one with a
+ * lease, a heartbeat and a broker.
+ *
+ * The pinned transport is the same one every hosted conformance run dials
+ * through: resolve once, refuse the disallowed answers, pin the surviving
+ * addresses into the socket, re-run all of it on every redirect hop. A no-op
+ * outside hosted mode, where reaching localhost is the point.
+ */
+export async function runLocalDirectoryReadiness(input: {
+  publisher: ReadinessPublisher;
+  target: string;
+  submissionMode?: OpenAISubmissionMode;
+  accessToken?: string;
+  customHeaders?: Record<string, string>;
+}): Promise<{ result: DirectoryReadinessResult }> {
+  const headers: Record<string, string> = { ...(input.customHeaders ?? {}) };
+  if (input.accessToken) headers.authorization = `Bearer ${input.accessToken}`;
+
+  const { result } = await runDirectoryReadiness({
+    publisher: input.publisher,
+    target: input.target,
+    submissionMode: input.submissionMode,
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
+    fetchFn: createConformanceFetch("MCP server"),
+  });
   return { result };
 }
 

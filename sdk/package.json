@@ -178,6 +178,7 @@
     "@xmldom/xmldom": "^0.8.13",
     "ai": "^6.0.141",
     "ajv": "^8.17.1",
+    "jszip": "^3.10.1",
     "ollama-ai-provider-v2": "^1.5.2",
     "posthog-node": "^5.24.10",
     "xml-crypto": "^6.1.2",

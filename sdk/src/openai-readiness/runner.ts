@@ -32,7 +32,14 @@ import {
   decideLaneStatus,
   summarizeLaneCoverage,
 } from "../directory-readiness/types.js";
+import { dialMcpServer } from "../directory-readiness/mcp-dial.js";
+import { NOT_REQUESTED_OBSERVATIONS } from "../directory-readiness/observations.js";
+import {
+  mapOpenAIObservationsToFindings,
+  type OpenAIObservationState,
+} from "./observations.js";
 import { OPENAI_POLICY_SNAPSHOT_DATE } from "./manifest.js";
+import { OPENAI_APP_HTML_MIME } from "./profile.js";
 import {
   readOpenAIPluginPackage,
   type OpenAIArchiveObservations,
@@ -122,6 +129,21 @@ export interface OpenAIReadinessEvidence {
   domainVerification?: OpenAIDomainVerificationEvidence;
   /** The tool listing, read once by the gatherer and graded statically. */
   tools?: OpenAIToolEvidence[];
+  /**
+   * Whether {@link tools} is the WHOLE listing.
+   *
+   * Separate from `tools` because the two answer different questions and only
+   * one of them can be read off an array. A five-entry listing from a server
+   * with forty tools is not a short listing, it is a truncated one, and
+   * grading the annotation requirements against it would report a submission
+   * as ready on the strength of the tools that happened to fit on page one.
+   * Absent means "the caller handed these over and made no claim", which the
+   * grader treats exactly as it treats a complete listing — a caller passing
+   * evidence in has already decided what it is passing.
+   */
+  toolListingComplete?: boolean;
+  /** Why the tool listing is partial or absent, in plain words. */
+  toolListingError?: string;
   /** Skills advertised for import, when the run read them. */
   importedSkills?: OpenAISkillsEvidence;
   /** UI resources the server serves, and the screenshots that go with them. */
@@ -144,6 +166,15 @@ export interface OpenAIReadinessEvidence {
   hasPublishedVersion?: boolean;
   /** Suite results consumed as evidence, named for the report. */
   evidenceSources?: string[];
+  /**
+   * The model-observation axis, whatever happened on it.
+   *
+   * PART OF THE EVIDENCE rather than an argument to the grader, so a replayed
+   * evidence object regrades to the same result. It arrives already validated
+   * — the grader never sees raw provider output, and could not call a provider
+   * if it wanted to.
+   */
+  llmObservations?: OpenAIObservationState;
 }
 
 const LANE_SUMMARIES: Record<OpenAIReadinessLane, string> = {
@@ -282,10 +313,61 @@ function describeStage(
       ),
     ];
     return gaps.length > 0
-      ? `Undetermined — ${STAGE_SUMMARIES[stage]}. Supply ${gaps.join(", ")} to close the gap.`
+      ? `Undetermined — ${STAGE_SUMMARIES[stage]}. Supply ${gaps.join(
+          ", ",
+        )} to close the gap.`
       : `Undetermined — ${STAGE_SUMMARIES[stage]}: some requirements could not be evaluated by this run.`;
   }
   return `Ready — ${STAGE_SUMMARIES[stage]}: every applicable requirement was satisfied.`;
+}
+
+/**
+ * `_meta.ui.domain`, read off a dialled resource.
+ *
+ * A tiny reader rather than a shared one because the two publishers want
+ * different things from the same `_meta`: OpenAI requires this field present
+ * and unique, and Anthropic derives its content domain from the connector URL
+ * instead. A shared extractor would have to serve both and would end up
+ * meaning neither.
+ */
+function readUiDomain(meta: Record<string, unknown> | undefined) {
+  const ui = meta?.ui;
+  if (typeof ui !== "object" || ui === null || Array.isArray(ui)) {
+    return undefined;
+  }
+  const domain = (ui as Record<string, unknown>).domain;
+  return typeof domain === "string" ? domain : undefined;
+}
+
+/**
+ * The domains a resource's declared CSP names.
+ *
+ * TOLERANT ABOUT SHAPE: the extension spells this two ways in the wild, a flat
+ * array of domains and an object of directive → domains. Reading whichever is
+ * present costs nothing; insisting on one would report a template with a
+ * perfectly good allowlist as declaring none, and the check that grades "the
+ * allowlist is exact" would then flag every domain the template loads.
+ */
+function readUiCspDomains(meta: Record<string, unknown> | undefined) {
+  const ui = meta?.ui;
+  if (typeof ui !== "object" || ui === null || Array.isArray(ui)) {
+    return undefined;
+  }
+  const csp = (ui as Record<string, unknown>).csp;
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string")
+      : [];
+
+  const flat = strings(csp);
+  if (flat.length > 0) return flat;
+  if (typeof csp !== "object" || csp === null || Array.isArray(csp)) {
+    return undefined;
+  }
+  const domains = Object.values(csp as Record<string, unknown>).flatMap(
+    strings,
+  );
+  return domains.length > 0 ? [...new Set(domains)].sort() : undefined;
 }
 
 /**
@@ -355,7 +437,10 @@ export function gradeOpenAIReadiness(
     ? [
         ...runOpenAIEndpointChecks(evidence.endpoint, stamp),
         ...runOpenAIAuthChecks(evidence.auth, stamp),
-        ...runOpenAIAnnotationChecks(evidence.tools, stamp),
+        ...runOpenAIAnnotationChecks(evidence.tools, stamp, {
+          complete: evidence.toolListingComplete,
+          error: evidence.toolListingError,
+        }),
         ...runOpenAIDomainVerificationChecks(
           {
             evidence: evidence.domainVerification,
@@ -439,6 +524,16 @@ export function gradeOpenAIReadiness(
         },
         stamp,
       ),
+      // LAST, and inside the capability gate like everything else. The mapper
+      // can only emit `heuristic`/`manual-review` findings in
+      // `experience-insights`, which `decideLaneStatus` does not consult — so
+      // their position in this list cannot change a verdict. They are appended
+      // rather than interleaved purely so a reader scanning the findings sees
+      // the deterministic inventory first.
+      ...mapOpenAIObservationsToFindings(
+        evidence.llmObservations?.envelope,
+        stamp,
+      ),
     ],
     evidence.capabilities,
   );
@@ -471,6 +566,7 @@ export function gradeOpenAIReadiness(
     lanes,
     findings,
     badges,
+    llmObservations: evidence.llmObservations ?? NOT_REQUESTED_OBSERVATIONS,
     policySnapshotDate: OPENAI_POLICY_SNAPSHOT_DATE,
     engineVersion: OPENAI_READINESS_ENGINE_VERSION,
     startedAt: evidence.startedAt,
@@ -515,9 +611,43 @@ export interface GatherOpenAIReadinessEvidenceOptions {
    * default would make the unguarded case the easy one to reach.
    */
   fetchFn?: typeof fetch;
+  /**
+   * Per-request budget for the wire half. The caller owns the run deadline.
+   *
+   * Threaded through rather than left to the discovery default because a
+   * hosted run and a local one have different ceilings: a hosted node is
+   * holding a lease with a heartbeat, and a probe that outran the lease would
+   * be swept mid-run.
+   */
+  timeoutMs?: number;
+  /**
+   * Headers the target needs, e.g. a saved server's credential.
+   *
+   * Without these a credentialed server answers `401` to every probe and the
+   * whole run reports an auth wall — a true observation about an
+   * unauthenticated dial, and the wrong one for a submitter grading their own
+   * server with a token they supplied.
+   */
+  headers?: Record<string, string>;
+  /**
+   * The caller's cancellation.
+   *
+   * Composed into every request this gather makes — the redirect trace, the
+   * auth discovery, the dial and the skills walk — so a cancelled run stops
+   * the request IN FLIGHT rather than merely declining to start the next one.
+   * A readiness run's requests are seconds long against somebody else's
+   * server, and that traffic is exactly what a cancellation is meant to stop.
+   */
+  signal?: AbortSignal;
   /** A package source to read, when the submission shape uploads one. */
   packageSource?: PluginFileSource;
-  /** The tool listing, when the caller already holds one. */
+  /**
+   * The tool listing, when the caller already holds one.
+   *
+   * Supplying it SKIPS the dial. A caller holding an attributable listing from
+   * a conformance run should not make the target answer `tools/list` twice,
+   * and re-dialling would also let the two listings disagree about one server.
+   */
   tools?: OpenAIToolEvidence[];
   /** Imported skills, when the caller already holds them. */
   importedSkills?: OpenAISkillsEvidence;
@@ -540,6 +670,17 @@ export interface GatherOpenAIReadinessEvidenceOptions {
   frameDomains?: string[];
   hasPublishedVersion?: boolean;
   evidenceSources?: string[];
+  /**
+   * An ALREADY VALIDATED observation state.
+   *
+   * The gatherer performs every side effect this product performs, and calling
+   * a model is emphatically not one of them: provider credentials never reach
+   * a Node worker, the call is billed, and a gatherer that could make it would
+   * put spending inside a function every local run calls for free. The hosted
+   * runner asks the backend broker, validates the answer against this
+   * publisher's schema, and hands the state in here.
+   */
+  llmObservations?: OpenAIObservationState;
   /**
    * Injected so the gatherer is deterministic under test.
    *
@@ -576,7 +717,13 @@ export async function gatherOpenAIReadinessEvidence(
   const wantsServer = OPENAI_SUBMISSION_MODE_SHAPES[options.mode].hasMcpServer;
   const discovery =
     options.fetchFn && wantsServer
-      ? { enteredUrl: options.target, fetchFn: options.fetchFn }
+      ? {
+          enteredUrl: options.target,
+          fetchFn: options.fetchFn,
+          timeoutMs: options.timeoutMs,
+          headers: options.headers,
+          signal: options.signal,
+        }
       : undefined;
 
   const [endpoint, auth, domainVerification] = discovery
@@ -587,6 +734,43 @@ export async function gatherOpenAIReadinessEvidence(
       ])
     : [undefined, undefined, undefined];
 
+  // THE TOOL LISTING, DIALLED. Until this landed the gatherer accepted a
+  // listing as an argument and never fetched one, so every wire run graded the
+  // whole annotation inventory `not-evaluated` — checks that existed, were
+  // wired up, and could not fire. A caller-supplied listing still wins: it is
+  // attributable to a run that already happened, and dialling over the top
+  // would let two listings of one server disagree.
+  // AN EXPLICIT EMPTY ARRAY IS A SUPPLIED LISTING. `!options.tools` is truthy
+  // for `[]`, which would dial over the top of a caller that had already
+  // established this server advertises no tools — and then attach the dial's
+  // completeness and errors to their answer, turning a known zero-tool server
+  // into an incomplete listing.
+  const hasSuppliedTools = options.tools !== undefined;
+  const hasSuppliedAppsUi = options.appsUi !== undefined;
+  const dialled =
+    discovery && (!hasSuppliedTools || !hasSuppliedAppsUi)
+      ? await dialMcpServer({
+          ...discovery,
+          // Each half is requested only when its answer will be USED. A
+          // caller who already holds one of them gets the other without the
+          // target being asked twice for something this run would discard.
+          appHtmlMime: hasSuppliedAppsUi ? undefined : OPENAI_APP_HTML_MIME,
+          ...(hasSuppliedTools ? { tools: options.tools } : {}),
+        })
+      : undefined;
+
+  // A TRUNCATED LISTING IS NOT A LISTING. `complete` is the dial's own verdict
+  // over pagination caps, entry caps and transport failures; when it is false
+  // the entries are still carried — they are real observations — but the
+  // grader is told not to treat them as the whole set, and the annotation
+  // checks report a gap rather than a pass earned by the tools that fit on
+  // page one. An `unsupported` listing IS complete: a server that answered
+  // "no such method" has answered.
+  const tools = hasSuppliedTools ? options.tools : dialled?.tools?.entries;
+  const toolListingComplete = hasSuppliedTools
+    ? undefined
+    : dialled?.tools?.complete;
+
   // Skills are read only in the shape that imports them. Calling `skills/list`
   // against a server that does not advertise the extension would turn a
   // legitimate absence into an error in the log.
@@ -594,6 +778,24 @@ export async function gatherOpenAIReadinessEvidence(
     discovery && OPENAI_SUBMISSION_MODE_SHAPES[options.mode].hasImportedSkills
       ? await discoverOpenAIImportedSkills(discovery, now)
       : options.importedSkills;
+
+  // A TRUNCATED RESOURCE LISTING GRADES NOTHING, for the same reason a
+  // truncated tool listing does: a widget that fell off the end reads as a
+  // server with no widgets, which the UI checks report `not-applicable` — a
+  // clean bill of health for a page nobody read.
+  const dialledApps = dialled?.appResources;
+  const appsUiFromDial: OpenAIAppsUiEvidence | undefined =
+    dialledApps && dialledApps.listing.complete
+      ? {
+          resources: dialledApps.appResources.map((resource) => ({
+            uri: resource.uri,
+            mimeType: resource.mimeType,
+            domain: readUiDomain(resource._meta),
+            declaredCspDomains: readUiCspDomains(resource._meta),
+            referencedByTools: dialledApps.referencedByTools[resource.uri],
+          })),
+        }
+      : undefined;
 
   const finishedAt = now();
 
@@ -611,9 +813,17 @@ export async function gatherOpenAIReadinessEvidence(
     endpoint,
     auth,
     domainVerification,
-    tools: options.tools,
+    tools,
+    toolListingComplete,
+    toolListingError: hasSuppliedTools ? undefined : dialled?.tools?.error,
     importedSkills,
-    appsUi: options.appsUi,
+    // THE DIALLED RESOURCES ARE USED, not discarded. Requesting them and then
+    // returning only the caller's `appsUi` would leave the UI lane
+    // permanently `not-evaluated` on a wire run — the same shape of bug the
+    // tool listing had. A caller-supplied result still wins: it is
+    // attributable to a run that already happened, and re-reading would let
+    // two readings of one server disagree.
+    appsUi: options.appsUi ?? appsUiFromDial,
     hasCommerce: options.hasCommerce,
     draftSnapshot: options.draftSnapshot,
     publishedSnapshot: options.publishedSnapshot,
@@ -623,5 +833,6 @@ export async function gatherOpenAIReadinessEvidence(
     frameDomains: options.frameDomains,
     hasPublishedVersion: options.hasPublishedVersion,
     evidenceSources: options.evidenceSources,
+    llmObservations: options.llmObservations,
   };
 }

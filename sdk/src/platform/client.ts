@@ -81,6 +81,11 @@ import type {
   PlatformSessionsPage,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
+  PlatformOpenAIReadinessStartBody,
+  PlatformReadinessKind,
+  PlatformReadinessRun,
+  PlatformReadinessRunReceipt,
+  PlatformReadinessStartBody,
 } from "./types.js";
 
 export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
@@ -1254,6 +1259,143 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options,
+    );
+  }
+
+  // ── Directory readiness ───────────────────────────────────────────────
+  //
+  // Asynchronous by design: a readiness run dials somebody else's server,
+  // walks its redirect chain, discovers its authorization metadata and lists
+  // its tools. A start answers `202` with a run id and everything after it is
+  // a separate call.
+  //
+  // The TARGET comes from the saved server the path names, never from a body.
+  // These methods have no URL parameter for the same reason the endpoint has
+  // no URL field: a caller cannot point a hosted run at an arbitrary host.
+
+  /**
+   * Start a Claude connector-directory readiness run.
+   *
+   * Deterministic grading is FREE. `includeLlmObservations` is the only field
+   * that can spend, and it defaults off.
+   */
+  startClaudeReadinessRun(
+    params: { projectId: string; serverId: string } & PlatformReadinessStartBody,
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRunReceipt> {
+    const { projectId, serverId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId,
+      )}/readiness-runs/claude`,
+      { body },
+      options,
+    );
+  }
+
+  /**
+   * Start an OpenAI plugin-directory readiness run.
+   *
+   * `submissionMode` is required by the TYPE as well as by the endpoint,
+   * because it is never inferred: a run with no declared shape reads as
+   * `mcp-only`, which reports the package lane not-applicable and turns a
+   * missing input into a clean bill of health.
+   */
+  startOpenAIReadinessRun(
+    params: {
+      projectId: string;
+      serverId: string;
+    } & PlatformOpenAIReadinessStartBody,
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRunReceipt> {
+    const { projectId, serverId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId,
+      )}/readiness-runs/openai`,
+      { body },
+      options,
+    );
+  }
+
+  /** Lane statuses, coverage and the observation axis. Poll this. */
+  getReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options,
+    );
+  }
+
+  listReadinessRuns(
+    params: {
+      projectId: string;
+      readinessKind?: PlatformReadinessKind;
+      serverId?: string;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformReadinessRun>> {
+    const { projectId, ...query } = params;
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(projectId)}/readiness-runs`,
+      { query },
+      options,
+    );
+  }
+
+  /**
+   * Cancel an in-flight run.
+   *
+   * The executing node learns about this on its next heartbeat and aborts the
+   * run in flight — which matters more than the row's status, because the
+   * thing being stopped is traffic to somebody else's server.
+   */
+  cancelReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<{ runId: string; projectId: string; status: string }> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * The full report: every finding, with its class, provenance, citation and
+   * remediation.
+   *
+   * Returned as `unknown` deliberately. The report's shape is the SDK's
+   * `ClaudeReadinessResult` / `OpenAIReadinessResult`, and importing either
+   * here would pull the whole readiness result model into the platform entry —
+   * which is loaded by surfaces that only ever render a lane status. A caller
+   * that wants the narrow type imports it from `@mcpjam/sdk/browser` and
+   * narrows on `readinessKind`.
+   */
+  getReadinessReport(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<unknown> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/report`,
       {},
       options,
     );

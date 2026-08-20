@@ -50,6 +50,11 @@ import {
   type ClaudeIntrusiveObservations,
 } from "./intrusive.js";
 import { CLAUDE_POLICY_SNAPSHOT_DATE } from "./manifest.js";
+import { NOT_REQUESTED_OBSERVATIONS } from "../directory-readiness/observations.js";
+import {
+  mapClaudeObservationsToFindings,
+  type ClaudeObservationState,
+} from "./observations.js";
 import {
   parseClaudeSubmissionProfile,
   type ClaudeSubmissionProfile,
@@ -95,6 +100,17 @@ export interface ClaudeReadinessInput {
   auth: ClaudeAuthEvidence;
   apps: ClaudeAppsEvidence;
   tools?: Tool[];
+  /**
+   * Whether {@link tools} is the WHOLE listing.
+   *
+   * Separate from `tools` because the two answer different questions and only
+   * one of them can be read off an array. Absent means "the caller handed
+   * these over and made no claim", which the grader treats exactly as it
+   * treats a complete listing.
+   */
+  toolListingComplete?: boolean;
+  /** Why the tool listing is partial, in plain words. */
+  toolListingError?: string;
 
   /** Raw submission profile, validated here so its issues become findings. */
   submissionProfile?: unknown;
@@ -108,6 +124,16 @@ export interface ClaudeReadinessInput {
 
   intrusive?: ClaudeIntrusiveConfig;
   intrusiveObservations?: ClaudeIntrusiveObservations;
+
+  /**
+   * The model-observation axis, whatever happened on it.
+   *
+   * PART OF THE EVIDENCE rather than an argument to the grader, so a replayed
+   * evidence object regrades to the same result. It arrives already validated
+   * — the grader never sees raw provider output, and could not call a provider
+   * if it wanted to.
+   */
+  llmObservations?: ClaudeObservationState;
 
   /** Suite results consumed as evidence, named for the report. */
   evidenceSources?: string[];
@@ -218,7 +244,10 @@ export function gradeClaudeReadiness(
     [
     ...runClaudeEndpointChecks(input.endpoint, stamp),
     ...auth.findings,
-    ...runClaudeToolChecks(input.tools, stamp),
+    ...runClaudeToolChecks(input.tools, stamp, {
+      complete: input.toolListingComplete,
+      error: input.toolListingError,
+    }),
     ...runClaudeAppsChecks(input.apps, stamp),
     ...runClaudeSubmissionChecks(
       {
@@ -234,6 +263,13 @@ export function gradeClaudeReadiness(
       input.intrusiveObservations ?? {},
       stamp,
     ),
+    // LAST, and inside the capability gate like everything else. The mapper
+    // can only emit `heuristic`/`manual-review` findings in
+    // `experience-insights`, which is not a required lane — so their position
+    // in this list cannot change a verdict. They are appended rather than
+    // interleaved purely so a reader scanning the findings sees the
+    // deterministic inventory first.
+    ...mapClaudeObservationsToFindings(input.llmObservations?.envelope, stamp),
     ],
     input.capabilities,
   );
@@ -269,6 +305,7 @@ export function gradeClaudeReadiness(
     lanes,
     findings,
     badges,
+    llmObservations: input.llmObservations ?? NOT_REQUESTED_OBSERVATIONS,
     policySnapshotDate: CLAUDE_POLICY_SNAPSHOT_DATE,
     engineVersion: CLAUDE_READINESS_ENGINE_VERSION,
     startedAt: input.startedAt,

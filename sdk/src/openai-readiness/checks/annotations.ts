@@ -188,17 +188,70 @@ export function annotatedToolNames(
     .sort();
 }
 
+/**
+ * How the run came by its listing, and whether the listing is the whole one.
+ *
+ * A SECOND ARGUMENT rather than a field on each tool, because completeness is
+ * a property of the LISTING and there is nowhere on an array to put it. Before
+ * the gatherer dialled `tools/list` this distinction did not exist — a run
+ * either held a listing a caller handed it or held nothing — and now a run can
+ * hold five of forty tools. Grading those five as the set would report a
+ * submission ready on the tools that fit on page one, which is precisely the
+ * failure `incomplete` exists to make visible.
+ */
+export interface OpenAIToolListingCompleteness {
+  /**
+   * `false` only when the run KNOWS the listing is partial. `undefined` means
+   * no claim was made — a caller-supplied listing, which the caller has
+   * already decided about — and is treated as complete.
+   */
+  complete?: boolean;
+  /** Why it is partial, for the gap's own sentence. */
+  error?: string;
+}
+
 export function runOpenAIAnnotationChecks(
   tools: readonly OpenAIToolEvidence[] | undefined,
   stamp: OpenAICheckStamp,
+  listing?: OpenAIToolListingCompleteness,
 ): OpenAIReadinessFinding[] {
   if (!tools) {
+    // THE DIAL'S OWN REASON, when there is one. A `tools/list` that could not
+    // be reached and a caller who simply supplied nothing produce the same
+    // absent listing, and only the first has an explanation a submitter can
+    // act on — "the server refused the request" sends them somewhere, "this
+    // run was given no tool listing" sends them to us.
+    const reason = listing?.error
+      ? `${listing.error}, so no tool listing was available to grade`
+      : "this run was given no tool listing";
     return ALL.map((definition) =>
       notEvaluated(
         definition,
         stamp,
-        "this run was given no tool listing",
+        reason,
         missingInput(OPENAI_READINESS_INPUTS.toolListing),
+      ),
+    );
+  }
+
+  // A PARTIAL LISTING GRADES NOTHING. Not even the entries that did arrive:
+  // every check here is universally quantified — "EVERY tool declares all
+  // three hints" — and a universal claim over a subset is not a weaker claim,
+  // it is a different one. Reporting `satisfied` from five of forty tools
+  // would be a pass the run did not earn, and the tools that arrived are still
+  // carried in the evidence for anyone who wants to look.
+  if (listing?.complete === false) {
+    const why =
+      listing.error ??
+      "the tool listing was truncated before the whole set was read";
+    return ALL.map((definition) =>
+      notEvaluated(
+        definition,
+        stamp,
+        `${why}, so a requirement about every tool cannot be graded`,
+        missingInput(OPENAI_READINESS_INPUTS.toolListing, {
+          toolsRead: tools.length,
+        }),
       ),
     );
   }
@@ -229,7 +282,9 @@ export function runOpenAIAnnotationChecks(
           ANNOTATIONS_PRESENT,
           stamp,
           // An unannotated tool is unreviewable, not assumed safe.
-          `Declare ${OPENAI_REQUIRED_TOOL_ANNOTATIONS.join(", ")} on every tool; these are missing hints: ${missingHints
+          `Declare ${OPENAI_REQUIRED_TOOL_ANNOTATIONS.join(
+            ", ",
+          )} on every tool; these are missing hints: ${missingHints
             .map((entry) => `${entry.name} (${entry.missing.join(", ")})`)
             .join("; ")}.`,
           { missing: missingHints },
@@ -245,7 +300,9 @@ export function runOpenAIAnnotationChecks(
       : violated(
           DESCRIPTIONS_PRESENT,
           stamp,
-          `Describe every tool; these have no description: ${undescribed.join(", ")}.`,
+          `Describe every tool; these have no description: ${undescribed.join(
+            ", ",
+          )}.`,
           { undescribed },
         ),
   );
@@ -261,7 +318,9 @@ export function runOpenAIAnnotationChecks(
       : violated(
           NAMES_WITHIN_LIMIT,
           stamp,
-          `Shorten these tool names to ${OPENAI_FIELD_LIMITS.toolNameMaxLength} characters or fewer: ${overLong.join(", ")}.`,
+          `Shorten these tool names to ${
+            OPENAI_FIELD_LIMITS.toolNameMaxLength
+          } characters or fewer: ${overLong.join(", ")}.`,
           { overLong },
         ),
   );
@@ -280,7 +339,9 @@ export function runOpenAIAnnotationChecks(
       : violated(
           SCHEMAS_VALID,
           stamp,
-          `Give every tool a JSON Schema object as its input schema; these do not have one: ${badSchemas.join(", ")}.`,
+          `Give every tool a JSON Schema object as its input schema; these do not have one: ${badSchemas.join(
+            ", ",
+          )}.`,
           { badSchemas },
         ),
   );
@@ -301,7 +362,9 @@ export function runOpenAIAnnotationChecks(
       { flagged: suspicious, tools: tools.length },
       suspicious.length === 0
         ? "No tool name contradicts its annotations, as far as a name can show."
-        : `These tools are annotated read-only and named as though they change something: ${suspicious.join(", ")}. A name is not a specification — worth a look, not a verdict.`,
+        : `These tools are annotated read-only and named as though they change something: ${suspicious.join(
+            ", ",
+          )}. A name is not a specification — worth a look, not a verdict.`,
     ),
   );
 
