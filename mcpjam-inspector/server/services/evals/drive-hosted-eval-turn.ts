@@ -164,8 +164,14 @@ export interface DriveHostedEvalTurnParams {
    * the live project-wide fetch, which is what keeps a frozen run frozen. An
    * empty set is how `skillsOverride: "exclude"` reaches the harness — the A/B
    * arm has to be deliberately skill-free, not accidentally so.
+   *
+   * The FROZEN-RUN channel (`pinnedHarnessSkills`), not the live-environment
+   * one (`runtimeSkillsOverride`). `selectHarnessSkillSource` ranks
+   * pinned → environment → live, and only the top rank promises that nothing
+   * live is consulted; `runtimeSkillsOverride` is for a turn whose environment
+   * re-resolves each time, which is the opposite of what a pinned run wants.
    */
-  runtimeSkillsOverride?: RunAssistantTurnOptions["runtimeSkillsOverride"];
+  pinnedHarnessSkills?: RunAssistantTurnOptions["pinnedHarnessSkills"];
   /**
    * MCPJam's SERVER-EXECUTED built-ins for the harness path.
    *
@@ -422,9 +428,11 @@ export async function driveHostedEvalTurn(
               ? { harnessMcpProxy: params.harnessMcpProxy }
               : {}),
             // Present-but-empty is meaningful (the "without skills" arm), so
-            // this checks for undefined rather than truthiness.
-            ...(params.runtimeSkillsOverride !== undefined
-              ? { runtimeSkillsOverride: params.runtimeSkillsOverride }
+            // this checks for undefined rather than truthiness. Absent would
+            // fall through to the harness's LIVE project-wide fetch, which is
+            // what unfreezes a frozen run.
+            ...(params.pinnedHarnessSkills !== undefined
+              ? { pinnedHarnessSkills: params.pinnedHarnessSkills }
               : {}),
             // The harness reads built-ins ONLY off this field. Omitting it
             // would hand the runtime a turn with no web_search and no way to

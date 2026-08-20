@@ -407,6 +407,29 @@ describe("hostCompatCatalogEnvelopeSchema forward-compat", () => {
     }
   });
 
+  it("preserves partial CSP findings from live catalogs", () => {
+    // Every catalog host now publishes a complete connect triple, so build the
+    // partial case rather than leaning on one staying unprobed.
+    const partial = bundled();
+    (
+      partial.hostsById.goose.mcpProfile as {
+        apps: { mcpAppsOverrides: Record<string, unknown> };
+      }
+    ).apps.mcpAppsOverrides.cspConnectDomains = { fetch: false, xhr: false };
+    const parsed = hostCompatCatalogEnvelopeSchema.safeParse(
+      envelopeFor(partial, { source: "live" })
+    );
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      const parsedCapabilities =
+        parsed.data.catalog.hostsById.goose.mcpProfile?.apps?.mcpAppsOverrides;
+      expect(parsedCapabilities?.cspConnectDomains).toEqual({
+        fetch: false,
+        xhr: false,
+      });
+    }
+  });
+
   it("strips unknown keys instead of failing", () => {
     const catalog = bundled() as Record<string, unknown>;
     catalog.futureTopLevelField = { anything: true };

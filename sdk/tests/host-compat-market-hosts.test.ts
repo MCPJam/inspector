@@ -4,6 +4,7 @@ import {
   bundledHostCompatCatalog,
   evaluateMarketHosts,
   MCP_APPS_FULL,
+  MCP_APPS_CLAUDE,
   type HostCompatToolsInput,
 } from "../src/host-compat/index";
 import {
@@ -64,8 +65,42 @@ describe("buildMarketHostProfiles", () => {
       logging: true,
       toolInputPartial: true,
       toolCancelled: true,
-      downloadFile: false,
       resourceTeardown: true,
+      downloadFile: false,
+    });
+  });
+
+  it("keeps Claude app capabilities faithful to the raw probe", () => {
+    expect(profileFor("claude")?.capabilities).toMatchObject({
+      availableDisplayModes: ["inline", "fullscreen"],
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      requestTeardown: false,
+      toolCancelled: true,
+    });
+  });
+
+  it("keeps Goose CSP findings faithful to the raw probe", () => {
+    expect(profileFor("goose")?.capabilities).toMatchObject({
+      cspConnectDomains: { fetch: false, xhr: false, websocket: false },
+      cspResourceDomains: {
+        script: false,
+        stylesheet: false,
+        image: false,
+        font: false,
+        media: false,
+      },
+      cspFrameDomains: false,
+      cspBaseUriDomains: false,
+      resourcePrefersBorder: true,
     });
   });
 
@@ -113,6 +148,8 @@ describe("buildMarketHostProfiles", () => {
   it("exports deeply frozen capability matrices (can't poison verdicts)", () => {
     expect(Object.isFrozen(MCP_APPS_FULL)).toBe(true);
     expect(Object.isFrozen(MCP_APPS_FULL.availableDisplayModes)).toBe(true);
+    expect(Object.isFrozen(MCP_APPS_CLAUDE.cspConnectDomains)).toBe(true);
+    expect(Object.isFrozen(MCP_APPS_CLAUDE.cspResourceDomains)).toBe(true);
     expect(() => {
       (MCP_APPS_FULL as { message?: boolean }).message = false;
     }).toThrow();
@@ -123,6 +160,7 @@ describe("buildMarketHostProfiles", () => {
     a.sort((x, y) => x.id.localeCompare(y.id));
     const claudeA = a.find((p) => p.id === "claude")!;
     claudeA.capabilities!.message = false;
+    claudeA.capabilities!.cspConnectDomains!.fetch = false;
     claudeA.supportedProtocolVersions?.push("mutated");
 
     const b = buildMarketHostProfiles();
@@ -131,6 +169,9 @@ describe("buildMarketHostProfiles", () => {
       Object.keys(bundledHostCompatCatalog().hostsById)
     );
     expect(b.find((p) => p.id === "claude")?.capabilities?.message).toBe(true);
+    expect(
+      b.find((p) => p.id === "claude")?.capabilities?.cspConnectDomains?.fetch
+    ).toBe(true);
   });
 });
 

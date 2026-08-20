@@ -4,6 +4,10 @@ import { ConvexError } from "convex/values";
 import type { ServerFormData } from "@/shared/types.js";
 import { REGISTRY_FEATURE_ENABLED } from "@/hooks/useRegistryServers";
 import {
+  parseDirectoryServerDetail,
+  type DirectoryServerDetail,
+} from "@/lib/claude-directory-detail";
+import {
   clearPendingQuickConnect,
   writePendingQuickConnect,
   type PendingQuickConnectState,
@@ -215,6 +219,41 @@ export function requiresEndpointChoice(
   server: Pick<DirectoryServer, "endpointKind">
 ): boolean {
   return server.endpointKind === "options" || server.endpointKind === "tenant";
+}
+
+/**
+ * The full upstream row behind one directory card, parsed for the detail
+ * dialog.
+ *
+ * The card renders from the blob-free summary row; everything richer — tool
+ * names, the long description, publisher links, permissions — lives only in
+ * the ~5KB `rawJson` payload, fetched here one entry at a time when a card is
+ * actually opened. `getCatalogServer` is a public query (the catalog mirrors
+ * a public directory), so this needs no auth.
+ *
+ * Returns:
+ *   `undefined` — still loading (or `catalogServerId` is null / feature dark).
+ *   `null`      — no such row, or its body failed to parse; the dialog falls
+ *                 back to the summary it already has.
+ */
+export function useDirectoryServerDetail(
+  catalogServerId: string | null
+): DirectoryServerDetail | null | undefined {
+  const enabled = REGISTRY_FEATURE_ENABLED && catalogServerId !== null;
+  const result = useQuery(
+    "serverCatalogQueries:getCatalogServer" as any,
+    // `includeRaw` because the upstream row is what the dialog renders.
+    // `serverJson` embeds the same row under `_meta`, but is null for the few
+    // entries whose generated server.json failed validation — `rawJson` is
+    // authoritative for both.
+    enabled ? ({ catalogServerId, includeRaw: true } as any) : "skip"
+  ) as { rawJson?: string | null } | null | undefined;
+
+  return useMemo(() => {
+    if (!enabled || result === undefined) return undefined;
+    if (result === null) return null;
+    return parseDirectoryServerDetail(result.rawJson ?? null);
+  }, [enabled, result]);
 }
 
 export interface UseClaudeDirectoryOptions {
