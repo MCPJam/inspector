@@ -197,10 +197,12 @@ export const APP_SURFACES = [
     navSegments: ["registry"],
     title: "Registry",
     purpose:
-      "Browse the public MCP server registry and install servers into the current project.",
+      "Browse two catalogs of MCP servers — MCPJam's curated registry, and a mirror of Anthropic's public Claude connectors directory — and install them into the current project.",
     userActivities: [
       "Search the registry for a server",
-      "Install a registry server into the project",
+      "Search the Claude connectors directory (~2,000 entries) by name, description or tool name",
+      "Install a curated or directory server into the project",
+      "Choose which endpoint a multi-region connector uses, or enter their own instance URL",
       "Star or unstar a registry server",
     ],
     hasSnapshotProvider: true,

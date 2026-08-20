@@ -4079,7 +4079,7 @@
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/scenarioId"
+            "$ref": "#/components/parameters/projectScenarioId"
           }
         ],
         "responses": {
@@ -8802,7 +8802,7 @@
             }
           },
           "400": {
-            "description": "The server has no remote URL to grade, or the body was invalid."
+            "$ref": "#/components/responses/ValidationError"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -8815,6 +8815,12 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -8872,6 +8878,9 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
@@ -8883,6 +8892,12 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -8925,6 +8940,12 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -8969,7 +8990,7 @@
             }
           },
           "409": {
-            "description": "The run already finished and cannot be cancelled."
+            "$ref": "#/components/responses/Conflict"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -8982,6 +9003,12 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
           }
         }
       }
@@ -9050,11 +9077,11 @@
           "type": "string"
         }
       },
-      "scenarioId": {
+      "projectScenarioId": {
         "name": "scenarioId",
         "in": "path",
         "required": true,
-        "description": "Scenario ID, as returned by publishing an environment or by the project's scenario reads.",
+        "description": "Scenario ID, as returned by the project's scenario list.",
         "schema": {
           "type": "string"
         }
@@ -9127,6 +9154,15 @@
         "in": "path",
         "required": true,
         "description": "Finding ID. Stable across waves \u2014 that stability is what makes a recurring finding one finding rather than a new one each time.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "scenarioId": {
+        "name": "scenarioId",
+        "in": "path",
+        "required": true,
+        "description": "Scenario ID, as returned by publishing an environment or by the project's scenario reads.",
         "schema": {
           "type": "string"
         }
@@ -11113,7 +11149,11 @@
                 },
                 "runStatus": {
                   "type": "string",
-                  "description": "The RUN's status (always `running` at launch). Named apart from the entry's own `status` on purpose \u2014 two fields called `status` in one object is how a reader ends up branching on the wrong one."
+                  "description": "The RUN's status. `running` for a target that just launched; on a target whose run was REPLAYED (see `deduped`), that run's own status. Named apart from the entry's own `status` on purpose \u2014 two fields called `status` in one object is how a reader ends up branching on the wrong one."
+                },
+                "deduped": {
+                  "type": "boolean",
+                  "description": "Present and true when this target REPLAYED an existing run instead of starting one. A replayed run is not executed again, so the target costs no further credits."
                 },
                 "servers": {
                   "type": "array",
@@ -11219,7 +11259,11 @@
           },
           "status": {
             "type": "string",
-            "const": "running"
+            "description": "The run's status. `running` on a fresh launch; on a replay (see `deduped`), the existing run's own status, which may already be terminal."
+          },
+          "deduped": {
+            "type": "boolean",
+            "description": "Present and true when this request REPLAYED an existing run instead of starting one (an idempotency-key hit, or the short keyless dedupe window). A replayed run is not executed again, so no further credits are spent; read `status` for what that run actually is. Absent on a fresh launch."
           },
           "runGroupId": {
             "type": "string",
@@ -13748,54 +13792,99 @@
           }
         }
       },
-      "Scenario": {
+      "ProjectScenario": {
         "type": "object",
-        "description": "A published environment: what a visitor lands on when you share a link.",
+        "description": "Summary of a published scenario, as returned by the list endpoint.",
         "required": [
           "id",
-          "environmentId",
           "name",
-          "mode",
-          "accessVersion",
-          "link"
+          "serverCount",
+          "serverNames"
         ],
         "properties": {
           "id": {
             "type": "string"
           },
-          "environmentId": {
-            "type": "string"
+          "projectId": {
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "name": {
             "type": "string"
           },
-          "mode": {
-            "type": "string",
-            "description": "Who may open the share link:\n- `project_members` \u2014 signed-in members of the project only\n- `invited_only` \u2014 named members, invited individually\n- `anyone_with_link` \u2014 **anyone holding the URL**, signed in or not",
-            "enum": [
-              "project_members",
-              "invited_only",
-              "anyone_with_link"
+          "description": {
+            "type": [
+              "string",
+              "null"
             ]
           },
-          "accessVersion": {
-            "type": "integer",
-            "description": "Bumped whenever access NARROWS \u2014 a mode change, or a member removal. Sessions minted under an older version stop working, which is what makes those changes take effect at once rather than at expiry. A link ROTATION is deliberately not one of them: it mints a new URL without bumping this, so anyone who already redeemed the old link keeps working. Rotating is half of closing a leak \u2014 see the rotate-link operation."
-          },
-          "link": {
+          "mode": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The share link. `null` when the scenario has no link token."
+            "description": "Who can use the scenario.",
+            "enum": [
+              "project_members",
+              "invited_only",
+              "anyone_with_link",
+              null
+            ]
           },
-          "created": {
-            "type": "boolean",
-            "description": "False when the environment was ALREADY published and this returned the existing scenario. Publishing is idempotent, so this is how you tell \"I published it\" from \"it was already there\" without a preflight read."
+          "hostStyle": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Chat surface style the scenario renders (e.g. `claude`, `chatgpt`)."
           },
-          "overridesIgnored": {
-            "type": "boolean",
-            "description": "True when the create-time overrides (`name`, `description`, `mode`) were NOT applied because the environment was already published. Paired with `created: false` \u2014 change an existing scenario with `PATCH .../user-testing/scenarios/{scenarioId}`."
+          "hostId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The named host the scenario publishes (hosts and scenarios are 1:1)."
+          },
+          "hostName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "serverCount": {
+            "type": "integer"
+          },
+          "serverNames": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "link": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ScenarioLink"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Unix epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Unix epoch milliseconds."
           }
         }
       },
@@ -13934,7 +14023,7 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Scenario"
+              "$ref": "#/components/schemas/ProjectScenario"
             }
           }
         }
@@ -17851,6 +17940,57 @@
           }
         }
       },
+      "Scenario": {
+        "type": "object",
+        "description": "A published environment: what a visitor lands on when you share a link.",
+        "required": [
+          "id",
+          "environmentId",
+          "name",
+          "mode",
+          "accessVersion",
+          "link"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "environmentId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "description": "Who may open the share link:\n- `project_members` \u2014 signed-in members of the project only\n- `invited_only` \u2014 named members, invited individually\n- `anyone_with_link` \u2014 **anyone holding the URL**, signed in or not",
+            "enum": [
+              "project_members",
+              "invited_only",
+              "anyone_with_link"
+            ]
+          },
+          "accessVersion": {
+            "type": "integer",
+            "description": "Bumped whenever access NARROWS \u2014 a mode change, or a member removal. Sessions minted under an older version stop working, which is what makes those changes take effect at once rather than at expiry. A link ROTATION is deliberately not one of them: it mints a new URL without bumping this, so anyone who already redeemed the old link keeps working. Rotating is half of closing a leak \u2014 see the rotate-link operation."
+          },
+          "link": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The share link. `null` when the scenario has no link token."
+          },
+          "created": {
+            "type": "boolean",
+            "description": "False when the environment was ALREADY published and this returned the existing scenario. Publishing is idempotent, so this is how you tell \"I published it\" from \"it was already there\" without a preflight read."
+          },
+          "overridesIgnored": {
+            "type": "boolean",
+            "description": "True when the create-time overrides (`name`, `description`, `mode`) were NOT applied because the environment was already published. Paired with `created: false` \u2014 change an existing scenario with `PATCH .../user-testing/scenarios/{scenarioId}`."
+          }
+        }
+      },
       "ScenarioPublishRequest": {
         "type": "object",
         "description": "Optional CREATE-TIME overrides, applied in the same call so the scenario is never briefly live in a wider mode than you asked for. Ignored on a republish \u2014 see `overridesIgnored`.",
@@ -19292,6 +19432,12 @@
         "description": "A Claude directory-readiness run. `status` is the run's lifecycle; `overallStatus` is the grade and is absent until the run finishes \u2014 which is what lets a caller tell \"still running\" from \"ran, and the answer is incomplete\".",
         "properties": {
           "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "serverId": {
             "type": "string"
           },
           "serverUrl": {

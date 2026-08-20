@@ -43,6 +43,7 @@ export type InspectorCommandType =
   | "connectRegistryServer"
   | "disconnectRegistryServer"
   | "toggleRegistryStar"
+  | "searchRegistryDirectory"
   | "openEvalSuiteForm"
   | "runEvalSuite"
   | "cancelEvalRun"
@@ -89,6 +90,7 @@ export const KNOWN_INSPECTOR_COMMAND_TYPES = [
   "connectRegistryServer",
   "disconnectRegistryServer",
   "toggleRegistryStar",
+  "searchRegistryDirectory",
   "openEvalSuiteForm",
   "runEvalSuite",
   "cancelEvalRun",
@@ -311,6 +313,22 @@ export interface ToggleRegistryStarInspectorCommand {
   id: string;
   type: "toggleRegistryStar";
   payload: { serverName: string; starred: boolean };
+  timeoutMs?: number;
+}
+
+/**
+ * Search the mirrored Claude connectors directory shown beneath the curated
+ * catalog on the same screen.
+ *
+ * Read-only, and deliberately narrow: it DRIVES the screen's own search box,
+ * so what the model sees is what the person sees. `query` is optional because
+ * an absent one is a real request — browse the directory — not an error, and
+ * a blank one means the same thing (see `searchCatalogServers`).
+ */
+export interface SearchRegistryDirectoryInspectorCommand {
+  id: string;
+  type: "searchRegistryDirectory";
+  payload: { query?: string; tier?: string };
   timeoutMs?: number;
 }
 
@@ -783,6 +801,7 @@ export type InspectorCommand =
   | RemoveServerInspectorCommand
   | ConnectRegistryServerInspectorCommand
   | DisconnectRegistryServerInspectorCommand
+  | SearchRegistryDirectoryInspectorCommand
   | ToggleRegistryStarInspectorCommand
   | OpenEvalSuiteFormInspectorCommand
   | RunEvalSuiteInspectorCommand
