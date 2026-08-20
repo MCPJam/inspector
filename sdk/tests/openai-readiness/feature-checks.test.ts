@@ -102,6 +102,74 @@ describe("mcp skills", () => {
     }
   });
 
+  it("treats a listing cut short by an ERROR as incomplete, not as complete", () => {
+    // The page cap is only one way a walk ends early. `skills/list` erroring
+    // on page two — after page one returned skills — leaves `paginationCapHit`
+    // false while the listing is every bit as partial.
+    const findings = runOpenAIMcpSkillChecks(
+      {
+        mode: "mcp-imported-skills",
+        evidence: skills({
+          pagesWalked: 2,
+          listError: "server closed the connection",
+        }),
+      },
+      STAMP,
+    );
+    const complete = byId(findings, "openai.skills.listing-complete");
+    expect(complete.status).toBe("violated");
+    expect(complete.remediation).toContain("server closed the connection");
+    for (const id of [
+      "openai.skills.caps",
+      "openai.skills.digests",
+      "openai.skills.frontmatter",
+    ]) {
+      expect(byId(findings, id).status, id).toBe("not-evaluated");
+    }
+  });
+
+  it("will not size the caps check on a skill it could not fetch at all", () => {
+    // A failed `skills/get` leaves `markdownBytes`, `totalBytes` AND
+    // `unmeasuredPages` all absent, so the skill contributed ZERO bytes to the
+    // combined total — and the caps check passed without a size measurement to
+    // its name. Keying the guard off `unmeasuredPages` missed exactly this.
+    const findings = runOpenAIMcpSkillChecks(
+      {
+        mode: "mcp-imported-skills",
+        evidence: skills({
+          skills: [
+            skills().skills[0],
+            { name: "alerts", fetchError: "skills/get returned an error" },
+          ],
+        }),
+      },
+      STAMP,
+    );
+    const caps = byId(findings, "openai.skills.caps");
+    expect(caps.status).toBe("not-evaluated");
+    expect(caps.notEvaluatedReason).toContain("alerts");
+  });
+
+  it("still reports a cap violation the fetched subset proves", () => {
+    // A floor already over the limit settles the question whichever way the
+    // unread skills go.
+    const findings = runOpenAIMcpSkillChecks(
+      {
+        mode: "mcp-imported-skills",
+        evidence: skills({
+          listError: "server closed the connection",
+          skills: Array.from({ length: 9 }, (_unused, index) => ({
+            name: `skill-${index}`,
+          })),
+        }),
+      },
+      STAMP,
+    );
+    const caps = byId(findings, "openai.skills.caps");
+    expect(caps.status).toBe("violated");
+    expect(JSON.stringify(caps.details)).toContain("mcp-skill-too-many");
+  });
+
   it("will not pass the digest check over a partly-fetched listing", () => {
     // Two skills listed, one fetched. "Every declared digest matches" is not a
     // claim one comparison supports.

@@ -176,30 +176,43 @@ export function runOpenAIMcpSkillChecks(
     satisfied(EXTENSION_ADVERTISED, stamp, { skills: evidence.skills.length }),
   );
 
+  // TWO WAYS A LISTING ENDS EARLY, and only one of them is the page cap. The
+  // walk also stops when `skills/list` ERRORS — and an error on page two,
+  // after page one returned skills, leaves `paginationCapHit` false while the
+  // listing is every bit as incomplete. Reaching this line means page one
+  // succeeded (`extensionAdvertised` is true), so a `listError` here is always
+  // the mid-walk case.
+  const listingCutShort =
+    evidence.paginationCapHit === true || evidence.listError !== undefined;
+
   // A cap hit is NOT the end of the list. Treating it as one would report a
   // count under the limit for a server that has more.
   findings.push(
-    evidence.paginationCapHit
+    listingCutShort
       ? violated(
           LISTING_COMPLETE,
           stamp,
-          "The skills listing was still paginating at the page limit, so this run has not seen every skill.",
-          { pagesWalked: evidence.pagesWalked },
+          evidence.listError !== undefined
+            ? `The skills listing stopped part-way with an error, so this run has not seen every skill: ${evidence.listError}`
+            : "The skills listing was still paginating at the page limit, so this run has not seen every skill.",
+          { pagesWalked: evidence.pagesWalked, listError: evidence.listError },
         )
       : satisfied(LISTING_COMPLETE, stamp, {
           pagesWalked: evidence.pagesWalked,
         }),
   );
 
-  // A PARTIAL LISTING MAKES EVERY CLEAN RESULT BELOW PROVISIONAL. The cap hit
-  // means there are skills this run never saw, so "five skills, all within
-  // their limits, all digests matching" is a statement about the five it read
-  // and not about the submission. Violations are unaffected — a limit already
-  // exceeded by what WAS read stays exceeded however many more there are.
-  const partialListing = evidence.paginationCapHit === true;
+  // A PARTIAL LISTING MAKES EVERY CLEAN RESULT BELOW PROVISIONAL. There are
+  // skills this run never saw, so "five skills, all within their limits, all
+  // digests matching" is a statement about the five it read and not about the
+  // submission. Violations are unaffected — a limit already exceeded by what
+  // WAS read stays exceeded however many more there are.
+  const partialListing = listingCutShort;
   const partialListingReason =
-    `the skills listing was still paginating at the page limit after ` +
-    `${evidence.pagesWalked} page(s), so this run has not seen every skill`;
+    evidence.listError !== undefined
+      ? `the skills listing stopped part-way after ${evidence.pagesWalked} page(s) with an error, so this run has not seen every skill: ${evidence.listError}`
+      : `the skills listing was still paginating at the page limit after ` +
+        `${evidence.pagesWalked} page(s), so this run has not seen every skill`;
 
   // ------------------------------------------------------------------- caps
   if (evidence.skills.length > OPENAI_MCP_SKILL_LIMITS.maxSkills) {
@@ -264,11 +277,15 @@ export function runOpenAIMcpSkillChecks(
       );
     }
     combinedBytes += skill.totalBytes ?? skill.markdownBytes ?? 0;
-    // A skill whose pages could not all be sized contributes an UNDERSTATED
-    // amount above, so the combined figure below is a floor rather than a
-    // measurement. Tracked so a clean result can say which it is.
-    if (skill.totalBytes === undefined && (skill.unmeasuredPages ?? 0) > 0) {
-      unmeasured.push(skill.name ?? "(unnamed skill)");
+    // `totalBytes` ABSENT IS THE WHOLE TEST, whatever made it absent. Two
+    // different failures land here and both understate the line above: a skill
+    // whose pages could not all be sized adds its markdown alone, and a skill
+    // whose `skills/get` failed outright adds ZERO — it has no `markdownBytes`
+    // either. The earlier version keyed off `unmeasuredPages`, which a failed
+    // fetch never sets, so an unfetchable skill contributed nothing and the
+    // caps check passed without a size measurement to its name.
+    if (skill.totalBytes === undefined) {
+      unmeasured.push(skill.name ?? skill.resourceUri ?? "(unnamed skill)");
     }
   }
 
@@ -295,7 +312,7 @@ export function runOpenAIMcpSkillChecks(
             stamp,
             partialListing
               ? partialListingReason
-              : `these skills report pages with no size this run could establish, so the combined total is a floor rather than a measurement: ${unmeasured.join(", ")}`,
+              : `these skills have no total size this run could establish, so the combined figure is a floor rather than a measurement: ${unmeasured.join(", ")}`,
           )
         : satisfied(WITHIN_CAPS, stamp, {
             skills: evidence.skills.length,

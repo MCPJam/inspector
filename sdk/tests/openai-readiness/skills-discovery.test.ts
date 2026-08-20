@@ -47,10 +47,21 @@ async function start(
     req.on("end", () => {
       const request = JSON.parse(body || "{}");
       calls.push(request.method);
-      const result = respond(request.method, request.params ?? {});
+      const answer = respond(request.method, request.params ?? {}) as Record<
+        string,
+        unknown
+      >;
       res.writeHead(200, { "content-type": "application/json" });
+      // A responder returning `{ error }` means a JSON-RPC ERROR, which belongs
+      // at the top level of the envelope. Nesting it under `result` would make
+      // it invisible to the reader and quietly turn an error test into a
+      // success test.
       res.end(
-        JSON.stringify({ jsonrpc: "2.0", id: request.id, result: result }),
+        JSON.stringify(
+          answer && "error" in answer
+            ? { jsonrpc: "2.0", id: request.id, error: answer.error }
+            : { jsonrpc: "2.0", id: request.id, result: answer },
+        ),
       );
     });
   });
@@ -240,6 +251,30 @@ describe("discoverOpenAIImportedSkills", () => {
     // than a figure that silently omits them.
     expect(skill.unmeasuredPages).toBe(15);
     expect(skill.totalBytes).toBeUndefined();
+  });
+
+  it("records the error when the walk stops part-way, keeping what it read", async () => {
+    // The other half of the contract the caps and digest checks now depend on:
+    // a `skills/list` error on page two must be REPORTED, not swallowed, or
+    // the grader has no way to know the listing it received is partial.
+    const { url } = await start((method, params) => {
+      if (method !== "skills/list") {
+        return { skill: { content: SKILL_MARKDOWN } };
+      }
+      return params.cursor
+        ? { error: { code: -32000, message: "listing backend unavailable" } }
+        : { skills: [{ name: "forecast" }], nextCursor: "page-2" };
+    });
+    const evidence = await discoverOpenAIImportedSkills({
+      enteredUrl: url,
+      fetchFn: fetch,
+    });
+    expect(evidence.listError).toContain("listing backend unavailable");
+    // Page one's skill is kept — it is real evidence, just not all of it.
+    expect(evidence.skills.map((skill) => skill.name)).toEqual(["forecast"]);
+    // And this is NOT the page-cap case, which is the whole reason the grader
+    // cannot key "incomplete" off `paginationCapHit` alone.
+    expect(evidence.paginationCapHit).toBeUndefined();
   });
 
   it("walks pagination before fetching any body", async () => {
