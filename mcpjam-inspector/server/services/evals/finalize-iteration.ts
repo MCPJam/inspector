@@ -26,6 +26,11 @@ import {
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  deriveStageResults,
+  stageDerivationToMetadata,
+  type StageAuthoredCase,
+} from "@mcpjam/sdk/contract";
+import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
@@ -33,6 +38,51 @@ import {
 type IterationStatus = "completed" | "failed" | "cancelled";
 
 type ToolCallRecord = { toolName: string; arguments: Record<string, any> };
+
+/**
+ * Adapt what the runner captured into the analyzer's evidence shape.
+ *
+ * The only subtle part is the two "we have no spans" flags, which are NOT
+ * interchangeable and which the analyzer reports differently:
+ *
+ *   - `traceAbsent` — nothing was captured at all. The row exists (a setup
+ *     failure, a lifecycle stop) and carries no transcript.
+ *   - `traceLacksSpanChannel` — a transcript exists (messages and/or per-turn
+ *     summaries) but no spans. That is the caller-supplied `HostExecutor`
+ *     signature: the run DID happen and this executor simply never reports
+ *     what happened. Collapsing it into "nothing happened" is precisely how a
+ *     run with every tool call failing passes vacuously.
+ */
+function buildStageEvidence(args: {
+  spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
+  messages?: ModelMessage[];
+  predicateResults?: unknown[];
+  widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  toolSignals?: ToolExposureSignals;
+}) {
+  const hasSpans = (args.spans?.length ?? 0) > 0;
+  const hasPrompts = (args.prompts?.length ?? 0) > 0;
+  const hasMessages = (args.messages?.length ?? 0) > 0;
+  return {
+    ...(hasSpans ? { spans: args.spans } : {}),
+    ...(hasPrompts ? { prompts: args.prompts } : {}),
+    ...(args.predicateResults?.length
+      ? {
+          predicateResults: args.predicateResults as ReadonlyArray<{
+            passed?: boolean;
+            reason?: string;
+          }>,
+        }
+      : {}),
+    ...(args.widgetRenderObservations?.length
+      ? { renderObservations: args.widgetRenderObservations }
+      : {}),
+    ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
+    traceAbsent: !hasSpans && !hasPrompts && !hasMessages,
+    traceLacksSpanChannel: !hasSpans && (hasPrompts || hasMessages),
+  };
+}
 
 /**
  * Builds the `finishParams` object every runner passes to
@@ -78,6 +128,24 @@ export function buildIterationFinishParams(args: {
    * `predicates` rows lack `stepId` and interact failures aren't otherwise saved.
    */
   stepResults?: unknown[];
+  /**
+   * The authored case's stage-applicability inputs, from
+   * `buildStageAuthoredCase`.
+   *
+   * PRESENT ⇒ this iteration gets a derived user-value chain under
+   * `metadata.stageResults` (+ `firstFailedStage` / `failureCategory` /
+   * `stageAnalyzerVersion`). ABSENT ⇒ no stage keys are written at all, which
+   * is the honest default for a caller that cannot say what the case authored:
+   * without the authored case there is no way to tell `notApplicable` from
+   * `notMeasured`, and guessing would report a stage the case never exercised
+   * as an evidence gap.
+   *
+   * Threaded as its own argument rather than folded into
+   * `iterationMetadataBase` because `buildIterationMetadata` is typed
+   * scalar-only (`Record<string, string | number | boolean>`) and
+   * `stageResults` is an array of rows.
+   */
+  stageCase?: StageAuthoredCase;
   iterationMetadataBase: Record<string, string | number | boolean>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
@@ -103,11 +171,26 @@ export function buildIterationFinishParams(args: {
     predicateResults,
     skippedSteps,
     stepResults,
+    stageCase,
     iterationMetadataBase,
     hostPolicy,
     toolSignals,
     injectOpenAiCompat,
   } = args;
+  const stageDerivation = stageCase
+    ? deriveStageResults({
+        authored: stageCase,
+        evidence: buildStageEvidence({
+          spans,
+          prompts,
+          messages,
+          predicateResults,
+          widgetRenderObservations,
+          toolSignals,
+        }),
+        iteration: { status, ...(error ? { error } : {}) },
+      })
+    : undefined;
   return {
     iterationId,
     passed,
@@ -132,6 +215,7 @@ export function buildIterationFinishParams(args: {
       ...(predicateResults?.length ? { predicates: predicateResults } : {}),
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),
+      ...(stageDerivation ? stageDerivationToMetadata(stageDerivation) : {}),
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
             hostPolicy,

@@ -120,6 +120,7 @@ import {
   type PinnedTurnSsePayload,
 } from "./evals/pinned-turn-sse.js";
 import { buildIterationFinishParams } from "./evals/finalize-iteration.js";
+import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import {
   dispatchEvalIterationFinalize,
   finalizeWithBrowserArtifacts,
@@ -2949,6 +2950,12 @@ const runLocalIteration = async ({
       predicateResults,
       ...(stepSkippedSteps.length ? { skippedSteps: stepSkippedSteps } : {}),
       ...(stepResults.length ? { stepResults } : {}),
+      stageCase: buildStageAuthoredCase({
+        test,
+        ...(test.steps ? { steps: test.steps } : {}),
+        turns: resolvedTest.promptTurns,
+        caseNeedsModel,
+      }),
       iterationMetadataBase,
       ...(hostPolicy ? { hostPolicy } : {}),
       ...(toolSignals ? { toolSignals } : {}),
@@ -3109,6 +3116,12 @@ const runLocalIteration = async ({
       startedAt: runStartedAt,
       ...(errorMessage ? { error: errorMessage } : {}),
       ...(errorDetails ? { errorDetails } : {}),
+      stageCase: buildStageAuthoredCase({
+        test,
+        ...(test.steps ? { steps: test.steps } : {}),
+        turns: resolvedTest.promptTurns,
+        caseNeedsModel,
+      }),
       iterationMetadataBase,
       ...(hostPolicy ? { hostPolicy } : {}),
       ...(toolSignals ? { toolSignals } : {}),
@@ -3753,6 +3766,14 @@ const runHostedIterationWithBrowser = async (
       ? { skippedSteps: hostedStepSkippedSteps }
       : {}),
     ...(hostedStepResults.length ? { stepResults: hostedStepResults } : {}),
+    // This runner is never reached by a model-free case (those dispatch to the
+    // local runner), so the case always has a model turn that could select.
+    stageCase: buildStageAuthoredCase({
+      test,
+      ...(test.steps ? { steps: test.steps } : {}),
+      turns: resolvedTest.promptTurns,
+      caseNeedsModel: true,
+    }),
     iterationMetadataBase,
     ...(hostPolicy ? { hostPolicy } : {}),
     ...(toolSignals ? { toolSignals } : {}),

@@ -9,6 +9,11 @@ import {
   suiteTestResultsToEvalResultInputs,
   promptsToEvalResult,
 } from "../src/eval-result-mapping";
+import {
+  STAGE_ANALYZER_VERSION,
+  USER_VALUE_STAGES,
+  type StageResultRow,
+} from "../src/contract/index.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -735,8 +740,59 @@ describe("iterationsToEvalResultInputs", () => {
 
     const results = iterationsToEvalResultInputs("t", iterations);
 
-    expect(results[0].metadata).toEqual({ retryCount: 0, iterationNumber: 1 });
-    expect(results[1].metadata).toEqual({ retryCount: 2, iterationNumber: 2 });
+    // Every SDK iteration now also carries the derived user-value chain. Split
+    // those keys off rather than loosening this to `toMatchObject`: the exact
+    // shape of the rest of the metadata is what this test exists to pin.
+    const split = (index: number) => {
+      const { stageResults, stageAnalyzerVersion, ...rest } = results[index]
+        .metadata as Record<string, unknown>;
+      return { stageResults, stageAnalyzerVersion, rest };
+    };
+
+    expect(split(0).rest).toEqual({ retryCount: 0, iterationNumber: 1 });
+    expect(split(1).rest).toEqual({ retryCount: 2, iterationNumber: 2 });
+
+    for (const index of [0, 1]) {
+      const { stageResults, stageAnalyzerVersion } = split(index);
+      expect(stageAnalyzerVersion).toBe(STAGE_ANALYZER_VERSION);
+      expect((stageResults as StageResultRow[]).map((r) => r.stage)).toEqual([
+        ...USER_VALUE_STAGES,
+      ]);
+    }
+  });
+
+  it("derives a stage chain that never passes a stage on missing evidence", () => {
+    // A retry-exhausted iteration with no prompt history at all: the mapper
+    // produces no trace, so there is nothing any stage could be decided from.
+    const iteration = makeIteration({
+      passed: false,
+      error: "connect ECONNREFUSED",
+      retryCount: 2,
+      prompts: [],
+    });
+
+    const [result] = iterationsToEvalResultInputs("no-evidence", [iteration]);
+
+    expect(result.trace).toBeUndefined();
+    const rows = (result.metadata as Record<string, unknown>)
+      .stageResults as StageResultRow[];
+    expect(rows.filter((r) => r.state === "passed")).toHaveLength(0);
+    // This fixture declares no expected tool calls and no predicates, so most
+    // stages genuinely do not apply to it. Every stage that DOES apply is
+    // unmeasured — none is quietly green.
+    const applicable = rows.filter((r) => r.state !== "notApplicable");
+    expect(applicable.length).toBeGreaterThan(0);
+    expect(applicable.every((r) => r.state === "notMeasured")).toBe(true);
+    // A failed iteration that captured nothing at all is a setup abort — the
+    // harness never got to the test — not a server verdict.
+    expect(applicable.every((r) => r.reason === "setupAborted")).toBe(true);
+    expect((result.metadata as Record<string, unknown>).failureCategory).toBe(
+      "setup"
+    );
+    // Nothing was measured, so nothing may be reported as having failed.
+    expect(
+      (result.metadata as Record<string, unknown>).firstFailedStage
+    ).toBeUndefined();
   });
 
   it("propagates error", () => {

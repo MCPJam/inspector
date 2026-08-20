@@ -20,6 +20,10 @@ import {
   type EvalMatchOptions,
 } from "./matchers.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
+import {
+  deriveStageResults,
+  stageDerivationToMetadata,
+} from "./contract/stage-derivation.js";
 
 /**
  * Per-iteration host-extras lookup:
@@ -787,6 +791,52 @@ export type EvalCaseIdentity = {
   expectedOutput?: string;
 };
 
+/**
+ * Adapt one SDK iteration into the stage analyzer's evidence shape.
+ *
+ * The load-bearing distinction is between the two span-less cases:
+ *
+ *   - `traceAbsent` — `iterationTraceFromPrompts` returned nothing at all, so
+ *     the iteration recorded no messages, no spans and no summaries. A retry
+ *     that died before the executor ever ran looks like this.
+ *   - `traceLacksSpanChannel` — a trace exists (messages survived) but carries
+ *     no `spans` key. That is the caller-supplied `HostExecutor` signature:
+ *     spans are not part of the `HostExecutor` contract, so an executor that
+ *     never populates `PromptResult.spans` produces exactly this. Reading it
+ *     as "nothing happened" is how an iteration whose every tool call failed
+ *     scores a vacuous pass.
+ */
+function buildSdkStageEvidence(
+  iteration: IterationResult,
+  trace: EvalResultInput["trace"]
+) {
+  const spans =
+    trace && typeof trace === "object" && !Array.isArray(trace) && trace.spans
+      ? trace.spans
+      : [];
+  const match = iteration.toolMatch;
+  return {
+    ...(spans.length > 0 ? { spans } : {}),
+    ...(match
+      ? {
+          prompts: [
+            {
+              promptIndex: 0,
+              missing: match.missing,
+              unexpected: match.extra,
+              argumentMismatches: match.argumentMismatches,
+            },
+          ],
+        }
+      : {}),
+    ...(iteration.predicateResults?.length
+      ? { predicateResults: iteration.predicateResults }
+      : {}),
+    traceAbsent: trace === undefined,
+    traceLacksSpanChannel: trace !== undefined && spans.length === 0,
+  };
+}
+
 export function iterationsToEvalResultInputs(
   testName: string,
   iterations: IterationResult[],
@@ -818,6 +868,32 @@ export function iterationsToEvalResultInputs(
       iterationError: iteration.error,
       failOnToolError,
       predicateResults: iteration.predicateResults,
+    });
+
+    const stageDerivation = deriveStageResults({
+      authored: {
+        // An SDK case always drives a HostExecutor with prompts, so there is
+        // always a model turn that could select a tool.
+        mode: "model_driven",
+        ...(caseIdentity?.isNegativeTest !== undefined
+          ? { isNegativeTest: caseIdentity.isNegativeTest }
+          : {}),
+        expectsToolCall:
+          (expectedToolCalls?.length ?? 0) > 0 ||
+          caseIdentity?.isNegativeTest === true,
+        // Render observations are not carried on the SDK path, so a case is
+        // never treated as asserting a widget render here — claiming otherwise
+        // would demand evidence this path cannot produce and report every SDK
+        // run's `response` as an evidence gap.
+        assertionCount:
+          (predicates?.length ?? 0) +
+          (caseIdentity?.expectedOutput !== undefined ? 1 : 0),
+      },
+      evidence: buildSdkStageEvidence(iteration, trace),
+      iteration: {
+        status: passed ? "completed" : "failed",
+        ...(iteration.error ? { error: iteration.error } : {}),
+      },
     });
 
     return {
@@ -862,6 +938,7 @@ export function iterationsToEvalResultInputs(
             ? { predicates: iteration.predicateResults }
             : {}),
           ...scoreMetadata(iteration, evaluationConfig),
+          ...stageDerivationToMetadata(stageDerivation),
         },
         resolveIterationHostExtras(iteration, hostExtras)
       ),
