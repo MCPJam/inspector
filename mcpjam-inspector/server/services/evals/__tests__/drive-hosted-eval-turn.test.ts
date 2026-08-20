@@ -177,7 +177,7 @@ describe("harness execution options reach the engine", () => {
     expect(options.harness).toBe("claude-code");
   });
 
-  it("forwards a PRESENT-BUT-EMPTY runtimeSkillsOverride — the A/B arm", async () => {
+  it("forwards a PRESENT-BUT-EMPTY pinnedHarnessSkills — the A/B arm", async () => {
     // The one harness field gated on `!== undefined` rather than truthiness,
     // and deliberately so: an empty array is how `skillsOverride: "exclude"`
     // says "this arm runs with NO skills". A truthiness regression would drop
@@ -186,9 +186,38 @@ describe("harness execution options reach the engine", () => {
     // assertion in this file still passed.
     const options = await engineOptionsFor({
       ...HARNESS_OPTIONS,
-      runtimeSkillsOverride: [],
+      pinnedHarnessSkills: [],
     } as unknown as Partial<DriveHostedEvalTurnParams>);
-    expect(options.runtimeSkillsOverride).toEqual([]);
+    expect(options.pinnedHarnessSkills).toEqual([]);
+  });
+
+  it("delivers the run's pins on the FROZEN channel, not the live-environment one", async () => {
+    // `selectHarnessSkillSource` ranks pinned → environment → live, and only
+    // the top rank promises that nothing live is consulted. Sending a frozen
+    // run's skills as `runtimeSkillsOverride` would work in the happy case and
+    // be wrong in the one that matters: `runtimeSkillsOverride` is documented
+    // as the channel for a turn whose environment re-resolves each time.
+    const options = await engineOptionsFor({
+      ...HARNESS_OPTIONS,
+      pinnedHarnessSkills: [
+        {
+          name: "deploy",
+          description: "ship it",
+          content: "# Deploy",
+          contentHash: "sha-1",
+        },
+      ],
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+
+    expect(options.pinnedHarnessSkills).toEqual([
+      {
+        name: "deploy",
+        description: "ship it",
+        content: "# Deploy",
+        contentHash: "sha-1",
+      },
+    ]);
+    expect(options.runtimeSkillsOverride).toBeUndefined();
   });
 
   it("keeps an EMULATED turn byte-identical — none of it leaks through", async () => {
@@ -201,11 +230,13 @@ describe("harness execution options reach the engine", () => {
       },
       harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
       builtInTools: { web_search: {} },
+      pinnedHarnessSkills: [],
     } as unknown as Partial<DriveHostedEvalTurnParams>);
 
     expect(options.harness).toBeUndefined();
     expect(options.harnessSandboxBinding).toBeUndefined();
     expect(options.harnessMcpProxy).toBeUndefined();
     expect(options.builtInTools).toBeUndefined();
+    expect(options.pinnedHarnessSkills).toBeUndefined();
   });
 });

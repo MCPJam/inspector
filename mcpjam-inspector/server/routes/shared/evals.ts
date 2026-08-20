@@ -69,6 +69,8 @@ import {
   runNeedsEffectiveSkillSurface,
   type RunPinnedSkill,
 } from "../../services/evals/run-plugin-snapshot.js";
+import { runPinnedSkillsToHarnessArtifacts } from "../../services/evals/run-pinned-harness-skills.js";
+import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import {
   countModelSteps,
   isModelFree,
@@ -2202,6 +2204,19 @@ export async function prepareEvalRun(
   // setup failure must precede model execution and name the component that
   // caused it.
   let pinnedSkillSource: EvalPinnedSkillSource | undefined;
+  /**
+   * The run's frozen skills in HARNESS shape (materialized on box), built here
+   * rather than per iteration because the supporting-file download is I/O that
+   * belongs in run preparation — where a failure fails the run cleanly, before
+   * any model call, naming the skill and path.
+   *
+   * Set for EVERY runId-bearing run, empty included. The harness selects its
+   * pinned source by PRESENCE, so `[]` says "this run delivers no skills" while
+   * `undefined` falls through to a live project-wide fetch of whatever the
+   * project holds right now — which would unfreeze a frozen run, and would hand
+   * the `skillsOverride: "exclude"` arm every skill in the project.
+   */
+  let pinnedHarnessSkills: PinnedSkillArtifact[] | undefined;
   if (runId) {
     // The run row already exists (startSuiteRunWithRecorder created it), so a
     // persistent setup failure would otherwise strand the run as
@@ -2235,11 +2250,21 @@ export async function prepareEvalRun(
         }
       );
 
+      // A pinned supporting file whose blob is gone fails the run BEFORE the
+      // model runs, attributed to the skill and the path. `url: null` is an
+      // unreachable blob, never "no file" — see the assertion's own note.
+      // Hoisted above the `length` guard so it also runs ahead of the harness
+      // adaptation below, which downloads those same blobs: an unreachable one
+      // should report through this assertion's wording, not a fetch failure's.
+      assertPinnedSkillFilesReachable(runPinnedSkills ?? []);
+
+      // Empty is a real answer for the harness (see `pinnedHarnessSkills`), so
+      // this is assigned outside the `length` guard below.
+      pinnedHarnessSkills = await runPinnedSkillsToHarnessArtifacts(
+        runPinnedSkills ?? []
+      );
+
       if (runPinnedSkills?.length) {
-        // A pinned supporting file whose blob is gone fails the run BEFORE the
-        // model runs, attributed to the skill and the path. `url: null` is an
-        // unreachable blob, never "no file" — see the assertion's own note.
-        assertPinnedSkillFilesReachable(runPinnedSkills);
         pinnedSkillSource = runNeedsEffectiveSkillSurface(runPinnedSkills)
           ? {
               kind: "pinned-effective",
@@ -2291,6 +2316,9 @@ export async function prepareEvalRun(
       // is the POLICY subset extracted upstream; this is the rest.
       suiteHostConfig,
       ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
+      // Presence is meaningful (empty ⇒ "no skills", absent ⇒ live fetch), so
+      // this checks for undefined rather than truthiness.
+      ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
     });
   };
 
