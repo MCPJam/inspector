@@ -239,6 +239,31 @@ describe("Windows path quirks", () => {
     }
   );
 
+  it("strips trailing dots and spaces in linear time", () => {
+    // `/[. ]+$/` is anchored only at its END, so the engine starts a fresh
+    // attempt at every position; on a long run of spaces that does NOT reach
+    // the end, each attempt consumes the whole run before failing `$`. That is
+    // O(n²), and the input is a path out of a submitted archive — CodeQL
+    // flagged it once the OpenAI reader started resolving manifest-declared
+    // asset references through this function. Timed rather than asserted on
+    // shape, because a future rewrite could reintroduce the pattern while
+    // keeping every behavioural test above green.
+    const hostile = `a/${" ".repeat(20_000)}x/f.txt`;
+    const started = performance.now();
+    normalizeBundlePath(hostile);
+    // The quadratic form took ~81ms at n=8000 and grows fourfold per doubling,
+    // so n=20000 would be seconds. A generous ceiling still separates them.
+    expect(performance.now() - started).toBeLessThan(150);
+  });
+
+  it("still rejects a segment that is only dots and spaces", () => {
+    // The linear scan must not cost the case the strip exists for: Windows
+    // drops the trailing run, and `" . "` becomes `" ."`… then `"."`, a dot
+    // name that extracts to a different path than the one validated.
+    const result = normalizeBundlePath("a/ . /x.txt");
+    expect(result.ok).toBe(false);
+  });
+
   it("still allows ordinary interior dots", async () => {
     const parsed = await parsePluginBundle(
       minimalBundle({
