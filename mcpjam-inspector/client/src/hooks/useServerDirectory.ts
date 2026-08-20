@@ -195,6 +195,13 @@ export interface DirectoryConnectResult {
   serverId: string;
   serverName: string;
   outcome: "created" | "reconnected" | "existing_endpoint";
+  /**
+   * Present on `existing_endpoint`: the URL that connection actually holds.
+   * The match is CANONICAL, so it can differ from this card's `remoteUrl` in
+   * exactly the ways canonicalization forgives, and it is the authoritative
+   * one — see `resolveDirectoryEndpointUrl`.
+   */
+  endpointUrl?: string;
   existing?: {
     catalogServerId: string;
     source: string;
@@ -360,6 +367,28 @@ export function resolveDirectoryEndpointUrl(
   endpointUrl?: string
 ): string | undefined {
   return server.endpointKind === "fixed" ? server.remoteUrl : endpointUrl;
+}
+
+/**
+ * The URL to hand `onConnect` once the mutation has spoken.
+ *
+ * On `existing_endpoint` the mutation matched an existing connection by
+ * CANONICAL URL and returned that connection — so the URL it holds can differ
+ * from this card's in the ways canonicalization forgives (a trailing slash,
+ * host casing). Connecting with this card's spelling would then rewrite the
+ * stored endpoint of a server this click did not create, and the OAuth
+ * resource indicator bound to that URL with it. The mutation's answer wins;
+ * the card's URL is only the question that was asked.
+ */
+export function resolveConnectedEndpointUrl(
+  server: Pick<DirectoryServer, "endpointKind" | "remoteUrl">,
+  result: Pick<DirectoryConnectResult, "outcome" | "endpointUrl">,
+  requestedUrl?: string
+): string | undefined {
+  if (result.outcome === "existing_endpoint" && result.endpointUrl) {
+    return result.endpointUrl;
+  }
+  return resolveDirectoryEndpointUrl(server, requestedUrl);
 }
 
 /** True when connecting this row needs the user to supply or pick a URL. */
@@ -564,7 +593,7 @@ export function useServerDirectory({
         onConnect({
           name: result.serverName,
           type: "http",
-          url: resolveDirectoryEndpointUrl(server, endpointUrl),
+          url: resolveConnectedEndpointUrl(server, result, endpointUrl),
           // RUNTIME-PROBED, not metadata-trusted. `authMethod: "auto"` runs
           // the discovery path: connect with a stored token if there is one,
           // otherwise unauthenticated, and on a 401 ASK before escalating to

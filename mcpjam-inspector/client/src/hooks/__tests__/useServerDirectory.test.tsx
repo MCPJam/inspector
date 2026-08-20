@@ -811,4 +811,58 @@ describe("cross-source connect", () => {
     });
     expect(outcome).toBe("existing_endpoint");
   });
+
+  it("connects the URL ALREADY held, not this card's spelling of it", async () => {
+    // The backend matched by CANONICAL url, so the two rows can differ by a
+    // trailing slash or host casing and still be the same endpoint. Connecting
+    // with this card's spelling would rewrite the stored endpoint of a server
+    // this click did not create — and the OAuth resource indicator bound to
+    // that URL with it.
+    mockConnectMutation.mockResolvedValue({
+      serverId: "srv_1",
+      serverName: "Linear",
+      outcome: "existing_endpoint",
+      endpointUrl: "https://mcp.linear.app/mcp",
+      existing: {
+        catalogServerId: "cat_9",
+        source: "anthropic-directory",
+        displayName: "Linear",
+      },
+    });
+    const server = directoryServer({
+      source: "chatgpt-directory",
+      remoteUrl: "https://MCP.linear.app/mcp/",
+    });
+    setPage([server]);
+    const { result, onConnect } = renderDirectory();
+
+    await act(async () => {
+      await result.current.connect(server);
+    });
+
+    expect(onConnect).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "https://mcp.linear.app/mcp" })
+    );
+  });
+
+  it("an ordinary install still uses the row's own URL", async () => {
+    mockConnectMutation.mockResolvedValue({
+      serverId: "srv_1",
+      serverName: "Acme",
+      outcome: "created",
+    });
+    const server = directoryServer({
+      remoteUrl: "https://mcp.acme.example/mcp",
+    });
+    setPage([server]);
+    const { result, onConnect } = renderDirectory();
+
+    await act(async () => {
+      await result.current.connect(server);
+    });
+
+    expect(onConnect).toHaveBeenCalledWith(
+      expect.objectContaining({ url: "https://mcp.acme.example/mcp" })
+    );
+  });
 });

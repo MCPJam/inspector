@@ -854,7 +854,7 @@ export type InspectorCommandResponse =
   | InspectorCommandErrorResponse;
 
 export function isInspectorCommandType(
-  value: unknown
+  value: unknown,
 ): value is InspectorCommandType {
   return (
     typeof value === "string" &&
@@ -865,7 +865,7 @@ export function isInspectorCommandType(
 export function buildInspectorCommandError(
   code: InspectorCommandErrorCode,
   message: string,
-  details?: unknown
+  details?: unknown,
 ): InspectorCommandError {
   return {
     code,
