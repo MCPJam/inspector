@@ -215,7 +215,13 @@ Each eval suite has a **Default Execution Config** section that controls the mod
 Changes to the suite execution config apply to future runs only. Existing run snapshots are not affected.
 
 <Note>
-  **Personal computers are not available for eval suites.** The personal computer toggle and computer-backed tools (such as Bash) are hidden and blocked in the suite execution config editor. If the project's default host config has a computer attached, resetting a suite to that default automatically strips the computer and any computer-backed tool ids — so eval runs are never aborted by the backend's computer restriction.
+  **Personal computers are not available for eval suites.** The personal computer toggle and computer-backed tools (such as Bash) are hidden and blocked in the suite execution config editor. If the project's default host config has a computer attached, resetting a suite to that default automatically strips the computer and any computer-backed tool ids.
+</Note>
+
+<Note>
+  **A host that grants `bash` requires a pinned computer environment.** If the suite's host config includes `bash` (or another computer-backed built-in) but no computer environment is pinned, the run is refused at pre-flight rather than executing with the tool silently absent. Pin a computer environment in suite settings, or remove the computer-backed built-in from the host config.
+
+  This applies to every eval run — harness and emulated alike. A single-case run (the **Run** button on an individual case outside a suite) is always refused for computer-backed built-ins because that surface never provisions a computer; run the case as part of a suite with a pinned environment instead.
 </Note>
 
 ### How suite defaults apply to test cases
