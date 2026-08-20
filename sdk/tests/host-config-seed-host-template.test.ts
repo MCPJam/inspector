@@ -97,6 +97,7 @@ describe("seedHostTemplate", () => {
     // requireToolApproval must be false — the harness rejects approval-gated turns.
     expect(config.requireToolApproval).toBe(false);
     expect(config.progressiveToolDiscovery).toBe(false);
+    expect(config.mcpProfile?.initialize?.clientInfo?.version).toBe("2.1.237");
   });
 
   it("seeds the real Codex harness + a personal computer", () => {
@@ -160,6 +161,17 @@ describe("seedHostTemplate", () => {
       logging: {},
     });
     expect(config.hostCapabilitiesOverride).not.toHaveProperty("downloadFile");
+    expect(config.mcpProfile?.apps?.mcpAppsOverrides).toMatchObject({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+    });
+    expect(
+      config.mcpProfile?.apps?.mcpAppsOverrides?.cspResourceDomains
+    ).toBeUndefined();
+    expect(config.mcpProfile?.apps?.sandbox?.csp?.cspDirectives).toMatchObject({
+      "connect-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+      "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+      "frame-src": ["'self'", "data:", "blob:"],
+    });
   });
 
   it("labels and persists the Copilot documented runtime surface", () => {

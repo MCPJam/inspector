@@ -767,7 +767,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.235",
+            version: "2.1.237",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -858,6 +858,20 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           uiInitialize: {
             hostInfo: { name: "chatgpt", version: "0.0.1" },
           },
+          mcpAppsOverrides: {
+            // One directive, one answer: the declared wss endpoint connected
+            // while an undeclared one took a real connect-src violation
+            // (2026-08-19 probe). The fetch/xhr canary passed because it is in
+            // ChatGPT's own baseline allowlist, carried as `cspDirectives`.
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            // cspResourceDomains stays unknown: the declared resource origin
+            // is in that same baseline, so the probe cannot tell honored from
+            // ignored. Re-probe with an origin the baseline misses first.
+          },
           // Vendor compat-runtime shims. Real ChatGPT exposes the
           // OpenAI Apps SDK `window.openai` surface to widget HTML, so
           // emulating it here keeps existing Apps SDK widgets rendering
@@ -868,28 +882,22 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           compatRuntime: { openaiApps: true },
           sandbox: {
             csp: {
-              // No host-side `restrictTo` — see the Claude template for
-              // the full rationale. The host-probe resource declared the
-              // captured anthropic / openai / jsdelivr allowlist, so it is
-              // per-resource evidence rather than a global ChatGPT allowlist.
-              // The view's declaration is authoritative.
               mode: "declared",
-              // cspDirectives — verbatim from a live chatgpt response
-              // Content-Security-Policy header (captured 2026-05-18 via
-              // DevTools → Network → oaiusercontent.com response).
-              //
-              // Real ChatGPT's outer-doc CSP is strikingly minimal: only
-              // `frame-ancestors`, `frame-src`, and the CSP `sandbox`
-              // directive are emitted. There is NO `script-src`,
-              // `style-src`, `connect-src` etc. — script and style
-              // execution is effectively unconstrained at the host layer.
-              // `frame-ancestors` is dropped (controls who can embed the
-              // doc — irrelevant for widget runtime); the CSP `sandbox`
-              // directive duplicates `sandboxAttrs` below and is modeled
-              // there. That leaves just `frame-src` as the meaningful
-              // host-emitted constraint on widget behavior.
+              // ChatGPT's own baseline allowlist, merged with the widget's
+              // declared domains. The 2026-08-19 probe loaded these origins
+              // without declaring them, while undeclared frame origins were
+              // blocked. Keep this intentionally limited to what was probed.
               cspDirectives: {
-                "frame-src": ["'self'", "https:", "data:", "blob:"],
+                "connect-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                ],
+                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "frame-src": ["'self'", "data:", "blob:"],
               },
             },
             permissions: {

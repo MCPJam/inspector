@@ -146,14 +146,44 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "compatRuntime": {
           "openaiApps": true,
         },
+        "mcpAppsOverrides": {
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+        },
         "sandbox": {
           "csp": {
             "cspDirectives": {
+              "connect-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "font-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
               "frame-src": [
                 "'self'",
-                "https:",
                 "data:",
                 "blob:",
+              ],
+              "img-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "media-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "script-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "style-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
               ],
             },
             "mode": "declared",
@@ -266,14 +296,44 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "compatRuntime": {
           "openaiApps": true,
         },
+        "mcpAppsOverrides": {
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+        },
         "sandbox": {
           "csp": {
             "cspDirectives": {
+              "connect-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "font-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
               "frame-src": [
                 "'self'",
-                "https:",
                 "data:",
                 "blob:",
+              ],
+              "img-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "media-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "script-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "style-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
               ],
             },
             "mode": "declared",
@@ -346,7 +406,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.235",
+          "version": "2.1.237",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -391,7 +451,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.235",
+          "version": "2.1.237",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
