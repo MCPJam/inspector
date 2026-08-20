@@ -11,7 +11,7 @@ import {
 import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
-import type { DirectoryServer } from "@/hooks/useClaudeDirectory";
+import type { DirectoryServer } from "@/hooks/useServerDirectory";
 import type { DirectoryServerDetail } from "@/lib/claude-directory-detail";
 
 /**

@@ -226,6 +226,43 @@ describe("ui_search_registry_directory", () => {
     expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
   });
 
+  it("dispatches the source when the model picks a directory", async () => {
+    await getTool("ui_search_registry_directory").execute({
+      query: "linear",
+      source: "chatgpt-directory",
+    });
+    expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({
+      type: "searchRegistryDirectory",
+      payload: { query: "linear", source: "chatgpt-directory" },
+    });
+  });
+
+  it("omits an absent source — the user's current view is the default", async () => {
+    // A model that does not know there are two directories must not silently
+    // switch the one the person is looking at.
+    await getTool("ui_search_registry_directory").execute({ query: "linear" });
+    const [dispatched] = dispatchInspectorCommandMock.mock.calls[0];
+    expect(dispatched.payload.source).toBeUndefined();
+  });
+
+  it("refuses a non-string source instead of dispatching it", async () => {
+    const result = await getTool("ui_search_registry_directory").execute({
+      source: 7,
+    });
+    expect(result.isError).toBe(true);
+    expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("names both directories, so the model knows there is a choice", () => {
+    const schema = getTool("ui_search_registry_directory").inputSchema as {
+      properties: { source: { enum: string[] } };
+    };
+    expect(schema.properties.source.enum).toEqual([
+      "anthropic-directory",
+      "chatgpt-directory",
+    ]);
+  });
+
   it("tells the model where the results actually appear", () => {
     const description = getTool("ui_search_registry_directory").description;
     expect(description).toContain("ui_snapshot_app");

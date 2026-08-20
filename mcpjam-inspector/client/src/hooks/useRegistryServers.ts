@@ -46,7 +46,7 @@ const DEV_MOCK_REGISTRY =
 // of this change so that reverting "turn it on" never means reverting that.
 //
 // EXPORTED so the Claude-directory half of the Registry tab
-// (`useClaudeDirectory`) reads the same switch. Two constants would let the
+// (`useServerDirectory`) reads the same switch. Two constants would let the
 // screen half-light: a directory that queries while the curated catalog is
 // dark is exactly the state this flag exists to prevent.
 export const REGISTRY_FEATURE_ENABLED = true;
