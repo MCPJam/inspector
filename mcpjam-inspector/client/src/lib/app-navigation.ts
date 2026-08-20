@@ -78,6 +78,7 @@ export const routePaths = {
   skills: "/skills",
   learning: "/learning",
   conformance: "/conformance",
+  claudeReadiness: "/claude-readiness",
   compatibility: "/compatibility",
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",

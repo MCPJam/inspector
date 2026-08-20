@@ -27,6 +27,8 @@ import {
   type MCPTasksConformanceResult,
   type OAuthConformanceConfig,
   type OAuthConformanceProfile,
+  runClaudeReadiness,
+  type ClaudeReadinessResult,
 } from "@mcpjam/sdk";
 import {
   createSession,
@@ -377,4 +379,44 @@ export async function completeOAuthConformance(
     phase: "pending",
     completedSteps: session.completedSteps,
   };
+}
+
+// ── Claude directory readiness ──────────────────────────────────────────
+//
+// NOT a fifth conformance suite, and it lives here only because it needs the
+// same guarded transport. Readiness carries no conformance score, never enters
+// the pooled number, and grades against Anthropic's listing policy rather than
+// the MCP spec. Keep it out of `canRunConformance`, the score functions, and
+// anything that pools.
+
+/**
+ * Grade a connector for Claude's connector directory, in-process.
+ *
+ * The transport guard is the same one every conformance run uses, and for a
+ * sharper reason here: readiness FOLLOWS the target's own metadata — its
+ * redirect chain, the `resource_metadata` pointer in its challenge, the
+ * authorization server it names. Every URL after the first is chosen by the
+ * server being graded.
+ */
+export async function runClaudeDirectoryReadiness(input: {
+  serverUrl: string;
+  accessToken?: string;
+  customHeaders?: Record<string, string>;
+  submissionProfile?: unknown;
+  timeoutMs?: number;
+}): Promise<{ result: ClaudeReadinessResult }> {
+  const result = await runClaudeReadiness({
+    serverUrl: input.serverUrl,
+    accessToken: input.accessToken,
+    customHeaders: input.customHeaders,
+    submissionProfile: input.submissionProfile,
+    timeoutMs: input.timeoutMs,
+    fetchFn: createConformanceFetch("connector"),
+    // What THIS process can actually do, not what the product can. A local
+    // inspector has DNS and can dial a raw origin; it has no browser and no
+    // interactive authorization, and saying so is what keeps those checks
+    // reported as not-applicable rather than silently failed.
+    capabilities: ["dns", "raw-origin"],
+  });
+  return { result };
 }
