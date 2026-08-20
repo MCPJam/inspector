@@ -265,8 +265,8 @@ export interface SeedHostTemplateOptions {
    * `applyHostDefaultsToPlayground`) where flipping to MCPJam's theme on
    * every brand-pill click would be a surprise.
    *
-   * Codex ignores this — its template doesn't set `hostContext` at all
-   * (no rendering surface, so no theme to honor).
+   * Codex currently pins dark, matching the backend catalog's probed host
+   * row. Keep this option for callers that stamp other host templates.
    */
   theme?: HostThemeMode;
   /**
@@ -923,28 +923,22 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           compatRuntime: { openaiApps: true },
           sandbox: {
             csp: {
-              // No host-side `restrictTo` — see the Claude template for
-              // the full rationale. The host-probe resource declared the
-              // captured anthropic / openai / jsdelivr allowlist, so it is
-              // per-resource evidence rather than a global ChatGPT allowlist.
-              // The view's declaration is authoritative.
               mode: "declared",
-              // cspDirectives — verbatim from a live chatgpt response
-              // Content-Security-Policy header (captured 2026-05-18 via
-              // DevTools → Network → oaiusercontent.com response).
-              //
-              // Real ChatGPT's outer-doc CSP is strikingly minimal: only
-              // `frame-ancestors`, `frame-src`, and the CSP `sandbox`
-              // directive are emitted. There is NO `script-src`,
-              // `style-src`, `connect-src` etc. — script and style
-              // execution is effectively unconstrained at the host layer.
-              // `frame-ancestors` is dropped (controls who can embed the
-              // doc — irrelevant for widget runtime); the CSP `sandbox`
-              // directive duplicates `sandboxAttrs` below and is modeled
-              // there. That leaves just `frame-src` as the meaningful
-              // host-emitted constraint on widget behavior.
+              // ChatGPT's own baseline allowlist, merged with the widget's
+              // declared domains. The 2026-08-19 probe loaded these origins
+              // without declaring them, while undeclared frame origins were
+              // blocked. Keep this intentionally limited to what was probed.
               cspDirectives: {
-                "frame-src": ["'self'", "https:", "data:", "blob:"],
+                "connect-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                ],
+                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "frame-src": ["'self'", "data:", "blob:"],
               },
             },
             permissions: {
@@ -1436,8 +1430,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
     id: "codex",
     label: "Codex",
-    description:
-      "OpenAI Codex CLI. Elicitation-only client, no widget rendering.",
+    description: "OpenAI Codex host with MCP Apps support.",
     seed: () => {
       const base = emptyHostConfigInputV2({
         // Dedicated Codex skin (OpenAI Apps SDK profile + ChatGPT chat
@@ -1459,34 +1452,76 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         harness: "codex",
         computer: { kind: "personal" },
       });
-      // Codex CLI probe advertises only elicitation. It does NOT advertise
-      // the MCP UI extension (no widget rendering), so we replace the SDK
-      // default clientCapabilities entirely rather than spreading on top —
-      // a spread would leak `extensions["io.modelcontextprotocol/ui"]`
-      // back in and misrepresent Codex as a UI-capable client.
+      // Probed 2026-08-19. Codex advertises MCP Apps, and lists the legacy
+      // ChatGPT mime type alongside the spec one.
       base.clientCapabilities = {
-        elicitation: {},
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE, "text/html+skybridge"],
+          },
+        },
+        elicitation: { form: {}, url: {} },
       };
-      // Codex is a CLI: it doesn't render MCP Apps views, so no
-      // hostContext (styles/displayMode/containerDimensions are
-      // meaningless without a renderer). Leaving `hostContext` as the
-      // empty object from emptyHostConfigInputV2.
-      //
-      // Same reasoning for hostCapabilitiesOverride: there's no
-      // ui/initialize negotiation, so we don't override what the preset
-      // advertises. The preset's chatgpt advertise is irrelevant in
-      // practice because no widget will ever read it from Codex.
+      base.hostContext = {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen"],
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "chatgpt",
+        platform: "desktop",
+        deviceCapabilities: { touch: false, hover: true },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+      };
       base.mcpProfile = {
         profileVersion: 1,
         initialize: {
           supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
-          // Verbatim from a real Codex CLI probe. `title` lands in the
-          // pass-through `Record<string, unknown>` per host-config-v2
-          // (backend soft-validates name/version only).
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
             version: "0.148.0-alpha.15",
+          },
+        },
+        apps: {
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: true,
+            hostContextChanged: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            toolInfo: false,
+            downloadFile: false,
+            sandboxPermissions: false,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            resourcePrefersBorder: true,
+            toolCancelled: false,
+            resourceTeardown: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+          compatRuntime: {
+            openaiApps: true,
+            openaiAppsOverrides: {
+              requestClose: false,
+              requestModal: false,
+              uploadFile: false,
+              selectFiles: false,
+              getFileDownloadUrl: false,
+              requestCheckout: false,
+              setOpenInAppUrl: false,
+              notifyIntrinsicHeight: false,
+            },
           },
         },
       };

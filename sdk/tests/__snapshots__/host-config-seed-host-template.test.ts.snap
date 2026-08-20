@@ -156,11 +156,34 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "sandbox": {
           "csp": {
             "cspDirectives": {
+              "connect-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "font-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
               "frame-src": [
                 "'self'",
-                "https:",
                 "data:",
                 "blob:",
+              ],
+              "img-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "media-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "script-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "style-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
               ],
             },
             "mode": "declared",
@@ -283,11 +306,34 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "sandbox": {
           "csp": {
             "cspDirectives": {
+              "connect-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "font-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
               "frame-src": [
                 "'self'",
-                "https:",
                 "data:",
                 "blob:",
+              ],
+              "img-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "media-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "script-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
+              ],
+              "style-src": [
+                "https://cdn.jsdelivr.net",
+                "https://unpkg.com",
               ],
             },
             "mode": "declared",
@@ -1180,7 +1226,18 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
-      "elicitation": {},
+      "elicitation": {
+        "form": {},
+        "url": {},
+      },
+      "extensions": {
+        "io.modelcontextprotocol/ui": {
+          "mimeTypes": [
+            "text/html;profile=mcp-app",
+            "text/html+skybridge",
+          ],
+        },
+      },
     },
     "computer": {
       "kind": "personal",
@@ -1191,9 +1248,74 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "harness": "codex",
     "hostCapabilitiesOverride": undefined,
-    "hostContext": {},
+    "hostContext": {
+      "availableDisplayModes": [
+        "inline",
+        "fullscreen",
+      ],
+      "deviceCapabilities": {
+        "hover": true,
+        "touch": false,
+      },
+      "displayMode": "inline",
+      "locale": "en-US",
+      "platform": "desktop",
+      "safeAreaInsets": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0,
+      },
+      "theme": "dark",
+      "timeZone": "America/Los_Angeles",
+      "userAgent": "chatgpt",
+    },
     "hostStyle": "codex",
     "mcpProfile": {
+      "apps": {
+        "compatRuntime": {
+          "openaiApps": true,
+          "openaiAppsOverrides": {
+            "getFileDownloadUrl": false,
+            "notifyIntrinsicHeight": false,
+            "requestCheckout": false,
+            "requestClose": false,
+            "requestModal": false,
+            "selectFiles": false,
+            "setOpenInAppUrl": false,
+            "uploadFile": false,
+          },
+        },
+        "mcpAppsOverrides": {
+          "availableDisplayModes": [
+            "inline",
+            "fullscreen",
+          ],
+          "cspBaseUriDomains": true,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspFrameDomains": true,
+          "downloadFile": false,
+          "hostContextChanged": true,
+          "logging": true,
+          "message": true,
+          "openLinks": true,
+          "requestTeardown": false,
+          "resourcePrefersBorder": true,
+          "resourceTeardown": false,
+          "sandboxPermissions": false,
+          "serverResources": true,
+          "serverTools": true,
+          "toolCancelled": false,
+          "toolInfo": false,
+          "toolInputPartial": true,
+          "updateModelContext": true,
+          "widgetDisplayModeRequests": "accept",
+        },
+      },
       "initialize": {
         "clientInfo": {
           "name": "codex-mcp-client",
@@ -1222,7 +1344,18 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     "builtInToolIds": [],
     "chatUiOverride": undefined,
     "clientCapabilities": {
-      "elicitation": {},
+      "elicitation": {
+        "form": {},
+        "url": {},
+      },
+      "extensions": {
+        "io.modelcontextprotocol/ui": {
+          "mimeTypes": [
+            "text/html;profile=mcp-app",
+            "text/html+skybridge",
+          ],
+        },
+      },
     },
     "computer": {
       "kind": "personal",
@@ -1233,9 +1366,74 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
     },
     "harness": "codex",
     "hostCapabilitiesOverride": undefined,
-    "hostContext": {},
+    "hostContext": {
+      "availableDisplayModes": [
+        "inline",
+        "fullscreen",
+      ],
+      "deviceCapabilities": {
+        "hover": true,
+        "touch": false,
+      },
+      "displayMode": "inline",
+      "locale": "en-US",
+      "platform": "desktop",
+      "safeAreaInsets": {
+        "bottom": 0,
+        "left": 0,
+        "right": 0,
+        "top": 0,
+      },
+      "theme": "dark",
+      "timeZone": "America/Los_Angeles",
+      "userAgent": "chatgpt",
+    },
     "hostStyle": "codex",
     "mcpProfile": {
+      "apps": {
+        "compatRuntime": {
+          "openaiApps": true,
+          "openaiAppsOverrides": {
+            "getFileDownloadUrl": false,
+            "notifyIntrinsicHeight": false,
+            "requestCheckout": false,
+            "requestClose": false,
+            "requestModal": false,
+            "selectFiles": false,
+            "setOpenInAppUrl": false,
+            "uploadFile": false,
+          },
+        },
+        "mcpAppsOverrides": {
+          "availableDisplayModes": [
+            "inline",
+            "fullscreen",
+          ],
+          "cspBaseUriDomains": true,
+          "cspConnectDomains": {
+            "fetch": true,
+            "websocket": true,
+            "xhr": true,
+          },
+          "cspFrameDomains": true,
+          "downloadFile": false,
+          "hostContextChanged": true,
+          "logging": true,
+          "message": true,
+          "openLinks": true,
+          "requestTeardown": false,
+          "resourcePrefersBorder": true,
+          "resourceTeardown": false,
+          "sandboxPermissions": false,
+          "serverResources": true,
+          "serverTools": true,
+          "toolCancelled": false,
+          "toolInfo": false,
+          "toolInputPartial": true,
+          "updateModelContext": true,
+          "widgetDisplayModeRequests": "accept",
+        },
+      },
       "initialize": {
         "clientInfo": {
           "name": "codex-mcp-client",
