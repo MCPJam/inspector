@@ -1549,7 +1549,7 @@ No additional flags. Removes the stored MCPJam session.
 | `0` | Success / all checks passed |
 | `1` | Command ran but reported a failure |
 | `2` | Invalid arguments or configuration |
-| `3` | `tasks conformance` only: the run was incomplete — its task-dependent checks never ran, so it is neither a pass nor a spec violation |
+| `3` | `tasks conformance` and `readiness check`: the run was incomplete — its checks never ran or could not reach the target, so it is neither a pass nor a spec violation |
 | `6` | `tasks watch` only: the task needs input this run could not answer. Answer it with `tasks update`, or re-run with `--interactive` in a TTY |
 | `7` | `tasks watch` only: `--duration-ms` elapsed before the task reached a terminal status |
 | `130` | Interrupted by a signal (`tasks watch` aborted, or a second Ctrl-C during `tunnel` shutdown) |
