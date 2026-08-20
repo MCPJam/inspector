@@ -589,10 +589,20 @@ export function MCPSidebar({
 
   return (
     <>
-      {/* Production Redesign chrome (BB-127): no 1px divider between the linen
+      {/* Production Redesign chrome (BB-127): no divider between the linen
           sidebar and the linen top bar — the inset panel's rounded top edge and
-          shadow are what separate chrome from content. */}
-      <Sidebar collapsible="icon" className="border-r-transparent" {...props}>
+          shadow are what separate chrome from content.
+          Drop the width, not the color: the border sits on sidebar-container,
+          which has no fill of its own (the linen is on sidebar-inner), so a
+          transparent border still reveals a 1px strip of the page behind it.
+          The variant prefix has to match the primitive's
+          `group-data-[side=left]:border-r` or tailwind-merge keeps both and the
+          more specific variant rule wins. */}
+      <Sidebar
+        collapsible="icon"
+        className="group-data-[side=left]:border-r-0"
+        {...props}
+      >
         <SidebarHeader className="gap-1 px-2 pt-1.5 pb-2">
           <div
             className={cn(
