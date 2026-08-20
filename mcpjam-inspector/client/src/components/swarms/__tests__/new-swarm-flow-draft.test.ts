@@ -17,6 +17,7 @@ const STORAGE_KEY = "mcp-new-swarm-flow-draft";
 function draft(overrides: Partial<NewSwarmFlowDraft> = {}): NewSwarmFlowDraft {
   return {
     step: "confirm",
+    name: "Swarm · Aug 20",
     description: "Support agents answering refunds",
     targetState: {
       environmentIds: ["env-1"],
@@ -66,6 +67,27 @@ afterEach(() => {
 });
 
 describe("new swarm flow draft", () => {
+  it("resumes a draft written before the Swarm name field existed", () => {
+    // The field is required in the form but tolerated in storage: rejecting an
+    // older draft would throw away a persona slate the user already paid a
+    // model call for. The flow falls back to the suggested name.
+    const { name: _omitted, ...withoutName } = draft({ step: "confirm" });
+    sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        savedAt: Date.now(),
+        projectId: "proj-1",
+        draft: withoutName,
+      })
+    );
+
+    const restored = readNewSwarmFlowDraft("proj-1");
+    expect(restored).not.toBeNull();
+    expect(restored?.name).toBe("");
+    expect(restored?.step).toBe("confirm");
+  });
+
   it("round-trips the resumable flow for the same project", () => {
     saveNewSwarmFlowDraft("proj-1", draft());
 

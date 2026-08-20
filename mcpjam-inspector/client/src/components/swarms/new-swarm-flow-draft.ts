@@ -53,6 +53,8 @@ export type NewSwarmLaunchIdentity = {
 
 export type NewSwarmFlowDraft = {
   step: NewSwarmFlowStep;
+  /** The Describe step's Swarm name field. */
+  name: string;
   description: string;
   targetState: EnvironmentComposerState;
   resolvedEnvironmentIds: string[] | null;
@@ -204,6 +206,11 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
     return null;
   }
   if (typeof value.description !== "string") return null;
+  // Tolerated rather than required: a draft written by a build before the Swarm
+  // name field existed is still resumable, and rejecting it would throw away a
+  // generated slate the user paid a model call for. The flow falls back to the
+  // suggested name for an empty string.
+  const name = typeof value.name === "string" ? value.name : "";
   if (!isComposerState(value.targetState)) return null;
   if (
     value.resolvedEnvironmentIds !== null &&
@@ -229,6 +236,7 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
 
   return {
     step: step as NewSwarmFlowStep,
+    name,
     description: value.description,
     targetState: value.targetState,
     resolvedEnvironmentIds: value.resolvedEnvironmentIds,

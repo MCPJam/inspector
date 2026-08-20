@@ -275,25 +275,6 @@ vi.mock("@/components/swarms/journey-rubric-editor", () => ({
   ),
 }));
 
-vi.mock("@/components/mcpjam-agent/McpjamAgentComposer", () => ({
-  McpjamAgentComposer: ({
-    value,
-    onChange,
-    placeholder,
-  }: {
-    value: string;
-    onChange: (next: string) => void;
-    placeholder?: string;
-  }) => (
-    <textarea
-      aria-label="Describe swarm"
-      placeholder={placeholder}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    />
-  ),
-}));
-
 vi.mock("@/components/project-environments/environment-picker", () => ({
   EnvironmentPicker: ({
     value,
@@ -330,6 +311,20 @@ import { SwarmsTab } from "../SwarmsTab";
 import { LaunchJourneyRunError } from "@/lib/swarm-api";
 import { toast } from "@/lib/toast";
 
+/**
+ * Attach an existing persona.
+ *
+ * The list moved behind "Add existing personas" (BB-121), so the popover has to
+ * be opened first. It stays open across a multi-select, hence the guard rather
+ * than an unconditional click — a second click would close it.
+ */
+function pickExistingPersona(name: RegExp) {
+  if (!screen.queryByRole("checkbox", { name })) {
+    fireEvent.click(screen.getByTestId("new-swarm-add-existing-personas"));
+  }
+  fireEvent.click(screen.getByRole("checkbox", { name }));
+}
+
 function openDescribe() {
   // `/swarms/new` is what opens the flow — mount it the way the router does.
   render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
@@ -341,7 +336,7 @@ function submitLaunchEnabled() {
 }
 
 function fillDescribe(text = "Support agents answering refunds") {
-  fireEvent.change(screen.getByLabelText("Describe swarm"), {
+  fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
     target: { value: text },
   });
   // Auto-seed usually already picked the first named environment; only click
@@ -460,7 +455,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.getByTestId("new-swarm-create-flow")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", {
-        name: /who uses this server, and what do they try to do/i,
+        name: /create an agentic swarm/i,
       })
     ).toBeInTheDocument();
     expect(
@@ -479,7 +474,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.getByText(/describe your users to continue/i)).toBeVisible();
 
     // Targets are auto-seeded; a description is the remaining gate for generate.
-    fireEvent.change(screen.getByLabelText("Describe swarm"), {
+    fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
       target: { value: "Support agents answering refunds" },
     });
     expect(submit).not.toBeDisabled();
@@ -509,7 +504,12 @@ describe("SwarmsTab — New swarm create flow", () => {
     ];
     openDescribe();
 
-    expect(screen.getByTestId("new-swarm-source-requirement")).toBeVisible();
+    // One label covers both sources and carries the required marker, so an
+    // untouched form no longer shows a disabled Continue with nothing on
+    // screen claiming to be required.
+    expect(
+      screen.getByText(/describe your users or bring in existing personas/i)
+    ).toBeVisible();
     expect(screen.queryByText(/optional/i)).not.toBeInTheDocument();
 
     const submit = screen.getByTestId("new-swarm-continue");
@@ -594,9 +594,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(
       screen.getByText(/describe your users, or pick a persona/i)
     ).toBeVisible();
-    expect(screen.getByTestId("new-swarm-shared-setup")).toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-describe-step")).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     expect(submit).not.toBeDisabled();
     expect(submit).toHaveTextContent("Continue");
     expect(screen.getByText(/1 persona selected/i)).toBeVisible();
@@ -620,7 +620,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-running-step");
   });
 
-  it("returns to Describe when its breadcrumb is clicked from Confirm", async () => {
+  it("returns to Describe when its stepper step is clicked from Confirm", async () => {
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -628,13 +628,13 @@ describe("SwarmsTab — New swarm create flow", () => {
       { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
     ];
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
 
-    fireEvent.click(screen.getByRole("button", { name: /^describe$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^back to describe$/i }));
 
-    expect(screen.getByTestId("new-swarm-shared-setup")).toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-describe-step")).toBeInTheDocument();
     expect(
       screen.queryByTestId("new-swarm-reused-personas")
     ).not.toBeInTheDocument();
@@ -652,7 +652,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     ];
     launchJourneyRunMock.mockRejectedValue(new Error("Launch was rejected"));
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     await waitFor(() => expect(submitLaunchEnabled()).toBe(true));
@@ -664,7 +664,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^back$/i }));
 
-    expect(screen.getByTestId("new-swarm-shared-setup")).toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-describe-step")).toBeInTheDocument();
     expect(
       screen.queryByText(/no runs were launched/i)
     ).not.toBeInTheDocument();
@@ -684,7 +684,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
     ];
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
 
@@ -721,7 +721,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       },
     ];
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
@@ -740,7 +740,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     ];
     openDescribe();
     fillDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
 
     expect(screen.getByTestId("new-swarm-continue")).toHaveTextContent(
       "Continue"
@@ -786,7 +786,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     openDescribe();
     fillDescribe();
 
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
 
     await waitFor(() =>
@@ -1153,7 +1153,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
     openDescribe();
     fillDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     // Launch stays held until the reused persona's journeys have resolved —
@@ -1201,7 +1201,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       },
     ];
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     // Auto-seed has [env-1]; one click adds env-2.
     fireEvent.click(screen.getByTestId("new-swarm-environments-picker"));
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
@@ -1239,7 +1239,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       },
     ];
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     // Auto-seed already matches the journey's env-1 — no picker click needed.
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
@@ -1269,7 +1269,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       },
     ];
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     await waitFor(() =>
@@ -1433,7 +1433,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
     ];
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
 
@@ -1458,14 +1458,14 @@ describe("SwarmsTab — New swarm create flow", () => {
       },
     ];
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     expect(
       await screen.findByText(/1 persona · 1 goal · 3 new sessions/i)
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /^describe$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^back to describe$/i }));
     fireEvent.click(screen.getByRole("radio", { name: /launch gate/i }));
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
@@ -1486,7 +1486,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
     ];
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     // Deliberately no environment picker clicks.
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
@@ -1516,7 +1516,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
     ];
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     await waitFor(() =>
@@ -1543,7 +1543,7 @@ describe("SwarmsTab — New swarm create flow", () => {
       { _id: "j-existing", name: "Reconcile payouts", goal: "Reconcile" },
     ];
     openDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     await waitFor(() =>
@@ -1577,7 +1577,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
     openDescribe();
     fillDescribe();
-    fireEvent.click(screen.getByRole("checkbox", { name: /include ana/i }));
+    pickExistingPersona(/include ana/i);
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
 
@@ -1645,7 +1645,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     environments = environmentsRef.current;
     openDescribe();
 
-    fireEvent.change(screen.getByLabelText("Describe swarm"), {
+    fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
       target: { value: "Support agents answering refunds" },
     });
     // No named envs → auto-seed picks Claude; add Cursor for a two-client fan-out.
@@ -1687,7 +1687,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     environments = environmentsRef.current;
     openDescribe();
 
-    fireEvent.change(screen.getByLabelText("Describe swarm"), {
+    fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
       target: { value: "Support agents answering refunds" },
     });
     // Auto-seed already has Claude; add Cursor.
@@ -1811,7 +1811,7 @@ describe("SwarmsTab create flow — survives a remount", () => {
     expect(screen.getByText("Refund Chaser")).toBeInTheDocument();
     expect(screen.getByText("Billing Dev")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("new-swarm-shared-setup")
+      screen.queryByTestId("new-swarm-describe-step")
     ).not.toBeInTheDocument();
     // The slate is the restored one — nothing was re-generated behind the user.
     expect(generateSwarmPersonaBatchMock).toHaveBeenCalledTimes(1);
@@ -1867,7 +1867,7 @@ describe("SwarmsTab create flow — survives a remount", () => {
     expect(
       await screen.findByText(/persona generation was interrupted/i)
     ).toBeVisible();
-    expect(screen.getByLabelText("Describe swarm")).toHaveValue(
+    expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue(
       "Support agents answering refunds"
     );
   });
@@ -1879,15 +1879,15 @@ describe("SwarmsTab create flow — survives a remount", () => {
     await screen.findByTestId("new-swarm-proposed-personas");
 
     // Back to Describe, then Cancel out of the flow entirely.
-    fireEvent.click(screen.getByRole("button", { name: /^describe$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^back to describe$/i }));
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
     remount();
 
-    expect(screen.getByTestId("new-swarm-shared-setup")).toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-describe-step")).toBeInTheDocument();
     expect(
       screen.queryByTestId("new-swarm-proposed-personas")
     ).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Describe swarm")).toHaveValue("");
+    expect(screen.getByTestId("new-swarm-describe-input")).toHaveValue("");
   });
 
   it("says what stage it is in while generation runs", async () => {
@@ -1905,5 +1905,131 @@ describe("SwarmsTab create flow — survives a remount", () => {
         /writing 3 personas with up to 5 goals each/i
       )
     );
+  });
+});
+
+// BB-121: the redesigned Describe step. These cover what the redesign ADDED —
+// the stepper, the required name, the scope control's copy, and the attached-
+// persona rows — rather than restating the gating the suite already covers.
+describe("SwarmsTab — Describe step (Production Redesign)", () => {
+  it("leads with the stepper, Describe current and nothing clickable behind it", () => {
+    openDescribe();
+
+    const stepper = screen.getByTestId("new-swarm-progress");
+    expect(stepper).toHaveTextContent("Describe");
+    expect(stepper).toHaveTextContent("Confirm personas");
+    expect(stepper).toHaveTextContent("Running");
+    expect(stepper).toHaveTextContent("Findings");
+    // Done is a state of Findings, not a fifth circle.
+    expect(stepper).not.toHaveTextContent(/\bDone\b/);
+
+    const current = within(stepper)
+      .getAllByRole("listitem")
+      .filter((item) => item.getAttribute("aria-current") === "step");
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveTextContent("Describe");
+    // Step one: there is nothing completed to go back to.
+    expect(within(stepper).queryAllByRole("button")).toHaveLength(0);
+  });
+
+  it("shows the redesigned title, subtitle and back link", () => {
+    openDescribe();
+
+    expect(
+      screen.getByRole("heading", { name: /create an agentic swarm/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/set up your environment and then describe your users/i)
+    ).toBeVisible();
+
+    fireEvent.click(screen.getByTestId("new-swarm-back-to-swarms"));
+    expect(navigateMock).toHaveBeenCalledWith("/swarms");
+  });
+
+  it("prefills the Swarm name and blocks Continue when it is cleared", () => {
+    openDescribe();
+
+    const name = screen.getByTestId("new-swarm-name") as HTMLInputElement;
+    expect(name.value.length).toBeGreaterThan(0);
+
+    fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
+      target: { value: "Support agents answering refunds" },
+    });
+    expect(screen.getByTestId("new-swarm-continue")).not.toBeDisabled();
+
+    // Required, and it says so instead of just going dead.
+    fireEvent.change(name, { target: { value: "   " } });
+    expect(screen.getByTestId("new-swarm-continue")).toBeDisabled();
+    expect(screen.getByTestId("new-swarm-continue-hint")).toHaveTextContent(
+      /name this swarm to continue/i
+    );
+
+    fireEvent.change(name, { target: { value: "Billing swarm" } });
+    expect(screen.getByTestId("new-swarm-continue")).not.toBeDisabled();
+  });
+
+  it("names the swarm from the field, not from the description paragraph", async () => {
+    openDescribe();
+    fireEvent.change(screen.getByTestId("new-swarm-name"), {
+      target: { value: "Billing swarm" },
+    });
+    fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
+      target: { value: "Support agents answering refunds" },
+    });
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+
+    await vi.waitFor(() => {
+      expect(createSwarmMock).toHaveBeenCalled();
+    });
+    expect(createSwarmMock.mock.calls[0][0]).toMatchObject({
+      name: "Billing swarm",
+      description: "Support agents answering refunds",
+    });
+  });
+
+  it("labels the scope options with the sessions each one costs", () => {
+    openDescribe();
+
+    const scope = screen.getByTestId("new-swarm-push-intensity");
+    expect(scope).toHaveTextContent("Quick look");
+    expect(scope).toHaveTextContent("15 sessions");
+    expect(scope).toHaveTextContent("Standard");
+    expect(scope).toHaveTextContent("36 sessions");
+    expect(scope).toHaveTextContent("Launch gate");
+    expect(scope).toHaveTextContent("120 sessions");
+  });
+
+  it("lists attached personas as removable rows, not as a checklist", () => {
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    openDescribe();
+
+    // Nothing attached yet: the rows only exist once a persona is picked.
+    expect(
+      screen.queryByTestId("new-swarm-attached-personas")
+    ).not.toBeInTheDocument();
+
+    pickExistingPersona(/include ana/i);
+    const attached = screen.getByTestId("new-swarm-attached-personas");
+    expect(attached).toHaveTextContent("Ana");
+    expect(attached).toHaveTextContent("Ops");
+
+    fireEvent.click(screen.getByRole("button", { name: /remove ana/i }));
+    expect(
+      screen.queryByTestId("new-swarm-attached-personas")
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("new-swarm-continue")).toBeDisabled();
+  });
+
+  it("hides the persona picker entirely when the project has none", () => {
+    existingPersonas = [];
+    openDescribe();
+
+    expect(
+      screen.queryByTestId("new-swarm-add-existing-personas")
+    ).not.toBeInTheDocument();
   });
 });

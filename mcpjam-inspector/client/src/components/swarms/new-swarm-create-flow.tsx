@@ -9,28 +9,20 @@
  * Nothing is written until Create & launch. After launch, Running shows the
  * live persona × client matrix; leaving keeps runs going on Overview.
  */
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "@mcpjam/design-system/breadcrumb";
+import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import { Loader2 } from "lucide-react";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@mcpjam/design-system/popover";
+import { Textarea } from "@mcpjam/design-system/textarea";
+import { ChevronLeft, Loader2, Plus, X } from "lucide-react";
+import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { McpjamAgentComposer } from "@/components/mcpjam-agent/McpjamAgentComposer";
 import { SwarmTargetComposer } from "@/components/swarms/swarm-target-composer";
 import {
   resolveSwarmJourneyPayload,
@@ -114,12 +106,51 @@ import { environmentLabel } from "@/lib/environment-label";
 import { ErrorCard } from "@/components/ui/error-card";
 import { cn } from "@/lib/utils";
 
+/**
+ * The flow's four steps. `Done` is deliberately absent: a finished swarm is a
+ * state of Findings, not a fifth circle that can never be current.
+ */
 const CREATE_STEPS = [
-  "Describe",
-  "Confirm personas",
-  "Running",
-  "Findings",
+  { id: "describe", label: "Describe" },
+  { id: "confirm", label: "Confirm personas" },
+  { id: "running", label: "Running" },
+  { id: "findings", label: "Findings" },
 ] as const;
+
+/**
+ * The prefilled Swarm name.
+ *
+ * The frame asks for a suggestion, and a date is the only honest one at first
+ * paint: the name field sits ABOVE the description, so there is no user input
+ * to derive a title from yet. Deriving it later would fight the user — the
+ * field is editable and most people will rewrite it — so it is computed once
+ * on mount and then left alone.
+ */
+export function suggestSwarmName(now: Date): string {
+  const day = new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(now);
+  return `Swarm · ${day}`;
+}
+
+/** Backend cap on `swarms.name`. */
+const SWARM_NAME_MAX = 120;
+
+/**
+ * The required marker beside a field label.
+ *
+ * `aria-hidden` because the asterisk is a visual convention, not a label: the
+ * field's own `required`/gating is what a screen reader should hear, and
+ * "Swarm name star" is noise.
+ */
+function RequiredMark() {
+  return (
+    <span aria-hidden className="font-medium text-primary">
+      *
+    </span>
+  );
+}
 
 // Prefixed with "e.g." on purpose: the un-prefixed sentence read as filled-in
 // content, so users hit a disabled button with no idea the box was empty.
@@ -444,6 +475,15 @@ export function NewSwarmCreateFlow({
     restoredDraft?.step ?? "describe"
   );
   const [draft, setDraft] = useState(restoredDraft?.description ?? "");
+  /**
+   * Required, and prefilled — see {@link suggestSwarmName}. Computed once via
+   * the lazy initializer so it does not change under the user on re-render.
+   */
+  const [swarmName, setSwarmName] = useState(
+    // `||`, not `??`: a draft written before this field existed carries an
+    // empty string, which should still fall back to the suggestion.
+    () => restoredDraft?.name || suggestSwarmName(new Date())
+  );
   const [targetState, setTargetState] = useState<EnvironmentComposerState>(
     () => restoredDraft?.targetState ?? emptyComposerState()
   );
@@ -461,6 +501,8 @@ export function NewSwarmCreateFlow({
     ProjectEnvironmentView[]
   >(restoredDraft?.createdEnvOverlay ?? []);
   const [materializing, setMaterializing] = useState(false);
+  /** "Add existing personas" popover. */
+  const [personaPickerOpen, setPersonaPickerOpen] = useState(false);
   const [savingInsightsTuning, setSavingInsightsTuning] = useState(false);
 
   // The project's standing clustering settings. Only subscribed when the row
@@ -738,8 +780,9 @@ export function NewSwarmCreateFlow({
   const wantsGenerate = draft.trim().length > 0;
   const canGenerate =
     wantsGenerate && hasGenerateTargets && !generating && !materializing;
+  const hasSwarmName = swarmName.trim().length > 0;
   const canContinue =
-    generating || materializing || serverBlock !== null
+    generating || materializing || serverBlock !== null || !hasSwarmName
       ? false
       : wantsGenerate
       ? canGenerate
@@ -752,6 +795,7 @@ export function NewSwarmCreateFlow({
       // The notice above carries the finding and the fix; repeating it here
       // would put the same two sentences on screen twice.
       if (serverBlock) return "Fix where it runs to continue.";
+      if (!hasSwarmName) return "Name this swarm to continue.";
       if (wantsGenerate) {
         return environmentsEnabled
           ? "Pick an environment or clients to generate against."
@@ -1115,9 +1159,13 @@ export function NewSwarmCreateFlow({
         if (!persistedSwarmIdRef.current) {
           try {
             persistedSwarmIdRef.current = await onCreateSwarm({
-              // The Describe paragraph is the closest thing to a title the user
-              // gave us; trimmed to the backend's cap. Renameable afterwards.
-              name: draft.trim().slice(0, 120) || "Swarm",
+              // The Describe step's own required field, trimmed to the
+              // backend's cap. The fallbacks are belt-and-braces: Continue is
+              // gated on a non-empty name, so neither should be reachable.
+              name:
+                swarmName.trim().slice(0, SWARM_NAME_MAX) ||
+                draft.trim().slice(0, SWARM_NAME_MAX) ||
+                "Swarm",
               ...(draft.trim() ? { description: draft.trim() } : {}),
               ...(envPayload?.environmentIds.length
                 ? { environmentIds: envPayload.environmentIds }
@@ -1477,6 +1525,7 @@ export function NewSwarmCreateFlow({
     }
     saveNewSwarmFlowDraft(projectId, {
       step,
+      name: swarmName,
       description: draft,
       targetState,
       resolvedEnvironmentIds,
@@ -1509,6 +1558,7 @@ export function NewSwarmCreateFlow({
     resolvedEnvironments,
     reusedIds,
     step,
+    swarmName,
     targetState,
   ]);
 
@@ -1553,6 +1603,20 @@ export function NewSwarmCreateFlow({
     [activeStepIndex, generating, launching, materializing, step]
   );
 
+  /**
+   * Which steps the stepper offers as a way back. "Already visited" is not the
+   * same as "safe to revisit": rewinding out of Running would re-launch the
+   * runs, and Findings is not built, so only earlier authoring steps qualify.
+   */
+  const canReturnToStep = useCallback(
+    (index: number) => {
+      if (launching || generating || materializing) return false;
+      if (step === "running") return false;
+      return index < activeStepIndex;
+    },
+    [activeStepIndex, generating, launching, materializing, step]
+  );
+
   const runningFallbackColumns = useMemo(() => {
     return environmentIds.flatMap((environmentId) => {
       const env = envListForPayload.find(
@@ -1592,58 +1656,35 @@ export function NewSwarmCreateFlow({
       className="flex h-full min-h-0 flex-col"
       data-testid="new-swarm-create-flow"
     >
-      <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
-        <div className="flex min-w-0 items-center gap-4">
-          <Breadcrumb className="min-w-0 flex-1">
-            <BreadcrumbList className="min-w-0 flex-nowrap">
-              {CREATE_STEPS.map((label, index) => {
-                const isActive = index === activeStepIndex;
-                const canGoBack =
-                  index < activeStepIndex &&
-                  !launching &&
-                  !generating &&
-                  !materializing;
-                return (
-                  <Fragment key={label}>
-                    {index > 0 ? <BreadcrumbSeparator /> : null}
-                    <BreadcrumbItem>
-                      {isActive ? (
-                        <BreadcrumbPage className="font-medium">
-                          {label}
-                        </BreadcrumbPage>
-                      ) : canGoBack ? (
-                        <BreadcrumbLink asChild>
-                          <button
-                            type="button"
-                            className="inline-flex border-0 bg-transparent p-0 font-medium text-muted-foreground hover:text-foreground"
-                            onClick={() => goToStep(index)}
-                          >
-                            {label}
-                          </button>
-                        </BreadcrumbLink>
-                      ) : (
-                        <span className="text-muted-foreground/70">
-                          {label}
-                        </span>
-                      )}
-                    </BreadcrumbItem>
-                  </Fragment>
-                );
-              })}
-            </BreadcrumbList>
-          </Breadcrumb>
-          <Button
-            type="button"
-            variant="ghost"
-            size="sm"
-            className="shrink-0"
-            disabled={launching}
-            onClick={step === "running" ? leaveRunning : leaveFlow}
-          >
-            {step === "running" ? "Leave" : "Cancel"}
-          </Button>
+      {/* Describe carries its own back link + stepper inside the form column
+          (BB-121's frame), so this bar is only the chrome the not-yet-redesigned
+          steps still need. Confirm and Running each own their footer actions —
+          this keeps their progress readout and their one-click exit. */}
+      {step === "describe" ? null : (
+        <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
+          <div className="flex min-w-0 items-center gap-4">
+            <ProgressStepper
+              steps={CREATE_STEPS}
+              activeIndex={activeStepIndex}
+              onStepSelect={goToStep}
+              isStepSelectable={canReturnToStep}
+              ariaLabel="New swarm progress"
+              className="min-w-0 flex-1"
+              testId="new-swarm-progress"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="shrink-0"
+              disabled={launching}
+              onClick={step === "running" ? leaveRunning : leaveFlow}
+            >
+              {step === "running" ? "Leave" : "Cancel"}
+            </Button>
+          </div>
         </div>
-      </div>
+      )}
 
       <div
         className={cn(
@@ -1686,231 +1727,280 @@ export function NewSwarmCreateFlow({
             onEditExistingPersona={onEditExistingPersona}
           />
         ) : (
-          <div className="mx-auto flex max-w-5xl flex-col gap-8 px-6 py-8 sm:px-8">
+          <div
+            className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-8"
+            data-testid="new-swarm-describe-step"
+          >
+            <button
+              type="button"
+              onClick={leaveFlow}
+              className="flex w-fit items-center gap-1 text-sm font-medium text-primary hover:underline"
+              data-testid="new-swarm-back-to-swarms"
+            >
+              <ChevronLeft className="size-3.5" />
+              Swarms
+            </button>
+
+            <ProgressStepper
+              steps={CREATE_STEPS}
+              activeIndex={activeStepIndex}
+              onStepSelect={goToStep}
+              isStepSelectable={canReturnToStep}
+              ariaLabel="New swarm progress"
+              testId="new-swarm-progress"
+            />
+
             <div className="space-y-2">
               <h2 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">
-                Who uses this server, and what do they try to do?
+                Create an agentic swarm
               </h2>
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                Bring in personas you already have, describe new ones, or both.
-                We infer the goals, the clients and the grading — you confirm
-                all of it next.
+              <p className="text-sm font-medium leading-relaxed text-foreground">
+                Set up your environment and then describe your users.
               </p>
-              {/* The requirement belongs here, once, above the pair: neither
-                  source is optional on its own — `canContinue` needs one of
-                  them — so labelling each panel "Optional" made the disabled
-                  button read as a bug. */}
-              {personaList.length > 0 ? (
-                <p
-                  className="text-sm font-medium text-foreground"
-                  data-testid="new-swarm-source-requirement"
-                >
-                  Pick at least one: personas you already have, new ones you
-                  describe, or both.
-                </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="new-swarm-name">
+                Swarm name
+                <RequiredMark />
+              </Label>
+              <Input
+                id="new-swarm-name"
+                value={swarmName}
+                maxLength={SWARM_NAME_MAX}
+                onChange={(event) => setSwarmName(event.target.value)}
+                placeholder="Name this swarm"
+                data-testid="new-swarm-name"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <SwarmTargetComposer
+                projectId={projectId}
+                environments={envList}
+                environmentsLoading={environments === undefined}
+                value={targetState}
+                onChange={setTargetState}
+                draftNameHint={swarmName.trim() || undefined}
+                disabled={generating || materializing}
+                serverBlock={serverBlock}
+                required
+              />
+              {groundingEnvironmentId ? (
+                <ErrorBoundary fallback={null}>
+                  <EnvironmentGroundingHint
+                    projectId={projectId}
+                    environmentId={groundingEnvironmentId}
+                  />
+                </ErrorBoundary>
               ) : null}
             </div>
 
-            {/* Sources: choose existing and/or describe new. Shared setup
-                (environments + intensity) sits below so it isn't nested under
-                only one door. */}
-            <div
-              className={cn(
-                "grid gap-6",
-                personaList.length > 0 ? "md:grid-cols-2 md:gap-8" : ""
-              )}
-            >
-              {personaList.length > 0 ? (
-                <section className="flex min-h-0 min-w-0 flex-col gap-3">
-                  <div className="shrink-0 space-y-1">
-                    <Label>Choose personas</Label>
-                    <p className="text-sm leading-relaxed text-muted-foreground">
-                      They keep their own goals and environments.
-                    </p>
-                  </div>
-                  <div
-                    className="flex h-72 min-w-0 flex-col gap-1 overflow-y-auto rounded-xl border border-border/50 bg-muted/20 p-2"
-                    role="group"
-                    aria-label="Choose personas"
-                    data-testid="new-swarm-existing-personas"
-                  >
-                    {personaList.map((persona) => {
-                      const selected = reusedIds.includes(persona._id);
-                      return (
-                        <button
-                          key={persona._id}
-                          type="button"
-                          role="checkbox"
-                          aria-checked={selected}
-                          aria-label={`Include ${persona.name}`}
-                          onClick={() =>
-                            setReusedIds((ids) =>
-                              selected
-                                ? ids.filter((id) => id !== persona._id)
-                                : [...ids, persona._id]
-                            )
-                          }
-                          className={cn(
-                            "flex w-full items-center gap-2.5 rounded-lg border px-2.5 py-2 text-left text-sm transition-colors",
-                            selected
-                              ? "border-border bg-background text-foreground shadow-sm"
-                              : "border-transparent text-muted-foreground hover:bg-background/70"
-                          )}
-                        >
-                          <PersonaPixelAvatar
-                            seed={persona._id}
-                            shapeIndex={persona.avatarShape}
-                            paletteIndex={persona.avatarPalette}
-                            size="sm"
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate font-medium text-foreground">
-                              {persona.name}
-                            </span>
-                            {persona.role ? (
-                              <span className="block truncate text-xs text-muted-foreground">
-                                {persona.role}
-                              </span>
-                            ) : null}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                </section>
+            <div className="space-y-2">
+              <Label htmlFor="new-swarm-describe">
+                Describe your users or bring in existing personas. We build the
+                user goals based on your input.
+                <RequiredMark />
+              </Label>
+              <Textarea
+                id="new-swarm-describe"
+                value={draft}
+                rows={3}
+                onChange={(event) => setDraft(event.target.value)}
+                placeholder={DESCRIBE_PLACEHOLDER}
+                data-testid="new-swarm-describe-input"
+              />
+
+              {/* Attached personas, as removable rows. They keep their own
+                  goals and environments, so they read as what they are —
+                  already-authored personas — not as text to edit. */}
+              {reusedPersonas.length > 0 ? (
+                <ul
+                  className="space-y-2"
+                  aria-label="Attached personas"
+                  data-testid="new-swarm-attached-personas"
+                >
+                  {reusedPersonas.map((persona) => (
+                    <li
+                      key={persona._id}
+                      className="flex items-center gap-2.5 rounded-lg border border-border bg-muted/25 p-4"
+                    >
+                      <PersonaPixelAvatar
+                        seed={persona._id}
+                        shapeIndex={persona.avatarShape}
+                        paletteIndex={persona.avatarPalette}
+                        size="sm"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-foreground">
+                          {persona.name}
+                        </p>
+                        {persona.role ? (
+                          <p className="truncate text-xs text-muted-foreground">
+                            {persona.role}
+                          </p>
+                        ) : null}
+                      </div>
+                      <button
+                        type="button"
+                        aria-label={"Remove " + persona.name}
+                        className="shrink-0 rounded-sm text-muted-foreground transition-colors hover:text-foreground"
+                        onClick={() =>
+                          setReusedIds((ids) =>
+                            ids.filter((id) => id !== persona._id)
+                          )
+                        }
+                      >
+                        <X className="size-4" />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
               ) : null}
 
-              <section className="flex min-h-0 min-w-0 flex-col gap-3">
-                <div className="shrink-0 space-y-1">
-                  <Label>
-                    {personaList.length > 0
-                      ? "Or describe new ones"
-                      : "Describe your users"}
-                  </Label>
-                  <p className="text-sm leading-relaxed text-muted-foreground">
-                    We’ll propose personas and goals for you to confirm.
+              {personaList.length > 0 ? (
+                <Popover
+                  open={personaPickerOpen}
+                  onOpenChange={setPersonaPickerOpen}
+                >
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="w-fit"
+                      data-testid="new-swarm-add-existing-personas"
+                    >
+                      <Plus className="mr-1.5 size-4" />
+                      Add existing personas
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="start" className="w-80 p-1">
+                    <div
+                      role="group"
+                      aria-label="Choose personas"
+                      className="max-h-72 space-y-0.5 overflow-y-auto"
+                      data-testid="new-swarm-existing-personas"
+                    >
+                      {personaList.map((persona) => {
+                        const selected = reusedIds.includes(persona._id);
+                        return (
+                          <button
+                            key={persona._id}
+                            type="button"
+                            role="checkbox"
+                            aria-checked={selected}
+                            aria-label={"Include " + persona.name}
+                            onClick={() =>
+                              setReusedIds((ids) =>
+                                selected
+                                  ? ids.filter((id) => id !== persona._id)
+                                  : [...ids, persona._id]
+                              )
+                            }
+                            className={cn(
+                              "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
+                              selected
+                                ? "bg-accent text-foreground"
+                                : "text-muted-foreground hover:bg-accent/60"
+                            )}
+                          >
+                            <PersonaPixelAvatar
+                              seed={persona._id}
+                              shapeIndex={persona.avatarShape}
+                              paletteIndex={persona.avatarPalette}
+                              size="sm"
+                            />
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-medium text-foreground">
+                                {persona.name}
+                              </span>
+                              {persona.role ? (
+                                <span className="block truncate text-xs text-muted-foreground">
+                                  {persona.role}
+                                </span>
+                              ) : null}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              ) : null}
+            </div>
+
+            <div className="space-y-2">
+              <Label id="new-swarm-scope-label">
+                Select the scope of the swarm
+                <RequiredMark />
+              </Label>
+              <div
+                role="radiogroup"
+                aria-labelledby="new-swarm-scope-label"
+                data-testid="new-swarm-push-intensity"
+                className="grid grid-cols-1 gap-1 rounded-xl bg-muted/50 p-1 sm:grid-cols-3"
+              >
+                {SWARM_INTENSITY_ORDER.map((value) => {
+                  const option = SWARM_INTENSITY_PRESETS[value];
+                  const selected = pushIntensity === value;
+                  const sessions = estimateSwarmSessions(option, targetCount);
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      onClick={() => setPushIntensity(value)}
+                      className={cn(
+                        "rounded-lg px-3 py-2.5 text-left transition-colors",
+                        selected
+                          ? "bg-background shadow-sm ring-1 ring-border/60"
+                          : "hover:bg-background/60"
+                      )}
+                    >
+                      <span className="block text-sm font-semibold text-foreground">
+                        {option.label}
+                      </span>
+                      {/* Sessions only, per the frame. The count still tracks
+                          the live target selection — environments multiply, so
+                          a fixed number would understate a multi-client swarm. */}
+                      <span className="mt-0.5 block text-sm leading-relaxed text-muted-foreground">
+                        {sessions} sessions
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Not in the frame, and deliberately kept: this is the only place
+                the project's clustering default can be set, and it reaches
+                every swarm's insights — not just this one, which is why it
+                sits apart from the controls above rather than among them. */}
+            {onSetInsightsTuning ? (
+              <div
+                className="space-y-2"
+                data-testid="new-swarm-insight-grouping"
+              >
+                <Label>Insight grouping</Label>
+                <div className="flex flex-wrap items-center gap-2">
+                  <ClusterTuningControl
+                    value={insightsTuning?.tuning}
+                    onApply={handleSaveInsightsTuning}
+                    busy={savingInsightsTuning}
+                    applyLabel="Save default"
+                    // Nothing has run yet, so there are no summaries to
+                    // re-analyze from scratch.
+                    showForce={false}
+                  />
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    How sessions get grouped into themes once runs finish. Saved
+                    for this project — it applies to every swarm&rsquo;s
+                    insights, including the automatic pass after this one.
                   </p>
                 </div>
-                <McpjamAgentComposer
-                  value={draft}
-                  onChange={setDraft}
-                  onSubmit={handleContinue}
-                  placeholder={DESCRIBE_PLACEHOLDER}
-                  minRows={personaList.length > 0 ? 8 : 3}
-                  maxRows={personaList.length > 0 ? 16 : 8}
-                  className={
-                    personaList.length > 0
-                      ? "flex h-72 min-h-0 flex-col [&_textarea]:min-h-0 [&_textarea]:flex-1"
-                      : undefined
-                  }
-                />
-              </section>
-            </div>
-
-            <section
-              className="space-y-5 rounded-xl border border-border/50 bg-muted/15 p-4 sm:p-5"
-              data-testid="new-swarm-shared-setup"
-            >
-              <div className="space-y-1">
-                <p className="text-sm font-semibold text-foreground">
-                  Shared setup
-                </p>
-                <p className="text-sm leading-relaxed text-muted-foreground">
-                  Targets ground new personas. Intensity sizes how many we
-                  generate — reused personas keep their own goals.
-                </p>
               </div>
-
-              <div className="space-y-2">
-                <SwarmTargetComposer
-                  projectId={projectId}
-                  environments={envList}
-                  environmentsLoading={environments === undefined}
-                  value={targetState}
-                  onChange={setTargetState}
-                  draftNameHint={draft.trim() || undefined}
-                  disabled={generating || materializing}
-                  serverBlock={serverBlock}
-                />
-                {groundingEnvironmentId ? (
-                  <ErrorBoundary fallback={null}>
-                    <EnvironmentGroundingHint
-                      projectId={projectId}
-                      environmentId={groundingEnvironmentId}
-                    />
-                  </ErrorBoundary>
-                ) : null}
-              </div>
-
-              {/* Deliberately its own row rather than a chip in the lego strip
-                  above: every chip up there pins what THIS swarm executes,
-                  while this is a project setting whose effects reach every
-                  swarm's insights. The hint says so out loud — the placement
-                  alone would imply a narrower blast radius than it has. */}
-              {onSetInsightsTuning ? (
-                <div
-                  className="space-y-2"
-                  data-testid="new-swarm-insight-grouping"
-                >
-                  <Label>Insight grouping</Label>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <ClusterTuningControl
-                      value={insightsTuning?.tuning}
-                      onApply={handleSaveInsightsTuning}
-                      busy={savingInsightsTuning}
-                      applyLabel="Save default"
-                      // Nothing has run yet, so there are no summaries to
-                      // re-analyze from scratch.
-                      showForce={false}
-                    />
-                    <p className="text-xs leading-relaxed text-muted-foreground">
-                      How sessions get grouped into themes once runs finish.
-                      Saved for this project — it applies to every swarm&rsquo;s
-                      insights, including the automatic pass after this one.
-                    </p>
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="space-y-2">
-                <Label>How hard to push</Label>
-                <div
-                  role="radiogroup"
-                  aria-label="How hard to push"
-                  data-testid="new-swarm-push-intensity"
-                  className="grid grid-cols-1 gap-1 rounded-xl bg-muted/50 p-1 sm:grid-cols-3"
-                >
-                  {SWARM_INTENSITY_ORDER.map((value) => {
-                    const option = SWARM_INTENSITY_PRESETS[value];
-                    const selected = pushIntensity === value;
-                    const sessions = estimateSwarmSessions(option, targetCount);
-                    return (
-                      <button
-                        key={value}
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        onClick={() => setPushIntensity(value)}
-                        className={cn(
-                          "rounded-lg px-3 py-2.5 text-left transition-colors",
-                          selected
-                            ? "bg-background shadow-sm ring-1 ring-border/60"
-                            : "hover:bg-background/60"
-                        )}
-                      >
-                        <span className="block text-sm font-semibold text-foreground">
-                          {option.label}
-                        </span>
-                        <span className="mt-0.5 block text-sm leading-relaxed text-muted-foreground">
-                          {option.personaCount} personas · {sessions} sessions ·{" "}
-                          {option.eta}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </section>
+            ) : null}
 
             {/* `errorMessage` is a bare string from a dozen call sites, most of
                 which are not environment failures — `ErrorCard` takes one and
@@ -1919,7 +2009,37 @@ export function NewSwarmCreateFlow({
                 sentence readable instead of a wall of red text. */}
             {errorMessage ? <ErrorCard error={errorMessage} /> : null}
 
-            <div className="flex flex-wrap items-center gap-3 border-t border-border/40 pt-4">
+            <div className="flex flex-wrap items-center justify-end gap-3 pt-4">
+              {generating || materializing ? (
+                <p
+                  className="mr-auto text-sm leading-relaxed text-muted-foreground"
+                  data-testid="new-swarm-generate-progress"
+                >
+                  {generationProgressLine({
+                    stage: materializing ? "targets" : "personas",
+                    elapsedSeconds: generationElapsedSeconds,
+                    personaCount: preset.personaCount,
+                    journeyCount: preset.journeyCount,
+                  })}
+                </p>
+              ) : continueHint ? (
+                <p
+                  id="new-swarm-continue-hint"
+                  data-testid="new-swarm-continue-hint"
+                  // One slot, two jobs. As a summary it stays muted; as the
+                  // only on-screen account of why Continue won't move it
+                  // shouldn't read like incidental helper text.
+                  className={cn(
+                    "mr-auto text-sm leading-relaxed",
+                    canContinue ? "text-muted-foreground" : "text-foreground"
+                  )}
+                >
+                  {continueHint}
+                </p>
+              ) : null}
+              <Button type="button" variant="ghost" onClick={leaveFlow}>
+                Cancel
+              </Button>
               <Button
                 type="button"
                 disabled={!canContinue}
@@ -1943,33 +2063,6 @@ export function NewSwarmCreateFlow({
                   "Continue"
                 )}
               </Button>
-              {generating || materializing ? (
-                <p
-                  className="text-sm leading-relaxed text-muted-foreground"
-                  data-testid="new-swarm-generate-progress"
-                >
-                  {generationProgressLine({
-                    stage: materializing ? "targets" : "personas",
-                    elapsedSeconds: generationElapsedSeconds,
-                    personaCount: preset.personaCount,
-                    journeyCount: preset.journeyCount,
-                  })}
-                </p>
-              ) : continueHint ? (
-                <p
-                  id="new-swarm-continue-hint"
-                  data-testid="new-swarm-continue-hint"
-                  // One slot, two jobs. As a summary it stays muted; as the
-                  // only on-screen account of why Continue won't move it
-                  // shouldn't read like incidental helper text.
-                  className={cn(
-                    "text-sm leading-relaxed",
-                    canContinue ? "text-muted-foreground" : "text-foreground"
-                  )}
-                >
-                  {continueHint}
-                </p>
-              ) : null}
             </div>
           </div>
         )}
