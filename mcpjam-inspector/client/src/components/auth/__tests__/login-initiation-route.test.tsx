@@ -85,6 +85,11 @@ describe("LoginInitiationRoute", () => {
       expect(screen.getByTestId("login-initiation-error")).toBeInTheDocument()
     );
     expect(screen.queryByTestId("login-initiation")).not.toBeInTheDocument();
+    // Announced, not just rendered: the failure swaps in without a navigation,
+    // so assistive tech has nothing else to notice it by.
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /Couldn't start sign-in/
+    );
 
     // Retry re-initiates rather than reloading: the guard against a duplicate
     // automatic sign-in must not also block a deliberate one.

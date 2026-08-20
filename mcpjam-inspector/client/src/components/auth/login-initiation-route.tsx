@@ -74,6 +74,10 @@ export function LoginInitiationRoute() {
   if (failed) {
     return (
       <div
+        // The failure replaces the spinner in place, with no navigation to
+        // announce it — without a live region a screen reader user is left on
+        // "Signing you in…" and never learns there is a retry to press.
+        role="alert"
         className="flex h-full min-h-[60vh] flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground"
         data-testid="login-initiation-error"
       >
