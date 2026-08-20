@@ -296,7 +296,13 @@ export async function failReadinessRun(
     INGEST_TIMEOUT_MS,
   );
   try {
-    if (!response.ok) return { applied: false };
+    if (!response.ok) {
+      // The body is never read on this path, and an unread body holds its
+      // keep-alive connection until GC. Cancelling hands it back now — the
+      // same reason the heartbeat and finalize paths do it.
+      await response.body?.cancel().catch(() => undefined);
+      return { applied: false };
+    }
     const body = (await response.json().catch(() => null)) as {
       applied?: unknown;
     } | null;

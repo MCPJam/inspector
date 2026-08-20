@@ -2447,13 +2447,31 @@ export type PlatformReadinessSubmissionMode =
 export type PlatformReadinessLaneStatus = "ready" | "not-ready" | "incomplete";
 
 /**
+ * Every lane either publisher grades, as one union.
+ *
+ * Claude uses five of these and OpenAI seven; the union is their sum rather
+ * than two types, because a client renders a run whose publisher it learns at
+ * runtime. Spelled out rather than left as `string` so a `switch` over lane
+ * copy is exhaustiveness-checked — a lane added here becomes a compile error
+ * at every renderer instead of an unlabelled row in production.
+ */
+export type PlatformReadinessLane =
+  | "runtime-compatibility"
+  | "directory-policy"
+  | "optional-features"
+  | "submission-artifacts"
+  | "experience-insights"
+  | "plugin-package"
+  | "release-contract";
+
+/**
  * What one lane managed to look at, reported separately from what it found.
  *
  * A lane with zero violations and zero evaluated checks is not a pass, and
  * publishing the denominator is the only way to keep those apart.
  */
 export interface PlatformReadinessLaneCoverage {
-  lane: string;
+  lane: PlatformReadinessLane;
   status: PlatformReadinessLaneStatus;
   evaluated: number;
   notEvaluated: number;
@@ -2465,7 +2483,7 @@ export interface PlatformReadinessLaneCoverage {
 export interface PlatformReadinessStageResult {
   stage: "technical-preflight" | "submission-ready";
   status: PlatformReadinessLaneStatus;
-  lanes: string[];
+  lanes: PlatformReadinessLane[];
 }
 
 /**
@@ -2496,6 +2514,8 @@ export interface PlatformReadinessObservationState {
 export interface PlatformReadinessRun {
   id: string;
   readinessKind: PlatformReadinessKind;
+  /** Null only on rows written before the field existed. */
+  serverId: string | null;
   serverUrl: string;
   submissionMode: PlatformReadinessSubmissionMode | null;
   status: "pending" | "running" | "completed" | "failed" | "cancelled";
@@ -2524,8 +2544,18 @@ export interface PlatformReadinessRunReceipt {
   projectId: string;
   serverId: string;
   readinessKind: PlatformReadinessKind;
-  status: string;
-  deduped?: boolean;
+  /**
+   * The run's status at the moment the start returned.
+   *
+   * `pending` for a fresh start. For a DEDUPED start it is whatever the
+   * existing run is already at — which may be `completed`, because an
+   * idempotency key replayed hours later names a run that finished long ago.
+   * Reporting `pending` unconditionally would send such a caller into a poll
+   * loop for a result it could already read.
+   */
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  /** True when an idempotency key replayed an existing run. */
+  deduped: boolean;
   includeLlmObservations: boolean;
 }
 

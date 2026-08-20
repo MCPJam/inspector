@@ -41,27 +41,30 @@ import { authorizeServer, parseWithSchema } from "../web/auth.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { getInternalBackendConfig } from "../../services/internal-backend.js";
-import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
-import { logger } from "../../utils/logger.js";
-import { executeHostedReadinessRun } from "../../services/readiness/worker.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
+import {
+  HOSTED_SUBMISSION_MODES,
+  READINESS_PUBLISHERS as PUBLISHERS,
+  startHostedReadinessRun,
+  toReadinessRunDto,
+  type ReadinessPublisher as Publisher,
+} from "../shared/readiness-runs.js";
 import type { OpenAISubmissionMode } from "@mcpjam/sdk";
 
 const readiness = new Hono();
 
-/** The two words the public vocabulary uses. Never `anthropic`/`chatgpt`. */
-const PUBLISHERS = ["claude", "openai"] as const;
-type Publisher = (typeof PUBLISHERS)[number];
+/** The largest page this endpoint will ask the backend for. */
+const READINESS_LIST_MAX_LIMIT = 100;
 
 /**
- * The submission shapes a HOSTED run may grade.
+ * How long the service-token read of a report blob may take.
  *
- * The package shapes need an upload this API has no way to receive, and the
- * refusal names the CLI rather than pretending the shape does not exist. The
- * backend refuses them too; this is the layer that can explain why.
+ * Without it the fetch inherits no deadline at all: a backend that accepts the
+ * socket and then stalls holds this request open for as long as it pleases,
+ * and the caller cannot tell that from a very large report.
  */
-const HOSTED_SUBMISSION_MODES = ["mcp-only", "mcp-imported-skills"] as const;
+const REPORT_FETCH_TIMEOUT_MS = 30_000;
 
 function createConvexClient(convexAuthToken: string): ConvexHttpClient {
   const convexUrl = process.env.CONVEX_URL;
@@ -110,40 +113,19 @@ const startOpenAISchema = z.strictObject({
   submissionMode: z.enum(HOSTED_SUBMISSION_MODES),
 });
 
-/** The run row as the public API renders it. */
-function toRunDto(run: Record<string, any>) {
-  return {
-    id: run.id,
-    readinessKind: run.readinessKind,
-    serverUrl: run.serverUrl,
-    submissionMode: run.submissionMode ?? null,
-    status: run.status,
-    overallStatus: run.overallStatus ?? null,
-    lanes: run.lanes ?? [],
-    stages: run.stages ?? [],
-    authMode: run.authMode ?? null,
-    capabilities: run.capabilities ?? [],
-    attemptCount: run.attemptCount,
-    terminalReason: run.terminalReason ?? null,
-    errorMessage: run.errorMessage ?? null,
-    policySnapshotDate: run.policySnapshotDate ?? null,
-    engineVersion: run.engineVersion ?? null,
-    sdkVersion: run.sdkVersion ?? null,
-    // The AI axis, ALWAYS present and independent of `status`. A run whose
-    // lanes graded cleanly is `completed` even when the observation call was
-    // refused for credit, and a reader has to be able to see both.
-    includeLlmObservations: run.includeLlmObservations ?? false,
-    llmObservations: run.llmObservations ?? {
-      status: "not-requested",
-      reason: "not_requested",
-    },
-    hasReport: run.hasReport === true,
-    reportUrl: run.hasReport
-      ? `/api/v1/projects/${run.projectId ?? ""}/readiness-runs/${run.id}/report`
-      : null,
-    createdAt: run.createdAt,
-    updatedAt: run.updatedAt,
-  };
+/**
+ * The run row as the public API renders it.
+ *
+ * The projection itself is shared with the web surface; what `/api/v1` adds is
+ * a report LINK, because a public caller has no other way to discover the
+ * endpoint that serves the bytes.
+ */
+function toRunDto(run: Record<string, any>, projectId: string) {
+  return toReadinessRunDto(run, {
+    projectId,
+    reportUrl: (runId) =>
+      `/api/v1/projects/${projectId}/readiness-runs/${runId}/report`,
+  });
 }
 
 /**
@@ -170,88 +152,21 @@ async function startRun(
     projectId,
     serverId,
   );
-  const config = authorized.serverConfig;
-  if (config.transportType !== "http" || !config.url) {
-    // Readiness grades what a HOST would see, and every host in question
-    // reaches a server over HTTP. A stdio server is not a connector these
-    // directories can list, so this is a wrong-shape refusal rather than a gap.
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      "Directory readiness grades HTTP connectors; this server uses a different transport.",
-    );
-  }
 
-  const convex = createConvexClient(convexAuthToken);
-  let created: { runId: string; jobId: string; reused: boolean };
-  try {
-    created = await convex.mutation(
-      "claudeReadinessRuns:requestReadinessRun" as any,
-      {
-        projectId,
-        serverId,
-        serverUrl: config.url,
-        readinessKind: publisher,
-        ...(submissionMode ? { submissionMode } : {}),
-        ...(body.idempotencyKey
-          ? { idempotencyKey: body.idempotencyKey }
-          : {}),
-        includeLlmObservations: body.includeLlmObservations === true,
-        authMode: config.useOAuth ? "provided-token" : "headless",
-      },
-    );
-  } catch (error) {
-    throw translateConvexError(error, { resource: "Readiness run" });
-  }
+  const receipt = await startHostedReadinessRun({
+    convex: createConvexClient(convexAuthToken),
+    projectId,
+    serverId,
+    publisher,
+    submissionMode,
+    idempotencyKey: body.idempotencyKey,
+    includeLlmObservations: body.includeLlmObservations === true,
+    authorized,
+    translateError: (error) =>
+      translateConvexError(error, { resource: "Readiness run" }),
+  });
 
-  // A REPLAY EXECUTES NOTHING. The run it names is already in flight or
-  // already finished; starting a second execution against the same lease would
-  // dial a third party's server twice for one logical request, which is the
-  // exact thing the idempotency key was sent to prevent.
-  if (!created.reused) {
-    const headers: Record<string, string> = { ...(config.headers ?? {}) };
-    if (authorized.oauthAccessToken) {
-      headers.authorization = `Bearer ${authorized.oauthAccessToken}`;
-    }
-
-    void executeHostedReadinessRun({
-      lease: { runId: created.runId, jobId: created.jobId },
-      publisher,
-      target: config.url,
-      submissionMode,
-      headers: Object.keys(headers).length > 0 ? headers : undefined,
-      // The DNS-pinned transport: resolve once, refuse the disallowed answers,
-      // pin the surviving addresses into the socket, re-run it on every hop.
-      fetchFn: createStreamingPinnedFetch({
-        targetLabel: "MCP server",
-        chainTimeoutMs: 30_000,
-        bodyIdleTimeoutMs: 120_000,
-        maxResponseBytes: 32 * 1024 * 1024,
-      }),
-      includeLlmObservations: body.includeLlmObservations === true,
-    }).catch((error) => {
-      // `executeHostedReadinessRun` never throws — every exit lands the run
-      // somewhere terminal. This catch exists for the impossible case, so an
-      // unhandled rejection cannot take the process with it.
-      logger.error("[v1 readiness] detached run escaped its own handler", error, {
-        runId: created.runId,
-      });
-    });
-  }
-
-  return v1Resource(
-    c,
-    {
-      runId: created.runId,
-      projectId,
-      serverId,
-      readinessKind: publisher,
-      status: created.reused ? "pending" : "pending",
-      deduped: created.reused,
-      includeLlmObservations: body.includeLlmObservations === true,
-    },
-    202,
-  );
+  return v1Resource(c, receipt, 202);
 }
 
 // ── Start ───────────────────────────────────────────────────────────────
@@ -311,7 +226,7 @@ readiness.get("/projects/:projectId/readiness-runs/:runId", async (c) => {
   if (!run) {
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Readiness run not found");
   }
-  return v1Resource(c, toRunDto({ ...run, projectId }));
+  return v1Resource(c, toRunDto(run, projectId));
 });
 
 readiness.get("/projects/:projectId/readiness-runs", async (c) => {
@@ -329,11 +244,18 @@ readiness.get("/projects/:projectId/readiness-runs", async (c) => {
   const serverId = c.req.query("serverId");
   const rawLimit = c.req.query("limit");
   const limit = rawLimit === undefined ? undefined : Number(rawLimit);
-  if (limit !== undefined && (!Number.isFinite(limit) || limit < 1)) {
+  // An INTEGER and a CEILING, not merely a finite number. `Number.isFinite`
+  // admits `2.5` and `1e9` alike and forwards both to the backend, so a page
+  // cap with no upper bound is an invitation to ask for every run an
+  // organization has ever recorded in one request.
+  if (
+    limit !== undefined &&
+    (!Number.isInteger(limit) || limit < 1 || limit > READINESS_LIST_MAX_LIMIT)
+  ) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      "limit must be a positive integer",
+      `limit must be an integer between 1 and ${READINESS_LIST_MAX_LIMIT}`,
     );
   }
 
@@ -350,7 +272,7 @@ readiness.get("/projects/:projectId/readiness-runs", async (c) => {
   }
   return v1PageJson(
     c,
-    runs.map((run) => toRunDto({ ...run, projectId })),
+    runs.map((run) => toRunDto(run, projectId)),
   );
 });
 
@@ -414,22 +336,38 @@ readiness.get(
     // precisely so a node cannot use it to read blobs belonging to other
     // features.
     const { convexUrl, serviceToken } = getInternalBackendConfig();
-    const response = await fetch(
-      `${convexUrl}/internal/v1/claude-readiness/runs/report?runId=${encodeURIComponent(runId)}`,
-      { headers: { "x-inspector-service-token": serviceToken } },
-    );
-    if (response.status === 404) {
-      throw new WebRouteError(
-        404,
-        ErrorCode.NOT_FOUND,
-        "This readiness run's report is no longer stored.",
+    let response: Response;
+    try {
+      response = await fetch(
+        `${convexUrl}/internal/v1/claude-readiness/runs/report?runId=${encodeURIComponent(runId)}`,
+        {
+          headers: { "x-inspector-service-token": serviceToken },
+          signal: AbortSignal.timeout(REPORT_FETCH_TIMEOUT_MS),
+        },
       );
-    }
-    if (!response.ok) {
+    } catch {
+      // A DNS failure, a refused connection or the deadline above. Uncaught,
+      // each of these surfaces as an opaque 500 — the same shape the two
+      // branches below take care to report as a 502, because none of them is
+      // the caller's fault.
       throw new WebRouteError(
         502,
         ErrorCode.INTERNAL_ERROR,
         "The readiness report could not be read from storage.",
+      );
+    }
+    if (!response.ok) {
+      // Neither branch reads the body, and an unread body holds its keep-alive
+      // connection until GC. Cancelling hands it back now.
+      await response.body?.cancel().catch(() => undefined);
+      throw new WebRouteError(
+        response.status === 404 ? 404 : 502,
+        response.status === 404
+          ? ErrorCode.NOT_FOUND
+          : ErrorCode.INTERNAL_ERROR,
+        response.status === 404
+          ? "This readiness run's report is no longer stored."
+          : "The readiness report could not be read from storage.",
       );
     }
     // Streamed through rather than buffered: a readiness report carries
