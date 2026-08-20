@@ -368,6 +368,12 @@ When you are signed in as a project member, the Playground gives the model a set
 | `get_server_prompt` | Render a prompt from a server with the given arguments and return its messages. |
 | `list_server_resources` | List the resources a server exposes — URIs, names, and MIME types. Paginated. |
 | `read_server_resource` | Read one resource from a server by URI and return its contents. |
+| `start_claude_readiness_run` | Grade a saved server against Anthropic's connector-directory rules. Returns a receipt with a run id — poll `get_readiness_run` for the verdict. Deterministic grading is free; `includeLlmObservations` adds an optional model pass that consumes MCPJam credits. Requires approval. |
+| `start_openai_readiness_run` | Grade a saved server against OpenAI's app-directory rules. `submissionMode` is required and never inferred. Returns a receipt; poll `get_readiness_run` for the verdict. Requires approval. |
+| `get_readiness_run` | Read one readiness run: `status` (whether the run finished), `overallStatus` (the grade), and `llmObservations` (whether the optional model pass ran). A `completed` run can be `not-ready`. |
+| `list_readiness_runs` | List a project's readiness runs, newest first, optionally narrowed to one publisher or server. |
+| `cancel_readiness_run` | Stop a readiness run that is still going. The run's real terminal state arrives on a later `get_readiness_run`. |
+| `get_readiness_report` | Read a finished run's findings, ordered most-consequential-first and capped. `truncated` and `totalFindings` indicate when you are seeing a subset. |
 
 Servers are identified by name or ID as saved in the project. Stdio servers are not supported for live operations — the model will receive a clear error rather than a connection failure.
 
