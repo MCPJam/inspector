@@ -59,6 +59,7 @@ import {
   CLAUDE_READINESS_LANES,
   CLAUDE_REQUIRED_LANES,
   decideLaneStatus,
+  enforceCapabilityGate,
   rollUpLaneStatus,
   summarizeLaneCoverage,
   type ClaudeCapabilityBadge,
@@ -160,42 +161,14 @@ function summarizeLane(
 
 /**
  * Grade gathered evidence. Pure — no network, no clock, no randomness.
- */
-/**
- * Hold every finding to the capabilities its own definition declares.
  *
- * `requiresCapabilities` was documented as an invariant and enforced nowhere:
- * each check module was trusted to remember that it had asked for a browser,
- * an interactive authorization, or the intrusive opt-in, and to report
- * `not-evaluated` when the run had none. A check that forgets does not fail
- * loudly — it publishes a verdict it had no evidence for, which is the one
- * outcome this product cannot afford. Enforcing it centrally makes the
- * declaration the thing that decides, rather than a comment each author has to
- * honour.
- *
- * It only ever downgrades. A missing capability turns a verdict into
- * `not-evaluated`; nothing here can turn a `not-evaluated` into a pass.
+ * The capability gate that holds every finding to the capabilities its own
+ * definition declares now lives in `directory-readiness/types.ts`: the rule —
+ * a missing capability downgrades a verdict to `not-evaluated`, and nothing
+ * can ever upgrade one — is publisher-agnostic, and a second copy of it would
+ * be a second place for a check to start publishing verdicts it had no
+ * evidence for.
  */
-function enforceCapabilityGate(
-  findings: ClaudeReadinessFinding[],
-  capabilities: ClaudeRunnerCapability[],
-): ClaudeReadinessFinding[] {
-  const available = new Set(capabilities);
-  return findings.map((finding) => {
-    const missing = (finding.requiresCapabilities ?? []).filter(
-      (capability) => !available.has(capability),
-    );
-    if (missing.length === 0 || finding.status === "not-evaluated") {
-      return finding;
-    }
-    return {
-      ...finding,
-      status: "not-evaluated",
-      notEvaluatedReason: `this run had no ${missing.join(", ")} capability, so the check could not observe what it grades`,
-    };
-  });
-}
-
 export function gradeClaudeReadiness(
   input: ClaudeReadinessInput,
 ): ClaudeReadinessResult {

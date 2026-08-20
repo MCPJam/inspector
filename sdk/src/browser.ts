@@ -109,6 +109,131 @@ export type {
   ClaudeSubmissionProfileParse,
 } from "./claude-readiness/submission-profile.js";
 
+/**
+ * OpenAI plugin-directory readiness — the RENDERING surface only.
+ *
+ * Named rather than `export *`, and narrower than the readiness barrel, for the
+ * same two reasons as the Claude block above. A wildcard would make any symbol
+ * added to `openai-readiness/index.ts` public browser API with no change to
+ * this file and no reviewer looking at it. And a client renders lanes, stages
+ * and coverage; it does not RUN checks, so the check runners and the evidence
+ * gatherer have no business in a browser bundle.
+ *
+ * The package PRIMITIVES are the exception, and deliberately so: the inspector
+ * validates a dropped package in the page, before anything is uploaded, and
+ * every one of them is pure computation over bytes.
+ */
+export {
+  OPENAI_HEADLINE_STAGE,
+  OPENAI_READINESS_ENGINE_VERSION,
+  OPENAI_READINESS_INPUTS,
+  OPENAI_READINESS_LANES,
+  OPENAI_READINESS_STAGES,
+  OPENAI_RUNNER_CAPABILITIES,
+  OPENAI_STAGE_LANES,
+  OPENAI_SUBMISSION_MODES,
+  OPENAI_SUBMISSION_MODE_SHAPES,
+  isLaneApplicableInMode,
+  isOpenAIReadinessResult,
+  stageLanesFor,
+} from "./openai-readiness/types.js";
+export type {
+  OpenAICapabilityBadge,
+  OpenAILaneCoverage,
+  OpenAILaneStatus,
+  OpenAIReadinessFinding,
+  OpenAIReadinessLane,
+  OpenAIReadinessLaneResult,
+  OpenAIReadinessResult,
+  OpenAIReadinessRunContext,
+  OpenAIReadinessStage,
+  OpenAIReadinessStageResult,
+  OpenAIRunnerCapability,
+  OpenAISubmissionMode,
+} from "./openai-readiness/types.js";
+
+export {
+  OPENAI_POLICY_MANIFEST,
+  OPENAI_POLICY_PAGES,
+  OPENAI_POLICY_SNAPSHOT_DATE,
+  isOpenAIPolicyCorpusVerified,
+  openaiPolicySource,
+} from "./openai-readiness/manifest.js";
+export type {
+  OpenAIPolicyPage,
+  OpenAIPolicySourceEntry,
+  OpenAIPolicySourceRef,
+} from "./openai-readiness/manifest.js";
+
+export {
+  OPENAI_ARCHIVE_LIMITS,
+  OPENAI_BRAND_COLOR_CONTRAST,
+  OPENAI_FIELD_LIMITS,
+  OPENAI_HOST_PROFILE,
+  OPENAI_IMAGE_CONSTRAINTS,
+  OPENAI_LISTING_CATEGORIES,
+  OPENAI_MCP_SKILL_LIMITS,
+} from "./openai-readiness/profile.js";
+export type { OpenAIListingCategory } from "./openai-readiness/profile.js";
+
+export {
+  OPENAI_PORTAL_ERRORS,
+  OPENAI_PORTAL_ERRORS_BY_ID,
+  OPENAI_PORTAL_ERROR_CATEGORIES,
+  groupPortalIssues,
+  hasBlockingPortalIssue,
+} from "./openai-readiness/portal-errors.js";
+export type {
+  OpenAIPortalErrorCategory,
+  OpenAIPortalErrorDefinition,
+  OpenAIPortalIssue,
+} from "./openai-readiness/portal-errors.js";
+
+export {
+  OPENAI_ATTESTATIONS,
+  OPENAI_DATA_TYPES,
+  openaiSubmissionProfileSchema,
+  parseOpenAISubmissionProfile,
+  summarizeTestCases,
+} from "./openai-readiness/submission-profile.js";
+export type {
+  OpenAIAttestation,
+  OpenAIDataType,
+  OpenAISubmissionProfile,
+  OpenAISubmissionProfileParse,
+} from "./openai-readiness/submission-profile.js";
+
+export {
+  checkBrandColor,
+  parseHexColor,
+} from "./openai-readiness/package/color.js";
+export type { BrandColorCheck } from "./openai-readiness/package/color.js";
+export {
+  readImageDimensions,
+  sniffImageMimeType,
+} from "./openai-readiness/package/image-dimensions.js";
+export type {
+  ImageDimensions,
+  ImageDimensionsResult,
+} from "./openai-readiness/package/image-dimensions.js";
+export {
+  findUnsupportedCharacters,
+  hasSurroundingWhitespace,
+  isSupportedText,
+} from "./openai-readiness/package/supported-text.js";
+export type { UnsupportedCharacter } from "./openai-readiness/package/supported-text.js";
+export { parseOpenAIAgentMetadata } from "./openai-readiness/package/openai-agent-metadata.js";
+export type {
+  OpenAIAgentMetadata,
+  OpenAIAgentMetadataIssue,
+  OpenAIAgentMetadataParse,
+} from "./openai-readiness/package/openai-agent-metadata.js";
+export { readOpenAIPluginPackage } from "./openai-readiness/package/reader.js";
+export type {
+  OpenAIArchiveObservations,
+  OpenAIPluginPackageEvidence,
+} from "./openai-readiness/package/reader.js";
+
 export { redactForTelemetry } from "./telemetry-redaction.js";
 /**
  * @deprecated Renamed to `redactForTelemetry`. Kept as an alias so external

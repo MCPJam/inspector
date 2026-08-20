@@ -8,73 +8,45 @@
  * that could construct a finding by hand is a check that can quietly ship one
  * with no provenance.
  *
+ * The constructors themselves are the shared `directory-readiness` factory,
+ * bound ONCE here to Anthropic's engine version and its three type parameters.
+ * Binding at module scope rather than per call is what keeps the version out
+ * of a check author's hands: there is no argument to get wrong.
+ *
  * Pure data. No transport.
  */
 
+import { createFindingConstructors } from "../../directory-readiness/helpers.js";
+import type {
+  DirectoryCheckDefinition,
+  DirectoryCheckStamp,
+} from "../../directory-readiness/helpers.js";
 import type { ClaudePolicySourceRef } from "../manifest.js";
 import {
   CLAUDE_READINESS_ENGINE_VERSION,
-  type ClaudeEvidenceProvenance,
-  type ClaudeFindingClass,
-  type ClaudeIntrusiveness,
-  type ClaudeReadinessFinding,
   type ClaudeReadinessLane,
   type ClaudeRunnerCapability,
 } from "../types.js";
 
 /** Everything about a check that does not depend on what it observed. */
-export interface ClaudeCheckDefinition {
-  id: string;
-  title: string;
-  lane: ClaudeReadinessLane;
-  class: ClaudeFindingClass;
-  source: ClaudePolicySourceRef;
-  provenance: ClaudeEvidenceProvenance;
-  /** Defaults to `read-only`; a purely static lint should say `passive`. */
-  intrusiveness?: ClaudeIntrusiveness;
-  requiresCapabilities?: ClaudeRunnerCapability[];
-}
+export type ClaudeCheckDefinition = DirectoryCheckDefinition<
+  ClaudeReadinessLane,
+  ClaudePolicySourceRef,
+  ClaudeRunnerCapability
+>;
 
 /** What every check is handed, so none of them reads a clock of its own. */
-export interface ClaudeCheckStamp {
-  /** One timestamp for the whole run: findings from one run are one moment. */
-  evaluatedAt: string;
-}
+export type ClaudeCheckStamp = DirectoryCheckStamp;
 
-function base(
-  definition: ClaudeCheckDefinition,
-  stamp: ClaudeCheckStamp,
-): Omit<ClaudeReadinessFinding, "status"> {
-  return {
-    id: definition.id,
-    title: definition.title,
-    lane: definition.lane,
-    class: definition.class,
-    source: definition.source,
-    provenance: definition.provenance,
-    intrusiveness: definition.intrusiveness ?? "read-only",
-    requiresCapabilities: definition.requiresCapabilities,
-    evaluatedAt: stamp.evaluatedAt,
-    engineVersion: CLAUDE_READINESS_ENGINE_VERSION,
-  };
-}
+const constructors = createFindingConstructors<
+  ClaudeReadinessLane,
+  ClaudePolicySourceRef,
+  ClaudeRunnerCapability
+>({ engineVersion: CLAUDE_READINESS_ENGINE_VERSION });
 
-export function satisfied(
-  definition: ClaudeCheckDefinition,
-  stamp: ClaudeCheckStamp,
-  details?: Record<string, unknown>,
-): ClaudeReadinessFinding {
-  return { ...base(definition, stamp), status: "satisfied", details };
-}
+export const satisfied = constructors.satisfied;
 
-export function violated(
-  definition: ClaudeCheckDefinition,
-  stamp: ClaudeCheckStamp,
-  remediation: string,
-  details?: Record<string, unknown>,
-): ClaudeReadinessFinding {
-  return { ...base(definition, stamp), status: "violated", remediation, details };
-}
+export const violated = constructors.violated;
 
 /**
  * The requirement applies here but this run never exercised it.
@@ -83,19 +55,7 @@ export function violated(
  * with no stated reason is indistinguishable from a bug, and it is what makes
  * the lane's `incomplete` status actionable rather than mysterious.
  */
-export function notEvaluated(
-  definition: ClaudeCheckDefinition,
-  stamp: ClaudeCheckStamp,
-  reason: string,
-  details?: Record<string, unknown>,
-): ClaudeReadinessFinding {
-  return {
-    ...base(definition, stamp),
-    status: "not-evaluated",
-    notEvaluatedReason: reason,
-    details,
-  };
-}
+export const notEvaluated = constructors.notEvaluated;
 
 /**
  * The requirement cannot apply to THIS target — an app-only rule against a
@@ -104,32 +64,10 @@ export function notEvaluated(
  * Distinct from {@link notEvaluated} in exactly the way `not-applicable` is
  * distinct from `could-not-run` in the suites: nothing was left unverified.
  */
-export function notApplicable(
-  definition: ClaudeCheckDefinition,
-  stamp: ClaudeCheckStamp,
-  reason: string,
-): ClaudeReadinessFinding {
-  return {
-    ...base(definition, stamp),
-    status: "not-applicable",
-    notEvaluatedReason: reason,
-  };
-}
+export const notApplicable = constructors.notApplicable;
 
 /** A statement that carries no pass/fail meaning — badges, observations. */
-export function informational(
-  definition: ClaudeCheckDefinition,
-  stamp: ClaudeCheckStamp,
-  details?: Record<string, unknown>,
-  note?: string,
-): ClaudeReadinessFinding {
-  return {
-    ...base(definition, stamp),
-    status: "informational",
-    remediation: note,
-    details,
-  };
-}
+export const informational = constructors.informational;
 
 /**
  * Mark a finding as derived from an existing suite result rather than
@@ -139,12 +77,4 @@ export function informational(
  * the suite disagree about the same server, and the first question anyone asks
  * about a disagreement is which one to believe.
  */
-export function derivedFrom(
-  finding: ClaudeReadinessFinding,
-  ...sources: string[]
-): ClaudeReadinessFinding {
-  return {
-    ...finding,
-    derivedFrom: [...(finding.derivedFrom ?? []), ...sources],
-  };
-}
+export { derivedFrom } from "../../directory-readiness/helpers.js";

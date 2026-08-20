@@ -458,6 +458,33 @@ export {
   probeDynamicRegistration,
   probeRefreshRotation,
 } from "./claude-readiness/intrusive-probes.js";
+
+// OpenAI plugin-directory readiness. Same rule as the Claude barrel above:
+// pure data and data reasoning only, so importing the result model or the
+// package reader never pulls a transport in with it.
+export * from "./openai-readiness/index.js";
+// The Node XML parser for SVG dimension reads, exported ONLY here. A browser
+// has `DOMParser` natively and `readImageDimensions` finds it; `@xmldom/xmldom`
+// is banned from the browser entry's import graph, so the Node fallback lives
+// behind this entry and is passed in as `parseXml`.
+export { xmldomParseXml } from "./openai-readiness/package/svg-xml-node.js";
+
+// The OpenAI readiness modules that touch the network, exported only from the
+// Node entry. They are deliberately absent from `openai-readiness/index.ts` so
+// that importing the result model can never pull a transport in with it.
+export {
+  discoverOpenAIAuthEvidence,
+  discoverOpenAIImportedSkills,
+  fetchOpenAIDomainVerification,
+  traceOpenAIEndpoint,
+} from "./openai-readiness/discovery.js";
+export type {
+  OpenAIAuthEvidence,
+  OpenAIAuthorizationServerEvidence,
+  OpenAIDiscoveryOptions,
+  OpenAIDomainVerificationEvidence,
+  OpenAIEndpointEvidence,
+} from "./openai-readiness/discovery.js";
 export {
   buildOutcomeSummary,
   decideConformanceOutcome,
