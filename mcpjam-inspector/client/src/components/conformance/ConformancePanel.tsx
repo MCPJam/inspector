@@ -1,5 +1,7 @@
 import { useState, useMemo } from "react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
+import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import {
   Select,
   SelectContent,
@@ -43,9 +45,6 @@ import {
   type OAuthConformanceCheckId,
 } from "@mcpjam/sdk/browser";
 import { ScoreHeadline } from "./ScoreHeadline";
-import { DirectoryReadinessSection } from "./DirectoryReadinessSection";
-import { useDirectoryReadinessEnabled } from "@/hooks/useDirectoryReadinessEnabled";
-import { isHttpServer } from "@/hooks/use-conformance-run";
 import {
   useConformanceRun,
   type ProtocolVersionPin,
@@ -487,6 +486,15 @@ function SuiteSection({
 }
 
 function ConformanceContent({ server }: { server: ServerWithName }) {
+  // A SECTION flag, not a route flag: `/conformance` is already gated by
+  // `mcpjam-conformance` (nav item and the route redirect in App.tsx), so
+  // these two sections only need to decide whether to render. `=== true`
+  // rather than `!== false`, because a section that pops in after PostHog
+  // hydrates is a better failure than one that flashes for users the flag
+  // excludes.
+  const directoryReadinessEnabled =
+    useFeatureFlagEnabled("mcpjam-directory-readiness") === true;
+
   // Run state, per-suite scores and the pooled headline all live in the shared
   // hook — score.mcpjam.com runs the same four suites and must pool them the
   // same way. Rendering stays here.
@@ -513,18 +521,15 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
     [versionPin]
   );
 
-  // Readiness grades what a HOST would see, and every directory in question
-  // reaches a server over HTTP. A stdio server is not a connector either
-  // directory can list, so the sections are absent rather than present and
-  // permanently failing.
-  const readinessEnabled = useDirectoryReadinessEnabled() && isHttpServer(server);
-
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="space-y-1 border-b border-border/50 pb-4">
         <h2 className="text-lg font-semibold">Conformance</h2>
         <p className="text-sm text-muted-foreground">
           Run Protocol, Apps, Tasks, and OAuth checks against {server.name}.
+          {directoryReadinessEnabled
+            ? " Directory readiness grades it against Anthropic's and OpenAI's published rules."
+            : ""}
         </p>
       </div>
 
@@ -688,15 +693,18 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           ) : null}
         </SuiteSection>
 
-        {readinessEnabled && (
-          // DELIBERATELY OUTSIDE the pooled score and outside "Run available
-          // checks". Readiness answers "would this be listed", which has no
-          // numerator to pool, and its hosted half can spend credits — so it
-          // is started on its own, per publisher, never as a side effect of
-          // the button above.
+        {/*
+          DELIBERATELY OUTSIDE `runAll` AND THE POOLED SCORE. A hosted
+          readiness run takes minutes, so joining the shared `isRunning` would
+          hold the Run button and the protocol-version select hostage for its
+          duration — and readiness produces lanes and coverage rather than
+          passed/failed checks, so there is no number to pool. Each section
+          owns its own run control.
+        */}
+        {directoryReadinessEnabled && (
           <>
-            <DirectoryReadinessSection server={server} publisher="claude" />
-            <DirectoryReadinessSection server={server} publisher="openai" />
+            <DirectoryReadinessSection publisher="claude" server={server} />
+            <DirectoryReadinessSection publisher="openai" server={server} />
           </>
         )}
       </div>

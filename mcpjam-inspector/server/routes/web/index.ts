@@ -75,12 +75,6 @@ for (const startsWork of [
   "/conformance/apps",
   "/conformance/tasks",
   "/conformance/oauth/start",
-  // A readiness start dials a third party too — and unlike the suites above it
-  // keeps dialling after the response is sent, so the per-IP ceiling is the
-  // only thing bounding how much egress one actor can queue up. Reads and
-  // cancels are deliberately NOT charged: cancelling is how a caller STOPS
-  // traffic, and rate-limiting the brake would be backwards.
-  "/conformance/readiness/:publisher",
 ]) {
   web.use(startsWork, conformanceRunRateLimitMiddleware);
 }
