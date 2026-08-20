@@ -136,6 +136,11 @@ describe("the gatherer dials tools/list", () => {
         // A cursor that never resolves: the walk stops and says so.
         "tools/list": [{ tools: [WELL_ANNOTATED], nextCursor: "more" }],
       }),
+      // BOUNDED HERE rather than left to the SDK default. The harness replays
+      // its last queued answer forever, so a fixture that named no bound would
+      // hang until the suite timeout if that default were ever raised — and a
+      // hanging test says far less than a failing one.
+      maxListPages: 2,
     });
 
     expect(evidence.toolListingComplete).toBe(false);
@@ -165,16 +170,27 @@ describe("the gatherer dials tools/list", () => {
         throw new Error("ECONNRESET");
       }) as unknown as typeof fetch,
     });
-    expect(evidence.tools).toBeUndefined();
-    expect(
-      findingById(gradeOpenAIReadiness(evidence), "openai.tools.annotations")
-        .status,
-    ).toBe("not-evaluated");
+    // AN EMPTY LISTING MARKED INCOMPLETE, not an absent one — and the pairing
+    // is the whole point. `[]` alone would read as "this server advertises no
+    // tools", which grades `not-applicable`; `complete: false` beside it says
+    // nobody established that. The REASON survives too, which is what turns
+    // the gap into something a submitter can act on: "the server refused"
+    // sends them somewhere, "this run was given no tool listing" sends them
+    // to us.
+    expect(evidence.tools).toEqual([]);
+    expect(evidence.toolListingComplete).toBe(false);
+    expect(evidence.toolListingError).toBeDefined();
+    const finding = findingById(
+      gradeOpenAIReadiness(evidence),
+      "openai.tools.annotations",
+    );
+    expect(finding.status).toBe("not-evaluated");
+    expect(finding.notEvaluatedReason).toContain("ECONNRESET");
   });
 });
 
 describe("model observations in a graded result", () => {
-  const envelope = parseOpenAIExperienceObservations({
+  const parsedEnvelope = parseOpenAIExperienceObservations({
     readinessKind: "openai-directory-readiness",
     observationKind: "experience",
     observationSchemaVersion: "1",
@@ -190,6 +206,8 @@ describe("model observations in a graded result", () => {
       },
     ],
   });
+  if (!parsedEnvelope.ok) throw new Error("fixture should parse");
+  const envelope = parsedEnvelope.envelope;
 
   async function gradedWithObservations(
     llmObservations: OpenAIReadinessEvidence["llmObservations"],
@@ -213,10 +231,9 @@ describe("model observations in a graded result", () => {
   });
 
   it("renders an observation as a non-dispositive experience finding", async () => {
-    if (!envelope.ok) throw new Error("fixture should parse");
     const result = await gradedWithObservations({
       status: "completed",
-      envelope: envelope.envelope,
+      envelope,
     });
     const finding = findingById(result, "openai.experience.tool-overlap");
     expect(finding.lane).toBe("experience-insights");
@@ -226,11 +243,10 @@ describe("model observations in a graded result", () => {
   });
 
   it("cannot move a required lane or the headline verdict", async () => {
-    if (!envelope.ok) throw new Error("fixture should parse");
     const without = await gradedWithObservations(undefined);
     const withAi = await gradedWithObservations({
       status: "completed",
-      envelope: envelope.envelope,
+      envelope,
     });
 
     expect(withAi.status).toBe(without.status);
@@ -276,10 +292,9 @@ describe("model observations in a graded result", () => {
   });
 
   it("renders AI findings as report advisories rather than testcases", async () => {
-    if (!envelope.ok) throw new Error("fixture should parse");
     const result = await gradedWithObservations({
       status: "completed",
-      envelope: envelope.envelope,
+      envelope,
     });
     const report = toConformanceReport(result);
     const advisoryIds = (report.advisories ?? []).map(

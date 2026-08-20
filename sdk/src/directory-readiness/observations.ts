@@ -585,14 +585,23 @@ export function mapObservationsToFindings<
  * default is the one value every free run publishes and a call site that spelt
  * it `{ status: "not-requested" }` with no reason would make the reason field
  * look optional in exactly the case a reader most wants it.
+ *
+ * PARAMETERISED `<never, never>` so it satisfies every publisher's narrowed
+ * state without a cast. Both parameters appear only inside `envelope`, which
+ * this value does not carry, and `never` is assignable to any id union — so
+ * the one constant fits a Claude result and an OpenAI one alike. Typed
+ * `<string, string>` it would fit neither, and each publisher would need its
+ * own copy of a sentence that says the same thing.
  */
-export const NOT_REQUESTED_OBSERVATIONS: DirectoryObservationState =
-  Object.freeze({
-    status: "not-requested",
-    reason: "not_requested",
-    detail:
-      "this run did not request model-backed observations, so nothing was charged",
-  });
+export const NOT_REQUESTED_OBSERVATIONS: DirectoryObservationState<
+  never,
+  never
+> = Object.freeze({
+  status: "not-requested",
+  reason: "not_requested",
+  detail:
+    "this run did not request model-backed observations, so nothing was charged",
+});
 
 /**
  * Build the state for a failure, with the reason a surface branches on.

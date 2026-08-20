@@ -36,6 +36,14 @@ import type {
 } from "../directory-readiness/types.js";
 
 import type { DirectoryObservationState } from "../directory-readiness/observations.js";
+// TYPE-ONLY: `observations.ts` imports this module, so a value import would be
+// a cycle. The narrowing survives compilation and the cycle does not exist at
+// runtime — without it the public result widens both parameters to `string`
+// and a consumer cannot switch exhaustively over an observation id.
+import type {
+  OpenAIObservationId,
+  OpenAIObservationKind,
+} from "./observations.js";
 
 import type { OpenAIPolicySourceRef } from "./manifest.js";
 
@@ -364,7 +372,10 @@ export interface OpenAIReadinessResult {
    * gathered before this field existed still parses; the grader always fills
    * it, with `not-requested` when nobody asked.
    */
-  llmObservations?: DirectoryObservationState;
+  llmObservations?: DirectoryObservationState<
+    OpenAIObservationKind,
+    OpenAIObservationId
+  >;
   /** Snapshot date of the policy corpus this run graded against (ISO date). */
   policySnapshotDate: string;
   engineVersion: string;

@@ -43,6 +43,17 @@ export interface DirectoryDiscoveryOptions {
   maxRedirects?: number;
   /** Headers the target needs, e.g. a static credential under test. */
   headers?: Record<string, string>;
+  /**
+   * The caller's cancellation, composed with each request's own timeout.
+   *
+   * WITHOUT THIS, cancelling a run stops the NEXT request and not the one in
+   * flight — and a readiness run's requests are seconds long against somebody
+   * else's server, which is precisely the traffic a cancellation is meant to
+   * stop. A hosted run learns its lease is gone on a heartbeat and has to be
+   * able to abort what it is already doing, not merely decline to start
+   * another.
+   */
+  signal?: AbortSignal;
 }
 
 export const DIRECTORY_DISCOVERY_DEFAULTS = {
@@ -165,6 +176,29 @@ export async function readSseJsonRpc(
   }
 }
 
+/**
+ * Abort a per-request controller when the caller's signal fires.
+ *
+ * `AbortSignal.any` would be shorter and is deliberately not used: this module
+ * runs in the browser too, and the helper predates that API's availability in
+ * every runtime this ships to. The returned detach is not optional — a
+ * long-lived caller signal accumulates one listener per request without it,
+ * and a readiness run makes dozens.
+ */
+function linkAbortSignal(
+  signal: AbortSignal | undefined,
+  controller: AbortController,
+): () => void {
+  if (!signal) return () => undefined;
+  if (signal.aborted) {
+    controller.abort(signal.reason);
+    return () => undefined;
+  }
+  const onAbort = () => controller.abort(signal.reason);
+  signal.addEventListener("abort", onAbort, { once: true });
+  return () => signal.removeEventListener("abort", onAbort);
+}
+
 export interface FetchedDiscoveryJson {
   status: number;
   headers: Headers;
@@ -183,6 +217,7 @@ export async function fetchDiscoveryJson(
     () => controller.abort(new Error("readiness discovery timed out")),
     options.timeoutMs ?? DIRECTORY_DISCOVERY_DEFAULTS.timeoutMs,
   );
+  const detachCaller = linkAbortSignal(options.signal, controller);
   try {
     const response = await options.fetchFn(url, {
       ...init,
@@ -252,6 +287,7 @@ export async function fetchDiscoveryJson(
     };
   } finally {
     clearTimeout(timer);
+    detachCaller();
   }
 }
 
@@ -288,6 +324,7 @@ export async function traceRedirects(
       () => controller.abort(new Error("readiness redirect trace timed out")),
       options.timeoutMs ?? DIRECTORY_DISCOVERY_DEFAULTS.timeoutMs,
     );
+    const detachCaller = linkAbortSignal(options.signal, controller);
     let response: Response;
     try {
       response = await options.fetchFn(current, {
@@ -303,6 +340,7 @@ export async function traceRedirects(
       return { enteredUrl: options.enteredUrl, redirectChain: chain };
     } finally {
       clearTimeout(timer);
+      detachCaller();
     }
 
     const location = response.headers.get("location") ?? undefined;

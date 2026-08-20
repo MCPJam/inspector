@@ -128,10 +128,13 @@ describe("observation envelope validation", () => {
   });
 
   it("refuses an unbounded observation list rather than truncating it", () => {
+    // Ids ALTERNATE so only the cap can refuse this. A list of identical ids
+    // would also be full of duplicates, and the assertion would then depend on
+    // the parser checking length before it walks the entries.
     const many = Array.from(
       { length: DIRECTORY_OBSERVATION_LIMITS.maxObservations + 1 },
-      () => ({
-        id: "demo.copy",
+      (_, index) => ({
+        id: index % 2 === 0 ? "demo.copy" : "demo.overlap",
         summary: "x",
         confidence: "low",
         evidenceRefs: [],
@@ -205,6 +208,95 @@ describe("observation envelope validation", () => {
       SCHEMA,
     );
     expect(parsed.ok).toBe(false);
+  });
+
+  it("refuses an observationKind the schema does not publish", () => {
+    const parsed = parseDirectoryObservationEnvelope(
+      envelope({ observationKind: "intrusive" }),
+      SCHEMA,
+    );
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.detail).toContain("observationKind");
+  });
+
+  it.each([
+    ["absent", undefined],
+    ["not a timestamp", "yesterday"],
+    ["not a string", 1_700_000_000],
+  ])("refuses an observedAt that is %s", (_label, observedAt) => {
+    // A broker emitting a malformed timestamp is ordinary, and the refusal is
+    // what keeps an unstamped envelope out of a graded result: without it,
+    // nothing later can say WHEN a model said this.
+    const parsed = parseDirectoryObservationEnvelope(
+      envelope({ observedAt }),
+      SCHEMA,
+    );
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.detail).toContain("observedAt");
+  });
+
+  it.each([
+    ["promptVersion", DIRECTORY_OBSERVATION_LIMITS.maxVersionChars],
+    ["modelId", DIRECTORY_OBSERVATION_LIMITS.maxModelIdChars],
+  ])("refuses a %s past its cap", (field, cap) => {
+    const parsed = parseDirectoryObservationEnvelope(
+      envelope({ [field]: "x".repeat(cap + 1) }),
+      SCHEMA,
+    );
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.detail).toContain(field);
+  });
+
+  it.each([
+    ["not an array", "listing.description"],
+    [
+      "past the entry cap",
+      Array.from(
+        { length: DIRECTORY_OBSERVATION_LIMITS.maxEvidenceRefs + 1 },
+        () => "ref",
+      ),
+    ],
+    [
+      "carrying an oversized entry",
+      ["x".repeat(DIRECTORY_OBSERVATION_LIMITS.maxEvidenceRefChars + 1)],
+    ],
+  ])("refuses evidenceRefs %s", (_label, evidenceRefs) => {
+    const parsed = parseDirectoryObservationEnvelope(
+      envelope({
+        observations: [
+          {
+            id: "demo.copy",
+            summary: "a",
+            confidence: "low",
+            evidenceRefs,
+          },
+        ],
+      }),
+      SCHEMA,
+    );
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.detail).toContain("evidenceRefs");
+  });
+
+  it("accepts an envelope that omits evidenceRefs entirely", () => {
+    // Absent is not the same as malformed: a model with nothing to cite is a
+    // legitimate answer, and refusing it would lose the observation over a
+    // field that carries no verdict.
+    const parsed = parseDirectoryObservationEnvelope(
+      envelope({
+        observations: [
+          { id: "demo.copy", summary: "a", confidence: "low" },
+        ],
+      }),
+      SCHEMA,
+    );
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.envelope.observations[0]!.evidenceRefs).toEqual([]);
   });
 
   it("survives a JSON round trip unchanged", () => {

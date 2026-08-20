@@ -216,11 +216,19 @@ export function runOpenAIAnnotationChecks(
   listing?: OpenAIToolListingCompleteness,
 ): OpenAIReadinessFinding[] {
   if (!tools) {
+    // THE DIAL'S OWN REASON, when there is one. A `tools/list` that could not
+    // be reached and a caller who simply supplied nothing produce the same
+    // absent listing, and only the first has an explanation a submitter can
+    // act on — "the server refused the request" sends them somewhere, "this
+    // run was given no tool listing" sends them to us.
+    const reason = listing?.error
+      ? `${listing.error}, so no tool listing was available to grade`
+      : "this run was given no tool listing";
     return ALL.map((definition) =>
       notEvaluated(
         definition,
         stamp,
-        "this run was given no tool listing",
+        reason,
         missingInput(OPENAI_READINESS_INPUTS.toolListing),
       ),
     );

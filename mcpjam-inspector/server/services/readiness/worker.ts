@@ -133,7 +133,16 @@ export async function executeHostedReadinessRun(
   const { lease } = options;
   const controller = new AbortController();
 
+  // TRACKED SEPARATELY FROM THE ABORT ITSELF. The runner reports every abort
+  // as `ReadinessRunCancelledError` — it has no way to inspect a reason — and
+  // the catch below treats that as "the lease moved on" and writes nothing.
+  // For a genuine cancellation that is right; for a deadline it would strand
+  // the row `running` until the recovery cron reclaimed a ten-minute
+  // concurrency slot spent on nothing, which is the outcome this function's
+  // docblock promises to avoid.
+  let deadlineExpired = false;
   const deadline = setTimeout(() => {
+    deadlineExpired = true;
     controller.abort(new Error("The readiness run exceeded its deadline."));
   }, RUN_DEADLINE_MS);
 
@@ -171,6 +180,17 @@ export async function executeHostedReadinessRun(
       result,
     );
   } catch (error) {
+    if (deadlineExpired) {
+      // A run that ran out of time is a FAILED run, and saying so is the whole
+      // point: the reason is what tells a reader why they have no report.
+      await failReadinessRun(
+        lease,
+        "deadline_exceeded",
+        "The readiness run exceeded its deadline.",
+      ).catch(() => undefined);
+      return;
+    }
+
     if (
       error instanceof ReadinessRunCancelledError ||
       error instanceof ReadinessLeaseLostError

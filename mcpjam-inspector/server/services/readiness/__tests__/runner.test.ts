@@ -87,7 +87,10 @@ function envelopeFor(publisher: "claude" | "openai") {
     observationKind: "experience",
     observationSchemaVersion: "1",
     promptVersion: "1",
-    modelId: "openai/gpt-5.4-mini",
+    modelId:
+      publisher === "claude"
+        ? "anthropic/claude-sonnet-4"
+        : "openai/gpt-5.4-mini",
     observedAt: "2026-08-20T00:00:00.000Z",
     observations: [
       {
@@ -156,9 +159,30 @@ describe("what the broker's answers become", () => {
   });
 
   it("turns a thrown broker call into a gap rather than a failed run", async () => {
+    const clean = await runDirectoryReadiness({
+      publisher: "claude",
+      target: TARGET,
+      fetchFn: wireFetch(HEALTHY),
+    });
     const { result } = await runWith(new Error("ECONNRESET"));
     expect(result.llmObservations?.status).toBe("provider-failed");
-    expect(result.status).toBeDefined();
+    // Compared against a run that never asked, because "a gap rather than a
+    // failed run" is a claim about the VERDICT and `toBeDefined` cannot fail.
+    expect(result.status).toBe(clean.result.status);
+  });
+
+  it("carries a RETURNED provider failure through as a gap", async () => {
+    // The shape the client actually produces most often: an unreachable
+    // broker, a refused request and an unreadable body all come back as a
+    // value rather than a throw.
+    const { result } = await runWith({
+      status: "provider-failed",
+      reason: "provider_error",
+      detail: "the observation broker returned an unreadable body",
+    });
+    expect(result.llmObservations?.status).toBe("provider-failed");
+    expect(result.llmObservations?.reason).toBe("provider_error");
+    expect(result.findings.some((f) => f.provenance === "llm")).toBe(false);
   });
 
   it("re-validates the envelope against the SDK's own catalogue", async () => {

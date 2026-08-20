@@ -35,22 +35,46 @@ export { ReadinessLeaseLostError };
 const READINESS_PATH = "/internal/v1/claude-readiness/runs";
 const OBSERVATIONS_PATH = "/internal/v1/claude-readiness/observations";
 
+/**
+ * The statuses this build understands, as a runtime list.
+ *
+ * A closed check rather than `typeof === "string"`, because the value lands on
+ * the run row and a surface branches on it.
+ */
+const BROKER_STATUSES: ObservationBrokerAnswer["status"][] = [
+  "completed",
+  "billing-blocked",
+  "provider-failed",
+  "invalid-output",
+];
+
 /** Per-call budget. Generous for the report, tight for the heartbeat. */
 const HEARTBEAT_TIMEOUT_MS = 10_000;
 const INGEST_TIMEOUT_MS = 60_000;
 /** The broker calls a provider, so its ceiling is the provider's plus a margin. */
 const OBSERVATION_TIMEOUT_MS = 90_000;
 
+/**
+ * One service-token POST, with a deadline that outlives the headers.
+ *
+ * The caller gets back a `release` it must call once the BODY is consumed.
+ * Clearing the timer in a `finally` around `fetch` alone would end the
+ * deadline the moment the response headers arrived — and a backend that
+ * answers and then stalls mid-body would leave the caller's `response.json()`
+ * with no bound at all, quietly turning the heartbeat's ten-second budget into
+ * an unbounded wait.
+ */
 async function postInternal(
   path: string,
   body: unknown,
   timeoutMs: number,
-): Promise<Response> {
+): Promise<{ response: Response; release: () => void }> {
   const { convexUrl, serviceToken } = getInternalBackendConfig();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const release = () => clearTimeout(timer);
   try {
-    return await fetch(`${convexUrl}${path}`, {
+    const response = await fetch(`${convexUrl}${path}`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -59,8 +83,10 @@ async function postInternal(
       body: JSON.stringify(body),
       signal: controller.signal,
     });
-  } finally {
-    clearTimeout(timer);
+    return { response, release };
+  } catch (error) {
+    release();
+    throw error;
   }
 }
 
@@ -85,16 +111,20 @@ export async function heartbeatReadinessRun(
   lease: ReadinessLease,
 ): Promise<{ alive: boolean }> {
   try {
-    const response = await postInternal(
+    const { response, release } = await postInternal(
       `${READINESS_PATH}/heartbeat`,
       lease,
       HEARTBEAT_TIMEOUT_MS,
     );
-    if (!response.ok) return { alive: true };
-    const body = (await response.json().catch(() => null)) as {
-      alive?: unknown;
-    } | null;
-    return { alive: body?.alive !== false };
+    try {
+      if (!response.ok) return { alive: true };
+      const body = (await response.json().catch(() => null)) as {
+        alive?: unknown;
+      } | null;
+      return { alive: body?.alive !== false };
+    } finally {
+      release();
+    }
   } catch {
     return { alive: true };
   }
@@ -116,9 +146,9 @@ export async function requestManagedObservations(
   lease: ReadinessLease,
   evidence: string,
 ): Promise<ObservationBrokerAnswer> {
-  let response: Response;
+  let posted: { response: Response; release: () => void };
   try {
-    response = await postInternal(
+    posted = await postInternal(
       OBSERVATIONS_PATH,
       { ...lease, observationKind: "experience", evidence },
       OBSERVATION_TIMEOUT_MS,
@@ -134,36 +164,49 @@ export async function requestManagedObservations(
     };
   }
 
-  if (response.status === 409) throw new ReadinessLeaseLostError();
-  if (!response.ok) {
-    const body = (await response.json().catch(() => null)) as {
-      error?: unknown;
-    } | null;
-    const detail =
-      typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
-    return {
-      status: "provider-failed",
-      reason: "provider_error",
-      detail: `the observation broker refused the request: ${detail}`,
-    };
-  }
+  const { response, release } = posted;
+  try {
+    if (response.status === 409) throw new ReadinessLeaseLostError();
+    if (!response.ok) {
+      const body = (await response.json().catch(() => null)) as {
+        error?: unknown;
+      } | null;
+      const detail =
+        typeof body?.error === "string"
+          ? body.error
+          : `HTTP ${response.status}`;
+      return {
+        status: "provider-failed",
+        reason: "provider_error",
+        detail: `the observation broker refused the request: ${detail}`,
+      };
+    }
 
-  const body = (await response.json().catch(() => null)) as
-    | (ObservationBrokerAnswer & { ok?: boolean })
-    | null;
-  if (!body || typeof body.status !== "string") {
+    const body = (await response.json().catch(() => null)) as
+      | (ObservationBrokerAnswer & { ok?: boolean })
+      | null;
+    // CONSTRAINED TO THE FOUR STATUSES THIS BUILD KNOWS, not merely to
+    // "a string". The value is copied onto the run row as
+    // `llmObservationStatus`, so a backend deployed ahead of this build could
+    // otherwise persist a status the SDK never defined — the exact drift the
+    // envelope re-validation exists to catch, arriving through the one field
+    // that was not being checked.
+    if (!body || !BROKER_STATUSES.includes(body.status as never)) {
+      return {
+        status: "provider-failed",
+        reason: "provider_error",
+        detail: "the observation broker returned an unreadable body",
+      };
+    }
     return {
-      status: "provider-failed",
-      reason: "provider_error",
-      detail: "the observation broker returned an unreadable body",
+      status: body.status,
+      reason: body.reason,
+      detail: body.detail,
+      envelope: body.envelope,
     };
+  } finally {
+    release();
   }
-  return {
-    status: body.status,
-    reason: body.reason,
-    detail: body.detail,
-    envelope: body.envelope,
-  };
 }
 
 /** The small, indexed summary the run row carries. The report is opaque. */
@@ -205,31 +248,35 @@ export async function finalizeReadinessRun(
   summary: ReadinessFinalizeSummary,
   report: unknown,
 ): Promise<{ applied: boolean }> {
-  const response = await postInternal(
+  const { response, release } = await postInternal(
     READINESS_PATH,
     { ...lease, ...summary, report },
     INGEST_TIMEOUT_MS,
   );
-  if (response.status === 413) {
-    // A report over the ingestion cap is a FAILED run rather than a lost one:
-    // recording the reason is what tells a reader why they have no report,
-    // where silence reads as a node that vanished.
-    await failReadinessRun(
-      lease,
-      "report_too_large",
-      "The readiness report exceeded the ingestion size limit.",
-    ).catch(() => undefined);
-    return { applied: false };
-  }
-  if (!response.ok) {
-    if (await isEntityNotFound(response, "not_found"))
+  try {
+    if (response.status === 413) {
+      // A report over the ingestion cap is a FAILED run rather than a lost one:
+      // recording the reason is what tells a reader why they have no report,
+      // where silence reads as a node that vanished.
+      await failReadinessRun(
+        lease,
+        "report_too_large",
+        "The readiness report exceeded the ingestion size limit.",
+      ).catch(() => undefined);
       return { applied: false };
-    throw new Error(`Readiness finalize failed (${response.status})`);
+    }
+    if (!response.ok) {
+      if (await isEntityNotFound(response, "not_found"))
+        return { applied: false };
+      throw new Error(`Readiness finalize failed (${response.status})`);
+    }
+    const body = (await response.json().catch(() => null)) as {
+      applied?: unknown;
+    } | null;
+    return { applied: body?.applied === true };
+  } finally {
+    release();
   }
-  const body = (await response.json().catch(() => null)) as {
-    applied?: unknown;
-  } | null;
-  return { applied: body?.applied === true };
 }
 
 export async function failReadinessRun(
@@ -237,14 +284,18 @@ export async function failReadinessRun(
   terminalReason: string,
   errorMessage?: string,
 ): Promise<{ applied: boolean }> {
-  const response = await postInternal(
+  const { response, release } = await postInternal(
     READINESS_PATH,
     { ...lease, outcome: "failed", terminalReason, errorMessage },
     INGEST_TIMEOUT_MS,
   );
-  if (!response.ok) return { applied: false };
-  const body = (await response.json().catch(() => null)) as {
-    applied?: unknown;
-  } | null;
-  return { applied: body?.applied === true };
+  try {
+    if (!response.ok) return { applied: false };
+    const body = (await response.json().catch(() => null)) as {
+      applied?: unknown;
+    } | null;
+    return { applied: body?.applied === true };
+  } finally {
+    release();
+  }
 }

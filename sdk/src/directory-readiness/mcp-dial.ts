@@ -324,7 +324,7 @@ async function walkListing<Entry>(
       // -32601 is the server saying "there is nothing here", which is an answer;
       // treating it as unreachable would report a resource-less server as one
       // nobody could reach.
-      unsupported = rpcError.code === -32601 || rpcError.code === -32_601;
+      unsupported = rpcError.code === -32601;
       error = asString(rpcError.message) ?? `${method} returned an error`;
       break;
     }
@@ -446,8 +446,9 @@ export interface DirectoryAppResourceEvidence {
 /**
  * The `_meta` keys a tool uses to point at its UI template.
  *
- * Three spellings because three ecosystems shipped: OpenAI's `openai/outputTemplate`,
- * the MCP-Apps extension's `mcp/ui`, and the older bare `outputTemplate`. Reading
+ * Four spellings because four conventions shipped: OpenAI's
+ * `openai/outputTemplate`, this product's own `mcpjam/outputTemplate`, the
+ * MCP-Apps extension's `mcp/ui`, and the older bare `outputTemplate`. Reading
  * whichever is present costs nothing and insisting on one would report a
  * working app as having no template at all.
  */
@@ -522,6 +523,20 @@ export interface DirectoryDialEvidence {
 export interface DirectoryDialRequest extends DirectoryDialOptions {
   /** The publisher's app template MIME profile. Omit to skip resources. */
   appHtmlMime?: string;
+  /**
+   * A tool listing the caller already holds.
+   *
+   * Supplying it SKIPS `tools/list` — and the skip is the point, not an
+   * optimisation. A caller that already has an attributable listing and wants
+   * only the app resources would otherwise make the target answer `tools/list`
+   * again for an answer it is about to discard, and two listings of one server
+   * can disagree.
+   *
+   * The list is still used, for the `referencedByTools` map: which tools point
+   * at which template is a fact about the pair, so it cannot be derived from
+   * the resources alone.
+   */
+  tools?: readonly DirectoryToolEvidence[];
 }
 
 /**
@@ -538,14 +553,32 @@ export async function dialMcpServer(
   request: DirectoryDialRequest,
 ): Promise<DirectoryDialEvidence> {
   const initialize = await dialInitialize(request);
-  if (!initialize.ok) return { initialize };
+  if (!initialize.ok) {
+    // THE LISTING CARRIES THE REASON, even though no listing request was made.
+    // A caller reading `tools` sees `undefined` either way — a server that
+    // refused `initialize` and a caller that supplied nothing look identical —
+    // and only one of them has an explanation a submitter can act on. Reported
+    // as `unreachable` when nothing answered and as an error otherwise, which
+    // is the same distinction `dialInitialize` already drew.
+    const failed: DirectoryListingEvidence<DirectoryToolEvidence> = {
+      entries: [],
+      pagesWalked: 0,
+      unreachable: initialize.unreachable,
+      error: initialize.error,
+      complete: false,
+    };
+    return { initialize, tools: failed };
+  }
 
-  const tools = await dialToolListing(request, initialize.sessionId);
+  const tools =
+    request.tools === undefined
+      ? await dialToolListing(request, initialize.sessionId)
+      : undefined;
   const appResources = request.appHtmlMime
     ? await dialAppResources(
         request,
         request.appHtmlMime,
-        tools.entries,
+        request.tools ?? tools?.entries ?? [],
         initialize.sessionId,
       )
     : undefined;

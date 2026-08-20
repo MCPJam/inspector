@@ -62,6 +62,10 @@ function wireFetch(rpc: Record<string, unknown[]>): typeof fetch {
         error: { code: -32601, message: "unknown method" },
       });
     }
+    // CLAMPED, deliberately: a method called more times than its queue is long
+    // keeps receiving the last answer. Two cases below depend on that replay —
+    // the pagination walk and the resource walk both need a cursor that never
+    // resolves.
     const index = Math.min(cursors[rpcMethod] ?? 0, queue.length - 1);
     cursors[rpcMethod] = (cursors[rpcMethod] ?? 0) + 1;
     return jsonResponse({ jsonrpc: "2.0", id: body.id, result: queue[index] });
@@ -136,6 +140,9 @@ describe("gatherClaudeReadinessEvidence", () => {
         "tools/list": [{ tools: [WIDGET_TOOL], nextCursor: "more" }],
         "resources/list": [{ resources: [] }],
       }),
+      // Bounded here rather than left to the SDK default — see the clamp note
+      // in `wireFetch`: this fixture's cursor never resolves.
+      maxListPages: 2,
       now: () => new Date("2026-08-20T00:00:00.000Z"),
     });
 
@@ -166,6 +173,7 @@ describe("gatherClaudeReadinessEvidence", () => {
           },
         ],
       }),
+      maxListPages: 2,
       now: () => new Date("2026-08-20T00:00:00.000Z"),
     });
     expect(evidence.apps.appsSuiteRan).toBe(false);

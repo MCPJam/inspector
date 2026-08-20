@@ -322,6 +322,55 @@ function describeStage(
 }
 
 /**
+ * `_meta.ui.domain`, read off a dialled resource.
+ *
+ * A tiny reader rather than a shared one because the two publishers want
+ * different things from the same `_meta`: OpenAI requires this field present
+ * and unique, and Anthropic derives its content domain from the connector URL
+ * instead. A shared extractor would have to serve both and would end up
+ * meaning neither.
+ */
+function readUiDomain(meta: Record<string, unknown> | undefined) {
+  const ui = meta?.ui;
+  if (typeof ui !== "object" || ui === null || Array.isArray(ui)) {
+    return undefined;
+  }
+  const domain = (ui as Record<string, unknown>).domain;
+  return typeof domain === "string" ? domain : undefined;
+}
+
+/**
+ * The domains a resource's declared CSP names.
+ *
+ * TOLERANT ABOUT SHAPE: the extension spells this two ways in the wild, a flat
+ * array of domains and an object of directive → domains. Reading whichever is
+ * present costs nothing; insisting on one would report a template with a
+ * perfectly good allowlist as declaring none, and the check that grades "the
+ * allowlist is exact" would then flag every domain the template loads.
+ */
+function readUiCspDomains(meta: Record<string, unknown> | undefined) {
+  const ui = meta?.ui;
+  if (typeof ui !== "object" || ui === null || Array.isArray(ui)) {
+    return undefined;
+  }
+  const csp = (ui as Record<string, unknown>).csp;
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value.filter((entry): entry is string => typeof entry === "string")
+      : [];
+
+  const flat = strings(csp);
+  if (flat.length > 0) return flat;
+  if (typeof csp !== "object" || csp === null || Array.isArray(csp)) {
+    return undefined;
+  }
+  const domains = Object.values(csp as Record<string, unknown>).flatMap(
+    strings,
+  );
+  return domains.length > 0 ? [...new Set(domains)].sort() : undefined;
+}
+
+/**
  * Everything a package says about ITSELF, for the guideline metadata rules.
  *
  * Collected here rather than in the check so the check stays a pure function of
@@ -580,6 +629,16 @@ export interface GatherOpenAIReadinessEvidenceOptions {
    * server with a token they supplied.
    */
   headers?: Record<string, string>;
+  /**
+   * The caller's cancellation.
+   *
+   * Composed into every request this gather makes — the redirect trace, the
+   * auth discovery, the dial and the skills walk — so a cancelled run stops
+   * the request IN FLIGHT rather than merely declining to start the next one.
+   * A readiness run's requests are seconds long against somebody else's
+   * server, and that traffic is exactly what a cancellation is meant to stop.
+   */
+  signal?: AbortSignal;
   /** A package source to read, when the submission shape uploads one. */
   packageSource?: PluginFileSource;
   /**
@@ -663,6 +722,7 @@ export async function gatherOpenAIReadinessEvidence(
           fetchFn: options.fetchFn,
           timeoutMs: options.timeoutMs,
           headers: options.headers,
+          signal: options.signal,
         }
       : undefined;
 
@@ -680,9 +740,23 @@ export async function gatherOpenAIReadinessEvidence(
   // wired up, and could not fire. A caller-supplied listing still wins: it is
   // attributable to a run that already happened, and dialling over the top
   // would let two listings of one server disagree.
+  // AN EXPLICIT EMPTY ARRAY IS A SUPPLIED LISTING. `!options.tools` is truthy
+  // for `[]`, which would dial over the top of a caller that had already
+  // established this server advertises no tools — and then attach the dial's
+  // completeness and errors to their answer, turning a known zero-tool server
+  // into an incomplete listing.
+  const hasSuppliedTools = options.tools !== undefined;
+  const hasSuppliedAppsUi = options.appsUi !== undefined;
   const dialled =
-    discovery && !options.tools
-      ? await dialMcpServer({ ...discovery, appHtmlMime: OPENAI_APP_HTML_MIME })
+    discovery && (!hasSuppliedTools || !hasSuppliedAppsUi)
+      ? await dialMcpServer({
+          ...discovery,
+          // Each half is requested only when its answer will be USED. A
+          // caller who already holds one of them gets the other without the
+          // target being asked twice for something this run would discard.
+          appHtmlMime: hasSuppliedAppsUi ? undefined : OPENAI_APP_HTML_MIME,
+          ...(hasSuppliedTools ? { tools: options.tools } : {}),
+        })
       : undefined;
 
   // A TRUNCATED LISTING IS NOT A LISTING. `complete` is the dial's own verdict
@@ -692,8 +766,8 @@ export async function gatherOpenAIReadinessEvidence(
   // checks report a gap rather than a pass earned by the tools that fit on
   // page one. An `unsupported` listing IS complete: a server that answered
   // "no such method" has answered.
-  const tools = options.tools ?? dialled?.tools?.entries;
-  const toolListingComplete = options.tools
+  const tools = hasSuppliedTools ? options.tools : dialled?.tools?.entries;
+  const toolListingComplete = hasSuppliedTools
     ? undefined
     : dialled?.tools?.complete;
 
@@ -704,6 +778,24 @@ export async function gatherOpenAIReadinessEvidence(
     discovery && OPENAI_SUBMISSION_MODE_SHAPES[options.mode].hasImportedSkills
       ? await discoverOpenAIImportedSkills(discovery, now)
       : options.importedSkills;
+
+  // A TRUNCATED RESOURCE LISTING GRADES NOTHING, for the same reason a
+  // truncated tool listing does: a widget that fell off the end reads as a
+  // server with no widgets, which the UI checks report `not-applicable` — a
+  // clean bill of health for a page nobody read.
+  const dialledApps = dialled?.appResources;
+  const appsUiFromDial: OpenAIAppsUiEvidence | undefined =
+    dialledApps && dialledApps.listing.complete
+      ? {
+          resources: dialledApps.appResources.map((resource) => ({
+            uri: resource.uri,
+            mimeType: resource.mimeType,
+            domain: readUiDomain(resource._meta),
+            declaredCspDomains: readUiCspDomains(resource._meta),
+            referencedByTools: dialledApps.referencedByTools[resource.uri],
+          })),
+        }
+      : undefined;
 
   const finishedAt = now();
 
@@ -723,9 +815,15 @@ export async function gatherOpenAIReadinessEvidence(
     domainVerification,
     tools,
     toolListingComplete,
-    toolListingError: options.tools ? undefined : dialled?.tools?.error,
+    toolListingError: hasSuppliedTools ? undefined : dialled?.tools?.error,
     importedSkills,
-    appsUi: options.appsUi,
+    // THE DIALLED RESOURCES ARE USED, not discarded. Requesting them and then
+    // returning only the caller's `appsUi` would leave the UI lane
+    // permanently `not-evaluated` on a wire run — the same shape of bug the
+    // tool listing had. A caller-supplied result still wins: it is
+    // attributable to a run that already happened, and re-reading would let
+    // two readings of one server disagree.
+    appsUi: options.appsUi ?? appsUiFromDial,
     hasCommerce: options.hasCommerce,
     draftSnapshot: options.draftSnapshot,
     publishedSnapshot: options.publishedSnapshot,

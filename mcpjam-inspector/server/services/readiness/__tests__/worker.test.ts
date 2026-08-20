@@ -37,6 +37,10 @@ vi.mock("../backend-client.js", () => ({
   ReadinessLeaseLostError,
 }));
 
+// DYNAMIC, and it has to stay that way. `vi.mock` is hoisted, but its factory
+// runs when `../backend-client.js` is first imported — and the factory closes
+// over `ReadinessLeaseLostError` from the import above. A static import of
+// `../worker.js` could reach the binding before that import initialized it.
 const { executeHostedReadinessRun, summarizeReadinessResult } = await import(
   "../worker.js"
 );
@@ -226,22 +230,40 @@ describe("the failure exits", () => {
     expect(failReadinessRun).not.toHaveBeenCalled();
   });
 
-  it("fails the row rather than stranding it running", async () => {
+  it("COMPLETES a run against a dead target rather than failing it", async () => {
+    // A transport failure is a FINDING, not a crash: the gatherers absorb it
+    // and the run reports a runtime blocker. That is the whole point of the
+    // gather/grade split, and it is why "the gatherer threw" is not a path a
+    // dead server can reach — a failed row would tell the submitter the run
+    // broke, when what broke is their server.
     const exploding = (async () => {
-      throw new Error("the gatherer exploded");
+      throw new Error("ECONNREFUSED");
     }) as unknown as typeof fetch;
 
     await executeHostedReadinessRun({
       lease: LEASE,
-      publisher: "openai",
-      // No submission mode: an OpenAI run without one throws before it dials.
+      publisher: "claude",
       target: TARGET,
       fetchFn: exploding,
       includeLlmObservations: false,
     });
 
+    expect(failReadinessRun).not.toHaveBeenCalled();
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+    const [, summary] = finalizeReadinessRun.mock.calls[0]!;
+    expect(summary.overallStatus).toBe("not-ready");
+  });
+
+  it("fails the row when an OpenAI run declares no submission mode", async () => {
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "openai",
+      target: TARGET,
+      fetchFn: wireFetch(),
+      includeLlmObservations: false,
+    });
+
     expect(finalizeReadinessRun).not.toHaveBeenCalled();
-    expect(failReadinessRun).toHaveBeenCalledTimes(1);
     const [, terminalReason, message] = failReadinessRun.mock.calls[0]!;
     expect(terminalReason).toBe("runner_error");
     expect(String(message)).toMatch(/submission mode/i);
@@ -261,6 +283,23 @@ describe("the failure exits", () => {
     // The finalize failed, so the run is recorded as failed rather than left
     // to the recovery cron.
     expect(failReadinessRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("never throws even when the FAILURE write also fails", async () => {
+    // Both writes go to the same backend. If ingest is down, the fallback is
+    // down too — and a worker that threw out of its own fallback would strand
+    // the run while passing the case above.
+    finalizeReadinessRun.mockRejectedValue(new Error("ingest is down"));
+    failReadinessRun.mockRejectedValue(new Error("ingest is down"));
+    await expect(
+      executeHostedReadinessRun({
+        lease: LEASE,
+        publisher: "claude",
+        target: TARGET,
+        fetchFn: wireFetch(),
+        includeLlmObservations: false,
+      }),
+    ).resolves.toBeUndefined();
   });
 });
 

@@ -292,7 +292,32 @@ describe("POST /api/mcp/conformance/readiness/:publisher", () => {
     });
     // Rejected on the transport, NOT on the unknown key — the schema drops it
     // silently, which is the point: there is nothing for it to switch on.
+    expect(res.status).toBe(400);
     const body = await res.json();
     expect(body.code).toBe("unsupportedTransport");
+  });
+
+  it("grades a connected HTTP server and answers 200", async () => {
+    // The target is unreachable on purpose, so the run stays deterministic and
+    // offline: readiness grades what it CAN observe and reports the rest as
+    // findings, so an unreachable server still produces a result rather than
+    // an error. Without this case a route that 500'd on every valid request
+    // would still pass this file.
+    const manager = createMockManager({
+      getServerConfig: vi
+        .fn()
+        .mockReturnValue({ url: new URL("https://unreachable.invalid/mcp") }),
+    });
+    const app = createTestApp(manager);
+    const res = await postJson(app, "/api/mcp/conformance/readiness/claude", {
+      serverId: "s1",
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.result.lanes.length).toBeGreaterThan(0);
+    // Free by construction: a local run has no requester, so nothing could
+    // have been charged.
+    expect(body.result.llmObservations.status).toBe("not-requested");
   });
 });

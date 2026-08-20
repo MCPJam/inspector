@@ -195,11 +195,16 @@ export function renderObservationEvidence(input: {
   lines.push("", `Tools (${tools.length}):`);
   lines.push(...(tools.length > 0 ? tools : ["(none advertised)"]));
 
-  const skills = input.skills ?? [];
+  // FILTERED BEFORE IT IS COUNTED, like the tools above. A header promising
+  // three skills over two rendered lines invites the model to reason about one
+  // it was never shown.
+  const skills = (input.skills ?? []).filter(
+    (skill): skill is { name: string; description?: string } =>
+      typeof skill.name === "string" && skill.name.length > 0,
+  );
   if (skills.length > 0) {
     lines.push("", `Skills (${skills.length}):`);
     for (const skill of skills) {
-      if (!skill.name) continue;
       lines.push(`- ${skill.name}: ${(skill.description ?? "").slice(0, 400)}`);
     }
   }
@@ -332,6 +337,10 @@ export async function runDirectoryReadiness(
       fetchFn: options.fetchFn,
       timeoutMs: options.timeoutMs,
       headers: options.headers,
+      // Threaded IN, not merely checked between steps: a cancelled run has to
+      // stop the request in flight, because the traffic being stopped is aimed
+      // at somebody else's server.
+      signal: options.signal,
       now: options.now,
     });
     assertNotCancelled(options.signal);
@@ -361,6 +370,8 @@ export async function runDirectoryReadiness(
     fetchFn: options.fetchFn,
     timeoutMs: options.timeoutMs,
     headers: options.headers,
+    // Threaded IN, not merely checked between steps — see the OpenAI branch.
+    signal: options.signal,
     now: options.now,
   });
   assertNotCancelled(options.signal);

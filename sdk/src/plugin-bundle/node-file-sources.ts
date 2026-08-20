@@ -27,8 +27,9 @@
  * different-but-valid bundle, which is precisely the confusion hash
  * verification exists to prevent.
  */
-import { lstat, readdir, readFile } from "node:fs/promises";
-import { join, relative, sep } from "node:path";
+import { lstat, open, readdir } from "node:fs/promises";
+import { constants } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import JSZip from "jszip";
 import type { PluginFileEntry, PluginFileSource } from "./types.js";
 import type { OpenAIArchiveObservations } from "../openai-readiness/package/reader.js";
@@ -50,7 +51,7 @@ function toBundlePath(root: string, absolute: string): string {
 async function listDirectory(
   root: string,
   current: string,
-  out: PluginFileEntry[]
+  out: PluginFileEntry[],
 ): Promise<void> {
   const entries = await readdir(current, { withFileTypes: true });
   for (const entry of entries) {
@@ -82,23 +83,56 @@ async function listDirectory(
 }
 
 /** Read an extracted bundle directory (the cache entry). */
-export function createDirectoryPluginFileSource(root: string): PluginFileSource {
+export function createDirectoryPluginFileSource(
+  root: string,
+): PluginFileSource {
   return {
     async list() {
       const out: PluginFileEntry[] = [];
       await listDirectory(root, root, out);
       return out;
     },
+    /**
+     * Read one file, and ONLY a file inside the bundle.
+     *
+     * `path` comes from a bundle's own entry table, which on the archive side
+     * is attacker-controlled: a manifest naming `../../../etc/passwd` would
+     * otherwise be read and hashed as bundle content. `resolve` collapses the
+     * traversal and the prefix check refuses whatever escapes.
+     *
+     * THE READ IS `O_NOFOLLOW` for a second reason, and it is the subtler one:
+     * `lstat` measures a SYMLINK while `readFile` follows it, so a link's own
+     * few bytes sail past the `maxBytes` gate and arbitrary host content comes
+     * back. Opening the handle first makes the size check and the read describe
+     * the same file, and a link fails to open at all — which is the right
+     * outcome, because the parser rejects link entries anyway.
+     */
     async readBytes(path: string, maxBytes: number) {
-      const absolute = join(root, path);
-      const stats = await lstat(absolute);
-      if (stats.size > maxBytes) {
-        throw new Error(
-          `Bundle file "${path}" is ${stats.size} bytes, over the ${maxBytes} byte limit`
-        );
+      const rootResolved = resolve(root);
+      const absolute = resolve(rootResolved, path);
+      if (
+        absolute !== rootResolved &&
+        !absolute.startsWith(rootResolved + sep)
+      ) {
+        throw new Error(`Bundle file "${path}" escapes the bundle root`);
       }
-      const buffer = await readFile(absolute);
-      return new Uint8Array(buffer);
+
+      const handle = await open(
+        absolute,
+        constants.O_RDONLY | constants.O_NOFOLLOW,
+      );
+      try {
+        const stats = await handle.stat();
+        if (stats.size > maxBytes) {
+          throw new Error(
+            `Bundle file "${path}" is ${stats.size} bytes, over the ${maxBytes} byte limit`,
+          );
+        }
+        const buffer = await handle.readFile();
+        return new Uint8Array(buffer);
+      } finally {
+        await handle.close();
+      }
     },
   };
 }
@@ -109,7 +143,7 @@ export function createDirectoryPluginFileSource(root: string): PluginFileSource 
  * materialize route.
  */
 export async function createZipPluginFileSource(
-  bytes: Uint8Array
+  bytes: Uint8Array,
 ): Promise<PluginFileSource> {
   const zip = await JSZip.loadAsync(bytes);
   return {
@@ -121,8 +155,9 @@ export async function createZipPluginFileSource(
         // WOULD be visible) before it is accepted.
         out.push({
           path: entry.dir ? path.replace(/\/+$/, "") : path,
-          size: (entry as { _data?: { uncompressedSize?: number } })._data
-            ?.uncompressedSize ?? 0,
+          size:
+            (entry as { _data?: { uncompressedSize?: number } })._data
+              ?.uncompressedSize ?? 0,
           kind: entry.dir ? "directory" : "file",
         });
       });
@@ -134,7 +169,7 @@ export async function createZipPluginFileSource(
       const bytes = await entry.async("uint8array");
       if (bytes.byteLength > maxBytes) {
         throw new Error(
-          `Bundle file "${path}" is ${bytes.byteLength} bytes, over the ${maxBytes} byte limit`
+          `Bundle file "${path}" is ${bytes.byteLength} bytes, over the ${maxBytes} byte limit`,
         );
       }
       return bytes;
@@ -207,7 +242,8 @@ function readRawCentralDirectoryNames(bytes: Uint8Array): string[] | undefined {
     const names: string[] = [];
     let cursor = directoryOffset;
     for (let entry = 0; entry < totalEntries; entry += 1) {
-      if (cursor + CENTRAL_FILE_HEADER_SIZE > bytes.byteLength) return undefined;
+      if (cursor + CENTRAL_FILE_HEADER_SIZE > bytes.byteLength)
+        return undefined;
       if (view.getUint32(cursor, true) !== CENTRAL_FILE_HEADER_SIGNATURE) {
         return undefined;
       }
@@ -221,7 +257,7 @@ function readRawCentralDirectoryNames(bytes: Uint8Array): string[] | undefined {
       // checked against these names — separators, empty and dot segments,
       // duplicates — is decided by ASCII characters.
       names.push(
-        decoder.decode(bytes.subarray(nameStart, nameStart + nameLength))
+        decoder.decode(bytes.subarray(nameStart, nameStart + nameLength)),
       );
       cursor = nameStart + nameLength + extraLength + entryCommentLength;
     }
@@ -231,7 +267,7 @@ function readRawCentralDirectoryNames(bytes: Uint8Array): string[] | undefined {
 }
 
 export async function collectZipArchiveObservations(
-  bytes: Uint8Array
+  bytes: Uint8Array,
 ): Promise<OpenAIArchiveObservations> {
   // Read straight off the archive, BEFORE and independently of JSZip: these
   // are the names the portal will see, and the loader's job is to produce a

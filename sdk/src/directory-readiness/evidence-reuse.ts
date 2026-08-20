@@ -93,13 +93,20 @@ export type EvidenceReuse<Evidence> =
  * Compare two target URLs the way a reader would.
  *
  * Scheme, host, port and path decide; a trailing slash, a case difference in
- * the host, and the ORDER of query parameters do not. Query parameters
+ * the HOST, and the ORDER of query parameters do not. Query parameters
  * themselves are compared, because an MCP endpoint that keys on one is a
  * different endpoint.
  *
- * An unparseable URL falls back to a trimmed string comparison rather than
- * being treated as a mismatch: two callers that both typed the same malformed
- * thing looked at the same thing.
+ * ONLY THE AUTHORITY IS CASE-FOLDED. Scheme and host are case-insensitive by
+ * specification; a path and a query value are not, and folding them would
+ * accept evidence gathered from `/MCP?tenant=AcmeCorp` as evidence about
+ * `/mcp?tenant=acmecorp`. Those can be two different tenants on two different
+ * endpoints, which is exactly the confusion this function exists to prevent.
+ *
+ * An unparseable URL falls back to a trimmed comparison rather than being
+ * treated as a mismatch: two callers that both typed the same malformed thing
+ * looked at the same thing. That fallback stays case-SENSITIVE for the same
+ * reason as above — with no parse there is no authority to fold separately.
  */
 export function sameReadinessTarget(left: string, right: string): boolean {
   const normalize = (value: string): string => {
@@ -108,9 +115,10 @@ export function sameReadinessTarget(left: string, right: string): boolean {
       url.hash = "";
       url.searchParams.sort();
       const path = url.pathname.replace(/\/+$/, "");
-      return `${url.protocol}//${url.host}${path}${url.search}`.toLowerCase();
+      const authority = `${url.protocol}//${url.host}`.toLowerCase();
+      return `${authority}${path}${url.search}`;
     } catch {
-      return value.trim().toLowerCase();
+      return value.trim();
     }
   };
   return normalize(left) === normalize(right);

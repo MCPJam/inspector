@@ -119,18 +119,25 @@ describe("dialToolListing", () => {
   });
 
   it("records the page cap instead of reporting a truncated list as whole", async () => {
+    // DISTINCT cursors, so only the cap can stop this walk. A fixture that
+    // repeated one cursor would be eligible for the repeat guard too, and a
+    // change to that guard could silently retire this case.
     const { fetchFn } = routedFetch({
-      "tools/list": [{ tools: [{ name: "a" }], nextCursor: "always-more" }],
+      "tools/list": [
+        { tools: [{ name: "a" }], nextCursor: "p2" },
+        { tools: [{ name: "b" }], nextCursor: "p3" },
+        { tools: [{ name: "c" }], nextCursor: "p4" },
+      ],
     });
     const listing = await dialToolListing({
       enteredUrl: URL_UNDER_TEST,
       fetchFn,
       maxListPages: 2,
     });
-    // The cursor repeats, so the walk stops on the repeat rather than burning
-    // the page budget — and either way it does NOT claim completeness.
-    expect(listing.complete).toBe(false);
+    expect(listing.pagesWalked).toBe(2);
     expect(listing.paginationCapHit).toBe(true);
+    expect(listing.error).toBeUndefined();
+    expect(listing.complete).toBe(false);
   });
 
   it("stops a server that echoes one cursor forever", async () => {
@@ -219,7 +226,11 @@ describe("dialAppResources", () => {
 });
 
 describe("dialMcpServer", () => {
-  it("skips the listings entirely when initialize failed", async () => {
+  it("makes no listing request when initialize failed, but says why", async () => {
+    // No request goes out — every listing would fail the same way, and three
+    // copies of one transport error buries the cause. What DOES survive is the
+    // reason, on a listing marked incomplete: a caller reading `tools` sees an
+    // empty set either way, and only one of them has an explanation.
     const { fetchFn, calls } = routedFetch({
       initialize: [
         jsonResponse(
@@ -234,8 +245,11 @@ describe("dialMcpServer", () => {
       appHtmlMime: "text/html;profile=mcp-app",
     });
     expect(evidence.initialize.ok).toBe(false);
-    expect(evidence.tools).toBeUndefined();
     expect(calls.map((call) => call.method)).toEqual(["initialize"]);
+    expect(evidence.tools?.entries).toEqual([]);
+    expect(evidence.tools?.complete).toBe(false);
+    expect(evidence.tools?.error).toContain("auth");
+    expect(evidence.appResources).toBeUndefined();
   });
 
   it("carries the session id onto the listing requests", async () => {

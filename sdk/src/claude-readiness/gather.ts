@@ -69,6 +69,15 @@ export interface GatherClaudeReadinessEvidenceOptions
    * — the honest outcome for a run assembled entirely from adapted evidence.
    */
   fetchFn?: typeof fetch;
+  /**
+   * The caller's cancellation.
+   *
+   * Composed into every request this gather makes, so a cancelled run stops
+   * the request IN FLIGHT rather than merely declining to start the next one.
+   * A readiness run's requests are seconds long against somebody else's
+   * server, and that traffic is exactly what a cancellation is meant to stop.
+   */
+  signal?: AbortSignal;
   authMode?: ClaudeReadinessAuthMode;
   capabilities?: ClaudeRunnerCapability[];
 
@@ -146,6 +155,7 @@ export async function gatherClaudeReadinessEvidence(
         timeoutMs: options.timeoutMs,
         maxRedirects: options.maxRedirects,
         headers: options.headers,
+        signal: options.signal,
       }
     : undefined;
 
@@ -161,19 +171,29 @@ export async function gatherClaudeReadinessEvidence(
 
   // THE DIAL. Skipped entirely when the caller supplied both halves, because
   // then there is nothing left for it to establish.
+  // AN EXPLICIT EMPTY ARRAY IS A SUPPLIED LISTING — `!options.tools` is truthy
+  // for `[]`, which would dial over the top of a caller that had already
+  // established this server advertises no tools, and then attach the dial's
+  // completeness to their answer.
+  const hasSuppliedTools = options.tools !== undefined;
+  const hasSuppliedApps = options.apps !== undefined;
   const needsDial =
-    discovery !== undefined &&
-    (options.tools === undefined || options.apps === undefined);
+    discovery !== undefined && (!hasSuppliedTools || !hasSuppliedApps);
   const dialled = needsDial
     ? await dialMcpServer({
         ...discovery!,
-        appHtmlMime: CLAUDE_APP_HTML_MIME,
+        // Requested only when its answer will be USED. Walking the resource
+        // listing for a caller who already holds an attributable apps result
+        // is a page of requests aimed at somebody else's server for evidence
+        // this run is about to discard.
+        appHtmlMime: hasSuppliedApps ? undefined : CLAUDE_APP_HTML_MIME,
+        ...(hasSuppliedTools ? { tools: options.tools } : {}),
         maxListPages: options.maxListPages,
         maxListEntries: options.maxListEntries,
       })
     : undefined;
 
-  const tools = options.tools ?? dialled?.tools?.entries;
+  const tools = hasSuppliedTools ? options.tools : dialled?.tools?.entries;
 
   // WHETHER THE APPS LANE MAY BE GRADED AT ALL. `appsSuiteRan` is not "we saw
   // some resources" — it is "this run holds an attributable statement about
@@ -218,8 +238,10 @@ export async function gatherClaudeReadinessEvidence(
         appsSuiteRan: false,
       },
     tools: tools as ClaudeReadinessInput["tools"],
-    toolListingComplete: options.tools ? undefined : dialled?.tools?.complete,
-    toolListingError: options.tools ? undefined : dialled?.tools?.error,
+    toolListingComplete: hasSuppliedTools
+      ? undefined
+      : dialled?.tools?.complete,
+    toolListingError: hasSuppliedTools ? undefined : dialled?.tools?.error,
     submissionProfile: options.submissionProfile,
     claimedFeatures: options.claimedFeatures,
     observedAuthMode: options.observedAuthMode,
