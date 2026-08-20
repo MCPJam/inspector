@@ -40,6 +40,9 @@ import { ConvexHttpClient } from "convex/browser";
 import { authorizeServer, parseWithSchema } from "../web/auth.js";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import { captureServerEvent } from "../../utils/analytics.js";
+import type { ServerAnalyticsActor } from "../../utils/analytics.js";
+import type { RequestLogContext } from "../../utils/log-events.js";
 import { getInternalBackendConfig } from "../../services/internal-backend.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { v1PageJson, v1Resource } from "./envelope.js";
@@ -130,6 +133,31 @@ function toRunDto(run: Record<string, any>, projectId: string) {
 }
 
 /**
+ * The identity a detached run's terminal event is attributed to.
+ *
+ * Resolved HERE, while the request still exists, because by the time the run
+ * finishes there is no `Context` left to read it from — and the terminal event
+ * is the one that carries the verdict. Returns `undefined` rather than
+ * inventing an identity when none resolves: an event attributed to nobody is
+ * worse than no event, since an unmatched `distinct_id` pollutes person
+ * profiles.
+ */
+function readinessAnalyticsActor(
+  c: any,
+  projectId: string,
+): ServerAnalyticsActor | undefined {
+  const ctx = c.var?.requestLogContext as RequestLogContext | undefined;
+  const distinctId =
+    ctx?.userExternalId ?? ctx?.guestExternalId ?? c.get?.("guestId") ?? null;
+  if (!distinctId) return undefined;
+  return {
+    distinctId,
+    organizationId: ctx?.orgId ?? undefined,
+    projectId: ctx?.projectId ?? projectId,
+  };
+}
+
+/**
  * Start one run: authorize the server, create the leased row, detach.
  *
  * The TARGET comes from the saved server the path names, resolved through the
@@ -163,8 +191,19 @@ async function startRun(
     idempotencyKey: body.idempotencyKey,
     includeLlmObservations: body.includeLlmObservations === true,
     authorized,
+    analyticsActor: readinessAnalyticsActor(c, projectId),
     translateError: (error) =>
       translateConvexError(error, { resource: "Readiness run" }),
+  });
+
+  // Fired for replays too — see the event's note. The server URL is not a
+  // property here and must not become one.
+  captureServerEvent(c, "directory_readiness_run_started_server", {
+    readiness_kind: publisher,
+    submission_mode: submissionMode ?? null,
+    include_llm_observations: body.includeLlmObservations === true,
+    deduped: receipt.deduped,
+    run_status: receipt.status,
   });
 
   return v1Resource(c, receipt, 202);

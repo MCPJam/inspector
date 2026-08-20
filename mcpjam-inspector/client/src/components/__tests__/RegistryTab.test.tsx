@@ -485,6 +485,53 @@ describe("RegistryTab", () => {
       expect(screen.getByText("Track issues and cycles.")).toBeInTheDocument();
     });
 
+    it("badges a row whose probe resolved to pre-registered-only OAuth", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [
+          createDirectoryServer({
+            oauthProbe: {
+              probedAt: Date.now(),
+              endpointUrl: "https://mcp.linear.app/mcp",
+              outcome: "resolved",
+              supportsDcr: false,
+              supportsCimd: false,
+            },
+          }),
+        ],
+      });
+
+      render(<RegistryTab {...defaultProps} />);
+      expect(
+        screen.getByText("Requires pre-registered client")
+      ).toBeInTheDocument();
+    });
+
+    it("shows no pre-registration badge for a self-registering server or an unprobed row", () => {
+      // A resolved verdict WITH a registration path, and a row the sweep has
+      // not reached: both must render nothing — the badge is a probe fact,
+      // not a default.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [
+          createDirectoryServer({
+            _id: "cat_dcr",
+            displayName: "Self Registering",
+            oauthProbe: {
+              probedAt: Date.now(),
+              endpointUrl: "https://mcp.linear.app/mcp",
+              outcome: "resolved",
+              supportsDcr: true,
+            },
+          }),
+          createDirectoryServer({ _id: "cat_unprobed" }),
+        ],
+      });
+
+      render(<RegistryTab {...defaultProps} />);
+      expect(
+        screen.queryByText("Requires pre-registered client")
+      ).not.toBeInTheDocument();
+    });
+
     it("renders the search box and the tier filter", () => {
       mockDirectoryReturn = directoryHookReturn({
         items: [createDirectoryServer()],

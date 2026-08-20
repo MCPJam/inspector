@@ -26,6 +26,7 @@ import { ErrorCode, WebRouteError } from "../web/errors.js";
 import { createStreamingPinnedFetch } from "../../utils/pinned-fetch.js";
 import { executeHostedReadinessRun } from "../../services/readiness/worker.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 
 /** The two words the public vocabulary uses. Never `anthropic`/`chatgpt`. */
 export const READINESS_PUBLISHERS = ["claude", "openai"] as const;
@@ -79,6 +80,14 @@ export interface StartHostedReadinessRunInput {
   includeLlmObservations: boolean;
   /** The output of the surface's own authorize exchange. */
   authorized: AuthorizedReadinessServer;
+  /**
+   * Who to attribute the run's TERMINAL event to.
+   *
+   * Resolved by the surface while its request still exists, because the run
+   * outlives it. Optional: a surface with no resolvable actor passes nothing
+   * and the terminal event is dropped rather than attributed to a stranger.
+   */
+  analyticsActor?: ServerAnalyticsActor;
   /** Maps a Convex error onto the surface's own error vocabulary. */
   translateError: (error: unknown) => Error;
 }
@@ -207,6 +216,7 @@ export async function startHostedReadinessRun(
         maxResponseBytes: 32 * 1024 * 1024,
       }),
       includeLlmObservations: input.includeLlmObservations,
+      analyticsActor: input.analyticsActor,
     }).catch((error) => {
       // `executeHostedReadinessRun` never throws — every exit lands the run
       // somewhere terminal. This catch exists for the impossible case, so an

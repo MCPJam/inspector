@@ -34,6 +34,8 @@
  */
 
 import { logger } from "../../utils/logger.js";
+import { captureServerEventForActor } from "../../utils/analytics.js";
+import type { ServerAnalyticsActor } from "../../utils/analytics.js";
 import {
   failReadinessRun,
   finalizeReadinessRun,
@@ -49,7 +51,10 @@ import {
   type DirectoryReadinessResult,
   type ReadinessPublisher,
 } from "./runner.js";
-import type { OpenAISubmissionMode } from "@mcpjam/sdk";
+import {
+  redactConformanceReportForSharing,
+  type OpenAISubmissionMode,
+} from "@mcpjam/sdk";
 
 /**
  * How often this node proves it is alive.
@@ -77,6 +82,12 @@ export interface ExecuteHostedReadinessOptions {
   includeLlmObservations: boolean;
   /** The SDK build, stamped onto the row for replay and drift triage. */
   sdkVersion?: string;
+  /**
+   * Who the terminal event belongs to, resolved before the request that
+   * started this run went away. Absent means the run is not instrumented,
+   * which is the honest outcome for a caller with no resolvable identity.
+   */
+  analyticsActor?: ServerAnalyticsActor;
 }
 
 /** Project the SDK result onto the small summary the run row carries. */
@@ -132,6 +143,19 @@ export async function executeHostedReadinessRun(
 ): Promise<void> {
   const { lease } = options;
   const controller = new AbortController();
+  const startedAtMs = Date.now();
+
+  // SET ON EVERY PATH, EMITTED IN `finally` — including the abandoned-lease
+  // path, which is a real outcome worth counting rather than a gap in the
+  // data. Recording it at each exit and reporting it in one place is what
+  // keeps "this run ended somehow but we have no event for it" impossible.
+  let terminal: {
+    outcome: string;
+    overallStatus?: string;
+    observationStatus?: string;
+    observationReason?: string;
+    terminalReason?: string;
+  } = { outcome: "abandoned" };
 
   // TRACKED SEPARATELY FROM THE ABORT ITSELF. The runner reports every abort
   // as `ReadinessRunCancelledError` — it has no way to inspect a reason — and
@@ -177,8 +201,39 @@ export async function executeHostedReadinessRun(
     await finalizeReadinessRun(
       lease,
       summarizeReadinessResult(result, options.sdkVersion),
-      result,
+      // REDACTED ON THE WAY IN, not on the way out.
+      //
+      // A readiness report is a debugging artifact: findings carry the raw
+      // observation behind the verdict, which is how a submitter learns WHY a
+      // lane failed. That is the right default while the result lives in the
+      // process that produced it, and the wrong one the moment it is persisted
+      // — a stored blob outlives the run, is read back by surfaces that did
+      // not exist when it was written, and `DirectoryReadinessFinding.details`
+      // already documents itself as redacted before it travels.
+      //
+      // Both layers, deliberately: the key-name pass alone is a blocklist, and
+      // a blocklist eventually misses a shape a future check introduces. The
+      // structural pass is what makes the blocklist acceptable, by dropping
+      // the containers where unknown-shaped secrets actually accumulate before
+      // it runs.
+      //
+      // Defense in depth rather than a breach fix: this route is
+      // project-authorized and was never public, and today's evidence is
+      // mostly challenges and metadata documents anyone can fetch. The point
+      // is that neither of those facts is guaranteed to hold for the next
+      // check somebody adds.
+      redactConformanceReportForSharing(result),
     );
+
+    terminal = {
+      outcome: "completed",
+      // The grade, kept separate from the outcome above on purpose: a
+      // completed run that graded `not-ready` is a finished run and a failed
+      // grade, and one field cannot say both.
+      overallStatus: result.status,
+      observationStatus: result.llmObservations?.status,
+      observationReason: result.llmObservations?.reason,
+    };
   } catch (error) {
     if (deadlineExpired) {
       // A run that ran out of time is a FAILED run, and saying so is the whole
@@ -188,6 +243,7 @@ export async function executeHostedReadinessRun(
         "deadline_exceeded",
         "The readiness run exceeded its deadline.",
       ).catch(() => undefined);
+      terminal = { outcome: "failed", terminalReason: "deadline_exceeded" };
       return;
     }
 
@@ -201,6 +257,7 @@ export async function executeHostedReadinessRun(
       logger.info("[readiness] run abandoned; the lease had moved on", {
         runId: lease.runId,
       });
+      terminal = { outcome: "abandoned", terminalReason: "lease_lost" };
       return;
     }
 
@@ -212,8 +269,30 @@ export async function executeHostedReadinessRun(
     await failReadinessRun(lease, "runner_error", message.slice(0, 2000)).catch(
       () => undefined,
     );
+    terminal = { outcome: "failed", terminalReason: "runner_error" };
   } finally {
     clearInterval(heartbeat);
     clearTimeout(deadline);
+
+    // NO REPORT CONTENTS AND NO TARGET URL. What a run found belongs to the
+    // person who ran it; what an analytics pipeline needs is whether it
+    // finished, what it decided, and whether the paid pass ran.
+    if (options.analyticsActor) {
+      captureServerEventForActor(
+        options.analyticsActor,
+        "directory_readiness_run_finished_server",
+        {
+          readiness_kind: options.publisher,
+          submission_mode: options.submissionMode ?? null,
+          include_llm_observations: options.includeLlmObservations,
+          outcome: terminal.outcome,
+          overall_status: terminal.overallStatus ?? null,
+          llm_observation_status: terminal.observationStatus ?? null,
+          llm_observation_reason: terminal.observationReason ?? null,
+          terminal_reason: terminal.terminalReason ?? null,
+          duration_ms: Date.now() - startedAtMs,
+        },
+      );
+    }
   }
 }

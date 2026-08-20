@@ -269,12 +269,13 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
 
   // ── Directory readiness ─────────────────────────────────────────────────
   //
-  // The two starts are the commands a person types; `readiness runs …` is for
-  // the other shape of script — start in one CI job, read the verdict in
-  // another. `runs get` carries the verdict in its EXIT CODE too, so it works
-  // as a gate on a run some earlier job started.
-  start_claude_readiness_run: { command: "readiness claude" },
-  start_openai_readiness_run: { command: "readiness openai" },
+  // `readiness run …` starts a HOSTED run; `readiness check …` beside it grades
+  // locally and calls no operation at all, which is why it appears in neither
+  // half of this map. `readiness runs …` is the other shape of script — start
+  // in one CI job, gate in another; `runs get` carries the verdict in its exit
+  // code so it can be that gate.
+  start_claude_readiness_run: { command: "readiness run claude" },
+  start_openai_readiness_run: { command: "readiness run openai" },
   get_directory_readiness_run: { command: "readiness runs get" },
   list_directory_readiness_runs: { command: "readiness runs list" },
   get_directory_readiness_report: { command: "readiness runs report" },

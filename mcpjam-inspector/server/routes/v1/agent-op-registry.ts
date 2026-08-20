@@ -354,15 +354,25 @@ async function freezeReadinessServer(
 ): Promise<Record<string, unknown>> {
   const selector = named(input, "server");
   if (!selector) return input;
-  // Already an id? Then there is nothing to freeze and nothing to look up.
+
   const page = await client.listProjectServers({ projectId });
-  const match = page.items.find(
+
+  // An id needs no freezing — it already IS the frozen form — but resolving it
+  // here anyway keeps this function's answer identical to the operation's.
+  const byId = page.items.find((candidate) => candidate.id === selector);
+  if (byId) return { ...input, server: byId.id };
+
+  // ONLY a UNIQUE name match, mirroring `resolveByIdOrName` exactly. Two
+  // servers can share a name, and the operation REFUSES that case with a list
+  // of ids to disambiguate. Picking the first here would replace a precise
+  // error the user can act on with a silent choice of the wrong server —
+  // strictly worse than not freezing, on the one field the approval is about.
+  const byName = page.items.filter(
     (candidate) =>
-      candidate.id === selector ||
       candidate.name?.toLocaleLowerCase() === selector.toLocaleLowerCase(),
   );
-  if (!match) return input;
-  return { ...input, server: match.id };
+  if (byName.length !== 1) return input;
+  return { ...input, server: byName[0]!.id };
 }
 
 async function freezeEvalRunTargets(
