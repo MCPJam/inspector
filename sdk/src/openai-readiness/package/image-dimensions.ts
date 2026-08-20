@@ -340,7 +340,9 @@ function looksLikeSvg(bytes: Uint8Array): boolean {
   // Sniffed from a prefix rather than the whole file: an SVG may open with an
   // XML declaration, a doctype, comments or a byte-order mark before `<svg`.
   const prefix = textDecoder.decode(bytes.subarray(0, 1024));
-  return /<svg[\s>]/i.test(prefix) || /^\s*(?:﻿)?<\?xml/.test(prefix);
+  // `<svg/>` is a valid self-closing root, so `/` belongs in the boundary
+  // class alongside whitespace and `>`.
+  return /<svg[\s/>]/i.test(prefix) || /^\s*(?:﻿)?<\?xml/.test(prefix);
 }
 
 /**

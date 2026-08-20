@@ -20,6 +20,7 @@ import type {
   PluginFileEntry,
   PluginFileSource,
 } from "@mcpjam/sdk/plugin-bundle";
+import type { OpenAIArchiveObservations } from "@mcpjam/sdk";
 
 /** Cache-internal scratch dirs (see `bundle-cache.ts`) are never bundle content. */
 const IGNORED_DIR_PREFIX = ".mcpjam-tmp-";
@@ -124,3 +125,46 @@ export async function createZipPluginFileSource(
     },
   };
 }
+
+/**
+ * Archive facts an OpenAI readiness run needs and a `PluginFileSource` cannot
+ * carry.
+ *
+ * The source abstraction is deliberately about CONTENT — list entries, read
+ * bytes — and these three are not content. Compressed size, encryption flags
+ * and the entry names exactly as the central directory records them exist only
+ * for an archive, and the readiness reader treats an absent field as "not
+ * observed" rather than "fine", so handing it partial observations is honest
+ * rather than lossy.
+ */
+export async function collectZipArchiveObservations(
+  bytes: Uint8Array
+): Promise<OpenAIArchiveObservations> {
+  const zip = await JSZip.loadAsync(bytes);
+  return {
+    // The uploaded bytes, which is exactly what the portal's compressed-size
+    // limit is measured against.
+    compressedBytes: bytes.byteLength,
+    // RAW names, straight off the entry table. The readiness reader checks the
+    // portal's path rules against these BEFORE anything normalizes them,
+    // because normalization repairs a backslash separator and a doubled or `.`
+    // segment — three of the things the portal rejects.
+    rawEntryNames: Object.keys(zip.files),
+    // `encryptedEntryPaths` is deliberately ABSENT rather than `[]`. JSZip
+    // cannot read an encrypted archive at all, so this adapter has no way to
+    // enumerate encrypted entries; reporting an empty list would assert
+    // "checked, none found" for a check that never ran.
+  };
+}
+
+/**
+ * A directory source has no archive facts, and that is not a gap to work
+ * around.
+ *
+ * An extracted tree genuinely has no compressed size, no encryption flags, and
+ * no pre-normalization names — the extractor already applied the platform's
+ * own normalization on the way to disk. Passing this constant states that
+ * explicitly at the call site, and the readiness reader turns each absent field
+ * into a `not-evaluated` with a reason rather than a silent pass.
+ */
+export const DIRECTORY_ARCHIVE_OBSERVATIONS: OpenAIArchiveObservations = {};

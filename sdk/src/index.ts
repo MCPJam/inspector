@@ -458,6 +458,11 @@ export {
   probeDynamicRegistration,
   probeRefreshRotation,
 } from "./claude-readiness/intrusive-probes.js";
+
+// OpenAI plugin-directory readiness. Same rule as the Claude barrel above:
+// pure data and data reasoning only, so importing the result model or the
+// package reader never pulls a transport in with it.
+export * from "./openai-readiness/index.js";
 export {
   buildOutcomeSummary,
   decideConformanceOutcome,
