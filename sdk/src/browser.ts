@@ -27,6 +27,60 @@ export {
   type McpLinkedResourceReader,
 } from "./mcp-client-manager/model-output.js";
 /**
+ * Model-backed observations — the RENDERING and STATUS surface only.
+ *
+ * A browser needs to render an observation, badge its confidence, and branch
+ * on `billing_limit_reached` to offer a top-up. It has no business VALIDATING
+ * provider output or MAPPING an envelope into findings: both happen where the
+ * run is graded, and a second implementation in the client would eventually
+ * disagree with the first about what a model was allowed to say.
+ *
+ * So the constants, the reason union and the result types cross; the parser
+ * and the mappers do not.
+ */
+export {
+  DIRECTORY_OBSERVATION_CONFIDENCE,
+  DIRECTORY_OBSERVATION_FINDING_CLASSES,
+  DIRECTORY_OBSERVATION_LIMITS,
+  DIRECTORY_OBSERVATION_REASONS,
+  DIRECTORY_OBSERVATION_STATUSES,
+  NOT_REQUESTED_OBSERVATIONS,
+} from "./directory-readiness/observations.js";
+export type {
+  DirectoryObservation,
+  DirectoryObservationConfidence,
+  DirectoryObservationEnvelope,
+  DirectoryObservationFindingClass,
+  DirectoryObservationReason,
+  DirectoryObservationState,
+  DirectoryObservationStatus,
+} from "./directory-readiness/observations.js";
+
+export {
+  CLAUDE_OBSERVATION_IDS,
+  CLAUDE_OBSERVATION_KINDS,
+  CLAUDE_OBSERVATION_SCHEMA_VERSION,
+} from "./claude-readiness/observations.js";
+export type {
+  ClaudeExperienceObservations,
+  ClaudeObservationId,
+  ClaudeObservationKind,
+  ClaudeObservationState,
+} from "./claude-readiness/observations.js";
+
+export {
+  OPENAI_OBSERVATION_IDS,
+  OPENAI_OBSERVATION_KINDS,
+  OPENAI_OBSERVATION_SCHEMA_VERSION,
+} from "./openai-readiness/observations.js";
+export type {
+  OpenAIExperienceObservations,
+  OpenAIObservationId,
+  OpenAIObservationKind,
+  OpenAIObservationState,
+} from "./openai-readiness/observations.js";
+
+/**
  * Claude directory readiness — the RENDERING surface only.
  *
  * Named rather than `export *`, and narrower than the readiness barrel, for

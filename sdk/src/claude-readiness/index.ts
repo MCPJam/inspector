@@ -156,3 +156,19 @@ export {
   CLAUDE_LOOPBACK_REDIRECT_IGNORES_PORT,
   CLAUDE_SUBMISSION_LIMITS,
 } from "./profile.js";
+
+export {
+  CLAUDE_OBSERVATION_CATALOG,
+  CLAUDE_OBSERVATION_IDS,
+  CLAUDE_OBSERVATION_KINDS,
+  CLAUDE_OBSERVATION_SCHEMA,
+  CLAUDE_OBSERVATION_SCHEMA_VERSION,
+  mapClaudeObservationsToFindings,
+  parseClaudeExperienceObservations,
+} from "./observations.js";
+export type {
+  ClaudeExperienceObservations,
+  ClaudeObservationId,
+  ClaudeObservationKind,
+  ClaudeObservationState,
+} from "./observations.js";

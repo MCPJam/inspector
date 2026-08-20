@@ -242,3 +242,21 @@ export type {
   OpenAIReleaseDelta,
   OpenAIReleaseImpact,
 } from "./checks/release-contract.js";
+
+export {
+  OPENAI_OBSERVATION_CATALOG,
+  OPENAI_OBSERVATION_IDS,
+  OPENAI_OBSERVATION_KINDS,
+  OPENAI_OBSERVATION_SCHEMA,
+  OPENAI_OBSERVATION_SCHEMA_VERSION,
+  mapOpenAIObservationsToFindings,
+  parseOpenAIExperienceObservations,
+} from "./observations.js";
+export type {
+  OpenAIExperienceObservations,
+  OpenAIObservationId,
+  OpenAIObservationKind,
+  OpenAIObservationState,
+} from "./observations.js";
+
+export type { OpenAIToolListingCompleteness } from "./checks/annotations.js";

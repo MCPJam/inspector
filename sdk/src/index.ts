@@ -440,6 +440,59 @@ export type {
   SupportedConformanceResult,
 } from "./conformance-reporting.js";
 
+// The publisher-neutral readiness algebra. Named rather than `export *`
+// because both publisher barrels below already re-export parts of it under
+// their own names, and a wildcard would collide with them.
+export {
+  DIRECTORY_OBSERVATION_CONFIDENCE,
+  DIRECTORY_OBSERVATION_FINDING_CLASSES,
+  DIRECTORY_OBSERVATION_LIMITS,
+  DIRECTORY_OBSERVATION_REASONS,
+  DIRECTORY_OBSERVATION_STATUSES,
+  NOT_REQUESTED_OBSERVATIONS,
+  mapObservationsToFindings,
+  observationFailure,
+  parseDirectoryObservationEnvelope,
+} from "./directory-readiness/observations.js";
+export type {
+  DirectoryObservation,
+  DirectoryObservationCatalog,
+  DirectoryObservationConfidence,
+  DirectoryObservationEnvelope,
+  DirectoryObservationFindingClass,
+  DirectoryObservationMapping,
+  DirectoryObservationParseFailure,
+  DirectoryObservationParseResult,
+  DirectoryObservationReason,
+  DirectoryObservationSchema,
+  DirectoryObservationState,
+  DirectoryObservationStatus,
+} from "./directory-readiness/observations.js";
+
+// The shared MCP dial. NODE ENTRY ONLY — it opens sockets, so it is absent
+// from `browser.ts` and from the two publisher barrels, exactly like the
+// discovery modules below.
+export {
+  DIRECTORY_DIAL_CLIENT_INFO,
+  DIRECTORY_DIAL_DEFAULTS,
+  DIRECTORY_DIAL_PROTOCOL_VERSION,
+  dialAppResources,
+  dialInitialize,
+  dialMcpServer,
+  dialResourceListing,
+  dialToolListing,
+} from "./directory-readiness/mcp-dial.js";
+export type {
+  DirectoryAppResourceEvidence,
+  DirectoryDialEvidence,
+  DirectoryDialOptions,
+  DirectoryDialRequest,
+  DirectoryInitializeEvidence,
+  DirectoryListingEvidence,
+  DirectoryResourceEvidence,
+  DirectoryToolEvidence,
+} from "./directory-readiness/mcp-dial.js";
+
 // Claude directory readiness. Pure data and data reasoning only — the runner
 // and the dialing checks are deliberately not re-exported here, so importing
 // the result model never pulls a transport in with it.
