@@ -120,7 +120,11 @@ import {
   emitPinnedTurnSse,
   type PinnedTurnSsePayload,
 } from "./evals/pinned-turn-sse.js";
-import { buildIterationFinishParams } from "./evals/finalize-iteration.js";
+import {
+  buildIterationFinishParams,
+  buildStageMetadata,
+} from "./evals/finalize-iteration.js";
+import type { StageAuthoredCase } from "@mcpjam/sdk/contract";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import {
   dispatchEvalIterationFinalize,
@@ -1060,6 +1064,16 @@ async function persistSetupFailedIteration(args: {
   runStartedAt: number;
   errorMessage: string;
   iterationMetadataBase: Record<string, string | number | boolean>;
+  /**
+   * The authored case's stage inputs (`buildStageAuthoredCase`).
+   *
+   * A setup abort is the one iteration shape that finalizes without ever
+   * entering the prompt loop, and the chain has a dedicated verdict for it:
+   * every applicable stage `notMeasured` for `setupAborted`, with
+   * `failureCategory: "setup"`. Omitted ⇒ no stage keys, which is how a caller
+   * that cannot say what the case authored stays honest.
+   */
+  stageCase?: StageAuthoredCase;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
 }): Promise<void> {
@@ -1073,7 +1087,17 @@ async function persistSetupFailedIteration(args: {
     startedAt: args.runStartedAt,
     error: args.errorMessage,
     resultSource: "reported" as const,
-    metadata: { ...args.iterationMetadataBase },
+    metadata: {
+      ...args.iterationMetadataBase,
+      ...buildStageMetadata({
+        ...(args.stageCase ? { stageCase: args.stageCase } : {}),
+        // No spans, no prompts, no messages: the analyzer reads that as
+        // `traceAbsent` and degrades the whole chain to a setup abort rather
+        // than reporting six unexplained evidence gaps.
+        status: "failed",
+        error: args.errorMessage,
+      }),
+    },
   };
   await dispatchEvalIterationFinalize({
     recorder: args.recorder,
@@ -3602,6 +3626,14 @@ const runHostedIterationWithBrowser = async (
       runStartedAt,
       errorMessage,
       iterationMetadataBase,
+      // Same authored-case inputs the success path builds further down; this
+      // runner is never reached by a model-free case.
+      stageCase: buildStageAuthoredCase({
+        test,
+        ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
+        turns: resolvedTest.promptTurns,
+        caseNeedsModel: true,
+      }),
       recorder,
       convexClient,
     });

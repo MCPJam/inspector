@@ -2,7 +2,10 @@ import { describe, expect, test } from "vitest";
 import type { ModelMessage } from "ai";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import type { StageAuthoredCase, StageResultRow } from "@mcpjam/sdk/contract";
-import { buildIterationFinishParams } from "../finalize-iteration.js";
+import {
+  buildIterationFinishParams,
+  buildStageMetadata,
+} from "../finalize-iteration.js";
 
 // =============================================================================
 // `buildIterationFinishParams` is where the derived user-value chain joins the
@@ -143,10 +146,59 @@ describe("buildIterationFinishParams — stage derivation", () => {
     const params = build({
       stageCase: authoredCase,
       spans: [okToolSpan],
-      stepResults: [{ stepId: "s1", stepIndex: 0, kind: "prompt", status: "ok" }],
+      stepResults: [
+        { stepId: "s1", stepIndex: 0, kind: "prompt", status: "ok" },
+      ],
     });
     const metadata = params.metadata as Record<string, unknown>;
     expect(metadata.stepResults).toHaveLength(1);
     expect(metadata.stageResults).toHaveLength(6);
+  });
+});
+
+describe("buildStageMetadata — the seam a setup abort finalizes through", () => {
+  // `persistSetupFailedIteration` writes its own minimal iteration row for a
+  // case that threw before the prompt loop started, so it never reaches
+  // `buildIterationFinishParams`. These pin what that path now reports.
+
+  test("no authored case ⇒ no stage keys at all", () => {
+    expect(buildStageMetadata({ status: "failed", error: "boom" })).toEqual({});
+  });
+
+  test("an authored case that captured nothing reports a setup abort", () => {
+    const metadata = buildStageMetadata({
+      stageCase: authoredCase,
+      status: "failed",
+      error: "prepareChatV2 rejected the tool set",
+    });
+    const rows = metadata.stageResults as StageResultRow[];
+    expect(rows).toHaveLength(6);
+    const applicable = rows.filter((r) => r.state !== "notApplicable");
+    expect(applicable.every((r) => r.state === "notMeasured")).toBe(true);
+    expect(applicable.every((r) => r.reason === "setupAborted")).toBe(true);
+    expect(metadata.failureCategory).toBe("setup");
+    expect(metadata.stageAnalyzerVersion).toBe(1);
+    // Never a fabricated failure: nothing was measured, so nothing "failed".
+    expect(metadata.firstFailedStage).toBeUndefined();
+  });
+
+  test("both callers derive identically for the same inputs", () => {
+    // The whole reason the helper is shared: a setup abort persisted through
+    // the minimal row must read the same as one persisted through the full
+    // finish-params path.
+    const viaHelper = buildStageMetadata({
+      stageCase: authoredCase,
+      status: "failed",
+      error: "server not connected",
+      messages: [],
+    });
+    const viaFinishParams = build({
+      stageCase: authoredCase,
+      status: "failed",
+      error: "server not connected",
+      messages: [],
+    }).metadata as Record<string, unknown>;
+    expect(viaHelper.stageResults).toEqual(viaFinishParams.stageResults);
+    expect(viaHelper.failureCategory).toBe(viaFinishParams.failureCategory);
   });
 });

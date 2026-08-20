@@ -100,6 +100,50 @@ function buildStageEvidence(args: {
 }
 
 /**
+ * Derive one iteration's user-value chain metadata, or `{}` when the caller
+ * cannot say what the case authored.
+ *
+ * Exported because a SETUP ABORT never reaches `buildIterationFinishParams`:
+ * `persistSetupFailedIteration` writes its own minimal row for an iteration
+ * that threw before the prompt loop started. That is exactly the shape the
+ * chain has a dedicated verdict for — every applicable stage `notMeasured` for
+ * `setupAborted`, `failureCategory: "setup"` — so leaving that path out would
+ * file a case that demonstrably died in setup as having no chain at all, which
+ * reads identically to an old SDK that reports no chain. Both callers derive
+ * through here so the two cannot drift.
+ */
+export function buildStageMetadata(args: {
+  stageCase?: StageAuthoredCase;
+  spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
+  messages?: ModelMessage[];
+  predicateResults?: unknown[];
+  widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  stageToolErrors?: unknown[];
+  toolSignals?: ToolExposureSignals;
+  status: "completed" | "failed";
+  error?: string;
+}): Record<string, unknown> {
+  const { stageCase, status, error } = args;
+  if (!stageCase) return {};
+  return stageDerivationToMetadata(
+    deriveStageResults({
+      authored: stageCase,
+      evidence: buildStageEvidence({
+        spans: args.spans,
+        prompts: args.prompts,
+        messages: args.messages,
+        predicateResults: args.predicateResults,
+        widgetRenderObservations: args.widgetRenderObservations,
+        toolErrors: args.stageToolErrors,
+        toolSignals: args.toolSignals,
+      }),
+      iteration: { status, ...(error ? { error } : {}) },
+    }),
+  );
+}
+
+/**
  * Builds the `finishParams` object every runner passes to
  * {@link finalizeIterationWithBrowserArtifacts} (which adds `videoBytes` +
  * `convexClient` and dispatches to the recorder or `finalizeEvalIteration`).
@@ -199,21 +243,18 @@ export function buildIterationFinishParams(args: {
     toolSignals,
     injectOpenAiCompat,
   } = args;
-  const stageDerivation = stageCase
-    ? deriveStageResults({
-        authored: stageCase,
-        evidence: buildStageEvidence({
-          spans,
-          prompts,
-          messages,
-          predicateResults,
-          widgetRenderObservations,
-          toolErrors: stageToolErrors,
-          toolSignals,
-        }),
-        iteration: { status, ...(error ? { error } : {}) },
-      })
-    : undefined;
+  const stageMetadata = buildStageMetadata({
+    ...(stageCase ? { stageCase } : {}),
+    spans,
+    prompts,
+    messages,
+    predicateResults,
+    widgetRenderObservations,
+    stageToolErrors,
+    toolSignals,
+    status,
+    ...(error ? { error } : {}),
+  });
   return {
     iterationId,
     passed,
@@ -238,7 +279,7 @@ export function buildIterationFinishParams(args: {
       ...(predicateResults?.length ? { predicates: predicateResults } : {}),
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),
-      ...(stageDerivation ? stageDerivationToMetadata(stageDerivation) : {}),
+      ...stageMetadata,
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
             hostPolicy,
