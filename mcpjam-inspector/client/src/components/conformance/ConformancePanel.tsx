@@ -1,5 +1,4 @@
 import { useState, useMemo } from "react";
-import { useFeatureFlagEnabled } from "posthog-js/react";
 import { Button } from "@mcpjam/design-system/button";
 import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import {
@@ -486,15 +485,6 @@ function SuiteSection({
 }
 
 function ConformanceContent({ server }: { server: ServerWithName }) {
-  // A SECTION flag, not a route flag: `/conformance` is already gated by
-  // `mcpjam-conformance` (nav item and the route redirect in App.tsx), so
-  // these two sections only need to decide whether to render. `=== true`
-  // rather than `!== false`, because a section that pops in after PostHog
-  // hydrates is a better failure than one that flashes for users the flag
-  // excludes.
-  const directoryReadinessEnabled =
-    useFeatureFlagEnabled("mcpjam-directory-readiness") === true;
-
   // Run state, per-suite scores and the pooled headline all live in the shared
   // hook — score.mcpjam.com runs the same four suites and must pool them the
   // same way. Rendering stays here.
@@ -518,7 +508,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
 
   const protocolChecks = useMemo(
     () => protocolCatalog(versionPin),
-    [versionPin]
+    [versionPin],
   );
 
   return (
@@ -526,10 +516,9 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
       <div className="space-y-1 border-b border-border/50 pb-4">
         <h2 className="text-lg font-semibold">Conformance</h2>
         <p className="text-sm text-muted-foreground">
-          Run Protocol, Apps, Tasks, and OAuth checks against {server.name}.
-          {directoryReadinessEnabled
-            ? " Directory readiness grades it against Anthropic's and OpenAI's published rules."
-            : ""}
+          Run Protocol, Apps, Tasks, and OAuth checks against {server.name}.{" "}
+          Directory readiness grades it against Anthropic's and OpenAI's
+          published rules.
         </p>
       </div>
 
@@ -701,12 +690,8 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
           passed/failed checks, so there is no number to pool. Each section
           owns its own run control.
         */}
-        {directoryReadinessEnabled && (
-          <>
-            <DirectoryReadinessSection publisher="claude" server={server} />
-            <DirectoryReadinessSection publisher="openai" server={server} />
-          </>
-        )}
+        <DirectoryReadinessSection publisher="claude" server={server} />
+        <DirectoryReadinessSection publisher="openai" server={server} />
       </div>
     </div>
   );
