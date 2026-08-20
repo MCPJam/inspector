@@ -5,6 +5,8 @@ import {
   createEvalSuiteOperation,
   createHostOperation,
   cancelEvalRunOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   createTunnelOperation,
   diagnoseServerOperation,
   getScenarioOperation,
@@ -327,6 +329,34 @@ type FixtureOverrides = {
    * and answered without the echo marker.
    */
   sessionsEnvelope?: Record<string, unknown>;
+  /**
+   * The suite DETAIL the run ops read to compute their targets. Default: a
+   * suite with NOTHING attached, which is the bare-rerun shape most of these
+   * tests are about. Override it to model an attached-environment or
+   * attached-host suite.
+   */
+  suiteDetail?: Record<string, unknown>;
+  /** Per-target failure injection for the grouped-launch endpoint, keyed by
+   *  target id. A present entry makes that target's entry a failure. */
+  groupTargetFailures?: Record<string, { code: string; message: string }>;
+  /** Model an API deployment with no grouped-launch endpoint at all. */
+  noRunGroupEndpoint?: boolean;
+};
+
+/** A suite with nothing attached — the shape a bare rerun expects. */
+const BARE_SUITE_DETAIL: Record<string, unknown> = {
+  id: "suite-1",
+  name: "Smoke",
+  description: null,
+  projectId: "project-new",
+  environment: { servers: [] },
+  executionConfig: null,
+  hosts: [],
+  environmentIds: [],
+  settings: {},
+  schedule: {},
+  createdAt: 1,
+  updatedAt: 1,
 };
 
 function makeClient(overrides: FixtureOverrides = {}): {
@@ -373,6 +403,68 @@ function makeClient(overrides: FixtureOverrides = {}): {
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites$/.test(path)) {
       return Response.json({ items: suites });
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-run-groups$/.test(path) &&
+      init?.method === "POST"
+    ) {
+      if (overrides.noRunGroupEndpoint) {
+        return Response.json(
+          { code: "NOT_FOUND", message: "No route" },
+          { status: 404 }
+        );
+      }
+      const requestBody = JSON.parse(String(init?.body)) as {
+        suiteId: string;
+        targets: Array<{ environmentId?: string; namedHostId?: string }>;
+      };
+      let started = 0;
+      let failed = 0;
+      const entries = requestBody.targets.map((target, index) => {
+        const id = target.environmentId ?? target.namedHostId ?? "";
+        const failure = overrides.groupTargetFailures?.[id];
+        if (failure) {
+          failed += 1;
+          return { target, status: "failed", error: failure };
+        }
+        started += 1;
+        return {
+          target,
+          status: "started",
+          runId: `run-group-${index + 1}`,
+          runStatus: "running",
+          servers: [{ id: "server-saved", name: "Saved" }],
+          environment: target.environmentId
+            ? { id: target.environmentId, name: "Staging", revision: 7 }
+            : null,
+          caseUpsert: { committed: [], failed: [] },
+        };
+      });
+      const firstStarted = entries.find((entry) => entry.status === "started");
+      return Response.json(
+        {
+          runGroupId: "group-1",
+          suiteId: requestBody.suiteId,
+          outcome:
+            started === 0 ? "failed" : failed > 0 ? "partial" : "started",
+          startedCount: started,
+          failedCount: failed,
+          targets: entries,
+          ...(firstStarted
+            ? {
+                runId: (firstStarted as { runId: string }).runId,
+                status: "running",
+              }
+            : {}),
+        },
+        { status: 202 }
+      );
+    }
+    if (
+      /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+$/.test(path) &&
+      (init?.method ?? "GET") === "GET"
+    ) {
+      return Response.json(overrides.suiteDetail ?? BARE_SUITE_DETAIL);
     }
     if (/^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/.test(path)) {
       return Response.json({ items: [RUN] });
@@ -628,6 +720,79 @@ describe("listProjectServersOperation", () => {
   });
 });
 
+describe("GitHub Checks operations", () => {
+  /**
+   * A client whose only project belongs to NO organization — the personal-
+   * project case. `PlatformProject.organizationId` is nullable, and GitHub
+   * Checks is configured per organization, so this is the one branch in these
+   * two operations that throws before any request.
+   */
+  function personalProjectClient(): {
+    client: PlatformApiClient;
+    fetchMock: ReturnType<typeof vi.fn>;
+  } {
+    const fetchMock = vi.fn(async (target: unknown) => {
+      const path = new URL(String(target)).pathname;
+      if (path === "/api/v1/projects") {
+        return Response.json({
+          items: [
+            {
+              id: "project-personal",
+              name: "Personal",
+              description: null,
+              icon: null,
+              organizationId: null,
+              visibility: null,
+              createdAt: 1,
+              updatedAt: 100,
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected fetch: ${path}`);
+    });
+    const client = new PlatformApiClient({
+      baseUrl: "https://api.example.com/api/v1",
+      getAuth: () => "sk_test",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    return { client, fetchMock };
+  }
+
+  it("refuses to list for a project with no organization", async () => {
+    const { client, fetchMock } = personalProjectClient();
+
+    const error = await listEvalCheckReposOperation
+      .execute({}, { client })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    // The reason, not just a refusal: GitHub Checks is per organization.
+    expect((error as PlatformApiError).message).toContain("organization");
+    // An empty organizationId would have built `/organizations//eval-check-repos`
+    // and come back as a flat not-found. Nothing is sent at all.
+    expect(callsTo(fetchMock, "/eval-check-repos")).toHaveLength(0);
+  });
+
+  it("refuses to connect for a project with no organization", async () => {
+    const { client, fetchMock } = personalProjectClient();
+
+    const error = await connectEvalCheckRepoOperation
+      .execute(
+        { suite: "s", repo: "acme/widgets", outagePolicy: "fail_open" },
+        { client }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    // It reaches a shared repository — the refusal must land before the write,
+    // and before the suite lookup that would otherwise run first.
+    expect(callsTo(fetchMock, "/eval-check-repos")).toHaveLength(0);
+  });
+});
+
 describe("showServersOperation", () => {
   it("assembles a payload without doctor calls for skip-only projects", async () => {
     const { client, fetchMock } = makeClient();
@@ -769,7 +934,13 @@ describe("runEvalSuiteOperation", () => {
   });
 
   it("resolves an environment name and echoes the pinned triple", async () => {
-    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+    // ATTACHED, because the op now checks attachment client-side: a fan-out
+    // issues one request per target, so an unattached one has to fail before
+    // its siblings start spending rather than after.
+    const { client, fetchMock } = makeClient({
+      servers: HTTP_SERVERS,
+      suiteDetail: { ...BARE_SUITE_DETAIL, environmentIds: ["env-stg"] },
+    });
 
     const result = await runEvalSuiteOperation.execute(
       { suite: "Smoke", environment: "staging" },
@@ -1703,6 +1874,15 @@ describe("operation catalog consistency", () => {
     list_eval_run_iterations: { project: "p", runId: "r" },
     get_eval_iteration_trace: { project: "p", runId: "r", iterationId: "i" },
     cancel_eval_run: { project: "p", runId: "r" },
+    request_eval_run_judge: { project: "p", runId: "r" },
+    list_eval_check_repos: {},
+    connect_eval_check_repo: {
+      suite: "s",
+      repo: "acme/widgets",
+      // No default: the policy decides what other people's pull requests
+      // report during an outage, so every caller states it.
+      outagePolicy: "fail_open",
+    },
     get_eval_run_steps: { project: "p", runId: "r", iterationId: "i" },
     create_tunnel: { name: "t" },
     close_tunnel: { serverId: "s" },
@@ -1790,6 +1970,8 @@ describe("operation catalog consistency", () => {
     get_project_environment: { environment: "e" },
     resolve_project_environment: { environment: "e" },
     create_project_environment: { name: "e", hostId: "h" },
+    ensure_adhoc_environment: { host: "h" },
+    name_environment: { environment: "e", expectedRevision: 0, name: "n" },
     update_project_environment: {
       environment: "e",
       expectedRevision: 0,
@@ -1842,6 +2024,8 @@ describe("operation catalog consistency", () => {
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
+      "request_eval_run_judge",
+      "connect_eval_check_repo",
       "create_eval_suite",
       "set_eval_suite_environments",
       "call_server_tool",
@@ -1870,6 +2054,8 @@ describe("operation catalog consistency", () => {
       "set_host_servers",
       "duplicate_host",
       "create_project_environment",
+      "ensure_adhoc_environment",
+      "name_environment",
       // Launching starts a fan-out that SPENDS model credits — the most
       // consequential write on this surface.
       "launch_journey_run",

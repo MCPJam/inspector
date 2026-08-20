@@ -31,7 +31,12 @@ const DEV_MOCK_REGISTRY =
 // merge) for internal users with the flag on and producing visible errors.
 // While `false`, the hook is fully inert: empty data, no fetches, no-op
 // mutations. Flip to true once the registry backend is ready for real use.
-const REGISTRY_FEATURE_ENABLED = false;
+//
+// EXPORTED so the Claude-directory half of the Registry tab
+// (`useClaudeDirectory`) reads the same switch. Two constants would let the
+// screen half-light: a directory that queries while the curated catalog is
+// dark is exactly the state this flag exists to prevent.
+export const REGISTRY_FEATURE_ENABLED = false;
 
 const MOCK_REGISTRY_SERVERS: RegistryServer[] = [
   {

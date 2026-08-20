@@ -704,6 +704,20 @@ export const startSuiteRunWithRecorder = async ({
     suiteId,
     config,
     recorder,
+    /**
+     * This start was a REPLAY of an existing run (idempotency key hit, or the
+     * keyless fingerprint window), not a launch.
+     *
+     * Absent from a backend that predates the field, which callers must read
+     * as "unknown", NOT as "fresh": treating an old backend's silence as a
+     * launch is exactly the assumption that had retries re-running a finished
+     * suite. Skew therefore keeps the old behaviour rather than gaining the
+     * new refusal.
+     */
+    deduped: response?.deduped as boolean | undefined,
+    /** The run's status as the platform holds it — `completed` on a replay of
+     *  a finished run, not the `running` a launch would report. */
+    status: response?.status as string | undefined,
     hostConfig: response?.hostConfig as
       | Record<string, unknown>
       | null

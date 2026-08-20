@@ -128,6 +128,38 @@ describe("bundledHostCompatCatalog", () => {
     expect(template).not.toHaveProperty("compatibilityEvidence");
   });
 
+  // Catalog metadata and the creation config share one object, and callers
+  // save that config straight back through `hosts:updateHost` — whose Convex
+  // validator rejects unknown fields. `styleVariablesByTheme` shipped without
+  // being stripped and every host update failed at the server, so assert the
+  // whole metadata set is gone rather than one key at a time.
+  it("keeps every catalog-metadata key out of the creation templates", () => {
+    const catalog = bundledHostCompatCatalog();
+    const metadataOnlyKeys = [
+      "id",
+      "label",
+      "provenance",
+      "rendersMcpApps",
+      "supportedProtocolVersions",
+      "verifiedAt",
+      "imageSupport",
+      "compatibilityEvidence",
+      "styleVariablesByTheme",
+    ] as const;
+
+    for (const host of getCatalogHosts(catalog)) {
+      const template = getCatalogTemplate(catalog, host.id);
+      expect(template).toBeDefined();
+      for (const key of metadataOnlyKeys) {
+        expect({ host: host.id, key, leaked: key in template! }).toEqual({
+          host: host.id,
+          key,
+          leaked: false,
+        });
+      }
+    }
+  });
+
   it("uses template image fields as source and derives imageSupport for profiles", () => {
     const catalog = bundledHostCompatCatalog();
     const rawGeneratedHost = BUNDLED_HOST_COMPAT_CATALOG.hostsById.notion;

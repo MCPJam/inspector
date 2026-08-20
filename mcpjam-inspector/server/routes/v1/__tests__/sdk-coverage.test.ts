@@ -102,6 +102,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/environments/capabilities":
     "getEnvironmentCapabilities",
   "post /projects/{projectId}/environments": "createEnvironment",
+  "post /projects/{projectId}/environments/ensure-adhoc":
+    "ensureAdhocEnvironment",
+  "post /projects/{projectId}/environments/{environmentId}/name":
+    "nameEnvironment",
   "get /projects/{projectId}/environments/{environmentId}": "getEnvironment",
   "patch /projects/{projectId}/environments/{environmentId}":
     "updateEnvironment",
@@ -154,6 +158,9 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
 
   // Eval runs
   "post /projects/{projectId}/eval-runs": "createEvalRun",
+  "post /projects/{projectId}/eval-run-groups": "createEvalRunGroup",
+  "post /projects/{projectId}/eval-suites/{suiteId}/environments":
+    "attachEvalSuiteEnvironment",
   "get /projects/{projectId}/eval-runs/{runId}": "getEvalRun",
   "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
@@ -204,6 +211,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "undismissSwarmFinding",
   "post /projects/{projectId}/eval-runs/{runId}/insights":
     "requestEvalRunInsights",
+  "post /projects/{projectId}/eval-runs/{runId}/judge": "requestEvalRunJudge",
+  "get /organizations/{organizationId}/eval-check-repos": "listEvalCheckRepos",
+  "post /organizations/{organizationId}/eval-check-repos":
+    "connectEvalCheckRepo",
   "get /projects/{projectId}/waves/{waveId}/insights": "getWaveInsights",
   "post /projects/{projectId}/waves/{waveId}/insights": "requestWaveInsights",
   "delete /projects/{projectId}/waves/{waveId}/insights": "cancelWaveInsights",

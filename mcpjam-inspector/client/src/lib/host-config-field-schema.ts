@@ -356,11 +356,13 @@ function readStyleVariable(
  *
  * These are probed values, so the row shows them: `light-dark(rgba(255, 255,
  * 255, 1), ...)` against `#fff` is the comparison a widget author is here to
- * make, and collapsing it to a yes/no chip would discard the finding. A host
- * that sends nothing reads as an em dash, so presence stays legible either way.
+ * make, and collapsing it to a yes/no chip would discard the finding. A probed
+ * host that sends nothing reads as an explicit "Not supported"; one nobody has
+ * probed stays an em dash, so absence stays legible either way.
  *
- * The trade is that value rows are not support-shaped: no chip, and no
- * participation in the coverage percentage or the support filters.
+ * The trade is that value rows are not support-shaped: the only chip they ever
+ * render is that `NOT_SUPPORTED` one, and they take no part in the coverage
+ * percentage or the support filters.
  */
 const APPS_STYLE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
   MCP_UI_STYLE_VARIABLE_KEYS.map((key) => ({
@@ -374,6 +376,23 @@ const APPS_STYLE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
     read: (cfg) => readStyleVariable(cfg, key),
   }));
 
+/**
+ * A host the catalog says renders no MCP Apps.
+ *
+ * The capability resolver returns a fully-populated shape, so every host has
+ * an `availableDisplayModes` and a `widgetDisplayModeRequests` whether or not
+ * it can show a widget — hosts that render nothing inherit `['inline']` and
+ * `'accept'` from the shared no-claims preset, which reads as an offer rather
+ * than the filler it is. The boolean dimensions do not have this problem:
+ * their no-claims value is `false`, which already renders as unsupported.
+ *
+ * Only the catalog can settle this; absent the fact (a host the user built),
+ * the effective value is the honest answer and is shown as-is.
+ */
+function rendersNoMcpApps(cfg: HostConfigDtoV2): boolean {
+  return (cfg as HostConfigDtoWithCatalogFacts).rendersMcpApps === false;
+}
+
 const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
   {
     id: "appsCap.availableDisplayModes",
@@ -384,7 +403,10 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     description:
       "Display modes the client offers widgets (inline / fullscreen / pip).",
     kind: { kind: "mode-set", modes: ALL_DISPLAY_MODES },
-    read: (cfg) => effMcpApps(cfg).availableDisplayModes,
+    read: (cfg) =>
+      rendersNoMcpApps(cfg)
+        ? NOT_SUPPORTED
+        : effMcpApps(cfg).availableDisplayModes,
   },
   {
     id: "appsCap.widgetDisplayModeRequests",
@@ -394,7 +416,10 @@ const APPS_MCP_CAP_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
     path: "mcpProfile.apps.mcpAppsOverrides.widgetDisplayModeRequests (effective)",
     description: "Policy for honoring widget display-mode change requests.",
     kind: { kind: "enum", support: DISPLAY_MODE_SUPPORT },
-    read: (cfg) => effMcpApps(cfg).widgetDisplayModeRequests,
+    read: (cfg) =>
+      rendersNoMcpApps(cfg)
+        ? NOT_SUPPORTED
+        : effMcpApps(cfg).widgetDisplayModeRequests,
   },
   ...MCP_APPS_DIMENSIONS.map(
     ({ key, description }): HostConfigFieldDef => ({
@@ -731,7 +756,6 @@ export const HOST_CONFIG_FIELDS: ReadonlyArray<HostConfigFieldDef> = [
       mcpProfile(cfg)?.initialize?.supportedProtocolVersions,
   },
 
-
   // ============================================================
   // Protocol · Client capabilities supported
   // ============================================================
@@ -1050,6 +1074,12 @@ export type HostConfigDtoWithCatalogFacts = HostConfigDtoV2 & {
    * probed this host", which look identical in the config alone.
    */
   provenance?: "probe" | "vendor-doc" | "assumed";
+  /**
+   * Whether this host renders MCP Apps at all. A host that renders none has
+   * no display modes to offer, but the capability matrix resolves to a
+   * non-optional shape, so the rows would otherwise print the preset filler.
+   */
+  rendersMcpApps?: boolean;
   /**
    * Style variables per theme, for hosts that resolve their tokens instead of
    * emitting `light-dark(…)`. `hostContext.styles` can only carry the one

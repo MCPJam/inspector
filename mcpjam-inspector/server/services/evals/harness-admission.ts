@@ -1,0 +1,383 @@
+/**
+ * Admission gate for eval runs whose resolved host config selects a HARNESS
+ * (Claude Code | Codex) rather than the emulated engine.
+ *
+ * WHY THIS EXISTS. A host config carrying `harness` runs the REAL runtime in
+ * chat (`routes/web/chat-v2.ts`) and in swarms (`sessionSimulation/
+ * swarm-runner.ts`), both of which pre-flight `checkHarnessRuntimeAvailable`
+ * and refuse rather than degrade. Eval runs forwarded `resolvedExecution.
+ * harness` into `prepareChatV2` but never pre-flighted anything and never
+ * supplied a `harnessMcpProxy` — and since an eval suite ALWAYS has servers,
+ * `runHarnessTurn` could not have run even if it had been reached. The
+ * observable result was a run that quietly executed on the emulated engine and
+ * reported GREEN, which is the worst possible answer: the suite claims it
+ * measured Claude Code and it measured something else.
+ *
+ * So: a harness-hosted eval run either passes the SAME gate chat and swarms
+ * use, or it fails with the gate's reason. Never emulated, never silent.
+ *
+ * DELIBERATELY NOT A RE-DERIVED SUBSET. `checkHarnessRuntimeAvailable` is
+ * called directly (the swarm-runner's own note at its call site is the
+ * governing rationale): a rule added to the shared gate later must apply here
+ * too, and calling the same function is the only way to guarantee that.
+ *
+ * TWO HALVES, because the batch-launch route needs one of them early:
+ *   - `checkEvalHarnessAdmission` — the full decision, made once the run's
+ *     cases (and therefore their models) are known.
+ *   - `checkEvalHarnessStaticAdmission` — everything knowable from the host
+ *     config alone, so `POST /eval-run-groups` can reject a bad target during
+ *     its all-target dry run BEFORE any sibling starts spending.
+ */
+import { isHarness, type Harness } from "@mcpjam/sdk/host-config/internal";
+import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
+import {
+  checkHarnessRuntimeAvailable,
+  type HarnessUnavailableKind,
+} from "../../utils/harness/harness-availability.js";
+import { getHarnessAdapter } from "../../utils/harness/registry.js";
+
+/**
+ * `ok` means the run may proceed. `harness` is present when a harness was
+ * selected at all — absent means the emulated engine, which is always
+ * admissible and is what the vast majority of suites run.
+ */
+export type EvalHarnessAdmission =
+  | { ok: true; harness?: Harness }
+  | { ok: false; harness: Harness; reason: string };
+
+/** The one case-shaped input the gate reads. Matches the recorder's
+ *  `config.tests` rows, so callers pass those straight through. */
+export interface EvalHarnessCase {
+  title?: string;
+  model?: string;
+  provider?: string;
+}
+
+/**
+ * Model sentinels the recorder emits for MODEL-FREE cases (a case whose steps
+ * are all pinned tool calls). They never reach a model runtime, so they are
+ * not evidence of an ineligible model and must not be gated as one.
+ */
+const MODEL_FREE_SENTINEL_PROVIDER = "none";
+
+function isModelFreeCase(test: EvalHarnessCase): boolean {
+  return (
+    !test.model ||
+    test.provider === MODEL_FREE_SENTINEL_PROVIDER ||
+    test.model === "widget-probe"
+  );
+}
+
+/** The host-level `harness` selector, or undefined for the emulated engine.
+ *  Only a REGISTERED id counts — same membership test the execution-context
+ *  resolver applies, so the two can never disagree about what a run runs. */
+export function harnessOfHostConfig(
+  hostConfig: Record<string, unknown> | null | undefined
+): Harness | undefined {
+  if (!hostConfig) return undefined;
+  return isHarness(hostConfig.harness) ? hostConfig.harness : undefined;
+}
+
+/**
+ * A harness eval iteration runs on ONE disposable box, and that box comes from
+ * the environment's pinned computer image.
+ *
+ * REQUIRED, with no fallback to the acting member's personal computer. Falling
+ * back would make eval runs stateful across runs — the point of a per-iteration
+ * box is that every iteration starts from the same frozen image — and it would
+ * quietly put a shared computer to work for a run nobody pointed at it.
+ */
+function harnessNeedsPinnedComputerReason(harness: Harness): string {
+  const name = getHarnessAdapter(harness).displayName;
+  return (
+    `the ${name} harness runs each eval iteration on a fresh computer, so this ` +
+    "run's environment must pin a computer image — pin one on the environment " +
+    "(or attach an environment that does) and retry. There is deliberately no " +
+    "fallback to your personal computer: eval iterations are disposable, and " +
+    "reusing a shared box would carry state between them."
+  );
+}
+
+/**
+ * `widgetRendered` needs the inspector's own widget manager to observe the
+ * tool call — and a harness reaches MCP through the signed proxy instead, so
+ * the manager never sees it and the assertion has nothing to watch.
+ *
+ * REFUSED at admission rather than skipped at grade time: a skipped assertion
+ * on a passing run is indistinguishable from one that held, which is the same
+ * false green this whole gate exists to prevent.
+ */
+function harnessCannotObserveWidgetsReason(
+  harness: Harness,
+  caseTitles: readonly string[]
+): string {
+  const name = getHarnessAdapter(harness).displayName;
+  const named = caseTitles.slice(0, 10).join(", ");
+  return (
+    `the ${name} harness reaches MCP servers through a signed proxy rather ` +
+    "than through the inspector, so widgetRendered assertions have nothing to " +
+    "observe on a harness run. Remove them, or run these cases on a " +
+    `non-harness host. Cases asserting widgetRendered: ${named}` +
+    (caseTitles.length > 10 ? `, +${caseTitles.length - 10} more` : "")
+  );
+}
+
+/**
+ * Everything the gate can decide from the HOST CONFIG and server set alone —
+ * no case models required.
+ *
+ * Exported for `POST /eval-run-groups`: a fan-out must not start target 1
+ * before target 2 has passed the checks that do not need a run row. The
+ * per-case model rules stay in the full check, which runs at prepare time.
+ */
+export function checkEvalHarnessStaticAdmission(args: {
+  hostConfig: Record<string, unknown> | null | undefined;
+  /** The run's resolved server set (the manager connects exactly this). */
+  serverIds?: readonly string[];
+  /** Servers contributed by the environment's pinned plugin versions. They
+   *  COUNT: a host whose MCP servers come solely from a plugin would otherwise
+   *  slip the approval gate this exists to close. */
+  pluginServerIds?: readonly string[];
+  /**
+   * The environment's pinned computer image, when the caller knows it.
+   *
+   * OMITTED means "not resolved here", NOT "absent", so a caller that never
+   * looked cannot refuse a run over a fact it does not hold. An explicit
+   * `null` is a RESOLVED absence and does refuse — which is what both callers
+   * pass today: the batch route resolves each target's environment during its
+   * dry run, and the prepare path reads the run's frozen environment.
+   */
+  pinnedComputerImageId?: string | null;
+}): EvalHarnessAdmission {
+  const harness = harnessOfHostConfig(args.hostConfig);
+  if (!harness) return { ok: true };
+  const hostConfig = args.hostConfig as Record<string, unknown>;
+
+  const hasSelectedMcpServers =
+    (args.serverIds?.length ?? 0) > 0 ||
+    (args.pluginServerIds?.length ?? 0) > 0;
+
+  // A model is required by the shared gate's signature, but the per-case
+  // models are not known yet on this path. Probe with the host's own pinned
+  // model when it has one: every rule EXCEPT model eligibility is model
+  // independent, and a host-pinned model is the one every case inherits unless
+  // it overrides. With no pinned model, skip the model-derived rules here and
+  // let the full check make that call.
+  const hostModelId =
+    typeof hostConfig.modelId === "string" && hostConfig.modelId.trim()
+      ? hostConfig.modelId.trim()
+      : undefined;
+
+  const availability = checkHarnessRuntimeAvailable({
+    harnessId: harness,
+    requireToolApproval: hostConfig.requireToolApproval === true,
+    hasSelectedMcpServers,
+    // A blank probe id is deliberately NOT hosted-eligible, so skip the model
+    // rules rather than fail on a model nobody named: `checkModelEligibility`
+    // below owns that decision once the run's cases are known.
+    model: { id: hostModelId ?? "" },
+    // Same tri-state read the swarm gate makes: `invalid` is treated exactly
+    // like `on`, because a malformed enterprise policy must never be MORE
+    // permissive than a valid one.
+    xaaEnterprisePolicyOn:
+      readXaaEnterprisePolicy(hostConfig.mcpProfile).kind !== "off",
+  });
+  if (!availability.ok) {
+    // With no host-pinned model, a model-eligibility refusal is about the
+    // empty probe id and not about anything the caller configured. Suppress it
+    // here; the full check re-runs the same gate with real case models.
+    if (!hostModelId && isModelKind(availability.kind)) {
+      return staticVerdict(harness, args.pinnedComputerImageId);
+    }
+    return { ok: false, harness, reason: availability.reason };
+  }
+  return staticVerdict(harness, args.pinnedComputerImageId);
+}
+
+/**
+ * The static half's verdict. A pin the caller did not look up is not evidence
+ * of a missing pin, so `undefined` admits and leaves the decision to the full
+ * check; an explicit `null` is a resolved absence and refuses here.
+ */
+function staticVerdict(
+  harness: Harness,
+  pinnedComputerImageId: string | null | undefined
+): EvalHarnessAdmission {
+  return pinnedComputerImageId === undefined
+    ? { ok: true, harness }
+    : admitHarness(harness, { pinnedComputerImageId });
+}
+
+/**
+ * The full decision: static admission plus per-case model eligibility.
+ *
+ * Model eligibility is per case because a suite can mix models, and the honest
+ * failure names the cases that cannot run — "some model is ineligible" sends
+ * the author hunting through the suite.
+ */
+export function checkEvalHarnessAdmission(args: {
+  hostConfig: Record<string, unknown> | null | undefined;
+  serverIds?: readonly string[];
+  pluginServerIds?: readonly string[];
+  /** The run's snapshotted cases (the recorder's `config.tests`). */
+  cases: ReadonlyArray<EvalHarnessCase>;
+  /** The environment's pinned computer image; `null`/absent means none. */
+  pinnedComputerImageId?: string | null;
+  /**
+   * Titles of cases asserting `widgetRendered`. A harness reaches MCP through
+   * the signed proxy, so the inspector's widget manager never sees those calls.
+   */
+  widgetAssertingCaseTitles?: readonly string[];
+}): EvalHarnessAdmission {
+  const harness = harnessOfHostConfig(args.hostConfig);
+  if (!harness) return { ok: true };
+  const hostConfig = args.hostConfig as Record<string, unknown>;
+
+  const hasSelectedMcpServers =
+    (args.serverIds?.length ?? 0) > 0 ||
+    (args.pluginServerIds?.length ?? 0) > 0;
+  const xaaEnterprisePolicyOn =
+    readXaaEnterprisePolicy(hostConfig.mcpProfile).kind !== "off";
+  const requireToolApproval = hostConfig.requireToolApproval === true;
+
+  // Model-bearing cases only. A model-free case runs pinned tool calls with no
+  // runtime at all, so gating it on model eligibility would refuse a suite for
+  // a model it never uses.
+  const modelCases = args.cases.filter((test) => !isModelFreeCase(test));
+
+  // Deduplicate by resolved model so a 40-case suite on one model makes one
+  // decision, and so the ineligible-case list below stays about CASES.
+  const ineligible: Array<{
+    title: string;
+    reason: string;
+    kind: HarnessUnavailableKind;
+  }> = [];
+  const verdictByModel = new Map<
+    string,
+    { reason: string; kind: HarnessUnavailableKind } | undefined
+  >();
+  for (const test of modelCases) {
+    const key = `${test.provider ?? ""}::${test.model}`;
+    let verdict = verdictByModel.get(key);
+    if (!verdictByModel.has(key)) {
+      const availability = checkHarnessRuntimeAvailable({
+        harnessId: harness,
+        requireToolApproval,
+        hasSelectedMcpServers,
+        model: {
+          id: String(test.model),
+          ...(test.provider ? { provider: test.provider } : {}),
+        },
+        xaaEnterprisePolicyOn,
+      });
+      verdict = availability.ok
+        ? undefined
+        : { reason: availability.reason, kind: availability.kind };
+      verdictByModel.set(key, verdict);
+    }
+    if (verdict) {
+      ineligible.push({
+        title: test.title?.trim() || "(untitled case)",
+        ...verdict,
+      });
+    }
+  }
+
+  if (ineligible.length > 0) {
+    // Non-model refusals (approval, MCP support, broker delivery, enterprise
+    // policy) are properties of the HOST and identical for every case — report
+    // one of them plainly rather than repeating it per case.
+    const hostLevel = ineligible.find((entry) => !isModelKind(entry.kind));
+    if (hostLevel) {
+      return { ok: false, harness, reason: hostLevel.reason };
+    }
+    const names = [...new Set(ineligible.map((entry) => entry.title))];
+    return {
+      ok: false,
+      harness,
+      reason: `${ineligible[0]!.reason}. Ineligible cases: ${names
+        .slice(0, 10)
+        .join(", ")}${names.length > 10 ? `, +${names.length - 10} more` : ""}`,
+    };
+  }
+
+  // No model-bearing case at all: the host-level rules still apply, so run the
+  // static half to decide them rather than admitting by default.
+  if (modelCases.length === 0) {
+    const staticOnly = checkEvalHarnessStaticAdmission({
+      hostConfig: args.hostConfig,
+      ...(args.serverIds ? { serverIds: args.serverIds } : {}),
+      ...(args.pluginServerIds
+        ? { pluginServerIds: args.pluginServerIds }
+        : {}),
+      // Explicitly `null` when absent: the FULL check has resolved the run's
+      // environment, so "no pin" here is a fact rather than "not looked up".
+      pinnedComputerImageId: args.pinnedComputerImageId ?? null,
+    });
+    if (!staticOnly.ok) return staticOnly;
+  }
+
+  return admitHarness(harness, {
+    pinnedComputerImageId: args.pinnedComputerImageId ?? null,
+    ...(args.widgetAssertingCaseTitles
+      ? { widgetAssertingCaseTitles: args.widgetAssertingCaseTitles }
+      : {}),
+  });
+}
+
+/**
+ * How the run's engine is ATTRIBUTED, forever after, on the run record.
+ *
+ * A run that says nothing about its engine is indistinguishable from one that
+ * ran the harness, which is exactly the ambiguity that let silent emulation go
+ * unnoticed. Stamped for every run, not just harness ones.
+ */
+export function executionEngineLabel(
+  hostConfig: Record<string, unknown> | null | undefined
+): string {
+  const harness = harnessOfHostConfig(hostConfig);
+  return harness ? `harness:${harness}` : "emulated";
+}
+
+/**
+ * Whether a refusal came from one of the gate's two MODEL rules — the only ones
+ * whose answer depends on WHICH model was probed, and therefore the only ones
+ * the static half must defer when it has no real model to probe with.
+ *
+ * Read off the gate's structured `kind`, never its wording: this used to match
+ * the reason text, which made rephrasing a user-facing sentence silently change
+ * which runs are admitted.
+ */
+function isModelKind(kind: HarnessUnavailableKind): boolean {
+  return kind === "model-not-hosted" || kind === "model-unsupported";
+}
+
+/**
+ * The last two rules, applied after every shared-gate rule has passed: the run
+ * needs a pinned computer image, and none of its cases may assert something a
+ * harness run cannot observe.
+ */
+function admitHarness(
+  harness: Harness,
+  args: {
+    pinnedComputerImageId?: string | null;
+    widgetAssertingCaseTitles?: readonly string[];
+  }
+): EvalHarnessAdmission {
+  if (!args.pinnedComputerImageId) {
+    return {
+      ok: false,
+      harness,
+      reason: harnessNeedsPinnedComputerReason(harness),
+    };
+  }
+  const widgetCases = args.widgetAssertingCaseTitles ?? [];
+  if (widgetCases.length > 0) {
+    return {
+      ok: false,
+      harness,
+      reason: harnessCannotObserveWidgetsReason(harness, widgetCases),
+    };
+  }
+  return { ok: true, harness };
+}
