@@ -12,6 +12,7 @@ import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 import {
   fieldDiverges,
   HOST_CONFIG_FIELDS,
+  NOT_SUPPORTED,
   type HostConfigFieldDef,
   type SupportLevel,
 } from "@/lib/host-config-field-schema";
@@ -48,6 +49,10 @@ export function getSupportLevel(
   cfg: HostConfigDtoV2
 ): SupportLevel | null {
   const value = field.read(cfg);
+  // An explicit "we know this host does not have it", which the cell renders
+  // as an unsupported chip. Summarize it the same way, or coverage and the
+  // support filters disagree with what is on screen.
+  if (value === NOT_SUPPORTED) return "unsupported";
   switch (field.kind.kind) {
     case "boolean":
       return value === true ? "supported" : "neutral";
