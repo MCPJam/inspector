@@ -2,6 +2,11 @@
  * What the OpenAI readiness reader is told about an ARCHIVE, as opposed to the
  * files inside it.
  *
+ * Moved here with its implementation: the adapters left the inspector server
+ * so the CLI's local package modes could reach them without depending on a web
+ * server, and a test that stayed behind would be guarding a re-export shim
+ * rather than the rules it is about.
+ *
  * The distinction is the point. Every path rule the portal enforces is checked
  * against the names the archive's central directory recorded, BEFORE anything
  * normalizes them — because normalization repairs a backslash separator and a
@@ -19,7 +24,7 @@ import JSZip from "jszip";
 import {
   DIRECTORY_ARCHIVE_OBSERVATIONS,
   collectZipArchiveObservations,
-} from "../bundle-file-sources.js";
+} from "../src/plugin-bundle/node-file-sources.js";
 
 const encoder = new TextEncoder();
 
