@@ -477,6 +477,54 @@ describe("checkEvalExecutionAdmission", () => {
     }
   });
 
+  // ── The single-case surface ──────────────────────────────────────────────
+  // Quick and streamed one-offs pass `runId: null`, and BOTH sandbox-
+  // provisioning sites require `runId !== null` — so no box is ever booted for
+  // them and a pinned image changes nothing. The rule is the surface itself.
+
+  it("refuses a computer-backed built-in on a single-case run, image or not", () => {
+    for (const pinnedComputerImageId of [null, "env-1"]) {
+      const verdict = checkEvalExecutionAdmission({
+        hostConfig: { builtInToolIds: ["bash"] },
+        pinnedComputerImageId,
+        surface: "single-case",
+      });
+      expect(verdict.ok).toBe(false);
+      if (verdict.ok) throw new Error("unreachable");
+      // The advice must NOT be "pin an image" — pinning one would not help.
+      expect(verdict.reason).toContain("never provisions a computer");
+      expect(verdict.reason).toContain("as part of a suite");
+      expect(verdict.reason).not.toContain("Pin one on the environment");
+    }
+  });
+
+  it("still admits a single-case run with no computer-backed built-in", () => {
+    expect(
+      checkEvalExecutionAdmission({
+        hostConfig: { builtInToolIds: ["web_search"] },
+        surface: "single-case",
+      }).ok
+    ).toBe(true);
+  });
+
+  it("leaves the suite surface unchanged — an image still admits it", () => {
+    // The default surface must keep its old behavior exactly; only the
+    // single-case one ignores the pin.
+    expect(
+      checkEvalExecutionAdmission({
+        hostConfig: { builtInToolIds: ["bash"] },
+        pinnedComputerImageId: "env-1",
+      }).ok
+    ).toBe(true);
+    expect(
+      checkEvalExecutionAdmission({
+        hostConfig: { builtInToolIds: ["bash"] },
+        pinnedComputerImageId: "env-1",
+        surface: "run",
+      }).ok
+    ).toBe(true);
+  });
+
   it("names every offending id, deduped", () => {
     const verdict = checkEvalExecutionAdmission({
       hostConfig: { builtInToolIds: ["bash", "web_search", "bash"] },

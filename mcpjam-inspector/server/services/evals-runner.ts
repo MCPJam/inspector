@@ -296,6 +296,25 @@ export function runFrozenSkillOptions(run: {
   pinnedSkillSource?: EvalPinnedSkillSource;
   pinnedHarnessSkills?: PinnedSkillArtifact[];
 } {
+  // Presence selects the pinned source at every hop below, so a non-array that
+  // is not `undefined` would sail through all of them and only fail inside
+  // `pinnedArtifactsToRuntimeSkills`'s `.map` — deep in the harness turn, after
+  // a sandbox has been provisioned and paid for. The type forbids it, but the
+  // value crosses a route boundary and a persisted-data conversion on the way
+  // here, so it is worth one loud check at the seam rather than a confusing
+  // crash later. `undefined` stays legal: it means "this run pinned nothing".
+  if (
+    run.pinnedHarnessSkills !== undefined &&
+    !Array.isArray(run.pinnedHarnessSkills)
+  ) {
+    throw new Error(
+      `runFrozenSkillOptions: pinnedHarnessSkills must be an array or undefined (got ${
+        run.pinnedHarnessSkills === null
+          ? "null"
+          : typeof run.pinnedHarnessSkills
+      })`
+    );
+  }
   return {
     ...(run.pinnedSkillSource
       ? { pinnedSkillSource: run.pinnedSkillSource }

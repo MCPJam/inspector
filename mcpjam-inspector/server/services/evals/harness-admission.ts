@@ -479,12 +479,30 @@ export function checkEvalExecutionAdmission(args: {
    * Unlike the harness static half, absent is treated as ABSENT rather than
    * "not looked up": every caller of this gate resolves the run's frozen
    * environment first, so there is no "did not look" case to protect.
+   *
+   * IGNORED when `surface` is `"single-case"` — that surface can never attach
+   * a computer regardless of what any environment pins.
    */
   pinnedComputerImageId?: string | null;
+  /**
+   * Which execution surface is asking.
+   *
+   * `"run"` (default) — a suite run. It provisions a box per iteration when the
+   * run's environment pins an image, so an image is exactly what it lacks.
+   *
+   * `"single-case"` — a quick or streamed one-off. These pass `runId: null`,
+   * and BOTH provisioning sites require `runId !== null`, so no box is ever
+   * booted for them. That makes "pin an image" the wrong advice: pinning one
+   * would change nothing. The surface itself is the constraint, so the refusal
+   * has to say so and point at running the case in a suite instead.
+   */
+  surface?: "run" | "single-case";
 }): { ok: true } | { ok: false; reason: string } {
   const ids = args.hostConfig?.builtInToolIds;
   if (!Array.isArray(ids) || ids.length === 0) return { ok: true };
-  if (args.pinnedComputerImageId) return { ok: true };
+  const singleCase = args.surface === "single-case";
+  // A pinned image only helps the surface that can actually boot from it.
+  if (!singleCase && args.pinnedComputerImageId) return { ok: true };
 
   const offending = ids.filter(
     (id): id is string =>
@@ -493,15 +511,19 @@ export function checkEvalExecutionAdmission(args: {
   if (offending.length === 0) return { ok: true };
 
   const named = [...new Set(offending)].join(", ");
+  const cause = singleCase
+    ? "a single-case run never provisions a computer, so it cannot provide " +
+      `${named} at all. Run this case as part of a suite whose environment ` +
+      "pins a computer image"
+    : "this run's environment pins no computer image. Pin one on the " +
+      "environment (or attach an environment that does) and retry";
   return {
     ok: false,
     reason:
       `this host grants the computer-backed built-in ${named}, which needs a ` +
-      "computer to run on, but this run's environment pins no computer image. " +
-      "Pin one on the environment (or attach an environment that does) and " +
-      `retry. The run was refused rather than executed with ${named} silently ` +
-      "missing, which would have reported a result for a host configuration " +
-      "that never ran.",
+      `computer to run on, but ${cause}. The run was refused rather than ` +
+      `executed with ${named} silently missing, which would have reported a ` +
+      "result for a host configuration that never ran.",
   };
 }
 

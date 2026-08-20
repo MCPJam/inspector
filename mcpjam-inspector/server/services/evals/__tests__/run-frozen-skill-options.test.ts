@@ -66,4 +66,42 @@ describe("runFrozenSkillOptions", () => {
   it("returns an empty object when the run froze nothing", () => {
     expect(runFrozenSkillOptions({})).toEqual({});
   });
+
+  // ── Invalid input ────────────────────────────────────────────────────────
+  // The type forbids these, but the value crosses a route boundary and a
+  // persisted-data conversion before it gets here. Without the guard they are
+  // not rejected anywhere: `null` passes every `!== undefined` presence check
+  // downstream and only fails inside `pinnedArtifactsToRuntimeSkills`'s `.map`
+  // — deep in the harness turn, after a sandbox has been provisioned and paid
+  // for. Failing loudly at the seam turns that into an attributable error.
+
+  it("REJECTS null rather than letting it crash mid-turn", () => {
+    expect(() =>
+      runFrozenSkillOptions({
+        pinnedHarnessSkills: null as unknown as PinnedSkillArtifact[],
+      })
+    ).toThrow(/must be an array or undefined \(got null\)/);
+  });
+
+  it("REJECTS a non-array value, naming what it got", () => {
+    for (const bad of ["deploy", 7, {}]) {
+      expect(() =>
+        runFrozenSkillOptions({
+          pinnedHarnessSkills: bad as unknown as PinnedSkillArtifact[],
+        })
+      ).toThrow(/pinnedHarnessSkills must be an array or undefined/);
+    }
+  });
+
+  it("does NOT inspect artifact contents — that is the adapter's job", () => {
+    // The seam decides WHICH channels travel, not whether an artifact is
+    // well-formed. `runPinnedSkillsToHarnessArtifacts` builds these from pin
+    // rows and is where per-artifact validation (and the fail-the-run
+    // behaviour for an unreachable file) lives, so re-checking here would
+    // duplicate a rule that already has one owner.
+    const malformed = [{ name: "x" }] as unknown as PinnedSkillArtifact[];
+    expect(runFrozenSkillOptions({ pinnedHarnessSkills: malformed })).toEqual({
+      pinnedHarnessSkills: malformed,
+    });
+  });
 });

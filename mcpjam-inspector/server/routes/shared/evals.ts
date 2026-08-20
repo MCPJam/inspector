@@ -1036,9 +1036,7 @@ export function shouldSkipExecution(prepared: {
   deduped?: boolean;
   status?: string;
 }): boolean {
-  return (
-    prepared.deduped === true && isTerminalRunStatus(prepared.status)
-  );
+  return prepared.deduped === true && isTerminalRunStatus(prepared.status);
 }
 
 /**
@@ -2486,6 +2484,29 @@ export async function runEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
+
+  // The same honesty gate the suite path applies, with the surface named: a
+  // single-case run passes `runId: null`, and both sandbox-provisioning sites
+  // require `runId !== null`, so no box is ever booted for it. A host granting
+  // a computer-backed built-in would therefore execute with the tool silently
+  // skipped by `resolveHostTools`. Refused instead — and the message points at
+  // running the case inside a suite rather than at pinning an image, which
+  // would change nothing here.
+  const singleCaseAdmission = checkEvalExecutionAdmission({
+    hostConfig:
+      (hostConfigOverride as Record<string, unknown> | undefined) ??
+      suiteHostConfig ??
+      null,
+    surface: "single-case",
+  });
+  if (!singleCaseAdmission.ok) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      singleCaseAdmission.reason,
+      { reason: "EVAL_EXECUTION_UNAVAILABLE" }
+    );
+  }
   const suiteEnvironment = await loadSuiteEnvironment(
     convexClient,
     testCase.evalTestSuiteId
@@ -2868,6 +2889,29 @@ export async function streamEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
+
+  // The same honesty gate the suite path applies, with the surface named: a
+  // single-case run passes `runId: null`, and both sandbox-provisioning sites
+  // require `runId !== null`, so no box is ever booted for it. A host granting
+  // a computer-backed built-in would therefore execute with the tool silently
+  // skipped by `resolveHostTools`. Refused instead — and the message points at
+  // running the case inside a suite rather than at pinning an image, which
+  // would change nothing here.
+  const singleCaseAdmission = checkEvalExecutionAdmission({
+    hostConfig:
+      (hostConfigOverride as Record<string, unknown> | undefined) ??
+      suiteHostConfig ??
+      null,
+    surface: "single-case",
+  });
+  if (!singleCaseAdmission.ok) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      singleCaseAdmission.reason,
+      { reason: "EVAL_EXECUTION_UNAVAILABLE" }
+    );
+  }
   const suiteEnvironment = await loadSuiteEnvironment(
     convexClient,
     testCase.evalTestSuiteId
