@@ -52,6 +52,7 @@ import { runOpenAIMcpSkillChecks } from "./checks/mcp-skills.js";
 import { runOpenAIMigrationChecks } from "./checks/migration.js";
 import { runOpenAIOptionalFeatureChecks } from "./checks/optional-features.js";
 import { runOpenAIPolicyChecks } from "./checks/policy.js";
+import { runOpenAIReleaseContractChecks } from "./checks/release-contract.js";
 import { runOpenAIDomainVerificationChecks } from "./checks/domain-verification.js";
 import { runOpenAIEndpointChecks } from "./checks/endpoint.js";
 import { runOpenAIPackageChecks } from "./checks/package.js";
@@ -91,6 +92,7 @@ import {
   type OpenAISubmissionMode,
 } from "./types.js";
 
+import type { OpenAIMetadataSnapshot } from "./snapshot.js";
 import type { XmlParseFn } from "./package/image-dimensions.js";
 import type { PluginFileSource } from "../plugin-bundle/types.js";
 
@@ -126,6 +128,10 @@ export interface OpenAIReadinessEvidence {
   appsUi?: OpenAIAppsUiEvidence;
   /** Whether the plugin sells anything, for the commerce rules. */
   hasCommerce?: boolean;
+  /** This version's metadata snapshot, for the release-contract comparison. */
+  draftSnapshot?: OpenAIMetadataSnapshot;
+  /** The published version's snapshot, captured whenever it was published. */
+  publishedSnapshot?: OpenAIMetadataSnapshot;
   /** Read from a package source, when the run was given one. */
   package?: OpenAIPluginPackageEvidence;
   /** Raw submission profile, validated during grading so issues become findings. */
@@ -414,6 +420,14 @@ export function gradeOpenAIReadiness(
         },
         stamp,
       ),
+      ...runOpenAIReleaseContractChecks(
+        {
+          draft: evidence.draftSnapshot,
+          published: evidence.publishedSnapshot,
+          hasPublishedVersion,
+        },
+        stamp,
+      ),
       ...optional.findings,
       ...runOpenAISubmissionChecks(
         {
@@ -510,6 +524,9 @@ export interface GatherOpenAIReadinessEvidenceOptions {
   appsUi?: OpenAIAppsUiEvidence;
   /** Whether the plugin sells anything. */
   hasCommerce?: boolean;
+  /** Snapshots for the release-contract comparison. */
+  draftSnapshot?: OpenAIMetadataSnapshot;
+  publishedSnapshot?: OpenAIMetadataSnapshot;
   /** Archive facts the source cannot report. See `OpenAIArchiveObservations`. */
   archive?: OpenAIArchiveObservations;
   /**
@@ -597,6 +614,8 @@ export async function gatherOpenAIReadinessEvidence(
     importedSkills,
     appsUi: options.appsUi,
     hasCommerce: options.hasCommerce,
+    draftSnapshot: options.draftSnapshot,
+    publishedSnapshot: options.publishedSnapshot,
     package: packageEvidence,
     submissionProfile: options.submissionProfile,
     annotatedTools: options.annotatedTools,

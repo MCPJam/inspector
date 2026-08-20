@@ -225,3 +225,20 @@ export type {
   OpenAIOptionalFeatureEvidence,
   OpenAIOptionalFeatureOutput,
 } from "./checks/optional-features.js";
+
+export { captureOpenAIMetadataSnapshot, splitEndpoint } from "./snapshot.js";
+export type {
+  OpenAIMetadataSnapshot,
+  OpenAIToolSnapshot,
+  OpenAIUiResourceSnapshot,
+} from "./snapshot.js";
+
+export {
+  compareOpenAISnapshots,
+  runOpenAIReleaseContractChecks,
+} from "./checks/release-contract.js";
+export type {
+  OpenAIReleaseContractInput,
+  OpenAIReleaseDelta,
+  OpenAIReleaseImpact,
+} from "./checks/release-contract.js";
