@@ -71,6 +71,21 @@ export type HarnessBrokerBox =
       // and nothing to re-check: the request cannot carry them.
     };
 
+/**
+ * The box, as request fields. Serialized STRAIGHT off the discriminated union —
+ * the project and the scope are fields of the `computer` arm, so the sandbox
+ * path has no branch that could emit them and no way to regress into one.
+ */
+function boxRequestFields(box: HarnessBrokerBox): Record<string, unknown> {
+  return box.kind === "computer"
+    ? {
+        projectId: box.projectId,
+        computerId: box.computerId,
+        ...(box.executionScope ? { executionScope: box.executionScope } : {}),
+      }
+    : { sandboxRowId: box.sandboxRowId };
+}
+
 export async function startHarnessModelBroker(args: {
   box: HarnessBrokerBox;
   harnessId: "claude-code" | "codex";
@@ -103,19 +118,8 @@ export async function startHarnessModelBroker(args: {
         "content-type": "application/json",
         authorization: bearerHeader(args.bearer),
       },
-      // Serialized STRAIGHT off the discriminated box — the project and the
-      // scope are fields of the `computer` arm, so the sandbox path has no
-      // branch that could emit them and no way to regress into one.
       body: JSON.stringify({
-        ...(args.box.kind === "computer"
-          ? {
-              projectId: args.box.projectId,
-              computerId: args.box.computerId,
-              ...(args.box.executionScope
-                ? { executionScope: args.box.executionScope }
-                : {}),
-            }
-          : { sandboxRowId: args.box.sandboxRowId }),
+        ...boxRequestFields(args.box),
         harnessId: args.harnessId,
         modelId: args.modelId,
         ...(args.runId ? { runId: args.runId } : {}),
@@ -225,6 +229,154 @@ export async function revokeHarnessModelBroker(args: {
     };
   } catch (err) {
     logger.warn("[harness-model-broker] revoke network error", err);
+    return { ok: false };
+  }
+}
+
+export type HarnessBoxReservationResult =
+  | {
+      ok: true;
+      expiresAt?: number;
+      /** The backend predates box reservations, so nothing was claimed. */
+      unsupported?: boolean;
+    }
+  | { ok: false; status: number; error: string };
+
+/**
+ * Claim a box for the span of a turn's PREPARATION — waking it and installing
+ * the harness runtime, all of which happens before the lease exists and
+ * therefore outside the protection of the lease's own per-box fence. The lease
+ * consumes this claim when it is minted (matched on `runId`).
+ *
+ * A 404 is treated as SUCCESS-but-unclaimed: a self-hosted deployment running a
+ * backend from before this endpoint existed should keep working exactly as it
+ * did, with the lease fence as its only serialization, rather than losing the
+ * harness entirely over a preparation lock it has never had.
+ */
+export async function reserveHarnessBox(args: {
+  box: HarnessBrokerBox;
+  harnessId: "claude-code" | "codex";
+  modelId: string;
+  runId: string;
+  bearer: string;
+  signal?: AbortSignal;
+}): Promise<HarnessBoxReservationResult> {
+  let url: string;
+  try {
+    url = new URL(
+      "/web/harness/model-broker/reserve",
+      getConvexHttpUrl()
+    ).toString();
+  } catch (err) {
+    logger.error("[harness-model-broker] missing reserve endpoint config", err);
+    return {
+      ok: false,
+      status: 500,
+      error: "Harness model-broker endpoint is not configured",
+    };
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: bearerHeader(args.bearer),
+      },
+      body: JSON.stringify({
+        ...boxRequestFields(args.box),
+        // The same harness + model the lease will name: the backend authorizes a
+        // reservation exactly as it authorizes a lease, which for an ephemeral
+        // box means checking both against what the run actually pinned.
+        harnessId: args.harnessId,
+        modelId: args.modelId,
+        runId: args.runId,
+      }),
+      signal: args.signal,
+    });
+  } catch (err) {
+    logger.error("[harness-model-broker] reserve network error", err);
+    return {
+      ok: false,
+      status: 502,
+      error: "Failed to reach harness model-broker endpoint",
+    };
+  }
+
+  if (response.status === 404) {
+    logger.warn(
+      "[harness-model-broker] backend has no box-reservation endpoint; " +
+        "preparing without a claim"
+    );
+    return { ok: true, unsupported: true };
+  }
+
+  const payload: any = await response.json().catch(() => null);
+  if (!response.ok || payload?.ok !== true) {
+    return {
+      ok: false,
+      status: response.status,
+      error:
+        typeof payload?.error === "string"
+          ? payload.error
+          : `Couldn't reserve the computer (${response.status})`,
+    };
+  }
+  return {
+    ok: true,
+    ...(typeof payload.expiresAt === "number"
+      ? { expiresAt: payload.expiresAt }
+      : {}),
+  };
+}
+
+/**
+ * Hand a claimed box back after a failed or aborted preparation. Best-effort:
+ * the reservation's TTL is the real guarantee, and a turn that dies without
+ * releasing must not wedge the box for longer than that.
+ */
+export async function releaseHarnessBoxReservation(args: {
+  box: HarnessBrokerBox;
+  harnessId: "claude-code" | "codex";
+  modelId: string;
+  runId: string;
+  bearer: string;
+  signal?: AbortSignal;
+}): Promise<{ ok: boolean }> {
+  let url: string;
+  try {
+    url = new URL(
+      "/web/harness/model-broker/reserve/release",
+      getConvexHttpUrl()
+    ).toString();
+  } catch {
+    return { ok: false };
+  }
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: bearerHeader(args.bearer),
+      },
+      body: JSON.stringify({
+        ...boxRequestFields(args.box),
+        harnessId: args.harnessId,
+        modelId: args.modelId,
+        runId: args.runId,
+      }),
+      signal: args.signal,
+    });
+    if (!response.ok) {
+      logger.warn(
+        `[harness-model-broker] reservation release returned ${response.status}`
+      );
+      return { ok: false };
+    }
+    return { ok: true };
+  } catch (err) {
+    logger.error("[harness-model-broker] reservation release network error", err);
     return { ok: false };
   }
 }
