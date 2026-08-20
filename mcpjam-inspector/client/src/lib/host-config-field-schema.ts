@@ -356,11 +356,13 @@ function readStyleVariable(
  *
  * These are probed values, so the row shows them: `light-dark(rgba(255, 255,
  * 255, 1), ...)` against `#fff` is the comparison a widget author is here to
- * make, and collapsing it to a yes/no chip would discard the finding. A host
- * that sends nothing reads as an em dash, so presence stays legible either way.
+ * make, and collapsing it to a yes/no chip would discard the finding. A probed
+ * host that sends nothing reads as an explicit "Not supported"; one nobody has
+ * probed stays an em dash, so absence stays legible either way.
  *
- * The trade is that value rows are not support-shaped: no chip, and no
- * participation in the coverage percentage or the support filters.
+ * The trade is that value rows are not support-shaped: the only chip they ever
+ * render is that `NOT_SUPPORTED` one, and they take no part in the coverage
+ * percentage or the support filters.
  */
 const APPS_STYLE_FIELDS: ReadonlyArray<HostConfigFieldDef> =
   MCP_UI_STYLE_VARIABLE_KEYS.map((key) => ({
