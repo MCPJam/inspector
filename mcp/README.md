@@ -48,16 +48,17 @@ so results respect the caller's project access.
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
 | `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
-| `run_eval_suite` | Start an asynchronous rerun of an existing eval suite. | — |
+| `run_eval_suite` | Start an asynchronous rerun of an existing eval suite, against one target or several. Fan-out is explicit: a suite with several attached targets refuses with TARGET_REQUIRED unless you name targets or pass allAttached, and each target is one PAID run. | — |
 | `create_eval_suite` | Create a runnable eval suite from authored test cases. | — |
-| `get_eval_suite` | Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge, schedule. | — |
-| `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge. | — |
+| `get_eval_suite` | Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule. | — |
+| `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge (`autoRun` is what makes grading happen; `enabled` alone only makes the judge available). | — |
 | `delete_eval_suite` | Permanently delete an eval suite and all its cases and runs. | — |
 | `set_eval_suite_schedule` | Enable or disable automatic scheduled runs for a suite, and set the interval. | — |
 | `set_eval_suite_environments` | Attach project environments to an eval suite, replacing whatever it had. | — |
 | `list_eval_cases` | List the test cases in an eval suite, with their ids and configuration. | — |
 | `get_eval_case` | Fetch one eval test case's full definition. | — |
 | `create_eval_case` | Add one test case to an eval suite. | — |
+| `create_eval_cases` | Add several test cases to an eval suite in one call. | — |
 | `update_eval_case` | Edit an eval test case. | — |
 | `delete_eval_case` | Permanently delete one test case from an eval suite. | — |
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
@@ -67,9 +68,14 @@ so results respect the caller's project access.
 | `get_eval_iteration_trace` | Fetch the full trace for one eval iteration: the complete message history plus expected-vs-actual tool-call analysis. | — |
 | `get_eval_run_steps` | Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). | — |
 | `cancel_eval_run` | Cancel an in-flight eval run. | — |
+| `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
+| `list_eval_check_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
+| `connect_eval_check_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
+| `list_sandbox_images` | List the custom Computer sandbox images (blueprints) in a project — the choices for a suite's `environment.computerEnvironment`. | — |
+| `get_sandbox_image` | Show one sandbox image's blueprint, sharing, and latest build status. | — |
 | `list_project_plugins` | List the live Agent Plugins installed in a project: name, display name, enabled state, and active version id. | — |
 | `get_plugin_version` | Show one imported plugin version: status, component counts, and per-component summaries (servers with placement and auth timing, skills with their namespaced refs). | — |
 | `list_scenarios` | List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
@@ -176,9 +182,21 @@ can run against instead of a loose server selection. Attach them to a suite
 with `set_eval_suite_environments`; from then on `run_eval_suite` /
 `run_eval_case` take an `environment` (name or ID) naming which one to use.
 A suite with exactly one attached environment uses it automatically; a suite
-with several requires the argument, and the error names the candidates.
+with several refuses with `TARGET_REQUIRED` and names every candidate, rather
+than guessing how much to spend. `run_eval_suite` also takes `environments`
+(several, one paid run each), `host`/`hosts` for a suite with attached hosts,
+and `allAttached` to fan out across every attached target on ONE axis —
+environments if the suite has any, otherwise hosts, never a cross product.
 `environment` and `servers` are mutually exclusive — an environment supplies a
-closed server set that an override cannot change.
+closed server set that an override cannot change — and so are the environment
+and host axes.
+
+Instead of NAMING a target, `compose` builds one: a host plus an optional
+model, sandbox image, server group and pinned skills becomes an unnamed,
+content-addressed environment (the same row `ensure_adhoc_environment`
+returns), which is then APPENDED to the suite so the run stays reproducible
+from the app. Promote such a row to a named environment in place with
+`name_environment`.
 
 An environment-backed run records the environment and the exact revision it
 executed against, and `get_eval_run` reports that triple — so an agent can

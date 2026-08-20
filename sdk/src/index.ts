@@ -324,6 +324,39 @@ export type {
   PublicCheckOverride,
   PublicMatchOptions,
 } from "./corpus.js";
+
+// Suite files: read one, resolve its documented defaults in memory, write an
+// authored one back. Pure and browser-safe — the file I/O half lives in
+// @mcpjam/cli (`eval validate`, `eval export`).
+//
+// Deliberately NOT re-exported from `@mcpjam/sdk/contract`. That subpath is
+// dependency-light (zod only) and browser-bundled on purpose; routing the
+// loader through it would pull `yaml` into every client bundle that imports
+// the contract for its types.
+export {
+  MAX_SUITE_FILE_BYTES,
+  SUITE_FILE_DEFAULT_CAPTURE_LEVEL,
+  SUITE_FILE_FINDING_CODES,
+  SUITE_FILE_VALIDITY_DEFAULTS,
+  formatSuiteFileFindings,
+  loadEvalSuiteFile,
+  resolveEvalSuiteFile,
+  serializeEvalSuiteFile,
+  suiteFilePointer,
+} from "./suite-file-loader.js";
+export type {
+  LoadEvalSuiteFileOptions,
+  ResolvedEvalSuiteFile,
+  ResolvedEvalSuiteFileCase,
+  ResolvedEvalSuiteFileValidity,
+  SuiteFileFailureStage,
+  SuiteFileFinding,
+  SuiteFileFindingCode,
+  SuiteFileLoadFailure,
+  SuiteFileLoadResult,
+  SuiteFileLoadSuccess,
+  SuiteFileLocation,
+} from "./suite-file-loader.js";
 export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,
@@ -399,12 +432,59 @@ export {
 } from "./conformance-reporting.js";
 export type {
   ConformanceReport,
+  ConformanceReportAdvisory,
   ConformanceReportCase,
   ConformanceReportCaseStatus,
   ConformanceReportGroup,
   ConformanceReportKind,
   SupportedConformanceResult,
 } from "./conformance-reporting.js";
+
+// Claude directory readiness. Pure data and data reasoning only — the runner
+// and the dialing checks are deliberately not re-exported here, so importing
+// the result model never pulls a transport in with it.
+export * from "./claude-readiness/index.js";
+// The one readiness module that touches the network, exported only from the
+// Node entry. It is deliberately absent from `claude-readiness/index.ts` so
+// that importing the result model can never pull a transport in with it.
+export {
+  discoverClaudeAuthEvidence,
+  traceConnectorRedirects,
+} from "./claude-readiness/discovery.js";
+export type { ClaudeDiscoveryOptions } from "./claude-readiness/discovery.js";
+// The side-effecting intrusive probes, likewise Node-only. The gate that arms
+// them and the grading that reads them are pure and come from the barrel above.
+export {
+  probeDynamicRegistration,
+  probeRefreshRotation,
+} from "./claude-readiness/intrusive-probes.js";
+
+// OpenAI plugin-directory readiness. Same rule as the Claude barrel above:
+// pure data and data reasoning only, so importing the result model or the
+// package reader never pulls a transport in with it.
+export * from "./openai-readiness/index.js";
+// The Node XML parser for SVG dimension reads, exported ONLY here. A browser
+// has `DOMParser` natively and `readImageDimensions` finds it; `@xmldom/xmldom`
+// is banned from the browser entry's import graph, so the Node fallback lives
+// behind this entry and is passed in as `parseXml`.
+export { xmldomParseXml } from "./openai-readiness/package/svg-xml-node.js";
+
+// The OpenAI readiness modules that touch the network, exported only from the
+// Node entry. They are deliberately absent from `openai-readiness/index.ts` so
+// that importing the result model can never pull a transport in with it.
+export {
+  discoverOpenAIAuthEvidence,
+  discoverOpenAIImportedSkills,
+  fetchOpenAIDomainVerification,
+  traceOpenAIEndpoint,
+} from "./openai-readiness/discovery.js";
+export type {
+  OpenAIAuthEvidence,
+  OpenAIAuthorizationServerEvidence,
+  OpenAIDiscoveryOptions,
+  OpenAIDomainVerificationEvidence,
+  OpenAIEndpointEvidence,
+} from "./openai-readiness/discovery.js";
 export {
   buildOutcomeSummary,
   decideConformanceOutcome,

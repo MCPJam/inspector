@@ -4,70 +4,50 @@
       "releases": [
         {
           "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Extract the publisher-agnostic readiness result algebra into `sdk/src/directory-readiness/`.\n\n`claude-readiness` was written as one publisher's product, but only its\nREQUIREMENTS are Anthropic's. How a requirement is graded — a finding cites a\nsource, declares provenance, names the capabilities it needed and is dispositive\nor not; a lane rolls its findings up; coverage is reported separately from\nverdicts — is the same for any directory. A second publisher would have copied\nthat algebra, and the first thing to drift would be the rule that keeps the\nproduct honest: \"did not run\" must never read as \"conformed\".\n\nThe algebra now lives once, generic over `<Lane, SourceRef, Capability>`:\n\n- `decideLaneStatus`, `rollUpLaneStatus`, `summarizeLaneCoverage`,\n  `isDispositiveDirectoryFinding`, and `enforceCapabilityGate` (promoted from\n  private in `claude-readiness/runner.ts`).\n- `createFindingConstructors({ engineVersion })`, which binds the engine version\n  once per publisher instead of trusting each call site to pass the right one.\n- A `DirectoryReadinessReportProvider` descriptor in `conformance-reporting`, so\n  the readiness renderer takes the provider's own result predicate and\n  dispositive policy rather than assuming Anthropic's.\n\nClaude's public API is unchanged: every exported name keeps its signature, and\nthe whole existing `sdk/tests/claude-readiness/` suite passes without edits.\n\nTwo behaviours are deliberately stricter than before:\n\n- `rollUpLaneStatus` now reports `incomplete` when a required lane is absent\n  from the result rather than grading the lanes that happen to be present. A\n  verdict that silently drops a lane it was told to grade is the same failure as\n  reporting an unevaluated lane as a pass.\n- `isClaudeReadinessResult` no longer recognises a result by shape alone.\n  Claude's structural discriminator (lanes + findings + badges) matches other\n  readiness results too, so an explicit absent-`readinessKind` test keeps a\n  different publisher's grade from being published under Anthropic's name.",
+      "id": "directory-readiness-shared-core"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
           "type": "patch"
+        }
+      ],
+      "summary": "Eval runs refuse what they can't deliver, instead of running a different configuration and reporting on it.\n\n**A computer-backed built-in with no computer is now a refusal.** `resolveHostTools` warn-and-skips `bash` when no computer is attached, so a `bash`-granting host with no pinned environment image ran with the shell silently absent: cases that needed one failed as if the model had chosen badly, and a suite that didn't need one reported green for a host configuration that never existed. A server log is not a result — nobody reading the run sees it. This is checked for **every** eval run, harness or emulated; it deliberately cannot live in the harness admission checks, which return admitted on their first line when no harness is selected — exactly the runs the rule is about.\n\n**A harness run with no project is refused at pre-flight.** An org-level suite has no project, and `runHarnessTurn` discovers that only when it tries to resolve the box — mid-iteration, after the sandbox has been booted and charged. It now fails before any spending, and names the project rather than the pinned image (an org-level suite has neither, and \"pin a computer image\" points at a setting that can't fix it).\n\n**A harness case pinning a short model id is refused, naming the id to store.** The backend pins each iteration's host config from the case's model string verbatim, while the runtime canonicalizes before asking the broker for a lease — `claude-sonnet-4-6` becomes `anthropic/claude-sonnet-4-6`. The broker's eval authorizer matches the two byte-exact, deliberately, because a lease is a spending authorization and a loose match would let a box authorize a model its run never pinned. So a case stored with the short form (which the public case-create API accepts today) passed every check, booted a paid box, and only then died at broker start on an opaque 403. It now fails pre-flight and prints both spellings, since the fix is a re-save rather than a different suite. Harness-only — an emulated run never requests a lease. The durable half, normalizing on save, is a separate change.\n\n**A transient project lookup no longer reports itself as \"this suite is org-level\".** \"We asked and there is none\" and \"we could not ask\" are different facts, and the harness gate reads an absent project as the former. A failed suite query now refuses harness runs with what actually happened and suggests a retry; emulated runs are unaffected, losing only their org-BYOK fallback exactly as before.\n\n**A runner capability declaration at run creation.** Run creates now declare `runnerCapabilities: [\"harness-execution\"]`. The backend pins a run's host config at start and stamps its `executionEngine` from it; without a declaration it would stamp `harness:*` for runs created by older desktop or local inspectors that talk to the same hosted Convex and still emulate. A false stamp is worse than the silent emulation being fixed — silent emulation is at least unlabelled. Undeclared runners keep today's behavior, honestly labelled `emulated`. Temporary, retired once old runner versions age out.\n\n**An ephemeral computer is read-only snapshot data.** The client hydrator rewrote every computer's `kind` to `\"personal\"` on read. With the platform now minting `kind: \"ephemeral\"` for per-run boxes, that laundering would let a run's pinned config be read and saved onto a live host — turning a disposable per-run box into a claim on the member's own machine. The kind is carried through unchanged, editor drafts drop a non-personal attachment rather than converting it, and draft-equality compares `kind` (two attachments differing only by kind previously compared equal).",
+      "id": "eval-execution-admission-hardening"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Harness evals deliver the run's PINNED skills, not the live project pool.\n\nA harness turn materializes skills on the sandbox and picks its source through a strict precedence — `pinned` → `environment` → `live` — where only the top rank promises that nothing live is consulted. Selection is by PRESENCE, not length: passing nothing falls through to a project-wide fetch resolved at turn time.\n\nAn eval run had nothing to pass, so every harness eval turn took that fall-through. Two consequences, both silent:\n\n- **A frozen run wasn't frozen.** The run pins its skills at start precisely so a re-run is byte-identical; the harness turn re-read whatever the project held at that moment, so editing a project skill mid-run changed what a running iteration saw.\n- **The \"without skills\" A/B arm ran with skills.** `skillsOverride: \"exclude\"` pins an empty set — which, sent as \"nothing\", is indistinguishable from an unpinned run and drew the entire project pool.\n\nThe run's pins now reach the harness as `PinnedSkillArtifact[]`, adapted at the run boundary where the pin rows and their signed file URLs are in hand. Every runId-bearing run passes an explicit list, empty included.\n\nThe adapter synthesizes nothing. Identity, preserved frontmatter and channel provenance carry straight off the pin, and `contentHash` takes the pin's `aggregateHash` when present — the complete-envelope fingerprint, which is what on-box reconcile compares. Using the body-only hash there would make a skill whose supporting FILES changed look unchanged, so a reused sandbox would keep the previous run's scripts.\n\nSupporting-file bodies are downloaded during run preparation rather than per iteration: once instead of N times, and before any model call, so a failure fails the run cleanly and names the skill and path — the same discipline as the existing pinned-blob reachability check. A file that cannot be fetched stops the run instead of shipping a skill without its scripts.\n\nThe delivery rides `pinnedHarnessSkills` (the frozen-run channel), not `runtimeSkillsOverride` (the live-environment channel one rank below it). The two behave alike in the happy case and differ in exactly the case that matters here.",
+      "id": "eval-harness-pinned-skills"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Add the `/login` initiate-login route so IdP-initiated SSO completes instead of failing the code exchange.\n\nClicking the MCPJam tile in an Okta dashboard got as far as WorkOS and no\nfurther. Okta posts its SAML assertion, WorkOS validates it and sends an\nauthorization code to `/callback`, and `@workos-inc/authkit-js` refuses to\nexchange it: \"Couldn't exchange code… The developer may not have configured a\nLogin Initiation endpoint.\" Nothing was misconfigured on the SAML side. The\nexchange runs client-side and needs the PKCE code verifier that sign-in wrote\ninto that tab's `sessionStorage` — a key that exists only when the sign-in\nstarted in the app. A login that started at the identity provider has no such\ntab, so the flow was unfinishable by construction, and enterprise SSO users had\nno working entry point from their own dashboard.\n\nThe fix WorkOS sanctions is an Initiate Login URL. Once one is configured,\nAuthKit recognizes a non-app-originated login and redirects the browser there\nINSTEAD of issuing a code; the app then begins an ordinary sign-in, which\nAuthKit completes silently against the SSO session the IdP already established\n— no second prompt — and the code lands on `/callback` beside a verifier that\nmatches it.\n\n`/login` is that URL. It has to be a client route rather than a server\nredirect for exactly the reason the flow was failing: a server-generated PKCE\nverifier cannot be written into the browser's `sessionStorage`. The SPA boots,\nthe route calls `signIn()`, and authkit-js mints its own. Both entrypoints\nalready serve `index.html` for unmatched paths, so no server change is\ninvolved. An already-signed-in visitor (a second tile click) is sent into the\napp rather than back through WorkOS.\n\nA sign-in that fails to start renders a retry rather than an endless spinner.\nThis route is the entry point an SSO user arrives on, so a dead end there costs\nthem the login with nothing to click — the same hazard `/callback` already\nguards with its own recovery UI.\n\nQuery parameters are ignored on purpose. The `context` hand-off the older\nexamples forward is deprecated — the endpoint is expected only to start a fresh\nsign-in — and forwarding it could not work anyway, since authkit-js omits\n`context` when it builds the authorize URL.\n\nTaking effect also requires setting the Initiate Login URL to\n`https://app.mcpjam.com/login` in the WorkOS dashboard (Applications →\nRedirects, per environment), which is a dashboard setting rather than a code\nchange. Normal sign-in and guest mode are untouched: the route is additive.",
+      "id": "idp-initiated-sso-login-route"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
         },
         {
           "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Keep OAuth diagnostics visible when a server advertises a metadata URL that is not absolute — the protected-resource URL or an authorization-server endpoint — and when it rejects an authorization code with `invalid_grant`. The sequence diagram now marks the unparsable value instead of crashing, and the token-exchange error keeps the authorization server's own explanation.",
-      "id": "calm-pandas-display"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "`shared/steps`, `shared/scripted-steps` and `shared/probe-config` now re-export\nthe canonical step union from `@mcpjam/sdk/contract` instead of defining it.\n\nThe union is part of the evaluation contract — it is what a suite file carries\nand what the hosted API accepts — and the SDK's new suite-file schema reuses it.\nThe SDK cannot import this app (the dependency direction is shared → sdk), so\nleaving the definition here would have meant a hand-mirrored copy inside the SDK:\na third sibling beside this file and the Convex validator, guaranteed to drift.\nThe definition moved; these modules re-export it.\n\nNo consumer changes: all ~55 importers of `shared/steps` are untouched, the\nexisting shared step tests pass unmodified, and a new test asserts referential\nidentity (`sharedSteps.testStepSchema === contract.testStepSchema`) so a copy can\nnever quietly replace the re-export. `WIDGET_ASSERTION_LABELS` deliberately\nstayed behind — display copy is not contract, and the SDK has no business\nshipping this app's wording.\n\nAlso: exported SDK test files now emit the case's declared `id` (required by\n`@mcpjam/sdk` 5.0), using the dashboard case's own id so an exported code-first\ntest joins back to the same hosted history rather than starting a new one. A\ncase that has no id — a config test, an unsaved draft — gets a freshly MINTED\nid rather than one numbered by position: a positional id is order-dependent\nidentity, so inserting a case above it would hand a different case that id on\nthe next export and join each to the other's history. Validity is checked with\nthe contract's `isOpaqueId` rather than a local regex, so the exporter cannot\ndrift from the rule the SDK enforces at construction.",
-      "id": "eval-suite-file-contract-inspector"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/vitest",
-          "type": "minor"
-        }
-      ],
-      "summary": "Track `@mcpjam/sdk` 5.0, and surface each case's declared id on the plan.\n\n`EvalCasePlan` gains an optional `caseId`, read from `EvalTestConfig.id`, so a CI\nreporter can key a case by its identity instead of by a title that gets renamed.\nVitest titles are unchanged: the ` [caseId]` suffix is the handle people grep the\nhosted dashboard with and still rides `externalCaseId`, so moving the suffix onto\nthe declared id would break those greps.\n\nThe `@mcpjam/sdk` dependency range is left at `^4.3.0` in the repo on purpose and\nmust NOT be hand-bumped to `^5.0.0`: the workspace sdk is still 4.x until this\nrelease train runs, and a range no local version satisfies makes npm stop linking\nthe workspace copy and try to fetch an unpublished 5.x from the registry\n(`ETARGET` on `npm ci`). Changesets rewrites the range as part of `changeset\nversion`, which is what `updateInternalDependencies` is configured for.\n\n`caseId` is read defensively rather than assumed. A consumer can end up with this\npackage beside an older `@mcpjam/sdk` copy — a mismatched transitive range, a pnpm\nlayout — where `id` does not exist yet; an absent `caseId` is a missing\nconvenience, whereas a thrown `TypeError` would be a broken test run. Old\n`@mcpjam/sdk` 4.x therefore keeps working at runtime: the wrapper only calls\n`getAll` / `getName` / `getConfig` / `run` / `getFailureReport`, all of which\nexist in both majors. What such a consumer does NOT get is the compile-time\nrequirement — their own `EvalTest` constructions are checked by their own SDK\ncopy, so `id` only becomes mandatory once they upgrade it.",
-      "id": "eval-suite-file-contract-vitest"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "major"
-        }
-      ],
-      "summary": "Canonical contract types for eval suites: a versioned suite-file schema, the\nstep union's new home, declared case identity, and the Wave-0 chain vocabulary.\n\n## BREAKING: `EvalTestConfig.id` is now required\n\nA case's identity used to be its `name`. That meant renaming a test forked its\nhosted history — the dashboard started a fresh series and orphaned the old one —\nbecause the backend derives a case key from the case's content and title when no\nexplicit identity is present. `id` separates the two: history joins on `id`, and\n`name` is free to change.\n\n```diff\n const test = new EvalTest({\n+  id: \"c_V1StGXR8Z5jdHi6Bmy\",\n   name: \"refunds a duplicate charge\",\n   test: async (executor) => { … },\n });\n```\n\nMint one ONCE and commit the literal:\n\n```ts\nimport { mintCaseId } from \"@mcpjam/sdk/contract\";\nconsole.log(mintCaseId()); // c_V1StGXR8Z5jdHi6Bmy — paste this in\n```\n\nAny URL-safe string of 1–128 characters (`A-Z a-z 0-9 _ -`) is accepted, so an id\nyou already maintain — a hosted case id, a ticket number, a slug — works as-is;\nthe `c_` prefix is a grep convenience, not a rule. Constructing an `EvalTest`\nwithout an `id` throws, and the error carries a freshly minted id to paste. The\nid is deliberately NOT derived from `name` when absent: deriving it would\nrecreate the exact bug being retired while looking like it worked. Do not call\n`mintCaseId()` inline either — an id regenerated per run is not an identity.\n\n`EvalSuite.add` now also rejects duplicate ids. Duplicate names always collided\nvisibly (the suite keys results by name); duplicate ids do not, and two cases\nsharing one silently merge into a single case's history.\n\n`externalCaseId` is unchanged and keeps its live wire semantics — it remains the\nhosted join key. **Nothing about the upload payload changes in this release**:\n`id` is threaded through types and constructors only, so published 4.x clients\nand every hosted surface behave exactly as before.\n\n## New: the eval suite file (`@mcpjam/sdk/contract`)\n\n`evalSuiteFileSchema` validates a whole suite as one declarative document:\n`schemaVersion`, `mode`, `reportingMode`, `suite`, `target`, `defaults`\n(model, repetitions, `passThreshold`, `validity`, `toolPolicy`, `captureLevel`),\noptional import `provenance`, and `cases[]` — each case carrying steps reused\nverbatim from the canonical step union, optional predicate `assertions`, per-case\noverrides, and an optional `import` record.\n\nThree properties are load-bearing:\n\n- **Reserved values are validation ERRORS, never accepted-and-ignored.** `mode:\n  \"serverContract\"`, `reportingMode: \"restricted\" | \"summary\"` and\n  `captureLevel: \"metadataOnly\" | \"none\"` name capabilities that do not exist\n  yet. A file asking for reduced capture and getting full capture would be a\n  privacy failure with a paper trail claiming otherwise, so each is a `z.literal`\n  whose error names the reserved value and the v1 stance — and the generated JSON\n  Schema emits `const`, rejecting them structurally too.\n- **No `.default()` anywhere.** An omitted field stays omitted, so a parsed file\n  round-trips byte-stably through canonical JSON and the diff of an unchanged\n  suite is empty. Default *semantics* are documented in JSDoc beside each field\n  (`validity.minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1) and applied by\n  a loader, not materialized here.\n- **Every object the file declares is `.strict()`.** An importer that invents or\n  mis-maps a suite-level field fails loudly instead of having it dropped on the\n  floor — and it matches Convex `v.object`, which rejects unknown fields. The\n  reused step and predicate schemas are the stated exception: they are the\n  shared authoring union, they strip unknown keys today, and making them strict\n  is a semantic change to a cross-repo mirrored schema rather than something a\n  new file format should do as a side effect.\n\n`schemaVersion` is `const \"1\"`: additive optional fields stay within `\"1\"`, a\nbreaking revision becomes `\"2\"`, and a v1 validator handed a `\"2\"` file says the\nCLI/SDK needs upgrading rather than sending someone to edit a correct file.\n\nShipped alongside: `eval-suite.schema.json` (draft 2020-12, `$id`\n`https://mcpjam.com/schemas/eval-suite/v1.json`) plus the same document exported\nas `evalSuiteFileJsonSchema` for consumers without a JSON import path. Both are\ngenerated from the zod source and a test byte-compares them against a fresh\ngeneration, so they can never be hand-edited into disagreement.\n\nThe schema describes what is ACCEPTED (`io: \"input\"`), not what zod returns, so\nthe two validators agree on which files they accept — including where both are\npermissive. The element locator's \"at least one of role/text/css/testId\" rule is\na refinement that would not project, so the generator encodes it as an `anyOf`\nof `required`; leaving it out would let an editor green-light a `target: {}` the\nSDK then rejects, and tooling passing while the runtime fails is the worst\ndirection for a divergence. What genuinely cannot be expressed in JSON Schema —\nunique case ids, unique step ids within a case, an `import` block requiring\ntop-level `provenance`, and the serialized-size cap on tool-call arguments —\nstays zod-only, and the fixtures annotate every reject row with whether the JSON\nSchema must catch it too.\n\n## New: the step union's canonical home is now the SDK\n\n`TestStep` and everything defining it — the four step schemas\n(`prompt`/`toolCall`/`interact`/`assert`), the interact actions, the widget\nassertions, `elementLocatorSchema`, the text/wait/args/render-timeout caps and\nthe narrowing helpers — now live in `@mcpjam/sdk/contract`. They previously lived\nin the inspector app, which the SDK cannot import, so a suite-file schema in the\nSDK would have needed a hand-mirrored second copy. There is still exactly one\ndefinition; the inspector re-exports it and a test asserts referential identity\nso a copy can never quietly replace the re-export.\n\n## New: the user-value chain vocabulary\n\n`USER_VALUE_STAGES`, `STAGE_STATES`, `FAILURE_CATEGORIES`, `ITERATION_STATUSES`\nand `IMPORT_MAPPING_STATUSES` as const arrays, derived types and zod enums.\n`USER_VALUE_STAGES` order is **normative** — \"not reached\" is derived from\nposition in it, so sorting the array changes which stages a failure is reported\nto have blocked. Stage states are strings with no numeric encoding: `notReached`,\n`notMeasured` and `notApplicable` are three different reasons there is no\nverdict, and collapsing them is how \"we never checked\" gets rendered as \"it\npassed\". `ITERATION_STATUSES` extends the six statuses the backend persists with\n`setup_failed` (our environment broke, not the server's) and `skipped`\n(deliberately not run, unlike `cancelled`).\n\n## New: `@mcpjam/sdk/contract` identity helpers\n\n`opaqueIdSchema` (`^[A-Za-z0-9_-]{1,128}$` — URL, path and CLI safe), plus\n`mintCaseId()` / `mintSuiteId()` using `crypto.getRandomValues`. Validators never\nrequire our prefix: ids are opaque, and demanding `c_` would reject every id the\nplatform has already issued.",
-      "id": "eval-suite-file-contract"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add the versioned evaluation contract and make scoring the single verdict path.\n\n`@mcpjam/sdk/contract` is a new browser-safe subpath carrying one shape for\nevery eval surface: `ScoreDefinition` / `ResolvedScoreDefinition`,\n`ScoreResult`, and the hashed `EvaluationConfigSnapshot` that joins them.\nHashing is pinned cross-runtime (RFC 8785-style canonical JSON + SHA-256 over\nresolved definitions) so the SDK, the CLI, the inspector client and the Convex\nbackend all derive the same digest.\n\n`EvalTest` now derives `passed` exclusively from gating scores. `test()`,\n`expectedToolCalls` and each predicate are projected into scores rather than\nbeing consulted separately, so scoring replaces the old verdict expression\ninstead of joining it as another opinion. Verdicts are unchanged for existing\ntests: each source contributes one gating score of exactly the value it used to\ncontribute, and `predicateResults` / `toolMatch` stay populated from the same\nsingle evaluation that feeds the scores.\n\nNew: `predicateScorer`, `judgeScorer` and a `scorers` config field, with\nrunner-enforced per-scorer timeouts and a concurrency cap. Judges are advisory\nby default; a gating scorer that errors or is skipped fails the iteration\nunless the author opts out. Scores ride on `metadata.scores` /\n`metadata.evaluationConfig`, and the run's `evaluationConfigHash` is sent on\nrun start.",
-      "id": "great-donkeys-smile"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/vitest",
-          "type": "minor"
-        }
-      ],
-      "summary": "New package: run MCPJam eval suites inside vitest.\n\n`describeEvalSuite(name, suite, options)` registers one `it` per eval case,\nplus a final `it` for the gate policy when one is given. `suite.run()` is\ncalled ONCE in `beforeAll` — the suite uploads a single hosted run and\ncomputes one aggregate evaluation-config hash, so running it per test would\nproduce N of each. Each test is an assertion over that one result, which is\nwhy the timeout that matters is `hookTimeoutMs` (default 300000) rather than\nany per-test one.\n\nDeliberately a wrapper, not a vitest Reporter. A reporter observes tests; it\ncannot decide what a test is. Evals want the opposite, so failures land on\nnamed tests in every vitest UI, watch mode and CI annotation that already\nexists — and a reporter has no seat for the gate, which is a verdict over the\nwhole run rather than any one case.\n\nA case materialized from a hosted corpus is titled `name [caseId]`, from its\nexplicit `externalCaseId` and never inferred from the test name, so a failing\ntest greps back to the dashboard row it came from. `testEval` is the\nsingle-test seat; `planEvalSuite`, `runAndAssertCase` and `gateFailureMessage`\nare pure and exported so the naming and failure rules can be asserted\ndirectly.\n\n`vitest` is a peer dependency at `>=3.2.0 <4`, tested at 3.2.4. Vitest 4 is\nunvalidated and excluded from the range rather than assumed compatible. The\nbuilt tarball is installed into a clean project and exercised by three child\n`vitest run` processes on every CI pass — proving a passing suite exits 0, a\nfailing case exits non-zero naming the case, and a breached policy exits\nnon-zero with the gate table, which a workspace-internal test cannot show.",
-      "id": "olive-jars-vitest"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
           "type": "minor"
         },
         {
@@ -75,8 +55,8 @@
           "type": "minor"
         }
       ],
-      "summary": "Add run-over-run comparison and comparative gates.\n\n`compareEvalRun` on the platform client fetches\n`GET /projects/{p}/eval-runs/{runId}/compare`: per-case status (`regressed`,\n`fixed`, `new_case`, `removed_case`, `changed`, `unchanged_passed`,\n`unchanged_failed`), per-scorer pass-rate and mean deltas from the\nevaluation contract, and whether the evaluation config changed. Omitting\n`baseRunId` compares against the nearest earlier completed run in the same\nsuite; a run with no comparable predecessor throws a `PlatformApiError` with\n`details.reason: \"BASELINE_NOT_FOUND\"`, which is an incomplete comparison\nrather than a failing one.\n\nNew `compare-stats` module: Wilson score intervals and Newcombe's\nhybrid-score interval for the difference between two pass rates, plus\n`assessPassRateRegression`. \"The pass rate dropped 4 points\" is not evidence\nof a regression at 10 iterations, so the verdict has three states —\n`insufficient_data` is not `no_regression`. The interval bounds are pinned\nagainst statsmodels, not against a second reading of the implementation.\n`detectFlakyCases` reports within-run instability, which is never gated.\n\n`GatePolicy` gains three comparative fields — `noDeterministicRegressions`,\n`maximumP95LatencyIncreaseMs` and `passRateRegression` — evaluated by the new\n`evaluateCompareGates`. Passing any of them to the single-run `evaluateGates`\nis now a usage error rather than a silent no-op. The statistical and latency\ngates are non-gateable unless the two runs cover the same population: same\ncase set, same scenario configs, same evaluation config, and equal per-case\niteration weighting. Deterministic per-case regressions still gate under a\npopulation change, since they join by case key.\n\nNew `mcpjam eval compare` applies that policy to a hosted run and sets an\nexit code (0 pass, 1 regression, 2 usage, 3 incomplete), with\n`--reporter json-summary|junit-xml` and `--out` via the same structured\nreport the server-diff reporter uses. It has no `--wait`: an unfinished run\nreturns an incomplete comparison (exit 3) rather than being gated against a\npartial population.\n\nAlso exported: `calculateLatencyStats` / `calculatePercentile` from the main\nentry, already used internally by the gate engine.\n\nAlso adds the hosted-corpus core: `buildCorpus` / `loadCorpusFromLock`\nmaterialize hosted eval cases into local `EvalTest`s and record them in a\nlock whose content hash is a versioned semantic allowlist. A case a local run\ncannot execute (a widget step, a direct tool call) raises\n`HostedOnlyCaseError` naming the case and step. `unsupported: \"skip\"` records\nit under `skipped` and omits it from both the materialized cases and the lock —\ninspect `skipped` to detect an incomplete corpus.\n`EvalTestConfig` gains `externalCaseId`, `isNegativeTest` and\n`expectedOutput`, so a materialized case keeps hosted grading semantics and\njoins the hosted case's history on the run page.\n\nNew `mcpjam eval pull --suite <id-or-name>` writes that corpus to\n`mcpjam-evals.lock.json`, and `--frozen` verifies the lock against the hosted\nsuite without writing — exit 1 when the corpus drifted, and drift alone. The\nlock is written through a sibling temp file and a rename, because a\nhalf-written lock does not look broken: it looks like a corpus that lost\ncases, and the next `--frozen` run would report drift nobody caused. Content\ndrift and grading drift are reported as separate kinds, since \"someone edited\nthe case\" and \"someone changed how it is graded\" have different fixes.\nEverything that means no comparison happened — no lock, an unreadable lock, a\nlock from another `lockVersion`, a failed fetch — is exit 3.",
-      "id": "proud-pumas-compare"
+      "summary": "MCP Apps: emulate each host's CSP subtypes instead of giving every host the same sandbox.\n\nHost profiles already recorded which CSP subtypes a host honors — fetch, XHR and\nWebSocket inside `connect-src`, and script/stylesheet/image/font/media across the\nresource directives — but nothing read them, so every emulated host got identical\nsandbox rules. The selected host's recorded answers now shape the widget sandbox,\nand each resource type gets its own directive, so a host that ignores widget-declared\nimage domains no longer strips its scripts as collateral.\n\n`connect-src` cannot tell fetch from XHR from WebSocket, so those three are enforced\nby a guard injected into the widget frame rather than by the policy. The guard\nfollows CSP3 source matching (scheme upgrades, default-port normalization, and\ndirectory-prefix vs exact path matching) so it cannot wave through a call the host's\nown allowlist does not actually cover. Blocked calls surface in the CSP workbench\nwith their subtype, like any other violation.\n\nHost rows now also carry the host's OWN allowlist as `cspDirectives`, not just the\nwidget's declaration. Without it, emulating a host that ignores widget-declared\ndomains blocked everything, which is stricter than the real host.\n\nNew optional capability keys `cspConnectDomains` and `cspResourceDomains` are\nvalidated in the canonicalizer, deep-merged in `mergeMcpAppsCapabilities`, cloned\nand frozen in profiles, and editable in the host-config UI. A subtype the host never\nanswered stays unknown and behaves exactly as it does today; only an explicit `false`\nchanges enforcement. New export: `MCP_APPS_CLAUDE`.\n\nProbe data is refreshed alongside it. Notably, ChatGPT and Codex honor widget-declared\nconnect domains after all: a declared WebSocket endpoint connected while an undeclared\none took a real `connect-src` violation, and since the three subtypes share one\ndirective they cannot diverge. The fetch and XHR canaries that passed did so because\nthey sit on those hosts' own allowlist, which the rows now carry. Their resource\nsubtypes are recorded as unknown rather than unsupported until a probe run uses a\ndeclared origin that the host baseline does not already cover.\n\nExisting saved rows are affected: Claude rows lose pip mode, `cspFrameDomains`,\n`cspBaseUriDomains` and `requestTeardown`, and Cursor rows lose fullscreen/pip and\n`downloadFile`. Those are the probe correcting earlier assumptions, not regressions.",
+      "id": "mcp-apps-csp-subtype-emulation"
     },
     {
       "releases": [
@@ -85,50 +65,82 @@
           "type": "patch"
         },
         {
-          "name": "@mcpjam/cli",
+          "name": "@mcpjam/inspector",
           "type": "patch"
         }
       ],
-      "summary": "Keep eval credentials out of logs, error trackers, and exported report files.\n\nEval replay configs carry live `accessToken` / `refreshToken` / `clientSecret`\nvalues, and they legitimately travel in the ingest request body — replay cannot\nauthorize an MCP call without them. That is fine while the body is the only\nplace they appear. It stops being fine the moment something quotes the request\nback.\n\nTwo paths did. The backend's failure message was passed through\n`normalizeReportingErrorMessage` verbatim into `EvalReportingError`, which the\nSDK writes to stderr and sends to Sentry as the exception value — so a validator\nthat echoes the rejected argument, which is exactly what Convex's\n`ArgumentValidationError` does, published live credentials to a log line and a\nthird-party error tracker. Separately, `--out` and `--reporter` are two exports\nof the same run, and only the reporter half was redacted: `writeJsonArtifact`\nwrote whatever it was handed straight to disk, so the identical report left\nclean through one flag and in the clear through the other.\n\nBoth are now redacted at the point the data becomes an artifact rather than at\neach sink, so a new caller inherits the guarantee instead of having to remember\nit. The request body is deliberately unchanged — redacting it would silently\nbreak replay while looking like hardening — and a canary-secret regression test\nasserts both directions: the planted credential must reach the request body, and\nmust reach nothing else.\n\nAdds `redactTelemetryString`, a string-specialized `redactForTelemetry` for\nmessage-shaped sinks.",
-      "id": "redact-eval-reporting-sinks"
+      "summary": "OpenAI readiness: five ways evidence absence read as a verdict\n\nEach of these is the same mistake pointing in one of two directions — a run that\nestablished nothing reporting a fault, or a run that read part of something\nreporting a pass — and in a product whose whole claim is that it never confuses\n\"did not run\" with \"conformed\", each is disqualifying on its own.\n\n**A skills listing nobody reached is not a missing extension.** `callJsonRpc`\nreturned the parsed document and dropped the status and the transport error with\nit, so a timeout or a 401 on the unauthenticated probe arrived at the caller as\n`undefined` — indistinguishable from a server that answered and said nothing.\nThe skills lane read that as \"this server does not implement the extension\" and\nraised a class-`required` violation, flipping the headline verdict on a network\nevent. The status and error now ride along, `skills/list` records\n`listUnreachable` when nothing readable came back, and the lane reports the gap.\n\n**A host nobody reached is not a host missing its metadata.** `discoveredVia:\n\"not-found\"` is recorded both when the well-known path answers 404 and when the\nrequest never lands. The PRM check treated both as the second and told the\nsubmitter to publish a document they may already have published. It now keys off\nthe endpoint's own probe — status 0 means the metadata requests failed the same\nway for the same reason — and off a recorded fetch error, and reports those as\n`not-evaluated` while a genuine 404 stays `violated`.\n\n**A profile that says nothing about publication was answering \"no\".**\n`hasPublishedVersion` carried `.default(false)`, which turned an omitted field\ninto an authoritative negative and made the runner's documented fallback to the\ngathered evidence unreachable. An update whose profile omitted it graded as a\nfirst submission: the release-contract lane dropped out of the stage as\n`not-applicable`, and a change breaking the published tool contract rolled up\n`ready`. The field is now optional, and the resolved value is threaded into the\nsubmission checks so the release-notes rule and the lane gate cannot disagree.\n\n**The archive's raw names were the loader's repaired ones.** `Object.keys(zip.files)`\nis JSZip's post-normalization view: it resolves `..`, collapses `//` and `./`,\nand — being name-keyed — keeps only the last of two records sharing a name. Those\nare four of the conditions the portal rejects, so the path rules ran against a\ntable with the violations already fixed out of it, and because the reader treats\na present `rawEntryNames` as \"checked\", the result read as a clean archive rather\nthan an unexamined one. The central directory is now walked directly, which also\nsurvives an encrypted archive whose directory is plaintext, and returns absent\nrather than empty for anything it cannot read faithfully (ZIP64, truncation).\n\n**The drift check was red on arrival.** The `llms.txt` parser matched the base as\na string prefix rather than a path segment, left `./` on relative links, and read\nthe index's own `llms-full.txt` export as a page — a slug that can never be\npinned, since fetching it would ask for `llms-full.txt.md`. The weekly job would\nhave failed every week with nothing to reconcile, which is how a maintainer\nlearns to ignore the one alarm that means OpenAI changed the rules. Verified\nagainst the live index: 28 slugs, no phantoms.\n\nAlso drops a regenerated `McpAppsHtml.bundled.ts` that no source input in this\nbranch produced.",
+      "id": "openai-readiness-evidence-absence-fixes"
     },
     {
       "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
         {
           "name": "@mcpjam/sdk",
           "type": "minor"
         }
       ],
-      "summary": "Release the latest Inspector, CLI, and SDK updates.\n\n- Add the versioned evaluation contract, comparison gates, corpus locking, and score reporting across all three surfaces.\n- Add unified session search, clearer API failures, and safer hosted launch guardrails.",
-      "id": "releases-2026-08-16"
+      "summary": "Wire the remaining OpenAI lanes: imported MCP skills, plugin UI, migration\nleftovers, app-guideline policy, and capability badges.\n\n- **Imported skills** walk `skills/list` pagination rather than reading the first\n  page — a server with six skills and a page size of five reports five otherwise,\n  under a cap the submission actually exceeds — and hitting the page bound is\n  recorded as an incomplete listing rather than treated as the end of it. Each of\n  the four size ceilings is checked against the thing it bounds, and listing\n  metadata must agree EXACTLY with the frontmatter it points at. The lane is\n  dispositive only in `mcp-imported-skills`; elsewhere the absence is a badge.\n- **Plugin UI** requires `_meta.ui.domain` to be present AND unique — two\n  resources sharing a domain share a sandbox — and grades the CSP allowlist in\n  both directions, since a domain allowlisted without being loaded is a hole\n  nobody needed and is invisible from watching the template work.\n- **Migration** sweeps for the surfaces a Claude bundle may carry that the\n  directory does not run, plus `${user_config.*}` placeholders, stdio commands\n  and `.mcpb` references. Host-name language stays a heuristic: the word \"Claude\"\n  in a description is not by itself a defect.\n- **App guidelines** keep the judgement calls (originality, predictable side\n  effects, response minimisation, privacy consistency, advertising) as\n  `manual-review` in experience-insights, each naming what a reviewer should look\n  at — \"a human has to look\" with no object is a shrug rather than a task.\n\nThree lane assignments changed while wiring the stages up, each because the\noriginal made a stage permanently undeterminable:\n\n- Advertising moved to experience-insights. Nothing a submission declares says\n  whether a plugin shows ads, so as a `required` directory-policy check it could\n  only ever be `not-evaluated` — making that lane `incomplete` for every\n  submission, and a lane that can never reach `ready` teaches its readers to\n  ignore it.\n- The promotional-copy rule is graded twice, once over the package's own copy\n  (directory-policy) and once over the listing form's (submission-artifacts),\n  because those live in different artifacts and only one of them exists before\n  someone starts filling in a form.\n- The domain-verification token comparison moved to submission-artifacts. The\n  token is issued by the portal DURING a submission, so grading it in the\n  technical preflight reported every pre-submission run as incomplete on a step\n  that cannot have happened yet.",
+      "id": "openai-readiness-feature-lanes"
     },
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
+          "name": "@mcpjam/sdk",
+          "type": "minor"
         }
       ],
-      "summary": "Stop silently dropping every message after a failed detach.\n\nWhen `detachToLocalFork` cannot confirm its fork went live, the surface stays on\nthe old chat session — with `resumedVersion` deliberately preserved — while its\nhistory selection is cleared. Every later send then carried a stale\n`expectedVersion`, the server returned a 409, and the resulting `conflict`\nreceipt reached a post-stream branch that returned without doing anything. The\nturn was lost, no notice was shown, and the state repeated for every message\nuntil the page was reloaded.\n\nA `conflict` now routes to the detach handler even when the turn has no version\nbaseline, so the user either moves to a fresh thread or is told the move failed.\nThe rail refresh stays suppressed on that path, and no other receipt outcome\nchanges behaviour.",
-      "id": "silent-turn-loss-after-failed-detach"
+      "summary": "Add the browser-safe package primitives the OpenAI plugin-package checks need:\nimage dimensions, `agents/openai.yaml`, listing text, and brand-colour contrast.\n\n`sdk/src/openai-readiness/package/`:\n\n- **`image-dimensions.ts`** decodes PNG, JPEG, WebP and SVG dimensions straight\n  from the bytes, because the listing rules are about pixels and every library\n  that reads them is Node-only or a native binding — this has to run in a\n  browser bundle validating a package before anything is uploaded. Each decoder\n  REFUSES with a reason rather than falling back to a default: a plausible guess\n  would produce a dimension check that passed on a file whose dimensions were\n  never read. JPEG walks marker segments (fill bytes and payload-less standalone\n  markers included) rather than reading a fixed offset, and WebP handles all\n  three of `VP8 `, `VP8L` and `VP8X`, so alpha and animated icons are not\n  silently refused.\n- **`openai-agent-metadata.ts`** parses the interface/policy/dependencies\n  document with the existing `yaml` dependency. The flat frontmatter parser in\n  `plugin-bundle` is deliberately not reused: handed a nested document it does\n  not fail, it returns a shape with things missing — which grades as \"field\n  absent\" when the truth is \"we could not read it\".\n- **`supported-text.ts`** finds control characters and the invisible U+2028 /\n  U+2029 separators, reporting rather than sanitising: the portal validates what\n  was uploaded, so a preflight that cleaned the text would report a pass on text\n  that will be rejected.\n- **`color.ts`** grades a brand colour against BOTH ChatGPT backgrounds and\n  takes the worse ratio. A colour that clears the threshold on white and fails\n  on the dark surface is invisible to half the users, so picking one background\n  would pass it.\n\nSVG is parsed with `@xmldom/xmldom` rather than a regex — a pattern matches a\nwidth inside a comment, inside a nested `<rect>`, and inside CDATA — and any\nparser diagnostic counts as malformed, since the parser recovers from unclosed\ntags by design and listening only for fatal errors would accept documents that\nare not well-formed XML.",
+      "id": "openai-readiness-package-primitives"
     },
     {
       "releases": [
         {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
+          "name": "@mcpjam/sdk",
+          "type": "minor"
         }
       ],
-      "summary": "Pressing Stop no longer claims the reply could not be saved.\n\nPressing Stop during a turn on a resumed chat-history thread produced an error toast about ten seconds later: \"This reply couldn't be saved to your chat history. It's still visible here.\" Nothing had gone wrong — the user had cancelled the turn on purpose — and it fired on every Stop, on both the chat tab and the playground.\n\nThree correct behaviors combined into a wrong one. The AI SDK has no distinct \"aborted\" status: on abort it sets `status: \"ready\"` and returns (`ai/dist/index.mjs`, in `makeRequest`'s catch — `if (isAbort || err.name === \"AbortError\") { this.setStatus({ status: \"ready\" }); return null; }`). The server deliberately does not persist an aborted turn — `onFinishEngine` in `server/utils/mcpjam-stream-handler.ts` gates the persist and the `data-persist-receipt` write on `runSucceeded && !aborted` — so no receipt is emitted and the session version never moves. And `useResumedThreadPersistence`, seeing a normal end-of-stream with no receipt, falls back to watching the session subscription for a version bump, which is exactly the deploy-skew case it was built for. The bump never came, the 10 s window expired, and the hook reported a dropped write.\n\n`useChatSession` now records whether the turn was aborted and exposes it as `consumeTurnAborted()`, alongside the existing `consumePersistReceipt()` and with the same consume-once semantics. It is sourced from the AI SDK's own `onFinish({ isAbort })` rather than from the Stop button, so an abort from any source counts and every finished turn overwrites a stopped predecessor. `useResumedThreadPersistence` checks it right after the send baseline is consumed and returns: no reconcile, no toast, no rail refresh and no read-marking, because an aborted turn wrote nothing for the rail to learn. Any receipt that raced the abort is consumed and discarded so it cannot be handed to the next turn.",
-      "id": "stop-no-false-unsaved-toast"
+      "summary": "Add `readOpenAIPluginPackage`, which turns a plugin package into gradeable\nevidence plus a list of typed portal issues.\n\nThe reader borrows `plugin-bundle`'s PRIMITIVES — the `PluginFileSource`\nabstraction, path normalisation, the frontmatter splitter, the hashers — and\nnone of its policy. Reusing `parsePluginBundle` itself would have been wrong\ntwice over: its issue codes and limits are a persisted backend contract, and it\nrejects `.codex-plugin/` outright, which is the location OpenAI documents as\ncanonical.\n\nThe subtle part is that the portal's path rules run against RAW entry names,\nbefore anything normalises them. `normalizeBundlePath` repairs a backslash\nseparator, a doubled separator and a `.` segment — three of the things the\nportal rejects — so checking normalised paths would report a clean package for\nan archive that is about to bounce. `OpenAIArchiveObservations` carries the\nfacts a file source cannot: compressed size, encryption flags, and those raw\nnames. New collectors supply them (`collectZipArchiveObservations` on the\nserver, `collectFolderArchiveObservations` on the client, which reads\n`webkitRelativePath` before the selection mapping rewrites separators). An\nabsent observation becomes a recorded gap with a reason, never a silent pass —\na folder source genuinely has no compressed size, and reporting that limit as\nsatisfied would claim a measurement nobody took.\n\nThe reader accepts all three manifest locations and records the normalisation\nwhen it used a non-canonical one, reads skills and their per-skill\n`agents/openai.yaml`, decodes asset dimensions, and lists the unsupported\nsurfaces a package ships (`hooks/`, `commands/`, `.app.json`, …) WITHOUT\njudging them — that decision needs the submission mode, and belongs to the\ncheck module.",
+      "id": "openai-readiness-package-reader"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add the OpenAI plugin-directory policy corpus, its drift plumbing, and the typed\nportal-error catalog.\n\n`sdk/src/openai-readiness/` now carries the foundations the check lanes will be\nbuilt on:\n\n- **`manifest.ts`** pins the documented page set across two hosts. The plugins\n  corpus is hashed over each page's `.md` twin rather than its rendered HTML —\n  no navigation chrome, no build hash, so the digest moves when the prose moves\n  and at no other time. Every entry ships `revision: null` until the sync runs;\n  a fabricated hash would make an unaudited corpus look audited.\n- **`types.ts`** models seven lanes, the four public submission shapes, and two\n  staged rollups. The submission mode is a REQUIRED grading input rather than\n  something inferred from which inputs a run happens to hold, and the two stages\n  let a run be honestly `ready` at `technical-preflight` while `incomplete` at\n  `submission-ready` — which is exactly what a server check with no submission\n  profile is.\n- **`profile.ts`** holds every host constant exactly once.\n- **`portal-errors.ts`** transcribes the documented submission errors as a typed\n  catalog whose limits REFERENCE `profile.ts` rather than restating it. Checks\n  cite catalog entries; findings group them for presentation only, so a readable\n  finding never drops a documented code.\n\nSync plumbing moves to `scripts/lib/policy-manifest-sync.mjs`, shared by both\npublishers. `scripts/sync-claude-policy-manifest.mjs` becomes a thin entry over\nit with unchanged behaviour. The OpenAI entry adds a signal the per-page hashes\nare blind to: it diffs the live `llms.txt` against the pinned page set, so a\nrequirement landing on a page nobody pinned is drift even when every pinned page\nis byte-identical. A new weekly `openai-policy-drift` workflow runs it\nindependently of the Claude one, so neither corpus can mask the other.\n\nNote that the corpus ships unsnapshotted: filling `PAGE_REVISIONS` requires\nnetwork access to the docs hosts, and the never-fabricate-a-hash rule means the\nfirst `npm run openai-policy:sync` in an environment with that access is what\npins it. Until then `isOpenAIPolicyCorpusVerified()` reports `false` and every\ncitation carries `revision: null`, so a grade says so about itself.",
+      "id": "openai-readiness-policy-corpus"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add the release-contract lane: what changed since the published version, and\nwhat that change costs.\n\n`captureOpenAIMetadataSnapshot` reduces a scan to the parts a contract\ncomparison is about — tool names, titles, descriptions, schemas, annotations,\nsecurity schemes, tool `_meta`, server `instructions`, UI resource metadata and\nCSP — and stores the server's ORIGIN apart from its PATH, because those two\nchanges have completely different costs. Tools, resources and CSP domains are\nsorted at capture: two scans of one server are free to list them in any order,\nand a comparison that treated order as contract would report drift forever.\n\n`compareOpenAISnapshots` classifies every difference into one of three\noutcomes, and telling them apart is the whole value of the lane:\n\n- an ORIGIN change is a NEW PLUGIN, not a version. A submitter who files it as\n  an update loses the review and starts over, so this must never read as a\n  routine bump — while a PATH change is exactly that routine bump.\n- a tool, schema, annotation, security scheme, `_meta`, `instructions`, UI URI\n  or CSP change requires a fresh scan and a new review.\n- UI content behind an unchanged URI ships without one, with a note that the\n  host may serve a cached copy for up to an hour — otherwise \"I deployed it and\n  nothing changed\" becomes a bug report.\n\nA changed SCHEMA is `manual-review`, never an automatic verdict. An added\noptional property and a removed required one are both \"the schema changed\", and\nstructural equality cannot tell them apart: reporting `not-ready` for the first\ncosts a submitter a release, and reporting `ready` for the second breaks their\nusers. Neither is acceptable, so the check reports what moved and says a person\nmust decide.\n\nFirst submissions report the lane `not-applicable` — there is no contract to\nbreak — and it joins the `submission-ready` stage only once a version is\npublished.",
+      "id": "openai-readiness-release-contract"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Add the OpenAI readiness runner, the submission profile, and the package and\nsubmission check lanes.\n\nThe runner is split into two halves that do not resemble each other.\n`gatherOpenAIReadinessEvidence` performs every side effect and returns a\nserializable evidence object; `gradeOpenAIReadiness` is pure. That is stricter\nthan the Claude runner and buys three things: a hosted surface can gather on one\nnode and grade on another, a test can drive the whole grader from a fixture, and\na grading run cannot reach a link-local address because the half that could is a\ndifferent function.\n\n`OpenAIReadinessResult` carries both staged verdicts. A run with a good package\nand no submission profile is `ready` at `technical-preflight` and `incomplete` at\n`submission-ready`, and the summary says so in one line — reporting only the\nheadline would tell a submitter \"not ready\" and send them to look at their\nserver.\n\nApplicability comes from the declared submission mode throughout. A lane the\nshape excludes is `not-applicable` and drops out of the stage rollup; a lane the\nshape includes but the run had no input for is `not-evaluated` with the input\nnamed. Those two must never look alike, and inference cannot tell them apart.\n\nTwo fixes fell out of building this:\n\n- `attestations` is now a PARTIAL record. `z.record` over an enum key is\n  exhaustive in zod 4, so a half-ticked form failed to parse — and a half-ticked\n  form is exactly the state a preflight exists to grade. The check can now\n  separate an absent key (unfinished) from a key set to `false` (refused).\n- SVG parsing takes an injected `parseXml`. `@xmldom/xmldom` is banned from the\n  browser entry's import graph, and a browser has `DOMParser` natively; Node\n  passes `xmldomParseXml` from the Node entry. A runtime with no parser records\n  a GAP rather than reporting the SVG as malformed — that limitation is ours,\n  not the submitter's.\n\n`toConformanceReport` now routes by an explicit provider registry.\n`isClaudeReadinessResult` could not stay a shape test once a second readiness\nresult existed with the identical shape.",
+      "id": "openai-readiness-runner"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Wire the OpenAI endpoint, authorization, annotation and domain-verification\nlanes, and extract the publisher-neutral discovery core.\n\n`sdk/src/directory-readiness/discovery.ts` now holds everything about getting\nevidence off the wire that does not depend on whose directory is being graded:\nthe bounded body read, the SSE-aware JSON fetch, the hop-by-hop redirect trace,\nand Protected Resource Metadata discovery with its same-origin refusal of an\nattacker-controlled `resource_metadata` pointer. Each of those has a failure mode\nthat is invisible until it bites, and each was found once already — a second copy\nwould eventually get one of them wrong in a way that looked fine.\n`claude-readiness/discovery.ts` keeps every exported name and delegates.\n\nThe OpenAI checks are the ones OpenAI's own docs make different:\n\n- **Every advertised authorization server is fetched**, not just the first.\n  Anthropic's client uses `authorization_servers[0]` and Claude's runner stops\n  there deliberately; ChatGPT documents multiple issuers, so a runner that looked\n  at one would report a multi-issuer server as healthy on the strength of an\n  entry the host may never pick.\n- **RFC 9207 `iss`** is `required` once there is more than one issuer and merely\n  informational with one — with a single issuer it is not load-bearing, and\n  failing on it would be inventing a requirement.\n- `_meta[\"mcp/www_authenticate\"]`, Client ID Metadata Documents as an\n  alternative to dynamic registration, and issuers offering no\n  authorization-code grant at all.\n- Annotation hints are graded on PRESENCE. A missing hint is not \"assumed safe\",\n  it is unreviewable. Whether a declaration is HONEST is a heuristic in\n  experience-insights, where it can never fail a lane — a tool name is not a\n  specification.\n- Domain verification checks that the well-known path responds and that the body\n  matches the declared token, with `declared` provenance and no token value\n  recorded in the finding. With no declared token it is `not-evaluated`, never a\n  pass on the strength of \"something answered\".",
+      "id": "openai-readiness-wire-lanes"
     },
     {
       "releases": [
@@ -137,59 +149,73 @@
           "type": "minor"
         }
       ],
-      "summary": "Give User Testing one create flow, and let a scenario's setup be edited without Project Environments.\n\nFlag-off, `/user-testing/new` rendered a separate form that offered a single-select Server dropdown and wrote `serverIds: [serverId]`. A tester could reach exactly one MCP server, and nothing could change that afterwards: the scenario's backing client is tagged `owner: 'user_testing'`, which `isPrivateScenarioBackingHost` hides from every client list and picker, and the \"Edit setup\" affordance on the scenario page was gated on `project-environments-enabled`. A scenario created in that state was frozen at one server for the rest of its life.\n\nNothing needed to be built for this. `EnvironmentComposer` gates only its saved-environment picker on the flag — the client pill and `ServerGroupPicker` render either way, which is what a flag-off project has always seen in the Swarms create flow. So `/user-testing/new` now uses that composer in both flag states: flag-off it asks for a client and an optional server group and resolves them to an ad-hoc environment, which reaches a whole server group instead of one server. The single-server form and its test are deleted rather than kept as a fallback.\n\nComposing needs the backend's `ensureAdhocEnvironments`, and that is not a new requirement flag-off. The deleted flow's only write was `hosts.createHost({owner: 'user_testing'})`, which has called `ensureOneAdhocEnvironment` internally since scenarios became environment-backed, and the client-callable mutation shipped before that. Any deployment that could serve the old flow can serve this one, which is why there is no legacy resolution path.\n\n\"Edit setup\" now appears for any environment-backed scenario, flag or no flag — the flag-off scenario is precisely the one that had no other way to change its servers. Promotion stays gated: \"Save as environment\" would name a row into a list the user has no page for.\n\nThe scenario name now defaults to the picked client's name when a setup is composed, the way it defaults to the environment's label when one is picked. Without it a flag-off user picked a client and met a required field nothing filled — the deleted flow defaulted the name off the client template for the same reason.",
-      "id": "user-testing-composer-without-environments"
+      "summary": "Registry: clicking a Claude-directory card now opens a detail dialog showing the full upstream listing — long description, published tool and prompt names, publisher and links, categories, access notes (permissions, sensitive data, required fields), and the endpoint it connects to. The body is fetched per card from the catalog's stored upstream row (`getCatalogServer` with `includeRaw`), so the list itself stays blob-free.",
+      "id": "registry-directory-detail-dialog"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Let the Registry tab load data: `REGISTRY_FEATURE_ENABLED` is now `true`.\n\nThe tab has two independent gates. The PostHog `registry-enabled` flag decides\nwho can reach the route; a build-time constant in `useRegistryServers` decided\nwhether the data layer did anything at all. With the constant `false` the hooks\nwere fully inert — empty arrays, no fetches, no-op mutations — so a user who had\nthe flag turned on reached `/registry` and was told \"No servers available\" by a\nscreen that had never asked.\n\nThe constant existed for a real reason: the flag gates the route, not the data,\nso an internal user with the flag on mounted the tab and fired requests at a\nbackend that wasn't ready, producing visible errors. Its comment named the exit\ncondition — flip once the registry backend is ready for real use — and that\ncondition is now met. The curated registry is seeded, and the Claude connectors\ndirectory carries ~2,000 rows synced daily, with search over names, descriptions\nand tool names.\n\nNothing else changes. The PostHog flag is untouched and still decides the\naudience, which today is internal users only. Both halves of the tab share this\none constant, so they light up together rather than leaving a directory querying\nbeside a dark curated catalog.\n\nThe constant should not survive long. It duplicates a control that is better at\nthe job — `registry-enabled` is per-user and needs no deploy, while this needs a\nbuild to move, so a real emergency reaches for the flag every time — and it is\nwhat currently forces two `useRegistryServers` suites to `describe.skip`.\nRemoving it means deleting the `enabled` plumbing in both hooks and un-skipping\nthose suites, which is a small refactor deliberately kept out of this change so\nthat reverting \"turn it on\" never means reverting the refactor too.",
+      "id": "registry-feature-constant-on"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Host config: accept the runtime-minted `ephemeral` computer kind on the canonical side.\n\n`canonicalizeComputer` took a closed union of exactly one value, `\"personal\"`, and hard-threw on anything else. That made a whole class of platform-minted host config unrepresentable: an eval run pins one box per iteration and boots it from the run's frozen environment image, so the computer attached to that run's pinned host config is a per-run box, not the author's personal cloud workstation. There was no legal shape for it, so the run's snapshot had to drop the field — and a host that asked for a computer (or a harness, which needs one) silently reproduced as a host without one.\n\n`kind` is now the closed union `\"personal\" | \"ephemeral\"`:\n\n- `\"personal\"` — the per-(project, user) cloud workstation. Unchanged.\n- `\"ephemeral\"` — a per-run box the platform mints at a snapshot boundary.\n\nThe legacy `toolset` key is accepted-and-dropped for **both** kinds, so `{ kind, toolset: \"bash\" }` and `{ kind }` remain one identity. The image never rides this field — it comes from the run's frozen environment pin.\n\n`workdir` is canonicalized identically for both kinds. A per-run box takes its working directory from provisioning, so the platform's minting site emits none — but that is a rule about what gets written, enforced there rather than here: canonicalization stays pure content-addressing, and nothing can author an ephemeral computer in the first place.\n\n`ephemeral` is **output-only**: it appears on canonical and persisted rows and can come back when you read a snapshot, but it is not authorable. Every authoring input stays personal-only — `HostComputerInput` is now its own personal-only type rather than an alias of the canonical shape, and `HostInit.computer` is typed to it. Treat an ephemeral computer as read-only snapshot data.\n\nHashing is unaffected for existing rows: every pre-existing golden vector canonicalizes to byte-identical JSON with an unchanged sha256. The parity fixture gains two vectors (`computer-ephemeral`, `computer-ephemeral-with-toolset-dropped`) that pin the new bytes, which is what lets the backend prove its own canonicalizer agrees.",
+      "id": "sdk-ephemeral-computer-kind"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/sdk",
-      "type": "major",
-      "oldVersion": "4.3.0",
+      "type": "minor",
+      "oldVersion": "6.2.0",
       "changesets": [
-        "calm-pandas-display",
-        "eval-suite-file-contract",
-        "great-donkeys-smile",
-        "proud-pumas-compare",
-        "redact-eval-reporting-sinks",
-        "releases-2026-08-16"
+        "directory-readiness-shared-core",
+        "mcp-apps-csp-subtype-emulation",
+        "openai-readiness-evidence-absence-fixes",
+        "openai-readiness-feature-lanes",
+        "openai-readiness-package-primitives",
+        "openai-readiness-package-reader",
+        "openai-readiness-policy-corpus",
+        "openai-readiness-release-contract",
+        "openai-readiness-runner",
+        "openai-readiness-wire-lanes",
+        "sdk-ephemeral-computer-kind"
       ],
-      "newVersion": "5.0.0"
+      "newVersion": "6.3.0"
     },
     {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.39.0",
+      "oldVersion": "2.43.0",
       "changesets": [
-        "calm-pandas-display",
-        "eval-suite-file-contract-inspector",
-        "releases-2026-08-16",
-        "silent-turn-loss-after-failed-detach",
-        "stop-no-false-unsaved-toast",
-        "user-testing-composer-without-environments"
+        "eval-execution-admission-hardening",
+        "eval-harness-pinned-skills",
+        "idp-initiated-sso-login-route",
+        "mcp-apps-csp-subtype-emulation",
+        "openai-readiness-evidence-absence-fixes",
+        "registry-directory-detail-dialog",
+        "registry-feature-constant-on"
       ],
-      "newVersion": "2.40.0"
-    },
-    {
-      "name": "@mcpjam/vitest",
-      "type": "minor",
-      "oldVersion": "0.0.0",
-      "changesets": [
-        "eval-suite-file-contract-vitest",
-        "olive-jars-vitest"
-      ],
-      "newVersion": "0.1.0"
+      "newVersion": "2.44.0"
     },
     {
       "name": "@mcpjam/cli",
       "type": "minor",
-      "oldVersion": "3.23.0",
+      "oldVersion": "3.27.0",
       "changesets": [
-        "proud-pumas-compare",
-        "redact-eval-reporting-sinks",
-        "releases-2026-08-16"
+        "mcp-apps-csp-subtype-emulation"
       ],
-      "newVersion": "3.24.0"
+      "newVersion": "3.28.0"
     },
     {
       "name": "@mcpjam/mcp",
@@ -197,13 +223,6 @@
       "oldVersion": "0.0.1",
       "changesets": [],
       "newVersion": "0.0.1"
-    },
-    {
-      "name": "@mcpjam/widget-react",
-      "type": "patch",
-      "oldVersion": "0.1.5",
-      "changesets": [],
-      "newVersion": "0.1.6"
     }
   ]
 }

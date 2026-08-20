@@ -35,6 +35,8 @@ import {
   diagnoseServerOperation,
   getProjectServerConnectionStatusOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
   getScenarioOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
@@ -123,6 +125,8 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
   listScenariosOperation,
   getScenarioOperation,
   listChatSessionsOperation,
@@ -196,6 +200,8 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
  * throw: a drifted list should fail the build, not refuse to boot the server.
  */
 export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
+  connect_eval_check_repo:
+    "Reaches OUTSIDE MCPJam and changes a shared repository for everyone who opens a pull request against it — with fail_closed it can block their merges. The suite settings sheet has this at the point of intent, next to the repository picker and the policy explainer, which is the context the decision needs. Available on the API, the CLI and the gated agent surfaces, where it goes through an approval proposal.",
   launch_journey_run:
     "Launching spends model credits across a whole fan-out. The Swarms tab puts the journey, its targets and its session count in front of you first; a chat tool would start all of it from an id.",
   cancel_journey_run:
@@ -281,6 +287,7 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   list_eval_cases: "Case-level browsing is the Evaluate tab's job.",
   get_eval_case: "Case-level browsing is the Evaluate tab's job.",
   create_eval_case: "Case authoring belongs to the Evaluate editor.",
+  create_eval_cases: "Case authoring belongs to the Evaluate editor.",
   update_eval_case: "Case authoring belongs to the Evaluate editor.",
   delete_eval_case: "Irreversible delete; the Evaluate tab confirms it.",
   generate_eval_cases:
@@ -301,6 +308,10 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   get_project_environment: "Environments have their own tab.",
   resolve_project_environment: "Resolution detail with no chat-facing use.",
   create_project_environment: "Environment authoring has its own editor.",
+  ensure_adhoc_environment:
+    "Environment authoring has its own editor, and the composer is where a workspace user assembles a stack. The RUN path already carries it: run_eval_suite takes a `compose` object and ensures the environment itself.",
+  name_environment:
+    "Promoting a composed environment into the project's permanent list is an editor action, and the composer offers it in place.",
   update_project_environment: "Environment authoring has its own editor.",
   archive_project_environment: "Environment lifecycle has its own controls.",
   restore_project_environment: "Environment lifecycle has its own controls.",
@@ -370,6 +381,11 @@ const CONNECTION_OPENING_IDS = new Set([
 const APPROVAL_REQUIRED_IDS = new Set([
   ...CONNECTION_OPENING_IDS,
   cancelEvalRunOperation.name,
+  // SPENDS the organization's model budget, on a run the chat can name from
+  // a list. Advertised rather than excluded because reading grades is only
+  // useful if you can ask for them — but the spend is the user's to approve,
+  // so it sits here with `cancel_eval_run` rather than executing on request.
+  requestEvalRunJudgeOperation.name,
   createProjectServerOperation.name,
   updateProjectServerOperation.name,
   deleteProjectServerOperation.name,

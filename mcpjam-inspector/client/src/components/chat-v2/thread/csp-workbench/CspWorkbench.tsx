@@ -57,9 +57,10 @@ export function CspWorkbench({ sandboxInfo, protocol }: CspWorkbenchProps) {
         baseUriDomains: sandboxInfo?.baseUriDomains,
       },
       widgetDeclared: sandboxInfo?.widgetDeclared ?? null,
+      subtypePolicy: sandboxInfo?.applied?.cspSubtypePolicy,
       violations: sandboxInfo?.violations ?? [],
     }),
-    [sandboxInfo],
+    [sandboxInfo]
   );
 
   const diagnoses = useMemo(() => classifyDiagnoses(input), [input]);

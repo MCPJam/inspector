@@ -250,6 +250,20 @@ export type EffectiveCompatRuntime =
  *   - `resourcePrefersBorder` — gate whether the renderer honors
  *     `_meta.ui.prefersBorder` when rendering the iframe chrome.
  */
+export type McpAppsCspConnectDomains = {
+  fetch?: boolean;
+  xhr?: boolean;
+  websocket?: boolean;
+};
+
+export type McpAppsCspResourceDomains = {
+  script?: boolean;
+  stylesheet?: boolean;
+  image?: boolean;
+  font?: boolean;
+  media?: boolean;
+};
+
 export type McpAppsCapabilities = {
   /** Allow-list of display modes advertised in HostContext. */
   availableDisplayModes?: ("inline" | "fullscreen" | "pip")[];
@@ -267,6 +281,8 @@ export type McpAppsCapabilities = {
   sandboxPermissions?: boolean;
   cspFrameDomains?: boolean;
   cspBaseUriDomains?: boolean;
+  cspConnectDomains?: McpAppsCspConnectDomains;
+  cspResourceDomains?: McpAppsCspResourceDomains;
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;
@@ -284,7 +300,8 @@ export type McpAppsCapabilities = {
 
 /**
  * Fully-resolved per-dimension matrix — preset merged with user overrides,
- * no undefineds. Returned by `resolveEffectiveMcpAppsCapabilities`.
+ * no undefineds except the optional probe-derived CSP subtype leaves.
+ * Returned by `resolveEffectiveMcpAppsCapabilities`.
  * `availableDisplayModes` is non-empty (resolver coerces to `["inline"]`
  * if a user override would otherwise empty it).
  *
@@ -323,6 +340,8 @@ export type ResolvedMcpAppsCapabilities = {
   sandboxPermissions: boolean;
   cspFrameDomains: boolean;
   cspBaseUriDomains: boolean;
+  cspConnectDomains?: McpAppsCspConnectDomains;
+  cspResourceDomains?: McpAppsCspResourceDomains;
   resourcePrefersBorder: boolean;
   downloadFile: boolean;
   requestTeardown: boolean;

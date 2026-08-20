@@ -42,6 +42,7 @@ import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
 import organizations from "./organizations.js";
+import evalChecks from "./eval-checks.js";
 import projects from "./projects.js";
 import capabilities from "./capabilities.js";
 import publicModels from "./public-models.js";
@@ -165,6 +166,7 @@ v1.route("/", catalog);
 // filters by; org/member/role/billing writes stay off every machine surface.
 // Guest-DENIED by default (no GUEST_ALLOWED_V1_RULES entry), like `/me`.
 v1.route("/", organizations);
+v1.route("/", evalChecks);
 v1.route("/", projects);
 // What the caller may do here, asked before they try. A planning read for
 // agents on the static surfaces (MCP catalog, CLI tree, agent registry), which

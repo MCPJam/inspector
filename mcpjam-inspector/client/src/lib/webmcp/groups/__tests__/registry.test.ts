@@ -34,11 +34,12 @@ describe("buildRegistryUiTools", () => {
     dispatchInspectorCommandMock.mockResolvedValue(success({ status: "ok" }));
   });
 
-  it("builds exactly the three registry tools", () => {
+  it("builds exactly the four registry tools", () => {
     expect(buildRegistryUiTools().map((t) => t.name)).toEqual([
       "ui_connect_registry_server",
       "ui_disconnect_registry_server",
       "ui_toggle_registry_star",
+      "ui_search_registry_directory",
     ]);
   });
 
@@ -67,6 +68,13 @@ describe("buildRegistryUiTools", () => {
     // star: set-to-state, so idempotent; pure MCPJam state.
     expect(getTool("ui_toggle_registry_star").annotations).toEqual({
       readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    });
+    // directory search: drives a search box. No write, nothing external.
+    expect(getTool("ui_search_registry_directory").annotations).toEqual({
+      readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
@@ -113,7 +121,7 @@ describe("buildRegistryUiTools", () => {
         status: "authorization_required",
         serverName: "Asana",
         message: "Ask the user to click Connect on its card.",
-      }),
+      })
     );
     const result = await getTool("ui_connect_registry_server").execute({
       serverName: "Asana",
@@ -176,5 +184,51 @@ describe("buildRegistryUiTools", () => {
     });
     expect(stringly.isError).toBe(true);
     expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("ui_search_registry_directory", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dispatchInspectorCommandMock.mockResolvedValue(success({ status: "ok" }));
+  });
+
+  it("dispatches searchRegistryDirectory with the query and tier", async () => {
+    await getTool("ui_search_registry_directory").execute({
+      query: "linear",
+      tier: "partner",
+    });
+    expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({
+      type: "searchRegistryDirectory",
+      payload: { query: "linear", tier: "partner" },
+    });
+  });
+
+  it("omits an absent query — browsing is a real request, not an error", async () => {
+    await getTool("ui_search_registry_directory").execute({});
+    expect(dispatchInspectorCommandMock).toHaveBeenCalledWith({
+      type: "searchRegistryDirectory",
+      payload: {},
+    });
+  });
+
+  it("treats a blank query the same as an absent one", async () => {
+    await getTool("ui_search_registry_directory").execute({ query: "   " });
+    const [dispatched] = dispatchInspectorCommandMock.mock.calls[0];
+    expect(dispatched.payload.query ?? "").toBe("");
+  });
+
+  it("refuses a non-string tier instead of dispatching it", async () => {
+    const result = await getTool("ui_search_registry_directory").execute({
+      tier: 7,
+    });
+    expect(result.isError).toBe(true);
+    expect(dispatchInspectorCommandMock).not.toHaveBeenCalled();
+  });
+
+  it("tells the model where the results actually appear", () => {
+    const description = getTool("ui_search_registry_directory").description;
+    expect(description).toContain("ui_snapshot_app");
+    expect(description).toContain("ui_connect_registry_server");
   });
 });
