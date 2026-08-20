@@ -374,7 +374,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.235",
+          "version": "2.1.237",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -419,7 +419,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
           "description": "Anthropic's agentic coding tool",
           "name": "claude-code",
           "title": "Claude Code",
-          "version": "2.1.235",
+          "version": "2.1.237",
           "websiteUrl": "https://claude.com/claude-code",
         },
         "supportedProtocolVersions": [
@@ -1212,7 +1212,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "clientInfo": {
           "name": "codex-mcp-client",
           "title": "Codex",
-          "version": "0.148.0-alpha.9",
+          "version": "0.148.0-alpha.15",
         },
         "supportedProtocolVersions": [
           "2025-03-26",
@@ -1254,7 +1254,7 @@ exports[`seedHostTemplate > seed output matches the committed golden snapshot 1`
         "clientInfo": {
           "name": "codex-mcp-client",
           "title": "Codex",
-          "version": "0.148.0-alpha.9",
+          "version": "0.148.0-alpha.15",
         },
         "supportedProtocolVersions": [
           "2025-03-26",

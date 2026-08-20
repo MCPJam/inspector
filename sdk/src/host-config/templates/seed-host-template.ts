@@ -807,7 +807,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.235",
+            version: "2.1.237",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -1484,7 +1484,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            version: "0.148.0-alpha.9",
+            version: "0.148.0-alpha.15",
           },
         },
       };
