@@ -1,0 +1,76 @@
+---
+title: "Registry"
+description: "Browse MCPJam's curated catalog and mirrored connector directories, then install servers into your project"
+icon: "store"
+---
+
+The Registry tab gives you two ways to find and install MCP servers into your project:
+
+- **Curated catalog** — servers MCPJam has reviewed and stands behind, shown as cards at the top of the page.
+- **Connector directories** — mirrors of Anthropic's Claude connector directory and OpenAI's ChatGPT app directory, searchable below the curated catalog.
+
+<Note>
+The Registry tab requires a signed-in account and an active project. The connector directories are behind a feature flag and may not be visible in all deployments.
+</Note>
+
+## Curated catalog
+
+The curated catalog lists servers that MCPJam has vetted. Each card shows the server name, a short description, and a **Connect** button. Clicking **Connect** installs the server into your active project and navigates to the Servers tab.
+
+You can star servers to save them for later. Starred servers appear at the top of the catalog on your next visit.
+
+## Connector directories
+
+Below the curated catalog, the **Connector directories** section mirrors two public upstream directories. Use it to find connectors that are not in the curated catalog.
+
+### Choosing a directory
+
+A **source selector** at the top of the section lets you switch between:
+
+| Source | Description |
+|--------|-------------|
+| **Claude directory** | Anthropic's public connector directory, synced daily (~2,000 entries). Includes verification tiers. |
+| **ChatGPT directory** | OpenAI's ChatGPT app directory, uploaded weekly (~2,900 entries). No verification tiers. |
+
+The Claude directory opens by default. Switching source clears any active tier filter, because verification tiers are a Claude-directory concept.
+
+### Searching
+
+Type in the search box to filter by name, description, or tool/skill name. The search is debounced — results update after you stop typing, not on every keystroke. Leave the box empty to browse the full directory.
+
+### Filtering
+
+**Tier filter (Claude directory only)** — Narrow results to a specific verification tier: Anthropic, Partner, or Community. The tier filter is hidden when the ChatGPT directory is selected, because that directory publishes no equivalent tiers.
+
+**Connectable only** — Toggle this on to hide rows that cannot be installed. It is off by default so you can see the full census of listed connectors. About 37% of the ChatGPT directory consists of hosted servers whose endpoints OpenAI proxies and does not publish; those rows appear disabled with an explanation rather than being hidden.
+
+### Freshness
+
+Each directory shows an **as of** date next to its name. This date comes from the upstream scrape time, not the ingest time — so if a weekly snapshot was taken on Tuesday and uploaded on Friday, the date shown is Tuesday.
+
+### Connecting a server
+
+Click **Connect** on a directory card to install that server into your active project. For connectors that offer multiple regions or require you to supply your own instance URL, a dialog appears first so you can pick or enter the endpoint.
+
+If the same server is already connected through the other directory (matched by canonical URL), MCPJam reuses the existing connection and shows a toast — for example, "Already connected via the Claude directory." No duplicate connection is created.
+
+### Non-connectable rows
+
+Some directory entries cannot be installed:
+
+| Reason shown | What it means |
+|---|---|
+| Endpoint not published by the directory that lists it. | A hosted server whose URL the directory does not expose. |
+| Endpoint unverified — nothing answered as an MCP server. | The endpoint was probed but did not respond as an MCP server. |
+| Local desktop extension — not a remote MCP server. | A local app extension, not a remote HTTP server. |
+
+These rows are shown disabled with a **Not connectable** button and an explanation. Use the **Connectable only** toggle to hide them.
+
+### Load more
+
+The directory loads results in pages. Click **Load more** at the bottom of the list to fetch the next page. The button only appears when more results are available.
+
+## What's next
+
+- [Connecting servers](/inspector/connecting-servers) — connect servers you find in the registry to your project
+- [Projects](/inspector/projects) — manage the project servers are installed into
