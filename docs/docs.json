@@ -126,6 +126,7 @@
               "cli/tasks",
               "cli/tasks-conformance",
               "cli/tools-resources-prompts",
+              "cli/readiness-check",
               "cli/ci",
               "cli/telemetry"
             ]
