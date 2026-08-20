@@ -36,8 +36,11 @@ import {
   type DirectoryRedirectHop,
   type PrmDiscoveryResult,
 } from "../directory-readiness/discovery.js";
+import { sha256HexOfText } from "../mcp-client-manager/skills-integrity.js";
+import { parseYamlLite, splitFrontmatter } from "../plugin-bundle/skill.js";
 import {
   OPENAI_DOMAIN_VERIFICATION_PATH,
+  OPENAI_MCP_SKILL_LIMITS,
   OPENAI_MCP_SKILLS_METHODS,
 } from "./profile.js";
 
@@ -397,6 +400,111 @@ async function callJsonRpc(
 }
 
 /**
+ * Read ONE skill's body with `skills/get`.
+ *
+ * WHY THE LISTING IS NOT ENOUGH. `skills/list` returns what the server SAYS
+ * about each skill — its name, its description, the digest it claims for its
+ * markdown. Three of this lane's checks are about whether those claims are
+ * true: that the declared digest matches the bytes actually served, that the
+ * markdown is within its size limit, that the frontmatter agrees with the
+ * listing. None of them can be answered from the listing alone, and a run that
+ * never fetched a body would report all three as `not-evaluated` forever —
+ * three checks that exist and never fire.
+ *
+ * TOLERANT ABOUT SPELLING, deliberately. The skills extension is young and
+ * servers in the wild spell the body field `content`, `markdown` or `text`,
+ * and the page list `pages` or `resources`. Reading whichever is present costs
+ * nothing; insisting on one would report a working server as unreadable. What
+ * this does NOT do is guess: a response with no body field at all records a
+ * `fetchError` and leaves the derived fields absent, so the checks above it
+ * stay `not-evaluated` rather than grading a body that was never returned.
+ */
+async function fetchImportedSkillBody(
+  options: OpenAIDiscoveryOptions,
+  id: number,
+  skill: OpenAIImportedSkillEvidence,
+): Promise<void> {
+  const name = skill.name;
+  if (!name) {
+    skill.fetchError = "the listing entry declared no name to fetch by";
+    return;
+  }
+
+  const document = await callJsonRpc(
+    options,
+    id,
+    OPENAI_MCP_SKILLS_METHODS.get,
+    { name },
+  );
+
+  const error = asRecord(document?.error);
+  if (error) {
+    skill.fetchError =
+      asString(error.message) ?? "skills/get returned an error";
+    return;
+  }
+  const result = asRecord(document?.result);
+  if (!result) {
+    skill.fetchError = "skills/get returned no result";
+    return;
+  }
+
+  const body = asRecord(result.skill) ?? result;
+  const markdown =
+    asString(body.content) ?? asString(body.markdown) ?? asString(body.text);
+  if (markdown === undefined) {
+    skill.fetchError = "skills/get returned no markdown body";
+    return;
+  }
+
+  // MEASURED IN BYTES, not characters. The limit this feeds is a byte limit,
+  // and a skill whose markdown is mostly non-ASCII would otherwise be measured
+  // as comfortably inside a limit it exceeds.
+  const markdownBytes = new TextEncoder().encode(markdown).length;
+  skill.markdownBytes = markdownBytes;
+  skill.observedDigest = await sha256HexOfText(markdown);
+
+  const split = splitFrontmatter(markdown);
+  if (split) {
+    const parsed = parseYamlLite(split.frontmatter);
+    // `tooDeep` is an ARRAY of the paths that nested too far, so its emptiness
+    // is the thing to test — the array itself is always truthy.
+    if (parsed.tooDeep.length === 0) skill.frontmatter = parsed.data;
+  }
+
+  const listed = Array.isArray(body.pages)
+    ? body.pages
+    : Array.isArray(body.resources)
+      ? body.resources
+      : [];
+  const pages: { uri: string; bytes: number }[] = [];
+  for (const entry of listed.slice(
+    0,
+    OPENAI_MCP_SKILL_LIMITS.maxPagesPerSkill,
+  )) {
+    const page = asRecord(entry);
+    if (!page) continue;
+    const uri = asString(page.uri) ?? asString(page.resourceUri);
+    const text =
+      asString(page.content) ?? asString(page.markdown) ?? asString(page.text);
+    if (!uri) continue;
+    pages.push({
+      uri,
+      bytes:
+        text === undefined
+          ? typeof page.bytes === "number"
+            ? page.bytes
+            : 0
+          : new TextEncoder().encode(text).length,
+    });
+  }
+  if (pages.length > 0) skill.pages = pages;
+
+  skill.totalBytes =
+    markdownBytes + pages.reduce((sum, page) => sum + page.bytes, 0);
+}
+
+/**
  * Read the server's advertised skills, walking `skills/list` pagination.
  *
  * PAGINATION IS NOT OPTIONAL HERE. A server with six skills and a page size of
@@ -454,6 +562,20 @@ export async function discoverOpenAIImportedSkills(
     cursor = asString(result.nextCursor);
     if (!cursor) break;
     if (page === MAX_SKILL_LIST_PAGES - 1) paginationCapHit = true;
+  }
+
+  // THE BODIES, one call each. Bounded by the same cap the size checks grade
+  // against plus a margin, so a server advertising a thousand skills cannot
+  // turn a preflight into a crawl — and the cap is not silent: a listing over
+  // the limit is already `violated` by the count check, which names the real
+  // problem, and the skills past the cap keep their derived fields absent so
+  // nothing reads as graded that was not fetched.
+  const bodiesToFetch = Math.min(
+    skills.length,
+    OPENAI_MCP_SKILL_LIMITS.maxSkills + 1,
+  );
+  for (let index = 0; index < bodiesToFetch; index += 1) {
+    await fetchImportedSkillBody(options, 200 + index, skills[index]);
   }
 
   return {

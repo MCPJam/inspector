@@ -77,13 +77,23 @@ export function parseLlmsIndex(body, baseUrl) {
     } else if (/^https?:\/\//.test(target)) {
       continue;
     }
-    // `/plugins/build/skills.md` and `build/skills` are the same page.
+    // `/plugins/build/skills.md#importing` and `build/skills` are the same
+    // page. ORDER MATTERS HERE, and getting it wrong manufactures drift out of
+    // nothing: stripping `.md` before the fragment leaves `skills.md#importing`
+    // untouched — `$` does not match mid-string — so the slug ends up as
+    // `build/skills.md`, which the corpus does not pin and the diff duly
+    // reports as an added page. Fragment and query come off FIRST.
+    //
+    // The `plugins` prefix is matched as a whole SEGMENT for the same reason:
+    // an unanchored `/^\/?plugins\/?/` would turn `plugins-guide/x` into
+    // `-guide/x`.
     const slug = target
-      .replace(/^\/?plugins\/?/, "")
+      .replace(/[#?].*$/, "")
+      .replace(/^\/+/, "")
+      .replace(/^plugins(?:\/|$)/, "")
       .replace(/\.md$/, "")
       .replace(/^\/+/, "")
-      .replace(/\/+$/, "")
-      .replace(/#.*$/, "");
+      .replace(/\/+$/, "");
     if (slug) slugs.add(slug);
   }
   return slugs;

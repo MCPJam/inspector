@@ -140,7 +140,24 @@ export async function createZipPluginFileSource(
 export async function collectZipArchiveObservations(
   bytes: Uint8Array
 ): Promise<OpenAIArchiveObservations> {
-  const zip = await JSZip.loadAsync(bytes);
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(bytes);
+  } catch {
+    // AN UNREADABLE ARCHIVE IS THE ENCRYPTED ONE'S USUAL SHAPE. JSZip rejects
+    // a password-protected zip outright rather than listing its entries, and
+    // an encrypted upload is precisely a case the readiness report must
+    // survive: letting the rejection escape turns a gradeable submission into
+    // a crashed run, and the one fact this adapter can still state — the
+    // uploaded size — is thrown away with it. Every other field stays absent,
+    // so the reader reports what it could not read rather than passing it.
+    //
+    // NOT the same choice as `createZipPluginFileSource` above, which must
+    // still throw: its whole contract is to hand back a readable file source,
+    // and there is nothing to read here. This function's contract is to report
+    // observations, and "unreadable" is one.
+    return { compressedBytes: bytes.byteLength };
+  }
   return {
     // The uploaded bytes, which is exactly what the portal's compressed-size
     // limit is measured against.

@@ -341,6 +341,21 @@ export function summarizeLaneCoverage<Lane extends string>(
  *
  * It only ever downgrades. A missing capability turns a verdict into
  * `not-evaluated`; nothing here can turn a `not-evaluated` into a pass.
+ *
+ * THREE STATUSES ARE LEFT ALONE, because for them there is no verdict to
+ * withdraw:
+ *
+ *   - `not-evaluated` is already the downgrade, and rewriting it would replace
+ *     a specific reason ("the endpoint could not be reached") with a generic
+ *     one about a capability that was never the obstacle.
+ *   - `not-applicable` says the rule does not apply to THIS submission — a
+ *     skills-only bundle has no MCP endpoint whatever capabilities the run
+ *     holds. Downgrading it invents a coverage gap out of a settled question
+ *     and puts a "nobody checked" line in a report where "there is nothing to
+ *     check" is the truth.
+ *   - `informational` carries no verdict at all: badges and heuristics are
+ *     excluded from lane rollups by construction, so gating them changes
+ *     nothing except to make a report read as less complete than it is.
  */
 export function enforceCapabilityGate<
   Capability extends string,
@@ -357,7 +372,12 @@ export function enforceCapabilityGate<
     const missing = (finding.requiresCapabilities ?? []).filter(
       (capability) => !available.has(capability),
     );
-    if (missing.length === 0 || finding.status === "not-evaluated") {
+    if (
+      missing.length === 0 ||
+      finding.status === "not-evaluated" ||
+      finding.status === "not-applicable" ||
+      finding.status === "informational"
+    ) {
       return finding;
     }
     return {

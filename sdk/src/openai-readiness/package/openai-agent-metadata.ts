@@ -67,8 +67,27 @@ export interface OpenAIAgentMetadataParse {
   issues: OpenAIAgentMetadataIssue[];
 }
 
+/**
+ * A MAPPING, not merely an object.
+ *
+ * `typeof value === "object"` is true of things a document can be that are not
+ * mappings, and every one of them would be read field-by-field as a mapping
+ * whose fields are all absent — reporting a document that is UNREADABLE as one
+ * that is merely incomplete. Those two carry different advice.
+ *
+ * Under this parser's default schema (YAML 1.2 core) the reachable non-mapping
+ * objects are arrays, which the test below already excluded. The prototype
+ * check is for the schema that is one option away: YAML 1.1 resolves the
+ * `!!timestamp` tag, and `2024-01-01` alone in a document then parses to a
+ * `Date` — an object, not an array, and not a mapping. Cheap to hold now,
+ * versus a silent misdiagnosis if that option is ever set.
+ */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
 }
 
 /** Read a string field, recording a type error rather than coercing. */

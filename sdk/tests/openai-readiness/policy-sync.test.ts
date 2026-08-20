@@ -118,6 +118,61 @@ describe("parseLlmsIndex", () => {
   it("does not mistake the index's own title for a page", () => {
     expect(parse("# Plugins\n\nSome prose with no links.")).toEqual(new Set());
   });
+
+  it("strips a fragment BEFORE the .md extension, not after", () => {
+    // Order is what makes this correct, and getting it wrong manufactures
+    // drift out of nothing: `$` does not match mid-string, so stripping `.md`
+    // first leaves `skills.md#importing` untouched and the slug settles at
+    // `build/skills.md` — a page the corpus does not pin and the diff duly
+    // reports as newly added upstream.
+    expect(parse("[a](/plugins/build/skills.md#importing-from-mcp)")).toEqual(
+      new Set(["build/skills"]),
+    );
+  });
+
+  it("strips a query string the same way", () => {
+    expect(parse("[a](/plugins/app-guidelines.md?v=2)")).toEqual(
+      new Set(["app-guidelines"]),
+    );
+  });
+
+  it("matches the plugins prefix as a whole segment", () => {
+    // An unanchored prefix strip turns `plugins-guide/x` into `-guide/x`,
+    // which is not a page on either side of the comparison.
+    expect(parse("[a](/plugins-guide/nope.md)")).toEqual(
+      new Set(["plugins-guide/nope"]),
+    );
+  });
+});
+
+describe("an empty extraction is a FAILED one", () => {
+  // `[]` is truthy, so a caller writing `if (!pages) throw` accepts it, syncs a
+  // corpus of nothing, records no drift and exits 0 — a green check that
+  // verified zero pages. That is the exact failure the whole sync exists to
+  // prevent, arrived at by a different door than the one already guarded.
+  it("returns undefined for an array literal holding no strings", () => {
+    expect(readConstArray("const PAGES = [] as const;", "PAGES")).toBe(
+      undefined,
+    );
+  });
+
+  it("returns undefined for a page/url list holding no pairs", () => {
+    expect(readPageUrlPairs("const EXTERNAL = [] as const;", "EXTERNAL")).toBe(
+      undefined,
+    );
+  });
+
+  it("makes the OpenAI manifest reader throw rather than sync nothing", () => {
+    expect(() =>
+      readManifestSource(
+        [
+          'const OPENAI_PLUGINS_DOCS_BASE_URL = "https://x.example.com";',
+          "const OPENAI_PLUGINS_POLICY_PAGES = [] as const;",
+          "const OPENAI_EXTERNAL_POLICY_PAGES = [] as const;",
+        ].join("\n"),
+      ),
+    ).toThrow(/Could not read/);
+  });
 });
 
 describe("diffIndexAgainstCorpus", () => {

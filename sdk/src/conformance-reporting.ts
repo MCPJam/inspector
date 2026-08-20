@@ -40,6 +40,10 @@ import {
   isOpenAIReadinessResult,
   type OpenAIReadinessResult,
 } from "./openai-readiness/types.js";
+import {
+  isDispositiveDirectoryFinding,
+  type DirectoryReadinessFinding,
+} from "./directory-readiness/types.js";
 
 export type ConformanceReportKind =
   | "protocol-conformance"
@@ -843,7 +847,12 @@ export const OPENAI_READINESS_REPORT_PROVIDER: DirectoryReadinessReportProvider<
     isResult: (result): result is OpenAIReadinessResult =>
       isOpenAIReadinessResult(result),
     isDispositive: (finding) =>
-      finding.class === "required" || finding.class === "runtime-blocker",
+      isDispositiveDirectoryFinding(
+        finding as unknown as Pick<
+          DirectoryReadinessFinding<string, unknown, string>,
+          "class"
+        >,
+      ),
   };
 
 const READINESS_REPORT_PROVIDERS: DirectoryReadinessReportProvider<never>[] = [
@@ -870,7 +879,19 @@ export function registerDirectoryReadinessProvider<
   ) {
     return;
   }
-  READINESS_REPORT_PROVIDERS.push(
+  // BEFORE THE CATCH-ALL, not after it. Claude's `isResult` recognises "a
+  // readiness result with no `readinessKind`", which is a shape a new
+  // publisher's result can match by accident — appending would then hand every
+  // registered provider's results to Claude's adapter and publish them under
+  // Anthropic's name. The ordering invariant this file states is that exact
+  // discriminators run first, and appending is the one operation that breaks
+  // it silently.
+  const catchAll = READINESS_REPORT_PROVIDERS.indexOf(
+    CLAUDE_READINESS_REPORT_PROVIDER as unknown as DirectoryReadinessReportProvider<never>,
+  );
+  READINESS_REPORT_PROVIDERS.splice(
+    catchAll === -1 ? READINESS_REPORT_PROVIDERS.length : catchAll,
+    0,
     provider as unknown as DirectoryReadinessReportProvider<never>,
   );
 }

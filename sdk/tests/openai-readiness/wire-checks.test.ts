@@ -55,6 +55,20 @@ describe("endpoint", () => {
     expect(byId(findings, "openai.endpoint.path").status).toBe("satisfied");
   });
 
+  it("does not report a path violation for a URL that has no path", () => {
+    // An unparseable URL has no path to compare. Grading it `violated` prints
+    // `path: undefined` and sends the submitter to fix a path when the URL
+    // itself is the problem — which the reachability checks already say, in
+    // the right words.
+    const findings = runOpenAIEndpointChecks(
+      endpoint({ enteredUrl: "not a url", redirectChain: [] }),
+      STAMP,
+    );
+    const path = byId(findings, "openai.endpoint.path");
+    expect(path.status).toBe("not-evaluated");
+    expect(path.notEvaluatedReason).toContain("parseable");
+  });
+
   it("treats a plaintext endpoint as a runtime blocker, not a policy item", () => {
     const findings = runOpenAIEndpointChecks(
       endpoint({
@@ -237,6 +251,71 @@ describe("auth", () => {
     expect(resolve.status).toBe("violated");
     expect(resolve.remediation).toContain("auth2.example.com");
     expect(resolve.remediation).not.toContain("//auth.example.com");
+  });
+
+  it("will not say EVERY issuer is fine having read five of two hundred", () => {
+    // The issuer fetch is BOUNDED, because `authorization_servers` is a list
+    // the submitted server chose. A clean result over the issuers this run
+    // read is not a clean result over the ones it did not, and reporting it as
+    // one would let a server advertising two hundred issuers pass "every
+    // advertised authorization server publishes usable metadata" on the
+    // strength of five.
+    const findings = runOpenAIAuthChecks(
+      authEvidence({ advertisedAuthorizationServerCount: 200 }),
+      STAMP,
+    );
+    for (const id of [
+      "openai.auth.issuers-resolve",
+      "openai.auth.pkce-s256",
+      "openai.auth.rfc9207-iss",
+      "openai.auth.unsupported-flows",
+    ]) {
+      const finding = byId(findings, id);
+      expect(finding.status, id).toBe("not-evaluated");
+      expect(finding.notEvaluatedReason, id).toContain("200");
+    }
+  });
+
+  it("still fails on a truncated fetch when what it DID read is broken", () => {
+    // Truncation only clouds the clean answer. One unreachable issuer among
+    // the five that were read settles the question whatever the other 195 say.
+    const findings = runOpenAIAuthChecks(
+      authEvidence({
+        advertisedAuthorizationServerCount: 200,
+        authorizationServers: [
+          {
+            issuer: "https://auth2.example.com",
+            metadataUrl: "https://auth2.example.com/.well-known/x",
+            fetchError: "404",
+          },
+        ],
+      }),
+      STAMP,
+    );
+    expect(byId(findings, "openai.auth.issuers-resolve").status).toBe(
+      "violated",
+    );
+  });
+
+  it("does not conclude NO issuer offers registration from a truncated read", () => {
+    // The mirror image: "some issuer supports registration" is existential, so
+    // it is the NEGATIVE that an unread issuer can overturn.
+    const findings = runOpenAIAuthChecks(
+      authEvidence({
+        advertisedAuthorizationServerCount: 200,
+        authorizationServers: [
+          {
+            issuer: "https://auth.example.com",
+            metadataUrl: "https://auth.example.com/.well-known/x",
+            document: { code_challenge_methods_supported: ["S256"] },
+          },
+        ],
+      }),
+      STAMP,
+    );
+    expect(byId(findings, "openai.auth.client-acquisition").status).toBe(
+      "not-evaluated",
+    );
   });
 
   it("requires RFC 9207 once there is more than one issuer", () => {

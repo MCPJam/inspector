@@ -192,12 +192,43 @@ export function runOpenAIMigrationChecks(
   );
 
   // ------------------------------------------------------------ placeholders
+  //
+  // AN UNREADABLE MANIFEST IS NOT A CLEAN ONE. `raw` is absent both when the
+  // package ships no manifest and when the one it ships is not valid JSON, and
+  // in either case `walkStrings` below visits nothing — which, left alone,
+  // would report every string-scanning check as `satisfied` on a package whose
+  // strings were never read. A package with a malformed `plugin.json` would
+  // then pass the placeholder and stdio checks outright. "Did not run" reading
+  // as "conformed" is the one failure this report cannot have; the malformed
+  // manifest itself is already reported by the package lane, so this says only
+  // that these two checks could not be decided.
+  const document = evidence.manifest?.raw;
+  if (!document) {
+    for (const definition of [
+      NO_USER_CONFIG_PLACEHOLDERS,
+      NO_STDIO_TRANSPORT,
+      HOST_SPECIFIC_LANGUAGE,
+    ]) {
+      findings.push(
+        notEvaluated(
+          definition,
+          stamp,
+          evidence.manifest
+            ? "the package's manifest is not readable as JSON, so none of its strings were scanned"
+            : "the package ships no manifest, so there were no declared strings to scan",
+          missingInput(OPENAI_READINESS_INPUTS.pluginBundle),
+        ),
+      );
+    }
+    return findings;
+  }
+
   const placeholders: string[] = [];
   const stdio: string[] = [];
   const mcpb: string[] = [];
   const hostLanguage: string[] = [];
 
-  walkStrings(evidence.manifest?.raw, (text, path) => {
+  walkStrings(document, (text, path) => {
     if (containsUserConfigPlaceholder(text)) placeholders.push(path);
     if (/\.mcpb\b/i.test(text)) mcpb.push(path);
     if (OTHER_HOST_NAMES.test(text)) hostLanguage.push(path);
@@ -206,7 +237,7 @@ export function runOpenAIMigrationChecks(
   // A stdio server is declared by a `command`, not by a URL. The distinction is
   // structural rather than textual: a public submission's server has to be
   // reachable over the network, and a command is a process on somebody's laptop.
-  const servers = evidence.manifest?.raw?.mcpServers;
+  const servers = document.mcpServers;
   walkStrings(servers, (text, path) => {
     if (/(^|\.)command$/.test(path) || /^stdio$/i.test(text)) stdio.push(path);
   });

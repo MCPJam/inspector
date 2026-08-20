@@ -305,6 +305,36 @@ export function runOpenAIAuthChecks(
   const servers = evidence.authorizationServers ?? [];
   const advertised = evidence.advertisedAuthorizationServerCount ?? 0;
 
+  // THE FETCH IS BOUNDED, and a clean result over the issuers this run read is
+  // not a clean result over the ones it did not. `authorization_servers` is
+  // attacker-supplied in the only sense that matters here — it is a list the
+  // submitted server chose — so the runner caps how many it will follow, and
+  // a server advertising two hundred issuers of which the first five resolve
+  // would otherwise pass "every advertised authorization server publishes
+  // usable metadata" on the strength of five.
+  //
+  // WHICH SIDE the remainder can overturn depends on the quantifier. A
+  // UNIVERSAL claim ("every issuer supports S256") is falsified by one
+  // unfetched issuer, so its SATISFIED side is the provisional one. An
+  // EXISTENTIAL claim ("some issuer offers registration") is established by
+  // one, so its VIOLATED side is. Reporting either provisional side as a
+  // verdict would be this report's cardinal sin: "did not run" reading as
+  // "conformed".
+  const untested = Math.max(0, advertised - servers.length);
+  const untestedReason =
+    `this run read ${servers.length} of the ${advertised} advertised ` +
+    `authorization servers, so ${untested} were never fetched and the ` +
+    `remainder could change this answer`;
+
+  const overFetchedIssuers = (
+    definition: OpenAICheckDefinition,
+    conclusive: OpenAIReadinessFinding,
+    overturnable: boolean,
+  ): OpenAIReadinessFinding =>
+    overturnable && untested > 0
+      ? notEvaluated(definition, stamp, untestedReason)
+      : conclusive;
+
   if (advertised === 0) {
     for (const definition of [
       ALL_ISSUERS_RESOLVE,
@@ -323,10 +353,14 @@ export function runOpenAIAuthChecks(
     const unreachable = servers.filter((server) => !server.document);
     findings.push(
       unreachable.length === 0
-        ? satisfied(ALL_ISSUERS_RESOLVE, stamp, {
-            advertised,
-            fetched: servers.length,
-          })
+        ? overFetchedIssuers(
+            ALL_ISSUERS_RESOLVE,
+            satisfied(ALL_ISSUERS_RESOLVE, stamp, {
+              advertised,
+              fetched: servers.length,
+            }),
+            true,
+          )
         : violated(
             ALL_ISSUERS_RESOLVE,
             stamp,
@@ -355,9 +389,13 @@ export function runOpenAIAuthChecks(
       );
     findings.push(
       withoutS256.length === 0
-        ? derivedFrom(
-            satisfied(PKCE_S256, stamp, { issuers: servers.length }),
-            "oauth-conformance:oauth-pkce-s256",
+        ? overFetchedIssuers(
+            PKCE_S256,
+            derivedFrom(
+              satisfied(PKCE_S256, stamp, { issuers: servers.length }),
+              "oauth-conformance:oauth-pkce-s256",
+            ),
+            true,
           )
         : violated(
             PKCE_S256,
@@ -380,7 +418,11 @@ export function runOpenAIAuthChecks(
       );
     findings.push(
       withoutIss.length === 0
-        ? satisfied(ISSUER_PARAMETER, stamp, { issuers: servers.length })
+        ? overFetchedIssuers(
+            ISSUER_PARAMETER,
+            satisfied(ISSUER_PARAMETER, stamp, { issuers: servers.length }),
+            true,
+          )
         : advertised > 1
           ? violated(
               ISSUER_PARAMETER,
@@ -425,11 +467,17 @@ export function runOpenAIAuthChecks(
             dynamicRegistration: anyRegistration,
             clientIdMetadataDocuments: cimdFlag,
           })
-        : violated(
+        : // EXISTENTIAL, so it is the negative that the unfetched issuers can
+          // overturn: one of them may be the issuer that offers registration.
+          overFetchedIssuers(
             CLIENT_ACQUISITION,
-            stamp,
-            "Support dynamic client registration or Client ID Metadata Documents; otherwise every install needs a manual pre-registration step.",
-            { issuers: servers.map((server) => server.issuer) },
+            violated(
+              CLIENT_ACQUISITION,
+              stamp,
+              "Support dynamic client registration or Client ID Metadata Documents; otherwise every install needs a manual pre-registration step.",
+              { issuers: servers.map((server) => server.issuer) },
+            ),
+            true,
           ),
     );
 
@@ -449,7 +497,11 @@ export function runOpenAIAuthChecks(
       });
     findings.push(
       requiredUnsupported.length === 0
-        ? satisfied(UNSUPPORTED_FLOWS, stamp)
+        ? overFetchedIssuers(
+            UNSUPPORTED_FLOWS,
+            satisfied(UNSUPPORTED_FLOWS, stamp),
+            true,
+          )
         : violated(
             UNSUPPORTED_FLOWS,
             stamp,

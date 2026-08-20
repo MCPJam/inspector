@@ -172,24 +172,37 @@ function skipRawText(html, from, name) {
  * long declaration onto the next line, and a regex that assumed a single space
  * would then match nothing — syncing an EMPTY corpus while reporting success,
  * which is the one failure mode this whole file exists to prevent.
+ *
+ * AN EMPTY EXTRACTION IS A FAILED ONE, and returning `[]` here would walk
+ * straight back into that failure by another door: `[]` is truthy, so a caller
+ * writing `if (!pages) throw` accepts it, syncs a corpus of nothing, records no
+ * drift and exits 0 — a green check that verified zero pages. The only reading
+ * of "this array literal parsed but held no strings" that is safe is that the
+ * literal is not in the shape this reader understands.
  */
 export function readConstArray(source, name) {
   const block = source.match(
     new RegExp(`${name}\\s*=\\s*\\[([\\s\\S]*?)\\] as const;`)
   );
   if (!block) return undefined;
-  return [...block[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  const values = [...block[1].matchAll(/"([^"]+)"/g)].map((match) => match[1]);
+  return values.length > 0 ? values : undefined;
 }
 
-/** Pull every `{ page: "…", url: "…" }` pair out of a named array literal. */
+/**
+ * Pull every `{ page: "…", url: "…" }` pair out of a named array literal.
+ *
+ * Empty is `undefined` for the same reason as `readConstArray`.
+ */
 export function readPageUrlPairs(source, name) {
   const block = source.match(
     new RegExp(`${name}\\s*=\\s*\\[([\\s\\S]*?)\\] as const;`)
   );
   if (!block) return undefined;
-  return [
+  const pairs = [
     ...block[1].matchAll(/page:\s*"([^"]+)"\s*,\s*url:\s*"([^"]+)"/g),
   ].map((match) => ({ page: match[1], url: match[2] }));
+  return pairs.length > 0 ? pairs : undefined;
 }
 
 /**
@@ -233,7 +246,13 @@ export function hashPolicyText(text) {
 /** The revisions currently recorded in the manifest's GENERATED block. */
 export function readRecordedRevisions(source, begin, end) {
   const beginIndex = source.indexOf(begin);
-  const endIndex = source.indexOf(end);
+  // SEARCHED FROM `beginIndex`, not from the top of the file. `// END
+  // GENERATED` is a short, quotable string, and the moment one appears in a
+  // docblock above the block itself — explaining the markers, say — a search
+  // from zero returns that one, and the splice that follows rewrites the
+  // wrong span of the manifest.
+  const endIndex =
+    beginIndex === -1 ? -1 : source.indexOf(end, beginIndex + begin.length);
   if (beginIndex === -1 || endIndex === -1) {
     throw new Error("Could not find the GENERATED block in the manifest.");
   }

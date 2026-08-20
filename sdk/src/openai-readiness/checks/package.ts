@@ -220,8 +220,24 @@ export function runOpenAIPackageChecks(
         notApplicable(
           definition,
           stamp,
-          `a ${evidence.mode} submission is ${shape.summary}, so there is no package archive to grade`,
+          `the ${evidence.mode} mode is ${shape.summary}, so there is no package archive to grade`,
         ),
+      );
+      continue;
+    }
+
+    // EXCLUSIONS IS THE ONE CATEGORY A PACKAGE-LESS MODE STILL ANSWERS, and
+    // the answer is that it passed. The rule it grades is "an mcp-only
+    // submission does not upload a bundle", so a run with no bundle has
+    // observed the rule being kept rather than failed to look — and falling
+    // through to the clause below would print "uploads a package and none was
+    // supplied", which contradicts the mode in the same sentence.
+    if (!shape.hasUploadedPackage && !evidence.package) {
+      findings.push(
+        satisfied(definition, stamp, {
+          portalIssues: [],
+          examined: `the ${evidence.mode} mode is ${shape.summary}, and no package was uploaded`,
+        }),
       );
       continue;
     }
@@ -231,7 +247,7 @@ export function runOpenAIPackageChecks(
         notEvaluated(
           definition,
           stamp,
-          `a ${evidence.mode} submission uploads a package and none was supplied to this run`,
+          `the ${evidence.mode} mode uploads a package and none was supplied to this run`,
           missingInput(OPENAI_READINESS_INPUTS.pluginBundle),
         ),
       );

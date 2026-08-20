@@ -377,6 +377,34 @@ describe("migration", () => {
     expect(surfaces.remediation).toContain("app-config");
   });
 
+  it("does not read an UNPARSEABLE manifest as a clean one", async () => {
+    // The string-scanning checks walk the parsed manifest, and a manifest that
+    // is not valid JSON parses to nothing — so a naive reading visits no
+    // strings, finds no placeholders, and reports both `required` checks as
+    // `satisfied` on a package whose strings were never read. "Did not run"
+    // reading as "conformed" is the one failure this report cannot have.
+    const findings = runOpenAIMigrationChecks(
+      await packageWith({
+        ...cleanSkillsPackage(),
+        ".codex-plugin/plugin.json": "{ this is not json",
+      }),
+      STAMP,
+    );
+    for (const id of [
+      "openai.migration.user-config",
+      "openai.migration.stdio-transport",
+    ]) {
+      const finding = byId(findings, id);
+      expect(finding.status, id).toBe("not-evaluated");
+      expect(finding.notEvaluatedReason, id).toContain("not readable as JSON");
+    }
+    // The surfaces check reads the FILE LISTING, not the manifest, so it is
+    // still decidable and must not be dragged down with the other two.
+    expect(byId(findings, "openai.migration.unsupported-surfaces").status).toBe(
+      "satisfied",
+    );
+  });
+
   it("reports a ${user_config.*} placeholder", async () => {
     const findings = runOpenAIMigrationChecks(
       await packageWith({
@@ -534,6 +562,48 @@ describe("app guidelines", () => {
       "satisfied",
     );
   });
+
+  // This check is `required`, so every phrase on the list is a submission it
+  // can block. Ordinary commerce copy using the same words is the expensive
+  // false positive, and each of these is a sentence a reviewer would wave
+  // through.
+  for (const copy of [
+    "Includes a 30-day money-back guarantee on every subscription.",
+    "Guaranteed delivery by Friday for orders placed before noon.",
+    "Ships to #10 Downing Street and 4,100 other addresses.",
+    "Track the best route between any two stations.",
+  ]) {
+    it(`does not read "${copy.slice(0, 32)}…" as a promotional claim`, () => {
+      const findings = runOpenAIPolicyChecks(
+        { profile: profileFor({ description: copy }) },
+        STAMP,
+      );
+      expect(
+        byId(findings, "openai.policy.non-promotional-listing").status,
+      ).toBe("satisfied");
+    });
+  }
+
+  // …and the claims it must still catch, including the one spelling of a rank
+  // that anybody actually writes. `\b#` demands a word character before the
+  // hash, so the pattern that used to be here matched `app#1` and never
+  // `The #1 plugin`.
+  for (const copy of [
+    "The #1 weather plugin for ChatGPT.",
+    "#1 for forecasts.",
+    "Guaranteed results or your money back.",
+    "100% guaranteed savings on every trip.",
+  ]) {
+    it(`reads "${copy.slice(0, 32)}…" as a promotional claim`, () => {
+      const findings = runOpenAIPolicyChecks(
+        { profile: profileFor({ description: copy }) },
+        STAMP,
+      );
+      expect(
+        byId(findings, "openai.policy.non-promotional-listing").status,
+      ).toBe("violated");
+    });
+  }
 
   it("grades package copy separately, in the technical lane", () => {
     // The two copies live in different artifacts: a package's description is

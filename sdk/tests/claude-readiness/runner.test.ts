@@ -246,11 +246,21 @@ describe("coverage and context", () => {
     // without anyone remembering to extend it.
     const result = gradeClaudeReadiness(input({ capabilities: ["dns"] }));
     const held = new Set(result.context.capabilities);
+    // A VERDICT is what the gate is about. `not-applicable` says the rule does
+    // not apply to this submission and `informational` carries no verdict at
+    // all, so neither is a claim a missing capability could have supported —
+    // and rewriting them would put "nobody checked" in a report where "there
+    // is nothing to check" is the truth.
+    const settled = new Set([
+      "not-evaluated",
+      "not-applicable",
+      "informational",
+    ]);
     const overreaching = result.findings.filter(
       (finding) =>
         (finding.requiresCapabilities ?? []).some(
           (capability) => !held.has(capability),
-        ) && finding.status !== "not-evaluated",
+        ) && !settled.has(finding.status),
     );
     expect(overreaching).toEqual([]);
     // And the gate is reached at all — a run where nothing declares a missing

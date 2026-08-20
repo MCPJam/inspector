@@ -125,6 +125,23 @@ describe("mode decides applicability", () => {
     );
   });
 
+  it("passes the exclusions check for a shape that uploads nothing", () => {
+    // `exclusions` is the ONE package category a package-less mode still
+    // answers, because the rule it grades is "an mcp-only submission does not
+    // upload a bundle" — and a run with no bundle has observed that rule being
+    // kept. Falling through to the missing-package clause instead reports
+    // "uploads a package and none was supplied" about a mode that uploads
+    // nothing, which contradicts itself inside one sentence.
+    const result = gradeOpenAIReadiness(evidence({ mode: "mcp-only" }));
+    const exclusions = result.findings.find(
+      (finding) => finding.id === "openai.package.exclusions",
+    )!;
+    expect(exclusions.status).toBe("satisfied");
+    expect(JSON.stringify(exclusions.details)).not.toContain(
+      "uploads a package",
+    );
+  });
+
   it("never reports an inapplicable lane as a coverage gap", () => {
     // The distinction the explicit mode exists to make: "you forgot the ZIP"
     // and "this shape has no ZIP" must not read the same.

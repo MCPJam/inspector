@@ -167,15 +167,27 @@ const PRIVACY_CONSISTENCY: OpenAICheckDefinition = {
  * Superlatives and ranking claims a listing may not make.
  *
  * A CLOSED LIST of phrases rather than a sentiment judgement: the rule is about
- * specific claims ("the best", "#1", "guaranteed"), and something fuzzier would
- * fail ordinary product copy.
+ * specific claims ("the best", "#1", "guaranteed results"), and something
+ * fuzzier would fail ordinary product copy.
+ *
+ * "GUARANTEED" IS THE ONE TO BE CAREFUL WITH. A bare `\bguaranteed?\b` reads
+ * "30-day money-back guarantee" and "guaranteed delivery by Friday" as
+ * promotional claims, and this check is `required` — so the cost of that match
+ * is a submission blocked on a sentence any reviewer would wave through. What
+ * the rule is actually about is a guarantee of OUTCOME or RANK, so the pattern
+ * below requires the word to attach to one.
  */
 const PROMOTIONAL_PHRASES = [
   /\bbest\b.{0,20}\b(app|plugin|tool)\b/i,
-  /\b#\s*1\b/,
+  // NO LEADING `\b`. `#` is not a word character, so `\b#` demands a word
+  // character immediately before the hash — which means it matched `app#1` and
+  // never `The #1 plugin`, the only spelling anyone writes. The trailing `\b`
+  // stays, so `#10` is a quantity rather than a rank.
+  /#\s*1\b/,
   /\bnumber one\b/i,
   /\bworld'?s (?:best|leading|first)\b/i,
-  /\bguaranteed?\b/i,
+  /\bguaranteed\s+(?:results?|success|accurate|accuracy|profits?|savings|rankings?)\b/i,
+  /\b100\s*%\s+guarantee(?:d)?\b/i,
   /\bunlimited free\b/i,
   /\bofficial(?:ly)? (?:endorsed|approved) by openai\b/i,
   /\bmost popular\b/i,

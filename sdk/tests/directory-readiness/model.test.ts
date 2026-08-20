@@ -283,6 +283,31 @@ describe("enforceCapabilityGate", () => {
     );
   });
 
+  it("leaves not-applicable alone", () => {
+    // `not-applicable` says the rule does not apply to THIS submission — a
+    // skills-only bundle has no MCP endpoint whatever capabilities the run
+    // holds. Downgrading it invents a coverage gap out of a settled question,
+    // and puts "nobody checked" in a report where "there is nothing to check"
+    // is the truth.
+    const original = finding({
+      status: "not-applicable",
+      notEvaluatedReason: undefined,
+      requiresCapabilities: ["browser"],
+    });
+    expect(enforceCapabilityGate([original], ["dns"])[0]).toBe(original);
+  });
+
+  it("leaves informational alone", () => {
+    // A badge carries no verdict, and is excluded from lane rollups by
+    // construction. Gating it changes nothing except to make a report read as
+    // less complete than it is.
+    const original = finding({
+      status: "informational",
+      requiresCapabilities: ["browser"],
+    });
+    expect(enforceCapabilityGate([original], ["dns"])[0]).toBe(original);
+  });
+
   it("names every missing capability, not just the first", () => {
     const [gated] = enforceCapabilityGate(
       [

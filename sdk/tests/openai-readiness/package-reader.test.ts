@@ -340,6 +340,33 @@ describe("skills", () => {
   });
 });
 
+describe("a loose file under skills/ is not a skill", () => {
+  it("does not read skills/README.md as a skill directory", async () => {
+    // `skill-metadata-missing` is BLOCKING, so a two-segment reading of
+    // `skills/README.md` registers a skill directory named `README.md`, looks
+    // for `skills/README.md/SKILL.md`, and blocks a submission whose only sin
+    // is a readme. A skill is a directory; the shortest path that establishes
+    // one is `skills/<name>/<file>`.
+    const evidence = await read({
+      ...cleanSkillsPackage(),
+      "skills/README.md": "# skills in this bundle",
+    });
+    expect(codes(evidence)).not.toContain("skill-metadata-missing");
+    expect(evidence.skills.map((skill) => skill.directoryName)).not.toContain(
+      "README.md",
+    );
+  });
+
+  it("still reports a real directory that is missing its SKILL.md", async () => {
+    // The narrowing above must not cost the case the check exists for.
+    const evidence = await read({
+      ...cleanSkillsPackage(),
+      "skills/broken/notes.md": "# notes",
+    });
+    expect(codes(evidence)).toContain("skill-metadata-missing");
+  });
+});
+
 describe("assets", () => {
   it("reports a non-square image", async () => {
     const evidence = await read({
@@ -416,6 +443,47 @@ describe("assets", () => {
     });
     expect(evidence.assets[0].declaredMimeType).toBe("image/png");
     expect(evidence.assets[0].sniffedMimeType).toBe("image/png");
+  });
+});
+
+describe("declared asset references are resolved, not string-compared", () => {
+  it("finds an icon the interface names as ./icon.png", async () => {
+    // `files` is keyed by canonical path and a hand-written reference is not.
+    // `./icon.png` and `icon.png` name the same shipped file, so comparing the
+    // reference as written invents `asset-missing` on a package that ships it —
+    // a fabricated defect on a correct submission, which is worse than the one
+    // the check was written to catch.
+    const evidence = await read({
+      ...cleanSkillsPackage(),
+      "agents/openai.yaml": openaiYaml({
+        interface: { icon_small: "./assets/icon.png" },
+      }),
+      "assets/icon.png": squarePng(512),
+    });
+    expect(codes(evidence)).not.toContain("asset-missing");
+  });
+
+  it("still reports an icon the package does not ship", async () => {
+    const evidence = await read({
+      ...cleanSkillsPackage(),
+      "agents/openai.yaml": openaiYaml({
+        interface: { icon_small: "assets/nope.png" },
+      }),
+    });
+    expect(codes(evidence)).toContain("asset-missing");
+  });
+
+  it("treats a reference that escapes the package as missing", async () => {
+    // `../` names nothing inside the package however it is spelled, so it is
+    // still missing — normalising must not turn an escape into a match.
+    const evidence = await read({
+      ...cleanSkillsPackage(),
+      "agents/openai.yaml": openaiYaml({
+        interface: { icon_small: "../assets/icon.png" },
+      }),
+      "assets/icon.png": squarePng(512),
+    });
+    expect(codes(evidence)).toContain("asset-missing");
   });
 });
 

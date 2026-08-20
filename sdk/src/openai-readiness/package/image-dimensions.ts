@@ -224,6 +224,13 @@ function decodeWebp(bytes: Uint8Array): ImageDimensionsResult {
     }
     const widthPx = (bytes[26] | (bytes[27] << 8)) & 0x3fff;
     const heightPx = (bytes[28] | (bytes[29] << 8)) & 0x3fff;
+    // The only decoder here whose fields can legitimately read zero: `VP8L` and
+    // `VP8X` store their dimensions minus one, so they cannot. Reporting a zero
+    // would hand a downstream minimum-edge or squareness rule a failed
+    // measurement dressed as a successful one.
+    if (widthPx === 0 || heightPx === 0) {
+      return { ok: false, reason: "lossy WebP declares a zero dimension" };
+    }
     return { ok: true, dimensions: { widthPx, heightPx, format: "webp" } };
   }
 
@@ -263,16 +270,32 @@ function decodeWebp(bytes: Uint8Array): ImageDimensionsResult {
   };
 }
 
-/** The first number in an SVG length, ignoring a unit suffix like `px`. */
+/**
+ * The pixel value of an SVG length, or `undefined` when it does not have one.
+ *
+ * THE NUMBER PATTERN IS UNAMBIGUOUS ON PURPOSE. `\d*\.?\d+` puts two digit
+ * quantifiers side by side, so on a long digit run with a failing suffix the
+ * engine tries O(n) splits and consumes O(n) in each — quadratic on input that
+ * is an attribute of a submitted SVG. CodeQL flagged it and was right. The
+ * alternation below admits exactly one parse of any input.
+ *
+ * THE EXPONENT IS INSIDE THE CAPTURE. Outside it, `width="1.5e2"` returned
+ * `1.5` — a wrong number rather than a refusal, and a downstream dimension rule
+ * then graded a file whose width it had misread. Every decoder in this module
+ * refuses rather than guesses, and this was the one place that did not.
+ */
 function parseSvgLength(value: string | null | undefined): number | undefined {
   if (!value) return undefined;
   const match = value
     .trim()
-    .match(/^([+-]?\d*\.?\d+)(?:e[+-]?\d+)?\s*([a-z%]*)$/i);
+    .match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:e[+-]?\d+)?)\s*([a-z%]*)$/i);
   if (!match) return undefined;
-  // A percentage is a fraction of a viewport this file does not have, so it
-  // cannot yield a pixel dimension — refusing beats inventing a base.
-  if (match[2] === "%") return undefined;
+  // Only an absent unit and `px` are pixels. A percentage is a fraction of a
+  // viewport this file does not have, and `em`/`pt`/`mm` need a rendering
+  // context nobody supplied — refusing beats inventing a conversion, and
+  // treating them as pixels was the same wrong-number failure as the exponent.
+  const unit = match[2].toLowerCase();
+  if (unit !== "" && unit !== "px") return undefined;
   const parsed = Number(match[1]);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }

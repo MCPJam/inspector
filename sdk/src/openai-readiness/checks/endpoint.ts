@@ -176,21 +176,32 @@ export function runOpenAIEndpointChecks(
     );
   }
 
+  // A URL THAT DOES NOT PARSE HAS NO PATH TO GRADE. Reporting it as a path
+  // violation would print `path: undefined` and send the submitter to fix a
+  // path when the URL itself is the problem — which the reachability checks
+  // above already say, in the right words.
   let path: string | undefined;
+  let pathReadable = true;
   try {
     path = new URL(evidence.enteredUrl).pathname.replace(/\/$/, "");
   } catch {
-    path = undefined;
+    pathReadable = false;
   }
   findings.push(
-    path === OPENAI_EXPECTED_MCP_PATH
-      ? satisfied(EXPECTED_PATH, stamp, { path })
-      : violated(
+    !pathReadable
+      ? notEvaluated(
           EXPECTED_PATH,
           stamp,
-          `The docs describe the endpoint at ${OPENAI_EXPECTED_MCP_PATH}; a reviewer will look there first.`,
-          { path },
-        ),
+          "the entered endpoint is not a parseable URL, so it has no path to compare",
+        )
+      : path === OPENAI_EXPECTED_MCP_PATH
+        ? satisfied(EXPECTED_PATH, stamp, { path })
+        : violated(
+            EXPECTED_PATH,
+            stamp,
+            `The docs describe the endpoint at ${OPENAI_EXPECTED_MCP_PATH}; a reviewer will look there first.`,
+            { path },
+          ),
   );
 
   return findings;

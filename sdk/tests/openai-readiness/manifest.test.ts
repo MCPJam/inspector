@@ -80,10 +80,16 @@ describe("revisions are never fabricated", () => {
     // would make an unverified corpus look audited, which is the single most
     // misleading thing this module could do.
     const source = readFileSync(MANIFEST_SOURCE, "utf8");
-    const generated = source.slice(
-      source.indexOf("// BEGIN GENERATED"),
-      source.indexOf("// END GENERATED"),
-    );
+    // ASSERTED, not assumed. If either marker were renamed, `indexOf` returns
+    // -1, `slice(-1, -1)` returns "", the hash sweep below finds nothing and
+    // this test passes — reporting "no fabricated hashes" about a block it
+    // never read. The markers are the test's whole premise, so they are the
+    // first thing checked.
+    const begin = source.indexOf("// BEGIN GENERATED");
+    const end = source.indexOf("// END GENERATED", begin);
+    expect(begin).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(begin);
+    const generated = source.slice(begin, end);
     const handWritten = [...generated.matchAll(/"([0-9a-f]{32})"/g)];
     for (const [, hash] of handWritten) {
       // Any hash present must have come from a sync run, which also fills

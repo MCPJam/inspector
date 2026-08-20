@@ -638,11 +638,21 @@ export async function readOpenAIPluginPackage(
   }
 
   // ----------------------------------------------------------------- skills
+  //
+  // THREE SEGMENTS, not two. A skill is a DIRECTORY under `skills/`, so the
+  // shortest path that establishes one is `skills/<name>/<file>`. Accepting
+  // two segments would register a loose file — `skills/README.md` is the
+  // obvious one — as a skill directory named `README.md`, and the very next
+  // step, looking for `skills/README.md/SKILL.md`, would then report a
+  // BLOCKING `skill-metadata-missing` against a package whose only sin is a
+  // readme.
   const skillDirectories = new Set<string>();
   for (const path of files.keys()) {
     if (!path.startsWith(`${SKILLS_DIRECTORY}/`)) continue;
     const segments = path.split("/");
-    if (segments.length >= 2) skillDirectories.add(segments[1]);
+    if (segments.length >= 3 && segments[1] !== "") {
+      skillDirectories.add(segments[1]);
+    }
   }
 
   const skills: OpenAIPackageSkill[] = [];
@@ -900,11 +910,21 @@ export async function readOpenAIPluginPackage(
   }
 
   // Assets the interface document names but the package does not ship.
+  //
+  // NORMALISED BEFORE THE LOOKUP, because `files` is keyed by canonical path
+  // and a hand-written reference is not. `./icon.png` and `icon.png` name the
+  // same shipped file, and comparing the reference as written would report the
+  // first as missing from a package that ships it — a fabricated defect on a
+  // correct submission, which is worse than the one it was meant to catch.
+  // A reference that does not normalise at all (absolute, traversing) names
+  // nothing inside the package, so it is still missing.
   for (const [field, reference] of [
     ["interface.icon_small", agentMetadata?.metadata?.interface.iconSmall],
     ["interface.icon_large", agentMetadata?.metadata?.interface.iconLarge],
   ] as const) {
-    if (reference && !files.has(reference)) {
+    if (!reference) continue;
+    const resolved = normalizeBundlePath(reference);
+    if (!resolved.ok || !files.has(resolved.path)) {
       issues.push(
         openaiPortalIssue("asset-missing", {
           subject: field,
