@@ -260,3 +260,9 @@ export type {
 } from "./observations.js";
 
 export type { OpenAIToolListingCompleteness } from "./checks/annotations.js";
+
+export {
+  OPENAI_APPS_EVIDENCE_KIND,
+  adaptAppsResultToOpenAIUiEvidence,
+} from "./evidence-adapters.js";
+export type { AdaptAppsResultToOpenAIOptions } from "./evidence-adapters.js";

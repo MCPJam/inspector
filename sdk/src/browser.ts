@@ -56,6 +56,22 @@ export type {
   DirectoryObservationStatus,
 } from "./directory-readiness/observations.js";
 
+/**
+ * The reuse guard's VOCABULARY, so a client can explain a refused adaptation
+ * ("that apps result graded a different server") without holding the adapters
+ * themselves — those read raw tool `_meta` a browser has no business seeing.
+ */
+export {
+  EVIDENCE_REUSE_REFUSALS,
+  sameReadinessTarget,
+} from "./directory-readiness/evidence-reuse.js";
+export type {
+  AttributableEvidenceSource,
+  EvidenceReuse,
+  EvidenceReuseExpectation,
+  EvidenceReuseRefusal,
+} from "./directory-readiness/evidence-reuse.js";
+
 export {
   CLAUDE_OBSERVATION_IDS,
   CLAUDE_OBSERVATION_KINDS,

@@ -172,3 +172,14 @@ export type {
   ClaudeObservationKind,
   ClaudeObservationState,
 } from "./observations.js";
+
+export {
+  CLAUDE_APPS_EVIDENCE_KIND,
+  adaptAppsResultToClaudeEvidence,
+} from "./evidence-adapters.js";
+export type {
+  AdaptAppsResultToClaudeOptions,
+  AdaptableAppsConformanceResult,
+} from "./evidence-adapters.js";
+
+export type { ClaudeToolListingCompleteness } from "./checks/tools.js";

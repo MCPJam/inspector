@@ -469,6 +469,18 @@ export type {
   DirectoryObservationStatus,
 } from "./directory-readiness/observations.js";
 
+export {
+  EVIDENCE_REUSE_REFUSALS,
+  checkEvidenceReuse,
+  sameReadinessTarget,
+} from "./directory-readiness/evidence-reuse.js";
+export type {
+  AttributableEvidenceSource,
+  EvidenceReuse,
+  EvidenceReuseExpectation,
+  EvidenceReuseRefusal,
+} from "./directory-readiness/evidence-reuse.js";
+
 // The shared MCP dial. NODE ENTRY ONLY — it opens sockets, so it is absent
 // from `browser.ts` and from the two publisher barrels, exactly like the
 // discovery modules below.
@@ -505,6 +517,11 @@ export {
   traceConnectorRedirects,
 } from "./claude-readiness/discovery.js";
 export type { ClaudeDiscoveryOptions } from "./claude-readiness/discovery.js";
+// The Claude gather half, Node-only for the same reason as the discovery
+// module above: it dials, and importing a result model must never pull a
+// transport in with it.
+export { gatherClaudeReadinessEvidence } from "./claude-readiness/gather.js";
+export type { GatherClaudeReadinessEvidenceOptions } from "./claude-readiness/gather.js";
 // The side-effecting intrusive probes, likewise Node-only. The gate that arms
 // them and the grading that reads them are pure and come from the barrel above.
 export {

@@ -67,6 +67,18 @@ export type {
   DirectoryObservationStatus,
 } from "./observations.js";
 
+export {
+  EVIDENCE_REUSE_REFUSALS,
+  checkEvidenceReuse,
+  sameReadinessTarget,
+} from "./evidence-reuse.js";
+export type {
+  AttributableEvidenceSource,
+  EvidenceReuse,
+  EvidenceReuseExpectation,
+  EvidenceReuseRefusal,
+} from "./evidence-reuse.js";
+
 /**
  * The MCP dial (`./mcp-dial.js`) is deliberately NOT re-exported here.
  *
