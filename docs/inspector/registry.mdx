@@ -1,0 +1,45 @@
+---
+title: "Registry"
+description: "Browse and connect to MCP servers from the MCPJam catalog and the Claude directory"
+icon: "store"
+---
+
+The Registry tab lets you discover and connect to MCP servers from two sources: the MCPJam catalog and the Claude directory (Anthropic's public listing of verified remote servers).
+
+## MCPJam catalog
+
+The top section of the Registry tab shows servers from the MCPJam catalog. Each card displays the server name, a short description, and a star count. Click **Connect** on any card to add the server to your active project.
+
+## Claude directory
+
+The Claude directory section lists remote MCP servers published by Anthropic's partners and verified integrations. Each card shows:
+
+- The server icon and display name
+- A one-line description
+- A tier badge (for example, **Partner**) and, where applicable, an endpoint badge (**Choose endpoint** or **Your instance**)
+
+### Viewing server details
+
+Click anywhere on a Claude-directory card (except the **Connect** button) to open the detail dialog for that server. The dialog shows the full upstream listing, including:
+
+- **Long-form description** — the complete description from the directory listing, which may be longer than the one-liner on the card
+- **Publisher** — the organization that publishes the server, with links to their documentation, support page, privacy policy, and the listing in the Claude directory
+- **Categories** — the topic tags the publisher assigned to the listing
+- **Tools** — the names of every tool the server exposes; lists longer than 24 tools collapse behind a **Show all** button
+- **Prompts** — the names of any prompts the server exposes
+- **Access** — the server's authentication posture (sign-in required or no authentication), any permissions free-text, sensitive data types, and required fields with links to where you can obtain them
+- **Endpoint** — the URL the server connects to; for servers with multiple endpoint options this shows all options, and for tenant-style servers it shows **Your own instance URL**
+
+The same tier and endpoint badges from the card appear in the dialog header.
+
+### Connecting from the detail dialog
+
+The detail dialog includes the same **Connect** button as the card. Clicking it closes the dialog first, then starts the connect flow — so any endpoint-selection prompt or OAuth redirect opens cleanly without a dialog underneath it.
+
+### Filtering and search
+
+Use the search box and tier filter above the Claude directory list to narrow results. The filter applies to the card list; the detail dialog always shows the full listing for the selected server.
+
+<Note>
+The Claude directory section requires the Registry feature to be enabled for your deployment. If you do not see it, contact your account team.
+</Note>
