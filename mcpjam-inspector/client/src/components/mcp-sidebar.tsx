@@ -92,6 +92,11 @@ interface NavItem {
 
 interface NavSection {
   id: string;
+  /**
+   * Section heading rendered above the items ("Explore", "Measure", …).
+   * The nav is grouped by what you do with a feature, not by internals.
+   */
+  label: string;
   items: NavItem[];
 }
 
@@ -183,11 +188,18 @@ export function applyBillingGateNavState(
 }
 
 // Define sections with their respective items.
+// Grouped by intent (Explore / Measure / Verify / Inspect / Educate) per the
+// Production Redesign, so the nav reads as five short lists instead of one flat
+// column. Flag-gated items that the design didn't enumerate are placed in the
+// section that matches what they do: Registry + Environments under Explore,
+// Sessions under Measure (it's the cross-surface run feed), Compatibility under
+// Verify next to its sibling Conformance.
 // Exported so tests can assert against the real nav data (e.g. that Skills is
 // not a sidebar item — it lives in the Connect tab switcher).
 export const navigationSections: NavSection[] = [
   {
-    id: "connection",
+    id: "explore",
+    label: "Explore",
     items: [
       {
         title: "Home",
@@ -229,10 +241,13 @@ export const navigationSections: NavSection[] = [
     ],
   },
   {
-    id: "mcp-apps",
+    id: "measure",
+    label: "Measure",
     items: [
       {
-        title: "User Testing",
+        // Labeled "Acceptance Testing" in the nav; the route stays
+        // /user-testing so existing links and hash tabs keep working.
+        title: "Acceptance Testing",
         url: "/user-testing",
         icon: Users,
         featureFlag: "sandboxes-enabled",
@@ -252,7 +267,7 @@ export const navigationSections: NavSection[] = [
         billingFeature: "evals",
       },
       {
-        // Cross-surface session feed (Playground + User Testing + Evals +
+        // Cross-surface session feed (Playground + Acceptance Testing + Evals +
         // Swarms). Route-guarded on the same flag (`SessionsRoute`).
         title: "Sessions",
         url: "/sessions",
@@ -262,16 +277,22 @@ export const navigationSections: NavSection[] = [
     ],
   },
   {
-    id: "others",
+    // Auth-flow debuggers and the spec checkers: everything that answers
+    // "is this implementation correct?".
+    id: "verify",
+    label: "Verify",
     items: [
-      // Skills is not a sidebar item: it's execution-context config, so it
-      // lives as a Connect tab (Servers | Client | Computer | Skills) and is
-      // reached through that switcher.
       {
-        title: "Learning",
-        url: "/learning",
-        icon: GraduationCap,
-        featureFlag: "mcpjam-learning",
+        title: "OAuth Debugger",
+        url: "/oauth-flow",
+        icon: Workflow,
+      },
+      {
+        title: "XAA Debugger",
+        url: "/xaa-flow",
+        icon: ShieldCheck,
+        badge: "New",
+        featureFlag: "xaa",
       },
       {
         title: "Conformance",
@@ -289,34 +310,14 @@ export const navigationSections: NavSection[] = [
         // MCPJam-internal flag (same convention as `mcpjam-conformance`).
         featureFlag: "mcpjam-compatibility",
       },
-      // {
-      //   title: "Tracing",
-      //   url: "/tracing",
-      //   icon: Activity,
-      // },
     ],
   },
   {
-    // Auth-flow debuggers get their own section so they read as a related
-    // pair, separated from the surrounding nav by the section dividers.
-    id: "debuggers",
-    items: [
-      {
-        title: "OAuth Debugger",
-        url: "/oauth-flow",
-        icon: Workflow,
-      },
-      {
-        title: "XAA Debugger",
-        url: "/xaa-flow",
-        icon: ShieldCheck,
-        badge: "New",
-        featureFlag: "xaa",
-      },
-    ],
-  },
-  {
-    id: "primitives",
+    // Raw MCP primitives. Skills is deliberately absent: it's execution-context
+    // config, so it lives as a Connect tab (Servers | Client | Computer |
+    // Skills) and is reached through that switcher.
+    id: "inspect",
+    label: "Inspect",
     items: [
       {
         title: "Tools",
@@ -337,6 +338,18 @@ export const navigationSections: NavSection[] = [
         title: "Tasks",
         url: "/tasks",
         icon: ListTodo,
+      },
+    ],
+  },
+  {
+    id: "educate",
+    label: "Educate",
+    items: [
+      {
+        title: "Learning",
+        url: "/learning",
+        icon: GraduationCap,
+        featureFlag: "mcpjam-learning",
       },
     ],
   },
@@ -576,7 +589,10 @@ export function MCPSidebar({
 
   return (
     <>
-      <Sidebar collapsible="icon" {...props}>
+      {/* Production Redesign chrome (BB-127): no 1px divider between the linen
+          sidebar and the linen top bar — the inset panel's rounded top edge and
+          shadow are what separate chrome from content. */}
+      <Sidebar collapsible="icon" className="border-r-transparent" {...props}>
         <SidebarHeader className="gap-1 px-2 pt-1.5 pb-2">
           <div
             className={cn(
@@ -687,6 +703,7 @@ export function MCPSidebar({
               return (
                 <React.Fragment key={section.id}>
                   <NavMain
+                    label={section.label}
                     items={section.items.map((item) => ({
                       ...item,
                       isActive: isNavItemActive(item),

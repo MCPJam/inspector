@@ -79,6 +79,7 @@ import {
   useSidebar,
 } from "./components/ui/sidebar";
 import { AgentSidePanelMount } from "./components/mcpjam-agent/AgentSidePanelMount";
+import { cn } from "@/lib/utils";
 import {
   Alert,
   AlertDescription,
@@ -502,6 +503,40 @@ function AppChromeHeader({ hidden, ...props }: AppChromeHeaderProps) {
   }
 
   return <Header {...props} />;
+}
+
+/**
+ * The middle panel of the Production Redesign chrome (BB-127): the off-white
+ * working surface that sits inset in the linen sidebar/top-bar frame.
+ *
+ * The 16px top radius + shadow only make sense with the top bar above them, so
+ * they mirror `AppChromeHeader`'s visibility rule exactly (hidden on Home for
+ * signed-in users and during playground onboarding, but always shown on
+ * mobile). Without that guard the rounded corners would cut into the very top
+ * of the viewport and read as a rendering bug.
+ */
+function AppChromePanel({
+  headerHidden,
+  children,
+}: {
+  headerHidden: boolean;
+  children: React.ReactNode;
+}) {
+  const { isMobile } = useSidebar();
+  const headerVisible = !headerHidden || isMobile;
+
+  return (
+    <div
+      className={cn(
+        "bg-background flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+        // rounded-t-2xl is 16px; it is not remapped by the theme's radius
+        // scale (only sm/md/lg/xl are), so it tracks the design value.
+        headerVisible && "rounded-t-2xl shadow-[0_2px_3px_#00000033]"
+      )}
+    >
+      {children}
+    </div>
+  );
 }
 
 import { ScoreRunnerPage } from "@/components/score/ScoreRunnerPage";
@@ -4568,6 +4603,11 @@ export default function App() {
     oauthServerModalNonce,
   };
 
+  // Shared by the top bar and the middle panel: the panel's 16px top radius +
+  // shadow are only correct when the bar is above them.
+  const appChromeHeaderHidden =
+    playgroundOnboarding || (activeTab === "home" && !!workOsUser);
+
   const appContent = (
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
@@ -4592,19 +4632,20 @@ export default function App() {
         createProjectDisabledReason={createProjectDisabledReason}
         onBeforeSignOut={disconnectRuntimeServersForAuthExit}
       />
-      <SidebarInset className="flex flex-col min-h-0">
+      {/* The inset is the linen shell: the sidebar and top bar read as one
+          continuous outer chrome and the off-white panel below is the working
+          surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
+      <SidebarInset className="bg-sidebar flex flex-col min-h-0">
         <AppChromeHeader
           // "make nux clean" (#2868) hid this on Home for everyone, but that
           // also hid guests' only Sign in / Create account affordance there
           // (PUR-35). Keep Home clean for signed-in users; show the header
           // for guests so they still get sign-in/sign-up.
-          hidden={
-            playgroundOnboarding || (activeTab === "home" && !!workOsUser)
-          }
+          hidden={appChromeHeaderHidden}
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <AppChromePanel headerHidden={appChromeHeaderHidden}>
           {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
               <Alert>
@@ -4624,7 +4665,7 @@ export default function App() {
               <NoRouterRouteBody activeTab={activeTab} />
             )}
           </AppRouteReactContext.Provider>
-        </div>
+        </AppChromePanel>
       </SidebarInset>
       <AgentSidePanelMount
         projectId={activeProjectId ?? null}
