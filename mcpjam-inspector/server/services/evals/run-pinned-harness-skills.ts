@@ -43,7 +43,10 @@
  */
 import type { PinnedSkillArtifact } from "../../../shared/skill-types.js";
 import { logger } from "../../utils/logger.js";
-import { RunPluginSnapshotError, type RunPinnedSkill } from "./run-plugin-snapshot.js";
+import {
+  RunPluginSnapshotError,
+  type RunPinnedSkill,
+} from "./run-plugin-snapshot.js";
 
 /** Per-file download budget. Pinned supporting files are small by construction
  *  (the pin store rejects large blobs), so a slow one is a broken one. */
@@ -76,9 +79,9 @@ async function downloadPinnedFile(
   pin: RunPinnedSkill,
   file: NonNullable<RunPinnedSkill["files"]>[number],
   signal?: AbortSignal
-): Promise<PinnedSkillArtifact["files"] extends (infer F)[] | undefined
-  ? F
-  : never> {
+): Promise<
+  PinnedSkillArtifact["files"] extends (infer F)[] | undefined ? F : never
+> {
   const ref = pin.modelRef ?? pin.name;
   // Callers run `assertPinnedSkillFilesReachable` first, so this is a
   // belt-and-braces narrowing rather than the primary check.
@@ -97,7 +100,9 @@ async function downloadPinnedFile(
   } catch (error) {
     throw new RunPluginSnapshotError(
       ref,
-      `This run pinned the skill "${ref}", but its supporting file "${file.path}" could not be downloaded from the run snapshot (${
+      `This run pinned the skill "${ref}", but its supporting file "${
+        file.path
+      }" could not be downloaded from the run snapshot (${
         error instanceof Error ? error.message : String(error)
       }). The run was stopped rather than executed with the file missing.`
     );

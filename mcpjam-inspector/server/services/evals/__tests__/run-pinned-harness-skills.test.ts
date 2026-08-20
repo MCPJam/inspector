@@ -25,7 +25,11 @@ const pin = (over: Partial<RunPinnedSkill> = {}): RunPinnedSkill => ({
 });
 
 function stubFetch(
-  responder: (url: string) => { body: Uint8Array | string; contentType?: string; status?: number } | Error
+  responder: (
+    url: string
+  ) =>
+    | { body: Uint8Array | string; contentType?: string; status?: number }
+    | Error
 ) {
   vi.stubGlobal(
     "fetch",
@@ -42,13 +46,14 @@ function stubFetch(
         headers: {
           get: (k: string) =>
             k.toLowerCase() === "content-type"
-              ? (result.contentType ?? null)
+              ? result.contentType ?? null
               : null,
         },
-        arrayBuffer: async () => bytes.buffer.slice(
-          bytes.byteOffset,
-          bytes.byteOffset + bytes.byteLength
-        ),
+        arrayBuffer: async () =>
+          bytes.buffer.slice(
+            bytes.byteOffset,
+            bytes.byteOffset + bytes.byteLength
+          ),
       } as unknown as Response;
     })
   );
@@ -122,11 +127,19 @@ describe("runPinnedSkillsToHarnessArtifacts", () => {
     // to base64 rather than the other way round.
     const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
     for (const contentType of ["image/png", undefined]) {
-      stubFetch(() => ({ body: bytes, ...(contentType ? { contentType } : {}) }));
+      stubFetch(() => ({
+        body: bytes,
+        ...(contentType ? { contentType } : {}),
+      }));
       const [artifact] = await runPinnedSkillsToHarnessArtifacts([
         pin({
           files: [
-            { path: "logo.png", contentHash: "f1", size: 6, url: "https://blob/1" },
+            {
+              path: "logo.png",
+              contentHash: "f1",
+              size: 6,
+              url: "https://blob/1",
+            },
           ],
         }),
       ]);
@@ -155,7 +168,12 @@ describe("runPinnedSkillsToHarnessArtifacts", () => {
       runPinnedSkillsToHarnessArtifacts([
         pin({
           files: [
-            { path: "run.sh", contentHash: "f1", size: 7, url: "https://blob/1" },
+            {
+              path: "run.sh",
+              contentHash: "f1",
+              size: 7,
+              url: "https://blob/1",
+            },
           ],
         }),
       ])
@@ -169,7 +187,12 @@ describe("runPinnedSkillsToHarnessArtifacts", () => {
         pin({
           modelRef: "acme/deploy",
           files: [
-            { path: "run.sh", contentHash: "f1", size: 7, url: "https://blob/1" },
+            {
+              path: "run.sh",
+              contentHash: "f1",
+              size: 7,
+              url: "https://blob/1",
+            },
           ],
         }),
       ])
@@ -180,9 +203,7 @@ describe("runPinnedSkillsToHarnessArtifacts", () => {
     await expect(
       runPinnedSkillsToHarnessArtifacts([
         pin({
-          files: [
-            { path: "run.sh", contentHash: "f1", size: 7, url: null },
-          ],
+          files: [{ path: "run.sh", contentHash: "f1", size: 7, url: null }],
         }),
       ])
     ).rejects.toThrow(RunPluginSnapshotError);

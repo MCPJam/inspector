@@ -381,7 +381,9 @@ export function checkEvalHarnessAdmission(args: {
  * `KNOWN_COMPUTER_BACKED_TOOL_IDS`. Under-listing here is the safe direction:
  * a tool we fail to name is admitted, which is today's behavior.
  */
-const COMPUTER_BACKED_BUILT_IN_TOOL_IDS: ReadonlySet<string> = new Set(["bash"]);
+const COMPUTER_BACKED_BUILT_IN_TOOL_IDS: ReadonlySet<string> = new Set([
+  "bash",
+]);
 
 /**
  * Admission for EVERY eval run — harness or emulated.

@@ -73,10 +73,7 @@ import {
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
-import type {
-  PinnableSkill,
-  PinnedSkillArtifact,
-} from "@/shared/skill-types";
+import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {

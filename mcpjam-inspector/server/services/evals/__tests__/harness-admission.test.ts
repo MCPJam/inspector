@@ -319,9 +319,9 @@ describe("checkEvalHarnessAdmission — org-level suites", () => {
   });
 
   it("admits a harness run that HAS a project", () => {
-    expect(
-      checkEvalHarnessAdmission({ ...args, projectId: "proj-1" }).ok
-    ).toBe(true);
+    expect(checkEvalHarnessAdmission({ ...args, projectId: "proj-1" }).ok).toBe(
+      true
+    );
   });
 
   it("does not refuse a harness run whose caller resolved no project field", () => {
