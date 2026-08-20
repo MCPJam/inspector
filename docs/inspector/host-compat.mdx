@@ -42,7 +42,7 @@ The report is computed from data already on the client at connect time — no ex
 
 The most common source of findings. The report checks whether each host can render the widget bridges your server's tools declare:
 
-- **MCP Apps** (`_meta.ui.resourceUri`) — rendered by Claude, ChatGPT, Cursor, and Copilot. Not rendered by Codex (a CLI with no widget surface).
+- **MCP Apps** (`_meta.ui.resourceUri`) — rendered by Claude, ChatGPT, Cursor, Copilot, and Codex. Codex runs the same ChatGPT app runtime, confirmed by a probe on 2026-08-19.
 - **OpenAI Apps** (`openai/outputTemplate`) — rendered by ChatGPT and Copilot via the `window.openai` shim. Not rendered by Claude, Cursor, or Codex.
 - **Dual-bridge** (both keys declared) — renderable wherever either bridge is supported.
 
