@@ -734,15 +734,10 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
     const detail = await screen.findByTestId("new-swarm-persona-detail");
 
-    // Save is inert until something actually changed: the row is shared with
-    // every other swarm reusing it, so a no-op must not bump it.
     const save = within(detail).getByTestId("new-swarm-persona-save");
-    expect(save).toBeDisabled();
-
     fireEvent.change(within(detail).getByDisplayValue("Reconcile payouts"), {
       target: { value: "Reconcile payouts weekly" },
     });
-    expect(save).not.toBeDisabled();
     expect(navigateMock).not.toHaveBeenCalledWith("/swarms?persona=p-1");
 
     fireEvent.click(save);
@@ -756,6 +751,40 @@ describe("SwarmsTab — New swarm create flow", () => {
     });
     // The persona row itself did not change, so it is left alone.
     expect(updatePersonaMock).not.toHaveBeenCalled();
+  });
+
+  it("writes nothing when Save is pressed on an untouched existing persona", async () => {
+    // The row is shared with every other swarm reusing it, so a no-op Save
+    // must not bump its updatedAt for all of them — it just closes.
+    existingPersonas = [
+      { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
+    ];
+    personaJourneys = [
+      {
+        _id: "j-existing",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        hostIds: ["host-1"],
+        environmentIds: ["env-1"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
+    const detail = await screen.findByTestId("new-swarm-persona-detail");
+
+    fireEvent.click(within(detail).getByTestId("new-swarm-persona-save"));
+
+    await vi.waitFor(() => {
+      expect(
+        screen.queryByTestId("new-swarm-persona-detail")
+      ).not.toBeInTheDocument();
+    });
+    expect(updatePersonaMock).not.toHaveBeenCalled();
+    expect(updateJourneyMock).not.toHaveBeenCalled();
   });
 
   it("saves an existing persona's own fields, sending only what moved", async () => {
@@ -2169,15 +2198,10 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     ).toBeInTheDocument();
   });
 
-  it("edits every field of a proposed persona in place, with no Save to press", async () => {
+  it("edits every field of a proposed persona in place, then closes on Save", async () => {
     await reachConfirm();
     fireEvent.click(screen.getAllByTestId("new-swarm-persona-compact")[0]);
     const detail = await screen.findByTestId("new-swarm-persona-detail");
-
-    // In-memory rows have nothing to commit until launch.
-    expect(
-      within(detail).queryByTestId("new-swarm-persona-save")
-    ).not.toBeInTheDocument();
 
     fireEvent.change(within(detail).getByLabelText("Persona name"), {
       target: { value: "Renamed persona" },
@@ -2199,6 +2223,22 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     expect(
       within(detail).getByDisplayValue("Fresh context")
     ).toBeInTheDocument();
+
+    // In-memory edits already landed, so Save is only "done here" — and it is
+    // live regardless, because a dead button is not a way out of the editor.
+    const save = within(detail).getByTestId("new-swarm-persona-save");
+    expect(save).not.toBeDisabled();
+    fireEvent.click(save);
+
+    await vi.waitFor(() => {
+      expect(
+        screen.queryByTestId("new-swarm-persona-detail")
+      ).not.toBeInTheDocument();
+    });
+    // The edit survived the collapse.
+    expect(
+      screen.getByTestId("new-swarm-proposed-personas")
+    ).toHaveTextContent("Renamed persona");
   });
 
   it("adds an existing persona from this step, and stops offering it once added", async () => {
@@ -2247,6 +2287,10 @@ describe("SwarmsTab — expanded persona card is the editor, not the list row", 
     expect(
       within(detail).queryByRole("button", { name: /close persona detail/i })
     ).not.toBeInTheDocument();
+    // Save changes is the one control the header carries.
+    expect(
+      within(detail).getByTestId("new-swarm-persona-save")
+    ).toBeVisible();
 
     // Remove is still one click away, on the sibling row.
     expect(

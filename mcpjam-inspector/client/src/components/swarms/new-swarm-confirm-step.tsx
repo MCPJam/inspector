@@ -282,17 +282,21 @@ function CompactPersonaCard({
  * Expanded persona card — every field editable in place.
  *
  * The header carries Save changes and nothing else: Remove belongs to the
- * collapsed card, which is the list row, while this is the editor. Escape
- * closes the panel — the design shows no close control, and selecting another
- * persona is its intended exit, so this is the keyboard escape that keeps a
- * lone expanded persona from being a dead end.
+ * collapsed card, which is the list row, while this is the editor.
  *
- * Two save models, because the two kinds of persona are not the same thing.
- * A proposed persona only exists in memory, so edits land immediately and
- * there is nothing to save until launch. A reused persona is a database row
- * shared with every other swarm that pulled it in, so its edits are held in a
- * local draft and committed by an explicit **Save changes** — mirroring
- * keystrokes into a shared row would rewrite other people's swarms as you type.
+ * That one button always shows and is always live — it means "done here" and
+ * always collapses the panel. A header with no button reads as broken, and a
+ * disabled one leaves the panel with no visible way out; Escape still works
+ * but nobody guesses it.
+ *
+ * What it does before collapsing differs, because the two kinds of persona are
+ * not the same thing.
+ * A proposed persona only exists in memory: its edits already landed as they
+ * were typed, so Save just closes. A reused persona is a database row shared
+ * with every other swarm that pulled it in, so its edits are held in a local
+ * draft and this is what commits them — mirroring keystrokes into a shared row
+ * would rewrite other people's swarms as you type. A failed save keeps the
+ * panel open with the draft intact.
  */
 function PersonaDetailPanel({
   seed,
@@ -313,7 +317,6 @@ function PersonaDetailPanel({
   onAddGoal,
   onSave,
   saving,
-  dirty,
   avatarShape,
   avatarPalette,
 }: {
@@ -340,10 +343,12 @@ function PersonaDetailPanel({
   onChangeContext?: (notes: string) => void;
   onChangeGoal?: (goalKey: string, goal: string) => void;
   onAddGoal?: () => void;
-  /** Persisted row: commits the local draft. Absent for proposed personas. */
-  onSave?: () => void;
+  /**
+   * "Done here". Always offered: it commits a persisted row's draft (a no-op
+   * for an unchanged one) and collapses the panel either way.
+   */
+  onSave: () => void;
   saving?: boolean;
-  dirty?: boolean;
   avatarShape?: number;
   avatarPalette?: number;
 }) {
@@ -365,26 +370,24 @@ function PersonaDetailPanel({
           size="lg"
         />
         <div className="flex shrink-0 items-center gap-2">
-          {onSave ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8 bg-background px-3 text-[13px]"
-              disabled={saving || !dirty}
-              data-testid="new-swarm-persona-save"
-              onClick={onSave}
-            >
-              {saving ? (
-                <>
-                  <Loader2 className="mr-1.5 size-3.5 animate-spin" />
-                  Saving…
-                </>
-              ) : (
-                "Save changes"
-              )}
-            </Button>
-          ) : null}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 bg-background px-3 text-[13px]"
+            disabled={saving}
+            data-testid="new-swarm-persona-save"
+            onClick={onSave}
+          >
+            {saving ? (
+              <>
+                <Loader2 className="mr-1.5 size-3.5 animate-spin" />
+                Saving…
+              </>
+            ) : (
+              "Save changes"
+            )}
+          </Button>
         </div>
       </div>
 
@@ -947,7 +950,11 @@ export function NewSwarmConfirmStep({
   const saveReused = useCallback(
     async (persona: ReusedPersona, goals: ReusedGoal[]) => {
       const draft = reusedDrafts[persona._id];
-      if (!draft) return;
+      // Nothing typed: Save still means "done", so just collapse.
+      if (!draft) {
+        setSelected(null);
+        return;
+      }
       setSavingReusedId(persona._id);
       try {
         // Only what actually moved. A no-op patch would still bump the row's
@@ -972,6 +979,9 @@ export function NewSwarmConfirmStep({
           const { [persona._id]: _saved, ...rest } = drafts;
           return rest;
         });
+        // Only on the way out of a clean save — a throw leaves the panel open
+        // with the draft still in it, so the edit is not silently lost.
+        setSelected(null);
       } finally {
         setSavingReusedId(null);
       }
@@ -1100,6 +1110,9 @@ export function NewSwarmConfirmStep({
                         }))
                       }
                       onAddGoal={() => addGoal(persona.key)}
+                      // In-memory edits already landed as they were typed, so
+                      // this only collapses the editor.
+                      onSave={() => setSelected(null)}
                     />
                   </li>
                 );
@@ -1152,14 +1165,6 @@ export function NewSwarmConfirmStep({
                         const draft = reusedDrafts[persona._id];
                         const goalText = (goal: ReusedGoal) =>
                           draft?.goals[goal.journeyId] ?? goal.label;
-                        const dirty =
-                          draft !== undefined &&
-                          (draft.name !== persona.name ||
-                            draft.role !== persona.role ||
-                            draft.notes !== (persona.notes ?? "") ||
-                            goals.some(
-                              (goal) => goalText(goal) !== goal.label
-                            ));
                         return (
                           <PersonaDetailPanel
                             seed={persona._id}
@@ -1194,7 +1199,6 @@ export function NewSwarmConfirmStep({
                             }
                             onSave={() => void saveReused(persona, goals)}
                             saving={savingReusedId === persona._id}
-                            dirty={dirty}
                           />
                         );
                       })()}
