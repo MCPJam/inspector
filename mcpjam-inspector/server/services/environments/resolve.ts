@@ -74,6 +74,15 @@ export interface ResolvedEnvironmentForLaunch {
    */
   servers?: Array<{ serverId: string; name: string }>;
   serverAttachmentId?: string | null;
+  /**
+   * The environment's pinned computer image, when it pins one. The backend
+   * returns it; DECLARED here because a harness run requires a pinned image
+   * and the admission gate has to distinguish "this environment pins none"
+   * from "nobody looked". An undeclared field survives the cast this module
+   * does today, but only by accident — the next reader adding a projection
+   * would drop it silently.
+   */
+  computerEnvironmentId?: string;
 }
 
 /**
