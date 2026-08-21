@@ -21,6 +21,26 @@ const MATERIAL = {
   refreshToken: "stored-refresh-token",
 };
 
+/**
+ * The hosts actually dialed, compared exactly.
+ *
+ * Deliberately not `url.includes("evil.example.com")`: these assertions are the
+ * whole point of the guard tests, and a substring match is a bad way to make
+ * them. It passes for `http://localhost:8001/?next=evil.example.com` (no
+ * request reached the attacker, but the URL mentions them) and fails to catch
+ * `http://evil.example.com.attacker.test` (a different host that contains the
+ * string). CodeQL flags the pattern for exactly this reason.
+ */
+function hostnamesOf(urls: string[]): string[] {
+  return urls.map((url) => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return url;
+    }
+  });
+}
+
 describe("refreshTokensAgainstPrivateAuthorizationServer", () => {
   beforeEach(() => {
     hostedModeMock.value = false;
@@ -89,7 +109,7 @@ describe("refreshTokensAgainstPrivateAuthorizationServer", () => {
     await expect(
       refreshTokensAgainstPrivateAuthorizationServer(MATERIAL)
     ).rejects.toThrow(/token endpoint is not on a private address/i);
-    expect(dialed.some((u) => u.includes("evil.example.com"))).toBe(false);
+    expect(hostnamesOf(dialed)).not.toContain("evil.example.com");
   });
 
   it("refuses a cloud-metadata address even though it is technically private", async () => {
@@ -205,7 +225,7 @@ describe("refreshTokensAgainstPrivateAuthorizationServer", () => {
     await expect(
       refreshTokensAgainstPrivateAuthorizationServer(MATERIAL)
     ).rejects.toThrow();
-    expect(dialed.some((u) => u.includes("evil.example.com"))).toBe(false);
+    expect(hostnamesOf(dialed)).not.toContain("evil.example.com");
   });
 
   it("performs a refresh_token grant against the private authorization server", async () => {
