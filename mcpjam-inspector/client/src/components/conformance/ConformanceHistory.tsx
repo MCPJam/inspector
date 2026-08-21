@@ -336,7 +336,7 @@ export function ConformanceRunDetailPage({
           passed: number;
           failed: number;
           couldNotRun: number;
-          report: unknown;
+          reportUrl?: string | null;
         }>;
         previous: ConformanceRunListItem | null;
         shareVersion: number;
@@ -496,20 +496,52 @@ export function ConformanceRunDetailPage({
               </span>
             </button>
             {open ? (
-              <div className="space-y-2 border-t border-border/40 px-3 py-2">
-                {report.incompleteReason ? (
-                  <p className="text-xs text-amber-600">
-                    {report.incompleteReason}
-                  </p>
-                ) : null}
-                <pre className="max-h-80 overflow-auto rounded bg-muted/40 p-2 text-xs">
-                  {JSON.stringify(report.report, null, 2)}
-                </pre>
-              </div>
+                <SuiteReportBody
+                  incompleteReason={report.incompleteReason}
+                  reportUrl={report.reportUrl}
+                />
             ) : null}
           </section>
         );
       })}
+    </div>
+  );
+}
+
+function SuiteReportBody({
+  incompleteReason,
+  reportUrl,
+}: {
+  incompleteReason: string | null;
+  reportUrl?: string | null;
+}) {
+  const [body, setBody] = useState<unknown>(null);
+  useEffect(() => {
+    if (!reportUrl) {
+      setBody(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(reportUrl)
+      .then((response) => response.json())
+      .then((json) => {
+        if (!cancelled) setBody(json);
+      })
+      .catch(() => {
+        if (!cancelled) setBody(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reportUrl]);
+  return (
+    <div className="space-y-2 border-t border-border/40 px-3 py-2">
+      {incompleteReason ? (
+        <p className="text-xs text-amber-600">{incompleteReason}</p>
+      ) : null}
+      <pre className="max-h-80 overflow-auto rounded bg-muted/40 p-2 text-xs">
+        {JSON.stringify(body, null, 2)}
+      </pre>
     </div>
   );
 }

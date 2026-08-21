@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   buildConformanceRunReport,
+  normalizeConformanceSuites,
+} from "../src/conformance-run-types.js";
+import {
   detectConformanceCiMetadata,
   githubActionExternalRunId,
+} from "../src/conformance-ci.js";
+import {
   isConformanceReportingConfigured,
-  normalizeConformanceSuites,
   reportConformanceRunSafely,
-  runConformance,
-} from "../src/index.js";
+} from "../src/report-conformance-run.js";
+import { runConformance } from "../src/conformance-run.js";
 
 describe("conformance run bundle", () => {
   it("defaults to protocol, apps, and tasks and ignores unknown suites", () => {
