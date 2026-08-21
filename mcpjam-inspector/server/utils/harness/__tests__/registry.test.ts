@@ -351,9 +351,16 @@ describe("bootstrap recipes are auth-independent", () => {
   // would not match the one the streaming turn looks for. The turn would then
   // re-run the bootstrap under the egress lock, where it cannot reach the
   // package registry — the original failure, silently restored.
-  const auth = (baseUrl: string) => ({
-    anthropic: { apiKey: "", authToken: "dummy", baseUrl },
-    openaiCompatible: { apiKey: "dummy", baseUrl },
+  const auth = (suffix: string) => ({
+    anthropic: {
+      apiKey: `anthropic-key-${suffix}`,
+      authToken: `anthropic-token-${suffix}`,
+      baseUrl: `https://${suffix}.invalid`,
+    },
+    openaiCompatible: {
+      apiKey: `openai-key-${suffix}`,
+      baseUrl: `https://${suffix}.invalid`,
+    },
   });
 
   for (const id of ["claude-code", "codex"] as const) {
@@ -362,12 +369,12 @@ describe("bootstrap recipes are auth-independent", () => {
       const a = adapter.createHarness({
         modelId:
           id === "codex" ? "openai/gpt-5-nano" : "anthropic/claude-haiku-4.5",
-        auth: auth("https://one.invalid"),
+        auth: auth("one"),
       });
       const b = adapter.createHarness({
         modelId:
           id === "codex" ? "openai/gpt-5-nano" : "anthropic/claude-haiku-4.5",
-        auth: auth("https://two.invalid"),
+        auth: auth("two"),
       });
 
       const ra = await a.getBootstrap!();
@@ -387,7 +394,10 @@ describe("bootstrap recipes are auth-independent", () => {
     // different hash than the turn does. This test is what makes that
     // divergence visible if anyone reaches for the bare constructor.
     // Dual-`ai` boundary cast, as everywhere else this constructor is used.
-    const patched = patchClaudeCodeHarnessBootstrap(createClaudeCode() as any);
+    const patched = getHarnessAdapter("claude-code").createHarness({
+      modelId: "anthropic/claude-haiku-4.5",
+      auth: auth("patched"),
+    });
     return Promise.all([
       patched.getBootstrap!(),
       createClaudeCode().getBootstrap!(),

@@ -228,7 +228,9 @@ export async function revokeHarnessModelBroker(args: {
       networkCleared: payload.networkCleared,
     };
   } catch (err) {
-    logger.warn("[harness-model-broker] revoke network error", err);
+    logger.warn("[harness-model-broker] revoke network error", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return { ok: false };
   }
 }
@@ -237,8 +239,6 @@ export type HarnessBoxReservationResult =
   | {
       ok: true;
       expiresAt?: number;
-      /** The backend predates box reservations, so nothing was claimed. */
-      unsupported?: boolean;
     }
   | { ok: false; status: number; error: string };
 
@@ -248,10 +248,9 @@ export type HarnessBoxReservationResult =
  * therefore outside the protection of the lease's own per-box fence. The lease
  * consumes this claim when it is minted (matched on `runId`).
  *
- * A 404 is treated as SUCCESS-but-unclaimed: a self-hosted deployment running a
- * backend from before this endpoint existed should keep working exactly as it
- * did, with the lease fence as its only serialization, rather than losing the
- * harness entirely over a preparation lock it has never had.
+ * A missing endpoint is a hard failure. Continuing without a claim would
+ * silently restore the preparation race this endpoint exists to close, so an
+ * inspector must be rolled out only after the reservation-capable backend.
  */
 export async function reserveHarnessBox(args: {
   box: HarnessBrokerBox;
@@ -304,14 +303,6 @@ export async function reserveHarnessBox(args: {
     };
   }
 
-  if (response.status === 404) {
-    logger.warn(
-      "[harness-model-broker] backend has no box-reservation endpoint; " +
-        "preparing without a claim"
-    );
-    return { ok: true, unsupported: true };
-  }
-
   const payload: any = await response.json().catch(() => null);
   if (!response.ok || payload?.ok !== true) {
     return {
@@ -329,6 +320,61 @@ export async function reserveHarnessBox(args: {
       ? { expiresAt: payload.expiresAt }
       : {}),
   };
+}
+
+/** Renew the preparation claim before its crash-recovery TTL elapses. */
+export async function renewHarnessBoxReservation(args: {
+  box: HarnessBrokerBox;
+  harnessId: "claude-code" | "codex";
+  modelId: string;
+  runId: string;
+  bearer: string;
+  signal?: AbortSignal;
+}): Promise<{ ok: boolean; expiresAt?: number }> {
+  let url: string;
+  try {
+    url = new URL(
+      "/web/harness/model-broker/reserve/renew",
+      getConvexHttpUrl()
+    ).toString();
+  } catch {
+    return { ok: false };
+  }
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: bearerHeader(args.bearer),
+      },
+      body: JSON.stringify({
+        ...boxRequestFields(args.box),
+        harnessId: args.harnessId,
+        modelId: args.modelId,
+        runId: args.runId,
+      }),
+      signal: args.signal,
+    });
+    const payload: any = await response.json().catch(() => null);
+    if (!response.ok || payload?.ok !== true) {
+      logger.error(
+        `[harness-model-broker] reservation renewal returned ${response.status}`
+      );
+      return { ok: false };
+    }
+    return {
+      ok: true,
+      ...(typeof payload.expiresAt === "number"
+        ? { expiresAt: payload.expiresAt }
+        : {}),
+    };
+  } catch (err) {
+    logger.error(
+      "[harness-model-broker] reservation renewal network error",
+      err
+    );
+    return { ok: false };
+  }
 }
 
 /**

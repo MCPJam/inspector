@@ -49,6 +49,7 @@ import {
   revokeHarnessModelBroker,
   reserveHarnessBox,
   releaseHarnessBoxReservation,
+  renewHarnessBoxReservation,
   type HarnessBrokerBox,
 } from "./harness-model-broker.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
@@ -330,6 +331,10 @@ const HARNESS_INSTANCE_ID = crypto.randomUUID();
  *  run bound (we heartbeat well within it). */
 const HARNESS_LEASE_TTL_MS = 5 * 60_000;
 const HARNESS_HEARTBEAT_MS = 90_000;
+// The backend reservation TTL is deliberately much longer than this interval.
+// A missed renewal aborts preparation immediately; the longer server-side TTL
+// is the crash-recovery backstop for a worker that disappears altogether.
+const HARNESS_RESERVATION_HEARTBEAT_MS = 60_000;
 // v7: gateway base URL normalization (Anthropic-protocol origin without /v1) —
 // resumed sessions reconnect to a bridge process holding the OLD env, so force
 // fresh sessions to pick up the corrected ANTHROPIC_BASE_URL.
@@ -548,6 +553,14 @@ export async function runHarnessTurn(
   // to wait out the reservation TTL.
   let reservationHeld = false;
   let releaseBoxReservation: (() => Promise<void>) | undefined;
+  let reservationHeartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  let reservationRenewalInFlight = false;
+  const clearReservationHeartbeat = () => {
+    if (reservationHeartbeatTimer !== undefined) {
+      clearInterval(reservationHeartbeatTimer);
+      reservationHeartbeatTimer = undefined;
+    }
+  };
   // Ownership handoff for the claimed continuity lane: false from the moment the
   // lane is claimed until the harness session is established (the point the
   // finalizer/heartbeat take over). While false, ANY failure (sandbox wake,
@@ -1143,7 +1156,7 @@ export async function runHarnessTurn(
       // otherwise the next turn waits out the reservation's TTL for nothing.
       // Cleared once the broker start succeeds, because recording the lease
       // consumes the claim and the lease's own fence takes over.
-      reservationHeld = !reservation.unsupported;
+      reservationHeld = true;
       releaseBoxReservation = async () => {
         await releaseHarnessBoxReservation({
           box,
@@ -1154,6 +1167,38 @@ export async function runHarnessTurn(
           signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
         }).catch(() => {});
       };
+      reservationHeartbeatTimer = setInterval(() => {
+        if (!reservationHeld || reservationRenewalInFlight) return;
+        reservationRenewalInFlight = true;
+        void renewHarnessBoxReservation({
+          box,
+          harnessId: harnessAdapter.id,
+          modelId,
+          runId: turnRunId,
+          bearer: authHeader,
+          signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+        })
+          .then((renewed) => {
+            if (!renewed.ok && reservationHeld) {
+              logger.error(
+                "[harness] preparation reservation was lost; aborting the turn"
+              );
+              livenessAbort.abort(new Error("harness box reservation lost"));
+            }
+          })
+          .catch((err) => {
+            if (reservationHeld) {
+              logger.error(
+                "[harness] preparation reservation renewal failed; aborting the turn",
+                err
+              );
+              livenessAbort.abort(new Error("harness box reservation lost"));
+            }
+          })
+          .finally(() => {
+            reservationRenewalInFlight = false;
+          });
+      }, HARNESS_RESERVATION_HEARTBEAT_MS);
 
       // Root the Shell at the host-configured working directory (COMP-16) — the
       // same `computer.workdir` the chat bash tool honors — confined under
@@ -1240,6 +1285,7 @@ export async function runHarnessTurn(
       // The lease is recorded, which consumed this turn's claim on the box; the
       // lease's own per-box fence covers the rest of the turn. Releasing now
       // would free a box that is very much still in use.
+      clearReservationHeartbeat();
       reservationHeld = false;
       const auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
       tBroker = Date.now();
@@ -2459,6 +2505,7 @@ export async function runHarnessTurn(
   // path. See the `createUIMessageStream` call below for why this now runs from
   // `execute`'s finally rather than the SDK's `onFinish`.
   const onFinishEngine = async (receiptWriter?: ChunkWriter) => {
+    clearReservationHeartbeat();
     // Broker teardown runs FIRST — the model stream has ended, so revoke the lease
     // + clear the E2B egress rule before the persistence/cleanup callbacks below,
     // which could hang and would otherwise keep the credential live until TTL/cron.

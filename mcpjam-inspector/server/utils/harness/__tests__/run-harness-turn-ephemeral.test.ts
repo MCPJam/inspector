@@ -96,6 +96,7 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 
 vi.mock("../harness-model-broker.js", () => ({
   reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
@@ -123,6 +124,7 @@ import { startHarnessModelBroker } from "../harness-model-broker.js";
 import { revokeHarnessModelBroker } from "../harness-model-broker.js";
 import {
   reserveHarnessBox,
+  renewHarnessBoxReservation,
   releaseHarnessBoxReservation,
 } from "../harness-model-broker.js";
 import { prewarmHarness } from "@ai-sdk/harness/agent";
@@ -178,6 +180,7 @@ afterEach(() => {
   vi.mocked(createE2BHarnessSandboxProvider).mockClear();
   vi.mocked(prewarmHarness).mockClear();
   vi.mocked(reserveHarnessBox).mockClear();
+  vi.mocked(renewHarnessBoxReservation).mockClear();
   vi.mocked(releaseHarnessBoxReservation).mockClear();
   vi.mocked(getHarnessAdapter).mockClear();
 });
@@ -373,23 +376,22 @@ describe("runHarnessTurn — the runtime is installed before egress is locked", 
     expect(startHarnessModelBroker).not.toHaveBeenCalled();
   });
 
-  it("keeps working against a backend that has no reservation endpoint", async () => {
-    // A self-hosted deployment on an older backend should keep the harness it
-    // has, with the lease fence as its only serialization, rather than losing
-    // it over a lock it never had.
+  it("fails closed when the backend has no reservation endpoint", async () => {
     vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
-      ok: true,
-      unsupported: true,
+      ok: false,
+      status: 404,
+      error: "Harness model-broker returned 404",
     });
+    const onEngineError = vi.fn();
 
     await runHarnessTurn(
-      baseOptions({ harnessSandboxBinding: BINDING }) as never,
+      baseOptions({ harnessSandboxBinding: BINDING, onEngineError }) as never,
       "none"
     );
 
-    expect(prewarmHarness).toHaveBeenCalledTimes(1);
-    expect(startHarnessModelBroker).toHaveBeenCalledTimes(1);
-    // Nothing was claimed, so there is nothing to release.
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(prewarmHarness).not.toHaveBeenCalled();
+    expect(startHarnessModelBroker).not.toHaveBeenCalled();
     expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
   });
 
