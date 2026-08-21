@@ -19,7 +19,7 @@ function parseConformanceRun(argv: string[]): Record<string, unknown> {
   run.action((options) => {
     captured = options as Record<string, unknown>;
   });
-  program.parse(["node", "mcpjam", "conformance", "run", ...argv], {
+  program.parse(["conformance", "run", ...argv], {
     from: "user",
   });
   assert.ok(captured);

@@ -23,6 +23,7 @@ import {
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
 import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
+import { parseReporterFormat } from "../lib/reporting.js";
 import {
   parseHeadersOption,
   parsePositiveInteger,
@@ -114,7 +115,7 @@ export function registerProtocolCommands(program: Command): void {
       await maybeUploadSingleSuite({
         suiteKind: "protocol",
         result,
-        serverUrl: config.url,
+        serverUrl: config.serverUrl,
         upload: Boolean((options as { upload?: boolean }).upload),
         requireUpload: Boolean((options as { requireUpload?: boolean }).requireUpload),
         command,

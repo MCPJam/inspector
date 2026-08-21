@@ -121,6 +121,11 @@ function harness(
   const events: string[] = [];
   const heartbeats: string[] = [];
   const resolveArgs: Array<{ cloneToken?: string }> = [];
+  const {
+    runEvalSuite: runEvalSuiteOverride,
+    runConformance: runConformanceOverride,
+    ...restOverrides
+  } = overrides ?? {};
 
   const session: CheckPlanSession = {
     planId: "plan-1",
@@ -216,6 +221,7 @@ function harness(
     },
     runEvalSuite: async (args) => {
       events.push("runEvalSuite");
+      if (runEvalSuiteOverride) return runEvalSuiteOverride(args);
       await args.onRunStarted?.("run-1");
       return {
         runId: "run-1",
@@ -225,6 +231,7 @@ function harness(
     },
     runConformance: async (args) => {
       events.push("runConformance");
+      if (runConformanceOverride) return runConformanceOverride(args);
       await args.onRunStarted?.("conf-run-1");
       return { runId: "conf-run-1" };
     },
@@ -236,7 +243,7 @@ function harness(
       heartbeats.push(triggerId);
     },
     heartbeatIntervalMs: 1_000,
-    ...overrides,
+    ...restOverrides,
   };
 
   return {

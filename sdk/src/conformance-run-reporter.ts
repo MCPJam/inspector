@@ -27,10 +27,9 @@ export function createConformanceRunReporter(
     ConformanceRunReportV1,
     "requestedSuites" | "protocolVersion" | "engineVersion"
   >,
-  options: ReportConformanceRunOptions & { strict?: boolean } = {},
+  options: ReportConformanceRunOptions = {},
 ): ConformanceRunReporter {
   let started: ReportConformanceRunOutput | null = null;
-  const strict = options.strict === true;
   return {
     async start() {
       started = await startConformanceRun(snapshot, options);

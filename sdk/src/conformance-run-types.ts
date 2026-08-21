@@ -79,10 +79,8 @@ export function buildConformanceRunReport(input: {
         failed: 0,
         couldNotRun: 1,
         notApplicable: 0,
-        advisoryCount: 0,
         advicePointsLost: 0,
         advisories: [],
-        incompleteReason: `Requested suite ${kind} did not produce a report`,
       });
     }
   }
