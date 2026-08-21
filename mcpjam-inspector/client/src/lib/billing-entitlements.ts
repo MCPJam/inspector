@@ -521,9 +521,9 @@ export function getBillingErrorMessage(
     );
   }
 
-  if (payload.message) {
-    return payload.message;
-  }
-
-  return error instanceof Error ? error.message : fallback;
+  // A payload carrying only a message is not a billing rejection at all —
+  // `extractBillingErrorPayload` wraps every thrown `Error` that way. Shape it
+  // like any other Convex failure so the redacted "[Request ID: …] Server
+  // Error" prefix never reaches the toast.
+  return convexErrMessage(error, payload.message || fallback);
 }

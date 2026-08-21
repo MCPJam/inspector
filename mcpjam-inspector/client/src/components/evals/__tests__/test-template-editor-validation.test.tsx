@@ -220,6 +220,40 @@ describe("getStepsBlockReason: widget steps", () => {
     ).toBe("Enter the tool name the view is expected to call.");
   });
 
+  // `normalizeSteps` and the legacy `widgetChecks` bridge cast stored blobs to
+  // the step types without checking leaf fields, and this runs in the editor's
+  // render-time `useMemo` — a throw here blanks the pane instead of reporting
+  // the gap.
+  it("blocks an interact step with no action instead of throwing", () => {
+    for (const action of [undefined, null]) {
+      expect(getStepsBlockReason(withInteract(action))).toBe(
+        "Pick an action for the interact step.",
+      );
+    }
+  });
+
+  it("blocks an interact step whose action kind is unknown", () => {
+    expect(getStepsBlockReason(withInteract({ kind: "teleport" }))).toBe(
+      "Pick an action for the interact step.",
+    );
+  });
+
+  it("blocks a locator whose role bundle is malformed", () => {
+    for (const role of [null, {}]) {
+      expect(
+        getStepsBlockReason(withInteract({ kind: "click", target: { role } })),
+      ).toBe("Pick an element target for the click step.");
+    }
+  });
+
+  it("blocks a widget assertion whose kind is unknown", () => {
+    expect(
+      getStepsBlockReason(
+        withAssertion({ kind: "teleported", toolName: "create_view" }),
+      ),
+    ).toBe("Pick a check type for the widget check.");
+  });
+
   it("names the turn when the case has more than one", () => {
     const steps = [
       { id: "1", kind: "prompt", prompt: "Draw a cat" },

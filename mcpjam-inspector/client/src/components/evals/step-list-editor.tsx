@@ -38,7 +38,7 @@ import {
 import type { RemoteServer } from "@/hooks/useProjects";
 import { AddStepPicker, type AddStepPickerChoice } from "./add-step-picker";
 import { cn } from "@/lib/utils";
-import type { ElementLocator } from "@/shared/scripted-steps";
+import { trimmedField, type ElementLocator } from "@/shared/scripted-steps";
 import type { Predicate } from "@/shared/eval-matching";
 import {
   isWidgetAssertion,
@@ -704,7 +704,7 @@ function StepRow({
                       }
                     >
                       <SelectTrigger
-                        aria-invalid={!readOnly && !step.toolName.trim()}
+                        aria-invalid={!readOnly && !trimmedField(step.toolName)}
                         className="h-7 text-[11px]"
                       >
                         <SelectValue placeholder="Pick a view tool…" />
@@ -732,7 +732,7 @@ function StepRow({
                         onUpdate({ ...step, toolName: e.target.value })
                       }
                       placeholder="view tool name…"
-                      aria-invalid={!readOnly && !step.toolName.trim()}
+                      aria-invalid={!readOnly && !trimmedField(step.toolName)}
                       className="h-7 text-[11px]"
                     />
                   )}

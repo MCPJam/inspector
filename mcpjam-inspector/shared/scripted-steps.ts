@@ -128,6 +128,16 @@ export function hasScriptedAssertion(
   return !!widgetChecks?.some((g) => g.steps.some((s) => s.kind === "assert"));
 }
 
+/**
+ * Read a step's string field defensively. `normalizeSteps` and the legacy
+ * `widgetChecks` bridge both cast stored blobs to the step types without
+ * checking leaf fields, so a field the type promises can still arrive missing
+ * or non-string — and the editors read these during render, where a `.trim()`
+ * on `undefined` would blank the pane instead of reporting the gap.
+ */
+export const trimmedField = (value: unknown): string =>
+  typeof value === "string" ? value.trim() : "";
+
 /** A locator has at least one usable reference point (no empty strings). */
 export function isLocatorComplete(loc: ElementLocator | undefined): boolean {
   if (!loc) return false;

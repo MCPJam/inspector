@@ -13,7 +13,7 @@ import type {
   ScriptedStep,
   StepAssertion,
 } from "@/shared/scripted-steps";
-import { MAX_SCRIPTED_STEPS } from "@/shared/scripted-steps";
+import { MAX_SCRIPTED_STEPS, trimmedField } from "@/shared/scripted-steps";
 import { WIDGET_ASSERTION_LABELS } from "@/shared/steps";
 
 /**
@@ -111,8 +111,10 @@ export function LocatorFields({
   // Every mode seeds an EMPTY field (`emptyLocatorFor`), and a locator with no
   // reference point is rejected at the write boundary — so flag the gap on the
   // field, not only in the blocked-Save tooltip. `aria-invalid` is enough: the
-  // design-system Input carries the destructive outline for it.
-  const invalid = by === "role" ? !value.role?.role.trim() : !value[by]?.trim();
+  // design-system Input carries the destructive outline for it. Read through
+  // `trimmedField`: stored locators are cast, not parsed, so a leaf the type
+  // promises can still arrive missing and crash this render-time check.
+  const invalid = !trimmedField(by === "role" ? value.role?.role : value[by]);
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Select

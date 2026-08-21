@@ -45,6 +45,7 @@ import {
 import {
   MAX_SCRIPTED_STEP_TEXT_CHARS,
   MAX_SCRIPTED_WAIT_MS,
+  trimmedField,
   type ElementLocator,
   type ScriptedStep,
   type StepAssertion,
@@ -477,29 +478,43 @@ function isToolCallStepIncomplete(step: ToolCallStep): boolean {
  */
 function getWidgetStepGap(step: TestStep): string | null {
   if (isInteractStep(step)) return getInteractStepGap(step);
-  if (isAssertStep(step) && isWidgetAssertion(step.assertion)) {
+  if (
+    isAssertStep(step) &&
+    typeof step.assertion === "object" &&
+    step.assertion !== null &&
+    isWidgetAssertion(step.assertion)
+  ) {
     return getWidgetAssertionGap(step.assertion);
   }
   return null;
 }
 
-/**
- * Read a step's string field defensively. `normalizeSteps` and the legacy
- * `widgetChecks` bridge both cast stored blobs to the step types without
- * checking leaf fields, so a field the type promises can still arrive missing —
- * and this runs inside the editor's render-time `useMemo`, where a `.trim()` on
- * `undefined` would blank the pane instead of reporting the gap.
- */
-const trimmed = (value: unknown): string =>
-  typeof value === "string" ? value.trim() : "";
-
 const tooLong = (value: unknown): boolean =>
   typeof value === "string" && value.length > MAX_SCRIPTED_STEP_TEXT_CHARS;
 
+/**
+ * Mirrors the discriminants of `interactActionSchema` (`@mcpjam/sdk/contract`).
+ */
+const INTERACT_ACTION_KINDS: readonly InteractAction["kind"][] = [
+  "click",
+  "type",
+  "key",
+  "scroll",
+  "wait",
+];
+
 function getInteractStepGap(step: InteractStep): string | null {
-  const label = `${step.action.kind} step`;
-  if (!trimmed(step.toolName)) return `Pick a view (tool) for the ${label}.`;
-  const a = step.action;
+  // Stored blobs reach the editor cast, never parsed, so `action` can arrive
+  // missing or carrying a kind this editor has no fields for. Settle that
+  // before the label reads `action.kind`.
+  const a = step.action as InteractAction | undefined;
+  if (!a || typeof a !== "object" || !INTERACT_ACTION_KINDS.includes(a.kind)) {
+    return "Pick an action for the interact step.";
+  }
+  const label = `${a.kind} step`;
+  if (!trimmedField(step.toolName)) {
+    return `Pick a view (tool) for the ${label}.`;
+  }
   switch (a.kind) {
     case "click":
       return getLocatorGap(a.target, label);
@@ -511,7 +526,7 @@ function getInteractStepGap(step: InteractStep): string | null {
           : null)
       );
     case "key":
-      return trimmed(a.key) ? null : "Enter a key for the key step.";
+      return trimmedField(a.key) ? null : "Enter a key for the key step.";
     case "scroll":
       return a.amount === undefined ||
         (Number.isInteger(a.amount) && a.amount >= 1)
@@ -525,11 +540,17 @@ function getInteractStepGap(step: InteractStep): string | null {
 }
 
 function getWidgetAssertionGap(a: WidgetAssertion): string | null {
-  const label = WIDGET_ASSERTION_LABELS[a.kind].toLowerCase();
-  if (!trimmed(a.toolName)) return `Pick a view (tool) for the ${label} check.`;
+  // `isWidgetAssertion` only asserts that `kind` is a string, so an unknown one
+  // has no label — and would otherwise fall past the switch as "complete".
+  const name = WIDGET_ASSERTION_LABELS[a.kind];
+  if (!name) return "Pick a check type for the widget check.";
+  const label = name.toLowerCase();
+  if (!trimmedField(a.toolName)) {
+    return `Pick a view (tool) for the ${label} check.`;
+  }
   switch (a.kind) {
     case "textVisible":
-      if (!trimmed(a.text)) return "Enter the text the check looks for.";
+      if (!trimmedField(a.text)) return "Enter the text the check looks for.";
       return tooLong(a.text)
         ? `Shorten the expected text to ${MAX_SCRIPTED_STEP_TEXT_CHARS} characters or fewer.`
         : null;
@@ -544,7 +565,7 @@ function getWidgetAssertionGap(a: WidgetAssertion): string | null {
           : null)
       );
     case "widgetToolCalled":
-      return trimmed(a.calledToolName)
+      return trimmedField(a.calledToolName)
         ? null
         : "Enter the tool name the view is expected to call.";
   }
@@ -565,9 +586,12 @@ function getLocatorGap(
   const gap = `Pick an element target for the ${label}.`;
   if (!loc || typeof loc !== "object") return gap;
   for (const value of [loc.text, loc.css, loc.testId]) {
-    if (value !== undefined && !trimmed(value)) return gap;
+    if (value !== undefined && !trimmedField(value)) return gap;
   }
-  if (loc.role !== undefined && !trimmed(loc.role.role)) return gap;
+  if (loc.role !== undefined) {
+    if (typeof loc.role !== "object" || loc.role === null) return gap;
+    if (!trimmedField(loc.role.role)) return gap;
+  }
   // Past those checks a present field is a usable one, so "carries at least
   // one" is just "at least one is set".
   const hasReferencePoint = [loc.role, loc.text, loc.css, loc.testId].some(

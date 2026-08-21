@@ -189,6 +189,65 @@ describe("StepListEditor", () => {
     );
   });
 
+  // With tools loaded the view field is a Select, not the fallback Input, so
+  // the flag lands on its trigger instead.
+  it("flags the view picker when tools load and none is picked", () => {
+    const renderWithTool = (toolName: string) =>
+      render(
+        <StepListEditor
+          steps={[
+            {
+              id: "1",
+              kind: "interact",
+              toolName,
+              action: { kind: "click", target: { testId: "canvas" } },
+            },
+          ]}
+          onStepsChange={vi.fn()}
+          availableTools={[{ name: "create_view" }]}
+          suiteServers={[]}
+          evalValidationBorderClass=""
+        />,
+      );
+
+    const { unmount } = renderWithTool("");
+    expect(
+      screen.getByText("Pick a view tool…").closest("button"),
+    ).toHaveAttribute("aria-invalid", "true");
+    unmount();
+
+    renderWithTool("create_view");
+    expect(
+      screen.getByText("create_view").closest("button"),
+    ).toHaveAttribute("aria-invalid", "false");
+  });
+
+  // A snapshot records what ran; nothing there is authorable, so the authoring
+  // flags stay off even on a step that reads incomplete.
+  it("leaves the view flag off in read-only mode", () => {
+    render(
+      <StepListEditor
+        steps={[
+          {
+            id: "1",
+            kind: "interact",
+            toolName: "",
+            action: { kind: "click", target: { testId: "canvas" } },
+          },
+        ]}
+        onStepsChange={vi.fn()}
+        availableTools={[]}
+        suiteServers={[]}
+        evalValidationBorderClass=""
+        readOnly
+      />,
+    );
+    expect(screen.getByPlaceholderText("view tool name…")).toHaveAttribute(
+      "aria-invalid",
+      "false",
+    );
+  });
+
   it("clears the flags once the step names a view and an element", () => {
     const steps: TestStep[] = [
       {
