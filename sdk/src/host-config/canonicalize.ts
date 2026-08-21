@@ -102,6 +102,9 @@ const MCP_APPS_CAPABILITY_KEYS = [
   "sandboxPermissions",
   "cspFrameDomains",
   "cspBaseUriDomains",
+  "cspConnectDomains",
+  "cspResourceDomains",
+  "resourceCacheTtl",
   "resourcePrefersBorder",
   "downloadFile",
   "requestTeardown",
@@ -521,6 +524,29 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return proto === Object.prototype || proto === null;
 }
 
+function canonicalBooleanCapabilityRecord(
+  path: string,
+  value: unknown,
+  allowedKeys: readonly string[]
+): Record<string, boolean> {
+  if (!isPlainObject(value)) {
+    throw new Error(`hostConfigV2: ${path} must be a plain object`);
+  }
+  const out: Record<string, boolean> = {};
+  for (const key of Object.keys(value)) {
+    if (!allowedKeys.includes(key)) {
+      throw new Error(`hostConfigV2: ${path} has unknown key "${key}"`);
+    }
+    if (typeof value[key] !== "boolean") {
+      throw new Error(`hostConfigV2: ${path}.${key} must be a boolean`);
+    }
+  }
+  for (const key of allowedKeys) {
+    if (value[key] !== undefined) out[key] = value[key] as boolean;
+  }
+  return out;
+}
+
 // Canonicalize a CSP domain list as a SET: trim, drop empty, dedupe, sort.
 // Order has no meaning for CSP allowlists (contrast supportedProtocolVersions,
 // where order IS semantic).
@@ -820,19 +846,16 @@ function canonicalizeMcpProfile(
     }
   }
 
-  // A stateful pin must be one of the client's declared supported versions,
-  // and a missing list is derived from it because initialize needs one. A
-  // stateless pin skips initialize entirely, so it is exempt from the
-  // accept-list check (see the guard below) — legacy rows carry that shape.
+  // A legacy pin must be one of the versions accepted by initialize. Derive a
+  // missing list because initialize needs one. Modern pins use server/discover
+  // and are deliberately separate from the legacy initialize accept-list.
   if (
     out.mcpProtocolVersion !== undefined &&
-    out.mcpProtocolVersion !== "auto"
+    out.mcpProtocolVersion !== "auto" &&
+    !isStatelessProtocolVersion(out.mcpProtocolVersion)
   ) {
     const advertised = out.initialize?.supportedProtocolVersions;
-    if (
-      advertised === undefined &&
-      !isStatelessProtocolVersion(out.mcpProtocolVersion)
-    ) {
+    if (advertised === undefined) {
       const initBase = out.initialize ?? {};
       const initWithDerived: NonNullable<HostConfigMcpProfileV1["initialize"]> =
         {
@@ -846,15 +869,7 @@ function canonicalizeMcpProfile(
         )[k];
       }
       out.initialize = sortedInit;
-    } else if (
-      advertised !== undefined &&
-      // A stateless pin never runs `initialize`, so it has no business being
-      // in that legacy accept-list. Hosts saved this way predate the dual-era
-      // work and must keep saving; the UI already warns when a client is not
-      // verified for the selected revision.
-      !isStatelessProtocolVersion(out.mcpProtocolVersion) &&
-      !advertised.includes(out.mcpProtocolVersion)
-    ) {
+    } else if (!advertised.includes(out.mcpProtocolVersion)) {
       throw new Error(
         `hostConfigV2: ConflictingProtocolVersionPin — mcpProtocolVersion "${
           out.mcpProtocolVersion
@@ -1203,6 +1218,24 @@ function canonicalizeMcpProfile(
             MCP_APPS_DISPLAY_MODE_VALUES.filter((m) =>
               seen.has(m)
             ) as McpAppsCapabilities["availableDisplayModes"];
+        } else if (key === "cspConnectDomains") {
+          const domains = canonicalBooleanCapabilityRecord(
+            "mcpProfile.apps.mcpAppsOverrides.cspConnectDomains",
+            value,
+            ["fetch", "xhr", "websocket"]
+          );
+          if (Object.keys(domains).length > 0) {
+            mcpAppsOverridesOut.cspConnectDomains = domains;
+          }
+        } else if (key === "cspResourceDomains") {
+          const domains = canonicalBooleanCapabilityRecord(
+            "mcpProfile.apps.mcpAppsOverrides.cspResourceDomains",
+            value,
+            ["script", "stylesheet", "image", "font", "media"]
+          );
+          if (Object.keys(domains).length > 0) {
+            mcpAppsOverridesOut.cspResourceDomains = domains;
+          }
         } else if (key === "widgetDisplayModeRequests") {
           if (
             typeof value !== "string" ||
@@ -1555,7 +1588,9 @@ function readOAuthAuthModelValue(
   for (const [i, entry] of raw.entries()) {
     if (typeof entry !== "string" || !OAUTH_AUTH_MODEL_SET.has(entry)) {
       throw new Error(
-        `hostConfigV2: ${fieldName}[${i}] must be one of ${OAUTH_AUTH_MODELS.join(", ")}`
+        `hostConfigV2: ${fieldName}[${i}] must be one of ${OAUTH_AUTH_MODELS.join(
+          ", "
+        )}`
       );
     }
     // Reject rather than dedupe: a repeat makes the precedence list ambiguous,
@@ -1758,10 +1793,7 @@ function readOAuthScopeRequestValue(
     );
   }
   const mode = raw.mode;
-  if (
-    typeof mode !== "string" ||
-    !OAUTH_SCOPE_REQUEST_MODE_SET.has(mode)
-  ) {
+  if (typeof mode !== "string" || !OAUTH_SCOPE_REQUEST_MODE_SET.has(mode)) {
     throw new Error(
       `hostConfigV2: ${fieldName}.mode must be one of ${OAUTH_SCOPE_REQUEST_MODES.join(
         ", "
@@ -1803,7 +1835,11 @@ function readOAuthScopeRequestValue(
           `hostConfigV2: ${fieldName}.scopes is only valid when mode is "fixed"`
         );
       }
-      assertOnlyKnownKeys(raw, OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET, fieldName);
+      assertOnlyKnownKeys(
+        raw,
+        OAUTH_SCOPE_REQUEST_MODE_ONLY_KEY_SET,
+        fieldName
+      );
       return { mode: mode as "omit" | "challenge" | "all-supported" };
     }
     default: {
@@ -2126,8 +2162,30 @@ const COMPUTER_KEYS = new Set(["kind", "toolset", "workdir"]);
  * Canonicalize the optional `computer` field. `null` collapses to undefined
  * ("cleared" hashes identically to "never set"); `workdir` is trimmed, with
  * empty-after-trim collapsing to absent; legacy `toolset` input is dropped
- * (so `{ kind, toolset: "bash" }` and `{ kind }` hash identically). Output
- * keys are built in sorted order (kind, workdir) for hash stability.
+ * for EVERY kind (so `{ kind, toolset: "bash" }` and `{ kind }` hash
+ * identically). Output keys are built in sorted order (kind, workdir) for
+ * hash stability.
+ *
+ * `kind` is a closed union of two values:
+ *   - `"personal"`  — the per-(project, user) cloud workstation. The only
+ *                     kind an author can ever write; every public authoring
+ *                     input (`HostComputerInput`, `HostInit.computer`) is
+ *                     narrowed to it.
+ *   - `"ephemeral"` — a per-run box minted by the platform at a snapshot
+ *                     boundary (eval runs pin one box per iteration and boot
+ *                     it from the run's frozen environment image). RUNTIME-
+ *                     MINTED ONLY: it appears on canonical/persisted rows,
+ *                     never on authored input. The image is NOT carried here
+ *                     — it comes from the run's frozen environment pin.
+ *
+ * `workdir` is handled identically for both kinds, deliberately. A per-run box
+ * takes its working directory from provisioning, so the platform's minting site
+ * emits no `workdir` — but that is a rule about what gets WRITTEN, enforced
+ * there, and this function does not re-check it. Canonicalization is pure
+ * content-addressing: making one field's treatment depend on another's value
+ * would mean the same input hashing differently for a reason no caller can see.
+ * Nothing can author an ephemeral computer (every input type is personal-only),
+ * so there is no shape here for such a rule to catch.
  */
 function canonicalizeComputer(
   computer: HostConfigInputV2["computer"]
@@ -2141,8 +2199,10 @@ function canonicalizeComputer(
       throw new Error(`hostConfigV2: computer has unknown key "${key}"`);
     }
   }
-  if (computer.kind !== "personal") {
-    throw new Error('hostConfigV2: computer.kind must be "personal"');
+  if (computer.kind !== "personal" && computer.kind !== "ephemeral") {
+    throw new Error(
+      'hostConfigV2: computer.kind must be "personal" or "ephemeral"'
+    );
   }
   // Legacy input only: when present it must be the one value that ever
   // existed, then it's dropped from the canonical form.
@@ -2158,7 +2218,7 @@ function canonicalizeComputer(
     workdir = trimmed === "" ? undefined : trimmed;
   }
   return {
-    kind: "personal",
+    kind: computer.kind,
     ...(workdir !== undefined ? { workdir } : {}),
   };
 }
@@ -2200,7 +2260,9 @@ export function canonicalizeHostConfigV2(
   // normalizer.
   if (input.harness !== undefined && !isHarness(input.harness)) {
     throw new Error(
-      `hostConfigV2: harness must be one of ${HARNESS_IDS.map((h) => `"${h}"`).join(", ")} when set`
+      `hostConfigV2: harness must be one of ${HARNESS_IDS.map(
+        (h) => `"${h}"`
+      ).join(", ")} when set`
     );
   }
   const serverIds = sortUniqueServerIds(input.serverIds);

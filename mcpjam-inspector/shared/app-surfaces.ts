@@ -197,10 +197,13 @@ export const APP_SURFACES = [
     navSegments: ["registry"],
     title: "Registry",
     purpose:
-      "Browse the public MCP server registry and install servers into the current project.",
+      "Browse catalogs of MCP servers — MCPJam's curated registry, plus mirrors of the Claude and ChatGPT connector directories — and install them into the current project.",
     userActivities: [
       "Search the registry for a server",
-      "Install a registry server into the project",
+      "Search a mirrored connector directory (Claude or ChatGPT) by name, description, tool or skill name",
+      "Switch between the Claude and ChatGPT directories",
+      "Install a curated or directory server into the project",
+      "Choose which endpoint a multi-region connector uses, or enter their own instance URL",
       "Star or unstar a registry server",
     ],
     hasSnapshotProvider: true,

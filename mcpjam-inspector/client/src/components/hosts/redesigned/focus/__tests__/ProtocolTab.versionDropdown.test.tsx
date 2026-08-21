@@ -185,10 +185,13 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     vi.mocked(toast.warning).mockClear();
   });
 
+  // Uses Cursor rather than ChatGPT: the 2026-08-19 ladder probe confirmed
+  // ChatGPT on all four revisions, so no version can be unverified for it any
+  // more. Cursor is still catalogued at 2025-11-25 only.
   it("warns, but still switches, for an old client not verified for the chosen version", async () => {
     const user = userEvent.setup();
     const initial = emptyHostConfigInputV2({
-      hostStyle: "chatgpt",
+      hostStyle: "cursor",
     } as Partial<HostConfigInputV2>);
     render(<Harness initial={initial} />);
 
@@ -198,7 +201,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     await user.click(screen.getByRole("option", { name: "2025-03-26" }));
 
     expect(toast.warning).toHaveBeenCalledWith(
-      "ChatGPT is not verified to support 2025-03-26."
+      "Cursor is not verified to support 2025-03-26."
     );
     expect(screen.getByTestId("pin")).toHaveTextContent("2025-03-26");
   });

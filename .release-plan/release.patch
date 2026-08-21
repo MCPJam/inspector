@@ -1,429 +1,657 @@
-diff --git a/.changeset/api-key-revoke-names-its-actor.md b/.changeset/api-key-revoke-names-its-actor.md
+diff --git a/.changeset/directory-readiness-shared-core.md b/.changeset/directory-readiness-shared-core.md
 deleted file mode 100644
-index e8ba79fd3..000000000
---- a/.changeset/api-key-revoke-names-its-actor.md
+index a95e14834..000000000
+--- a/.changeset/directory-readiness-shared-core.md
 +++ /dev/null
-@@ -1,24 +0,0 @@
+@@ -1,38 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Extract the publisher-agnostic readiness result algebra into `sdk/src/directory-readiness/`.
+-
+-`claude-readiness` was written as one publisher's product, but only its
+-REQUIREMENTS are Anthropic's. How a requirement is graded — a finding cites a
+-source, declares provenance, names the capabilities it needed and is dispositive
+-or not; a lane rolls its findings up; coverage is reported separately from
+-verdicts — is the same for any directory. A second publisher would have copied
+-that algebra, and the first thing to drift would be the rule that keeps the
+-product honest: "did not run" must never read as "conformed".
+-
+-The algebra now lives once, generic over `<Lane, SourceRef, Capability>`:
+-
+-- `decideLaneStatus`, `rollUpLaneStatus`, `summarizeLaneCoverage`,
+-  `isDispositiveDirectoryFinding`, and `enforceCapabilityGate` (promoted from
+-  private in `claude-readiness/runner.ts`).
+-- `createFindingConstructors({ engineVersion })`, which binds the engine version
+-  once per publisher instead of trusting each call site to pass the right one.
+-- A `DirectoryReadinessReportProvider` descriptor in `conformance-reporting`, so
+-  the readiness renderer takes the provider's own result predicate and
+-  dispositive policy rather than assuming Anthropic's.
+-
+-Claude's public API is unchanged: every exported name keeps its signature, and
+-the whole existing `sdk/tests/claude-readiness/` suite passes without edits.
+-
+-Two behaviours are deliberately stricter than before:
+-
+-- `rollUpLaneStatus` now reports `incomplete` when a required lane is absent
+-  from the result rather than grading the lanes that happen to be present. A
+-  verdict that silently drops a lane it was told to grade is the same failure as
+-  reporting an unevaluated lane as a pass.
+-- `isClaudeReadinessResult` no longer recognises a result by shape alone.
+-  Claude's structural discriminator (lanes + findings + badges) matches other
+-  readiness results too, so an explicit absent-`readinessKind` test keeps a
+-  different publisher's grade from being published under Anthropic's name.
+diff --git a/.changeset/eval-execution-admission-hardening.md b/.changeset/eval-execution-admission-hardening.md
+deleted file mode 100644
+index a0fed575a..000000000
+--- a/.changeset/eval-execution-admission-hardening.md
++++ /dev/null
+@@ -1,17 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Name the revoking user when an API key's org binding is removed.
+-Eval runs refuse what they can't deliver, instead of running a different configuration and reporting on it.
 -
--The binding delete used to arrive at the backend carrying nothing but the key
--id, so the audit row it writes had to infer an actor — and the only identity
--the row carries is the user who minted the key, which is not necessarily the
--one revoking it. The revoke handler now resolves the caller's MCPJam user and
--sends it as `actorUserId`. That is the Convex document id, not the WorkOS
--`sub`; the backend validates it as such.
+-**A computer-backed built-in with no computer is now a refusal.** `resolveHostTools` warn-and-skips `bash` when no computer is attached, so a `bash`-granting host with no pinned environment image ran with the shell silently absent: cases that needed one failed as if the model had chosen badly, and a suite that didn't need one reported green for a host configuration that never existed. A server log is not a result — nobody reading the run sees it. This is checked for **every** eval run, harness or emulated; it deliberately cannot live in the harness admission checks, which return admitted on their first line when no harness is selected — exactly the runs the rule is about.
 -
--An unresolvable caller sends nothing rather than failing: by that point the
--WorkOS key is already destroyed, and the backend records the revocation as
--explicitly unattributed instead of naming someone who may not have done it.
--The session's existing ownership check remains the authorization — this is
--attribution, and defense in depth on a route reachable with the service token
--alone.
+-**A harness run with no project is refused at pre-flight.** An org-level suite has no project, and `runHarnessTurn` discovers that only when it tries to resolve the box — mid-iteration, after the sandbox has been booted and charged. It now fails before any spending, and names the project rather than the pinned image (an org-level suite has neither, and "pin a computer image" points at a setting that can't fix it).
 -
--Minting also stops flattening one backend answer into a bad one: a key id
--already bound to a different organization now surfaces as `409 CONFLICT`
--instead of `502`. The backend refuses to re-point a live key into another org,
--and that refusal is a conflict, not an unreachable service.
-diff --git a/.changeset/batch-eval-case-authoring.md b/.changeset/batch-eval-case-authoring.md
+-**A harness case pinning a short model id is refused, naming the id to store.** The backend pins each iteration's host config from the case's model string verbatim, while the runtime canonicalizes before asking the broker for a lease — `claude-sonnet-4-6` becomes `anthropic/claude-sonnet-4-6`. The broker's eval authorizer matches the two byte-exact, deliberately, because a lease is a spending authorization and a loose match would let a box authorize a model its run never pinned. So a case stored with the short form (which the public case-create API accepts today) passed every check, booted a paid box, and only then died at broker start on an opaque 403. It now fails pre-flight and prints both spellings, since the fix is a re-save rather than a different suite. Harness-only — an emulated run never requests a lease. The durable half, normalizing on save, is a separate change.
+-
+-**A transient project lookup no longer reports itself as "this suite is org-level".** "We asked and there is none" and "we could not ask" are different facts, and the harness gate reads an absent project as the former. A failed suite query now refuses harness runs with what actually happened and suggests a retry; emulated runs are unaffected, losing only their org-BYOK fallback exactly as before.
+-
+-**A runner capability declaration at run creation.** Run creates now declare `runnerCapabilities: ["harness-execution"]`. The backend pins a run's host config at start and stamps its `executionEngine` from it; without a declaration it would stamp `harness:*` for runs created by older desktop or local inspectors that talk to the same hosted Convex and still emulate. A false stamp is worse than the silent emulation being fixed — silent emulation is at least unlabelled. Undeclared runners keep today's behavior, honestly labelled `emulated`. Temporary, retired once old runner versions age out.
+-
+-**An ephemeral computer is read-only snapshot data.** The client hydrator rewrote every computer's `kind` to `"personal"` on read. With the platform now minting `kind: "ephemeral"` for per-run boxes, that laundering would let a run's pinned config be read and saved onto a live host — turning a disposable per-run box into a claim on the member's own machine. The kind is carried through unchanged, editor drafts drop a non-personal attachment rather than converting it, and draft-equality compares `kind` (two attachments differing only by kind previously compared equal).
+diff --git a/.changeset/eval-harness-pinned-skills.md b/.changeset/eval-harness-pinned-skills.md
 deleted file mode 100644
-index a03f44070..000000000
---- a/.changeset/batch-eval-case-authoring.md
+index 8989a5c6e..000000000
+--- a/.changeset/eval-harness-pinned-skills.md
 +++ /dev/null
-@@ -1,85 +0,0 @@
+@@ -1,20 +0,0 @@
 ----
--"@mcpjam/sdk": minor
 -"@mcpjam/inspector": minor
 ----
 -
--Eval cases are authored in batches, and every case gets a declared identity.
+-Harness evals deliver the run's PINNED skills, not the live project pool.
 -
--Every first-party authoring path used to loop the platform's per-case create
--mutation: `authorEvalSuite` once per case, generation once per draft, the public
--`POST …/cases` route once per call. An agent converting a repo's 40 test files
--made 40 sequential round trips, each its own transaction, with no way to say
--"these 40 cases" as one write. All of them now go through the platform's batch
--mutation, which validates every case before writing any of them and reports the
--outcome per case.
+-A harness turn materializes skills on the sandbox and picks its source through a strict precedence — `pinned` → `environment` → `live` — where only the top rank promises that nothing live is consulted. Selection is by PRESENCE, not length: passing nothing falls through to a project-wide fetch resolved at turn time.
 -
--## `create_eval_cases` / `POST …/cases/batch`
+-An eval run had nothing to pass, so every harness eval turn took that fall-through. Two consequences, both silent:
 -
--The bulk form of `create_eval_case`, taking up to 100 cases per call. Each entry
--takes exactly the fields a single create takes, because it *is* the single
--create repeated — not a second contract with its own spelling of a case.
+-- **A frozen run wasn't frozen.** The run pins its skills at start precisely so a re-run is byte-identical; the harness turn re-read whatever the project held at that moment, so editing a project skill mid-run changed what a running iteration saw.
+-- **The "without skills" A/B arm ran with skills.** `skillsOverride: "exclude"` pins an empty set — which, sent as "nothing", is indistinguishable from an unpinned run and drew the entire project pool.
 -
--The response is a partial outcome by design, and says so rather than implying
--it:
+-The run's pins now reach the harness as `PinnedSkillArtifact[]`, adapted at the run boundary where the pin rows and their signed file URLs are in hand. Every runId-bearing run passes an explicit list, empty included.
 -
--```jsonc
--{
--  "created": [{ "index": 0, "id": "…", "declaredId": "c_…", "title": "lists files", "replayed": false }],
--  "failed":  [{ "index": 1, "code": "DUPLICATE_CONTENT", "message": "…" }],
--  "duplicatePolicy": { "requestedPolicy": "blcok", "effectivePolicy": "block", "coerced": true }
--}
--```
+-The adapter synthesizes nothing. Identity, preserved frontmatter and channel provenance carry straight off the pin, and `contentHash` takes the pin's `aggregateHash` when present — the complete-envelope fingerprint, which is what on-box reconcile compares. Using the body-only hash there would make a skill whose supporting FILES changed look unchanged, so a reused sandbox would keep the previous run's scripts.
 -
--Both arrays carry the `index` of the entry they describe, so a caller lines
--results up against the list it sent. It is `201` even when `failed` is non-empty:
--the cases in `created` really were written, and a `4xx` would tell the caller to
--retry writes that already landed. `duplicatePolicy` defaults to `block`; `warn`
--and `create_anyway` author a duplicate but require an `overrideReason`, which is
--recorded on the case's revision. An unrecognized policy coerces to `block` and
--reports the coercion — a typo should not look like a platform that refuses cases
--for no reason.
+-Supporting-file bodies are downloaded during run preparation rather than per iteration: once instead of N times, and before any model call, so a failure fails the run cleanly and names the skill and path — the same discipline as the existing pinned-blob reachability check. A file that cannot be fetched stops the run instead of shipping a skill without its scripts.
 -
--The 100-case cap is deliberately smaller than a suite file's 500-case limit. The
--two answer different questions — a file is an authored artifact, a call is bound
--by request size — so a maximal file uploads in several calls. Do not align them.
--
--## Cases carry a declared id
--
--`create_eval_case` and `POST …/cases` accept an optional `id`: the identity the
--case answers to in a suite file, an import, or a CLI argument. Callers mint it
--(`mintCaseId` from `@mcpjam/sdk/contract`); the platform validates the charset
--and suite-scoped uniqueness and never derives one, because an id derived from a
--case's content or position is the content-hash identity declared ids exist to
--retire. Omitting it still works — this server mints one — so no existing caller
--has to change.
--
--`POST …/cases` now writes through the same batch mutation with a single entry,
--so the single and bulk paths cannot drift into two meanings of "author a case".
--One consequence is worth knowing before you upgrade: that route now gets the
--batch default `duplicatePolicy: block`, so creating a case whose definition
--already exists in the suite returns `409 CONFLICT` instead of authoring a second
--copy. To author one deliberately, send it through `…/cases/batch` with
--`duplicatePolicy` and an `overrideReason` — the reason is what gets recorded.
--The hosted editor is unaffected; it writes through the platform mutation
--directly and keeps its existing behaviour.
--
--The declared id reads back as `declaredId` on the case, deliberately NOT folded
--into `id`:
--that field is the platform row id every case route takes as its path parameter
--and every selector resolves against, and one name for two identities would break
--each of them. A declared id is also never written into a case's storage key,
--which stays the platform's own random `ui_*` value.
--
--## Generation reads both case shapes
--
--`generateTestCases` now accepts a versioned union from the backend: no
--`shapeVersion` is today's case, and `shapeVersion: "wave0"` is the converged
--shape where `steps[]` replaces `query`/`expectedToolCalls`/`promptTurns` and
--`repetitions` replaces `runs`. A Wave-0 case still persists the same legacy
--display columns, derived from its steps, so equivalent authored intent stores
--equivalently whichever shape produced it.
--
--This lands before the backend emits the new shape on purpose. A consumer that
--already reads both is what makes the producer's change non-breaking, and lets
--either side roll back while both are deployed. The legacy branch is temporary
--and marked for removal once the compatibility window closes.
-diff --git a/.changeset/chatgpt-dual-era-protocol.md b/.changeset/chatgpt-dual-era-protocol.md
+-The delivery rides `pinnedHarnessSkills` (the frozen-run channel), not `runtimeSkillsOverride` (the live-environment channel one rank below it). The two behave alike in the happy case and differ in exactly the case that matters here.
+diff --git a/.changeset/idp-initiated-sso-login-route.md b/.changeset/idp-initiated-sso-login-route.md
 deleted file mode 100644
-index f643cf0f8..000000000
---- a/.changeset/chatgpt-dual-era-protocol.md
+index 45b657cf7..000000000
+--- a/.changeset/idp-initiated-sso-login-route.md
 +++ /dev/null
-@@ -1,55 +0,0 @@
+@@ -1,46 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Add the `/login` initiate-login route so IdP-initiated SSO completes instead of failing the code exchange.
+-
+-Clicking the MCPJam tile in an Okta dashboard got as far as WorkOS and no
+-further. Okta posts its SAML assertion, WorkOS validates it and sends an
+-authorization code to `/callback`, and `@workos-inc/authkit-js` refuses to
+-exchange it: "Couldn't exchange code… The developer may not have configured a
+-Login Initiation endpoint." Nothing was misconfigured on the SAML side. The
+-exchange runs client-side and needs the PKCE code verifier that sign-in wrote
+-into that tab's `sessionStorage` — a key that exists only when the sign-in
+-started in the app. A login that started at the identity provider has no such
+-tab, so the flow was unfinishable by construction, and enterprise SSO users had
+-no working entry point from their own dashboard.
+-
+-The fix WorkOS sanctions is an Initiate Login URL. Once one is configured,
+-AuthKit recognizes a non-app-originated login and redirects the browser there
+-INSTEAD of issuing a code; the app then begins an ordinary sign-in, which
+-AuthKit completes silently against the SSO session the IdP already established
+-— no second prompt — and the code lands on `/callback` beside a verifier that
+-matches it.
+-
+-`/login` is that URL. It has to be a client route rather than a server
+-redirect for exactly the reason the flow was failing: a server-generated PKCE
+-verifier cannot be written into the browser's `sessionStorage`. The SPA boots,
+-the route calls `signIn()`, and authkit-js mints its own. Both entrypoints
+-already serve `index.html` for unmatched paths, so no server change is
+-involved. An already-signed-in visitor (a second tile click) is sent into the
+-app rather than back through WorkOS.
+-
+-A sign-in that fails to start renders a retry rather than an endless spinner.
+-This route is the entry point an SSO user arrives on, so a dead end there costs
+-them the login with nothing to click — the same hazard `/callback` already
+-guards with its own recovery UI.
+-
+-Query parameters are ignored on purpose. The `context` hand-off the older
+-examples forward is deprecated — the endpoint is expected only to start a fresh
+-sign-in — and forwarding it could not work anyway, since authkit-js omits
+-`context` when it builds the authorize URL.
+-
+-Taking effect also requires setting the Initiate Login URL to
+-`https://app.mcpjam.com/login` in the WorkOS dashboard (Applications →
+-Redirects, per environment), which is a dashboard setting rather than a code
+-change. Normal sign-in and guest mode are untouched: the route is additive.
+diff --git a/.changeset/mcp-apps-csp-subtype-emulation.md b/.changeset/mcp-apps-csp-subtype-emulation.md
+deleted file mode 100644
+index 873a2660c..000000000
+--- a/.changeset/mcp-apps-csp-subtype-emulation.md
++++ /dev/null
+@@ -1,43 +0,0 @@
 ----
 -"@mcpjam/sdk": minor
 -"@mcpjam/inspector": minor
+-"@mcpjam/cli": minor
 ----
 -
--Claude and ChatGPT speak two protocol eras, and a host's protocol selection can
--say "negotiate" instead of naming a revision.
+-MCP Apps: emulate each host's CSP subtypes instead of giving every host the same sandbox.
 -
--Both catalog rows now list `["2025-11-25", "2026-07-28"]` as supported and are
--marked `provenance: "probe"` — captured from the real clients rather than
--assumed or read off a vendor page. The same capture corrected details that were
--guessed before: ChatGPT and Claude do not honour `requestTeardown`, Claude's
--available display modes are inline and fullscreen (no PiP), Cursor's are inline
--only, and every MCP Apps row now carries explicit `cspConnectDomains` and
--`cspResourceDomains` sets instead of leaving them unstated.
+-Host profiles already recorded which CSP subtypes a host honors — fetch, XHR and
+-WebSocket inside `connect-src`, and script/stylesheet/image/font/media across the
+-resource directives — but nothing read them, so every emulated host got identical
+-sandbox rules. The selected host's recorded answers now shape the widget sandbox,
+-and each resource type gets its own directive, so a host that ignores widget-declared
+-image domains no longer strips its scripts as collateral.
 -
--## `mcpProtocolVersion: "auto"`
+-`connect-src` cannot tell fetch from XHR from WebSocket, so those three are enforced
+-by a guard injected into the widget frame rather than by the policy. The guard
+-follows CSP3 source matching (scheme upgrades, default-port normalization, and
+-directory-prefix vs exact path matching) so it cannot wave through a call the host's
+-own allowlist does not actually cover. Blocked calls surface in the CSP workbench
+-with their subtype, like any other violation.
 -
--`mcpProfile.mcpProtocolVersion` accepts `"auto"` alongside the concrete
--revisions. It is a **stored selection policy, never a wire literal**: nothing
--puts the string on a request. `resolveEffectiveMcpProtocolVersion` and
--`hostConnectionProfile` both collapse it to `undefined`, which is exactly what
--an unpinned host resolved to before, so connect behaviour is unchanged for
--every existing row.
+-Host rows now also carry the host's OWN allowlist as `cspDirectives`, not just the
+-widget's declaration. Without it, emulating a host that ignores widget-declared
+-domains blocked everything, which is stricter than the real host.
 -
--The distinction it buys is between "this client negotiates, deliberately" and
--"this field was never set". Legacy rows keep the absent field and keep saving;
--the dual-era presets ship `"auto"` explicitly, so a client whose default is
--negotiation says so in its own config instead of being inferred from a hole.
--Absent still canonicalizes to absent, so pre-feature rows continue to hash
--identically.
+-New optional capability keys `cspConnectDomains` and `cspResourceDomains` are
+-validated in the canonicalizer, deep-merged in `mergeMcpAppsCapabilities`, cloned
+-and frozen in profiles, and editable in the host-config UI. A subtype the host never
+-answered stays unknown and behaves exactly as it does today; only an explicit `false`
+-changes enforcement. New export: `MCP_APPS_CLAUDE`.
 -
--`ConflictingProtocolVersionPin` is now stated the way it actually behaves: a
--stateful pin must appear in `initialize.supportedProtocolVersions` (and derives
--that list when the caller sent none), while a stateless pin skips the
--handshake entirely and is exempt from the accept-list check. Hosts saved with a
--stateless pin outside their list predate this work and must keep saving.
+-Probe data is refreshed alongside it. Notably, ChatGPT and Codex honor widget-declared
+-connect domains after all: a declared WebSocket endpoint connected while an undeclared
+-one took a real `connect-src` violation, and since the three subtypes share one
+-directive they cannot diverge. The fetch and XHR canaries that passed did so because
+-they sit on those hosts' own allowlist, which the rows now carry. Their resource
+-subtypes are recorded as unknown rather than unsupported until a probe run uses a
+-declared origin that the host baseline does not already cover.
 -
--## Inspector
--
--The Protocol tab's dropdown offers the union of the client's `initialize`
--accept-list and the eras its catalog row advertises. The handshake list only
--ever carries legacy revisions, so reading it alone made `2026-07-28`
--unselectable on the very clients that speak it. A row with no accept-list is a
--legacy row and stays fully editable — the catalog only widens an existing list,
--never creates one. Selecting Automatic now writes `"auto"` rather than deleting
--the field, and the JSON editor round-trips it.
--
--The unadvertised-pin warning fires for stateful pins only, matching the rule
--above: warning on a stateless pin promised a Save failure that never came.
--
--Can-I-use gains a Protocol versions row. It reads the catalog's supported list
--rather than the preset's handshake list, so the matrix reports what each client
--speaks instead of what it happens to advertise during `initialize`. It renders
--as a plain value, not a support chip — "which eras" is not a yes/no question.
-diff --git a/.changeset/electron-major-bump.md b/.changeset/electron-major-bump.md
+-Existing saved rows are affected: Claude rows lose pip mode, `cspFrameDomains`,
+-`cspBaseUriDomains` and `requestTeardown`, and Cursor rows lose fullscreen/pip and
+-`downloadFile`. Those are the probe correcting earlier assumptions, not regressions.
+diff --git a/.changeset/openai-readiness-evidence-absence-fixes.md b/.changeset/openai-readiness-evidence-absence-fixes.md
 deleted file mode 100644
-index 7d21df6bb..000000000
---- a/.changeset/electron-major-bump.md
+index 2231bd76b..000000000
+--- a/.changeset/openai-readiness-evidence-absence-fixes.md
++++ /dev/null
+@@ -1,58 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-OpenAI readiness: five ways evidence absence read as a verdict
+-
+-Each of these is the same mistake pointing in one of two directions — a run that
+-established nothing reporting a fault, or a run that read part of something
+-reporting a pass — and in a product whose whole claim is that it never confuses
+-"did not run" with "conformed", each is disqualifying on its own.
+-
+-**A skills listing nobody reached is not a missing extension.** `callJsonRpc`
+-returned the parsed document and dropped the status and the transport error with
+-it, so a timeout or a 401 on the unauthenticated probe arrived at the caller as
+-`undefined` — indistinguishable from a server that answered and said nothing.
+-The skills lane read that as "this server does not implement the extension" and
+-raised a class-`required` violation, flipping the headline verdict on a network
+-event. The status and error now ride along, `skills/list` records
+-`listUnreachable` when nothing readable came back, and the lane reports the gap.
+-
+-**A host nobody reached is not a host missing its metadata.** `discoveredVia:
+-"not-found"` is recorded both when the well-known path answers 404 and when the
+-request never lands. The PRM check treated both as the second and told the
+-submitter to publish a document they may already have published. It now keys off
+-the endpoint's own probe — status 0 means the metadata requests failed the same
+-way for the same reason — and off a recorded fetch error, and reports those as
+-`not-evaluated` while a genuine 404 stays `violated`.
+-
+-**A profile that says nothing about publication was answering "no".**
+-`hasPublishedVersion` carried `.default(false)`, which turned an omitted field
+-into an authoritative negative and made the runner's documented fallback to the
+-gathered evidence unreachable. An update whose profile omitted it graded as a
+-first submission: the release-contract lane dropped out of the stage as
+-`not-applicable`, and a change breaking the published tool contract rolled up
+-`ready`. The field is now optional, and the resolved value is threaded into the
+-submission checks so the release-notes rule and the lane gate cannot disagree.
+-
+-**The archive's raw names were the loader's repaired ones.** `Object.keys(zip.files)`
+-is JSZip's post-normalization view: it resolves `..`, collapses `//` and `./`,
+-and — being name-keyed — keeps only the last of two records sharing a name. Those
+-are four of the conditions the portal rejects, so the path rules ran against a
+-table with the violations already fixed out of it, and because the reader treats
+-a present `rawEntryNames` as "checked", the result read as a clean archive rather
+-than an unexamined one. The central directory is now walked directly, which also
+-survives an encrypted archive whose directory is plaintext, and returns absent
+-rather than empty for anything it cannot read faithfully (ZIP64, truncation).
+-
+-**The drift check was red on arrival.** The `llms.txt` parser matched the base as
+-a string prefix rather than a path segment, left `./` on relative links, and read
+-the index's own `llms-full.txt` export as a page — a slug that can never be
+-pinned, since fetching it would ask for `llms-full.txt.md`. The weekly job would
+-have failed every week with nothing to reconcile, which is how a maintainer
+-learns to ignore the one alarm that means OpenAI changed the rules. Verified
+-against the live index: 28 slugs, no phantoms.
+-
+-Also drops a regenerated `McpAppsHtml.bundled.ts` that no source input in this
+-branch produced.
+diff --git a/.changeset/openai-readiness-feature-lanes.md b/.changeset/openai-readiness-feature-lanes.md
+deleted file mode 100644
+index fbf4205c2..000000000
+--- a/.changeset/openai-readiness-feature-lanes.md
++++ /dev/null
+@@ -1,43 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Wire the remaining OpenAI lanes: imported MCP skills, plugin UI, migration
+-leftovers, app-guideline policy, and capability badges.
+-
+-- **Imported skills** walk `skills/list` pagination rather than reading the first
+-  page — a server with six skills and a page size of five reports five otherwise,
+-  under a cap the submission actually exceeds — and hitting the page bound is
+-  recorded as an incomplete listing rather than treated as the end of it. Each of
+-  the four size ceilings is checked against the thing it bounds, and listing
+-  metadata must agree EXACTLY with the frontmatter it points at. The lane is
+-  dispositive only in `mcp-imported-skills`; elsewhere the absence is a badge.
+-- **Plugin UI** requires `_meta.ui.domain` to be present AND unique — two
+-  resources sharing a domain share a sandbox — and grades the CSP allowlist in
+-  both directions, since a domain allowlisted without being loaded is a hole
+-  nobody needed and is invisible from watching the template work.
+-- **Migration** sweeps for the surfaces a Claude bundle may carry that the
+-  directory does not run, plus `${user_config.*}` placeholders, stdio commands
+-  and `.mcpb` references. Host-name language stays a heuristic: the word "Claude"
+-  in a description is not by itself a defect.
+-- **App guidelines** keep the judgement calls (originality, predictable side
+-  effects, response minimisation, privacy consistency, advertising) as
+-  `manual-review` in experience-insights, each naming what a reviewer should look
+-  at — "a human has to look" with no object is a shrug rather than a task.
+-
+-Three lane assignments changed while wiring the stages up, each because the
+-original made a stage permanently undeterminable:
+-
+-- Advertising moved to experience-insights. Nothing a submission declares says
+-  whether a plugin shows ads, so as a `required` directory-policy check it could
+-  only ever be `not-evaluated` — making that lane `incomplete` for every
+-  submission, and a lane that can never reach `ready` teaches its readers to
+-  ignore it.
+-- The promotional-copy rule is graded twice, once over the package's own copy
+-  (directory-policy) and once over the listing form's (submission-artifacts),
+-  because those live in different artifacts and only one of them exists before
+-  someone starts filling in a form.
+-- The domain-verification token comparison moved to submission-artifacts. The
+-  token is issued by the portal DURING a submission, so grading it in the
+-  technical preflight reported every pre-submission run as incomplete on a step
+-  that cannot have happened yet.
+diff --git a/.changeset/openai-readiness-package-primitives.md b/.changeset/openai-readiness-package-primitives.md
+deleted file mode 100644
+index 30859fe30..000000000
+--- a/.changeset/openai-readiness-package-primitives.md
++++ /dev/null
+@@ -1,38 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add the browser-safe package primitives the OpenAI plugin-package checks need:
+-image dimensions, `agents/openai.yaml`, listing text, and brand-colour contrast.
+-
+-`sdk/src/openai-readiness/package/`:
+-
+-- **`image-dimensions.ts`** decodes PNG, JPEG, WebP and SVG dimensions straight
+-  from the bytes, because the listing rules are about pixels and every library
+-  that reads them is Node-only or a native binding — this has to run in a
+-  browser bundle validating a package before anything is uploaded. Each decoder
+-  REFUSES with a reason rather than falling back to a default: a plausible guess
+-  would produce a dimension check that passed on a file whose dimensions were
+-  never read. JPEG walks marker segments (fill bytes and payload-less standalone
+-  markers included) rather than reading a fixed offset, and WebP handles all
+-  three of `VP8 `, `VP8L` and `VP8X`, so alpha and animated icons are not
+-  silently refused.
+-- **`openai-agent-metadata.ts`** parses the interface/policy/dependencies
+-  document with the existing `yaml` dependency. The flat frontmatter parser in
+-  `plugin-bundle` is deliberately not reused: handed a nested document it does
+-  not fail, it returns a shape with things missing — which grades as "field
+-  absent" when the truth is "we could not read it".
+-- **`supported-text.ts`** finds control characters and the invisible U+2028 /
+-  U+2029 separators, reporting rather than sanitising: the portal validates what
+-  was uploaded, so a preflight that cleaned the text would report a pass on text
+-  that will be rejected.
+-- **`color.ts`** grades a brand colour against BOTH ChatGPT backgrounds and
+-  takes the worse ratio. A colour that clears the threshold on white and fails
+-  on the dark surface is invisible to half the users, so picking one background
+-  would pass it.
+-
+-SVG is parsed with `@xmldom/xmldom` rather than a regex — a pattern matches a
+-width inside a comment, inside a nested `<rect>`, and inside CDATA — and any
+-parser diagnostic counts as malformed, since the parser recovers from unclosed
+-tags by design and listening only for fatal errors would accept documents that
+-are not well-formed XML.
+diff --git a/.changeset/openai-readiness-package-reader.md b/.changeset/openai-readiness-package-reader.md
+deleted file mode 100644
+index a5f545a78..000000000
+--- a/.changeset/openai-readiness-package-reader.md
++++ /dev/null
+@@ -1,33 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add `readOpenAIPluginPackage`, which turns a plugin package into gradeable
+-evidence plus a list of typed portal issues.
+-
+-The reader borrows `plugin-bundle`'s PRIMITIVES — the `PluginFileSource`
+-abstraction, path normalisation, the frontmatter splitter, the hashers — and
+-none of its policy. Reusing `parsePluginBundle` itself would have been wrong
+-twice over: its issue codes and limits are a persisted backend contract, and it
+-rejects `.codex-plugin/` outright, which is the location OpenAI documents as
+-canonical.
+-
+-The subtle part is that the portal's path rules run against RAW entry names,
+-before anything normalises them. `normalizeBundlePath` repairs a backslash
+-separator, a doubled separator and a `.` segment — three of the things the
+-portal rejects — so checking normalised paths would report a clean package for
+-an archive that is about to bounce. `OpenAIArchiveObservations` carries the
+-facts a file source cannot: compressed size, encryption flags, and those raw
+-names. New collectors supply them (`collectZipArchiveObservations` on the
+-server, `collectFolderArchiveObservations` on the client, which reads
+-`webkitRelativePath` before the selection mapping rewrites separators). An
+-absent observation becomes a recorded gap with a reason, never a silent pass —
+-a folder source genuinely has no compressed size, and reporting that limit as
+-satisfied would claim a measurement nobody took.
+-
+-The reader accepts all three manifest locations and records the normalisation
+-when it used a non-canonical one, reads skills and their per-skill
+-`agents/openai.yaml`, decodes asset dimensions, and lists the unsupported
+-surfaces a package ships (`hooks/`, `commands/`, `.app.json`, …) WITHOUT
+-judging them — that decision needs the submission mode, and belongs to the
+-check module.
+diff --git a/.changeset/openai-readiness-policy-corpus.md b/.changeset/openai-readiness-policy-corpus.md
+deleted file mode 100644
+index 64db0cc89..000000000
+--- a/.changeset/openai-readiness-policy-corpus.md
++++ /dev/null
+@@ -1,40 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add the OpenAI plugin-directory policy corpus, its drift plumbing, and the typed
+-portal-error catalog.
+-
+-`sdk/src/openai-readiness/` now carries the foundations the check lanes will be
+-built on:
+-
+-- **`manifest.ts`** pins the documented page set across two hosts. The plugins
+-  corpus is hashed over each page's `.md` twin rather than its rendered HTML —
+-  no navigation chrome, no build hash, so the digest moves when the prose moves
+-  and at no other time. Every entry ships `revision: null` until the sync runs;
+-  a fabricated hash would make an unaudited corpus look audited.
+-- **`types.ts`** models seven lanes, the four public submission shapes, and two
+-  staged rollups. The submission mode is a REQUIRED grading input rather than
+-  something inferred from which inputs a run happens to hold, and the two stages
+-  let a run be honestly `ready` at `technical-preflight` while `incomplete` at
+-  `submission-ready` — which is exactly what a server check with no submission
+-  profile is.
+-- **`profile.ts`** holds every host constant exactly once.
+-- **`portal-errors.ts`** transcribes the documented submission errors as a typed
+-  catalog whose limits REFERENCE `profile.ts` rather than restating it. Checks
+-  cite catalog entries; findings group them for presentation only, so a readable
+-  finding never drops a documented code.
+-
+-Sync plumbing moves to `scripts/lib/policy-manifest-sync.mjs`, shared by both
+-publishers. `scripts/sync-claude-policy-manifest.mjs` becomes a thin entry over
+-it with unchanged behaviour. The OpenAI entry adds a signal the per-page hashes
+-are blind to: it diffs the live `llms.txt` against the pinned page set, so a
+-requirement landing on a page nobody pinned is drift even when every pinned page
+-is byte-identical. A new weekly `openai-policy-drift` workflow runs it
+-independently of the Claude one, so neither corpus can mask the other.
+-
+-Note that the corpus ships unsnapshotted: filling `PAGE_REVISIONS` requires
+-network access to the docs hosts, and the never-fabricate-a-hash rule means the
+-first `npm run openai-policy:sync` in an environment with that access is what
+-pins it. Until then `isOpenAIPolicyCorpusVerified()` reports `false` and every
+-citation carries `revision: null`, so a grade says so about itself.
+diff --git a/.changeset/openai-readiness-release-contract.md b/.changeset/openai-readiness-release-contract.md
+deleted file mode 100644
+index 510f7fb6f..000000000
+--- a/.changeset/openai-readiness-release-contract.md
++++ /dev/null
+@@ -1,37 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add the release-contract lane: what changed since the published version, and
+-what that change costs.
+-
+-`captureOpenAIMetadataSnapshot` reduces a scan to the parts a contract
+-comparison is about — tool names, titles, descriptions, schemas, annotations,
+-security schemes, tool `_meta`, server `instructions`, UI resource metadata and
+-CSP — and stores the server's ORIGIN apart from its PATH, because those two
+-changes have completely different costs. Tools, resources and CSP domains are
+-sorted at capture: two scans of one server are free to list them in any order,
+-and a comparison that treated order as contract would report drift forever.
+-
+-`compareOpenAISnapshots` classifies every difference into one of three
+-outcomes, and telling them apart is the whole value of the lane:
+-
+-- an ORIGIN change is a NEW PLUGIN, not a version. A submitter who files it as
+-  an update loses the review and starts over, so this must never read as a
+-  routine bump — while a PATH change is exactly that routine bump.
+-- a tool, schema, annotation, security scheme, `_meta`, `instructions`, UI URI
+-  or CSP change requires a fresh scan and a new review.
+-- UI content behind an unchanged URI ships without one, with a note that the
+-  host may serve a cached copy for up to an hour — otherwise "I deployed it and
+-  nothing changed" becomes a bug report.
+-
+-A changed SCHEMA is `manual-review`, never an automatic verdict. An added
+-optional property and a removed required one are both "the schema changed", and
+-structural equality cannot tell them apart: reporting `not-ready` for the first
+-costs a submitter a release, and reporting `ready` for the second breaks their
+-users. Neither is acceptable, so the check reports what moved and says a person
+-must decide.
+-
+-First submissions report the lane `not-applicable` — there is no contract to
+-break — and it joins the `submission-ready` stage only once a version is
+-published.
+diff --git a/.changeset/openai-readiness-runner.md b/.changeset/openai-readiness-runner.md
+deleted file mode 100644
+index 161baeb6e..000000000
+--- a/.changeset/openai-readiness-runner.md
++++ /dev/null
+@@ -1,41 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Add the OpenAI readiness runner, the submission profile, and the package and
+-submission check lanes.
+-
+-The runner is split into two halves that do not resemble each other.
+-`gatherOpenAIReadinessEvidence` performs every side effect and returns a
+-serializable evidence object; `gradeOpenAIReadiness` is pure. That is stricter
+-than the Claude runner and buys three things: a hosted surface can gather on one
+-node and grade on another, a test can drive the whole grader from a fixture, and
+-a grading run cannot reach a link-local address because the half that could is a
+-different function.
+-
+-`OpenAIReadinessResult` carries both staged verdicts. A run with a good package
+-and no submission profile is `ready` at `technical-preflight` and `incomplete` at
+-`submission-ready`, and the summary says so in one line — reporting only the
+-headline would tell a submitter "not ready" and send them to look at their
+-server.
+-
+-Applicability comes from the declared submission mode throughout. A lane the
+-shape excludes is `not-applicable` and drops out of the stage rollup; a lane the
+-shape includes but the run had no input for is `not-evaluated` with the input
+-named. Those two must never look alike, and inference cannot tell them apart.
+-
+-Two fixes fell out of building this:
+-
+-- `attestations` is now a PARTIAL record. `z.record` over an enum key is
+-  exhaustive in zod 4, so a half-ticked form failed to parse — and a half-ticked
+-  form is exactly the state a preflight exists to grade. The check can now
+-  separate an absent key (unfinished) from a key set to `false` (refused).
+-- SVG parsing takes an injected `parseXml`. `@xmldom/xmldom` is banned from the
+-  browser entry's import graph, and a browser has `DOMParser` natively; Node
+-  passes `xmldomParseXml` from the Node entry. A runtime with no parser records
+-  a GAP rather than reporting the SVG as malformed — that limitation is ours,
+-  not the submitter's.
+-
+-`toConformanceReport` now routes by an explicit provider registry.
+-`isClaudeReadinessResult` could not stay a shape test once a second readiness
+-result existed with the identical shape.
+diff --git a/.changeset/openai-readiness-wire-lanes.md b/.changeset/openai-readiness-wire-lanes.md
+deleted file mode 100644
+index b4868a4d3..000000000
+--- a/.changeset/openai-readiness-wire-lanes.md
++++ /dev/null
+@@ -1,37 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-Wire the OpenAI endpoint, authorization, annotation and domain-verification
+-lanes, and extract the publisher-neutral discovery core.
+-
+-`sdk/src/directory-readiness/discovery.ts` now holds everything about getting
+-evidence off the wire that does not depend on whose directory is being graded:
+-the bounded body read, the SSE-aware JSON fetch, the hop-by-hop redirect trace,
+-and Protected Resource Metadata discovery with its same-origin refusal of an
+-attacker-controlled `resource_metadata` pointer. Each of those has a failure mode
+-that is invisible until it bites, and each was found once already — a second copy
+-would eventually get one of them wrong in a way that looked fine.
+-`claude-readiness/discovery.ts` keeps every exported name and delegates.
+-
+-The OpenAI checks are the ones OpenAI's own docs make different:
+-
+-- **Every advertised authorization server is fetched**, not just the first.
+-  Anthropic's client uses `authorization_servers[0]` and Claude's runner stops
+-  there deliberately; ChatGPT documents multiple issuers, so a runner that looked
+-  at one would report a multi-issuer server as healthy on the strength of an
+-  entry the host may never pick.
+-- **RFC 9207 `iss`** is `required` once there is more than one issuer and merely
+-  informational with one — with a single issuer it is not load-bearing, and
+-  failing on it would be inventing a requirement.
+-- `_meta["mcp/www_authenticate"]`, Client ID Metadata Documents as an
+-  alternative to dynamic registration, and issuers offering no
+-  authorization-code grant at all.
+-- Annotation hints are graded on PRESENCE. A missing hint is not "assumed safe",
+-  it is unreviewable. Whether a declaration is HONEST is a heuristic in
+-  experience-insights, where it can never fail a lane — a tool name is not a
+-  specification.
+-- Domain verification checks that the well-known path responds and that the body
+-  matches the declared token, with `declared` provenance and no token value
+-  recorded in the finding. With no declared token it is `not-evaluated`, never a
+-  pass on the strength of "something answered".
+diff --git a/.changeset/registry-directory-detail-dialog.md b/.changeset/registry-directory-detail-dialog.md
+deleted file mode 100644
+index fcd02d160..000000000
+--- a/.changeset/registry-directory-detail-dialog.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
--"@mcpjam/inspector": patch
-----
--
--Update Electron 37.10.3 -> 43.4.0, clearing all 31 open Electron security advisories (7 high, 18 medium, 6 low). 43 is the current stable line; the minimum fix version (39.8.10) is already outside Electron's support window.
-diff --git a/.changeset/eval-role-matrix-capabilities.md b/.changeset/eval-role-matrix-capabilities.md
-deleted file mode 100644
-index 0fa430d97..000000000
---- a/.changeset/eval-role-matrix-capabilities.md
-+++ /dev/null
-@@ -1,36 +0,0 @@
-----
--"@mcpjam/sdk": minor
 -"@mcpjam/inspector": minor
 ----
 -
--Publish the eval role-permission matrix as capabilities, and gate suite and
--run deletion on it.
--
--`GET /v1/projects/:projectId/capabilities` gains six eval keys: `readEvals`,
--`writeEvalSuites`, `launchEvalRun`, `deleteAnyEvalSuite`, `deleteAnyEvalRun`
--and `exportEvalTraces`.
--
--They are NOT derived like the swarm keys beside them, and the difference is
--the point. Swarm writes rank the organization role alone (`requireProjectRole`),
--so a guest holding a project grant cannot author one. Eval writes resolve
--project ACCESS, where the grant counts — so reporting org membership for both
--would deny a grant-holding guest eval capabilities they actually hold. The
--eval edit tier is satisfied by anyone whose access resolves, which is the same
--condition under which this endpoint answers rather than 404s.
--
--`deleteAnyEvalSuite` and `deleteAnyEvalRun` carry "any" in the name on purpose.
--Deleting someone else's suite takes the project admin tier, but the creator of
--a suite may always delete it whatever their role — the escape hatch that lets
--an interrupted import roll back the suite it just wrote. A key named
--`deleteEvalSuite` reading `false` would tell an ordinary member they cannot
--delete the suite they just made.
--
--The eval tab now applies that same rule instead of assuming it. Suite deletion
--was pinned to `true` for every caller, which left the whole question to a
--mutation the user reached by clicking Delete and watching it fail; run deletion
--was pinned to member-management rights, which hid deletion of your own runs.
--Both are now per-row — the manage tier, or authorship of that particular suite
--or run — so the suite switcher offers delete on the rows a caller can act on
--and not the others. Batch run deletion stays visible but disables while the
--selection holds a run started by someone else, with the count in the tooltip,
--rather than silently deleting the subset it is allowed to.
-diff --git a/.changeset/github-checks-outage-policy-ui.md b/.changeset/github-checks-outage-policy-ui.md
+-Registry: clicking a Claude-directory card now opens a detail dialog showing the full upstream listing — long description, published tool and prompt names, publisher and links, categories, access notes (permissions, sensitive data, required fields), and the endpoint it connects to. The body is fetched per card from the catalog's stored upstream row (`getCatalogServer` with `includeRaw`), so the list itself stays blob-free.
+diff --git a/.changeset/registry-feature-constant-on.md b/.changeset/registry-feature-constant-on.md
 deleted file mode 100644
-index d7e3d8f0c..000000000
---- a/.changeset/github-checks-outage-policy-ui.md
+index 714f88ded..000000000
+--- a/.changeset/registry-feature-constant-on.md
 +++ /dev/null
-@@ -1,42 +0,0 @@
+@@ -1,33 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Ask for a GitHub check's outage policy when a repository is connected, and
--connect through the server-verified action.
+-Let the Registry tab load data: `REGISTRY_FEATURE_ENABLED` is now `true`.
 -
--Connecting now goes to `github/checkRepoConfigsNode:connectVerifiedRepo`, which
--proves the pinned installation can actually reach the repository before any
--config row is written and stamps the installation id server-side. Both connect
--surfaces — Settings → Integrations → GitHub and the suite's own "run this on
--every pull request" section — use it, so nothing in Inspector calls the
--unverified `github/checkRepoConfigs:connectRepo` mutation any more and it can be
--removed in the follow-up backend deploy. The client never names an installation
--id: which installation can reach a repository is a server-side fact, and a
--client that could name one is a client that could name the wrong one.
+-The tab has two independent gates. The PostHog `registry-enabled` flag decides
+-who can reach the route; a build-time constant in `useRegistryServers` decided
+-whether the data layer did anything at all. With the constant `false` the hooks
+-were fully inert — empty arrays, no fetches, no-op mutations — so a user who had
+-the flag turned on reached `/registry` and was told "No servers available" by a
+-screen that had never asked.
 -
--The outage policy is now an explicit onboarding choice rather than an assumed
--default. Neither value is preselected and Connect stays disabled until
--repository, suite and policy are all chosen, because a preselected policy
--records a decision nobody made. Both options are described before the choice:
--fail open reports the check as neutral during an MCPJam outage or pause, fail
--closed reports it as failed. Neither description promises a merge outcome —
--MCPJam decides the check's conclusion, and whether a failed or neutral check
--blocks merging is the repository's branch-protection setting, which MCPJam can
--neither read nor set.
+-The constant existed for a real reason: the flag gates the route, not the data,
+-so an internal user with the flag on mounted the tab and fired requests at a
+-backend that wasn't ready, producing visible errors. Its comment named the exit
+-condition — flip once the registry backend is ready for real use — and that
+-condition is now met. The curated registry is seeded, and the Claude connectors
+-directory carries ~2,000 rows synced daily, with search over names, descriptions
+-and tool names.
 -
--Connected rows gain a policy control and keep the distinction visible. A row
--connected before the policy existed shows "Policy not chosen" and says that it
--effectively fails open, rather than rendering `fail_open` as though it had been
--selected — those two rows behave identically today and are not the same thing.
--Choosing a value on such a row records it. The control is disabled while its
--write is in flight and a duplicate change is dropped until it settles, tracked
--separately from the enable toggle so one control never freezes the other.
+-Nothing else changes. The PostHog flag is untouched and still decides the
+-audience, which today is internal users only. Both halves of the tab share this
+-one constant, so they light up together rather than leaving a directory querying
+-beside a dark curated catalog.
 -
--Rows also show live repository visibility, joined case-insensitively to the
--installation listing. Only an explicit `private` boolean produces a badge:
--a repository GitHub returned without the flag, one absent from the current
--listing, a listing still loading and a listing that failed all render no badge
--at all, because none of them is evidence that a repository is public.
--Visibility is never persisted — it can change under a connected repository at
--any time — and a connected repository missing from the listing keeps its row.
-diff --git a/.changeset/github-checks-refusal-copy.md b/.changeset/github-checks-refusal-copy.md
+-The constant should not survive long. It duplicates a control that is better at
+-the job — `registry-enabled` is per-user and needs no deploy, while this needs a
+-build to move, so a real emergency reaches for the flag every time — and it is
+-what currently forces two `useRegistryServers` suites to `describe.skip`.
+-Removing it means deleting the `enabled` plumbing in both hooks and un-skipping
+-those suites, which is a small refactor deliberately kept out of this change so
+-that reverting "turn it on" never means reverting the refactor too.
+diff --git a/.changeset/sdk-ephemeral-computer-kind.md b/.changeset/sdk-ephemeral-computer-kind.md
 deleted file mode 100644
-index 804ac8aa2..000000000
---- a/.changeset/github-checks-refusal-copy.md
+index 7e6621d86..000000000
+--- a/.changeset/sdk-ephemeral-computer-kind.md
 +++ /dev/null
-@@ -1,21 +0,0 @@
+@@ -1,20 +0,0 @@
 ----
--"@mcpjam/inspector": patch
-----
--
--Show the GitHub Checks settings refusal the backend actually wrote, instead of
--`Server Error`.
--
--Convex masks a plain thrown error as `Server Error` plus a request id before it
--reaches a browser; only a `ConvexError` arrives intact, carrying its message as
--a payload on `data`. Both connect surfaces read `error.message`, so every
--carefully-worded refusal on this page — the repository is not reachable by the
--App, GitHub is down right now, that repository is already connected, this
--organization is at its limit — reached administrators as `Server Error`.
--
--Less visibly, the availability branch matched on the message text, so with a
--masked message it never fired and the page could not substitute its own copy.
--
--Both surfaces now shape write errors through one helper that reads `data` first
--and falls back to a de-prefixed `message`, which keeps plain throws from a dev
--deployment readable. Requires the backend change that throws these refusals as
--`ConvexError`s (mcpjam-backend #1028).
-diff --git a/.changeset/mcpjam-yaml-declared-env.md b/.changeset/mcpjam-yaml-declared-env.md
-deleted file mode 100644
-index 8631374d4..000000000
---- a/.changeset/mcpjam-yaml-declared-env.md
-+++ /dev/null
-@@ -1,52 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Let a repository declare a build/start environment in `mcpjam.yaml`, and inject
--it into GitHub PR checks through E2B's `envs` command option.
--
--`checks.env` is a bounded map of `NAME: value` pairs — at most 20 entries, keys
--of at most 64 characters matching `^[A-Z][A-Z0-9_]*$`, values of at most 1,024
--characters. The bounds mirror the backend's, which already accepts and persists
--the field. Anything outside them is **rejected, never truncated or coerced**: a
--shortened value, or an unquoted `8080` silently read as `"8080"`, is a different
--configuration from the one the author committed, and a check that started a
--server with it would report a verdict about something nobody wrote. A value that
--is not a string, a map that is a list or a scalar, and an unknown sibling key
--under `checks:` all fail the file — which, at an authoritative rung, means the
--check fails honestly rather than falling through to a heuristic guess. An empty
--`env: {}` normalizes to no environment at all, so it has the same runtime
--behaviour and the same wire shape as omitting the field.
--
--**These are non-secret configuration literals. Do not put credentials in
--`mcpjam.yaml`.** The map comes out of a file committed to the repository —
--readable by anyone who can read the repo — and it is persisted verbatim in
--durable backend plan rows. Nothing redacts it and nothing expires it. It is for
--the flags a server needs in order to boot, and for nothing that would matter if
--it were printed in public. The GitHub-checks clone token is the counter-example
--of how a secret is handled here: minted per check, carried on a single
--command-line git header, redacted out of every observable failure, and never an
--environment variable.
--
--Only an authoritative rung produces one. `mcpjam.yaml` is the only real producer
--(the operator override table is empty on purpose), detection never invents an
--environment, and the backend refuses `env` on a cacheable `detected` or
--`agentic` recipe — so a cached recipe stays env-free. The Inspector reports the
--declared map to the plan, and executes back whatever the plan issues: the
--backend still owns candidate ordering and selection.
--
--Injection happens at exactly two commands, the build and the background start,
--as E2B's `commands.run(..., { envs })` option. Nothing is ever written into a
--command string — no `export`, no assignment, no shell interpolation — so the
--build and start scripts stay byte-identical with and without an environment, and
--author-controlled values never enter a `bash -lc` quoting boundary or the
--command text that failure diagnostics quote into a check summary. Provisioning,
--clone and fetch, checkout and sha verification, `/proc` listener inspection,
--health probes, and the log tail all receive nothing. On a recipe with no
--environment the `envs` key is omitted entirely rather than passed as `undefined`
--or `{}`.
--
--Error messages name `checks.env` or `checks.env.<key>` and the limit that was
--violated. Keys are echoed, because the author needs to see which one is wrong,
--and are length-clamped through the same formatter every other echoed key uses.
--Values are never echoed.
-diff --git a/.changeset/releases-2026-08-19.md b/.changeset/releases-2026-08-19.md
-deleted file mode 100644
-index 9ce4c51c4..000000000
---- a/.changeset/releases-2026-08-19.md
-+++ /dev/null
-@@ -1,13 +0,0 @@
-----
--"@mcpjam/inspector": minor
--"@mcpjam/cli": minor
 -"@mcpjam/sdk": minor
 ----
 -
--Release the latest Inspector, CLI, and SDK updates.
+-Host config: accept the runtime-minted `ephemeral` computer kind on the canonical side.
 -
--- Model Claude and ChatGPT as dual-era clients — 2025-11-25 and 2026-07-28, probed rather than assumed — and let a host's protocol selection say "negotiate" instead of naming a revision.
--- Author eval cases in batches with declared ids, so an agent converting a repo's test files writes them as one validated call instead of one round trip each.
--- Publish the eval role-permission matrix as project capabilities, and gate suite and run deletion on it per row rather than pinning it for everyone.
--- Make GitHub PR checks answerable: an explicit outage policy chosen at connect, a build/start environment declared in `mcpjam.yaml`, and the backend's actual refusal instead of `Server Error`.
--- Name the user revoking an API key on the audit row, rather than inferring the one who minted it.
-diff --git a/.changeset/toast-theme-from-document.md b/.changeset/toast-theme-from-document.md
-deleted file mode 100644
-index 47e5a9716..000000000
---- a/.changeset/toast-theme-from-document.md
-+++ /dev/null
-@@ -1,24 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
+-`canonicalizeComputer` took a closed union of exactly one value, `"personal"`, and hard-threw on anything else. That made a whole class of platform-minted host config unrepresentable: an eval run pins one box per iteration and boots it from the run's frozen environment image, so the computer attached to that run's pinned host config is a per-run box, not the author's personal cloud workstation. There was no legal shape for it, so the run's snapshot had to drop the field — and a host that asked for a computer (or a harness, which needs one) silently reproduced as a host without one.
 -
--Keep toast text readable for anyone running the app in light mode on a
--dark-mode machine.
+-`kind` is now the closed union `"personal" | "ephemeral"`:
 -
--The Toaster read its theme from `next-themes`, which nothing in the app
--provides. With no provider `useTheme()` fell back to `"system"`, so Sonner
--resolved the operating system's setting instead of the app's: on a dark-mode
--machine viewing the light app it stamped `data-sonner-theme="dark"` and
--coloured the toast description near-white on the white background our own
--tokens supplied. The message was there and unreadable.
+-- `"personal"` — the per-(project, user) cloud workstation. Unchanged.
+-- `"ephemeral"` — a per-run box the platform mints at a snapshot boundary.
 -
--The theme now comes from the `.dark` class the design system already scopes its
--dark tokens under, read through `useSyncExternalStore` with a `MutationObserver`
--on the document element so a theme switch updates a visible toast. Server-side
--and observer-less environments fall back to light rather than throwing.
+-The legacy `toolset` key is accepted-and-dropped for **both** kinds, so `{ kind, toolset: "bash" }` and `{ kind }` remain one identity. The image never rides this field — it comes from the run's frozen environment pin.
 -
--The toast description is also pinned to `var(--foreground)` in CSS. Sonner
--colours that one element from its own theme rather than from the variables it
--is handed, which is what made it the single part of a toast that could come out
--light-on-light — pinning it keeps the text readable even if the two themes drift
--again.
+-`workdir` is canonicalized identically for both kinds. A per-run box takes its working directory from provisioning, so the platform's minting site emits none — but that is a rule about what gets written, enforced there rather than here: canonicalization stays pure content-addressing, and nothing can author an ephemeral computer in the first place.
+-
+-`ephemeral` is **output-only**: it appears on canonical and persisted rows and can come back when you read a snapshot, but it is not authorable. Every authoring input stays personal-only — `HostComputerInput` is now its own personal-only type rather than an alias of the canonical shape, and `HostInit.computer` is typed to it. Treat an ephemeral computer as read-only snapshot data.
+-
+-Hashing is unaffected for existing rows: every pre-existing golden vector canonicalizes to byte-identical JSON with an unchanged sha256. The parity fixture gains two vectors (`computer-ephemeral`, `computer-ephemeral-with-toolset-dropped`) that pin the new bytes, which is what lets the backend prove its own canonicalizer agrees.
 diff --git a/cli/package.json b/cli/package.json
-index 8cc48aaed..f31c7e503 100644
+index 412414bff..466290351 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "3.25.0",
-+  "version": "3.26.0",
+-  "version": "3.27.0",
++  "version": "3.28.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
@@ -431,21 +659,21 @@ index 8cc48aaed..f31c7e503 100644
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^6.0.0",
-+    "@mcpjam/sdk": "^6.1.0",
+-    "@mcpjam/sdk": "^6.2.0",
++    "@mcpjam/sdk": "^6.3.0",
      "@modelcontextprotocol/server": "2.0.0",
      "commander": "^12.1.0",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 9332e9d56..d17d272c4 100644
+index f823349fc..e25e24ba9 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.41.0",
-+  "version": "2.42.0",
+-  "version": "2.43.0",
++  "version": "2.44.0",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
@@ -453,24 +681,24 @@ index 9332e9d56..d17d272c4 100644
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^6.0.0",
-+    "@mcpjam/sdk": "^6.1.0",
+-    "@mcpjam/sdk": "^6.2.0",
++    "@mcpjam/sdk": "^6.3.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 619a474be..cb81860db 100644
+index 78f328271..63d7dfcd6 100644
 --- a/package-lock.json
 +++ b/package-lock.json
 @@ -61,9 +61,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "3.25.0",
-+      "version": "3.26.0",
+-      "version": "3.27.0",
++      "version": "3.28.0",
        "dependencies": {
--        "@mcpjam/sdk": "^6.0.0",
-+        "@mcpjam/sdk": "^6.1.0",
+-        "@mcpjam/sdk": "^6.2.0",
++        "@mcpjam/sdk": "^6.3.0",
          "@modelcontextprotocol/server": "2.0.0",
          "commander": "^12.1.0",
          "posthog-node": "^5.24.10",
@@ -478,8 +706,8 @@ index 619a474be..cb81860db 100644
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.41.0",
-+      "version": "2.42.0",
+-      "version": "2.43.0",
++      "version": "2.44.0",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
@@ -487,8 +715,8 @@ index 619a474be..cb81860db 100644
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^6.0.0",
-+        "@mcpjam/sdk": "^6.1.0",
+-        "@mcpjam/sdk": "^6.2.0",
++        "@mcpjam/sdk": "^6.3.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
@@ -496,20 +724,20 @@ index 619a474be..cb81860db 100644
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "6.0.0",
-+      "version": "6.1.0",
+-      "version": "6.2.0",
++      "version": "6.3.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 7d2905b84..03de0494a 100644
+index 1b4da6f3a..57d2a28e1 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "6.0.0",
-+  "version": "6.1.0",
+-  "version": "6.2.0",
++  "version": "6.3.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

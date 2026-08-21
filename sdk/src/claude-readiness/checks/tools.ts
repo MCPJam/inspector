@@ -26,6 +26,16 @@ import {
   type ClaudeCheckStamp,
 } from "./helpers.js";
 
+/**
+ * The input that closes this module's coverage gap.
+ *
+ * A tool listing is not something a caller "has" — on an OAuth connector it
+ * costs a completed authorization to get one. Naming it lets a surface tell
+ * the submitter to authenticate rather than leaving the run-level summary to
+ * offer whatever unrelated input happened to be declared elsewhere.
+ */
+export const CLAUDE_TOOL_LISTING_INPUT = "toolListing";
+
 const TOOL_NAME_LENGTH: ClaudeCheckDefinition = {
   id: "claude.tools.name-length",
   title: "Tool names fit Claude's 64-character limit",
@@ -241,9 +251,30 @@ function behaviorHints(tool: Tool): {
  * is nothing to grade, and reporting five satisfied requirements over an empty
  * list would be five statements about nothing.
  */
+/**
+ * How the run came by its listing, and whether the listing is the whole one.
+ *
+ * A SECOND ARGUMENT rather than a field on each tool, because completeness is
+ * a property of the LISTING and there is nowhere on an array to put it. The
+ * distinction only became reachable when the gatherer started dialling
+ * `tools/list` itself: a run can now hold five of forty tools, and every check
+ * below is universally quantified over "every tool".
+ */
+export interface ClaudeToolListingCompleteness {
+  /**
+   * `false` only when the run KNOWS the listing is partial. `undefined` means
+   * no claim was made — a caller-supplied listing, which the caller has
+   * already decided about — and is treated as complete.
+   */
+  complete?: boolean;
+  /** Why it is partial, for the gap's own sentence. */
+  error?: string;
+}
+
 export function runClaudeToolChecks(
   tools: Tool[] | undefined,
   stamp: ClaudeCheckStamp,
+  listing?: ClaudeToolListingCompleteness,
 ): ClaudeReadinessFinding[] {
   const definitions = [
     TOOL_NAME_LENGTH,
@@ -262,9 +293,40 @@ export function runClaudeToolChecks(
   // looked at.
   if (!tools) {
     return definitions.map((definition) =>
-      notEvaluated(definition, stamp, "no tool listing was captured for this run"),
+      notEvaluated(
+        definition,
+        stamp,
+        "no tool listing was captured for this run",
+        // NAMING THE INPUT IS WHAT MAKES THE GAP ACTIONABLE. Without it the
+        // run-level summary can only offer inputs some OTHER check declared,
+        // and on an OAuth connector the only one left is `intrusive` — so a
+        // server whose sole problem is "we could not authenticate" got told to
+        // run the one probe that must never be aimed at someone else's
+        // production server.
+        { missingInput: CLAUDE_TOOL_LISTING_INPUT },
+      ),
     );
   }
+  // A PARTIAL LISTING GRADES NOTHING — not even the entries that did arrive.
+  // Every check here is universally quantified ("every tool declares a
+  // title"), and a universal claim over a subset is not a weaker claim, it is
+  // a different one. The tools that arrived stay in the evidence for anyone
+  // who wants to look; what they must not do is earn a pass for the ones that
+  // did not.
+  if (listing?.complete === false) {
+    const why =
+      listing.error ??
+      "the tool listing was truncated before the whole set was read";
+    return definitions.map((definition) =>
+      notEvaluated(
+        definition,
+        stamp,
+        `${why}, so a requirement about every tool cannot be graded`,
+        { missingInput: CLAUDE_TOOL_LISTING_INPUT, toolsRead: tools.length },
+      ),
+    );
+  }
+
   if (tools.length === 0) {
     return definitions.map((definition) =>
       notApplicable(

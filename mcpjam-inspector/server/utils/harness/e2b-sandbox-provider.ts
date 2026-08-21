@@ -74,6 +74,24 @@ function enforceHarnessWritePath(path: string): void {
   }
 }
 
+/**
+ * Pass a caller's `abortSignal` down to E2B, omitting the key when there is
+ * none.
+ *
+ * Worth being precise about what this buys, because the sandbox contract
+ * promises more than the vendor delivers: E2B's `signal` cancels the in-flight
+ * REQUEST, so an aborted call rejects promptly instead of waiting out
+ * `commandTimeoutMs` — which for the harness bootstrap is ten minutes of a dead
+ * turn holding a box. It does not guarantee the process inside the box dies.
+ * That is the difference between a turn that ends when the user cancels it and
+ * one that appears to hang, so it is the part worth having; a box-side kill
+ * would need spawn/kill plumbing on every exec path and buys nothing while the
+ * box itself is short-lived or about to be reclaimed.
+ */
+function signalOpt(signal?: AbortSignal): { signal?: AbortSignal } {
+  return signal ? { signal } : {};
+}
+
 /** E2B throws `FileNotFoundError` for a missing path; the SandboxSession
  *  contract wants `null` there, but real failures (transport / permission /
  *  sandbox-gone) must propagate rather than masquerade as "file absent". */
@@ -142,27 +160,52 @@ export function createE2BHarnessSandboxProvider(
   // On resume the Claude Code adapter rehydrates its thread from the workdir
   // (which persists on the box) using the `resumeFrom` state; our provider just
   // has to supply the sandbox connection.
-  const connectSession = async (): Promise<HarnessV1NetworkSandboxSession> => {
+  const connectSession = async (
+    connectSignal?: AbortSignal
+  ): Promise<HarnessV1NetworkSandboxSession> => {
     // Reuse the host's existing computer. It must already be awake — the
     // caller wakes it via the control plane (`ensureComputerReady`) before
     // resolving the sandboxId. We never create or kill a box here.
     const sandbox = await Sandbox.connect(opts.sandboxId, {
       apiKey: opts.apiKey,
       timeoutMs: opts.connectTimeoutMs,
+      ...(connectSignal ? { signal: connectSignal } : {}),
     });
 
     // Mutated in place by setPorts so `session.ports` (same ref) stays live.
     const ports: number[] = [bridgePort];
 
-    // The @ai-sdk/harness-claude-code bootstrap shells `pnpm install` BEFORE
-    // any session hook runs. pnpm is baked into the computer template
-    // (mcpjam-backend templates/computer/e2b.Dockerfile); this idempotent
-    // guard is a stopgap for boxes provisioned before that template rebuild
-    // lands, and no-ops once pnpm is present. We do not own the box, so a
-    // failure here propagates (the control plane still owns teardown).
-    await sandbox.commands.run("command -v pnpm || npm install -g pnpm", {
-      timeoutMs: commandTimeoutMs,
-    });
+    // The harness bootstrap shells `pnpm install` BEFORE any session hook runs.
+    // pnpm is baked into the computer template (mcpjam-backend
+    // templates/computer/e2b.Dockerfile); this idempotent guard covers boxes
+    // provisioned before that template rebuild lands, and no-ops once pnpm is
+    // present. We do not own the box, so a failure here propagates (the control
+    // plane still owns teardown).
+    //
+    // Where it runs matters: on the harness path this is reached during PREWARM,
+    // while the box still has ordinary egress. Reached after a lease has locked
+    // the box down, the `npm install` fallback cannot see the registry and
+    // spends a minute of retries before failing — which is why the failure is
+    // spelled out below rather than surfacing as E2B's bare "exit status 1".
+    try {
+      await sandbox.commands.run("command -v pnpm || npm install -g pnpm", {
+        timeoutMs: commandTimeoutMs,
+        ...(connectSignal ? { signal: connectSignal } : {}),
+      });
+    } catch (err) {
+      if (err instanceof CommandExitError) {
+        const output = (err.stderr || err.stdout || "").trim();
+        throw new Error(
+          `pnpm is missing on sandbox ${opts.sandboxId} and installing it failed ` +
+            `(exit ${err.exitCode}). If the box's egress is already locked to the ` +
+            `model proxy, the package registry is unreachable by design — the ` +
+            `harness runtime must be installed before that lock. Output: ` +
+            (output ? output.slice(-500) : "(none)"),
+          { cause: err }
+        );
+      }
+      throw err;
+    }
 
     const session: HarnessV1NetworkSandboxSession = {
       id: sandbox.sandboxId,
@@ -174,49 +217,65 @@ export function createE2BHarnessSandboxProvider(
         )}.`,
 
       // ── file I/O ──────────────────────────────────────────────────────
-      readTextFile: async ({ path }) => {
+      readTextFile: async ({ path, abortSignal }) => {
         try {
-          return await sandbox.files.read(path);
+          return await sandbox.files.read(path, signalOpt(abortSignal));
         } catch (err) {
           return nullIfMissing(err); // null only for a genuinely missing file
         }
       },
-      readBinaryFile: async ({ path }) => {
+      readBinaryFile: async ({ path, abortSignal }) => {
         try {
-          return await sandbox.files.read(path, { format: "bytes" });
+          return await sandbox.files.read(path, {
+            format: "bytes",
+            ...signalOpt(abortSignal),
+          });
         } catch (err) {
           return nullIfMissing(err);
         }
       },
-      readFile: async ({ path }) => {
+      readFile: async ({ path, abortSignal }) => {
         try {
-          const bytes = await sandbox.files.read(path, { format: "bytes" });
+          const bytes = await sandbox.files.read(path, {
+            format: "bytes",
+            ...signalOpt(abortSignal),
+          });
           return bytesToStream(bytes);
         } catch (err) {
           return nullIfMissing(err);
         }
       },
-      writeTextFile: async ({ path, content }) => {
+      writeTextFile: async ({ path, content, abortSignal }) => {
         enforceHarnessWritePath(path);
-        await sandbox.files.write([{ path, data: content }]);
+        await sandbox.files.write(
+          [{ path, data: content }],
+          signalOpt(abortSignal)
+        );
       },
-      writeBinaryFile: async ({ path, content }) => {
+      writeBinaryFile: async ({ path, content, abortSignal }) => {
         enforceHarnessWritePath(path);
-        await sandbox.files.write([{ path, data: u8ToArrayBuffer(content) }]);
+        await sandbox.files.write(
+          [{ path, data: u8ToArrayBuffer(content) }],
+          signalOpt(abortSignal)
+        );
       },
-      writeFile: async ({ path, content }) => {
+      writeFile: async ({ path, content, abortSignal }) => {
         enforceHarnessWritePath(path);
         const bytes = await streamToBytes(content);
-        await sandbox.files.write([{ path, data: u8ToArrayBuffer(bytes) }]);
+        await sandbox.files.write(
+          [{ path, data: u8ToArrayBuffer(bytes) }],
+          signalOpt(abortSignal)
+        );
       },
 
       // ── exec ──────────────────────────────────────────────────────────
-      run: async ({ command, workingDirectory, env }) => {
+      run: async ({ command, workingDirectory, env, abortSignal }) => {
         try {
           const res = await sandbox.commands.run(command, {
             cwd: workingDirectory ?? cwd,
             envs: env,
             timeoutMs: commandTimeoutMs,
+            ...signalOpt(abortSignal),
           });
           return {
             exitCode: res.exitCode,
@@ -238,7 +297,7 @@ export function createE2BHarnessSandboxProvider(
       },
 
       // ── spawn (long-lived; adapt E2B callbacks → ReadableStreams) ──────
-      spawn: async ({ command, workingDirectory, env }) => {
+      spawn: async ({ command, workingDirectory, env, abortSignal }) => {
         let outCtl!: ReadableStreamDefaultController<Uint8Array>;
         let errCtl!: ReadableStreamDefaultController<Uint8Array>;
         let streamsClosed = false;
@@ -266,6 +325,7 @@ export function createE2BHarnessSandboxProvider(
           background: true,
           cwd: workingDirectory ?? cwd,
           envs: env,
+          ...signalOpt(abortSignal),
           // Guard against enqueue-after-close once the process ends/is killed.
           onStdout: (d: string) => {
             if (!streamsClosed) outCtl.enqueue(enc.encode(d));
@@ -343,7 +403,13 @@ export function createE2BHarnessSandboxProvider(
     // Single-port pool — the bridge leases this one port.
     bridgePorts: [bridgePort],
 
-    createSession: () => connectSession(),
+    // `identity` and `onFirstCreate` are deliberately unused: they exist for
+    // providers that CREATE and snapshot boxes, and this one only ever attaches
+    // to a box the control plane already owns. The framework applies its own
+    // idempotent bootstrap after attaching, which is the path that matters here.
+    // `abortSignal` IS honored, so a cancelled turn stops waiting on the box
+    // instead of holding it until the command timeout.
+    createSession: (options) => connectSession(options?.abortSignal),
 
     // Reattach for multi-turn continuity. The harness only invokes this when a
     // turn passes `resumeFrom`; presence of this method is the capability the
@@ -351,6 +417,6 @@ export function createE2BHarnessSandboxProvider(
     // otherwise). We ignore the harness `sessionId` — the box is the project's
     // single computer resolved per-turn via the control plane — and reconnect;
     // the Claude Code adapter restores the thread from the workdir.
-    resumeSession: () => connectSession(),
+    resumeSession: (options) => connectSession(options?.abortSignal),
   };
 }

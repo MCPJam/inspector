@@ -53,6 +53,7 @@ export type {
 } from "./manifest.js";
 
 export {
+  CLAUDE_GATED_INPUTS,
   CLAUDE_READINESS_INPUTS,
   gradeClaudeReadiness,
 } from "./runner.js";
@@ -75,6 +76,7 @@ export type {
 } from "./intrusive.js";
 
 export {
+  CLAUDE_APPS_RESULT_INPUT,
   claudeAppContentDomain,
   claudeAppResourceEvidenceFrom,
   claudeAppToolEvidenceFrom,
@@ -86,7 +88,9 @@ export type {
   ClaudeAppsEvidence,
 } from "./checks/apps.js";
 export {
+  CLAUDE_AUTHORIZATION_REQUESTS_INPUT,
   canonicalResourceIndicator,
+  resourceIndicatorsFrom,
   runClaudeAuthChecks,
 } from "./checks/auth.js";
 export type {
@@ -104,7 +108,10 @@ export {
   runClaudeSubmissionChecks,
 } from "./checks/submission.js";
 export type { ClaudeSubmissionEvidence } from "./checks/submission.js";
-export { runClaudeToolChecks } from "./checks/tools.js";
+export {
+  CLAUDE_TOOL_LISTING_INPUT,
+  runClaudeToolChecks,
+} from "./checks/tools.js";
 export { runClaudeEndpointChecks } from "./checks/endpoint.js";
 export type {
   ClaudeEndpointEvidence,
@@ -149,3 +156,30 @@ export {
   CLAUDE_LOOPBACK_REDIRECT_IGNORES_PORT,
   CLAUDE_SUBMISSION_LIMITS,
 } from "./profile.js";
+
+export {
+  CLAUDE_OBSERVATION_CATALOG,
+  CLAUDE_OBSERVATION_IDS,
+  CLAUDE_OBSERVATION_KINDS,
+  CLAUDE_OBSERVATION_SCHEMA,
+  CLAUDE_OBSERVATION_SCHEMA_VERSION,
+  mapClaudeObservationsToFindings,
+  parseClaudeExperienceObservations,
+} from "./observations.js";
+export type {
+  ClaudeExperienceObservations,
+  ClaudeObservationId,
+  ClaudeObservationKind,
+  ClaudeObservationState,
+} from "./observations.js";
+
+export {
+  CLAUDE_APPS_EVIDENCE_KIND,
+  adaptAppsResultToClaudeEvidence,
+} from "./evidence-adapters.js";
+export type {
+  AdaptAppsResultToClaudeOptions,
+  AdaptableAppsConformanceResult,
+} from "./evidence-adapters.js";
+
+export type { ClaudeToolListingCompleteness } from "./checks/tools.js";

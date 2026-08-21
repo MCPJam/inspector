@@ -113,6 +113,14 @@ const PLAIN_TOOLS = [
   "read_server_resource",
   // Host-compat check: agent-oriented per-host verdict payload, no widget view.
   "check_host_compatibility",
+  // Directory readiness: receipts and run rows are agent-oriented payloads,
+  // and a report is a document to read rather than a card to render.
+  "start_claude_readiness_run",
+  "start_openai_readiness_run",
+  "get_readiness_run",
+  "list_readiness_runs",
+  "cancel_readiness_run",
+  "get_readiness_report",
   "run_eval_case",
   "run_eval_suite",
   "create_eval_suite",
@@ -254,6 +262,35 @@ describe("platform tool registration", () => {
     }
   });
 
+  it("warns that a spend operation costs money, derived from its risk facet", () => {
+    // MCP has no "this costs money" annotation, so the honest place for it is
+    // the description every client renders. Derived from the operation's own
+    // `risk`, never a second name list here: that list would go stale the
+    // first time an operation is re-classified, silently and in the direction
+    // that drops the warning.
+    const { registrar, registrations } = fakeRegistrar();
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
+    const byName = new Map(
+      registrations.map((registration) => [registration.name, registration])
+    );
+    for (const operation of PLATFORM_CATALOG_OPERATIONS) {
+      const description = String(byName.get(operation.name)?.config.description);
+      expect(description.includes("COSTS MONEY")).toBe(
+        operation.risk === "spend"
+      );
+    }
+    // The two eval launches are the ones this exists for.
+    expect(String(byName.get("run_eval_suite")?.config.description)).toContain(
+      "COSTS MONEY"
+    );
+    expect(String(byName.get("list_eval_suites")?.config.description)).not.toContain(
+      "COSTS MONEY"
+    );
+  });
+
   it("registers show_servers with the MCP Apps UI resource", () => {
     const { registrar, registrations } = fakeRegistrar();
 
@@ -297,6 +334,12 @@ describe("platform tool registration", () => {
       "list_server_resources",
       "read_server_resource",
       "check_host_compatibility",
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "get_readiness_run",
+      "list_readiness_runs",
+      "cancel_readiness_run",
+      "get_readiness_report",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_case",
@@ -427,6 +470,11 @@ describe("platform tool registration", () => {
     );
 
     const NON_DESTRUCTIVE_WRITES = new Set([
+      // Starting dials a third party's server and can spend; cancelling stops
+      // one. Neither destroys a record, so both annotate as plain writes.
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "cancel_readiness_run",
       "run_eval_case",
       "run_eval_suite",
       "create_eval_suite",

@@ -59,6 +59,12 @@ import {
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getCapabilitiesOperation,
@@ -115,6 +121,12 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getServerPromptOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,
@@ -308,6 +320,10 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   get_project_environment: "Environments have their own tab.",
   resolve_project_environment: "Resolution detail with no chat-facing use.",
   create_project_environment: "Environment authoring has its own editor.",
+  ensure_adhoc_environment:
+    "Environment authoring has its own editor, and the composer is where a workspace user assembles a stack. The RUN path already carries it: run_eval_suite takes a `compose` object and ensures the environment itself.",
+  name_environment:
+    "Promoting a composed environment into the project's permanent list is an editor action, and the composer offers it in place.",
   update_project_environment: "Environment authoring has its own editor.",
   archive_project_environment: "Environment lifecycle has its own controls.",
   restore_project_environment: "Environment lifecycle has its own controls.",
@@ -347,11 +363,11 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
 };
 
 const OPERATIONS_BY_ID = new Map(
-  WORKSPACE_OPERATIONS.map((operation) => [operation.name, operation])
+  WORKSPACE_OPERATIONS.map((operation) => [operation.name, operation]),
 );
 
 export const MCPJAM_TOOL_IDS: ReadonlyArray<string> = WORKSPACE_OPERATIONS.map(
-  (operation) => operation.name
+  (operation) => operation.name,
 );
 
 export function isMcpjamToolId(id: string): boolean {
@@ -382,6 +398,12 @@ const APPROVAL_REQUIRED_IDS = new Set([
   // useful if you can ask for them — but the spend is the user's to approve,
   // so it sits here with `cancel_eval_run` rather than executing on request.
   requestEvalRunJudgeOperation.name,
+  // Dials a third party's server for minutes and, with the opt-in, spends the
+  // organization's credits. Reading grades is only useful if you can ask for
+  // one, so these are advertised rather than excluded — but the asking is the
+  // user's to approve. Cancelling is NOT here: it stops that traffic.
+  startClaudeReadinessRunOperation.name,
+  startOpenAIReadinessRunOperation.name,
   createProjectServerOperation.name,
   updateProjectServerOperation.name,
   deleteProjectServerOperation.name,
@@ -422,7 +444,7 @@ const AMBIENT_PROJECT_NOTE =
 type WorkspaceInputClamp = {
   descriptionNote: string;
   transform: (
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
   ) => Record<string, unknown> | { error: string };
 };
 
@@ -517,7 +539,7 @@ export function capForModel(value: unknown): unknown {
 /** Map a thrown error to the `{ error }` envelope, preferring its message. */
 export function toToolError(
   error: unknown,
-  fallback: string
+  fallback: string,
 ): { error: string } {
   const message =
     error instanceof Error && error.message.trim() ? error.message : "";
@@ -530,7 +552,7 @@ export function toToolError(
  */
 export function buildMcpjamTool(
   id: string,
-  opts: McpjamToolOptions
+  opts: McpjamToolOptions,
 ): ToolSet[string] | null {
   const operation = OPERATIONS_BY_ID.get(id);
   if (!operation) return null;

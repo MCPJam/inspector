@@ -17,11 +17,54 @@
  * "did not run" must never read as "conformed" — is the ancestor of the
  * `incomplete` status here.
  *
+ * WHERE THE ALGEBRA LIVES. Everything below that is not specific to Anthropic
+ * — what a finding is, how a lane decides, how coverage is tallied, how a
+ * capability gate downgrades a verdict — now comes from
+ * `../directory-readiness/`, which the OpenAI plugin-directory product shares.
+ * The names, signatures and shapes exported here are UNCHANGED: this module is
+ * the Anthropic-flavoured face of that algebra, and every alias below is
+ * structurally identical to the interface it replaced, so no consumer and no
+ * test had to move.
+ *
  * Pure data: no MCP client, no transport, no Node built-ins. Safe from the
  * browser entry.
  */
 
+import {
+  DIRECTORY_EVIDENCE_PROVENANCE,
+  DIRECTORY_FINDING_CLASSES,
+  DIRECTORY_INTRUSIVENESS_LEVELS,
+  isDispositiveDirectoryFinding,
+  rollUpLaneStatus as rollUpDirectoryLaneStatus,
+  type DirectoryCapabilityBadge,
+  type DirectoryEvidenceProvenance,
+  type DirectoryFindingClass,
+  type DirectoryFindingStatus,
+  type DirectoryIntrusiveness,
+  type DirectoryLaneCoverage,
+  type DirectoryLaneStatus,
+  type DirectoryReadinessFinding,
+  type DirectoryReadinessLaneResult,
+} from "../directory-readiness/types.js";
+
+import type { DirectoryObservationState } from "../directory-readiness/observations.js";
+// TYPE-ONLY, and that is what makes it safe: `observations.ts` imports this
+// module, so a value import would be a cycle. Erasing at compile time, the
+// narrowing survives and the cycle does not exist at runtime. Without it the
+// public result widens both parameters to `string` and a consumer cannot
+// switch exhaustively over an observation id.
+import type {
+  ClaudeObservationId,
+  ClaudeObservationKind,
+} from "./observations.js";
+
 import type { ClaudePolicySourceRef } from "./manifest.js";
+
+export {
+  decideLaneStatus,
+  enforceCapabilityGate,
+  summarizeLaneCoverage,
+} from "../directory-readiness/types.js";
 
 /**
  * The engine that produced a finding, stamped onto every one of them.
@@ -70,16 +113,9 @@ export type ClaudeReadinessLane = (typeof CLAUDE_READINESS_LANES)[number];
  *   - `heuristic` — a signal, not a verdict. Belongs to experience-insights
  *     and may be confirmed by an LLM or a person; never fails a lane.
  */
-export const CLAUDE_FINDING_CLASSES = [
-  "required",
-  "runtime-blocker",
-  "recommended",
-  "experimental-feature",
-  "manual-review",
-  "heuristic",
-] as const;
+export const CLAUDE_FINDING_CLASSES = DIRECTORY_FINDING_CLASSES;
 
-export type ClaudeFindingClass = (typeof CLAUDE_FINDING_CLASSES)[number];
+export type ClaudeFindingClass = DirectoryFindingClass;
 
 /**
  * The status of a lane whose findings are dispositive.
@@ -93,7 +129,7 @@ export type ClaudeFindingClass = (typeof CLAUDE_FINDING_CLASSES)[number];
  * a screenshot, and reporting `ready` for a lane it could not evaluate would
  * be the single most damaging thing this product could do.
  */
-export type ClaudeLaneStatus = "ready" | "not-ready" | "incomplete";
+export type ClaudeLaneStatus = DirectoryLaneStatus;
 
 /**
  * How a finding was established. A grade that cannot say where its evidence
@@ -107,16 +143,9 @@ export type ClaudeLaneStatus = "ready" | "not-ready" | "incomplete";
  *     independently verified by this run.
  *   - `manual` — recorded by a person.
  */
-export const CLAUDE_EVIDENCE_PROVENANCE = [
-  "wire",
-  "browser",
-  "static",
-  "declared",
-  "manual",
-] as const;
+export const CLAUDE_EVIDENCE_PROVENANCE = DIRECTORY_EVIDENCE_PROVENANCE;
 
-export type ClaudeEvidenceProvenance =
-  (typeof CLAUDE_EVIDENCE_PROVENANCE)[number];
+export type ClaudeEvidenceProvenance = DirectoryEvidenceProvenance;
 
 /**
  * How much a check DOES to the target.
@@ -126,13 +155,9 @@ export type ClaudeEvidenceProvenance =
  *   - `side-effecting` — registers a client, spends a grant, mutates state.
  *     Only ever reached through the explicit intrusive opt-in.
  */
-export const CLAUDE_INTRUSIVENESS_LEVELS = [
-  "passive",
-  "read-only",
-  "side-effecting",
-] as const;
+export const CLAUDE_INTRUSIVENESS_LEVELS = DIRECTORY_INTRUSIVENESS_LEVELS;
 
-export type ClaudeIntrusiveness = (typeof CLAUDE_INTRUSIVENESS_LEVELS)[number];
+export type ClaudeIntrusiveness = DirectoryIntrusiveness;
 
 /**
  * How the run authenticated. Recorded on the run so `incomplete` explains
@@ -166,15 +191,11 @@ export const CLAUDE_RUNNER_CAPABILITIES = [
   "intrusive-probes",
 ] as const;
 
-export type ClaudeRunnerCapability = (typeof CLAUDE_RUNNER_CAPABILITIES)[number];
+export type ClaudeRunnerCapability =
+  (typeof CLAUDE_RUNNER_CAPABILITIES)[number];
 
 /** A finding's verdict. `informational` carries no pass/fail meaning at all. */
-export type ClaudeFindingStatus =
-  | "satisfied"
-  | "violated"
-  | "not-evaluated"
-  | "not-applicable"
-  | "informational";
+export type ClaudeFindingStatus = DirectoryFindingStatus;
 
 /**
  * One graded statement about the target.
@@ -183,45 +204,11 @@ export type ClaudeFindingStatus =
  * time: Anthropic's docs change, and a grade that cannot say WHICH revision it
  * was made against becomes silently wrong rather than visibly stale.
  */
-export interface ClaudeReadinessFinding {
-  /**
-   * Stable identifier, shipped WITH its check. There is deliberately no frozen
-   * union of ids for checks that do not exist yet: publishing one would make
-   * the inventory look complete while the coverage was not, which is the same
-   * lie `incomplete` exists to prevent.
-   */
-  id: string;
-  title: string;
-  lane: ClaudeReadinessLane;
-  class: ClaudeFindingClass;
-  status: ClaudeFindingStatus;
-  /** One sentence a submitter can act on. Absent for `satisfied`. */
-  remediation?: string;
-  /** Where in Anthropic's documentation this requirement comes from. */
-  source: ClaudePolicySourceRef;
-  provenance: ClaudeEvidenceProvenance;
-  intrusiveness: ClaudeIntrusiveness;
-  /**
-   * Capabilities the runner needed. When the run lacks one, the finding is
-   * `not-evaluated` and this is why — which is what makes a coverage gap
-   * legible instead of silent.
-   */
-  requiresCapabilities?: ClaudeRunnerCapability[];
-  /** Why a `not-evaluated` finding was not evaluated, in plain words. */
-  notEvaluatedReason?: string;
-  /** ISO-8601. The moment the verdict was reached, not when it was rendered. */
-  evaluatedAt: string;
-  /** Version of the readiness engine that produced this finding. */
-  engineVersion: string;
-  /** Raw observation behind the verdict. Redacted before telemetry. */
-  details?: Record<string, unknown>;
-  /**
-   * Suite results this finding was DERIVED from rather than re-observed, e.g.
-   * `"oauth-conformance:oauth-prm-resource-match"`. Readiness composes; a
-   * finding that quietly re-ran an existing check would let the two disagree.
-   */
-  derivedFrom?: string[];
-}
+export type ClaudeReadinessFinding = DirectoryReadinessFinding<
+  ClaudeReadinessLane,
+  ClaudePolicySourceRef,
+  ClaudeRunnerCapability
+>;
 
 /**
  * What a lane managed to look at, reported SEPARATELY from what it found.
@@ -229,48 +216,17 @@ export interface ClaudeReadinessFinding {
  * A lane with zero violations and zero evaluated checks is not a pass, and the
  * only way to keep those apart is to publish the denominator.
  */
-export interface ClaudeLaneCoverage {
-  lane: ClaudeReadinessLane;
-  /** Findings that reached a `satisfied`/`violated` verdict. */
-  evaluated: number;
-  /** Applicable but never exercised. Each one is an unanswered question. */
-  notEvaluated: number;
-  /** Could not apply to this target; not a gap. */
-  notApplicable: number;
-  /**
-   * Named inputs the caller could supply to close the gap, e.g.
-   * `"submissionProfile"`, `"intrusive.testCredentials"`. Empty when the gap
-   * is not the caller's to close.
-   */
-  missingInputs: string[];
-}
+export type ClaudeLaneCoverage = DirectoryLaneCoverage<ClaudeReadinessLane>;
 
-export interface ClaudeReadinessLaneResult {
-  lane: ClaudeReadinessLane;
-  status: ClaudeLaneStatus;
-  /** One line a human can read without opening the findings. */
-  summary: string;
-  coverage: ClaudeLaneCoverage;
-}
+export type ClaudeReadinessLaneResult =
+  DirectoryReadinessLaneResult<ClaudeReadinessLane>;
 
 /**
  * A capability badge. Present in the optional-features lane only, and never a
  * defect when absent — that is the whole difference between a badge and a
  * requirement.
  */
-export interface ClaudeCapabilityBadge {
-  id: string;
-  title: string;
-  /**
-   * `supported` — observed working. `unsupported` — observed absent.
-   * `claimed` — the submitter declared it and this run did not verify it.
-   * `not-evaluated` — never looked, which is the default for a badge whose
-   * depth-evaluation was neither claimed nor selected.
-   */
-  state: "supported" | "unsupported" | "claimed" | "not-evaluated";
-  detail?: string;
-  provenance: ClaudeEvidenceProvenance;
-}
+export type ClaudeCapabilityBadge = DirectoryCapabilityBadge;
 
 /** How the target was reached and what the runner could do while it was there. */
 export interface ClaudeReadinessRunContext {
@@ -294,6 +250,21 @@ export interface ClaudeReadinessResult {
   lanes: ClaudeReadinessLaneResult[];
   findings: ClaudeReadinessFinding[];
   badges: ClaudeCapabilityBadge[];
+  /**
+   * The model-observation axis, ALWAYS present.
+   *
+   * Independent of {@link status} on purpose. A run whose required lanes
+   * graded cleanly is `ready` even when the observation call was refused for
+   * credit — a payment problem belongs to the account, not to the connector
+   * under grading — and a run that could not afford to look must never render
+   * as one that looked and found nothing. Optional in the TYPE only so
+   * evidence gathered before this field existed still parses; the grader
+   * always fills it, with `not-requested` when nobody asked.
+   */
+  llmObservations?: DirectoryObservationState<
+    ClaudeObservationKind,
+    ClaudeObservationId
+  >;
   /** Snapshot date of the policy corpus this run graded against (ISO date). */
   policySnapshotDate: string;
   engineVersion: string;
@@ -314,28 +285,19 @@ export const CLAUDE_REQUIRED_LANES: readonly ClaudeReadinessLane[] = [
  * point: a run that found a violation AND could not evaluate something else is
  * `not-ready` — the violation is established, and softening it to `incomplete`
  * would let an unrelated coverage gap launder a real failure.
+ *
+ * Anthropic has exactly ONE required-lane set, so this keeps its single-argument
+ * shape and closes over {@link CLAUDE_REQUIRED_LANES}. The shared rollup takes
+ * the lane set as an argument because OpenAI's product grades two of them —
+ * a technical preflight and a full submission-ready verdict — from one set of
+ * findings.
  */
 export function rollUpLaneStatus(
   lanes: ClaudeReadinessLaneResult[],
 ): ClaudeLaneStatus {
-  const required = lanes.filter((lane) =>
-    CLAUDE_REQUIRED_LANES.includes(lane.lane),
-  );
-  if (required.some((lane) => lane.status === "not-ready")) return "not-ready";
-  if (required.some((lane) => lane.status === "incomplete")) return "incomplete";
-  // No required lane present at all is not a pass; it is a run that graded
-  // nothing dispositive.
-  return required.length === 0 ? "incomplete" : "ready";
+  return rollUpDirectoryLaneStatus(lanes, CLAUDE_REQUIRED_LANES);
 }
 
-/**
- * Decide one lane's status from its findings.
- *
- * Only `required` and `runtime-blocker` findings can make a lane `not-ready`.
- * A `heuristic` or `manual-review` finding never does, however alarming it
- * reads — that separation is what keeps an LLM's opinion out of a verdict a
- * submitter is held to.
- */
 /**
  * Whether a finding can DECIDE a lane.
  *
@@ -347,39 +309,5 @@ export function rollUpLaneStatus(
 export function isDispositiveClaudeFinding(
   finding: Pick<ClaudeReadinessFinding, "class">,
 ): boolean {
-  return finding.class === "required" || finding.class === "runtime-blocker";
-}
-
-export function decideLaneStatus(
-  findings: ClaudeReadinessFinding[],
-): ClaudeLaneStatus {
-  const dispositive = findings.filter(isDispositiveClaudeFinding);
-  if (dispositive.some((finding) => finding.status === "violated")) {
-    return "not-ready";
-  }
-  if (dispositive.some((finding) => finding.status === "not-evaluated")) {
-    return "incomplete";
-  }
-  return dispositive.length === 0 ? "incomplete" : "ready";
-}
-
-/** Tally a lane's coverage from its findings. */
-export function summarizeLaneCoverage(
-  lane: ClaudeReadinessLane,
-  findings: ClaudeReadinessFinding[],
-  missingInputs: string[] = [],
-): ClaudeLaneCoverage {
-  return {
-    lane,
-    evaluated: findings.filter(
-      (finding) =>
-        finding.status === "satisfied" || finding.status === "violated",
-    ).length,
-    notEvaluated: findings.filter((finding) => finding.status === "not-evaluated")
-      .length,
-    notApplicable: findings.filter(
-      (finding) => finding.status === "not-applicable",
-    ).length,
-    missingInputs: [...new Set(missingInputs)].sort(),
-  };
+  return isDispositiveDirectoryFinding(finding);
 }

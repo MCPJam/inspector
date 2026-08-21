@@ -20,8 +20,13 @@
  * disagreement.
  */
 
-import { runClaudeAppsChecks, type ClaudeAppsEvidence } from "./checks/apps.js";
 import {
+  CLAUDE_APPS_RESULT_INPUT,
+  runClaudeAppsChecks,
+  type ClaudeAppsEvidence,
+} from "./checks/apps.js";
+import {
+  CLAUDE_AUTHORIZATION_REQUESTS_INPUT,
   runClaudeAuthChecks,
   type ClaudeAuthEvidence,
 } from "./checks/auth.js";
@@ -34,7 +39,10 @@ import {
   CLAUDE_SUBMISSION_PROFILE_INPUT,
   runClaudeSubmissionChecks,
 } from "./checks/submission.js";
-import { runClaudeToolChecks } from "./checks/tools.js";
+import {
+  CLAUDE_TOOL_LISTING_INPUT,
+  runClaudeToolChecks,
+} from "./checks/tools.js";
 import {
   gradeClaudeIntrusiveObservations,
   resolveClaudeIntrusiveMode,
@@ -42,6 +50,11 @@ import {
   type ClaudeIntrusiveObservations,
 } from "./intrusive.js";
 import { CLAUDE_POLICY_SNAPSHOT_DATE } from "./manifest.js";
+import { NOT_REQUESTED_OBSERVATIONS } from "../directory-readiness/observations.js";
+import {
+  mapClaudeObservationsToFindings,
+  type ClaudeObservationState,
+} from "./observations.js";
 import {
   parseClaudeSubmissionProfile,
   type ClaudeSubmissionProfile,
@@ -51,6 +64,7 @@ import {
   CLAUDE_READINESS_LANES,
   CLAUDE_REQUIRED_LANES,
   decideLaneStatus,
+  enforceCapabilityGate,
   rollUpLaneStatus,
   summarizeLaneCoverage,
   type ClaudeCapabilityBadge,
@@ -86,6 +100,17 @@ export interface ClaudeReadinessInput {
   auth: ClaudeAuthEvidence;
   apps: ClaudeAppsEvidence;
   tools?: Tool[];
+  /**
+   * Whether {@link tools} is the WHOLE listing.
+   *
+   * Separate from `tools` because the two answer different questions and only
+   * one of them can be read off an array. Absent means "the caller handed
+   * these over and made no claim", which the grader treats exactly as it
+   * treats a complete listing.
+   */
+  toolListingComplete?: boolean;
+  /** Why the tool listing is partial, in plain words. */
+  toolListingError?: string;
 
   /** Raw submission profile, validated here so its issues become findings. */
   submissionProfile?: unknown;
@@ -99,6 +124,16 @@ export interface ClaudeReadinessInput {
 
   intrusive?: ClaudeIntrusiveConfig;
   intrusiveObservations?: ClaudeIntrusiveObservations;
+
+  /**
+   * The model-observation axis, whatever happened on it.
+   *
+   * PART OF THE EVIDENCE rather than an argument to the grader, so a replayed
+   * evidence object regrades to the same result. It arrives already validated
+   * — the grader never sees raw provider output, and could not call a provider
+   * if it wanted to.
+   */
+  llmObservations?: ClaudeObservationState;
 
   /** Suite results consumed as evidence, named for the report. */
   evidenceSources?: string[];
@@ -152,42 +187,14 @@ function summarizeLane(
 
 /**
  * Grade gathered evidence. Pure — no network, no clock, no randomness.
- */
-/**
- * Hold every finding to the capabilities its own definition declares.
  *
- * `requiresCapabilities` was documented as an invariant and enforced nowhere:
- * each check module was trusted to remember that it had asked for a browser,
- * an interactive authorization, or the intrusive opt-in, and to report
- * `not-evaluated` when the run had none. A check that forgets does not fail
- * loudly — it publishes a verdict it had no evidence for, which is the one
- * outcome this product cannot afford. Enforcing it centrally makes the
- * declaration the thing that decides, rather than a comment each author has to
- * honour.
- *
- * It only ever downgrades. A missing capability turns a verdict into
- * `not-evaluated`; nothing here can turn a `not-evaluated` into a pass.
+ * The capability gate that holds every finding to the capabilities its own
+ * definition declares now lives in `directory-readiness/types.ts`: the rule —
+ * a missing capability downgrades a verdict to `not-evaluated`, and nothing
+ * can ever upgrade one — is publisher-agnostic, and a second copy of it would
+ * be a second place for a check to start publishing verdicts it had no
+ * evidence for.
  */
-function enforceCapabilityGate(
-  findings: ClaudeReadinessFinding[],
-  capabilities: ClaudeRunnerCapability[],
-): ClaudeReadinessFinding[] {
-  const available = new Set(capabilities);
-  return findings.map((finding) => {
-    const missing = (finding.requiresCapabilities ?? []).filter(
-      (capability) => !available.has(capability),
-    );
-    if (missing.length === 0 || finding.status === "not-evaluated") {
-      return finding;
-    }
-    return {
-      ...finding,
-      status: "not-evaluated",
-      notEvaluatedReason: `this run had no ${missing.join(", ")} capability, so the check could not observe what it grades`,
-    };
-  });
-}
-
 export function gradeClaudeReadiness(
   input: ClaudeReadinessInput,
 ): ClaudeReadinessResult {
@@ -237,7 +244,10 @@ export function gradeClaudeReadiness(
     [
     ...runClaudeEndpointChecks(input.endpoint, stamp),
     ...auth.findings,
-    ...runClaudeToolChecks(input.tools, stamp),
+    ...runClaudeToolChecks(input.tools, stamp, {
+      complete: input.toolListingComplete,
+      error: input.toolListingError,
+    }),
     ...runClaudeAppsChecks(input.apps, stamp),
     ...runClaudeSubmissionChecks(
       {
@@ -253,6 +263,13 @@ export function gradeClaudeReadiness(
       input.intrusiveObservations ?? {},
       stamp,
     ),
+    // LAST, and inside the capability gate like everything else. The mapper
+    // can only emit `heuristic`/`manual-review` findings in
+    // `experience-insights`, which is not a required lane — so their position
+    // in this list cannot change a verdict. They are appended rather than
+    // interleaved purely so a reader scanning the findings sees the
+    // deterministic inventory first.
+    ...mapClaudeObservationsToFindings(input.llmObservations?.envelope, stamp),
     ],
     input.capabilities,
   );
@@ -288,6 +305,7 @@ export function gradeClaudeReadiness(
     lanes,
     findings,
     badges,
+    llmObservations: input.llmObservations ?? NOT_REQUESTED_OBSERVATIONS,
     policySnapshotDate: CLAUDE_POLICY_SNAPSHOT_DATE,
     engineVersion: CLAUDE_READINESS_ENGINE_VERSION,
     startedAt: input.startedAt,
@@ -318,8 +336,31 @@ function buildRunSummary(
       .filter((lane) => lane.status === "incomplete")
       .flatMap((lane) => lane.coverage.missingInputs);
     const unique = [...new Set(gaps)];
-    return unique.length > 0
-      ? `Readiness is undetermined: some requirements were not evaluated. Supply ${unique.join(", ")} to close the gap.`
+
+    // GATED INPUTS ARE NOT RECOMMENDATIONS. `intrusive` registers OAuth
+    // clients and spends refresh grants; it is only ever legitimate against a
+    // server the submitter controls, with a dedicated test account. Listing it
+    // in the same breath as "give us a tool listing" reads as advice to run
+    // it — and on a connector whose ONLY gap was intrusive, that is exactly
+    // what a clean report told the reader to do.
+    const suggestable = unique.filter(
+      (input) => !CLAUDE_GATED_INPUTS.includes(input),
+    );
+    const gated = unique.filter((input) =>
+      CLAUDE_GATED_INPUTS.includes(input),
+    );
+    const gatedNote =
+      gated.length > 0
+        ? gated.length === 1
+          ? ` The remaining gap (${gated[0]}) needs explicit opt-in on a server you control.`
+          : ` The remaining gaps (${gated.join(", ")}) need explicit opt-in on a server you control.`
+        : "";
+
+    if (suggestable.length > 0) {
+      return `Readiness is undetermined: some requirements were not evaluated. Supply ${suggestable.join(", ")} to close the gap.${gatedNote}`;
+    }
+    return gated.length > 0
+      ? `Readiness is undetermined: nothing failed, and every remaining requirement needs a probe this run is not allowed to make on its own.${gatedNote}`
       : "Readiness is undetermined: some requirements could not be evaluated by this run.";
   }
   return "Every requirement this run could evaluate is satisfied.";
@@ -328,5 +369,20 @@ function buildRunSummary(
 /** Named inputs a surface can offer to make a run more complete. */
 export const CLAUDE_READINESS_INPUTS = {
   submissionProfile: CLAUDE_SUBMISSION_PROFILE_INPUT,
+  toolListing: CLAUDE_TOOL_LISTING_INPUT,
+  appsResult: CLAUDE_APPS_RESULT_INPUT,
+  authorizationRequests: CLAUDE_AUTHORIZATION_REQUESTS_INPUT,
   intrusive: "intrusive",
 } as const;
+
+/**
+ * Inputs a report must never simply ask for.
+ *
+ * Everything else on {@link CLAUDE_READINESS_INPUTS} is something a submitter
+ * can hand over at no cost to anyone. These are not: supplying them means
+ * running probes that mutate state on the target, so the decision belongs to
+ * whoever owns that server and a summary line is the wrong place to nudge it.
+ */
+export const CLAUDE_GATED_INPUTS: readonly string[] = [
+  CLAUDE_READINESS_INPUTS.intrusive,
+];
