@@ -1117,7 +1117,10 @@ function CompareSearchBar({
     [fields]
   );
   const filteredFieldGroups = useMemo(() => {
-    const loweredQuery = query.trim().toLowerCase();
+    // Deliberately not lowercased — see fieldMatchesQuery. Selecting a
+    // suggestion feeds that field's own camelCase label back in as the query,
+    // so this list is the first thing a pre-lowered query breaks.
+    const trimmedQuery = query.trim();
     return fieldGroups
       .map((group) => ({
         ...group,
@@ -1125,7 +1128,7 @@ function CompareSearchBar({
           .map((subsection) => ({
             ...subsection,
             fields: subsection.fields.filter((field) =>
-              fieldMatchesQuery(field, loweredQuery)
+              fieldMatchesQuery(field, trimmedQuery)
             ),
           }))
           .filter((subsection) => subsection.fields.length > 0),

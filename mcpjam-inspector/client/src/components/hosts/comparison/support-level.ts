@@ -179,12 +179,18 @@ function normalizeFieldSearchText(value: string): string {
     .trim();
 }
 
-/** Free-text match against a field's label / subsection / description / id / path. */
+/**
+ * Free-text match against a field's label / subsection / description / id /
+ * path. Pass `query` with its original casing — `normalizeFieldSearchText`
+ * lowercases internally, but only after splitting on camelCase boundaries, so
+ * a caller that pre-lowercases leaves "toolCancelled" as the single token
+ * "toolcancelled" and it never matches the haystack's "tool"/"cancelled".
+ */
 export function fieldMatchesQuery(
   field: HostConfigFieldDef,
-  loweredQuery: string
+  query: string
 ): boolean {
-  const queryTokens = normalizeFieldSearchText(loweredQuery)
+  const queryTokens = normalizeFieldSearchText(query)
     .split(/\s+/)
     .filter(Boolean);
   if (queryTokens.length === 0) return true;
@@ -217,7 +223,8 @@ export function computeVisibleFieldIds(args: {
   supportFilter: SupportFilterMode;
   searchQuery: string;
 }): Set<string> {
-  const q = args.searchQuery.trim().toLowerCase();
+  // Deliberately not lowercased — see fieldMatchesQuery.
+  const q = args.searchQuery.trim();
   const set = new Set<string>();
   for (const field of args.fields ?? HOST_CONFIG_FIELDS) {
     if (args.divergingOnly && !fieldDiverges(field, args.configs)) continue;

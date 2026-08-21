@@ -229,6 +229,25 @@ describe("fieldMatchesQuery / computeVisibleFieldIds", () => {
     ).toBe(true);
   });
 
+  it("matches a field whose label is itself camelCase (MCP Apps capability rows)", () => {
+    // Some rows' `label` is the raw camelCase key, not a humanized string —
+    // appsCap.toolCancelled's label is literally "toolCancelled". Selecting a
+    // suggestion feeds that label back as the query verbatim
+    // (onQueryChange(field.label)), so it has to match its own field.
+    const field = hostConfigField("appsCap.toolCancelled");
+    expect(field.label).toBe("toolCancelled");
+    expect(fieldMatchesQuery(field, field.label)).toBe(true);
+  });
+
+  it("stays case-insensitive now that callers no longer pre-lowercase", () => {
+    // The tokenizer splits on the case boundary first and lowercases after, so
+    // dropping the callers' `.toLowerCase()` costs nothing in case-insensitivity.
+    const field = hostConfigField("appsCap.toolCancelled");
+    for (const query of ["toolCancelled", "ToolCancelled", "TOOL CANCELLED"]) {
+      expect(fieldMatchesQuery(field, query)).toBe(true);
+    }
+  });
+
   it("narrows visible ids by search query", () => {
     const all = computeVisibleFieldIds({
       configs: [makeConfig()],
@@ -245,6 +264,20 @@ describe("fieldMatchesQuery / computeVisibleFieldIds", () => {
     expect(narrowed.has("temperature")).toBe(true);
     expect(narrowed.has("modelId")).toBe(false);
     expect(narrowed.size).toBeLessThan(all.size);
+  });
+
+  it("computeVisibleFieldIds matches a camelCase field label without lowercasing", () => {
+    // This is the other call site the fix touched (the search bar's own
+    // matching goes through fieldMatchesQuery directly, above) — it must not
+    // reintroduce the pre-lowercasing that broke the search bar's autocomplete.
+    const field = hostConfigField("appsCap.toolCancelled");
+    const ids = computeVisibleFieldIds({
+      configs: [makeConfig()],
+      divergingOnly: false,
+      supportFilter: "all",
+      searchQuery: field.label,
+    });
+    expect(ids.has(field.id)).toBe(true);
   });
 });
 
