@@ -84,6 +84,26 @@ describe("useOrganizationQueries", () => {
       "joined",
     ]);
   });
+
+  // A backend predating isPendingInvite sends no flag; those orgs must survive.
+  it("keeps orgs whose flag is absent or false, drops only true", () => {
+    mockUseQuery.mockReturnValue([
+      { _id: "no-flag", updatedAt: 3 },
+      { _id: "explicit-false", updatedAt: 2, isPendingInvite: false },
+      { _id: "invited", updatedAt: 1, isPendingInvite: true },
+    ]);
+
+    const { result } = renderHook(
+      () => useOrganizationQueries({ isAuthenticated: true }),
+      { wrapper: readyWrapper(true) }
+    );
+
+    expect(result.current.sortedOrganizations.map((o) => o._id)).toEqual([
+      "no-flag",
+      "explicit-false",
+    ]);
+  });
+
   it("does not report loading for unauthenticated actors", () => {
     const { result } = renderHook(() =>
       useOrganizationQueries({ isAuthenticated: false }), {
