@@ -22,6 +22,7 @@ import {
   resolveConformanceOutputFormatForCli,
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
+import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
 import { parseReporterFormat } from "../lib/reporting.js";
 import {
   parseHeadersOption,
@@ -93,6 +94,11 @@ export function registerProtocolCommands(program: Command): void {
       "--reporter <reporter>",
       "Structured reporter output: json-summary or junit-xml",
     )
+    .option("--upload", "Upload this suite's result into MCPJam run history")
+    .option(
+      "--require-upload",
+      "Fail if reporting is configured but the UI record cannot be written",
+    )
     .action(async (options, command) => {
       const reporter = parseReporterFormat(options.reporter as string | undefined);
       const format = getFormat(command, reporter);
@@ -106,6 +112,14 @@ export function registerProtocolCommands(program: Command): void {
       reportScore(scoreFromProtocolResult(result), command);
       reportReadiness(result, command);
       reportIncomplete(result, command);
+      await maybeUploadSingleSuite({
+        suiteKind: "protocol",
+        result,
+        serverUrl: config.serverUrl,
+        upload: Boolean((options as { upload?: boolean }).upload),
+        requireUpload: Boolean((options as { requireUpload?: boolean }).requireUpload),
+        command,
+      });
       const exitCode = conformanceExitCode(result);
       if (exitCode !== 0) {
         setProcessExitCode(exitCode);

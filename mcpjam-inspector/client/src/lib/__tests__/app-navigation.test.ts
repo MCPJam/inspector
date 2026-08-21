@@ -1,6 +1,8 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildConformanceRunPath,
+  buildConformanceSharePath,
   buildOrganizationPath,
   buildSessionsPath,
   buildSwarmPath,
@@ -22,6 +24,17 @@ import {
   useCurrentOrgRoute,
   useCurrentSearchParam,
 } from "../app-navigation";
+
+describe("conformance run and share paths", () => {
+  it("builds encoded detail and share URLs", () => {
+    expect(buildConformanceRunPath("run/1", "proj")).toBe(
+      "/conformance/runs/run%2F1?project=proj"
+    );
+    expect(buildConformanceSharePath("tok/en")).toBe(
+      "/conformance/shared/tok%2Fen"
+    );
+  });
+});
 
 describe("isDebugOAuthCallbackPath", () => {
   it("matches the OAuth debugger callback popup route", () => {
@@ -163,6 +176,7 @@ describe("pathnameToActiveTab", () => {
     // from KNOWN_APP_TAB_SEGMENTS resolves to "servers", so the shell's
     // flag-redirect / auto-select / active-server-selector never fire.
     expect(pathnameToActiveTab("/conformance")).toBe("conformance");
+    expect(pathnameToActiveTab("/conformance/runs/abc")).toBe("conformance");
     expect(pathnameToActiveTab("/compatibility")).toBe("compatibility");
   });
 
