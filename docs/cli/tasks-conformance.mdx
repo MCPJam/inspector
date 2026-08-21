@@ -4,7 +4,7 @@ description: "Validate MCP Tasks wire behavior — legacy and SEP-2663 extension
 icon: "list-checks"
 ---
 
-The `tasks conformance` command validates the MCP Tasks wire your server exposes: which wire the connection resolves to, whether declaration hygiene holds for that wire, and whether the server honours the observable parts of the contract (result-type discipline, `-32003` on undeclared requests, TTL shapes, inline results, and `Mcp-Name` routing for HTTP transports).
+The `tasks conformance` command validates the MCP Tasks wire your server exposes: which wire the connection resolves to, whether declaration hygiene holds for that wire, and whether the server honours the observable parts of the contract (result-type discipline, `-32021` on undeclared requests, TTL shapes, inline results, and `Mcp-Name` routing for HTTP transports).
 
 <Note>
   Tasks conformance provokes and then polls a real task, so it requires a
