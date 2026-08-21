@@ -166,7 +166,10 @@ export function isCredentialBearingPath(
     ? undefined
     : window.location?.pathname
 ): boolean {
-  return !!pathname && pathname.startsWith("/results/");
+  return !!pathname && (
+    pathname.startsWith("/results/") ||
+    pathname.startsWith("/conformance/shared/")
+  );
 }
 
 export function shouldRecordSession(): boolean {

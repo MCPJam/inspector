@@ -182,7 +182,7 @@ export function pooledConformanceScore(
     couldNotRun: sum(parts, (part) => part.couldNotRun),
     notApplicable: sum(parts, (part) => part.notApplicable),
   };
-  const advisories = parts.flatMap((part) => part.advisories);
+  const advisories = parts.flatMap((part) => part.advisories ?? []);
 
   // Worst-of, failure outranking incomplete — the same ordering the CLI exit
   // codes and suite reports use. Scoreless parts carry "passed" (nothing

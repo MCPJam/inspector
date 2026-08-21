@@ -142,6 +142,35 @@ describe("HttpCheckPlanSession.attempt", () => {
     expect(JSON.stringify(r.calls[0].body)).not.toContain("evals_failed");
   });
 
+  it("recognizes run_conformance instead of failing closed", async () => {
+    const r = recorder([
+      { status: 200, body: { ok: true, action: "run_conformance" } },
+    ]);
+    const session = new HttpCheckPlanSession("t1", "plan-1", r.post);
+    const decision = await session.attempt({
+      phase: "eval",
+      ok: true,
+      runId: "run-1",
+      candidateId: "c1",
+      durationMs: 0,
+    });
+    expect(decision).toEqual({ action: "run_conformance" });
+    expect(decision.unknownAction).toBeUndefined();
+  });
+
+  it("posts conformanceRunId on a successful conformance bind", async () => {
+    const r = recorder([OK_ACTION]);
+    const session = new HttpCheckPlanSession("t1", "plan-1", r.post);
+    await session.attempt({
+      phase: "conformance",
+      ok: true,
+      conformanceRunId: "conf-1",
+      candidateId: "c1",
+      durationMs: 0,
+    });
+    expect(r.calls[0].body.conformanceRunId).toBe("conf-1");
+  });
+
   it("fails CLOSED on an action it does not recognize", async () => {
     const r = recorder([
       { status: 200, body: { ok: true, action: "escalate_to_agent" } },
