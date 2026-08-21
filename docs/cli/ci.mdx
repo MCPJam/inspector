@@ -422,7 +422,7 @@ Poll `eval status` until `run.status` is terminal (`completed`, `failed`, or `ca
 The eval verdict does not control the exit code — `eval run` and `eval status` exit non-zero on API, transport, and usage errors instead. The pass/fail verdict lives in the JSON payload (`run.result`), so the final assertion above is what fails the job. `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
 </Note>
 
-Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`eval` command reference](/cli/reference#eval-commands) for the rest of the surface (`eval cancel`, `eval iterations`, `eval trace`, `eval cases`, and more).
+Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`eval` command reference](/cli/reference#eval-commands) for the full surface, including `eval judge` (request LLM-as-judge grading on a finished run), `eval validate` (offline suite-file validation), `eval export` (write a hosted suite to a local file), `eval checks list/connect` (GitHub Checks integration), and more.
 
 ### Upload SDK eval results
 

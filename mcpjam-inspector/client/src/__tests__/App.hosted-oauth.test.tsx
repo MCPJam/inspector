@@ -805,7 +805,9 @@ describe("App hosted OAuth callback handling", () => {
       screen.queryByTestId("callback-auth-timeout")
     ).not.toBeInTheDocument();
     expect(mockWorkOsAuthState.signIn).not.toHaveBeenCalled();
-    expect(readScenarioSignInReturnPath()).toBe("/user-testing/asana/token-123");
+    expect(readScenarioSignInReturnPath()).toBe(
+      "/user-testing/asana/token-123"
+    );
   });
 
   it("clears stale client auth state before retrying a timed-out callback", async () => {
@@ -2258,7 +2260,7 @@ describe("App hosted OAuth callback handling", () => {
     // User Testing is flag-gated at the route, not just in the sidebar — the
     // callback can only land back on it for a user who has the flag.
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "sandboxes-enabled",
+      (flag: string) => flag === "sandboxes-enabled"
     );
     mockCompleteHostedOAuthCallback.mockResolvedValue({
       success: true,
@@ -2367,6 +2369,40 @@ describe("App hosted OAuth callback handling", () => {
         hasSeenFirstRunOnboarding: false,
       })
     );
+  });
+
+  it("leaves an IdP-initiated visitor on /login instead of auto-routing to Playground", async () => {
+    // Same first-run-eligible guest as the test above, at the WorkOS Initiate
+    // Login URL. `/login` is not a known tab segment, so the shell resolves it
+    // to the `servers` fallback — a first-run-eligible route — and a hosted
+    // guest session IS Convex-authenticated. Without the guard in
+    // `shouldRouteToFirstRunOnboarding`, the onboarding redirect fires on the
+    // commit that mounts LoginInitiationRoute and navigates the visitor to
+    // Playground mid-sign-in, stranding the enterprise entry point the route
+    // exists to fix.
+    //
+    // Asserts the App-level half only: `render(<App />)` mounts no Router, so
+    // the shell renders its no-router body rather than the route element. That
+    // `signIn()` is what actually runs there is covered by
+    // `components/auth/__tests__/login-initiation-route.test.tsx`.
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/login");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mcp-sidebar")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/login");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("auto-routes a Convex-authenticated hosted guest from the default route into Playground onboarding", async () => {
@@ -2777,18 +2813,18 @@ describe("App hosted OAuth callback handling", () => {
       ref === "users:getCurrentUser"
         ? existingConvexUser
         : ref === "hosts:listHosts"
-          ? [
-              {
-                hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
-                name: "Slack",
-                hostConfigId: "host-config-slack",
-                modelId: "claude-sonnet-4",
-                serverCount: 0,
-                createdAt: 0,
-                updatedAt: 0,
-              },
-            ]
-          : undefined
+        ? [
+            {
+              hostId: "m17b6q9xw2tv4kz8p3r5s0dc",
+              name: "Slack",
+              hostConfigId: "host-config-slack",
+              modelId: "claude-sonnet-4",
+              serverCount: 0,
+              createdAt: 0,
+              updatedAt: 0,
+            },
+          ]
+        : undefined
     );
     localStorage.setItem(
       "mcp-previewed-host-id",
@@ -2799,10 +2835,11 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}"))
-        .toEqual({
-          project_shared: "m17b6q9xw2tv4kz8p3r5s0dc",
-        });
+      expect(
+        JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}")
+      ).toEqual({
+        project_shared: "m17b6q9xw2tv4kz8p3r5s0dc",
+      });
     });
     expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
   });
@@ -2999,8 +3036,7 @@ describe("App hosted OAuth callback handling", () => {
       },
     }));
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) =>
-        flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui"
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
