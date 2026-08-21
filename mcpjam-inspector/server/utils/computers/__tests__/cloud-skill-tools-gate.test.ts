@@ -13,6 +13,7 @@ import { shouldEnableCloudSkillTools } from "../cloud-skill-tools";
 
 const base = {
   isGuest: false,
+  hasComputer: false,
   harness: undefined as string | undefined,
   modelId: "mcpjam/claude",
   hasProjectId: true,
@@ -30,8 +31,45 @@ describe("shouldEnableCloudSkillTools", () => {
     );
   });
 
-  it("disables for a guest", () => {
+  it("disables for a guest without a computer", () => {
     expect(shouldEnableCloudSkillTools({ ...base, isGuest: true })).toBe(false);
+  });
+
+  it("ENABLES for a guest WITH a computer/VM attached", () => {
+    // COMP-38: a guest with sandbox access gets cloud skills — they can run
+    // bash in the VM, so skills let them drive advanced automation there too.
+    expect(
+      shouldEnableCloudSkillTools({
+        ...base,
+        isGuest: true,
+        hasComputer: true,
+      })
+    ).toBe(true);
+  });
+
+  it("still disables a guest WITH a computer on a real harness turn", () => {
+    // VM access relaxes the guest gate, not the harness gate: a harness turn
+    // delivers skills via the adapter, so the emulated tools stay off.
+    expect(
+      shouldEnableCloudSkillTools({
+        ...base,
+        isGuest: true,
+        hasComputer: true,
+        harness: "claude-code",
+        modelId: "mcpjam/claude",
+      })
+    ).toBe(false);
+  });
+
+  it("still disables a guest WITH a computer but no project id", () => {
+    expect(
+      shouldEnableCloudSkillTools({
+        ...base,
+        isGuest: true,
+        hasComputer: true,
+        hasProjectId: false,
+      })
+    ).toBe(false);
   });
 
   it("disables without a project id", () => {
