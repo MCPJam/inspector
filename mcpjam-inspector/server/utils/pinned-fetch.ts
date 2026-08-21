@@ -28,10 +28,12 @@
  */
 
 import {
+  createPinnedStreamingFetch,
   executeOAuthProxy,
   isLoopbackOAuthUrl,
   OAuthProxyError,
 } from "@mcpjam/sdk/oauth/node";
+import { HOSTED_MODE } from "../config.js";
 import {
   BlockedEgressTargetError,
   EgressResolutionError,
@@ -74,6 +76,32 @@ const REFUSAL_PATTERNS: readonly RegExp[] = [
   /invalid url format/i,
   /must not contain credentials/i,
   /only https targets are allowed/i,
+  // The streaming transport reaches this one BEFORE any socket exists, and it
+  // arrives here as `OAuthProxyError` rather than being thrown directly the way
+  // `createPinnedFetch` throws its loopback refusal — so without it a refused
+  // target was classified `retryable` and went back on a retry schedule, which
+  // is the exact outcome this taxonomy prevents. Loopback belongs in THIS list
+  // because in hosted mode "loopback" and "not publicly routable" are the same
+  // statement; the refusals below are not.
+  /refusing a connection to loopback/i,
+];
+
+/**
+ * Refusals that are just as terminal, and just as much the caller's to fix, but
+ * are NOT about where the host resolves.
+ *
+ * These keep the transport's own wording instead of the canned address message.
+ * A connector served over plaintext `http://` is refused for its SCHEME, and
+ * telling its owner that their perfectly public host "is not a publicly
+ * routable address" sends them to look at DNS and firewalls for a problem that
+ * one character in the URL would fix. A redirect chain that runs past the
+ * ceiling is the same kind of mismatch. Both are still 400s — the request
+ * cannot be retried into success — they simply have to say what is actually
+ * wrong.
+ */
+const TERMINAL_REQUEST_PATTERNS: readonly RegExp[] = [
+  /refusing a plaintext connection/i,
+  /too many redirects/i,
 ];
 
 /** DNS could not answer. Ours to retry, not the caller's to fix. */
@@ -383,31 +411,112 @@ export function createPinnedFetch(
       // so flattening the class made an SSRF refusal indistinguishable from a
       // timeout — the refused target went back on a retry schedule, which is the
       // exact outcome that module's bookkeeping exists to prevent.
-      if (error instanceof OAuthProxyError) {
-        if (REFUSAL_PATTERNS.some((pattern) => pattern.test(error.message))) {
-          // NOT the transport's message. It names the address the hostname
-          // RESOLVED to — "example.com resolves to a private/reserved IP
-          // address (169.254.169.254)" — and this error's message is reported
-          // back to whoever submitted the hostname. That would make a refusal
-          // into a resolution oracle: submit a name, read back what our
-          // resolver saw, and map the internal network one answer at a time.
-          // The requested host is fine to repeat (they typed it); what it
-          // resolved to is not. The original stays on `cause` for logs.
-          throw new BlockedEgressTargetError(
-            `Refusing to connect to "${safeHost(url)}": it is not a publicly routable address.`,
-            { cause: error }
-          );
-        }
-        if (RESOLUTION_FAILURE_PATTERN.test(error.message)) {
-          throw new EgressResolutionError(error.message);
-        }
-        // A genuine transport failure — timeout, byte cap, redirect ceiling.
-        // Still worth retrying, so it stays a plain error.
-        throw new Error(error.message);
-      }
-      throw error;
+      // `classifyPinnedTransportError` is shared with the streaming transport
+      // below so the two cannot disagree about what a refusal is. It never
+      // repeats the address a hostname RESOLVED to — that would make a refusal
+      // into a resolution oracle — and it leaves a genuine transport failure
+      // (timeout, byte cap, redirect ceiling) a plain retryable `Error`.
+      throw classifyPinnedTransportError(error, url);
     }
   };
 
   return pinnedFetch as typeof fetch;
+}
+
+/**
+ * The streaming sibling of {@link createPinnedFetch}.
+ *
+ * `createPinnedFetch` is built on `executeOAuthProxy`, which BUFFERS the whole
+ * response — fine for an OAuth metadata document, impossible for
+ * `text/event-stream`. So it could never be the fetch an MCP transport dials
+ * through, and the conformance suites were left guarding their raw probes with
+ * `createGuardedFetch` (which resolves twice, leaving a TOCTOU window) while
+ * the one real MCP connection each run opens followed redirects with no guard
+ * at all.
+ *
+ * `createPinnedStreamingFetch` closes both halves: same resolve-once,
+ * classify, pin-into-the-socket walk, re-run on every redirect hop, with the
+ * body handed back as a live stream. This wrapper adds the one thing the SDK
+ * cannot know about — the inspector's error taxonomy, which decides `terminal`
+ * vs `retryable` and must not let an SSRF refusal be mistaken for a timeout.
+ *
+ * OUTSIDE HOSTED MODE THIS IS A NO-OP by default. Locally, reaching
+ * `http://127.0.0.1:3000/mcp` is the entire product; the guard is an egress
+ * decision that only exists on our nodes.
+ */
+export function createStreamingPinnedFetch(
+  options: PinnedFetchOptions & {
+    /** Defaults to `HOSTED_MODE`; pass explicitly in tests. */
+    hosted?: boolean;
+    /** Bounds DNS, connect and headers across the whole redirect chain. */
+    chainTimeoutMs?: number;
+    /** Kills a body stream that has stalled. SSE-safe; a total deadline is not. */
+    bodyIdleTimeoutMs?: number;
+    /** Cumulative decompressed body cap for one request. */
+    maxResponseBytes?: number;
+    /** Redirect hops allowed before the chain is refused. Defaults to fetch parity. */
+    maxRedirects?: number;
+    /** Names the target in refusal messages, e.g. `"MCP server"`. */
+    targetLabel?: string;
+  } = {}
+): typeof fetch {
+  const hosted = options.hosted ?? HOSTED_MODE;
+  if (!hosted) {
+    return ((...args: Parameters<typeof fetch>) =>
+      fetch(...args)) as typeof fetch;
+  }
+
+  const streamingFetch = createPinnedStreamingFetch({
+    allowLoopback: options.allowLoopback,
+    chainTimeoutMs: options.chainTimeoutMs ?? options.timeoutMs,
+    bodyIdleTimeoutMs: options.bodyIdleTimeoutMs,
+    maxResponseBytes: options.maxResponseBytes,
+    maxRedirects: options.maxRedirects,
+    targetLabel: options.targetLabel,
+  });
+
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+    try {
+      return await streamingFetch(input as never, init as never);
+    } catch (error) {
+      throw classifyPinnedTransportError(error, url);
+    }
+  }) as typeof fetch;
+}
+
+/**
+ * Map a transport rejection onto the inspector's taxonomy.
+ *
+ * Shared with {@link createPinnedFetch} so the two transports cannot disagree
+ * about what a refusal is — the discrimination is by message because
+ * `OAuthProxyError` carries only a `status`, and that status is 400 for both
+ * "resolves to a private or reserved IP address" (a verdict about the target)
+ * and "request timeout" (an outage on our side).
+ */
+function classifyPinnedTransportError(error: unknown, url: string): unknown {
+  if (!(error instanceof OAuthProxyError)) return error;
+  if (REFUSAL_PATTERNS.some((pattern) => pattern.test(error.message))) {
+    // The address it RESOLVED to never appears in the message: that would make
+    // a refusal into a resolution oracle. The host they typed is theirs
+    // already; the answer our resolver saw is not.
+    return new BlockedEgressTargetError(
+      `Refusing to connect to "${safeHost(url)}": it is not a publicly routable address.`,
+      { cause: error }
+    );
+  }
+  if (TERMINAL_REQUEST_PATTERNS.some((pattern) => pattern.test(error.message))) {
+    // Terminal like the refusals above, but the transport already said what is
+    // wrong and it is not the address, so its message is the honest one.
+    return new BlockedEgressTargetError(error.message, { cause: error });
+  }
+  if (RESOLUTION_FAILURE_PATTERN.test(error.message)) {
+    return new EgressResolutionError(error.message);
+  }
+  return new Error(error.message);
 }
