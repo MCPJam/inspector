@@ -25,12 +25,20 @@ import {
 } from "@testing-library/react";
 const authkit = vi.hoisted(() => ({
   getAccessToken: vi.fn(async (): Promise<string | undefined> => undefined),
+  signIn: vi.fn(async () => undefined),
+  signOut: vi.fn(async () => undefined),
+  user: null as { email?: string } | null,
 }));
 
 // The page is mounted inside <AuthKitProvider> by `main.tsx`; the hook is the
 // only part of it this component touches.
 vi.mock("@workos-inc/authkit-react", () => ({
-  useAuth: () => ({ getAccessToken: authkit.getAccessToken }),
+  useAuth: () => ({
+    getAccessToken: authkit.getAccessToken,
+    signIn: authkit.signIn,
+    signOut: authkit.signOut,
+    user: authkit.user,
+  }),
 }));
 
 import { ServerConnectionHandoff } from "../ServerConnectionHandoff";
@@ -38,6 +46,7 @@ import {
   clearPendingAuthorization,
   readPendingAuthorization,
   rememberPendingAuthorization,
+  takeHandoffSignInReturn,
 } from "@/lib/server-connection-handoff";
 
 const ORIGIN = "https://app.mcpjam.test";
@@ -433,5 +442,112 @@ describe("proving who the visitor is", () => {
     await screen.findByText("Personal");
 
     expect(seen.find((entry) => entry.url.endsWith("/claim"))?.auth).toBeNull();
+  });
+});
+
+/**
+ * A claim refused because of WHO is asking.
+ *
+ * This is the one failure on this page the user can act on, and it used to
+ * render as a dead end reading "This authorization link belongs to a different
+ * account" — for signed-out visitors too, for whom it was simply false. What
+ * is pinned here is that each reason gets the action that resolves IT, and
+ * that both screens say the link survives, because it does.
+ */
+function refuseClaim(details: unknown, message = "Refused.") {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(
+      async () =>
+        new Response(JSON.stringify({ message, details }), { status: 403 })
+    )
+  );
+}
+
+describe("a refused claim", () => {
+  afterEach(() => {
+    authkit.user = null;
+  });
+
+  it("asks a signed-out visitor to sign in, and says the link survives", async () => {
+    refuseClaim({ reason: "sign-in-required" });
+    goTo("/connect/server/handoff-token-abc");
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("Sign in to finish connecting");
+
+    // NOT "belongs to a different account" — that was the false half of the
+    // old single message, and it is what sent people looking for a problem
+    // they did not have.
+    expect(screen.queryByText(/different account/i)).toBeNull();
+    expect(screen.getByText(/still valid/i)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Sign in" })).toBeTruthy();
+  });
+
+  it("names both accounts on a real mismatch", async () => {
+    authkit.user = { email: "someone@gmail.com" };
+    refuseClaim({ reason: "account-mismatch", ownerHint: "m•••@mcpjam.com" });
+    goTo("/connect/server/handoff-token-abc");
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("This link belongs to a different account");
+
+    // Which account you ARE and which one you NEED. Neither was on screen
+    // before, which is what made this unactionable.
+    expect(screen.getByText("someone@gmail.com")).toBeTruthy();
+    expect(screen.getByText(/m•••@mcpjam\.com/)).toBeTruthy();
+    // The CLI is where these links come from, and an agent driving it cannot
+    // see which account it is acting as.
+    expect(screen.getByText(/mcpjam whoami/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Switch account" })).toBeTruthy();
+  });
+
+  it("still reads without an owner hint", async () => {
+    refuseClaim({ reason: "account-mismatch" });
+    goTo("/connect/server/handoff-token-abc");
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("This link belongs to a different account");
+
+    // A guest-owned request, or an account with no address on file. The
+    // sentence has to survive the missing half rather than print `undefined`.
+    expect(screen.queryByText(/undefined/)).toBeNull();
+    expect(screen.getByText(/a different MCPJam account/)).toBeTruthy();
+  });
+
+  it("sends the sign-in back to this link, carrying only a nonce", async () => {
+    refuseClaim({ reason: "sign-in-required" });
+    goTo("/connect/server/handoff-token-abc");
+
+    render(<ServerConnectionHandoff />);
+    fireEvent.click(await screen.findByRole("button", { name: "Sign in" }));
+
+    await waitFor(() => expect(authkit.signIn).toHaveBeenCalled());
+    const state = authkit.signIn.mock.calls[0]?.[0]?.state as
+      | Record<string, unknown>
+      | undefined;
+    const nonce = state?.mcpjamHandoffReturn;
+    expect(typeof nonce).toBe("string");
+    // AuthKit round-trips `state` through WorkOS, into a redirect URL and this
+    // browser's history. The handoff token must be in none of those.
+    expect(JSON.stringify(state)).not.toContain("handoff-token-abc");
+    // The path itself stayed in same-origin storage.
+    expect(
+      takeHandoffSignInReturn(nonce, window.location.origin)
+    ).toBe("/connect/server/handoff-token-abc");
+  });
+
+  it("falls back to plain prose when the backend sent no reason", async () => {
+    // A backend that predates the split answers a wrong-account claim with a
+    // bare FORBIDDEN. Guessing a reason would offer a signed-out visitor the
+    // switch-accounts flow.
+    refuseClaim(undefined, "This link cannot be used right now.");
+    goTo("/connect/server/handoff-token-abc");
+
+    render(<ServerConnectionHandoff />);
+    await screen.findByText("This link cannot be used");
+
+    expect(screen.getByText("This link cannot be used right now.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Sign in" })).toBeNull();
   });
 });
