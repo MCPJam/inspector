@@ -78,11 +78,19 @@ function parseRefreshMaterial(
  * backend returns a plain 429 — locking the user out of a refresh that needs
  * nothing from the backend.
  *
- * In-memory and process-local, never persisted. This is the LOCAL binary (the
- * `HOSTED_MODE` assertion in `local-oauth-refresh` refuses the whole path
- * otherwise), so it is the user's own machine holding the user's own token,
- * for as long as their inspector runs — the same lifetime as every other
- * credential this process keeps to talk to their servers.
+ * In-memory and process-local, never persisted, and it only ever populates on
+ * a non-hosted process: the write happens after a successful local refresh,
+ * and `refreshTokensAgainstPrivateAuthorizationServer` throws on `HOSTED_MODE`
+ * before dialing. A hosted replica therefore holds nothing here, and
+ * `declareLocalRuntime: !HOSTED_MODE` means the backend would withhold the
+ * material anyway. Horizontal hosted deployments see no behaviour change.
+ *
+ * Process-local is NOT single-owner, though. Two local inspectors (desktop and
+ * `npx`), or several replicas of a self-hosted non-hosted-mode deployment,
+ * share one backend credential while each keeps its own copy of this map — so
+ * an entry can be superseded by a refresh this process never saw. Treat a
+ * cache hit as a guess: `cachedMaterialFallback` below is what keeps a stale
+ * guess from being reported as a dead credential.
  */
 const privateAuthorizationServerMaterialCache = new Map<
   string,
@@ -305,6 +313,9 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
 ): Promise<string> {
   const cacheKey = `${projectId}:${serverId}`;
   let material: PrivateAuthorizationServerRefreshMaterial | null = null;
+  // Material read back from the cache is a GUESS about a credential this
+  // process does not own — see the failure handling below.
+  let cachedMaterialFallback: { backendError: unknown } | null = null;
 
   try {
     return await forceRefreshHostedOAuthAccessToken(
@@ -342,6 +353,7 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
       if (!material) {
         throw error;
       }
+      cachedMaterialFallback = { backendError: error };
       logger.debug(
         "[local oauth refresh] backend refresh unavailable; using cached private-AS material",
         { serverId, error: parseErrorMessage(error) }
@@ -353,9 +365,32 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
   try {
     tokens = await refreshTokensAgainstPrivateAuthorizationServer(material);
   } catch (refreshError) {
-    // A rejected grant means the cached refresh token is dead; never replay it.
     if (isRejectedGrant(refreshError)) {
+      // The cached token is dead; never replay it.
       privateAuthorizationServerMaterialCache.delete(cacheKey);
+
+      // ...and if that is ALL we had, do not tell the user to reconnect.
+      //
+      // This cache is per process, but the credential is not. A second local
+      // inspector, or another replica of a self-hosted deployment, may have
+      // refreshed the same credential and rotated the refresh token out from
+      // under this copy — in which case the vault holds a perfectly good token
+      // and only OUR guess is stale. Reporting "the stored refresh token was
+      // rejected. Please reconnect." would send someone to re-run an OAuth
+      // flow they do not need.
+      //
+      // Only material handed over by the backend moments ago is authoritative
+      // enough to say that. Surface the backend's own error instead: it is
+      // why we fell back at all, it is honest, and it is transient — the next
+      // attempt gets fresh material and either succeeds or earns a real
+      // reconnect prompt.
+      if (cachedMaterialFallback) {
+        logger.debug(
+          "[local oauth refresh] cached private-AS material was stale; deferring to the backend error",
+          { serverId, error: parseErrorMessage(refreshError) }
+        );
+        throw cachedMaterialFallback.backendError;
+      }
     }
     throw translateLocalRefreshFailure(
       refreshError,
