@@ -8,6 +8,7 @@ import { VitePlugin } from "@electron-forge/plugin-vite";
 import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { FuseV1Options, FuseVersion } from "@electron/fuses";
 import { resolve } from "path";
+import { assertWsNativeFallback } from "./src/ws-native-fallback.assert";
 
 const enableMacSigning = process.platform === "darwin";
 const macSignIdentity = process.env.MAC_CODESIGN_IDENTITY?.trim();
@@ -197,7 +198,7 @@ const config: ForgeConfig = {
      * build`, and uploading it there keeps this hook to the forge-only outputs.
      *
      * The sourcemap half never throws — a Sentry outage must not fail a signed
-     * release. `assertWsNativeFallback` below deliberately DOES: it guards a
+     * release. `assertWsNativeFallback` deliberately DOES: it guards a
      * defect that only exists after bundling, and a build that ships it is
      * worse than a build that fails.
      */
@@ -307,67 +308,6 @@ function deleteMapsIn(dir: string, fs: FsBits): void {
   } catch {
     // Best effort.
   }
-}
-
-type ReadFsBits = {
-  existsSync: (p: string) => boolean;
-  readdirSync: (p: string) => string[];
-  statSync: (p: string) => { isDirectory: () => boolean };
-  readFileSync: (p: string, enc: "utf8") => string;
-};
-
-/**
- * Fail the package if the bundled `ws` would use Vite's empty stub for its
- * optional `bufferutil` dep (#4208).
- *
- * `ws` decides "no native masker" by `require('bufferutil')` THROWING. Vite
- * resolves an absent optional peer dep to a frozen empty namespace instead, so
- * the require succeeds, `ws` installs a fast path whose `.mask`/`.unmask` are
- * undefined, and every WebSocket frame over the size threshold throws —
- * silently killing tunnels while the handshake still looks healthy.
- *
- * `src/ws-native-fallback.ts` fixes that by setting `WS_NO_BUFFER_UTIL` before
- * `ws` loads. Nothing below the bundler can verify it: the stub only exists
- * after bundling, and the packaged tree is the one place both halves are
- * visible at once. So assert on the artifact — if the stub is in the graph, the
- * assignment that neutralizes it has to be there too.
- *
- * Note the assertion is "fix present", not "stub absent": the fix stops `ws`
- * from USING the stub, it does not remove it from the bundle.
- */
-function assertWsNativeFallback(buildDir: string, fs: ReadFsBits): void {
-  if (!fs.existsSync(buildDir)) return;
-
-  const chunks: string[] = [];
-  const walk = (dir: string) => {
-    for (const entry of fs.readdirSync(dir)) {
-      const full = resolve(dir, entry);
-      if (fs.statSync(full).isDirectory()) walk(full);
-      else if (entry.endsWith(".cjs") || entry.endsWith(".js"))
-        chunks.push(fs.readFileSync(full, "utf8"));
-    }
-  };
-  walk(buildDir);
-
-  const stubbed = chunks.some((c) =>
-    c.includes("__viteOptionalPeerDep_bufferutil_ws"),
-  );
-  if (!stubbed) return;
-
-  // An ASSIGNMENT, not `ws`'s own `!process.env.WS_NO_BUFFER_UTIL` read — that
-  // read is in every bundle containing `ws` and proves nothing.
-  const neutralized = chunks.some((c) =>
-    /WS_NO_BUFFER_UTIL\s*=\s*["']/.test(c),
-  );
-  if (neutralized) return;
-
-  throw new Error(
-    `[forge] ${buildDir} bundles an empty \`bufferutil\` stub for \`ws\` with ` +
-      "nothing setting WS_NO_BUFFER_UTIL. Every WebSocket frame >= 48 bytes " +
-      "would throw `mask is not a function`, and tunnels would die silently " +
-      "(#4208). Restore the `./ws-native-fallback.js` import at the top of " +
-      "src/main.ts.",
-  );
 }
 
 export default config;

@@ -37,3 +37,7 @@
  */
 process.env.WS_NO_BUFFER_UTIL = "1";
 process.env.WS_NO_UTF_8_VALIDATE = "1";
+
+// Side effects only. Marks the file as a module so it can be `import()`ed
+// under `isolatedModules` — the test clears both vars, then imports.
+export {};
