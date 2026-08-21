@@ -104,9 +104,25 @@ export type EvalResultInput = {
   trace?: EvalTraceInput;
   externalIterationId?: string;
   externalCaseId?: string;
+  /**
+   * The case's DECLARED identity (`EvalTestConfig.id`) — the id an author
+   * committed beside the test.
+   *
+   * The backend resolves by this first (`by_testSuite_declaredCaseId`), falling
+   * back to the content-hash key, and ADOPTS: an id-bearing upload that resolves
+   * by hash to a case with no declared id patches the id on without touching the
+   * immutable `caseKey`. That is what lets a renamed test keep its history.
+   *
+   * Must equal `externalCaseId` when both are present — the SDK enforces that at
+   * construction and the backend rejects a mismatch at ingest. Never a silent
+   * precedence between two identity claims.
+   */
+  caseId?: string;
   /** Extensible per-iteration metadata; predicate verdicts are nested here. */
   metadata?: Record<string, unknown>;
   isNegativeTest?: boolean;
+  /** Reference output for judge scorers; emitted by the result mappers. */
+  expectedOutput?: string;
   advancedConfig?: Record<string, unknown>;
   widgetSnapshots?: EvalWidgetSnapshotInput[];
   /**
@@ -156,15 +172,27 @@ export type MCPJamReportingConfig = {
   expectedIterations?: number;
   tags?: string[];
   /**
-   * Host configuration that drove this eval run. Wire-level send is active
-   * when the backend advertises capability `evalsHostConfig` (see
-   * `GET /sdk/v1/info`). When `iteration.hostSnapshot` is present (Stage
-   * 4 per-iteration capture), it takes precedence; this field is the
+   * Host configuration that drove this eval run. Sent unconditionally: the
+   * `GET /sdk/v1/info` capability probe this once negotiated through was
+   * deleted, and no probe replaced it — an older backend ignores the extra
+   * field rather than rejecting it. When `iteration.hostSnapshot` is present
+   * (Stage 4 per-iteration capture), it takes precedence; this field is the
    * fallback for executors that don't expose `getHostSnapshot` and runs
    * without per-iteration capture. The reporter computes the content
    * hash internally — callers never set `hostConfigHash`.
    */
   host?: import("./host-config/host.js").Host;
+  /**
+   * `evaluationConfigHash` for this run — the digest of the scorer definitions
+   * every iteration graded with.
+   *
+   * Sent on the run-start body so the backend can persist it on
+   * `testSuiteRun` and fold it into the run fingerprint: reusing an
+   * `externalRunId` with a different evaluation config is a conflict, not a
+   * duplicate. Same no-probe rule as `host` above — an un-upgraded backend
+   * ignores it.
+   */
+  evaluationConfigHash?: string;
 };
 
 export type ReportEvalResultsInput = MCPJamReportingConfig & {

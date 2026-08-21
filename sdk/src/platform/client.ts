@@ -1,13 +1,23 @@
 import { PlatformApiError } from "./errors.js";
 import type {
-  PlatformChatbox,
-  PlatformChatboxDetail,
+  PlatformScenarioSummary,
+  PlatformScenarioDetail,
   PlatformChatSession,
   PlatformDoctorReport,
   PlatformEvalIteration,
   PlatformEvalRun,
+  PlatformEvalRunInsightsRequested,
+  PlatformAdhocEnvironmentBody,
+  PlatformAdhocEnvironmentEnsured,
+  PlatformEnvironmentNameBody,
+  PlatformEvalSuiteEnvironmentAttached,
+  PlatformEvalRunJudgeRequested,
+  PlatformEvalCheckRepos,
+  PlatformEvalCheckRepoConnected,
   PlatformEvalRunCreated,
+  PlatformEvalRunGroupCreated,
   PlatformEvalCase,
+  PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
   PlatformEvalSuite,
@@ -23,9 +33,31 @@ import type {
   PlatformJourneyRunSession,
   PlatformJourneyRunCanceled,
   PlatformJourneyRunLaunched,
+  PlatformCapabilities,
+  PlatformFindingDismissed,
+  PlatformGenerationDrafts,
+  PlatformJourneyArchived,
+  PlatformPersona,
+  PlatformPersonaDeleted,
+  PlatformRunCompare,
+  PlatformRunScorecard,
+  PlatformGuestExecution,
   PlatformScenario,
+  PlatformUserTestingInsightsRequested,
+  PlatformUserTestingScenario,
+  PlatformUserTestingScenarioDetail,
+  PlatformUserTestingSession,
+  PlatformUserTestingSessionDetail,
+  PlatformSwarm,
+  PlatformSwarmArchived,
+  PlatformSwarmFinding,
+  PlatformSwarmOverview,
+  PlatformWaveInsights,
+  PlatformWaveInsightsCanceled,
+  PlatformWaveInsightsRequested,
   PlatformScenarioDeleted,
   PlatformEnvironmentCreateBody,
+  PlatformEnvironmentCapabilities,
   PlatformEnvironmentResolved,
   PlatformEnvironmentUpdateBody,
   PlatformImage,
@@ -38,13 +70,22 @@ import type {
   PlatformHostDetail,
   PlatformMe,
   PlatformModel,
+  PlatformOrganization,
   PlatformPage,
   PlatformPlugin,
   PlatformPluginVersion,
   PlatformProject,
+  PlatformServerConnection,
+  PlatformServerConnectionCreateBody,
   PlatformProjectServer,
+  PlatformSessionsPage,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
+  PlatformOpenAIReadinessStartBody,
+  PlatformReadinessKind,
+  PlatformReadinessRun,
+  PlatformReadinessRunReceipt,
+  PlatformReadinessStartBody,
 } from "./types.js";
 
 export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
@@ -96,6 +137,27 @@ type ServerScope = {
  * injected. Tolerant reader: unknown response fields pass through untouched,
  * and empty success bodies (204) resolve to `undefined`.
  */
+/**
+ * The two fields a readiness start body shares, and nothing else.
+ *
+ * Undefined entries are dropped rather than serialized as `null`: the
+ * endpoint's schema types both as optional, and an explicit `null` is a value
+ * it rejects rather than an absence it ignores.
+ */
+function pickReadinessStartBody(params: {
+  idempotencyKey?: string;
+  includeLlmObservations?: boolean;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (params.idempotencyKey !== undefined) {
+    body.idempotencyKey = params.idempotencyKey;
+  }
+  if (params.includeLlmObservations !== undefined) {
+    body.includeLlmObservations = params.includeLlmObservations;
+  }
+  return body;
+}
+
 export class PlatformApiClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
@@ -106,7 +168,7 @@ export class PlatformApiClient {
   constructor(options: PlatformApiClientOptions) {
     this.baseUrl = (options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL).replace(
       /\/+$/,
-      ""
+      "",
     );
     this.getAuth = options.getAuth;
     // Native fetch must run with `this` bound to the global scope. Storing the
@@ -125,84 +187,165 @@ export class PlatformApiClient {
     return this.request("GET", "/models", {}, options);
   }
 
+  listOrganizations(
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformOrganization>> {
+    return this.request("GET", "/organizations", {}, options);
+  }
+
   listProjects(
     params: { organizationId?: string } = {},
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformProject>> {
     return this.request(
       "GET",
       "/projects",
       { query: { organizationId: params.organizationId } },
-      options
+      options,
     );
   }
 
   createProject(
     params: { body: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformProject> {
     return this.request("POST", "/projects", { body: params.body }, options);
   }
 
   updateProject(
     params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformProject> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(params.projectId)}`,
       { body: params.body },
-      options
+      options,
     );
   }
 
   deleteProject(
     params: { projectId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<{ id: string; deleted: boolean }> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(params.projectId)}`,
       {},
-      options
+      options,
+    );
+  }
+
+  // ── Server connections ───────────────────────────────────────────────────
+  //
+  // The handoff-first flow: creating a request may answer with a `handoffUrl`
+  // the user must open, rather than with a finished connection. Callers poll
+  // `getServerConnection` until the status is terminal.
+
+  /**
+   * Start connecting an MCP server URL to a project.
+   *
+   * The response is the ONLY place a `handoffUrl` ever appears — the raw token
+   * behind it is minted once and never stored, so it cannot be re-fetched.
+   * Treat it as a private, single-person capability.
+   */
+  createServerConnection(
+    params: { body: PlatformServerConnectionCreateBody },
+    options?: RequestOptions,
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "POST",
+      "/server-connections",
+      { body: params.body },
+      options,
+    );
+  }
+
+  /** Poll one request. Safe to call on a short interval: this path is metered
+   * on its own poll budget rather than the shared per-caller one, so polling
+   * responsively does not spend the budget your other calls need. A 429 here
+   * means the interval itself is too fast — honour `Retry-After`. */
+  getServerConnection(
+    params: { connectionRequestId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "GET",
+      `/server-connections/${encodeURIComponent(params.connectionRequestId)}`,
+      {},
+      options,
+    );
+  }
+
+  cancelServerConnection(
+    params: { connectionRequestId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "POST",
+      `/server-connections/${encodeURIComponent(
+        params.connectionRequestId,
+      )}/cancel`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Ask for another validation attempt now instead of waiting out the backoff.
+   *
+   * Does not revive a terminal request: after `failed`, `expired`, or
+   * `cancelled`, the way forward is a new request.
+   */
+  retryServerConnectionValidation(
+    params: { connectionRequestId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformServerConnection> {
+    return this.request(
+      "POST",
+      `/server-connections/${encodeURIComponent(
+        params.connectionRequestId,
+      )}/retry-validation`,
+      {},
+      options,
     );
   }
 
   listProjectServers(
     params: { projectId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformProjectServer>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/servers`,
       {},
-      options
+      options,
     );
   }
 
   createProjectServer(
     params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformProjectServer> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/servers`,
       { body: params.body },
-      options
+      options,
     );
   }
 
   getProjectServer(
     params: { projectId: string; serverId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformProjectServer> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/servers/${encodeURIComponent(params.serverId)}`,
       {},
-      options
+      options,
     );
   }
 
@@ -212,41 +355,41 @@ export class PlatformApiClient {
       serverId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformProjectServer> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/servers/${encodeURIComponent(params.serverId)}`,
       { body: params.body },
-      options
+      options,
     );
   }
 
   deleteProjectServer(
     params: { projectId: string; serverId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<{ id: string; deleted: boolean }> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/servers/${encodeURIComponent(params.serverId)}`,
       { body: {} },
-      options
+      options,
     );
   }
 
   listEvalSuites(
     params: { projectId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformEvalSuite>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/eval-suites`,
       {},
-      options
+      options,
     );
   }
 
@@ -257,7 +400,7 @@ export class PlatformApiClient {
       limit?: number;
       before?: string;
     } = {},
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformChatSession>> {
     return this.request(
       "GET",
@@ -270,33 +413,81 @@ export class PlatformApiClient {
           before: params.before,
         },
       },
-      options
+      options,
     );
   }
 
-  listChatboxes(
-    params: { projectId: string },
-    options?: RequestOptions
-  ): Promise<PlatformPage<PlatformChatbox>> {
+  /**
+   * The unified, cross-surface sessions feed for one project.
+   *
+   * `q` is optional HERE (omitted = the recency feed) even though the
+   * `search_sessions` operation requires it: a client method is the general
+   * transport, and list-mode is a legitimate use of the endpoint. The
+   * operation narrows that on purpose — an agent asking for "the sessions"
+   * unfiltered is almost never what its user meant.
+   *
+   * `sourceTypes` is CSV-joined because the endpoint takes a repeated-value
+   * `sourceType` param as one comma-separated string; an empty array is sent
+   * as nothing at all rather than as `sourceType=`, which the backend would
+   * reject.
+   *
+   * `cursor` passes through unrenamed — it is an opaque Convex cursor, so echo
+   * back exactly what the previous page returned and never construct one.
+   */
+  listSessions(
+    params: {
+      projectId: string;
+      q?: string;
+      scope?: "titles" | "transcripts";
+      sourceTypes?: string[];
+      status?: string;
+      limit?: number;
+      cursor?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformSessionsPage> {
     return this.request(
       "GET",
-      `/projects/${encodeURIComponent(params.projectId)}/chatboxes`,
-      {},
-      options
+      `/projects/${encodeURIComponent(params.projectId)}/sessions`,
+      {
+        query: {
+          q: params.q,
+          scope: params.scope,
+          sourceType: params.sourceTypes?.length
+            ? params.sourceTypes.join(",")
+            : undefined,
+          status: params.status,
+          limit: params.limit,
+          cursor: params.cursor,
+        },
+      },
+      options,
     );
   }
 
-  getChatbox(
-    params: { projectId: string; chatboxId: string },
-    options?: RequestOptions
-  ): Promise<PlatformChatboxDetail> {
+  listScenarios(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformScenarioSummary>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/scenarios`,
+      {},
+      options,
+    );
+  }
+
+  getScenario(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformScenarioDetail> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
-      )}/chatboxes/${encodeURIComponent(params.chatboxId)}`,
+        params.projectId,
+      )}/scenarios/${encodeURIComponent(params.scenarioId)}`,
       {},
-      options
+      options,
     );
   }
 
@@ -304,27 +495,27 @@ export class PlatformApiClient {
 
   listHosts(
     params: { projectId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformHost>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/hosts`,
       {},
-      options
+      options,
     );
   }
 
   getHost(
     params: { projectId: string; hostId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformHostDetail> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/hosts/${encodeURIComponent(params.hostId)}`,
       {},
-      options
+      options,
     );
   }
 
@@ -335,13 +526,13 @@ export class PlatformApiClient {
    */
   createHost(
     params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformHostDetail> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/hosts`,
       { body: params.body },
-      options
+      options,
     );
   }
 
@@ -351,15 +542,15 @@ export class PlatformApiClient {
       hostId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformHostDetail> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/hosts/${encodeURIComponent(params.hostId)}`,
       { body: params.body },
-      options
+      options,
     );
   }
 
@@ -370,12 +561,12 @@ export class PlatformApiClient {
       serverIds: string[];
       optionalServerIds?: string[];
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<{ hostId: string; hostConfigId: string }> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/hosts/${encodeURIComponent(params.hostId)}/servers`,
       {
         body: {
@@ -385,21 +576,21 @@ export class PlatformApiClient {
             : {}),
         },
       },
-      options
+      options,
     );
   }
 
   duplicateHost(
     params: { projectId: string; hostId: string; name?: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformHostDetail> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/hosts/${encodeURIComponent(params.hostId)}/duplicate`,
       { body: params.name === undefined ? {} : { name: params.name } },
-      options
+      options,
     );
   }
 
@@ -409,15 +600,15 @@ export class PlatformApiClient {
       hostId: string;
       body?: Record<string, unknown>;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformHostDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/hosts/${encodeURIComponent(params.hostId)}`,
       { body: params.body ?? {} },
-      options
+      options,
     );
   }
 
@@ -433,7 +624,7 @@ export class PlatformApiClient {
 
   listEnvironments(
     params: { projectId: string; includeArchived?: boolean },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformEnvironment>> {
     return this.request(
       "GET",
@@ -441,21 +632,43 @@ export class PlatformApiClient {
       {
         query: params.includeArchived ? { includeArchived: "true" } : undefined,
       },
-      options
+      options,
+    );
+  }
+
+  /**
+   * What this deployment's environment surface supports.
+   *
+   * CALL THIS BEFORE SENDING `modelId`. The SDK ships independently of the
+   * backend, and a field an older deployment does not know is a hard validator
+   * error there rather than a silently ignored one. A deployment too old to
+   * answer reports `false` for everything, which is the correct assumption.
+   */
+  getEnvironmentCapabilities(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformEnvironmentCapabilities> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/environments/capabilities`,
+      {},
+      options,
     );
   }
 
   getEnvironment(
     params: { projectId: string; environmentId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEnvironment> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/environments/${encodeURIComponent(params.environmentId)}`,
       {},
-      options
+      options,
     );
   }
 
@@ -467,34 +680,89 @@ export class PlatformApiClient {
    */
   resolveEnvironment(
     params: { projectId: string; environmentId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEnvironmentResolved> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/environments/${encodeURIComponent(params.environmentId)}/resolve`,
       {},
-      options
+      options,
     );
   }
 
   createEnvironment(
     params: { projectId: string; body: PlatformEnvironmentCreateBody },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEnvironment> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/environments`,
       { body: params.body },
-      options
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/environments/ensure-adhoc` — GET-OR-CREATE an UNNAMED,
+   * content-addressed environment for a composed stack.
+   *
+   * Distinct from `createEnvironment`, which mints a NAMED row that lands in
+   * the project's environment list forever. A composed stack is a throwaway:
+   * the caller wants to run this exact combination, not to add a permanent
+   * entry someone else has to reason about.
+   *
+   * Deduped server-side by a fingerprint of the stack, so the same stack
+   * always returns the same environment (`created: false` after the first
+   * call) and a retried launch converges instead of accumulating rows.
+   */
+  ensureAdhocEnvironment(
+    params: { projectId: string; body: PlatformAdhocEnvironmentBody },
+    options?: RequestOptions,
+  ): Promise<PlatformAdhocEnvironmentEnsured> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/environments/ensure-adhoc`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/environments/{id}/name` — PROMOTE an ad-hoc
+   * environment to a named one, in place.
+   *
+   * The ONLY promotion path: `updateEnvironment` cannot do it. The platform
+   * keeps the two apart because its rename is admin-gated and refuses a row
+   * that already has a name, while promotion is member-gated and refuses one
+   * that already has a name. Routing promotion through the rename would either
+   * open it to members or leave ad-hoc rows unnameable.
+   */
+  nameEnvironment(
+    params: {
+      projectId: string;
+      environmentId: string;
+      body: PlatformEnvironmentNameBody;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/environments/${encodeURIComponent(params.environmentId)}/name`,
+      { body: params.body },
+      options,
     );
   }
 
   /**
    * Only the fields you pass change. Pass `null` for `serverAttachmentId`,
-   * `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting a field
-   * leaves it alone.
+   * `modelId`, `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting
+   * a field leaves it alone.
    */
   updateEnvironment(
     params: {
@@ -502,15 +770,15 @@ export class PlatformApiClient {
       environmentId: string;
       body: PlatformEnvironmentUpdateBody;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEnvironment> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/environments/${encodeURIComponent(params.environmentId)}`,
       { body: params.body },
-      options
+      options,
     );
   }
 
@@ -524,15 +792,15 @@ export class PlatformApiClient {
       environmentId: string;
       expectedRevision: number;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEnvironment> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/environments/${encodeURIComponent(params.environmentId)}/archive`,
       { body: { expectedRevision: params.expectedRevision } },
-      options
+      options,
     );
   }
 
@@ -548,15 +816,15 @@ export class PlatformApiClient {
       environmentId: string;
       expectedRevision: number;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEnvironment> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/environments/${encodeURIComponent(params.environmentId)}/restore`,
       { body: { expectedRevision: params.expectedRevision } },
-      options
+      options,
     );
   }
 
@@ -567,13 +835,13 @@ export class PlatformApiClient {
 
   listProjectPlugins(
     params: { projectId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformPlugin>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/plugins`,
       {},
-      options
+      options,
     );
   }
 
@@ -585,13 +853,13 @@ export class PlatformApiClient {
    */
   getPluginVersion(
     params: { pluginVersionId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPluginVersion> {
     return this.request(
       "GET",
       `/plugin-versions/${encodeURIComponent(params.pluginVersionId)}`,
       {},
-      options
+      options,
     );
   }
 
@@ -602,39 +870,39 @@ export class PlatformApiClient {
 
   listImages(
     params: { projectId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformImage>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/images`,
       {},
-      options
+      options,
     );
   }
 
   getImage(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformImage> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/images/${encodeURIComponent(params.imageId)}`,
       {},
-      options
+      options,
     );
   }
 
   createImage(
     params: { projectId: string; body: { name: string; blueprint: string } },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformImage> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/images`,
       { body: params.body },
-      options
+      options,
     );
   }
 
@@ -644,15 +912,15 @@ export class PlatformApiClient {
       imageId: string;
       body: { name?: string; blueprint?: string };
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformImage> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/images/${encodeURIComponent(params.imageId)}`,
       { body: params.body },
-      options
+      options,
     );
   }
 
@@ -660,70 +928,70 @@ export class PlatformApiClient {
    * invalid blueprint is a successful lint with structured errors. */
   validateImageBlueprint(
     params: { projectId: string; body: { blueprint: string } },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformImageBlueprintValidation> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/images/validate`,
       { body: params.body },
-      options
+      options,
     );
   }
 
   deleteImage(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformImageDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/images/${encodeURIComponent(params.imageId)}`,
       {},
-      options
+      options,
     );
   }
 
   listImageBuilds(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformImageBuild>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/images/${encodeURIComponent(params.imageId)}/builds`,
       {},
-      options
+      options,
     );
   }
 
   /** `POST …/build` — async (202); poll `listImageBuilds` for status. */
   buildImage(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformImageBuildStarted> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/images/${encodeURIComponent(params.imageId)}/build`,
       {},
-      options
+      options,
     );
   }
 
   promoteImage(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformImage> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/images/${encodeURIComponent(params.imageId)}/promote`,
       {},
-      options
+      options,
     );
   }
 
@@ -731,28 +999,28 @@ export class PlatformApiClient {
    * pinned image). */
   useImage(
     params: { projectId: string; imageId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformComputerAttached> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/images/${encodeURIComponent(params.imageId)}/use`,
       {},
-      options
+      options,
     );
   }
 
   /** Reset the caller's computer to its image (wipes mutable state). */
   resetComputer(
     params: { projectId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformComputerReset> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/computer/reset`,
       {},
-      options
+      options,
     );
   }
 
@@ -762,13 +1030,64 @@ export class PlatformApiClient {
    */
   createEvalRun(
     params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalRunCreated> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
       { body: params.body },
-      options
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/eval-suites/{id}/environments` — APPEND one
+   * environment to the suite's attachments, atomically.
+   *
+   * Distinct from `updateEvalSuite({ environmentIds })`, which REPLACES the
+   * whole list: an append built on that is a read-modify-write across two
+   * round trips, and a concurrent attach landing in between is silently
+   * detached. Idempotent — attaching an already-attached environment reports
+   * `attached: false` and changes nothing.
+   */
+  attachEvalSuiteEnvironment(
+    params: { projectId: string; suiteId: string; environmentId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalSuiteEnvironmentAttached> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/environments`,
+      { body: { environmentId: params.environmentId } },
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/eval-run-groups` — launch ONE run per target (attached
+   * environments, or attached named hosts) under a single server-minted group
+   * id, and respond 202 with a per-target receipt.
+   *
+   * The ONLY endpoint with grouped-launch semantics: the server bounds the
+   * fan-out, validates every target before launching any of them, and holds
+   * ONE organization concurrency slot for the whole group. `createEvalRun`
+   * accepts a `runGroupId` too, but purely as a display label — it gives N
+   * separate launches no group treatment, which is why a fan-out has to come
+   * through here.
+   *
+   * A per-target failure does not abort its siblings, so read `outcome` rather
+   * than treating the 202 as "everything started".
+   */
+  createEvalRunGroup(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunGroupCreated> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/eval-run-groups`,
+      { body: params.body },
+      options,
     );
   }
 
@@ -780,27 +1099,138 @@ export class PlatformApiClient {
    */
   createEvalSuite(
     params: { projectId: string; body: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalSuiteCreated> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-suites`,
       { body: params.body },
-      options
+      options,
     );
   }
 
   getEvalRun(
     params: { projectId: string; runId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalRun> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}`,
       {},
-      options
+      options,
+    );
+  }
+
+  /**
+   * Request (or with `force`, regenerate) the eval run's insights —
+   * serverQuality behind the common envelope. SPENDS the org's model budget;
+   * poll `getEvalRun().insights` rather than re-requesting.
+   */
+  requestEvalRunInsights(
+    params: { projectId: string; runId: string; force?: boolean },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunInsightsRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options,
+    );
+  }
+
+  /**
+   * Request (or with `force`, re-request) LLM-as-judge grading of a finished
+   * run. SPENDS the org's model budget; poll `getEvalRun().judges` rather than
+   * re-requesting.
+   *
+   * `enable` grades a run whose config snapshot has the judge OFF. It is a
+   * per-run answer, not a suite edit — grading reads the snapshot pinned when
+   * the run was created, so turning the judge on for the suite does not reach
+   * an already-recorded run.
+   */
+  requestEvalRunJudge(
+    params: {
+      projectId: string;
+      runId: string;
+      force?: boolean;
+      enable?: boolean;
+      model?: string;
+      threshold?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunJudgeRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/judge`,
+      {
+        body: {
+          ...(params.force === true ? { force: true } : {}),
+          ...(params.enable !== undefined ? { enable: params.enable } : {}),
+          ...(params.model !== undefined ? { model: params.model } : {}),
+          ...(params.threshold !== undefined
+            ? { threshold: params.threshold }
+            : {}),
+        },
+      },
+      options,
+    );
+  }
+
+  /**
+   * The repositories in an organization whose pull requests run an eval suite,
+   * plus what the MCPJam GitHub App can reach.
+   */
+  listEvalCheckRepos(
+    params: { organizationId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalCheckRepos> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId,
+      )}/eval-check-repos`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Connect a repository so its pull requests run one eval suite.
+   *
+   * `outagePolicy` is required rather than defaulted: it decides what a check
+   * reports when MCPJam cannot conclude, and a surface that picks silently is
+   * the one that produces repositories nobody chose a policy for.
+   */
+  connectEvalCheckRepo(
+    params: {
+      organizationId: string;
+      projectId: string;
+      suiteId: string;
+      repo: string;
+      outagePolicy: "fail_open" | "fail_closed";
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalCheckRepoConnected> {
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(
+        params.organizationId,
+      )}/eval-check-repos`,
+      {
+        body: {
+          projectId: params.projectId,
+          suiteId: params.suiteId,
+          repo: params.repo,
+          outagePolicy: params.outagePolicy,
+        },
+      },
+      options,
     );
   }
 
@@ -811,78 +1241,261 @@ export class PlatformApiClient {
       cursor?: string;
       limit?: number;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformEvalIteration>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}/iterations`,
       { query: { cursor: params.cursor, limit: params.limit } },
-      options
+      options,
     );
   }
 
   /** Full trace envelope (messages + analysis) for one iteration. */
   getEvalIterationTrace(
     params: { projectId: string; runId: string; iterationId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<unknown> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-runs/${encodeURIComponent(
-        params.runId
+        params.runId,
       )}/iterations/${encodeURIComponent(params.iterationId)}/trace`,
       {},
-      options
+      options,
     );
   }
 
   /** Cancel an in-flight run; returns the run in its (now cancelled) state. */
   cancelEvalRun(
     params: { projectId: string; runId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalRun> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}/cancel`,
       {},
-      options
+      options,
+    );
+  }
+
+  // ── Directory readiness ───────────────────────────────────────────────
+  //
+  // Asynchronous by design: a readiness run dials somebody else's server,
+  // walks its redirect chain, discovers its authorization metadata and lists
+  // its tools. A start answers `202` with a run id and everything after it is
+  // a separate call.
+  //
+  // The TARGET comes from the saved server the path names, never from a body.
+  // These methods have no URL parameter for the same reason the endpoint has
+  // no URL field: a caller cannot point a hosted run at an arbitrary host.
+
+  /**
+   * Start a Claude connector-directory readiness run.
+   *
+   * Deterministic grading is FREE. `includeLlmObservations` is the only field
+   * that can spend, and it defaults off.
+   */
+  startClaudeReadinessRun(
+    params: { projectId: string; serverId: string } & PlatformReadinessStartBody,
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRunReceipt> {
+    // Explicit picks, not a rest spread. The endpoint's body schema is
+    // `strictObject`, and TypeScript's structural typing lets a caller hand a
+    // WIDER object to this parameter — so a spread would forward whatever else
+    // that object carries and turn a valid start into a 400. Worse, the
+    // rejected request never reaches the idempotency key, so the caller's
+    // retry dedupes against nothing. `publishScenario` picks for the same
+    // reason.
+    const { projectId, serverId } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId,
+      )}/readiness-runs/claude`,
+      { body: pickReadinessStartBody(params) },
+      options,
+    );
+  }
+
+  /**
+   * Start an OpenAI plugin-directory readiness run.
+   *
+   * `submissionMode` is required by the TYPE as well as by the endpoint,
+   * because it is never inferred: a run with no declared shape reads as
+   * `mcp-only`, which reports the package lane not-applicable and turns a
+   * missing input into a clean bill of health.
+   */
+  startOpenAIReadinessRun(
+    params: {
+      projectId: string;
+      serverId: string;
+    } & PlatformOpenAIReadinessStartBody,
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRunReceipt> {
+    // Explicit picks — see `startClaudeReadinessRun`.
+    const { projectId, serverId, submissionMode } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId,
+      )}/readiness-runs/openai`,
+      { body: { ...pickReadinessStartBody(params), submissionMode } },
+      options,
+    );
+  }
+
+  /** Lane statuses, coverage and the observation axis. Poll this. */
+  getReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options,
+    );
+  }
+
+  listReadinessRuns(
+    params: {
+      projectId: string;
+      readinessKind?: PlatformReadinessKind;
+      serverId?: string;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformReadinessRun>> {
+    const { projectId, ...query } = params;
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(projectId)}/readiness-runs`,
+      { query },
+      options,
+    );
+  }
+
+  /**
+   * Cancel an in-flight run.
+   *
+   * The executing node learns about this on its next heartbeat and aborts the
+   * run in flight — which matters more than the row's status, because the
+   * thing being stopped is traffic to somebody else's server.
+   */
+  cancelReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<{ runId: string; projectId: string; status: string }> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * The full report: every finding, with its class, provenance, citation and
+   * remediation.
+   *
+   * Returned as `unknown` deliberately. The report's shape is the SDK's
+   * `ClaudeReadinessResult` / `OpenAIReadinessResult`, and importing either
+   * here would pull the whole readiness result model into the platform entry —
+   * which is loaded by surfaces that only ever render a lane status. A caller
+   * that wants the narrow type imports it from `@mcpjam/sdk/browser` and
+   * narrows on `readinessKind`.
+   */
+  getReadinessReport(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<unknown> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/report`,
+      {},
+      options,
     );
   }
 
   /** One row per authored step (status + reason + evidence) for one iteration. */
   getEvalRunSteps(
     params: { projectId: string; runId: string; iterationId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformEvalStepResult>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-runs/${encodeURIComponent(
-        params.runId
+        params.runId,
       )}/iterations/${encodeURIComponent(params.iterationId)}/steps`,
       {},
-      options
+      options,
+    );
+  }
+
+  /**
+   * `GET /projects/{p}/eval-runs/{runId}/compare` — this run against a
+   * baseline.
+   *
+   * Omitting `baseRunId` selects the nearest earlier COMPLETED run in the same
+   * suite. Baseline resolution is server-side on purpose: `listEvalSuiteRuns`
+   * has no cursor, so a client-side walk cannot be bounded-correct, and the
+   * policy belongs beside the backend's other baseline resolvers.
+   *
+   * THROWS `PlatformApiError` (404, `details.reason === "BASELINE_NOT_FOUND"`)
+   * when no baseline resolves — a suite's first run, or one whose whole lookup
+   * window never completed. That is an incomplete comparison, not a failing
+   * one; callers must not map it to a regression.
+   */
+  compareEvalRun(
+    params: {
+      projectId: string;
+      runId: string;
+      baseRunId?: string;
+      previewChars?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformRunCompare> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/compare`,
+      {
+        query: {
+          baseRunId: params.baseRunId,
+          previewChars: params.previewChars,
+        },
+      },
+      options,
     );
   }
 
   listEvalSuiteRuns(
     params: { projectId: string; suiteId: string; limit?: number },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformEvalRun>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/runs`,
       { query: { limit: params.limit } },
-      options
+      options,
     );
   }
 
@@ -890,15 +1503,15 @@ export class PlatformApiClient {
 
   getEvalSuite(
     params: { projectId: string; suiteId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalSuiteDetail> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
       {},
-      options
+      options,
     );
   }
 
@@ -908,29 +1521,29 @@ export class PlatformApiClient {
       suiteId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalSuiteDetail> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
       { body: params.body },
-      options
+      options,
     );
   }
 
   deleteEvalSuite(
     params: { projectId: string; suiteId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalSuiteDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
       {},
-      options
+      options,
     );
   }
 
@@ -940,45 +1553,45 @@ export class PlatformApiClient {
       suiteId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalSuiteDetail> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/schedule`,
       { body: params.body },
-      options
+      options,
     );
   }
 
   listEvalCases(
     params: { projectId: string; suiteId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformEvalCase>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases`,
       {},
-      options
+      options,
     );
   }
 
   getEvalCase(
     params: { projectId: string; suiteId: string; caseId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalCase> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-suites/${encodeURIComponent(
-        params.suiteId
+        params.suiteId,
       )}/cases/${encodeURIComponent(params.caseId)}`,
       {},
-      options
+      options,
     );
   }
 
@@ -988,15 +1601,38 @@ export class PlatformApiClient {
       suiteId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalCase> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases`,
       { body: params.body },
-      options
+      options,
+    );
+  }
+
+  /**
+   * Author several cases in one call. The bulk form of {@link createEvalCase} —
+   * same case body, same identity rules — so an import writes one request per
+   * chunk instead of one per case.
+   */
+  createEvalCases(
+    params: {
+      projectId: string;
+      suiteId: string;
+      body: Record<string, unknown>;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalCaseBatchResult> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/batch`,
+      { body: params.body },
+      options,
     );
   }
 
@@ -1007,33 +1643,33 @@ export class PlatformApiClient {
       caseId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalCase> {
     return this.request(
       "PATCH",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-suites/${encodeURIComponent(
-        params.suiteId
+        params.suiteId,
       )}/cases/${encodeURIComponent(params.caseId)}`,
       { body: params.body },
-      options
+      options,
     );
   }
 
   deleteEvalCase(
     params: { projectId: string; suiteId: string; caseId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalCaseDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-suites/${encodeURIComponent(
-        params.suiteId
+        params.suiteId,
       )}/cases/${encodeURIComponent(params.caseId)}`,
       {},
-      options
+      options,
     );
   }
 
@@ -1043,56 +1679,56 @@ export class PlatformApiClient {
       suiteId: string;
       body: Record<string, unknown>;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformEvalCasesGenerated> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/generate`,
       { body: params.body },
-      options
+      options,
     );
   }
 
   validateServer(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "validate", options);
   }
 
   doctorServer(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformDoctorReport> {
     return this.serverOp(params, "doctor", options);
   }
 
   exportServer(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "export", options);
   }
 
   listServerTools(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<Record<string, unknown>>> {
     return this.serverOp(params, "tools", options);
   }
 
   listServerResources(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<Record<string, unknown>>> {
     return this.serverOp(params, "resources", options);
   }
 
   listServerPrompts(
     params: ServerScope & { body?: Record<string, unknown> },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<Record<string, unknown>>> {
     return this.serverOp(params, "prompts", options);
   }
@@ -1106,7 +1742,7 @@ export class PlatformApiClient {
     params: ServerScope & {
       body: { toolName: string; parameters?: Record<string, unknown> };
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "tools/call", options);
   }
@@ -1119,7 +1755,7 @@ export class PlatformApiClient {
         arguments?: Record<string, string | number | boolean>;
       };
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "prompts/get", options);
   }
@@ -1127,7 +1763,7 @@ export class PlatformApiClient {
   /** `POST /projects/{p}/servers/{s}/resources/read` — read one resource. */
   readServerResource(
     params: ServerScope & { body: { uri: string } },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<Record<string, unknown>> {
     return this.serverOp(params, "resources/read", options);
   }
@@ -1140,13 +1776,13 @@ export class PlatformApiClient {
    */
   createTunnel(
     params: { projectId: string; name: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformTunnelGrant> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/tunnels`,
       { body: { name: params.name } },
-      options
+      options,
     );
   }
 
@@ -1157,15 +1793,15 @@ export class PlatformApiClient {
    */
   closeTunnel(
     params: { projectId: string; serverId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformTunnelClosed> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/tunnels/${encodeURIComponent(params.serverId)}/close`,
       {},
-      options
+      options,
     );
   }
 
@@ -1187,13 +1823,13 @@ export class PlatformApiClient {
 
   listJourneys(
     params: { projectId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformJourney>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/journeys`,
       {},
-      options
+      options,
     );
   }
 
@@ -1204,29 +1840,29 @@ export class PlatformApiClient {
       cursor?: string;
       limit?: number;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformJourneyRun>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/journeys/${encodeURIComponent(params.journeyId)}/runs`,
       { query: pageQuery(params) },
-      options
+      options,
     );
   }
 
   getJourneyRun(
     params: { projectId: string; runId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformJourneyRun> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/journey-runs/${encodeURIComponent(params.runId)}`,
       {},
-      options
+      options,
     );
   }
 
@@ -1237,15 +1873,15 @@ export class PlatformApiClient {
       cursor?: string;
       limit?: number;
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformPage<PlatformJourneyRunSession>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/journey-runs/${encodeURIComponent(params.runId)}/sessions`,
       { query: pageQuery(params) },
-      options
+      options,
     );
   }
 
@@ -1270,12 +1906,12 @@ export class PlatformApiClient {
       waveId?: string;
       environmentIds?: string[];
     },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformJourneyRunLaunched> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/journeys/${encodeURIComponent(params.journeyId)}/runs`,
       {
         body: {
@@ -1285,7 +1921,7 @@ export class PlatformApiClient {
             : {}),
         },
       },
-      options
+      options,
     );
   }
 
@@ -1302,15 +1938,505 @@ export class PlatformApiClient {
    */
   cancelJourneyRun(
     params: { projectId: string; runId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformJourneyRunCanceled> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/journey-runs/${encodeURIComponent(params.runId)}/cancel`,
       {},
-      options
+      options,
+    );
+  }
+
+  // ── Personas, swarms, generation (Swarms authoring) ─────────────────────
+  //
+  // The half of the loop that was missing: `/api/v1` could launch a journey
+  // and read its results but could not create one, because a journey needs a
+  // persona and there was no way to make a persona outside the app.
+  //
+  // Creates and updates are behind the `sandboxes-enabled` beta flag. Reads
+  // and the soft deletes are not — an org that has just lost the flag must
+  // still be able to see and clean up what it authored.
+
+  listPersonas(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformPersona>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/personas`,
+      {},
+      options,
+    );
+  }
+
+  getPersona(
+    params: { projectId: string; personaId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPersona> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/personas/${encodeURIComponent(params.personaId)}`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * IDEMPOTENT ON `options.idempotencyKey`, and worth passing even though
+   * creating a persona spends nothing: the server replays the key BEFORE it
+   * uniquifies the slug, so a retry without one leaves you with a second,
+   * near-identical persona named `…-2` rather than the row you already made.
+   */
+  createPersona(
+    params: {
+      projectId: string;
+      name: string;
+      role: string;
+      notes?: string;
+      avatarShape?: number;
+      avatarPalette?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformPersona> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/personas`,
+      { body },
+      options,
+    );
+  }
+
+  updatePersona(
+    params: {
+      projectId: string;
+      personaId: string;
+      name?: string;
+      role?: string;
+      notes?: string;
+      avatarShape?: number;
+      avatarPalette?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformPersona> {
+    const { projectId, personaId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(projectId)}/personas/${encodeURIComponent(
+        personaId,
+      )}`,
+      { body },
+      options,
+    );
+  }
+
+  /**
+   * SOFT delete. The persona leaves the roster and cannot be used for new
+   * journeys, but historical runs and sessions keep resolving it — a finished
+   * run does not lose the character it ran as. A second call answers 404,
+   * which cleanup should read as success.
+   */
+  deletePersona(
+    params: { projectId: string; personaId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPersonaDeleted> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/personas/${encodeURIComponent(params.personaId)}`,
+      {},
+      options,
+    );
+  }
+
+  getJourney(
+    params: { projectId: string; journeyId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformJourney> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/journeys/${encodeURIComponent(params.journeyId)}`,
+      {},
+      options,
+    );
+  }
+
+  /** IDEMPOTENT ON `options.idempotencyKey`. */
+  createJourney(
+    params: {
+      projectId: string;
+      goal: string;
+      personaId: string;
+      sessionsPerTarget: number;
+      maxTurns: number;
+      name?: string;
+      swarmId?: string;
+      environmentIds?: string[];
+      serverAttachmentId?: string;
+      hostIds?: string[];
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformJourney> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/journeys`,
+      { body },
+      options,
+    );
+  }
+
+  /**
+   * `null` CLEARS a field; omitting it leaves it alone. That tri-state is the
+   * only way to say "stop fanning this journey out across environments".
+   *
+   * `sessionsPerTarget` and `maxTurns` must move together — they are one
+   * config object upstream, so a partial update would need a read-modify-write
+   * that could silently clobber a concurrent edit.
+   */
+  updateJourney(
+    params: {
+      projectId: string;
+      journeyId: string;
+      name?: string;
+      goal?: string;
+      environmentIds?: string[] | null;
+      serverAttachmentId?: string | null;
+      hostIds?: string[];
+      sessionsPerTarget?: number;
+      maxTurns?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformJourney> {
+    const { projectId, journeyId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(projectId)}/journeys/${encodeURIComponent(
+        journeyId,
+      )}`,
+      { body },
+      options,
+    );
+  }
+
+  /**
+   * ARCHIVES the journey. Its runs, sessions and scorecards stay readable —
+   * deleting the results of work that already happened is not what anyone
+   * means by removing a journey from their list.
+   */
+  archiveJourney(
+    params: { projectId: string; journeyId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformJourneyArchived> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/journeys/${encodeURIComponent(params.journeyId)}`,
+      {},
+      options,
+    );
+  }
+
+  listSwarms(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformSwarm>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/swarms`,
+      {},
+      options,
+    );
+  }
+
+  getSwarm(
+    params: { projectId: string; swarmId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformSwarm> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/swarms/${encodeURIComponent(params.swarmId)}`,
+      {},
+      options,
+    );
+  }
+
+  /** IDEMPOTENT ON `options.idempotencyKey`. */
+  createSwarm(
+    params: {
+      projectId: string;
+      name: string;
+      sessionsPerTarget: number;
+      maxTurns: number;
+      description?: string;
+      environmentIds?: string[];
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformSwarm> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/swarms`,
+      { body },
+      options,
+    );
+  }
+
+  updateSwarm(
+    params: {
+      projectId: string;
+      swarmId: string;
+      name?: string;
+      description?: string | null;
+      environmentIds?: string[] | null;
+      sessionsPerTarget?: number;
+      maxTurns?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformSwarm> {
+    const { projectId, swarmId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/projects/${encodeURIComponent(projectId)}/swarms/${encodeURIComponent(
+        swarmId,
+      )}`,
+      { body },
+      options,
+    );
+  }
+
+  /**
+   * ARCHIVES the container. Journeys authored under it keep working and keep
+   * their `swarmId` — the reference is authoring provenance, not ownership.
+   */
+  archiveSwarm(
+    params: { projectId: string; swarmId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformSwarmArchived> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/swarms/${encodeURIComponent(params.swarmId)}`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Draft personas with an LLM. NOTHING IS SAVED — feed what you want to keep
+   * to `createPersona`. That is also why there is no idempotency key: a call
+   * with no effect has no duplicate to prevent, and offering one would imply
+   * the drafts are stable across retries, which they are not.
+   *
+   * Exactly one grounding source: `serverAttachmentId` or `environmentId`.
+   */
+  generatePersonas(
+    params: {
+      projectId: string;
+      serverAttachmentId?: string;
+      environmentId?: string;
+      journeyCount?: number;
+      personaCount?: number;
+      description?: string;
+      existingPersonas?: Array<{ name: string; role: string }>;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformGenerationDrafts> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/personas/generate`,
+      { body },
+      options,
+    );
+  }
+
+  /**
+   * Draft journeys for a persona. The persona is passed BY VALUE, not by id:
+   * the create flow drafts a persona and its journeys before either exists,
+   * so requiring a saved persona would force you to keep a draft you may
+   * discard. Nothing is saved here either.
+   */
+  generateJourneys(
+    params: {
+      projectId: string;
+      persona: { name: string; role: string; notes?: string };
+      serverAttachmentId?: string;
+      environmentId?: string;
+      journeyCount?: number;
+      description?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformGenerationDrafts> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/journeys/generate`,
+      { body },
+      options,
+    );
+  }
+
+  // ── Swarm insights ──────────────────────────────────────────────────────
+  //
+  // Three different kinds of evidence, deliberately not merged into one run
+  // payload. The scorecard is deterministic and free; findings aggregate it
+  // across waves; wave insights are LLM prose that SPENDS against the org's
+  // shared daily ledger. Reach for the scorecard first — it is usually the
+  // whole answer.
+
+  getSwarmOverview(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformSwarmOverview> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/journeys-overview`,
+      {},
+      options,
+    );
+  }
+
+  getJourneyRunScorecard(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformRunScorecard> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/journey-runs/${encodeURIComponent(params.runId)}/scorecard`,
+      {},
+      options,
+    );
+  }
+
+  listSwarmFindings(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformSwarmFinding>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/journey-findings`,
+      {},
+      options,
+    );
+  }
+
+  dismissSwarmFinding(
+    params: { projectId: string; findingId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformFindingDismissed> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/journey-findings/${encodeURIComponent(params.findingId)}/dismiss`,
+      {},
+      options,
+    );
+  }
+
+  undismissSwarmFinding(
+    params: { projectId: string; findingId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformFindingDismissed> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/journey-findings/${encodeURIComponent(params.findingId)}/undismiss`,
+      {},
+      options,
+    );
+  }
+
+  getWaveInsights(
+    params: { projectId: string; waveId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformWaveInsights> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/waves/${encodeURIComponent(params.waveId)}/insights`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Request an LLM pass over a wave. Answers **202** — generation is
+   * scheduled, not done; poll `getWaveInsights`.
+   *
+   * SPENDS against the org's `insightsPerDay` ledger, which is SHARED with
+   * user-testing window insights. `force` regenerates over a wave that already
+   * has insights and spends again; the usual reason to reach for it is a
+   * caller that did not poll.
+   */
+  requestWaveInsights(
+    params: { projectId: string; waveId: string; force?: boolean },
+    options?: RequestOptions,
+  ): Promise<PlatformWaveInsightsRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/waves/${encodeURIComponent(params.waveId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options,
+    );
+  }
+
+  /**
+   * Cancel an in-flight generation. The recovery path when a request was made
+   * by mistake or its runner went silent — without it a wave stuck `pending`
+   * can only be re-requested with `force`, which spends again.
+   */
+  cancelWaveInsights(
+    params: { projectId: string; waveId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformWaveInsightsCanceled> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/waves/${encodeURIComponent(params.waveId)}/insights`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * What this caller may do in the project — role, beta-gate state, plan
+   * limits, and the derived booleans to branch on.
+   *
+   * Ask this BEFORE planning work on a static surface (MCP catalog, CLI, agent
+   * registry), none of which can advertise a per-organization beta. It is
+   * descriptive: the write paths enforce independently, so a stale answer
+   * costs a clean 403 rather than an incorrect success.
+   */
+  getCapabilities(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformCapabilities> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/capabilities`,
+      {},
+      options,
     );
   }
 
@@ -1320,41 +2446,437 @@ export class PlatformApiClient {
   // `sandboxes-enabled` beta flag; UNPUBLISHING deliberately is not, so an org
   // that loses the flag can still take a live scenario down.
 
+  /**
+   * `name`, `description` and `mode` are CREATE-TIME overrides applied in the
+   * same call, so the scenario is never briefly live in a wider mode than the
+   * caller asked for. They are ignored on a republish (the response says
+   * `overridesIgnored: true`) — changing an existing scenario is
+   * `updateUserTestingScenario`.
+   */
   publishScenario(
-    params: { projectId: string; environmentId: string },
-    options?: RequestOptions
+    params: {
+      projectId: string;
+      environmentId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
+    options?: RequestOptions,
   ): Promise<PlatformScenario> {
+    const { projectId, environmentId } = params;
+    // Explicit picks, not a rest spread: TypeScript's structural typing lets a
+    // wider object through, and the route's schema is strict — an unknown key
+    // forwarded here turns a valid publish into a 400.
+    const body = Object.fromEntries(
+      Object.entries({
+        name: params.name,
+        description: params.description,
+        mode: params.mode,
+      }).filter(([, value]) => value !== undefined),
+    );
     return this.request(
       "PUT",
       `/projects/${encodeURIComponent(
-        params.projectId
-      )}/environments/${encodeURIComponent(params.environmentId)}/scenario`,
-      {},
-      options
+        projectId,
+      )}/environments/${encodeURIComponent(environmentId)}/scenario`,
+      // Bodyless when there is nothing to send — the common case, and what
+      // existing callers already put on the wire.
+      Object.keys(body).length > 0 ? { body } : {},
+      options,
     );
   }
 
   unpublishScenario(
     params: { projectId: string; environmentId: string },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<PlatformScenarioDeleted> {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(
-        params.projectId
+        params.projectId,
       )}/environments/${encodeURIComponent(params.environmentId)}/scenario`,
       {},
-      options
+      options,
+    );
+  }
+
+  // ── User testing ────────────────────────────────────────────────────────
+  //
+  // What a published scenario produced, and who may reach it. `publishScenario`
+  // above creates one (keyed by environment, because the scenario does not
+  // exist yet); everything here is keyed by the scenario.
+  //
+  // AUTHORIZATION DIFFERS from the rest of this client: these gate on the
+  // WORKSPACE role rather than the project role, and workspace MEMBERSHIP is
+  // enough for most of them — mode changes, renames, member edits and link
+  // rotation included. Only guest execution and rebinding need project
+  // ADMIN. A legacy
+  // workspace with no organization hard-denies delegated (`sk_`) callers
+  // entirely — a documented limitation, not a bug you can grant your way out
+  // of.
+
+  /**
+   * Publish an environment as a scenario.
+   *
+   * `name`, `description` and `mode` are CREATE-TIME overrides applied in the
+   * same call, so the scenario is never briefly live in a wider mode than you
+   * asked for. They are ignored on a republish (the response says
+   * `overridesIgnored: true`), because re-applying `mode` would let a routine
+   * idempotent publish widen a scenario someone had narrowed by hand.
+   */
+  publishUserTestingScenario(
+    params: {
+      projectId: string;
+      environmentId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformScenario> {
+    const { projectId, environmentId, ...body } = params;
+    return this.request(
+      "PUT",
+      `/projects/${encodeURIComponent(
+        projectId,
+      )}/environments/${encodeURIComponent(environmentId)}/scenario`,
+      { body },
+      options,
+    );
+  }
+
+  /**
+   * Scenario detail, with the common insights envelope when the caller may
+   * have it. `insights` is OPTIONAL: the envelope is gated on workspace
+   * membership while the scenario is visible more widely, so a
+   * lower-privilege viewer — and any server predating the envelope — gets the
+   * scenario without it rather than an error. Treat absence as
+   * `not_available`, never as "no findings".
+   */
+  getUserTestingScenario(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformUserTestingScenarioDetail> {
+    return this.request(
+      "GET",
+      this.userTestingPath(params.projectId, params.scenarioId),
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Edit a scenario. SINGLE-CONCERN: send `mode` on its own, or `name` and
+   * `description` together — never both. Identity and exposure are separate
+   * mutations upstream, so a mixed request would have to apply them in
+   * sequence, and a failure between the two leaves the scenario half-updated
+   * on the half that decides who can reach it.
+   */
+  updateUserTestingScenario(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      name?: string;
+      description?: string;
+      mode?: "project_members" | "invited_only" | "anyone_with_link";
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformUserTestingScenario> {
+    const { projectId, scenarioId, ...body } = params;
+    return this.request(
+      "PATCH",
+      this.userTestingPath(projectId, scenarioId),
+      { body },
+      options,
+    );
+  }
+
+  /** Session SUMMARIES. Transcripts are a separate, explicit read. */
+  listUserTestingSessions(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformUserTestingSession>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/sessions`,
+      { query: pageQuery(params) },
+      options,
+    );
+  }
+
+  /**
+   * One session's transcript, PAGED and projected to role + text + timing.
+   *
+   * These are real people's conversations with your product. The API never
+   * hands back the stored blob URL, so a caller cannot pass "read this
+   * transcript" onward as an unrevocable capability.
+   */
+  getUserTestingSession(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      sessionId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformUserTestingSessionDetail> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId,
+      )}/sessions/${encodeURIComponent(params.sessionId)}`,
+      { query: pageQuery(params) },
+      options,
+    );
+  }
+
+  getUserTestingMetrics(
+    params: { projectId: string; scenarioId: string; population?: string },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/metrics`,
+      {
+        query: params.population ? { population: params.population } : {},
+      },
+      options,
+    );
+  }
+
+  /**
+   * Usage breakdown. Read `scan.truncated` before quoting any rate from this:
+   * true means the rates were computed over the most recent N sessions rather
+   * than all of them, and dropping the flag turns a conditional statistic into
+   * an unconditional claim.
+   */
+  getUserTestingUsage(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/usage`,
+      {},
+      options,
+    );
+  }
+
+  listUserTestingFindings(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<Record<string, unknown>>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/findings`,
+      {},
+      options,
+    );
+  }
+
+  /** Also how you learn the CURRENT window id, which the insights read takes. */
+  getUserTestingSignals(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/signals`,
+      {},
+      options,
+    );
+  }
+
+  getUserTestingInsights(
+    params: { projectId: string; scenarioId: string; windowId: string },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId,
+      )}/windows/${encodeURIComponent(params.windowId)}/insights`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Ask a model to analyze the scenario's current window. **202** — scheduled,
+   * not done. SPENDS against the organization's daily insights budget, which
+   * is SHARED with swarm wave insights.
+   */
+  requestUserTestingInsights(
+    params: { projectId: string; scenarioId: string; force?: boolean },
+    options?: RequestOptions,
+  ): Promise<PlatformUserTestingInsightsRequested> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/insights`,
+      { body: params.force ? { force: true } : {} },
+      options,
+    );
+  }
+
+  cancelUserTestingInsights(
+    params: { projectId: string; scenarioId: string; windowId: string },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "DELETE",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/insights`,
+      { body: { windowId: params.windowId } },
+      options,
+    );
+  }
+
+  dismissUserTestingFinding(
+    params: { projectId: string; scenarioId: string; findingId: string },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.userTestingFindingAction(params, "dismiss", options);
+  }
+
+  undismissUserTestingFinding(
+    params: { projectId: string; scenarioId: string; findingId: string },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.userTestingFindingAction(params, "undismiss", options);
+  }
+
+  /**
+   * Replace the guest-execution caps.
+   *
+   * A full replacement, not a patch: these only mean something as a SET, and
+   * raising one while leaving a stale sibling behind produces a combination
+   * nobody chose. Project ADMIN.
+   */
+  setUserTestingGuestExecution(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      guestExecution: PlatformGuestExecution;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "PUT",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId,
+      )}/guest-execution`,
+      { body: params.guestExecution },
+      options,
+    );
+  }
+
+  /**
+   * Rotate the share link. DESTRUCTIVE and immediate: the old link stops
+   * working and every session on it dies. There is no rotating back.
+   */
+  rotateUserTestingLink(
+    params: { projectId: string; scenarioId: string },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId,
+      )}/rotate-link`,
+      {},
+      options,
+    );
+  }
+
+  /** Upsert by email, so re-inviting someone is not an error. */
+  upsertUserTestingMember(
+    params: {
+      projectId: string;
+      scenarioId: string;
+      email: string;
+      sendInviteEmail?: boolean;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    const { projectId, scenarioId, ...body } = params;
+    return this.request(
+      "PUT",
+      `${this.userTestingPath(projectId, scenarioId)}/members`,
+      { body },
+      options,
+    );
+  }
+
+  removeUserTestingMember(
+    params: { projectId: string; scenarioId: string; member: string },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "DELETE",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId,
+      )}/members/${encodeURIComponent(params.member)}`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Point a scenario at a DIFFERENT environment, keeping its link, members and
+   * session history. The alternative — unpublish and republish — mints a new
+   * link, which means re-sharing it with everyone who had the old one.
+   */
+  rebindUserTestingScenario(
+    params: { projectId: string; scenarioId: string; environmentId: string },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(params.projectId, params.scenarioId)}/rebind`,
+      { body: { environmentId: params.environmentId } },
+      options,
+    );
+  }
+
+  private userTestingPath(projectId: string, scenarioId: string): string {
+    return `/projects/${encodeURIComponent(
+      projectId,
+    )}/user-testing/scenarios/${encodeURIComponent(scenarioId)}`;
+  }
+
+  private userTestingFindingAction(
+    params: { projectId: string; scenarioId: string; findingId: string },
+    action: "dismiss" | "undismiss",
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.userTestingPath(
+        params.projectId,
+        params.scenarioId,
+      )}/findings/${encodeURIComponent(params.findingId)}/${action}`,
+      {},
+      options,
     );
   }
 
   private serverOp<T>(
     params: ServerScope & { body?: Record<string, unknown> },
     op: string,
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<T> {
     const path = `/projects/${encodeURIComponent(
-      params.projectId
+      params.projectId,
     )}/servers/${encodeURIComponent(params.serverId)}/${op}`;
     return this.request("POST", path, { body: params.body ?? {} }, options);
   }
@@ -1367,7 +2889,7 @@ export class PlatformApiClient {
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
     init: { query?: QueryParams; body?: unknown },
-    options?: RequestOptions
+    options?: RequestOptions,
   ): Promise<T> {
     const url = new URL(`${this.baseUrl}${path}`);
     for (const [name, value] of Object.entries(init.query ?? {})) {
@@ -1404,48 +2926,70 @@ export class PlatformApiClient {
     const timeoutHandle = setTimeout(
       () =>
         controller.abort(
-          new Error(`Request timed out after ${this.timeoutMs}ms`)
+          new Error(`Request timed out after ${this.timeoutMs}ms`),
         ),
-      this.timeoutMs
+      this.timeoutMs,
     );
 
+    // BOTH THE FETCH AND THE BODY READ ARE INSIDE THIS `try`, and that is the
+    // point. Headers arriving is not the end of the request: a server can send
+    // them and then stall the body indefinitely. Releasing the deadline and the
+    // caller's signal at the end of the fetch — as this did — left
+    // `response.text()` bounded by NOTHING. Not `timeoutMs`, which had just been
+    // cleared; not the caller's abort, whose listener had just been removed. A
+    // stalling server held the caller forever, and a Ctrl-C could not take it
+    // back.
     let response: Response;
+    let raw: string;
     try {
-      response = await this.fetchFn(url, {
-        method,
-        headers,
-        body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
-        signal: controller.signal,
-      });
-    } catch (error) {
-      if (externalSignal?.aborted) {
-        // Caller-initiated abort: propagate, don't dress it up as an API error.
-        throw error;
+      try {
+        response = await this.fetchFn(url, {
+          method,
+          headers,
+          body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+          signal: controller.signal,
+        });
+      } catch (error) {
+        if (externalSignal?.aborted) {
+          // Caller-initiated abort: propagate, don't dress it up as an API error.
+          throw error;
+        }
+        const aborted = controller.signal.aborted;
+        throw new PlatformApiError(
+          aborted
+            ? `Request to ${path} timed out after ${this.timeoutMs}ms`
+            : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(
+                error,
+              )}`,
+          aborted ? "TIMEOUT" : "NETWORK_ERROR",
+          { status: 0, endpoint: path, cause: error },
+        );
       }
-      const aborted = controller.signal.aborted;
-      throw new PlatformApiError(
-        aborted
-          ? `Request to ${path} timed out after ${this.timeoutMs}ms`
-          : `Failed to reach the MCPJam API at ${url.origin}: ${errorMessage(
-              error
-            )}`,
-        aborted ? "TIMEOUT" : "NETWORK_ERROR",
-        { status: 0, endpoint: path, cause: error }
-      );
+
+      try {
+        raw = await response.text();
+      } catch (error) {
+        // Same taxonomy as the fetch arm above, for the same reasons: a caller's
+        // abort is theirs to see, and our own deadline is a TIMEOUT rather than
+        // an unexplained read failure. Reporting a stalled body as
+        // INTERNAL_ERROR sends someone looking for a bug on our side.
+        if (externalSignal?.aborted) throw error;
+        if (controller.signal.aborted) {
+          throw new PlatformApiError(
+            `Request to ${path} timed out after ${this.timeoutMs}ms`,
+            "TIMEOUT",
+            { status: 0, endpoint: path, cause: error },
+          );
+        }
+        throw new PlatformApiError(
+          `Failed to read the MCPJam API response (${response.status}) for ${path}`,
+          "INTERNAL_ERROR",
+          { status: response.status, endpoint: path, cause: error },
+        );
+      }
     } finally {
       clearTimeout(timeoutHandle);
       externalSignal?.removeEventListener("abort", onExternalAbort);
-    }
-
-    let raw: string;
-    try {
-      raw = await response.text();
-    } catch (error) {
-      throw new PlatformApiError(
-        `Failed to read the MCPJam API response (${response.status}) for ${path}`,
-        "INTERNAL_ERROR",
-        { status: response.status, endpoint: path, cause: error }
-      );
     }
 
     let parsed: unknown;
@@ -1468,7 +3012,7 @@ export class PlatformApiClient {
       throw new PlatformApiError(
         `The MCPJam API returned a non-JSON response (${response.status}) for ${path}`,
         "INTERNAL_ERROR",
-        { status: response.status, endpoint: path, cause: parseError }
+        { status: response.status, endpoint: path, cause: parseError },
       );
     }
 
@@ -1479,7 +3023,7 @@ export class PlatformApiClient {
   private toApiError(
     response: Response,
     body: unknown,
-    path: string
+    path: string,
   ): PlatformApiError {
     const envelope =
       body && typeof body === "object" && !Array.isArray(body)
@@ -1525,7 +3069,7 @@ function fallbackCodeForStatus(status: number): string {
 
 function parseRetryAfter(
   header: string | null,
-  now: number = Date.now()
+  now: number = Date.now(),
 ): number | undefined {
   if (!header) return undefined;
   const seconds = Number(header);

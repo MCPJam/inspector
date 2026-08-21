@@ -6,6 +6,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 import type { Command } from "commander";
 import {
   createEvalCaseOperation,
@@ -17,6 +18,9 @@ import {
   cancelEvalRunOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   listEvalCasesOperation,
@@ -24,6 +28,7 @@ import {
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
   PlatformApiError,
+  resolveProject,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -40,14 +45,91 @@ import {
   extractIterationVideoUrl,
   screenshotFilename,
 } from "../lib/eval-screenshots.js";
-import { operationalError, usageError, writeResult } from "../lib/output.js";
+import {
+  cliError,
+  operationalError,
+  setProcessExitCode,
+  usageError,
+  writeResult,
+} from "../lib/output.js";
+import {
+  buildCorpus,
+  buildRunCompareReport,
+  calculateLatencyStats,
+  detectFlakyCases,
+  evaluateCompareGates,
+  formatGateReport,
+  formatSuiteFileFindings,
+  HostedOnlyCaseError,
+  loadEvalSuiteFile,
+  MAX_SUITE_FILE_BYTES,
+  serializeEvalSuiteFile,
+  verifyCorpusLock,
+  type FlakyCase,
+  type GateReport,
+  type LoadedCorpus,
+  type PublicMatchOptions,
+  type StructuredRunReport,
+  type SuiteFileFailureStage,
+} from "@mcpjam/sdk";
+import type {
+  PlatformEvalCase,
+  PlatformEvalIteration,
+  PlatformRunCompare,
+} from "@mcpjam/sdk/platform";
+import { writeFileAtomic } from "../lib/atomic-write.js";
+import {
+  buildSuiteFileFromPlatform,
+  defaultSuiteFilePath,
+  suiteFileTooLarge,
+  type SuiteExportFinding,
+} from "../lib/eval-suite-export.js";
+import {
+  CORPUS_DRIFT_EXIT_CODE,
+  CORPUS_INCOMPLETE_EXIT_CODE,
+  CORPUS_USAGE_EXIT_CODE,
+  corpusFetchFailure,
+  DEFAULT_CORPUS_LOCK_PATH,
+  readCorpusLock,
+  renderCorpusDrift,
+  resolveCorpusLockPath,
+  writeCorpusLockAtomic,
+} from "../lib/corpus-lock.js";
+import {
+  EVAL_GATE_INCOMPLETE_EXIT_CODE,
+  EVAL_GATE_USAGE_EXIT_CODE,
+  TERMINAL_RUN_STATUSES,
+  evalGateExitCode,
+  isNonVerdictRunStatus,
+} from "../lib/eval-gate-exit-code.js";
+import {
+  policyFromOptions,
+  policyNeedsIterations,
+  reportForRun,
+  type EvalGateOptions,
+} from "../lib/eval-gate.js";
+import { fetchAllIterations } from "../lib/eval-iterations.js";
+import {
+  comparePolicyFromOptions,
+  compareGateInputFrom,
+  flakyInputFrom,
+  type EvalCompareOptions,
+} from "../lib/eval-compare.js";
+import {
+  parseReporterFormat,
+  writeJsonArtifact,
+  writeReporterResult,
+} from "../lib/reporting.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
   buildPlatformClient,
   toCliError,
   webOriginForApiBaseUrl,
 } from "../lib/platform-client.js";
-import { getGlobalOptions, parsePositiveInteger } from "../lib/server-config.js";
+import {
+  getGlobalOptions,
+  parsePositiveInteger,
+} from "../lib/server-config.js";
 import {
   detectInlineImageProtocol,
   encodeInlineImage,
@@ -90,6 +172,200 @@ function addPlatformOptions(command: Command): Command {
  * `/ci-evals` twin is behind the `evaluate-ci` flag and its redirect drops
  * the run path.
  */
+/**
+ * A variadic selector maps to the SINGULAR op field for one value and the
+ * PLURAL for several. The op rejects both together, and the singular field
+ * carries the semantics (and description) callers already rely on.
+ */
+function selectorField(
+  singular: string,
+  plural: string,
+  values: string[] | undefined
+): Record<string, string | string[]> {
+  if (!values?.length) return {};
+  return values.length === 1
+    ? { [singular]: values[0]! }
+    : { [plural]: values };
+}
+
+/**
+ * The `--compose-*` flags as the op's `compose` object, or nothing at all.
+ *
+ * `--compose-host` is what MAKES it a composed run — the other axes only
+ * refine a stack that already has a host — so a `--compose-computer` with no
+ * host is a usage error rather than a silently ignored flag. Combining any of
+ * them with `--environment`/`--host`/`--all-targets` is rejected by the op,
+ * which owns that rule for every surface.
+ */
+function composeField(options: {
+  composeHost?: string;
+  composeComputer?: string;
+  composeModel?: string;
+  composeServerGroup?: string;
+  composeSkill?: string[];
+}): {
+  compose?: {
+    host: string;
+    serverGroup?: string;
+    model?: string;
+    computer?: string;
+    skills?: { mode: "explicit"; skillIds: string[] };
+  };
+} {
+  const refinements =
+    options.composeComputer !== undefined ||
+    options.composeModel !== undefined ||
+    options.composeServerGroup !== undefined ||
+    (options.composeSkill?.length ?? 0) > 0;
+  if (!options.composeHost) {
+    if (refinements) {
+      throw usageError(
+        "--compose-* flags need --compose-host: the host is what the composed stack runs as, and the others only refine it."
+      );
+    }
+    return {};
+  }
+  return {
+    compose: {
+      host: options.composeHost,
+      ...(options.composeServerGroup !== undefined
+        ? { serverGroup: options.composeServerGroup }
+        : {}),
+      ...(options.composeModel !== undefined
+        ? { model: options.composeModel }
+        : {}),
+      ...(options.composeComputer !== undefined
+        ? { computer: options.composeComputer }
+        : {}),
+      ...(options.composeSkill?.length
+        ? {
+            skills: {
+              mode: "explicit" as const,
+              skillIds: options.composeSkill,
+            },
+          }
+        : {}),
+    },
+  };
+}
+
+/**
+ * `--iterations 3` → 3, and anything else → a usage error rather than NaN.
+ *
+ * The emptiness guard is not decoration: `Number("")` and `Number(" ")` are
+ * both `0`, and `0` passes `isInteger` and `isFinite` alike. Without it
+ * `--min-pass-rate ""` would become a threshold of 0 — inside the documented
+ * range, so nothing downstream objects, and every run passes.
+ */
+function parseIntOption(raw: string, flag: string): number {
+  if (raw.trim() === "") {
+    throw usageError(`${flag} requires a value.`);
+  }
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed)) {
+    throw usageError(`${flag} must be a whole number (got "${raw}").`);
+  }
+  return parsed;
+}
+
+function parseNumberOption(raw: string, flag: string): number {
+  if (raw.trim() === "") {
+    throw usageError(`${flag} requires a value.`);
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed)) {
+    throw usageError(`${flag} must be a number (got "${raw}").`);
+  }
+  return parsed;
+}
+
+/**
+ * `--match-options '{"toolCallOrder":"exact"}'`. Malformed JSON is a usage
+ * error naming the flag: the op's own schema would reject the parsed value
+ * with a field-level message, which is unhelpful when the real problem is a
+ * missing quote in the shell.
+ */
+function parseMatchOptionsOption(raw: string): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw usageError(
+      `--match-options must be valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw usageError("--match-options must be a JSON object.");
+  }
+  return parsed as Record<string, unknown>;
+}
+
+/**
+ * Human-format summary of a launch: one `View:` link per started run, a group
+ * line when several were launched, and a named line per failure.
+ *
+ * Silent on `--format json`, where the receipt IS the output — see the
+ * one-document rule at the call site.
+ */
+function writeRunGroupSummary(
+  format: string,
+  webOrigin: string,
+  result: {
+    project: { id: string };
+    suite: { id: string };
+    outcome: string;
+    startedCount: number;
+    failedCount: number;
+    runGroupId?: string;
+    targets: Array<
+      | {
+          status: "started";
+          runId: string;
+          host?: { id: string; name: string };
+          environment?: { id: string; name?: string | null } | null;
+        }
+      | {
+          status: "failed";
+          host?: { id: string; name: string };
+          environment?: { id: string; name?: string | null } | null;
+          error: { code: string; message: string };
+        }
+    >;
+  }
+): void {
+  if (format !== "human") return;
+  for (const target of result.targets) {
+    if (target.status !== "started") continue;
+    writeRunLink(format, webOrigin, {
+      projectId: result.project.id,
+      suiteId: result.suite.id,
+      runId: target.runId,
+    });
+  }
+  const total = result.startedCount + result.failedCount;
+  if (total > 1) {
+    process.stdout.write(
+      `Started ${result.startedCount}/${total} runs` +
+        (result.runGroupId ? ` (group ${result.runGroupId})` : "") +
+        "\n"
+    );
+  }
+  for (const target of result.targets) {
+    if (target.status !== "failed") continue;
+    const label =
+      target.host?.name ??
+      target.host?.id ??
+      target.environment?.name ??
+      target.environment?.id ??
+      "target";
+    process.stderr.write(
+      `Failed: ${label} — ${target.error.code}: ${target.error.message}\n`
+    );
+  }
+}
+
 function writeRunLink(
   format: string,
   webOrigin: string,
@@ -107,6 +383,56 @@ function writeRunLink(
       suiteId
     )}/runs/${encodeURIComponent(runId)}${query}\n`
   );
+}
+
+/** Judge keys the CLI knows how to label, in the order it prints them. */
+const JUDGE_LABELS: ReadonlyArray<[string, string]> = [
+  ["goalCompletion", "goal completion"],
+  ["groundedness", "groundedness"],
+];
+
+/**
+ * One line per judge that has actually been asked to grade this run.
+ *
+ * Human format only — `--format json` output stays byte-identical, and the
+ * full `judges` envelope is in the JSON either way. A judge nobody requested
+ * prints NOTHING rather than a "not requested" line each: the absence is the
+ * answer, and enumerating every judge the platform could run would turn a
+ * status read into a catalog.
+ */
+function writeJudgeSummary(format: string, judges: unknown): void {
+  if (format !== "human" || !judges || typeof judges !== "object") return;
+  for (const [key, label] of JUDGE_LABELS) {
+    const judge = (judges as Record<string, any>)[key];
+    const status = judge?.status;
+    // null/absent = never requested.
+    if (!status) continue;
+    if (status !== "completed") {
+      const code =
+        typeof judge.errorCode === "string" ? ` (${judge.errorCode})` : "";
+      process.stdout.write(`Judge ${label}: ${status}${code}\n`);
+      continue;
+    }
+    const cases: any[] = Array.isArray(judge.cases) ? judge.cases : [];
+    if (cases.length === 0) {
+      // A completed judge with no cases graded nothing — its summary says why,
+      // and "0/0 passed" would bury that behind a number.
+      const why =
+        typeof judge.summary === "string" ? judge.summary : "nothing graded";
+      process.stdout.write(`Judge ${label}: ${why}\n`);
+      continue;
+    }
+    const passed = cases.filter((c) => c?.passed === true).length;
+    const at =
+      typeof judge.threshold === "number"
+        ? ` at threshold ${judge.threshold}`
+        : "";
+    const model =
+      typeof judge.modelUsed === "string" ? ` — ${judge.modelUsed}` : "";
+    process.stdout.write(
+      `Judge ${label}: ${passed}/${cases.length} passed${at}${model}\n`
+    );
+  }
 }
 
 async function runPlatformCommand<TOutput>(
@@ -299,6 +625,15 @@ function buildSuiteUpdateInput(
       ...(input.environment ?? {}),
       servers: options.server,
     };
+  if (options.computerImage !== undefined) {
+    input.environment = {
+      ...(input.environment ?? {}),
+      // NULL, not undefined — `off` has to reach the wire as an explicit
+      // clear, and omitting the servers alongside it preserves them.
+      computerEnvironment:
+        options.computerImage === "off" ? null : options.computerImage,
+    };
+  }
   if (options.host !== undefined)
     input.hosts = options.host.map((host: string) => ({ host }));
 
@@ -313,6 +648,22 @@ function buildSuiteUpdateInput(
   const settings = { ...(input.settings ?? {}) };
   if (options.minAccuracy !== undefined)
     settings.minimumAccuracy = Number(options.minAccuracy);
+  if (options.minIterations !== undefined) {
+    if (options.minIterations === "off") {
+      // NULL, not undefined. `undefined` is "leave this alone" all the way
+      // down the stack, so writing it here would make `--min-iterations off`
+      // a no-op that reports success.
+      settings.minimumIterations = null;
+    } else {
+      const iterations = Number(options.minIterations);
+      if (!Number.isInteger(iterations) || iterations < 1 || iterations > 10) {
+        throw usageError(
+          '--min-iterations must be a whole number from 1 to 10, or "off".'
+        );
+      }
+      settings.minimumIterations = iterations;
+    }
+  }
   const mo = { ...(settings.matchOptions ?? {}) };
   if (options.toolCallOrder !== undefined)
     mo.toolCallOrder = options.toolCallOrder;
@@ -328,14 +679,53 @@ function buildSuiteUpdateInput(
     if (options.judge !== "on" && options.judge !== "off") {
       throw usageError('--judge must be "on" or "off".');
     }
+    // ONE switch, matching the app's LLM-as-Judge toggle, which binds to
+    // `enabled && autoRun`. Writing `enabled` alone changes nothing a user
+    // can observe: it already defaults on, and the grader gates on `autoRun`.
+    // "Turn the judge on" means "grade my runs", so both flip together.
     judge.enabled = options.judge === "on";
+    judge.autoRun = options.judge === "on";
   }
   if (options.judgeModel !== undefined) judge.model = options.judgeModel;
+  if (options.judgeThreshold !== undefined) {
+    judge.threshold = parseJudgeThreshold(options.judgeThreshold);
+  }
   if (Object.keys(judge).length > 0) settings.judge = judge;
   if (Object.keys(settings).length > 0) input.settings = settings;
 
   return input;
 }
+
+/**
+ * `--judge-threshold`, coerced and bounded. Shared by `eval update` and
+ * `eval judge`: two copies of a range check are two places to update when the
+ * range moves, and the second copy is the one that gets forgotten.
+ */
+function parseJudgeThreshold(raw: string): number {
+  // Reject blank BEFORE coercing: `Number("")` and `Number("   ")` are both
+  // `0`, which is a perfectly valid threshold — so an empty flag would sail
+  // through the range check below and silently set "every case passes"
+  // (`passed = score >= 0`). A refusal is the only honest answer to a flag
+  // whose value the caller never supplied.
+  const normalized = raw.trim();
+  const threshold = normalized === "" ? Number.NaN : Number(normalized);
+  if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) {
+    throw usageError("--judge-threshold must be a number between 0 and 1.");
+  }
+  return threshold;
+}
+
+/**
+ * Hyphens on the flag, underscores on the wire: the flag reads like every other
+ * CLI value, and the API keeps the platform's own spelling. Both spellings are
+ * accepted so a caller echoing back an API value is not punished for it.
+ */
+const OUTAGE_POLICY_BY_FLAG = new Map([
+  ["fail-open", "fail_open"],
+  ["fail-closed", "fail_closed"],
+  ["fail_open", "fail_open"],
+  ["fail_closed", "fail_closed"],
+]);
 
 /** Merge a --file/--json case body with the selectors (+ optional --title). */
 function buildCaseInput(
@@ -418,6 +808,896 @@ function resolveScreenshotPath(
     );
   }
   return out;
+}
+
+/** Commander collector for a repeatable `--flag value` option. */
+function collectRepeatable(value: string, previous: string[]): string[] {
+  return [...previous, value];
+}
+
+const DEFAULT_GATE_WAIT_TIMEOUT_MS = 600_000;
+
+async function runEvalGate(
+  options: PlatformOptions &
+    EvalGateOptions & {
+      project: string;
+      run: string;
+      wait?: boolean;
+      waitTimeout?: string;
+      /**
+       * Commander models `--no-gating-score-errors` as the NEGATION of an
+       * implicit `--gating-score-errors`, so the field is `gatingScoreErrors`
+       * and it is `false` exactly when the user passed the flag. Reading it any
+       * other way silently enables the gate on every invocation.
+       */
+      gatingScoreErrors?: boolean;
+    },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  const policy = policyFromOptions({
+    ...options,
+    noGatingScoreErrors: options.gatingScoreErrors === false,
+  });
+  const waitTimeoutMs =
+    options.waitTimeout !== undefined
+      ? parsePositiveInteger(options.waitTimeout, "--wait-timeout")
+      : DEFAULT_GATE_WAIT_TIMEOUT_MS;
+
+  let report: GateReport;
+  try {
+    report = await runPlatformCommand(
+      options,
+      Math.max(globalOptions.timeout, options.wait ? waitTimeoutMs : 0),
+      async ({ client, signal }) => {
+        const projects = await client.listProjects({}, { signal });
+        const resolution = resolveProject(projects.items, options.project);
+        if (!resolution.ok) {
+          throw usageError(resolution.message);
+        }
+        const project = resolution.project;
+        const deadline = Date.now() + waitTimeoutMs;
+        let run = await client.getEvalRun(
+          { projectId: project.id, runId: options.run },
+          { signal }
+        );
+
+        while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+          if (!options.wait) {
+            // Without --wait, a still-running run would otherwise be gated on
+            // its PARTIAL summary — a confident verdict about an unfinished
+            // run. Undecidable, not failed.
+            return {
+              outcome: "incomplete" as const,
+              scoreIntegrity: "unknown" as const,
+              verdicts: [
+                {
+                  gate: "run",
+                  status: "non_gateable" as const,
+                  message: `run is ${run.status}; pass --wait, or gate it once it finishes`,
+                },
+              ],
+            };
+          }
+          if (Date.now() >= deadline) {
+            // A wait timeout is INFRASTRUCTURE, not a verdict: the run may yet
+            // pass. Reported as incomplete so it can never read as a
+            // regression.
+            return {
+              outcome: "incomplete" as const,
+              scoreIntegrity: "unknown" as const,
+              verdicts: [
+                {
+                  gate: "wait",
+                  status: "non_gateable" as const,
+                  message: `run still ${run.status} after ${waitTimeoutMs}ms`,
+                },
+              ],
+            };
+          }
+          await new Promise((resolve) => setTimeout(resolve, 3000));
+          run = await client.getEvalRun(
+            { projectId: project.id, runId: options.run },
+            { signal }
+          );
+        }
+
+        if (isNonVerdictRunStatus(run.status)) {
+          // Cancelled / timed out: the run has not told us the server
+          // regressed, it has told us nothing.
+          return {
+            outcome: "incomplete" as const,
+            scoreIntegrity: "unknown" as const,
+            verdicts: [
+              {
+                gate: "run",
+                status: "non_gateable" as const,
+                message: `run is ${run.status}; no verdict was established`,
+              },
+            ],
+          };
+        }
+
+        const iterations = policyNeedsIterations(policy)
+          ? await fetchAllIterations(client, signal, project.id, options.run)
+          : undefined;
+        return reportForRun(run, iterations, policy);
+      }
+    );
+  } catch (error) {
+    // A USAGE error (bad project selector, malformed flag) is the author's
+    // mistake and keeps its own exit code — mapping it to 3 would tell a CI
+    // operator to go looking for an outage that never happened.
+    if (
+      error instanceof Error &&
+      (error as { exitCode?: number }).exitCode === EVAL_GATE_USAGE_EXIT_CODE
+    ) {
+      throw error;
+    }
+    // Everything else — network, auth, timeout — is infrastructure. NEVER exit
+    // 1: a CI job that fails a release on a flaked request, and calls it a
+    // regression, teaches people to ignore the gate.
+    const detail = error instanceof Error ? error.message : String(error);
+    writeResult(
+      {
+        gate: {
+          outcome: "incomplete",
+          scoreIntegrity: "unknown",
+          verdicts: [
+            {
+              gate: "fetch",
+              status: "non_gateable",
+              message: `could not read the run: ${detail}`,
+            },
+          ],
+        },
+        exitCode: EVAL_GATE_INCOMPLETE_EXIT_CODE,
+      },
+      globalOptions.format
+    );
+    setProcessExitCode(EVAL_GATE_INCOMPLETE_EXIT_CODE);
+    return;
+  }
+
+  const exitCode = evalGateExitCode(report);
+  writeResult({ gate: report, exitCode }, globalOptions.format);
+  if (globalOptions.format === "human") {
+    process.stderr.write(`${formatGateReport(report)}\n`);
+  }
+  if (exitCode !== 0) {
+    setProcessExitCode(exitCode);
+  }
+}
+
+/**
+ * `mcpjam eval compare` — this run against a baseline.
+ *
+ * Deliberately has NO `--wait`. A comparison against a run that has not
+ * finished compares against a partial population, and the honest answer is
+ * incomplete (exit 3), not "wait around and hope". `eval gate --wait` exists
+ * for the waiting.
+ */
+async function runEvalCompare(
+  options: PlatformOptions &
+    EvalCompareOptions & {
+      project: string;
+      run: string;
+      baseRun?: string;
+      reporter?: string;
+      out?: string;
+    },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  // Parsed BEFORE any network call, so a malformed flag exits 2 without
+  // spending a request — and cannot be mistaken for an infrastructure failure.
+  const policy = comparePolicyFromOptions(options);
+  const reporter = parseReporterFormat(options.reporter);
+
+  type CompareOutcome = {
+    report: GateReport;
+    compare?: PlatformRunCompare;
+    flakyCases?: FlakyCase[];
+  };
+
+  let outcome: CompareOutcome;
+  try {
+    outcome = await runPlatformCommand(
+      options,
+      globalOptions.timeout,
+      async ({ client, signal }) => {
+        const projects = await client.listProjects({}, { signal });
+        const resolution = resolveProject(projects.items, options.project);
+        if (!resolution.ok) {
+          throw usageError(resolution.message);
+        }
+        const project = resolution.project;
+
+        const compare = await client.compareEvalRun(
+          {
+            projectId: project.id,
+            runId: options.run,
+            ...(options.baseRun ? { baseRunId: options.baseRun } : {}),
+          },
+          { signal }
+        );
+
+        // Latency and flakiness both need per-iteration rows. An INCOMPLETE
+        // walk contributes neither: a p95 over page one is not this run's p95,
+        // and a flaky-case list from a sample is misleading rather than
+        // partial.
+        const needsIterations =
+          policy.maximumP95LatencyIncreaseMs !== undefined;
+        const [baseIterations, compareIterations] = needsIterations
+          ? await Promise.all([
+              fetchAllIterations(
+                client,
+                signal,
+                project.id,
+                compare.baseRun.id
+              ),
+              fetchAllIterations(
+                client,
+                signal,
+                project.id,
+                compare.compareRun.id
+              ),
+            ])
+          : [
+              undefined,
+              await fetchAllIterations(
+                client,
+                signal,
+                project.id,
+                compare.compareRun.id
+              ),
+            ];
+
+        // Defence in depth. The backend action already refuses a
+        // non-completed run, so this is normally unreachable — but the
+        // command's contract says an unfinished comparison is INCOMPLETE, and
+        // that must not depend on a guard in another repo staying put.
+        if (
+          compare.baseRun.completedAt === null ||
+          compare.compareRun.completedAt === null
+        ) {
+          return {
+            report: {
+              outcome: "incomplete" as const,
+              scoreIntegrity: "unknown" as const,
+              verdicts: [
+                {
+                  gate: "run",
+                  status: "non_gateable" as const,
+                  message:
+                    "both runs must be completed before they can be compared",
+                },
+              ],
+            },
+            compare,
+            flakyCases: [],
+          };
+        }
+
+        const input = compareGateInputFrom(compare, {
+          baseP95Ms: p95Of(baseIterations),
+          compareP95Ms: p95Of(compareIterations),
+        });
+
+        return {
+          report: evaluateCompareGates(input, policy),
+          compare,
+          // Reported, NEVER gated. See `detectFlakyCases`.
+          flakyCases: compareIterations?.complete
+            ? detectFlakyCases(flakyInputFrom(compareIterations.items))
+            : [],
+        };
+      }
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error as { exitCode?: number }).exitCode === EVAL_GATE_USAGE_EXIT_CODE
+    ) {
+      throw error;
+    }
+    // A missing baseline is INCOMPLETE, not a failure: the run may be a
+    // suite's first, and reporting exit 1 would claim a regression nobody
+    // observed. Keyed on `details.reason` rather than the message, which is
+    // prose and may be localized or reworded.
+    const reason = baselineNotFoundReason(error);
+    const detail = error instanceof Error ? error.message : String(error);
+    const report: GateReport = {
+      outcome: "incomplete",
+      scoreIntegrity: "unknown",
+      verdicts: [
+        {
+          gate: reason ? "baseline" : "fetch",
+          status: "non_gateable",
+          message: reason
+            ? `no baseline to compare against: ${detail}`
+            : `could not compare the runs: ${detail}`,
+        },
+      ],
+    };
+    // A reporter was requested, so CI is parsing the output — handing it the
+    // default JSON instead of JUnit on the error path is how a pipeline
+    // silently stops seeing results.
+    await writeCompareResult(
+      { report, reporter, out: options.out, format: globalOptions.format },
+      // Built whenever EITHER output channel was requested. `--reporter` needs
+      // it to emit JUnit rather than JSON; `--out` needs it so a CI step
+      // reading the artifact finds the verdict instead of a missing file.
+      reporter || options.out ? emptyCompareReport(report) : undefined
+    );
+    setProcessExitCode(EVAL_GATE_INCOMPLETE_EXIT_CODE);
+    return;
+  }
+
+  const exitCode = evalGateExitCode(outcome.report);
+  await writeCompareResult(
+    {
+      report: outcome.report,
+      reporter,
+      out: options.out,
+      format: globalOptions.format,
+    },
+    outcome.compare
+      ? buildRunCompareReport(outcome.compare, outcome.report, {
+          flakyCases: outcome.flakyCases,
+        })
+      : undefined
+  );
+  if (globalOptions.format === "human" && !reporter) {
+    process.stderr.write(`${formatGateReport(outcome.report)}\n`);
+  }
+  if (exitCode !== 0) {
+    setProcessExitCode(exitCode);
+  }
+}
+
+/**
+ * `mcpjam eval pull` — materialize a hosted suite into a local corpus lock.
+ *
+ * Two modes, one code path. The default fetches and WRITES the lock; `--frozen`
+ * fetches and only COMPARES, never writing. Sharing the fetch and
+ * materialization matters: a `--frozen` check that built its corpus differently
+ * from the pull that wrote the lock would report drift that does not exist.
+ *
+ * Exit codes follow the contract in `corpus-lock.ts`: 0 clean, 1 drift (the one
+ * real verdict this command can reach), 2 a flag or a case this CLI cannot run,
+ * 3 anything that means no comparison happened.
+ */
+async function runEvalPull(
+  options: PlatformOptions & {
+    suite: string;
+    project?: string;
+    lock?: string;
+    frozen?: boolean;
+    skipUnsupported?: boolean;
+  },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+  const lockPath = resolveCorpusLockPath(options.lock);
+
+  // Read the existing lock BEFORE fetching. A `--frozen` run with no lock is
+  // exit 3 whatever the server would have said, and discovering that after a
+  // round trip only delays the answer.
+  const locked = options.frozen ? await readCorpusLock(lockPath) : undefined;
+
+  let fetched: {
+    suite: { id: string; name?: string };
+    cases: PlatformEvalCase[];
+    suiteChecks: unknown[];
+    suiteMatchOptions?: PublicMatchOptions;
+  };
+  try {
+    fetched = await runPlatformCommand(
+      options,
+      globalOptions.timeout,
+      async ({ client, signal }) => {
+        const selector = {
+          ...(options.project ? { project: options.project } : {}),
+          suite: options.suite,
+        };
+        const [detail, page] = await Promise.all([
+          getEvalSuiteOperation.execute(selector, { client, signal }),
+          listEvalCasesOperation.execute(selector, { client, signal }),
+        ]);
+
+        // The cases endpoint returns the whole suite today and the client has
+        // no cursor parameter to follow one with. If that ever changes, a
+        // silently truncated corpus would be locked as if complete — so this
+        // refuses rather than guessing. Fail-closed: a partial lock is worse
+        // than no lock.
+        if (page.nextCursor) {
+          throw cliError(
+            "CORPUS_TRUNCATED",
+            `Suite "${options.suite}" returned more cases than one page and ` +
+              `this CLI cannot follow the cursor. Upgrade @mcpjam/cli.`,
+            CORPUS_INCOMPLETE_EXIT_CODE
+          );
+        }
+
+        return {
+          suite: {
+            id: detail.id,
+            ...(detail.name ? { name: detail.name } : {}),
+          },
+          cases: page.items,
+          suiteChecks: detail.settings.checks ?? [],
+          ...(detail.settings.matchOptions
+            ? { suiteMatchOptions: detail.settings.matchOptions }
+            : {}),
+        };
+      }
+    );
+  } catch (error) {
+    throw corpusFetchFailure(error);
+  }
+
+  let corpus: LoadedCorpus;
+  try {
+    corpus = buildCorpus({
+      ...(options.project ? { project: options.project } : {}),
+      suite: fetched.suite,
+      cases: fetched.cases,
+      suiteChecks: fetched.suiteChecks,
+      ...(fetched.suiteMatchOptions
+        ? { suiteMatchOptions: fetched.suiteMatchOptions }
+        : {}),
+      unsupported: options.skipUnsupported ? "skip" : "error",
+      fetchedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    // A case this CLI cannot execute is the user's to resolve — by fixing the
+    // case, or by opting into `--skip-unsupported`. It is emphatically NOT
+    // exit 1: nothing regressed. Nor exit 3: the fetch succeeded and the
+    // answer is definite.
+    if (error instanceof HostedOnlyCaseError) {
+      throw cliError(
+        "CORPUS_HOSTED_ONLY_CASE",
+        `${error.message} Pass --skip-unsupported to omit cases like this ` +
+          `from the corpus and the lock.`,
+        CORPUS_USAGE_EXIT_CODE,
+        { caseId: error.caseId, caseTitle: error.caseTitle }
+      );
+    }
+    throw cliError(
+      "CORPUS_INVALID_CASE",
+      error instanceof Error ? error.message : String(error),
+      CORPUS_USAGE_EXIT_CODE
+    );
+  }
+
+  const summary = {
+    suite: corpus.suite,
+    cases: corpus.cases.length,
+    skipped: corpus.skipped,
+    evaluationConfigHash: corpus.lock.evaluationConfigHash,
+  };
+
+  if (locked) {
+    const drift = verifyCorpusLock(locked, corpus.lock);
+    writeResult(
+      { ...summary, lockPath, frozen: true, drift },
+      globalOptions.format
+    );
+    if (globalOptions.format === "human") {
+      process.stderr.write(`${renderCorpusDrift(drift)}\n`);
+    }
+    if (drift.length > 0) {
+      setProcessExitCode(CORPUS_DRIFT_EXIT_CODE);
+    }
+    return;
+  }
+
+  const written = await writeCorpusLockAtomic(lockPath, corpus.lock);
+  writeResult(
+    { ...summary, lockPath: written, written: true },
+    globalOptions.format
+  );
+}
+
+/**
+ * A structured report for a comparison that never happened.
+ *
+ * The gate case alone, so `--reporter junit-xml` still emits well-formed XML
+ * whose single failure explains why — rather than an empty suite, which every
+ * CI UI renders as "nothing ran".
+ */
+function emptyCompareReport(report: GateReport): StructuredRunReport {
+  return buildRunCompareReport(
+    {
+      suite: { id: "", name: "" },
+      baseline: { policy: "previous_completed", baseRunId: "" },
+      baseRun: {
+        id: "",
+        runNumber: 0,
+        result: "",
+        createdAt: 0,
+        completedAt: null,
+        summary: null,
+      },
+      compareRun: {
+        id: "",
+        runNumber: 0,
+        result: "",
+        createdAt: 0,
+        completedAt: null,
+        summary: null,
+      },
+      passSummary: {
+        passRatePercent: EMPTY_DIFF,
+        total: EMPTY_DIFF,
+        passed: EMPTY_DIFF,
+        failed: EMPTY_DIFF,
+      },
+      metrics: {
+        wallDurationMs: EMPTY_DIFF,
+        totalTokens: EMPTY_DIFF,
+        estimatedCostUsd: EMPTY_DIFF,
+      },
+      scoreContract: {
+        base: {
+          evaluationConfigHash: null,
+          scoreIntegrity: null,
+          scoredIterations: 0,
+          quarantinedIterations: 0,
+        },
+        compare: {
+          evaluationConfigHash: null,
+          scoreIntegrity: null,
+          scoredIterations: 0,
+          quarantinedIterations: 0,
+        },
+        evaluationConfigChanged: false,
+        scorers: [],
+      },
+      cases: [],
+    },
+    report
+  );
+}
+
+const EMPTY_DIFF = {
+  base: null,
+  compare: null,
+  delta: null,
+  percentDelta: null,
+};
+
+/** p95 over a COMPLETE iteration walk; `undefined` from a partial one. */
+function p95Of(
+  iterations: { items: PlatformEvalIteration[]; complete: boolean } | undefined
+): number | undefined {
+  if (!iterations?.complete) return undefined;
+  const durations = iterations.items
+    .map((iteration) => iteration.durationMs)
+    .filter((ms): ms is number => typeof ms === "number");
+  if (durations.length === 0 || durations.length !== iterations.items.length) {
+    // A single missing duration makes the p95 describe a different set than
+    // the run — absent beats approximate.
+    return undefined;
+  }
+  return calculateLatencyStats(durations).p95;
+}
+
+/**
+ * The server says "no baseline" with a 404 carrying
+ * `details.reason: "BASELINE_NOT_FOUND"`. Read the machine field, not the
+ * prose.
+ */
+function baselineNotFoundReason(error: unknown): boolean {
+  const details = (error as { details?: unknown })?.details;
+  return (
+    typeof details === "object" &&
+    details !== null &&
+    (details as { reason?: unknown }).reason === "BASELINE_NOT_FOUND"
+  );
+}
+
+async function writeCompareResult(
+  args: {
+    report: GateReport;
+    reporter: ReturnType<typeof parseReporterFormat>;
+    out?: string;
+    format: ReturnType<typeof getGlobalOptions>["format"];
+  },
+  structured: StructuredRunReport | undefined
+): Promise<void> {
+  if (args.out && structured) {
+    await writeJsonArtifact(args.out, structured);
+  }
+  if (args.reporter && structured) {
+    writeReporterResult(args.reporter, structured);
+    return;
+  }
+  writeResult(
+    { compare: args.report, exitCode: evalGateExitCode(args.report) },
+    args.format
+  );
+}
+
+// ── suite files ──────────────────────────────────────────────────────────────
+
+/**
+ * Exit codes for `eval validate`, spelled out because the difference between
+ * them is the whole point of the command.
+ *
+ * 1 means the file was READ AND JUDGED and it is invalid. 2 means nothing was
+ * judged — the path was wrong, the input was over the cap, the YAML was
+ * malformed. A script that retries on 2 and opens a ticket on 1 is doing the
+ * right thing with both.
+ */
+const SUITE_FILE_INVALID_EXIT_CODE = 1;
+/**
+ * Nothing was judged. The same code `usageError` carries (`lib/output.ts`),
+ * named here so the two suite-file commands do not borrow the eval GATE's
+ * constant for a thing that has nothing to do with a gate.
+ */
+const SUITE_FILE_USAGE_EXIT_CODE = 2;
+
+/**
+ * Read `--file`, keeping the file's REAL byte count.
+ *
+ * The bytes are what the 1 MiB cap is about, and a string re-encoded from a
+ * file that was not valid UTF-8 does not have the same length as the file. So
+ * the buffer's length travels with the text rather than being re-derived from
+ * it.
+ */
+function readSuiteFileInput(value: string): { text: string; bytes: number } {
+  try {
+    const buffer = value === "-" ? readFileSync(0) : readFileSync(value);
+    return { text: buffer.toString("utf8"), bytes: buffer.byteLength };
+  } catch (error) {
+    throw usageError(
+      value === "-"
+        ? "Failed to read the suite file from stdin."
+        : `Failed to read the suite file "${value}".`,
+      { source: error instanceof Error ? error.message : String(error) }
+    );
+  }
+}
+
+/** The `--format json` envelope. Pinned: `docs/cli/reference.mdx` repeats it. */
+type ValidateResult = {
+  valid: boolean;
+  file: string;
+  /** Absent when valid. `contract` is exit 1; `input`/`parse` are exit 2. */
+  stage?: SuiteFileFailureStage;
+  suite?: {
+    id: string;
+    name: string;
+    cases: number;
+    enabledCases: number;
+  };
+  findings: unknown[];
+};
+
+/**
+ * Validate a suite file offline.
+ *
+ * NO auth, NO network, NO project: this command builds no platform client,
+ * reads no API key and resolves no project, which is why it takes no
+ * `--project`. It answers "is this file well-formed and contract-valid?" and
+ * nothing else.
+ *
+ * What it deliberately does NOT answer: whether the tool names, server
+ * references and fixtures a case mentions exist in some project. That
+ * re-resolution against live discovery is project-aware validation, it needs a
+ * network round trip, and it is a later step's work. "Valid" here therefore
+ * means "a valid suite file", never "this will run".
+ */
+function runEvalValidate(options: { file: string }, command: Command): void {
+  const globalOptions = getGlobalOptions(command);
+  const source = readSuiteFileInput(options.file);
+  const label = options.file === "-" ? "<stdin>" : options.file;
+  const loaded = loadEvalSuiteFile(source.text, { byteLength: source.bytes });
+
+  if (loaded.ok) {
+    const result: ValidateResult = {
+      valid: true,
+      file: label,
+      suite: {
+        id: loaded.authored.suite.id,
+        name: loaded.authored.suite.name,
+        cases: loaded.resolved.cases.length,
+        enabledCases: loaded.resolved.enabledCases.length,
+      },
+      findings: [],
+    };
+    if (globalOptions.format === "human") {
+      const total = result.suite?.cases ?? 0;
+      process.stdout.write(
+        `${label}: valid — suite ${result.suite?.id} ` +
+          `(${total} ${total === 1 ? "case" : "cases"}, ` +
+          `${result.suite?.enabledCases} enabled)\n`
+      );
+      return;
+    }
+    writeResult(result, globalOptions.format);
+    return;
+  }
+
+  // Annotated, like the success envelope above: the shape is pinned in
+  // `docs/cli/reference.mdx`, and an unannotated literal can drift from it
+  // without the compiler noticing.
+  const result: ValidateResult = {
+    valid: false,
+    file: label,
+    stage: loaded.stage,
+    findings: [...loaded.findings],
+  };
+  if (globalOptions.format === "human") {
+    process.stdout.write(
+      `${label}: invalid (${loaded.findings.length} ${
+        loaded.findings.length === 1 ? "finding" : "findings"
+      })\n${formatSuiteFileFindings(loaded.findings)}\n`
+    );
+  } else {
+    writeResult(result, globalOptions.format);
+  }
+
+  // Exit 1 only when the file PARSED and lost on the contract. Everything else
+  // means no verdict was reached, and reporting that as "your file is invalid"
+  // sends someone to edit a file whose problem is its size or its syntax.
+  setProcessExitCode(
+    loaded.stage === "contract"
+      ? SUITE_FILE_INVALID_EXIT_CODE
+      : SUITE_FILE_USAGE_EXIT_CODE
+  );
+}
+
+/**
+ * Fetch a hosted suite and write it as a suite file — or write nothing.
+ *
+ * The fetch is the SAME operation pair `eval pull` uses, including its
+ * fail-closed pagination guard: a suite whose cases do not fit one page refuses
+ * rather than exporting a file that silently holds fewer tests than the suite.
+ */
+async function runEvalExport(
+  options: PlatformOptions & {
+    suite: string;
+    project?: string;
+    out?: string;
+    force?: boolean;
+  },
+  command: Command
+): Promise<void> {
+  const globalOptions = getGlobalOptions(command);
+
+  // Checked BEFORE the fetch when the caller named the path: refusing to
+  // overwrite is not worth a round trip. With no `--out` the path is derived
+  // from the suite's id, so that check has to wait until it is known.
+  if (options.out !== undefined) {
+    refuseToOverwrite(options.out, options.force === true);
+  }
+
+  const fetched = await runPlatformCommand(
+    options,
+    globalOptions.timeout,
+    async ({ client, signal }) => {
+      const selector = {
+        ...(options.project ? { project: options.project } : {}),
+        suite: options.suite,
+      };
+      const [detail, page] = await Promise.all([
+        getEvalSuiteOperation.execute(selector, { client, signal }),
+        listEvalCasesOperation.execute(selector, { client, signal }),
+      ]);
+
+      // Same guard as `eval pull`, same reason: the cases endpoint returns the
+      // whole suite today and the client has no cursor to follow. A truncated
+      // export is a file that describes a smaller suite than the one it names.
+      if (page.nextCursor) {
+        throw cliError(
+          "SUITE_FILE_TRUNCATED",
+          `Suite "${options.suite}" returned more cases than one page and this ` +
+            `CLI cannot follow the cursor. Upgrade @mcpjam/cli.`,
+          SUITE_FILE_USAGE_EXIT_CODE
+        );
+      }
+
+      return { detail, cases: page.items };
+    }
+  );
+
+  const built = buildSuiteFileFromPlatform(fetched);
+  if (!built.ok) {
+    writeExportRefusal(built.findings, globalOptions.format);
+    return;
+  }
+
+  const text = serializeEvalSuiteFile(built.file);
+
+  // Over the cap is a REFUSAL, not a bug. Nothing in the contract bounds a
+  // suite's total size — 500 cases and an unbounded `expectedOutput` are all
+  // legal — so a suite that serializes past the limit is a representability
+  // answer like any other, and reporting it through the round-trip assertion
+  // below would tell the author to file a CLI bug about their own suite.
+  const bytes = Buffer.byteLength(text, "utf8");
+  if (bytes > MAX_SUITE_FILE_BYTES) {
+    writeExportRefusal(
+      [suiteFileTooLarge(bytes, MAX_SUITE_FILE_BYTES)],
+      globalOptions.format
+    );
+    return;
+  }
+
+  // The round trip is asserted HERE, not only in tests. A serializer that
+  // loses a field is a file that runs a different suite than the dashboard
+  // does, and the bytes about to be written are the only thing that can prove
+  // it did not happen for THIS suite.
+  const reloaded = loadEvalSuiteFile(text, { byteLength: bytes });
+  if (!reloaded.ok || !isDeepStrictEqual(reloaded.authored, built.file)) {
+    throw operationalError(
+      `The suite file written for "${built.file.suite.id}" does not read back ` +
+        `identically, so nothing was written. This is a bug in @mcpjam/cli — ` +
+        `please report it.`,
+      reloaded.ok ? undefined : { findings: reloaded.findings }
+    );
+  }
+
+  const outPath = options.out ?? defaultSuiteFilePath(built.file.suite.id);
+  if (options.out === undefined) {
+    refuseToOverwrite(outPath, options.force === true);
+  }
+  const written = await writeFileAtomic(outPath, text, { createParents: true });
+
+  writeResult(
+    {
+      exported: true,
+      path: written,
+      suite: { id: built.file.suite.id, name: built.file.suite.name },
+      cases: built.file.cases.length,
+      bytes,
+    },
+    globalOptions.format
+  );
+}
+
+/** Refuse to replace a file the caller did not ask to replace. */
+function refuseToOverwrite(outPath: string, force: boolean): void {
+  if (force || !existsSync(outPath)) return;
+  throw usageError(
+    `"${outPath}" already exists. Pass --force to replace it, or --out to ` +
+      `write somewhere else.`
+  );
+}
+
+/**
+ * Report a suite that cannot be represented, and write NOTHING.
+ *
+ * A verdict, not a crash — the command did its job and the answer is "this
+ * suite does not fit the format". Same shape as `eval pull --frozen`'s drift
+ * report: the finding list goes to stdout so a script can read it, and the
+ * exit code says the export did not happen.
+ */
+function writeExportRefusal(
+  findings: SuiteExportFinding[],
+  format: ReturnType<typeof getGlobalOptions>["format"]
+): void {
+  if (format === "human") {
+    process.stdout.write(
+      `Nothing was written: this suite cannot be represented as a suite file ` +
+        `(${findings.length} ${
+          findings.length === 1 ? "reason" : "reasons"
+        }).\n` +
+        findings
+          .map((entry) =>
+            entry.pointer === ""
+              ? `  ${entry.code} ${entry.message}`
+              : `  ${entry.code} ${entry.pointer}: ${entry.message}`
+          )
+          .join("\n") +
+        "\n"
+    );
+  } else {
+    writeResult({ exported: false, path: null, findings }, format);
+  }
+  setProcessExitCode(SUITE_FILE_INVALID_EXIT_CODE);
 }
 
 export function registerEvalCommands(program: Command): void {
@@ -536,16 +1816,86 @@ export function registerEvalCommands(program: Command): void {
         "Override the suite's saved server selection (HTTP servers only)"
       )
       .option(
-        "--environment <id-or-name>",
-        "Project environment to run against (must be attached to the suite; optional when it has exactly one)"
+        "--environment <id-or-name...>",
+        "Attached project environment(s) to run. Several values start one PAID RUN each."
+      )
+      .option(
+        "--host <id-or-name...>",
+        "Attached host(s) to run, so the run is stamped with that host's config. Several values start one PAID RUN each."
+      )
+      .option(
+        "--all-targets",
+        "Run EVERY attached environment (or, if none, every attached host) — one PAID RUN per target"
+      )
+      .option("--iterations <n>", "Run each case this many times (1-10)", (v) =>
+        parseIntOption(v, "--iterations")
+      )
+      .option(
+        "--case <id-or-title...>",
+        "Run only these cases instead of the whole suite"
+      )
+      .option(
+        "--exclude-skills",
+        "Run the 'without skills' arm: no skills are pinned, and the run is labelled as excluded"
+      )
+      .option(
+        "--refresh-snapshot",
+        "PERSISTS a new host-config snapshot on the suite, changing every future run of it. Single-target runs only."
+      )
+      .option("--notes <text>", "Free-text note stored on the run")
+      .option("--min-pass-rate <n>", "Pass threshold for this run (0-100)", (v) =>
+        parseNumberOption(v, "--min-pass-rate")
+      )
+      .option(
+        "--match-options <json>",
+        'Tool-call match options for this run, e.g. \'{"toolCallOrder":"exact"}\''
+      )
+      .option(
+        "--idempotency-key <key>",
+        "Retry-safety key: repeating the call returns the run it already started"
+      )
+      .option(
+        "--compose-host <id-or-name>",
+        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+      )
+      .option(
+        "--compose-computer <id-or-name>",
+        "Sandbox image to pin on the composed stack"
+      )
+      .option(
+        "--compose-model <id>",
+        "Model to run on the composed stack, instead of the host's"
+      )
+      .option(
+        "--compose-server-group <id>",
+        "Standalone server group to pin on the composed stack"
+      )
+      .option(
+        "--compose-skill <id...>",
+        "Project-shared skill IDs to pin on the composed stack"
       )
   ).action(
     async (
       options: PlatformOptions & {
+        composeHost?: string;
+        composeComputer?: string;
+        composeModel?: string;
+        composeServerGroup?: string;
+        composeSkill?: string[];
         project?: string;
         suite: string;
         server?: string[];
-        environment?: string;
+        environment?: string[];
+        host?: string[];
+        allTargets?: boolean;
+        iterations?: number;
+        case?: string[];
+        excludeSkills?: boolean;
+        refreshSnapshot?: boolean;
+        notes?: string;
+        minPassRate?: number;
+        matchOptions?: string;
+        idempotencyKey?: string;
       },
       command
     ) => {
@@ -561,20 +1911,44 @@ export function registerEvalCommands(program: Command): void {
               project: options.project,
               suite: options.suite,
               ...(options.server ? { servers: options.server } : {}),
-              ...(options.environment
-                ? { environment: options.environment }
+              // ONE value maps to the singular field, several to the plural:
+              // the op rejects sending both, and the singular carries the
+              // long-standing description a caller may already rely on.
+              ...selectorField("environment", "environments", options.environment),
+              ...selectorField("host", "hosts", options.host),
+              ...(options.allTargets ? { allAttached: true } : {}),
+              ...(options.iterations !== undefined
+                ? { iterations: options.iterations }
                 : {}),
+              ...(options.case?.length ? { cases: options.case } : {}),
+              ...(options.excludeSkills ? { excludeSkills: true } : {}),
+              ...(options.refreshSnapshot ? { refreshSnapshot: true } : {}),
+              ...(options.notes !== undefined ? { notes: options.notes } : {}),
+              ...(options.minPassRate !== undefined
+                ? { minPassRate: options.minPassRate }
+                : {}),
+              ...(options.matchOptions
+                ? { matchOptions: parseMatchOptionsOption(options.matchOptions) }
+                : {}),
+              ...(options.idempotencyKey
+                ? { idempotencyKey: options.idempotencyKey }
+                : {}),
+              ...composeField(options),
             },
             { client: context.client, signal: context.signal }
           );
         }
       );
+      // EXACTLY ONE JSON document on `--format json`: the receipt already
+      // carries every run, so appending human lines to it would make the
+      // stream unparseable for the CI callers that read it.
       writeResult(result, globalOptions.format);
-      writeRunLink(globalOptions.format, webOrigin, {
-        projectId: result.project.id,
-        suiteId: result.suite.id,
-        runId: result.runId,
-      });
+      writeRunGroupSummary(globalOptions.format, webOrigin, result);
+      // A partial or wholly failed fan-out is not a success. Exiting 0 would
+      // let a pipeline treat "1 of 3 runs never started" as a clean launch.
+      if (result.outcome !== "started") {
+        setProcessExitCode(1);
+      }
     }
   );
 
@@ -603,6 +1977,7 @@ export function registerEvalCommands(program: Command): void {
         }
       );
       writeResult(result, globalOptions.format);
+      writeJudgeSummary(globalOptions.format, result.run.judges);
       writeRunLink(globalOptions.format, webOrigin, {
         projectId: result.project.id,
         suiteId: result.run.suiteId,
@@ -633,7 +2008,119 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+  addPlatformOptions(
+    evals
+      .command("judge")
+      .description(
+        "Grade a finished eval run with LLM as Judge (SPENDS your model budget)"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption("--project <id-or-name>", "Project name or ID")
+      .option("--force", "Re-grade a run that already has a judge result")
+      .option(
+        "--enable",
+        "Grade this run even though the judge was off when it ran"
+      )
+      .option("--judge-model <id>", "Judge model for this run only")
+      .option("--judge-threshold <0-1>", "Pass threshold for this run only")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project: string;
+        run: string;
+        force?: boolean;
+        enable?: boolean;
+        judgeModel?: string;
+        judgeThreshold?: string;
+      },
+      command
+    ) => {
+      const threshold =
+        options.judgeThreshold !== undefined
+          ? parseJudgeThreshold(options.judgeThreshold)
+          : undefined;
+      const input = validateOpInput(requestEvalRunJudgeOperation, {
+        project: options.project,
+        runId: options.run,
+        ...(options.force ? { force: true } : {}),
+        ...(options.enable ? { enable: true } : {}),
+        ...(options.judgeModel !== undefined
+          ? { model: options.judgeModel }
+          : {}),
+        ...(threshold !== undefined ? { threshold } : {}),
+      });
+      await executeOp(requestEvalRunJudgeOperation, input, options, command);
+    }
+  );
+
   const PROJECT_OPT = "Project name or ID (defaults to most recently updated)";
+
+  // ── GitHub Checks: run this suite on every pull request ────────────
+  // A subgroup, not two flat commands: `checks` is a different resource from
+  // the suite it points at, and flattening it would put `eval connect` next to
+  // `eval run` as if they were the same kind of verb.
+  const checks = evals
+    .command("checks")
+    .description("Run an eval suite on a repository's pull requests");
+
+  addPlatformOptions(
+    checks
+      .command("list")
+      .description(
+        "List the repositories running an eval suite on their pull requests"
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+    await executeOp(
+      listEvalCheckReposOperation,
+      { project: options.project },
+      options,
+      command
+    );
+  });
+
+  addPlatformOptions(
+    checks
+      .command("connect")
+      .description(
+        "Run this suite on every pull request to a repository (affects everyone who opens one)"
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .requiredOption("--repo <owner/repo>", "Repository to connect")
+      .requiredOption(
+        "--outage-policy <fail-open|fail-closed>",
+        "What the check reports when MCPJam cannot conclude"
+      )
+      .option("--project <id-or-name>", PROJECT_OPT)
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        suite: string;
+        repo: string;
+        outagePolicy: string;
+      },
+      command
+    ) => {
+      // A Map, not an object literal: `{...}[key]` consults the prototype
+      // chain, so `--outage-policy constructor` would be truthy, skip the
+      // message written for the caller, and fail later against a schema they
+      // never typed.
+      const policy = OUTAGE_POLICY_BY_FLAG.get(options.outagePolicy);
+      if (!policy) {
+        throw usageError(
+          '--outage-policy must be "fail-open" or "fail-closed". fail-closed blocks merges while MCPJam cannot conclude; fail-open lets an unverified change through.'
+        );
+      }
+      const input = validateOpInput(connectEvalCheckRepoOperation, {
+        project: options.project,
+        suite: options.suite,
+        repo: options.repo,
+        outagePolicy: policy,
+      });
+      await executeOp(connectEvalCheckRepoOperation, input, options, command);
+    }
+  );
 
   // ── Eval run iterations + traces ───────────────────────────────────
   addPlatformOptions(
@@ -663,9 +2150,202 @@ export function registerEvalCommands(program: Command): void {
         project: options.project,
         runId: options.run,
         ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
-        ...(options.limit !== undefined ? { limit: Number(options.limit) } : {}),
+        ...(options.limit !== undefined
+          ? { limit: Number(options.limit) }
+          : {}),
       });
       await executeOp(listEvalRunIterationsOperation, input, options, command);
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("gate")
+      .description(
+        "Apply a pass/fail policy to a finished eval run and set an exit code (0 pass, 1 eval failure, 2 usage, 3 incomplete)"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+      .option(
+        "--min-pass-rate-percent <0-100>",
+        "Minimum share of iterations that must pass, as a percentage"
+      )
+      .option(
+        "--no-gating-score-errors",
+        "Fail if any gating scorer errored during the run"
+      )
+      .option(
+        "--min-scorer-pass-rate <scorerId=percent>",
+        "Minimum pass rate for one scorer (repeatable)",
+        collectRepeatable,
+        [] as string[]
+      )
+      .option(
+        "--min-mean-score <scorerId=0..1>",
+        "Minimum mean score for one scorer (repeatable)",
+        collectRepeatable,
+        [] as string[]
+      )
+      .option("--wait", "Poll until the run reaches a terminal status")
+      .option(
+        "--wait-timeout <ms>",
+        "Give up waiting after this many milliseconds (default 600000)"
+      )
+  ).action(
+    async (
+      options: PlatformOptions &
+        EvalGateOptions & {
+          project: string;
+          run: string;
+          wait?: boolean;
+          waitTimeout?: string;
+        },
+      command
+    ) => {
+      await runEvalGate(options, command);
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("compare")
+      .description(
+        "Compare a finished eval run against a baseline and set an exit code (0 pass, 1 regression, 2 usage, 3 incomplete)"
+      )
+      .requiredOption("--run <id>", "Eval run ID to compare")
+      .requiredOption(
+        "--project <id-or-name>",
+        "Project the run belongs to (name or ID)"
+      )
+      .option(
+        "--base-run <id>",
+        "Baseline run ID (defaults to the nearest earlier completed run in the same suite)"
+      )
+      .option(
+        "--gate-regressions",
+        "Fail on a statistically significant pass-rate regression"
+      )
+      .option(
+        "--min-sample-size <n>",
+        "Iterations required on EACH side before a pass-rate regression is decidable (default 5)"
+      )
+      .option(
+        "--min-effect-size-percent <0-100>",
+        "Smallest pass-rate drop worth failing on, as a percentage (default 1)"
+      )
+      .option(
+        "--gate-deterministic-regressions",
+        "Fail if a deterministic gating scorer flipped from passed to failed"
+      )
+      .option(
+        "--max-p95-latency-increase-ms <ms>",
+        "Fail if p95 end-to-end latency rose by more than this many milliseconds"
+      )
+      .option(
+        "--reporter <json-summary|junit-xml>",
+        "Write a structured report to stdout instead of the default output"
+      )
+      .option("--out <path>", "Write the structured report to a JSON file")
+  ).action(
+    async (
+      options: PlatformOptions &
+        EvalCompareOptions & {
+          project: string;
+          run: string;
+          baseRun?: string;
+          reporter?: string;
+          out?: string;
+        },
+      command
+    ) => {
+      await runEvalCompare(options, command);
+    }
+  );
+
+  evals
+    .command("validate")
+    .description(
+      "Validate a local eval suite file offline — no auth, no network (0 valid, 1 contract-invalid, 2 unreadable/oversize/malformed)"
+    )
+    .requiredOption(
+      "--file <path>",
+      "Suite file to validate, .yaml or .json (or - for stdin)"
+    )
+    .action((options: { file: string }, command: Command) => {
+      runEvalValidate(options, command);
+    });
+
+  addPlatformOptions(
+    evals
+      .command("export")
+      .description(
+        "Write a hosted eval suite to a local suite file, refusing anything it cannot represent losslessly"
+      )
+      .requiredOption(
+        "--suite <id-or-name>",
+        "Eval suite to export (name or ID)"
+      )
+      .option(
+        "--project <id-or-name>",
+        "Project the suite belongs to (defaults to the most recently updated project)"
+      )
+      .option(
+        "--out <path>",
+        "Where to write (default .mcpjam/evals/<suite-id>.yaml)"
+      )
+      .option("--force", "Replace an existing file at the output path")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        suite: string;
+        project?: string;
+        out?: string;
+        force?: boolean;
+      },
+      command
+    ) => {
+      await runEvalExport(options, command);
+    }
+  );
+
+  addPlatformOptions(
+    evals
+      .command("pull")
+      .description(
+        "LEGACY: materialize a hosted eval suite into a corpus lock for @mcpjam/vitest — new work should use `eval export` (0 clean, 1 drift under --frozen, 2 usage, 3 incomplete)"
+      )
+      .requiredOption("--suite <id-or-name>", "Eval suite to pull (name or ID)")
+      .option(
+        "--project <id-or-name>",
+        "Project the suite belongs to (defaults to the most recently updated project)"
+      )
+      .option(
+        "--lock <path>",
+        `Lock file path (default ${DEFAULT_CORPUS_LOCK_PATH})`
+      )
+      .option(
+        "--frozen",
+        "Verify the lock matches the hosted suite without writing; exit 1 on drift"
+      )
+      .option(
+        "--skip-unsupported",
+        "Omit cases a local run cannot execute instead of failing"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        suite: string;
+        project?: string;
+        lock?: string;
+        frozen?: boolean;
+        skipUnsupported?: boolean;
+      },
+      command
+    ) => {
+      await runEvalPull(options, command);
     }
   );
 
@@ -893,7 +2573,10 @@ export function registerEvalCommands(program: Command): void {
         "--project <id-or-name>",
         "Project the run belongs to (name or ID)"
       )
-      .option("--out <path>", "Download the .webm to this file instead of printing the URL")
+      .option(
+        "--out <path>",
+        "Download the .webm to this file instead of printing the URL"
+      )
   ).action(
     async (
       options: PlatformOptions & {
@@ -997,16 +2680,28 @@ export function registerEvalCommands(program: Command): void {
         "--server <name...>",
         "Replace the suite's server selection (project server names)"
       )
+      .option(
+        "--computer-image <name-or-id|off>",
+        "Sandbox image eval runs boot from (see `mcpjam images list`); off uses the default base image"
+      )
       .option("--host <name...>", "Replace host attachments (by name/ID)")
       .option("--model <id>", "Execution model id")
       .option("--system-prompt <text>", "Execution system prompt")
       .option("--temperature <n>", "Execution temperature")
       .option("--min-accuracy <pct>", "Minimum accuracy, 0–100")
+      .option(
+        "--min-iterations <1-10|off>",
+        "Floor on per-case iterations; off removes the floor"
+      )
       .option("--tool-call-order <any|in-order|exact>", "Tool call order")
       .option("--arguments <ignore|partial|exact>", "Argument matching")
       .option("--extra-tool-calls <unlimited|N>", "Allowed extra tool calls")
-      .option("--judge <on|off>", "Enable/disable LLM-as-judge grading")
+      .option(
+        "--judge <on|off>",
+        "Turn LLM-as-judge grading on/off (grades every run as it completes)"
+      )
       .option("--judge-model <id>", "Judge model id")
+      .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1")
   ).action(async (options: PlatformOptions & Record<string, any>, command) => {
     const input = validateOpInput(
       updateEvalSuiteOperation,
@@ -1213,14 +2908,53 @@ export function registerEvalCommands(program: Command): void {
         "--environment <id-or-name>",
         "Project environment to run against (must be attached to the suite)"
       )
+      .option(
+        "--host <id-or-name>",
+        "Attached host to run against, so the run is stamped with that host's config"
+      )
+      .option("--iterations <n>", "Run the case this many times (1-10)", (v) =>
+        parseIntOption(v, "--iterations")
+      )
+      .option(
+        "--idempotency-key <key>",
+        "Retry-safety key: repeating the call returns the run it already started"
+      )
+      .option(
+        "--compose-host <id-or-name>",
+        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+      )
+      .option(
+        "--compose-computer <id-or-name>",
+        "Sandbox image to pin on the composed stack"
+      )
+      .option(
+        "--compose-model <id>",
+        "Model to run on the composed stack, instead of the host's"
+      )
+      .option(
+        "--compose-server-group <id>",
+        "Standalone server group to pin on the composed stack"
+      )
+      .option(
+        "--compose-skill <id...>",
+        "Project-shared skill IDs to pin on the composed stack"
+      )
   ).action(
     async (
       options: PlatformOptions & {
+        composeHost?: string;
+        composeComputer?: string;
+        composeModel?: string;
+        composeServerGroup?: string;
+        composeSkill?: string[];
         project?: string;
         suite: string;
         case: string;
         server?: string[];
         environment?: string;
+        host?: string;
+        iterations?: number;
+        idempotencyKey?: string;
       },
       command
     ) => {
@@ -1232,6 +2966,14 @@ export function registerEvalCommands(program: Command): void {
           case: options.case,
           ...(options.server?.length ? { servers: options.server } : {}),
           ...(options.environment ? { environment: options.environment } : {}),
+          ...(options.host ? { host: options.host } : {}),
+          ...(options.iterations !== undefined
+            ? { iterations: options.iterations }
+            : {}),
+          ...(options.idempotencyKey
+            ? { idempotencyKey: options.idempotencyKey }
+            : {}),
+          ...composeField(options),
         },
         options,
         command
@@ -1329,6 +3071,10 @@ export function registerEvalCommands(program: Command): void {
         "--vary-user-styles",
         "Vary query phrasing across a realistic range of user styles"
       )
+      .option(
+        "--idempotency-key <key>",
+        "Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again"
+      )
   ).action(
     async (
       options: PlatformOptions & {
@@ -1344,6 +3090,7 @@ export function registerEvalCommands(program: Command): void {
         complex?: string;
         negative?: string;
         varyUserStyles?: boolean;
+        idempotencyKey?: string;
       },
       command
     ) => {
@@ -1380,6 +3127,9 @@ export function registerEvalCommands(program: Command): void {
           : {}),
         ...(Object.keys(caseMix).length > 0 ? { caseMix } : {}),
         ...(options.varyUserStyles ? { varyUserStyles: true } : {}),
+        ...(options.idempotencyKey
+          ? { idempotencyKey: options.idempotencyKey }
+          : {}),
       });
       await executeOp(generateEvalCasesOperation, input, options, command);
     }

@@ -92,7 +92,7 @@ vi.mock("@/hooks/useViews", () => ({
 vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
   ShareUsageThreadDetail: () => null,
 }));
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/components/swarms/SwarmsSessionsPanel", () => ({
@@ -140,13 +140,13 @@ function openGradingEditor() {
 }
 
 describe("SwarmsTab — journey grading editor", () => {
-  it("labels the trigger with the journey's current criterion count", () => {
+  it("labels the trigger with the journey's current check count", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
     openPersonasTab();
     fireEvent.click(screen.getAllByText("Persona One")[0]);
 
     expect(screen.getByTestId("journey-grading-trigger")).toHaveTextContent(
-      "1 criterion"
+      "1 check"
     );
   });
 

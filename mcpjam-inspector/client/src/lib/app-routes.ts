@@ -88,20 +88,20 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     kind: "redirect",
     note: "Legacy deep link; redirects to /playground so old bookmarks land there rather than the catch-all.",
   },
-  { path: "user-testing", kind: "screen", surfaceId: "chatboxes" },
-  { path: "user-testing/new", kind: "screen", surfaceId: "chatboxes" },
-  // `:scenarioId` is the scenario's chatbox id. Edit is a sibling screen
+  { path: "user-testing", kind: "screen", surfaceId: "scenarios" },
+  { path: "user-testing/new", kind: "screen", surfaceId: "scenarios" },
+  // `:scenarioId` is the scenario's scenario id. Edit is a sibling screen
   // (setup / share / preview), not a detail tab.
   {
     path: "user-testing/:scenarioId/edit",
     kind: "screen",
-    surfaceId: "chatboxes",
+    surfaceId: "scenarios",
   },
-  { path: "user-testing/:scenarioId", kind: "screen", surfaceId: "chatboxes" },
+  { path: "user-testing/:scenarioId", kind: "screen", surfaceId: "scenarios" },
   {
-    path: "chatboxes",
+    path: "scenarios",
     kind: "redirect",
-    note: "Legacy: the Chatbox surface is now User Testing. Redirects to /user-testing, preserving search + hash so old ?host=&session= links keep working.",
+    note: "Legacy: the Scenario surface is now User Testing. Redirects to /user-testing, preserving search + hash so old ?host=&session= links keep working.",
   },
   { path: "swarms", kind: "screen", surfaceId: "swarms" },
   { path: "swarms/new", kind: "screen", surfaceId: "swarms" },
@@ -111,6 +111,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     kind: "screen",
     surfaceId: "project-environments",
   },
+  { path: "sessions", kind: "screen", surfaceId: "sessions" },
   { path: "playground", kind: "screen", surfaceId: "playground" },
   { path: "support", kind: "screen", surfaceId: "support" },
   { path: "settings", kind: "screen", surfaceId: "settings" },
@@ -118,6 +119,13 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "settings/integrations", kind: "screen", surfaceId: "settings" },
   {
     path: "settings/integrations/github",
+    kind: "screen",
+    surfaceId: "settings",
+  },
+  {
+    // Where GitHub sends the browser back — the App's setup URL and its OAuth
+    // callback both point here, told apart by which query parameters arrived.
+    path: "settings/integrations/github/callback",
     kind: "screen",
     surfaceId: "settings",
   },
@@ -231,6 +239,14 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     path: "billing",
     kind: "special",
     note: "Post-checkout landing; renders Servers.",
+  },
+  {
+    // WorkOS Initiate Login URL for IdP-initiated SSO (the Okta app tile).
+    // Not a destination anyone navigates to: it starts a fresh, app-originated
+    // sign-in so authkit-js writes the PKCE verifier `/callback` needs.
+    path: "login",
+    kind: "special",
+    note: "WorkOS Initiate Login URL for IdP-initiated SSO; starts a fresh app-originated sign-in.",
   },
   {
     path: "callback",

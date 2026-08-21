@@ -9,6 +9,7 @@ import {
   buildCapEntriesFromPersistedCases,
   buildUpsertCaseKey,
   probeIdentityKey,
+  shouldSkipExecution,
   assertTestCaseRunWithinCap,
   buildManagerKeyToDisplayNameMap,
   fetchRunPinnedSkillsWithRetry,
@@ -618,6 +619,25 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     ).not.toThrow();
   });
 
+  it("uses one cap entry per case for environment-backed runs", () => {
+    const entries = buildCapEntriesFromPersistedCases(
+      [
+        {
+          title: "Environment model",
+          runs: 2,
+          models: [
+            { model: "a", provider: "p1" },
+            { model: "b", provider: "p2" },
+          ],
+          steps: [{ id: "t1", kind: "prompt", prompt: "one" }],
+        },
+      ],
+      { environmentBacked: true }
+    );
+    expect(entries).toHaveLength(1);
+    expect(entries[0].runs).toBe(2);
+  });
+
   it("counts model-less prompt cases once (suite-default substitution)", () => {
     const entries = buildCapEntriesFromPersistedCases([
       { title: "No models", runs: 2, models: [] },
@@ -885,5 +905,46 @@ describe("fetchRunPinnedSkillsWithRetry (strict pin fetch)", () => {
       fetchRunPinnedSkillsWithRetry({ query }, "run_1", noSleep)
     ).rejects.toThrow(/pinned skills after 3 attempts/);
     expect(calls).toBe(3);
+  });
+});
+
+describe("shouldSkipExecution", () => {
+  it("skips ONLY a replay of a run that already finished", () => {
+    // The one case with a single right answer: the run is done, its results
+    // are recorded, and executing again would repeat every case and bill for
+    // it — the double-spend the caller sent a key to prevent.
+    for (const status of ["completed", "failed", "cancelled", "timed_out"]) {
+      expect(shouldSkipExecution({ deduped: true, status })).toBe(true);
+    }
+  });
+
+  it("executes a replay of a run still in flight", () => {
+    // In-flight and abandoned-mid-flight are indistinguishable here and want
+    // opposite treatments, so this keeps the behaviour that predates the
+    // check: a crashed run can still be driven to completion by a retry.
+    expect(shouldSkipExecution({ deduped: true, status: "running" })).toBe(
+      false
+    );
+    expect(shouldSkipExecution({ deduped: true, status: "pending" })).toBe(
+      false
+    );
+  });
+
+  it("executes a fresh start, whatever its status says", () => {
+    expect(shouldSkipExecution({ deduped: false, status: "running" })).toBe(
+      false
+    );
+    // A fresh start reporting a terminal status is nonsense, but it must not
+    // be read as licence to skip: `deduped` is the field that decides.
+    expect(shouldSkipExecution({ deduped: false, status: "completed" })).toBe(
+      false
+    );
+  });
+
+  it("executes when the backend does not report a replay at all", () => {
+    // Deploy skew. An older backend's silence is UNKNOWN, not "fresh" and not
+    // "replayed" — and unknown must never start refusing to run work.
+    expect(shouldSkipExecution({})).toBe(false);
+    expect(shouldSkipExecution({ status: "completed" })).toBe(false);
   });
 });

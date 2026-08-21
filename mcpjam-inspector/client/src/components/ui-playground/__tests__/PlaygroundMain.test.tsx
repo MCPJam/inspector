@@ -35,6 +35,11 @@ const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 // exercise both sides of that gate. Defaults to signed out, which is what every
 // other test in this file has always run as.
 const mockConvexAuthState = vi.hoisted(() => ({ isAuthenticated: false }));
+const mockReactiveHistoryState = vi.hoisted(() => ({
+  session: undefined as any,
+  widgetSnapshots: undefined as any,
+}));
+
 const mockHostQueryState = vi.hoisted(() => ({ result: null as unknown }));
 // Non-null `harnessId` means the chat executes inside a harness runtime
 // (Claude Code, Codex). Default null = an ordinary model host.
@@ -193,6 +198,15 @@ vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     if (name === "hosts:getHost") return mockHostQueryState.result;
+    // The reactive chat-history subscription. `useResumedThreadPersistence`
+    // reconciles a failed/absent persist receipt against this, so it needs a
+    // real cell rather than the blanket null the other queries get.
+    if (name === "directChatHistory:getCurrentSession") {
+      return mockReactiveHistoryState.session;
+    }
+    if (name === "directChatHistory:getCurrentSessionWidgetSnapshots") {
+      return mockReactiveHistoryState.widgetSnapshots;
+    }
     return null;
   },
   useMutation: () => () => Promise.resolve(),
@@ -261,6 +275,9 @@ const mockUseChatSession = {
   resetChat: vi.fn(),
   loadChatSession: vi.fn(async () => undefined),
   rewindToMessage: vi.fn(),
+  detachToLocalFork: vi.fn(async () => ({ chatSessionId: "forked-session" })),
+  consumePersistReceipt: vi.fn(() => null),
+  consumeTurnAborted: vi.fn(() => false),
   syncResumedVersion: vi.fn(),
   resumedVersion: null,
   restoredToolRenderOverrides: {},
@@ -686,6 +703,8 @@ describe("PlaygroundMain", () => {
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
     mockHostQueryState.result = null;
+    mockReactiveHistoryState.session = undefined;
+    mockReactiveHistoryState.widgetSnapshots = undefined;
     mockHarnessState.harnessId = null;
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
@@ -867,6 +886,89 @@ describe("PlaygroundMain", () => {
       );
     });
 
+    it("refuses the send but KEEPS the thread when the pre-send sync fails transiently", async () => {
+      // `refreshCurrentHistorySession` returns null for 403/404 — the thread is
+      // gone — and callers detach on that. A network blip or 5xx must NOT be
+      // flattened into the same signal, or a brief history-API outage tears
+      // users off perfectly valid conversations.
+      const session = {
+        _id: "history-1",
+        chatSessionId: "chat-session-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      // The detail cache is module-level and this file clears it per test
+      // rather than in beforeEach; without this, the session ids below stay
+      // cached and shift the next test's mockResolvedValueOnce queue.
+      invalidateChatHistoryPrefetch();
+      // A non-empty transcript, so a detach would take the FORK branch and be
+      // visible as a `detachToLocalFork` call rather than a silent no-op.
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ];
+      mockGetChatHistoryDetail.mockResolvedValueOnce({
+        ok: true,
+        session,
+        widgetSnapshots: [],
+      });
+
+      render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null
+        );
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(session));
+      });
+
+      // Control: with the sync healthy the send goes through, so the assertions
+      // below are about the failure and not about a submit path that never runs.
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session,
+        widgetSnapshots: [],
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "first message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+
+      mockGetChatHistoryDetail.mockRejectedValue(new Error("network down"));
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "another message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+
+      // Blocked, because a blind send could clobber another writer...
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      // ...but the conversation is still the user's; nothing was forked away.
+      expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+
+      // Leave the module-level detail cache as this test found it — the ids
+      // above are reused by later tests, which queue their own
+      // `mockResolvedValueOnce` responses and would otherwise be served stale.
+      invalidateChatHistoryPrefetch();
+    });
+
     it("keeps active playground thread visibility in sync after sharing", async () => {
       const privateSession = {
         _id: "history-1",
@@ -936,7 +1038,7 @@ describe("PlaygroundMain", () => {
 
     // Removed: "passes the requested loading indicator variant to Thread".
     // PlaygroundMain no longer accepts a `loadingIndicatorVariant` prop —
-    // the inner Thread reads the host id from `ChatboxHostStyleProvider`
+    // the inner Thread reads the host id from `ScenarioHostStyleProvider`
     // context. Brand-indicator behavior is covered in
     // `LoadingIndicatorContent.test.tsx` and `Thread.test.tsx`.
   });
@@ -2266,7 +2368,7 @@ describe("PlaygroundMain", () => {
       const hint = screen.getByTestId("playground-send-nux-hint");
       const chatInput = screen.getByTestId("chat-input");
       expect(hint).toHaveTextContent(
-        "Try this prompt with Excalidraw and compare across clients",
+        "Try this prompt with Excalidraw and compare across clients"
       );
       expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
       expect(
@@ -2291,7 +2393,7 @@ describe("PlaygroundMain", () => {
       );
 
       expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
-        "Try this prompt with Excalidraw and compare across clients",
+        "Try this prompt with Excalidraw and compare across clients"
       );
     });
 
@@ -2475,12 +2577,9 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Find trash icon button
-      const buttons = screen.getAllByRole("button");
-      const clearButton = buttons.find(
-        (btn) => btn.querySelector(".lucide-trash2") !== null
-      );
-      expect(clearButton).toBeDefined();
+      // Find the "Clear chat" restart-session button
+      const clearButton = screen.queryByRole("button", { name: "Clear chat" });
+      expect(clearButton).not.toBeNull();
     });
 
     it("does not show clear button when thread is empty", () => {
@@ -2488,12 +2587,9 @@ describe("PlaygroundMain", () => {
 
       render(<PlaygroundMain {...defaultProps} />);
 
-      // Should not have trash button
-      const buttons = screen.getAllByRole("button");
-      const clearButton = buttons.find(
-        (btn) => btn.querySelector(".lucide-trash2") !== null
-      );
-      expect(clearButton).toBeUndefined();
+      // Should not have the "Clear chat" button
+      const clearButton = screen.queryByRole("button", { name: "Clear chat" });
+      expect(clearButton).toBeNull();
     });
 
     /**
@@ -2535,7 +2631,7 @@ describe("PlaygroundMain", () => {
 
       await waitFor(() => {
         expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
-          null,
+          null
         );
       });
 
@@ -2545,23 +2641,21 @@ describe("PlaygroundMain", () => {
       });
       await waitFor(() => {
         expect(
-          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId
         ).toBe(savedSession._id);
       });
 
-      const clearButton = screen
-        .getAllByRole("button")
-        .find((btn) => btn.querySelector(".lucide-trash2") !== null);
-      fireEvent.click(clearButton!);
+      const clearButton = screen.getByRole("button", { name: "Clear chat" });
+      fireEvent.click(clearButton);
       fireEvent.click(
         within(screen.getByTestId("confirm-dialog")).getByRole("button", {
           name: "Confirm",
-        }),
+        })
       );
 
       await waitFor(() => {
         expect(
-          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId
         ).toBe(null);
       });
       expect(mockUseChatSession.resetChat).toHaveBeenCalled();
@@ -2624,7 +2718,7 @@ describe("PlaygroundMain", () => {
       window.history.replaceState(
         {},
         "",
-        `/playground?conversation=${savedSession.chatSessionId}`,
+        `/playground?conversation=${savedSession.chatSessionId}`
       );
 
       // This file mocks the chat hook with a bare `vi.fn()` for `resetChat`, so
@@ -2651,7 +2745,7 @@ describe("PlaygroundMain", () => {
 
       await waitFor(() => {
         expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
-          null,
+          null
         );
       });
 
@@ -2661,25 +2755,25 @@ describe("PlaygroundMain", () => {
       });
       await waitFor(() => {
         expect(
-          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId
         ).toBe(savedSession._id);
       });
 
       // Guard against a vacuous pass: the param has to be there to be dropped.
       expect(window.location.search).toContain(savedSession.chatSessionId);
 
-      const clearButton = screen
-        .getAllByRole("button")
-        .find((btn) => btn.querySelector(".lucide-trash2") !== null);
-      fireEvent.click(clearButton!);
+      const clearButton = screen.getByRole("button", { name: "Clear chat" });
+      fireEvent.click(clearButton);
       fireEvent.click(
         within(screen.getByTestId("confirm-dialog")).getByRole("button", {
           name: "Confirm",
-        }),
+        })
       );
 
       await waitFor(() => {
-        expect(window.location.search).not.toContain(savedSession.chatSessionId);
+        expect(window.location.search).not.toContain(
+          savedSession.chatSessionId
+        );
       });
     });
 
@@ -2748,7 +2842,7 @@ describe("PlaygroundMain", () => {
   // (`use-persisted-model.ts:150-159`) under a key shared by every chat
   // surface. Playground is the surface that actually turns compare mode on,
   // and it renders both the real Playground and the eval live-chat panel, so a
-  // clobber here destroys the selection the hosted chatbox reads back.
+  // clobber here destroys the selection the hosted scenario reads back.
   describe("selected-model persistence", () => {
     const LEAD_KEY = "mcp-inspector-selected-model";
     const OWN_PROVIDER_MODEL_ID = "claude-haiku-4-5";
@@ -2779,7 +2873,11 @@ describe("PlaygroundMain", () => {
           provider: "anthropic",
         },
         availableModels: [
-          { id: "claude-fable-5", name: "Claude Fable 5", provider: "anthropic" },
+          {
+            id: "claude-fable-5",
+            name: "Claude Fable 5",
+            provider: "anthropic",
+          },
           { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
         ],
         selectedModelIds: [OWN_PROVIDER_MODEL_ID],

@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   chipKey,
   isSameSelection,
@@ -7,7 +14,7 @@ import {
   type ThemeRef,
   type UsageFilterChip,
   type UsageFilterState,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 import {
   useInsightsFlowController,
   useInsightsRebuild,
@@ -16,18 +23,20 @@ import {
 import {
   useUsageInsights,
   type InsightsScope,
-  type UsageBreakdown,
 } from "@/hooks/useUsageInsights";
 import { SessionFlowSankey } from "@/components/shared/usage-insights/SessionFlowSankey";
 import { GoalOutcomeDrilldown } from "@/components/shared/usage-insights/GoalOutcomeDrilldown";
 import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel";
-import { InsightsStatline } from "@/components/shared/usage-insights/InsightsStatline";
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
 import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
 import { CriterionScorecard } from "@/components/shared/usage-insights/CriterionScorecard";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+} from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
-import { X } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 
 interface InsightsWorkbenchProps {
   /** Which surface's insights to read. Null ⇒ nothing to scope to. */
@@ -48,28 +57,16 @@ interface InsightsWorkbenchProps {
   onOpenSession?: (sessionId: string) => void;
   /** Open the Sessions tab without selecting a particular session. */
   onOpenSessionsTab?: () => void;
-  /** Leading statline content supplied by the owning page. */
-  personasSlot?: ReactNode;
   /**
-   * Top-level callout above the scorecard / session flow (e.g. Run insights
-   * banner). Kept separate from the statline so the summary is always visible.
+   * Top-level callout above Findings / session flow (e.g. Run insights
+   * banner). Kept separate so the summary stays visible when Findings collapses.
    */
   bannerSlot?: ReactNode;
   /**
-   * Pattern recommendations beside the scorecard (expandable rows). Rendered
-   * under the criterion table when present.
+   * Pattern recommendations under the scorecard (expandable rows). Rendered
+   * as a distinct subsection inside Findings when present.
    */
   recommendationsSlot?: ReactNode;
-  /**
-   * Statline chips supplied by the owning page. A function receives the
-   * breakdown this workbench is already subscribed to: User Testing's Feedback
-   * popover renders FROM the breakdown and must not appear when there is
-   * nothing rated to show, and the workbench owns that subscription — a plain
-   * node would force the page to duplicate the query to decide.
-   */
-  strugglesSlot?:
-    | ReactNode
-    | ((breakdown: UsageBreakdown | null | undefined) => ReactNode);
   /** Extra content shown below the rubric scorecard section (e.g. findings). */
   checksExtras?: ReactNode;
   /**
@@ -94,19 +91,73 @@ interface InsightsWorkbenchProps {
   className?: string;
   /**
    * Prefix for every `data-testid` this renders, so each surface keeps the
-   * ids its own suites already assert (`swarm-insights-*`, `chatbox-insights-*`).
+   * ids its own suites already assert (`swarm-insights-*`, `scenario-insights-*`).
    */
   testIdPrefix: string;
+}
+
+/**
+ * Collapsible parent for the scorecard and recommendations rail. Hidden when
+ * both subsections render nothing, so a provided-but-empty slot does not
+ * leave a Findings shell. Expanded by default; the trigger is a real button
+ * (aria-expanded, focus ring) rather than hover-only.
+ *
+ * The body is one scrollable card. Subsections (scorecard, recommendations)
+ * sit inside it and are separated by a divider — they must not bring their
+ * own card chrome, or Findings reads as two stacked modules on the page.
+ */
+function InsightsFindings({
+  testId,
+  children,
+}: {
+  testId: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className={cn(
+        "group/findings flex max-h-[42%] min-h-0 shrink-0 flex-col gap-1 overflow-hidden",
+        "[&:not(:has([data-slot=findings-body]>*))]:hidden",
+      )}
+      data-testid={testId}
+    >
+      <CollapsibleTrigger
+        className={cn(
+          "flex min-h-11 w-full shrink-0 cursor-pointer items-center justify-between gap-2 rounded-md px-0.5 py-1.5 text-left",
+          "outline-none transition-colors hover:bg-muted/50",
+          "focus-visible:ring-2 focus-visible:ring-ring/40",
+        )}
+      >
+        <h2 className="text-sm font-semibold tracking-tight">Findings</h2>
+        <ChevronDown
+          aria-hidden
+          className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out motion-reduce:transition-none group-data-[state=closed]/findings:-rotate-90"
+        />
+      </CollapsibleTrigger>
+      <div
+        data-slot="findings-body"
+        hidden={!open}
+        className="flex min-h-0 flex-1 flex-col divide-y divide-border/60 overflow-y-auto rounded-lg border border-border/60 bg-card/60"
+      >
+        {children}
+      </div>
+    </Collapsible>
+  );
 }
 
 /**
  * The Insights workbench: one body for Swarms and User Testing.
  *
  * Exclusive toggle between Session flow (Sankey) and Clusters (topic map),
- * a statline above both, a chip row for dismissible filters, and a session
- * drill-down beside the flow chart. Everything surface-specific arrives as a
- * prop — the scope the queries read, the slots the statline renders, the
- * filter policy, the empty state, and the testid prefix.
+ * a Findings rail (scorecard + recommendations) above both, a chip row for
+ * dismissible filters, and a session drill-down beside the flow chart.
+ * Everything surface-specific arrives as a prop — the scope the queries
+ * read, the slots Findings renders, the filter policy, the empty state,
+ * and the testid prefix.
  *
  * This replaces two panels that had drifted into ~250 lines of duplicated
  * shell against the same hooks. Where the two disagreed, the reconciliations
@@ -137,10 +188,8 @@ export function InsightsWorkbench({
   onViewChange,
   onOpenSession,
   onOpenSessionsTab,
-  personasSlot,
   bannerSlot,
   recommendationsSlot,
-  strugglesSlot,
   checksExtras,
   autoBackfillTopicMap = false,
   emptyState,
@@ -293,8 +342,7 @@ export function InsightsWorkbench({
       : undefined;
 
   // Freshness + Session flow | Clusters sit in the chart header (next to the
-  // Sankey legend / topic-map toolbar), not the statline — that row is for
-  // cohort chips only.
+  // Sankey / topic-map toolbar), not in Findings.
   const viewChrome = (
     <div className="flex flex-wrap items-center justify-end gap-2">
       {/* The chip reads `getWindowSignals` for its staleness watermark, and
@@ -406,41 +454,28 @@ export function InsightsWorkbench({
       )}
       data-testid={`${testIdPrefix}-panel`}
     >
-      <InsightsStatline
-        breakdown={breakdown}
-        flowSelection={flow.flowSelection}
-        onSelectFlow={flow.handleSelectFlow}
-        leadingSlot={personasSlot}
-        strugglesSlot={
-          typeof strugglesSlot === "function"
-            ? strugglesSlot(breakdown)
-            : strugglesSlot
-        }
-        testId={`${testIdPrefix}-statline`}
-      />
       {bannerSlot ? (
         <div className="shrink-0" data-testid={`${testIdPrefix}-banner`}>
           {bannerSlot}
         </div>
       ) : null}
-      {hasScorecard ? (
-        <div
-          className="max-h-[42%] shrink-0 overflow-y-auto"
-          data-testid={`${testIdPrefix}-scorecard`}
-          aria-label="Scorecard"
-        >
-          <CriterionScorecard
-            facets={criterionFacets}
-            filter={flow.filter}
-            onToggleChip={flow.handleToggleChip}
-          />
-          {checksExtras}
+      {hasScorecard || recommendationsSlot ? (
+        <InsightsFindings testId={`${testIdPrefix}-findings`}>
+          {hasScorecard ? (
+            <div
+              data-testid={`${testIdPrefix}-scorecard`}
+              aria-label="Scorecard"
+            >
+              <CriterionScorecard
+                facets={criterionFacets}
+                filter={flow.filter}
+                onToggleChip={flow.handleToggleChip}
+              />
+              {checksExtras}
+            </div>
+          ) : null}
           {recommendationsSlot}
-        </div>
-      ) : recommendationsSlot ? (
-        <div className="max-h-[42%] shrink-0 overflow-y-auto">
-          {recommendationsSlot}
-        </div>
+        </InsightsFindings>
       ) : null}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">

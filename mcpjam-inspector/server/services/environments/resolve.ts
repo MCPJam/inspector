@@ -74,6 +74,15 @@ export interface ResolvedEnvironmentForLaunch {
    */
   servers?: Array<{ serverId: string; name: string }>;
   serverAttachmentId?: string | null;
+  /**
+   * The environment's pinned computer image, when it pins one. The backend
+   * returns it; DECLARED here because a harness run requires a pinned image
+   * and the admission gate has to distinguish "this environment pins none"
+   * from "nobody looked". An undeclared field survives the cast this module
+   * does today, but only by accident — the next reader adding a projection
+   * would drop it silently.
+   */
+  computerEnvironmentId?: string;
 }
 
 /**
@@ -207,6 +216,49 @@ function environmentConflictKind(error: unknown): "drift" | "revision" {
   }
   const message = error instanceof Error ? error.message : String(error ?? "");
   return /drift/i.test(message) ? "drift" : "revision";
+}
+
+/**
+ * The 409 for an environment that cannot name a model to run, or null when
+ * `error` is something else.
+ *
+ * The backend refuses a headless launch whose environment resolves to no model
+ * — no override on the environment, none pinned on its client — with a
+ * structured `ENV_MODEL_REQUIRED`. Untranslated, that reaches an eval caller as
+ * a bare Convex rejection, which reads as an internal fault rather than as the
+ * one-field misconfiguration it is.
+ *
+ * Shaped to match the v1 environments resolve route byte for byte (`code` +
+ * the backend's `details` + a stable `reason` slug), so a caller branching on
+ * `details.reason` gets the same answer whichever surface refused it. Returns
+ * null rather than throwing so call sites read as one line next to the other
+ * translations.
+ */
+export function environmentModelRequiredError(
+  error: unknown
+): WebRouteError | null {
+  const data = (error as { data?: unknown } | null)?.data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+  const record = data as {
+    code?: unknown;
+    message?: unknown;
+    details?: unknown;
+  };
+  if (record.code !== "ENV_MODEL_REQUIRED") return null;
+  const message =
+    typeof record.message === "string" && record.message.trim()
+      ? record.message
+      : "This environment has no model to run. Set a model on the environment, or pin one on its client.";
+  const details =
+    record.details && typeof record.details === "object" &&
+    !Array.isArray(record.details)
+      ? (record.details as Record<string, unknown>)
+      : {};
+  return new WebRouteError(409, ErrorCode.CONFLICT, message, {
+    code: "ENV_MODEL_REQUIRED",
+    ...details,
+    reason: "environment_model_required",
+  });
 }
 
 /**

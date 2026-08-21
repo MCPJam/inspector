@@ -1086,7 +1086,7 @@ export function NewSwarmConfirmStep({
                 gradingOpen && "rotate-180"
               )}
             />
-            Scoring rubric
+            Grading
             {(() => {
               // Same invitation the header line makes with "2 personas ·
               // 10 journeys": say what's inside before it's opened.

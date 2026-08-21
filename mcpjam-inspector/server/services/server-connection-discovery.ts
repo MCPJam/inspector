@@ -38,12 +38,29 @@ import { probeMcpServer } from "@mcpjam/sdk";
 import type { ProbeMcpServerResult } from "@mcpjam/sdk";
 import {
   BlockedEgressTargetError,
-  createGuardedFetch,
   EgressResolutionError,
 } from "../utils/hosted-egress-guard.js";
+import { createPinnedFetch } from "../utils/pinned-fetch.js";
 
 /** The three values the backend's `reportDiscovery` accepts. */
 export type DiscoveredAuthMethod = "none" | "oauth" | "unsupported";
+
+/**
+ * The transport a real preflight uses: DNS-pinned, redirect-revalidating, and
+ * bounded by the same timeout the probe is given.
+ *
+ * Built per call rather than once at module scope so `allowLoopback` and the
+ * timeout come from the request being served, not from whichever request
+ * happened to construct it first.
+ */
+function createDefaultDiscoveryFetch(
+  input: RunDiscoveryPreflightInput
+): typeof fetch {
+  return createPinnedFetch({
+    allowLoopback: input.allowLoopback === true,
+    timeoutMs: clampTimeout(input.timeoutMs),
+  });
+}
 
 /**
  * What one preflight concluded.
@@ -270,18 +287,22 @@ export interface RunDiscoveryPreflightDependencies {
  * hostname: `evil.example` passes the classifier and can still resolve to
  * 169.254.169.254. Classification alone leaves the rebinding window open.
  *
- * So the probe dials through `createGuardedFetch`, which resolves the hostname,
- * refuses private answers, and re-checks EVERY redirect hop against the same
- * rules. The redirect half is not optional: a caller does not have to name the
- * address they want reached — they can name a host they control and have it
- * answer `302 Location: http://169.254.169.254/`, and a guard that inspects
- * only the first URL is a guard against typos.
+ * So the probe dials through the SDK's PINNED transport (`utils/pinned-fetch`,
+ * over `@mcpjam/sdk/oauth/node`), which resolves the hostname once, refuses
+ * private answers, pins the surviving addresses into the socket, and re-checks
+ * EVERY redirect hop against the same rules. The redirect half is not optional:
+ * a caller does not have to name the address they want reached — they can name
+ * a host they control and have it answer `302 Location:
+ * http://169.254.169.254/`, and a guard that inspects only the first URL is a
+ * guard against typos.
  *
- * Known residual gap, accepted repo-wide rather than invented here: the guard
- * validates the DNS answer and the HTTP client then resolves again, so a
- * check-vs-connect (TOCTOU) window remains. `hosted-egress-guard.ts` documents
- * that punt for every egress path in this server; closing it needs connection
- * pinning at the infra layer, not a second private copy here.
+ * PINNING IS WHY THIS DOES NOT USE `createGuardedFetch` like the rest of the
+ * server. That guard validates the DNS answer and then lets the HTTP client
+ * resolve a second time — its own docblock says so — leaving a check-vs-connect
+ * (TOCTOU) window. That punt is defensible for egress to hosts we chose; it is
+ * not defensible here, where the hostname is supplied by whoever is asking us
+ * to connect a server. The SDK entry that closes the window shipped one day
+ * before this module and was always the intended transport.
  *
  * A blocked target is TERMINAL, not retryable — the address a URL names will
  * not become public on the next attempt. A resolver OUTAGE is retryable: DNS
@@ -337,7 +358,7 @@ export async function runDiscoveryPreflight(
   const refusal: { blocked: BlockedEgressTargetError | null } = {
     blocked: null,
   };
-  const guarded = dependencies.fetchFn ?? createGuardedFetch();
+  const guarded = dependencies.fetchFn ?? createDefaultDiscoveryFetch(input);
   const fetchFn: typeof fetch = async (target, init) => {
     try {
       return await guarded(target, init);

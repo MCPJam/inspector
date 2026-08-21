@@ -101,6 +101,46 @@ describe("resolveHostTools — computer-backed bash", () => {
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
+  // ── Eval snapshots now carry `builtInToolIds` AND an ephemeral `computer`.
+  //
+  // Both halves are new at once, so the hazard is that `bash` gets registered
+  // TWICE for one iteration: once here (the host grants the id and the config
+  // carries a computer) and once out of band, where the eval runner injects a
+  // sandbox-bound `bash` into `prepared.allTools` after provisioning the box.
+  //
+  // It cannot happen, and these pin the reason: the personal resolver refuses a
+  // non-personal kind outright. The two paths are mutually exclusive by
+  // construction rather than by ordering luck.
+
+  it("does NOT advertise bash off an EPHEMERAL computer — the per-run box is not a personal resource", () => {
+    // An eval iteration's pinned config carries `{ kind: "ephemeral" }`. If
+    // this resolved a personal machine from it, the iteration would get a
+    // second `bash` pointed at the ACTING MEMBER's own computer, alongside the
+    // sandbox-bound one the runner injects.
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME],
+        computer: { kind: "ephemeral" },
+      },
+      ctx
+    );
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+  });
+
+  it("binds exactly ONE bash when the turn owns a sandbox, even with an ephemeral computer on the config", () => {
+    // The binding arrives out of band on `ctx` and is checked before every
+    // other gate, so it wins outright — one entry, bound to that box.
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [BASH_TOOL_NAME],
+        computer: { kind: "ephemeral" },
+      },
+      { ...ctx, sandboxBinding: { sandboxId: "sbx_eval_1" } }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+    expect(typeof tools![BASH_TOOL_NAME].execute).toBe("function");
+  });
+
   it("skips bash for an anonymous guest on the personal-project path (backend rejects the reserve)", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
@@ -174,8 +214,8 @@ describe("resolveHostTools — local engine actor coercion (structural)", () => 
     expect(bash?.description).toMatch(/user's own machine/);
   });
 
-  it("downgrades local for a chatbox session", () => {
-    const bash = bashTool({ isChatboxSession: true });
+  it("downgrades local for a scenario session", () => {
+    const bash = bashTool({ isScenarioSession: true });
     expect(bash?.needsApproval).toBe(false);
     expect(bash?.description).not.toMatch(/user's own machine/);
   });
@@ -241,7 +281,7 @@ describe("resolveHostTools — bash in Journey (swarm) sessions", () => {
   });
 
   it("leaves evals and hosted chat unaffected", () => {
-    for (const surface of [{}, { isChatboxSession: true }]) {
+    for (const surface of [{}, { isScenarioSession: true }]) {
       const tools = resolveHostTools(
         { builtInToolIds: [BASH_TOOL_NAME], computer },
         { ...ctx, ...surface }
@@ -371,10 +411,10 @@ describe("resolveHostTools — workspace tools (platform operation catalog)", ()
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
-  it("does not advertise any workspace id in chatbox sessions", () => {
+  it("does not advertise any workspace id in scenario sessions", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [...MCPJAM_TOOL_IDS, WEB_SEARCH_TOOL_NAME] },
-      { ...ctx, isChatboxSession: true, mcpjamPlatformClient: stubClient }
+      { ...ctx, isScenarioSession: true, mcpjamPlatformClient: stubClient }
     );
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });

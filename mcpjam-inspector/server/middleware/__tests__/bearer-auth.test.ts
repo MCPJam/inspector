@@ -22,12 +22,15 @@ import { Hono } from "hono";
 // above the imports. `vi.hoisted` is the supported way to initialize the mock
 // fns before those factories run (a plain `const fooMock = vi.fn()` lands in
 // the temporal dead zone when the factory executes at import time).
-const { validateApiKeyMock, resolveUserByExternalIdMock, lookupWorkosKeyBindingMock } =
-  vi.hoisted(() => ({
-    validateApiKeyMock: vi.fn(),
-    resolveUserByExternalIdMock: vi.fn(),
-    lookupWorkosKeyBindingMock: vi.fn(),
-  }));
+const {
+  validateApiKeyMock,
+  resolveUserByExternalIdMock,
+  lookupWorkosKeyBindingMock,
+} = vi.hoisted(() => ({
+  validateApiKeyMock: vi.fn(),
+  resolveUserByExternalIdMock: vi.fn(),
+  lookupWorkosKeyBindingMock: vi.fn(),
+}));
 
 vi.mock("../../services/workos-client.js", () => ({
   getWorkOSClient: () => ({
@@ -68,7 +71,7 @@ function createApp(): Hono {
       workosUserId: c.get("workosUserId") ?? null,
       mcpjamUserId: c.get("mcpjamUserId") ?? null,
       mcpjamOrganizationId: c.get("mcpjamOrganizationId") ?? null,
-    }),
+    })
   );
   return app;
 }
@@ -155,6 +158,56 @@ describe("bearerAuthMiddleware — sk_ WorkOS API key branch", () => {
     // `x-mcpjam-acting-in-org`.
     expect(body.mcpjamOrganizationId).toBe("org_42");
     expect(lookupWorkosKeyBindingMock).toHaveBeenCalledWith("api_key_42");
+  });
+
+  it("puts the bound org on the request LOG context, not just the request vars", async () => {
+    // `/api/v1/*` rows reached Axiom with no `orgId` at all, which structurally
+    // disabled the error-class-spike monitor's "affects >= 3 organizations"
+    // rule for the whole public API: the rule cannot fire on a field that is
+    // never populated, so an error class spiking across every customer counted
+    // as one org forever. This is the only place the API-key path knows the org.
+    validateApiKeyMock.mockResolvedValueOnce({
+      apiKey: { id: "api_key_log", owner: { id: "user_log" } },
+    });
+    resolveUserByExternalIdMock.mockResolvedValueOnce({
+      _id: "mcpjam_user_log",
+    });
+    lookupWorkosKeyBindingMock.mockResolvedValueOnce({
+      mcpjamOrganizationId: "org_log",
+    });
+
+    const app = new Hono();
+    // Stand in for `requestLogContextMiddleware`, which seeds the context this
+    // merges into — `setRequestLogContext` no-ops when there is none, so the
+    // seed is what makes the assertion meaningful rather than vacuous.
+    app.use("*", async (c, next) => {
+      c.set("requestLogContext", {
+        event: "http.request.completed",
+        timestamp: new Date().toISOString(),
+        environment: "test",
+        release: null,
+        component: "http",
+        requestId: "req_log",
+        route: "pending",
+        method: "GET",
+        authType: "unknown",
+      } as never);
+      await next();
+    });
+    app.use("*", bearerAuthMiddleware);
+    app.get("/test", (c) =>
+      c.json({
+        orgId:
+          (c.get("requestLogContext") as { orgId?: string })?.orgId ?? null,
+      })
+    );
+
+    const res = await app.request("/test", {
+      headers: { authorization: "Bearer sk_live_log" },
+    });
+
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { orgId: unknown }).orgId).toBe("org_log");
   });
 
   it("returns 401 UNAUTHORIZED with details.reason ORPHANED_KEY when the key has no org binding", async () => {
@@ -274,5 +327,66 @@ describe("bearerAuthMiddleware — request-local memoization", () => {
     expect(res.status).toBe(200);
     expect(validateApiKeyMock).toHaveBeenCalledTimes(1);
     expect(lookupWorkosKeyBindingMock).toHaveBeenCalledTimes(1);
+  });
+  /**
+   * `credentialPresented` is what lets the 4xx storm monitor tell a customer
+   * outage apart from background noise. A scan walks the public API with no
+   * `Authorization` header and produces hundreds of correct 401s; without this
+   * label those are indistinguishable from 401s where somebody's key failed.
+   */
+  const seedLogContext = (app: Hono, sink: { ctx: unknown }) => {
+    app.use("*", async (c, next) => {
+      c.set("requestLogContext", {
+        event: "http.request.completed",
+        timestamp: new Date().toISOString(),
+        environment: "test",
+        release: null,
+        component: "http",
+        requestId: "req_cred",
+        route: "pending",
+        method: "GET",
+        authType: "unknown",
+      } as never);
+      await next();
+      // Runs AFTER the middleware short-circuits, which is the only way to
+      // observe the context on a request that never reached a handler.
+      sink.ctx = c.get("requestLogContext");
+    });
+  };
+
+  it("labels a 401 with credentialPresented false when no bearer was sent", async () => {
+    const sink: { ctx: unknown } = { ctx: null };
+    const app = new Hono();
+    seedLogContext(app, sink);
+    app.use("*", bearerAuthMiddleware);
+    app.get("/test", (c) => c.json({ ok: true }));
+
+    const res = await app.request("/test");
+
+    expect(res.status).toBe(401);
+    expect((sink.ctx as { credentialPresented?: boolean }).credentialPresented).toBe(
+      false
+    );
+  });
+
+  it("labels a rejected credential with credentialPresented true", async () => {
+    // An invalid key is a caller whose credential FAILED — the class the
+    // monitor must keep counting, unlike the no-header case above.
+    validateApiKeyMock.mockResolvedValueOnce({ apiKey: null });
+
+    const sink: { ctx: unknown } = { ctx: null };
+    const app = new Hono();
+    seedLogContext(app, sink);
+    app.use("*", bearerAuthMiddleware);
+    app.get("/test", (c) => c.json({ ok: true }));
+
+    const res = await app.request("/test", {
+      headers: { authorization: "Bearer sk_bad" },
+    });
+
+    expect(res.status).toBe(401);
+    expect((sink.ctx as { credentialPresented?: boolean }).credentialPresented).toBe(
+      true
+    );
   });
 });

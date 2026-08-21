@@ -23,6 +23,11 @@
 export type CliBinding = { command: string } | { excluded: string };
 
 export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
+  // ── Organizations ───────────────────────────────────────────────────────
+  // Read-only, and the only organization command there is. Member, role,
+  // invite and billing writes are account administration and stay in the app.
+  list_organizations: { command: "organizations list" },
+
   // ── Projects and servers ────────────────────────────────────────────────
   list_projects: { command: "projects list" },
   create_project: { command: "projects create" },
@@ -30,6 +35,15 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   delete_project: { command: "projects delete" },
   list_project_servers: { command: "projects servers" },
   create_project_server: { command: "projects server add" },
+  connect_project_server: { command: "projects server connect" },
+  // Its OWN command, not `server connect`. `connect` does poll this operation
+  // while it waits, but `--no-wait` and Ctrl-C both hand back a request id, and
+  // pointing the binding at `connect` claimed a command that could not follow
+  // one — re-running `connect` starts a second request rather than reading the
+  // first.
+  get_project_server_connection_status: {
+    command: "projects server connect-status",
+  },
   get_project_server: { command: "projects server get" },
   update_project_server: { command: "projects server update" },
   delete_project_server: { command: "projects server remove" },
@@ -46,12 +60,69 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_journey_run_sessions: { command: "journeys sessions" },
   launch_journey_run: { command: "journeys run" },
   cancel_journey_run: { command: "journeys cancel" },
+  // Authoring + insights, in `commands/swarms.ts` but hung off the same
+  // `journeys` group so `journeys run` and `journeys create` are one surface
+  // to the person typing them.
+  get_journey: { command: "journeys get" },
+  create_journey: { command: "journeys create" },
+  update_journey: { command: "journeys update" },
+  archive_journey: { command: "journeys archive" },
+  generate_journeys: { command: "journeys generate" },
+  get_swarms_overview: { command: "journeys overview" },
+  get_journey_run_scorecard: { command: "journeys scorecard" },
+  list_swarm_findings: { command: "journeys findings" },
+  dismiss_swarm_finding: { command: "journeys dismiss-finding" },
+  undismiss_swarm_finding: { command: "journeys undismiss-finding" },
+  get_wave_insights: { command: "journeys insights" },
+  request_wave_insights: { command: "journeys request-insights" },
+  cancel_wave_insights: { command: "journeys cancel-insights" },
+
+  // ── Personas and swarm containers (Swarms authoring) ────────────────────
+  list_personas: { command: "personas list" },
+  get_persona: { command: "personas get" },
+  create_persona: { command: "personas create" },
+  update_persona: { command: "personas update" },
+  delete_persona: { command: "personas delete" },
+  generate_personas: { command: "personas generate" },
+  list_swarms: { command: "swarms list" },
+  get_swarm: { command: "swarms get" },
+  create_swarm: { command: "swarms create" },
+  update_swarm: { command: "swarms update" },
+  archive_swarm: { command: "swarms archive" },
+
+  // ── Capabilities ────────────────────────────────────────────────────────
+  // Top-level rather than nested: the answer spans Swarms, user testing and
+  // the plan, so filing it under one of them would suggest it only describes
+  // that one.
+  get_capabilities: { command: "capabilities" },
 
   // ── Scenarios (user testing) ────────────────────────────────────────────
-  // Supersedes the `chatboxes` group below, which is the same product under
-  // its older name.
+  // Publishing and taking down. The reads (`scenarios list` / `scenarios get`)
+  // are bound under "Chat surfaces" below — they used to be a separate group
+  // under the product's older name, and now share this one command.
   publish_scenario: { command: "scenarios publish" },
   unpublish_scenario: { command: "scenarios unpublish" },
+  // ── User testing: everything you do with a scenario once it exists ──────
+  get_user_testing_scenario: { command: "user-testing get" },
+  update_user_testing_scenario: { command: "user-testing update" },
+  list_user_testing_sessions: { command: "user-testing sessions" },
+  get_user_testing_session: { command: "user-testing session" },
+  get_user_testing_metrics: { command: "user-testing metrics" },
+  get_user_testing_usage: { command: "user-testing usage" },
+  list_user_testing_findings: { command: "user-testing findings" },
+  get_user_testing_signals: { command: "user-testing signals" },
+  get_user_testing_insights: { command: "user-testing insights" },
+  request_user_testing_insights: { command: "user-testing request-insights" },
+  cancel_user_testing_insights: { command: "user-testing cancel-insights" },
+  dismiss_user_testing_finding: { command: "user-testing dismiss-finding" },
+  undismiss_user_testing_finding: {
+    command: "user-testing undismiss-finding",
+  },
+  set_user_testing_guest_execution: { command: "user-testing guest-execution" },
+  rotate_user_testing_link: { command: "user-testing rotate-link" },
+  upsert_user_testing_member: { command: "user-testing invite" },
+  remove_user_testing_member: { command: "user-testing remove-member" },
+  rebind_user_testing_scenario: { command: "user-testing rebind" },
 
   // ── Evals ───────────────────────────────────────────────────────────────
   list_eval_suites: { command: "eval list" },
@@ -64,13 +135,21 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_eval_suite_runs: { command: "eval runs" },
   run_eval_suite: { command: "eval run" },
   cancel_eval_run: { command: "eval cancel" },
+  request_eval_run_judge: { command: "eval judge" },
+  list_eval_check_repos: { command: "eval checks list" },
+  connect_eval_check_repo: { command: "eval checks connect" },
   get_eval_run: { command: "eval status" },
+  compare_eval_run: { command: "eval compare" },
   list_eval_run_iterations: { command: "eval iterations" },
   get_eval_iteration_trace: { command: "eval trace" },
   get_eval_run_steps: { command: "eval steps" },
   list_eval_cases: { command: "eval cases list" },
   get_eval_case: { command: "eval cases get" },
   create_eval_case: { command: "eval cases create" },
+  create_eval_cases: {
+    excluded:
+      'Authoring several cases from a shell means passing a FILE, and that file\'s format is now settled: the versioned eval suite file (`schemaVersion: "1"`, YAML canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`), which `eval validate` reads offline and `eval export` writes. What is still missing is the UPLOAD half — a suite file has cases with declared ids and the batch surface takes cases inline, and deciding which of the two owns identity on the way up is the same decision as `eval run --file`\'s ownership rules. So this binds when that command lands, not before; a batch command today would ship a second spelling of "send these cases" ahead of it. The bulk writers meanwhile are the agent surfaces (MCP `create_eval_cases`, `POST …/cases/batch`), which take the cases inline.',
+  },
   update_eval_case: { command: "eval cases update" },
   delete_eval_case: { command: "eval cases delete" },
   generate_eval_cases: { command: "eval cases generate" },
@@ -85,9 +164,15 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   set_host_servers: { command: "hosts servers" },
   duplicate_host: { command: "hosts duplicate" },
   list_project_environments: { command: "environments list" },
+  get_project_environment_capabilities: {
+    excluded:
+      "Not a user-facing command: it answers 'does this deployment accept a model override?', which `environments create --model` / `environments update --model|--clear-model` already ask on the caller's behalf before writing. A standalone command would only invite people to check by hand what the write already checks.",
+  },
   get_project_environment: { command: "environments get" },
   resolve_project_environment: { command: "environments resolve" },
   create_project_environment: { command: "environments create" },
+  ensure_adhoc_environment: { command: "environments ensure-adhoc" },
+  name_environment: { command: "environments name" },
   update_project_environment: { command: "environments update" },
   archive_project_environment: { command: "environments archive" },
   restore_project_environment: { command: "environments restore" },
@@ -112,9 +197,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   reset_computer: { command: "images reset" },
 
   // ── Chat surfaces ───────────────────────────────────────────────────────
-  list_chatboxes: { command: "chatboxes list" },
-  get_chatbox: { command: "chatboxes get" },
+  list_scenarios: { command: "scenarios list" },
+  get_scenario: { command: "scenarios get" },
   list_chat_sessions: { command: "chat-sessions list" },
+  search_sessions: { command: "sessions search" },
 
   // ── Tunnels ─────────────────────────────────────────────────────────────
   create_tunnel: { command: "tunnel" },
@@ -170,6 +256,17 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "`compat` evaluates the bundled catalog locally, so it stays fast and works offline.",
   },
+  // Directory readiness, hosted half. NOT excluded-citing-local like its
+  // neighbours above: `readiness check` grades what THIS machine can reach,
+  // and a hosted run grades the server as the platform reaches it, through the
+  // saved row and the authorize exchange. Different questions, and only the
+  // hosted one can spend for model observations or leave a record.
+  start_claude_readiness_run: { command: "readiness start claude" },
+  start_openai_readiness_run: { command: "readiness start openai" },
+  get_readiness_run: { command: "readiness status" },
+  list_readiness_runs: { command: "readiness list" },
+  cancel_readiness_run: { command: "readiness cancel" },
+  get_readiness_report: { command: "readiness report" },
 
   // ── Covered by the surrounding session, not a command ────────────────────
   get_me: {

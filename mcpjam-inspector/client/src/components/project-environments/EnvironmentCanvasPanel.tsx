@@ -20,7 +20,7 @@ import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 
 /**
  * Read-only embedding of the Connect "Host" graph for an environment's
- * RESOLVED bundle. Mirrors `ChatboxHostCanvasPanel` — pure data →
+ * RESOLVED bundle. Mirrors `ScenarioHostCanvasPanel` — pure data →
  * `buildRedesignedHostCanvas` → `<RedesignedHostCanvas readOnly>` — with one
  * difference that drives the whole file: the server set is not the host's own
  * picks, it is whatever the backend resolver says this environment currently
@@ -43,7 +43,7 @@ export function buildEnvironmentCanvasContext(args: {
 }): HostRedesignContext {
   const { hostName, hostConfig, previewServers, projectServers } = args;
 
-  // `hostConfigDtoToInput` requires a non-null DTO; the chatbox precedent
+  // `hostConfigDtoToInput` requires a non-null DTO; the scenario precedent
   // guards the same way so a dangling host still renders host-less chrome.
   const base = hostConfig
     ? hostConfigDtoToInput(hostConfig)

@@ -13,9 +13,10 @@
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InsightsWorkbench } from "../InsightsWorkbench";
-import { chipKey, type UsageFilterState } from "@/hooks/chatbox-usage-filters";
+import { chipKey, type UsageFilterState } from "@/hooks/scenario-usage-filters";
 import type { CriterionFacet } from "@/hooks/useUsageInsights";
 
 const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown } = vi.hoisted(() => ({
@@ -24,7 +25,7 @@ const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown } = vi.hoisted(() => (
 }));
 
 // The workbench's freshness chip reads Convex directly. These suites render it
-// outside a provider, and the chip's own query is chatbox-scoped (skipped on a
+// outside a provider, and the chip's own query is scenario-scoped (skipped on a
 // swarm scope), so a stub client is the whole requirement.
 vi.mock("convex/react", async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -94,6 +95,7 @@ function renderSwarmWorkbench(props: {
   journeyRunIds?: string[];
   urlSelection?: ReadonlyArray<{ dimension: string; clusterId: string }> | null;
   onSelectionChange?: (themes: unknown) => void;
+  recommendationsSlot?: ReactNode;
 } = { projectId: "proj-1" }) {
   const { projectId, journeyRunIds, ...rest } = props;
   return render(
@@ -146,7 +148,10 @@ describe("InsightsWorkbench — criterion scorecard", () => {
     expect(screen.getByText("Score 65%")).toBeInTheDocument();
     // Neither criterion has a clean sheet (6 fails and 1 fail respectively).
     expect(
-      screen.getByText(/0 \/ 2 criteria passing · 7\/20 graded checks failed/),
+      // Two denominators, two nouns: 2 is the number of CHECKS, 20 is the
+      // number of VERDICTS (pass+fail summed across both checks). Calling the
+      // second one "sessions" would overstate the sample by the rubric's size.
+      screen.getByText(/0 \/ 2 checks passing · 7\/20 graded checks failed/),
     ).toBeInTheDocument();
   });
 
@@ -231,6 +236,7 @@ describe("InsightsWorkbench — criterion scorecard", () => {
     renderSwarmWorkbench({ projectId: "proj-1" });
     expect(screen.queryByTestId("swarm-insights-scorecard")).not.toBeInTheDocument();
     expect(screen.queryByText("Scorecard")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Findings" })).toBeNull();
   });
 
   it("renders nothing when the server predates criterionBreakdown", () => {
@@ -238,5 +244,98 @@ describe("InsightsWorkbench — criterion scorecard", () => {
     renderSwarmWorkbench({ projectId: "proj-1" });
     expect(screen.queryByTestId("swarm-insights-scorecard")).not.toBeInTheDocument();
     expect(screen.queryByText("Scorecard")).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Findings" })).toBeNull();
+  });
+});
+
+describe("InsightsWorkbench — Findings", () => {
+  it("shows Findings when the scorecard renders", () => {
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    expect(screen.getByRole("heading", { name: "Findings" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Scorecard" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Findings" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+  });
+
+  it("shows Findings when only recommendations render", () => {
+    withFacets([]);
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      recommendationsSlot: (
+        <div data-testid="run-insights-recommendations">
+          <h3>Recommendations</h3>
+          <p>Patterns to investigate across sessions</p>
+        </div>
+      ),
+    });
+    expect(screen.getByRole("heading", { name: "Findings" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recommendations" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Scorecard" })).toBeNull();
+  });
+
+  it("puts scorecard and recommendations in one Findings card", () => {
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      recommendationsSlot: (
+        <div data-testid="run-insights-recommendations">
+          <h3>Recommendations</h3>
+        </div>
+      ),
+    });
+    const body = screen
+      .getByTestId("swarm-insights-findings")
+      .querySelector("[data-slot=findings-body]");
+    expect(body).not.toBeNull();
+    expect(body).toHaveClass("rounded-lg", "border", "divide-y", "overflow-y-auto");
+    expect(body).toContainElement(
+      screen.getByRole("heading", { name: "Scorecard" }),
+    );
+    expect(body).toContainElement(
+      screen.getByRole("heading", { name: "Recommendations" }),
+    );
+  });
+
+  it("is expanded by default so scorecard and recommendations are visible", () => {
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      recommendationsSlot: (
+        <div data-testid="run-insights-recommendations">
+          <h3>Recommendations</h3>
+        </div>
+      ),
+    });
+    expect(screen.getByRole("button", { name: "Findings" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(screen.getByRole("heading", { name: "Scorecard" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Recommendations" })).toBeVisible();
+  });
+
+  it("collapses and expands from the keyboard-accessible toggle", async () => {
+    const user = userEvent.setup();
+    renderSwarmWorkbench({
+      projectId: "proj-1",
+      recommendationsSlot: (
+        <div data-testid="run-insights-recommendations">
+          <h3>Recommendations</h3>
+        </div>
+      ),
+    });
+    const toggle = screen.getByRole("button", { name: "Findings" });
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByRole("heading", { name: "Scorecard" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Recommendations" })).toBeNull();
+
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByRole("heading", { name: "Scorecard" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Recommendations" }),
+    ).toBeInTheDocument();
   });
 });

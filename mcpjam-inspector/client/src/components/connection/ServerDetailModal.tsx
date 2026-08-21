@@ -92,7 +92,7 @@ interface ServerDetailModalProps {
    * Undefined = no host-level pin = "Legacy · default" attribution on
    * the chip.
    */
-  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
+  hostDefaultMcpProtocolVersion?: McpProtocolVersion | "auto";
   /** Project default XAA test identity — shown as override placeholders. */
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
@@ -176,8 +176,12 @@ export function ServerDetailModal({
   // without forcing the Servers tab to also wire up the provider just
   // for the chip's source attribution.
   const activeMcpProfile = useActiveMcpProfile();
-  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+  const storedHostDefaultMcpProtocolVersion =
     hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
+  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+    storedHostDefaultMcpProtocolVersion === "auto"
+      ? undefined
+      : storedHostDefaultMcpProtocolVersion;
   const canEditMcpProtocolVersionOverride = Boolean(
     canQueryProjectServerConfig &&
       serverId &&
@@ -198,6 +202,18 @@ export function ServerDetailModal({
     target: McpProtocolVersion | undefined;
   } | null>(null);
   const [pendingReconnectTick, setPendingReconnectTick] = useState(0);
+  const fallbackReconnectTimerRef = useRef<number | null>(null);
+  // The safety-net timer below outlives the modal: closing it a moment after
+  // the toggle otherwise still fires a reconnect 1.5s later, against a server
+  // the user has navigated away from.
+  useEffect(
+    () => () => {
+      if (fallbackReconnectTimerRef.current !== null) {
+        window.clearTimeout(fallbackReconnectTimerRef.current);
+      }
+    },
+    []
+  );
   useEffect(() => {
     const pending = pendingReconnectRef.current;
     if (!pending) return;
@@ -276,7 +292,8 @@ export function ServerDetailModal({
       // Fallback: if the reactive refetch is delayed (network blip,
       // backend slow), trigger reconnect after 1.5s anyway. The watcher
       // effect short-circuits if it already fired.
-      window.setTimeout(() => {
+      fallbackReconnectTimerRef.current = window.setTimeout(() => {
+        fallbackReconnectTimerRef.current = null;
         if (pendingReconnectRef.current?.target === next) {
           pendingReconnectRef.current = null;
           void onReconnect(server.name, {
@@ -510,6 +527,9 @@ export function ServerDetailModal({
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent
+        // Browser translators rewrite text nodes in-place. React then cannot
+        // safely remove this portaled dialog after its close animation.
+        translate="no"
         // The `sm:` prefix is load-bearing. DialogContent's base carries
         // `sm:max-w-lg`, and tailwind-merge only collapses classes that
         // share a variant — so an unprefixed `max-w-2xl` never conflicts
@@ -519,7 +539,7 @@ export function ServerDetailModal({
         // spares the base `max-w-[calc(100%-2rem)]`, which tailwind-merge
         // used to drop as a same-variant conflict — that's the guard that
         // keeps the dialog off both screen edges below 640px.
-        className="sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
+        className="notranslate sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
         }}

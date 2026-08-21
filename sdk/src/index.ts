@@ -290,6 +290,74 @@ export type {
   DiffServerSnapshotsOptions,
   CollectAndDiffServerSnapshotInput,
 } from "./server-diff.js";
+// Adapts a run comparison into the same StructuredRunReport the server-diff
+// reporter uses, so `--reporter junit-xml` needs no second renderer.
+export { buildRunCompareReport } from "./run-compare.js";
+// Already the p95 the gate engine uses internally. Exported so the CLI's
+// compare command computes latency the SAME way rather than growing a second
+// percentile implementation next to it.
+export { calculateLatencyStats, calculatePercentile } from "./percentiles.js";
+
+// Hosted corpus: materialize eval cases into local EvalTests, and lock what was
+// materialized. Pure — the file I/O half lives in @mcpjam/cli.
+export {
+  CORPUS_LOCK_VERSION,
+  HostedOnlyCaseError,
+  buildCorpus,
+  buildCorpusLock,
+  evalTestFromPlatformCase,
+  loadCorpusFromLock,
+  resolveCaseNames,
+  resolveEffectiveChecks,
+  scenarioContentHash,
+  sdkMatchOptionsFromPublic,
+  verifyCorpusLock,
+} from "./corpus.js";
+export type {
+  BuildCorpusInput,
+  CorpusCase,
+  CorpusDrift,
+  CorpusLock,
+  CorpusSkip,
+  EvalTestFromCaseOptions,
+  LoadedCorpus,
+  PublicCheckOverride,
+  PublicMatchOptions,
+} from "./corpus.js";
+
+// Suite files: read one, resolve its documented defaults in memory, write an
+// authored one back. Pure and browser-safe — the file I/O half lives in
+// @mcpjam/cli (`eval validate`, `eval export`).
+//
+// Deliberately NOT re-exported from `@mcpjam/sdk/contract`. That subpath is
+// dependency-light (zod only) and browser-bundled on purpose; routing the
+// loader through it would pull `yaml` into every client bundle that imports
+// the contract for its types.
+export {
+  MAX_SUITE_FILE_BYTES,
+  SUITE_FILE_DEFAULT_CAPTURE_LEVEL,
+  SUITE_FILE_FINDING_CODES,
+  SUITE_FILE_VALIDITY_DEFAULTS,
+  formatSuiteFileFindings,
+  loadEvalSuiteFile,
+  resolveEvalSuiteFile,
+  serializeEvalSuiteFile,
+  suiteFilePointer,
+} from "./suite-file-loader.js";
+export type {
+  LoadEvalSuiteFileOptions,
+  ResolvedEvalSuiteFile,
+  ResolvedEvalSuiteFileCase,
+  ResolvedEvalSuiteFileValidity,
+  SuiteFileFailureStage,
+  SuiteFileFinding,
+  SuiteFileFindingCode,
+  SuiteFileLoadFailure,
+  SuiteFileLoadResult,
+  SuiteFileLoadSuccess,
+  SuiteFileLocation,
+} from "./suite-file-loader.js";
+export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,
   evaluateToolCallOutcome,
@@ -364,12 +432,140 @@ export {
 } from "./conformance-reporting.js";
 export type {
   ConformanceReport,
+  ConformanceReportAdvisory,
   ConformanceReportCase,
   ConformanceReportCaseStatus,
   ConformanceReportGroup,
   ConformanceReportKind,
   SupportedConformanceResult,
 } from "./conformance-reporting.js";
+
+// The publisher-neutral readiness algebra. Named rather than `export *`
+// because both publisher barrels below already re-export parts of it under
+// their own names, and a wildcard would collide with them.
+export {
+  DIRECTORY_OBSERVATION_CONFIDENCE,
+  DIRECTORY_OBSERVATION_FINDING_CLASSES,
+  DIRECTORY_OBSERVATION_LIMITS,
+  DIRECTORY_OBSERVATION_REASONS,
+  DIRECTORY_OBSERVATION_STATUSES,
+  NOT_REQUESTED_OBSERVATIONS,
+  mapObservationsToFindings,
+  observationFailure,
+  parseDirectoryObservationEnvelope,
+} from "./directory-readiness/observations.js";
+export type {
+  DirectoryObservation,
+  DirectoryObservationCatalog,
+  DirectoryObservationConfidence,
+  DirectoryObservationEnvelope,
+  DirectoryObservationFindingClass,
+  DirectoryObservationMapping,
+  DirectoryObservationParseFailure,
+  DirectoryObservationParseResult,
+  DirectoryObservationReason,
+  DirectoryObservationSchema,
+  DirectoryObservationState,
+  DirectoryObservationStatus,
+} from "./directory-readiness/observations.js";
+
+export {
+  EVIDENCE_REUSE_REFUSALS,
+  checkEvidenceReuse,
+  sameReadinessTarget,
+} from "./directory-readiness/evidence-reuse.js";
+export type {
+  AttributableEvidenceSource,
+  EvidenceReuse,
+  EvidenceReuseExpectation,
+  EvidenceReuseRefusal,
+} from "./directory-readiness/evidence-reuse.js";
+
+// The shared MCP dial. NODE ENTRY ONLY — it opens sockets, so it is absent
+// from `browser.ts` and from the two publisher barrels, exactly like the
+// discovery modules below.
+export {
+  DIRECTORY_DIAL_CLIENT_INFO,
+  DIRECTORY_DIAL_DEFAULTS,
+  DIRECTORY_DIAL_PROTOCOL_VERSION,
+  dialAppResources,
+  dialInitialize,
+  dialMcpServer,
+  dialResourceListing,
+  dialToolListing,
+} from "./directory-readiness/mcp-dial.js";
+export type {
+  DirectoryAppResourceEvidence,
+  DirectoryDialEvidence,
+  DirectoryDialOptions,
+  DirectoryDialRequest,
+  DirectoryInitializeEvidence,
+  DirectoryListingEvidence,
+  DirectoryResourceEvidence,
+  DirectoryToolEvidence,
+} from "./directory-readiness/mcp-dial.js";
+
+// Claude directory readiness. Pure data and data reasoning only — the runner
+// and the dialing checks are deliberately not re-exported here, so importing
+// the result model never pulls a transport in with it.
+export * from "./claude-readiness/index.js";
+// The one readiness module that touches the network, exported only from the
+// Node entry. It is deliberately absent from `claude-readiness/index.ts` so
+// that importing the result model can never pull a transport in with it.
+export {
+  discoverClaudeAuthEvidence,
+  traceConnectorRedirects,
+} from "./claude-readiness/discovery.js";
+export type { ClaudeDiscoveryOptions } from "./claude-readiness/discovery.js";
+// The Claude gather half, Node-only for the same reason as the discovery
+// module above: it dials, and importing a result model must never pull a
+// transport in with it.
+export { gatherClaudeReadinessEvidence } from "./claude-readiness/gather.js";
+export type { GatherClaudeReadinessEvidenceOptions } from "./claude-readiness/gather.js";
+// The side-effecting intrusive probes, likewise Node-only. The gate that arms
+// them and the grading that reads them are pure and come from the barrel above.
+export {
+  probeDynamicRegistration,
+  probeRefreshRotation,
+} from "./claude-readiness/intrusive-probes.js";
+
+// OpenAI plugin-directory readiness. Same rule as the Claude barrel above:
+// pure data and data reasoning only, so importing the result model or the
+// package reader never pulls a transport in with it.
+export * from "./openai-readiness/index.js";
+// The Node plugin-bundle file sources: a directory on disk and a ZIP in
+// memory. NODE ENTRY ONLY — they are the only `plugin-bundle` modules that
+// touch `node:fs` or an archive library, and `plugin-bundle/index.ts` stays
+// free of both so a browser can still validate a dropped package in the page.
+export {
+  DIRECTORY_ARCHIVE_OBSERVATIONS,
+  collectZipArchiveObservations,
+  createDirectoryPluginFileSource,
+  createZipPluginFileSource,
+} from "./plugin-bundle/node-file-sources.js";
+
+// The Node XML parser for SVG dimension reads, exported ONLY here. A browser
+// has `DOMParser` natively and `readImageDimensions` finds it; `@xmldom/xmldom`
+// is banned from the browser entry's import graph, so the Node fallback lives
+// behind this entry and is passed in as `parseXml`.
+export { xmldomParseXml } from "./openai-readiness/package/svg-xml-node.js";
+
+// The OpenAI readiness modules that touch the network, exported only from the
+// Node entry. They are deliberately absent from `openai-readiness/index.ts` so
+// that importing the result model can never pull a transport in with it.
+export {
+  discoverOpenAIAuthEvidence,
+  discoverOpenAIImportedSkills,
+  fetchOpenAIDomainVerification,
+  traceOpenAIEndpoint,
+} from "./openai-readiness/discovery.js";
+export type {
+  OpenAIAuthEvidence,
+  OpenAIAuthorizationServerEvidence,
+  OpenAIDiscoveryOptions,
+  OpenAIDomainVerificationEvidence,
+  OpenAIEndpointEvidence,
+} from "./openai-readiness/discovery.js";
 export {
   buildOutcomeSummary,
   decideConformanceOutcome,
@@ -905,6 +1101,110 @@ export type {
   ListAllServerSkillsParams,
   ListAllServerSkillsResult,
 } from "./operations.js";
+
+// The versioned evaluation contract (browser-safe; also exported in full from
+// `@mcpjam/sdk/contract`). Re-exported here so a code-first author can build a
+// custom scorer without a second import path.
+export {
+  aggregateEvaluationConfigHash,
+  buildEvaluationConfigSnapshot,
+  canonicalDigest,
+  canonicalJson,
+  definitionHash,
+  errorScoreResult,
+  evaluationConfigHash,
+  finalizeScoreResult,
+  notApplicableScoreResult,
+  resolveScoreDefinition,
+  scorePassed,
+  sha256Hex,
+  skippedScoreResult,
+  PREDICATES_VERSION,
+  evaluationConfigSnapshotSchema,
+  resolvedScoreDefinitionSchema,
+  scoreResultSchema,
+} from "./contract/index.js";
+export type {
+  EvaluationConfigSnapshot,
+  ResolvedScoreDefinition,
+  ScoreDefinition,
+  ScoreRawOutcome,
+  ScoreResult,
+  ScoreStatus,
+  ScorerContextV1,
+  ScorerErrorPolicy,
+  ScorerIdSource,
+  ScorerRole,
+} from "./contract/index.js";
+
+// The scorer runtime. Main-entry only — `judgeScorer` reaches the model
+// factory, which is not browser-safe.
+export {
+  DEFAULT_JUDGE_THRESHOLD,
+  DEFAULT_SCORER_CONCURRENCY,
+  DEFAULT_SCORER_TIMEOUT_MS,
+  JUDGE_TEMPLATE_VERSION,
+  judgeScorer,
+  predicateScorer,
+  runScorers,
+  scoresPassed,
+} from "./scorers/index.js";
+export type {
+  JudgeScorerOptions,
+  PredicateScorerOptions,
+  Scorer,
+  ScorerRunOptions,
+} from "./scorers/index.js";
+
+// The gate engine. ONE evaluator behind `assertGate` (code-first) and
+// `mcpjam eval gate` (hosted), so a CI gate cannot be green on one path and
+// red on the other.
+export {
+  GateError,
+  assertGate,
+  evaluateGates,
+  formatGateReport,
+  gateInputFromPlatformRun,
+  gateInputFromRunResult,
+  gateInputFromSuiteResult,
+  passRateFractionFromPercent,
+} from "./gates.js";
+export { COMPARATIVE_GATE_FIELDS } from "./gates.js";
+export type {
+  GateInput,
+  GatePolicy,
+  GateReport,
+  GateScore,
+  GateStatus,
+  GateVerdict,
+  ScoreIntegrity,
+} from "./gates.js";
+
+// Run-over-run comparison: the statistics, and the gates built on them.
+// Separate from the single-run engine because the question is different —
+// "did these two runs measure the same thing, and if so did it get worse?"
+export { evaluateCompareGates } from "./compare-gates.js";
+export type {
+  CompareGateInput,
+  DeterministicScoreRegression,
+} from "./compare-gates.js";
+export {
+  DEFAULT_MIN_EFFECT_SIZE,
+  DEFAULT_MIN_SAMPLE_SIZE,
+  Z_95,
+  assessPassRateRegression,
+  detectFlakyCases,
+  newcombeDifferenceInterval,
+  wilsonInterval,
+} from "./compare-stats.js";
+export type {
+  ConfidenceInterval,
+  DifferenceInterval,
+  FlakyCase,
+  ProportionSample,
+  RegressionAssessment,
+  RegressionVerdict,
+} from "./compare-stats.js";
 
 // Eval matchers (browser-safe; also exported from `@mcpjam/sdk/matchers`)
 export { evaluateToolCalls } from "./matchers.js";

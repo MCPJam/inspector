@@ -3,8 +3,8 @@ import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
 
 /**
  * Per-scope active `mcpProfile` envelope. Mirrors
- * {@link ChatboxHostCapabilitiesOverrideContext} — a single Provider sets
- * the value for whatever scope owns the host config (chatbox, eval suite,
+ * {@link ScenarioHostCapabilitiesOverrideContext} — a single Provider sets
+ * the value for whatever scope owns the host config (scenario, eval suite,
  * project default), and downstream consumers read via
  * {@link useActiveMcpProfile}.
  *
@@ -13,10 +13,10 @@ import type { HostConfigMcpProfileV1 } from "@/lib/client-config-v2";
  * identity / sandbox policy, not the per-resource environment the UI
  * Playground tweaks. Two providers exist:
  *
- *   - **Hosted-chat flow** (ChatboxChatPage): provides
+ *   - **Hosted-chat flow** (ScenarioChatPage): provides
  *     `session.payload.mcpProfile` decoded from the redeem response.
  *   - **In-inspector flows** (project default, eval suite): provide the
- *     `projectDefaultDto.mcpProfile` (or chatbox/suite-specific DTO) so
+ *     `projectDefaultDto.mcpProfile` (or scenario/suite-specific DTO) so
  *     in-inspector connections honor the same pin as hosted runs.
  *
  * Consumers:

@@ -31,6 +31,16 @@ import {
 } from "./lib/app-navigation";
 import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
+import { ServerConnectionHandoff } from "./components/server-connections/ServerConnectionHandoff";
+import {
+  callbackMatchesPending,
+  HANDOFF_SIGN_IN_STATE_KEY,
+  matchHandoffRoute,
+  readCallbackParams,
+  readPendingAuthorization,
+  takeHandoffSignInReturn,
+} from "./lib/server-connection-handoff";
+import { PlanLimitDialogPreview } from "./components/billing/PlanLimitDialogPreview";
 import {
   getInitialThemeMode,
   getInitialThemePreset,
@@ -78,8 +88,7 @@ initSentry();
  * nothing and it is what a developer looking at THIS page load will see.
  */
 const sandboxOriginFault =
-  HOSTED_MODE &&
-  (!SANDBOX_ORIGIN || SANDBOX_ORIGIN === window.location.origin);
+  HOSTED_MODE && (!SANDBOX_ORIGIN || SANDBOX_ORIGIN === window.location.origin);
 if (sandboxOriginFault) {
   const message = SANDBOX_ORIGIN
     ? `VITE_MCPJAM_SANDBOX_ORIGIN is set to this app's own origin (${SANDBOX_ORIGIN}). MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.`
@@ -120,8 +129,8 @@ function AuthBootstrap({ children }: { children: ReactNode }) {
 // and does history.pushState, then the iframe is refreshed. The server doesn't recognize
 // the new path and serves the Inspector's index.html inside the iframe.
 //
-// Exception: same-origin self-embed of the public chatbox runtime (a tester
-// link path — `/user-testing/<slug>/<token>`, or the legacy `/chatbox/…` one).
+// Exception: same-origin self-embed of the public scenario runtime (a tester
+// link path — `/user-testing/<slug>/<token>`).
 // The User Testing tab's Preview pane iframes the publish link to show a live
 // preview inside the app — that's intentional, not a misrouted-pushState
 // misconfiguration, so we let the normal tree mount. Restricted to a tester
@@ -135,10 +144,10 @@ const isInIframe = (() => {
       // Match the documented `<segment>/<slug>/<token>` shape only; a generic
       // prefix test would let any unrelated future subpath slip past the
       // misrouted-pushState guard. See lib/tester-link-path.ts.
-      const isPublicChatboxRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
+      const isPublicScenarioRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
         window.location.pathname
       );
-      if (sameOrigin && isPublicChatboxRuntimePath) {
+      if (sameOrigin && isPublicScenarioRuntimePath) {
         return false;
       }
     } catch {
@@ -152,12 +161,96 @@ const isInIframe = (() => {
   }
 })();
 
+/**
+ * Whether this load belongs to the connection handoff page.
+ *
+ * Two ways in. The handoff paths are unambiguous. The third case is
+ * `/oauth/callback`, which is SHARED with the Inspector's own OAuth flow — so
+ * it is claimed only when this tab actually started a connection
+ * authorization, and only when the query carries an authorization server's
+ * answer. Claiming it on the marker alone would swallow the Inspector's own
+ * callbacks in the same tab.
+ */
+function isServerConnectionHandoff(): boolean {
+  if (matchHandoffRoute(window.location.pathname)) return true;
+  if (window.location.pathname !== "/oauth/callback") return false;
+  // Matched on `state`, not merely on a marker existing: an abandoned handoff
+  // must not swallow the Inspector's own OAuth callbacks in the same tab.
+  return callbackMatchesPending(
+    readPendingAuthorization(),
+    readCallbackParams(window.location.search)
+  );
+}
+
 // If we're in an iframe, render a helpful error message instead of the full Inspector
 if (isInIframe) {
   const root = createRoot(document.getElementById("root")!);
   root.render(
     <StrictMode>
       <IframeRouterError />
+    </StrictMode>
+  );
+} else if (isServerConnectionHandoff()) {
+  // <AuthKitProvider> BUT NO CONVEX. The page still holds no credential of its
+  // own — every connection call authenticates with an HttpOnly cookie it
+  // cannot read — but the CLAIM has to say who the visitor is: the backend
+  // refuses an account-owned handoff link to anyone but its owner, and with no
+  // token to send it refused the owner too.
+  //
+  // The provider rather than a hand-rolled token fetch, because only the SDK
+  // knows where to ask. The `/user_management` proxy this page first tried is
+  // mounted only when `!HOSTED_MODE` (see `server/index.ts`), so in hosted it
+  // 404s and every signed-in owner is refused exactly as before — the same
+  // shape of never-passing gate this flow has already shipped twice.
+  //
+  // A signed-out visitor or a guest costs one failed refresh and proceeds
+  // unauthenticated, which is what `bestEffortAccessToken` in the page is for.
+  // App's theme bootstrap does not run here, so apply the stored theme
+  // directly — same as the debug callback below.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  const handoffWorkosClientId =
+    getRuntimeWorkosClientId() ??
+    (import.meta.env.VITE_WORKOS_CLIENT_ID as string | undefined) ??
+    "";
+  const handoffRuntimeApiHostname = getRuntimeWorkosApiHostname();
+  const handoffWorkosOptions = handoffRuntimeApiHostname
+    ? { apiHostname: handoffRuntimeApiHostname }
+    : resolveWorkosClientOptions(import.meta.env, window.location);
+  const root = createRoot(document.getElementById("root")!);
+  root.render(
+    <StrictMode>
+      <AuthKitProvider
+        clientId={handoffWorkosClientId}
+        redirectUri={resolveWorkosRedirectUri({
+          envRedirect:
+            (import.meta.env.VITE_WORKOS_REDIRECT_URI as string) || undefined,
+          isElectron: window.isElectron === true,
+          location: window.location,
+        })}
+        devMode={WORKOS_DEV_MODE}
+        {...handoffWorkosOptions}
+      >
+        <ServerConnectionHandoff />
+      </AuthKitProvider>
+    </StrictMode>
+  );
+} else if (
+  import.meta.env.DEV &&
+  window.location.pathname.startsWith("/__preview/plan-limit")
+) {
+  // Dev-only design harness for the free-plan limit wall. Mounted here, ahead
+  // of AuthKit and Convex, because the states worth reviewing (member who
+  // can't upgrade, org already at its Team ceiling) can't be produced on
+  // demand against a real backend. Renders the real component and the real
+  // stylesheet with dummy data. The DEV guard keeps it out of production
+  // bundles entirely.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  const root = createRoot(document.getElementById("root")!);
+  root.render(
+    <StrictMode>
+      <PlanLimitDialogPreview />
     </StrictMode>
   );
 } else if (isDebugOAuthCallbackPath(window.location.pathname)) {
@@ -185,7 +278,8 @@ if (isInIframe) {
   // Coerced to "" rather than typed as `string`: the previous `as string` cast
   // claimed a value that may not exist, and AuthKit already fails loudly on a
   // falsy client id. The warning below is the one that should fire first.
-  const workosClientId = getRuntimeWorkosClientId() ?? buildWorkosClientId ?? "";
+  const workosClientId =
+    getRuntimeWorkosClientId() ?? buildWorkosClientId ?? "";
 
   // Compute redirect URI safely across environments
   const workosRedirectUri = (() => {
@@ -269,6 +363,34 @@ if (isInIframe) {
       devMode={WORKOS_DEV_MODE}
       onRefresh={() => {
         clearLegacyWorkosRefreshTokenStorage();
+      }}
+      /**
+       * Send a returning sign-in back where it started, when something asked
+       * to come back.
+       *
+       * Only the handoff page does today: it lives on `/connect/server/…`, its
+       * sign-in redirect lands HERE on `/callback`, and without this the user
+       * arrives at the app shell having lost the link they were trying to use.
+       *
+       * The nonce is all that crossed the network — the path itself was kept
+       * in same-origin storage, and `takeHandoffSignInReturn` re-validates it
+       * as same-origin on the way out before anything navigates. AuthKit's
+       * default for this hook is a no-op, so nothing else changes by
+       * supplying it.
+       *
+       * It runs AFTER the session is persisted (authkit-js sets session data,
+       * then calls this), so navigating away here does not race the login.
+       */
+      onRedirectCallback={({ state }) => {
+        const returnTo = takeHandoffSignInReturn(
+          (state as Record<string, unknown> | null)?.[
+            HANDOFF_SIGN_IN_STATE_KEY
+          ],
+          window.location.origin
+        );
+        // `replace`, not `assign`: `/callback` is not somewhere the back
+        // button should return to.
+        if (returnTo) window.location.replace(returnTo);
       }}
       {...workosClientOptions}
     >
