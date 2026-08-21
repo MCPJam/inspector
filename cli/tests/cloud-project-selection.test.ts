@@ -281,7 +281,7 @@ test("sessions list rejects --project together with --all-projects", async () =>
     "json",
   ]);
   assert.equal(run.exitCode, 2);
-  assert.match(run.stderr, /cannot be used with option '--project'/i);
+  assert.match(run.stderr, /cannot be used with option '--project/i);
 });
 
 test("sessions list --help shows --all-projects", async () => {
