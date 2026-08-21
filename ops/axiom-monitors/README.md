@@ -115,7 +115,18 @@ someone records that observation here, assume the pre-existing behavior
 
 ## Fields this Axiom deployment may ignore
 
-`notifyByGroup`, `alertOnNoData`, and `notifyEveryRun` are sent but do not
-appear in the current API's monitor payload. After `--apply` the script reports
-any field the API did not persist. Treat such a report as real: `resolvable`
-silently dropped would turn a day-long incident into repeated notifications.
+`notifyByGroup`, `alertOnNoData`, and `notifyEveryRun` are sent but the API
+omits them from its response when they equal its defaults. After `--apply` the
+script reports any field the response did not echo.
+
+Measured when the PAGE monitors were first applied: **`resolvable` is
+persisted** on all three (it governs repeat notifications, so this is the one
+that mattered), and **`alertOnNoData: true` is persisted** on the deadman where
+it is non-default. The omissions are therefore default-elision, not unsupported
+fields.
+
+Because a field the API omits is not comparable, `diffFields` skips it. Without
+that, every re-run reported `update` for those three keys and buried real drift
+in permanent noise. The trade-off is that drift in exactly those fields cannot
+be detected — the API declines to report them — while everything it does echo,
+including `resolvable`, diffs normally.
