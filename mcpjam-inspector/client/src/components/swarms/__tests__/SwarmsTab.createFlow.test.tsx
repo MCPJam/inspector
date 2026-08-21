@@ -189,6 +189,7 @@ vi.mock("convex/react", () => ({
     if (name === "personas:createPersona") return createPersonaMock;
     if (name === "journeys:createJourney") return createJourneyMock;
     if (name === "journeys:updateJourney") return updateJourneyMock;
+    if (name === "personas:updatePersona") return updatePersonaMock;
     if (name === "projectEnvironments:createEnvironment") {
       return createEnvironmentMock;
     }
@@ -304,6 +305,7 @@ const createSwarmMock = vi.fn();
 const createPersonaMock = vi.fn();
 const createJourneyMock = vi.fn();
 const updateJourneyMock = vi.fn();
+const updatePersonaMock = vi.fn();
 
 import { SwarmsTab } from "../SwarmsTab";
 // Real class (the `swarm-api` mock spreads the original), so the `instanceof`
@@ -417,6 +419,7 @@ beforeEach(() => {
     runId: `run-${Math.random().toString(36).slice(2, 8)}`,
   }));
   updateJourneyMock.mockResolvedValue(undefined);
+  updatePersonaMock.mockResolvedValue(undefined);
   generateSwarmPersonaBatchMock.mockResolvedValue({
     personas: [
       {
@@ -696,11 +699,15 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     const detail = await screen.findByTestId("new-swarm-persona-detail");
     expect(within(detail).getByText(/use cases & context/i)).toBeVisible();
-    expect(within(detail).getByText("Reconcile payouts")).toBeVisible();
-    expect(within(detail).getByText(/closes the books monthly/i)).toBeVisible();
+    // Every field is a control now (BB-122) — the goal and the context read
+    // back as values, not as text nodes.
+    expect(within(detail).getByDisplayValue("Reconcile payouts")).toBeVisible();
+    expect(
+      within(detail).getByDisplayValue(/closes the books monthly/i)
+    ).toBeVisible();
   });
 
-  it("edit on an existing goal leaves create flow for the Personas tab", async () => {
+  it("edits an existing persona's goal in place and saves it explicitly", async () => {
     existingPersonas = [
       {
         _id: "p-1",
@@ -727,11 +734,72 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
     const detail = await screen.findByTestId("new-swarm-persona-detail");
 
-    fireEvent.click(within(detail).getByTestId("new-swarm-goal-edit"));
+    // Save is inert until something actually changed: the row is shared with
+    // every other swarm reusing it, so a no-op must not bump it.
+    const save = within(detail).getByTestId("new-swarm-persona-save");
+    expect(save).toBeDisabled();
 
-    // Leaving the flow is a route change now; the persona lands in the URL so
-    // the Personas view restores its selection even on a cold load.
-    expect(navigateMock).toHaveBeenCalledWith("/swarms?persona=p-1");
+    fireEvent.change(within(detail).getByDisplayValue("Reconcile payouts"), {
+      target: { value: "Reconcile payouts weekly" },
+    });
+    expect(save).not.toBeDisabled();
+    expect(navigateMock).not.toHaveBeenCalledWith("/swarms?persona=p-1");
+
+    fireEvent.click(save);
+
+    await vi.waitFor(() => {
+      expect(updateJourneyMock).toHaveBeenCalled();
+    });
+    expect(updateJourneyMock.mock.calls[0][0]).toMatchObject({
+      journeyRefId: "j-existing",
+      goal: "Reconcile payouts weekly",
+    });
+    // The persona row itself did not change, so it is left alone.
+    expect(updatePersonaMock).not.toHaveBeenCalled();
+  });
+
+  it("saves an existing persona's own fields, sending only what moved", async () => {
+    existingPersonas = [
+      {
+        _id: "p-1",
+        personaId: "p1",
+        name: "Ana",
+        role: "Ops",
+        notes: "Closes the books monthly.",
+      },
+    ];
+    personaJourneys = [
+      {
+        _id: "j-existing",
+        name: "Reconcile payouts",
+        goal: "Reconcile",
+        hostIds: ["host-1"],
+        environmentIds: ["env-1"],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
+    const detail = await screen.findByTestId("new-swarm-persona-detail");
+
+    fireEvent.change(within(detail).getByLabelText("Persona role"), {
+      target: { value: "Finance ops" },
+    });
+    fireEvent.click(within(detail).getByTestId("new-swarm-persona-save"));
+
+    await vi.waitFor(() => {
+      expect(updatePersonaMock).toHaveBeenCalled();
+    });
+    const patch = updatePersonaMock.mock.calls[0][0];
+    expect(patch).toMatchObject({ personaRefId: "p-1", role: "Finance ops" });
+    // Untouched fields stay off the wire entirely.
+    expect(patch.name).toBeUndefined();
+    expect(patch.notes).toBeUndefined();
+    // The goal never moved, so no journey write either.
+    expect(updateJourneyMock).not.toHaveBeenCalled();
   });
 
   it("summarizes the combined result when both doors are used", () => {
@@ -1438,7 +1506,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-reused-personas");
 
     expect(
-      await screen.findByText(/1 persona · 1 goal · 1 new session/i)
+      await screen.findByText(/run 1 session total in this swarm/i)
     ).toBeInTheDocument();
   });
 
@@ -1462,7 +1530,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-reused-personas");
     expect(
-      await screen.findByText(/1 persona · 1 goal · 3 new sessions/i)
+      await screen.findByText(/run 3 sessions total in this swarm/i)
     ).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /^back to describe$/i }));
@@ -1471,7 +1539,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-reused-personas");
 
     expect(
-      await screen.findByText(/1 persona · 1 goal · 3 new sessions/i)
+      await screen.findByText(/run 3 sessions total in this swarm/i)
     ).toBeInTheDocument();
   });
 
@@ -2031,5 +2099,131 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     expect(
       screen.queryByTestId("new-swarm-add-existing-personas")
     ).not.toBeInTheDocument();
+  });
+});
+
+// BB-122: Confirm personas. These cover what the redesign added — the shared
+// header, the Edit affordance, adding existing personas from this step, and the
+// renamed primary — plus the promise the task is built on: every field editable
+// without leaving the page.
+describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
+  async function reachConfirm() {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+  }
+
+  it("carries the same header, with Describe done and Confirm current", async () => {
+    await reachConfirm();
+
+    const stepper = screen.getByTestId("new-swarm-progress");
+    const current = within(stepper)
+      .getAllByRole("listitem")
+      .filter((item) => item.getAttribute("aria-current") === "step");
+    expect(current).toHaveLength(1);
+    expect(current[0]).toHaveTextContent("Confirm personas");
+
+    // Describe is complete, so it is the one step offered as a way back.
+    expect(
+      within(stepper)
+        .getAllByRole("button")
+        .map((node) => node.getAttribute("aria-label"))
+    ).toEqual(["Back to Describe"]);
+
+    // The old chrome bar is Running's alone now.
+    expect(screen.getByTestId("new-swarm-back-to-swarms")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^cancel$/i })
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the redesigned title and leads the helper with the session spend", async () => {
+    await reachConfirm();
+
+    expect(
+      screen.getByRole("heading", {
+        name: /review user personas and what they.{0,3}ll accomplish/i,
+      })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/run \d+ sessions? total in this swarm/i)
+    ).toBeVisible();
+  });
+
+  it("puts Edit and Remove on the card, not behind an overflow menu", async () => {
+    await reachConfirm();
+
+    const card = screen.getAllByTestId("new-swarm-persona-compact")[0];
+    // Both are real, visible buttons — the whole point of the step is that the
+    // slate is editable, and a hover-only affordance does not say so.
+    const edit = within(card).getByRole("button", { name: /^edit persona /i });
+    expect(edit).toBeVisible();
+    expect(
+      within(card).getByRole("button", { name: /^remove persona /i })
+    ).toBeVisible();
+
+    fireEvent.click(edit);
+    expect(
+      await screen.findByTestId("new-swarm-persona-detail")
+    ).toBeInTheDocument();
+  });
+
+  it("edits every field of a proposed persona in place, with no Save to press", async () => {
+    await reachConfirm();
+    fireEvent.click(screen.getAllByTestId("new-swarm-persona-compact")[0]);
+    const detail = await screen.findByTestId("new-swarm-persona-detail");
+
+    // In-memory rows have nothing to commit until launch.
+    expect(
+      within(detail).queryByTestId("new-swarm-persona-save")
+    ).not.toBeInTheDocument();
+
+    fireEvent.change(within(detail).getByLabelText("Persona name"), {
+      target: { value: "Renamed persona" },
+    });
+    fireEvent.change(within(detail).getByLabelText("Persona role"), {
+      target: { value: "Renamed role" },
+    });
+    fireEvent.change(
+      within(detail).getByLabelText("Use cases and context"),
+      { target: { value: "Fresh context" } }
+    );
+
+    expect(
+      within(detail).getByDisplayValue("Renamed persona")
+    ).toBeInTheDocument();
+    expect(
+      within(detail).getByDisplayValue("Renamed role")
+    ).toBeInTheDocument();
+    expect(
+      within(detail).getByDisplayValue("Fresh context")
+    ).toBeInTheDocument();
+  });
+
+  it("adds an existing persona from this step, and stops offering it once added", async () => {
+    existingPersonas = [
+      { _id: "p-9", personaId: "p9", name: "Zoe", role: "Support", notes: "" },
+    ];
+    await reachConfirm();
+
+    fireEvent.click(screen.getByTestId("new-swarm-confirm-add-existing"));
+    fireEvent.click(screen.getByRole("button", { name: /^add zoe$/i }));
+
+    const reused = await screen.findByTestId("new-swarm-reused-personas");
+    expect(reused).toHaveTextContent("Zoe");
+    // Nothing left to offer, so the affordance goes rather than opening empty.
+    expect(
+      screen.queryByTestId("new-swarm-confirm-add-existing")
+    ).not.toBeInTheDocument();
+  });
+
+  it("names the primary Launch Swarm, with Back beside it", async () => {
+    await reachConfirm();
+
+    expect(screen.getByTestId("new-swarm-launch")).toHaveTextContent(
+      "Launch Swarm"
+    );
+    expect(screen.getByRole("button", { name: /^back$/i })).toBeVisible();
   });
 });

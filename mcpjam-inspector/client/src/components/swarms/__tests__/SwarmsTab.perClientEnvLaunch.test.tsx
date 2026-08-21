@@ -332,7 +332,7 @@ describe("SwarmsTab — a swarm across two per-client environments", () => {
       "ChatGPT prod · Claude prod"
     );
     expect(
-      screen.getByText(/2 personas · 2 goals · 4 new sessions/i)
+      screen.getByText(/run 4 sessions total in this swarm/i)
     ).toBeInTheDocument();
 
     // Attach the rubric: a deterministic check plus the LLM judge, moved off

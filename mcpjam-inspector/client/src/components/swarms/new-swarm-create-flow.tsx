@@ -365,7 +365,7 @@ export function NewSwarmCreateFlow({
   onCancel,
   onDone,
   onOpenSession,
-  onEditExistingPersona,
+  onSaveExistingPersona,
   onSetInsightsTuning,
 }: {
   projectId: string;
@@ -393,6 +393,8 @@ export function NewSwarmCreateFlow({
       hostIds?: string[];
       rubric?: ReturnType<typeof serializeRubricForWire>;
       judgeConfig?: GoalJudgeConfig;
+      /** Confirm edits a reused goal's text in place (BB-122). */
+      goal?: string;
     }
   ) => Promise<void>;
   launchJourney: (
@@ -426,7 +428,18 @@ export function NewSwarmCreateFlow({
     runLabels: Map<string, string>;
   }) => void;
   /** Leave create flow and open Personas for an existing persona. */
-  onEditExistingPersona: (personaRefId: string) => void;
+  /**
+   * Persist an edit to an EXISTING persona from Confirm (BB-122).
+   *
+   * Unlike everything else in this flow, this writes before launch — the row
+   * is already in the database and shared with every other swarm that reuses
+   * it. That is why Confirm gates it behind an explicit Save rather than
+   * mirroring keystrokes. `personas:updatePersona` under the hood.
+   */
+  onSaveExistingPersona: (
+    personaRefId: string,
+    patch: { name?: string; role?: string; notes?: string }
+  ) => Promise<void>;
   /**
    * Save the project's clustering settings. Optional: absent hides the row, so
    * a surface on an older backend renders the flow unchanged rather than
@@ -1617,6 +1630,34 @@ export function NewSwarmCreateFlow({
     [activeStepIndex, generating, launching, materializing, step]
   );
 
+  /**
+   * Back link + stepper, built once and placed by whichever step renders it.
+   * Describe and Confirm each own their own centered column, so the header has
+   * to sit inside that column to line up with the form — which rules out a
+   * full-width bar above them.
+   */
+  const flowHeader = (
+    <>
+      <button
+        type="button"
+        onClick={leaveFlow}
+        className="flex w-fit items-center gap-1 text-sm font-medium text-primary hover:underline"
+        data-testid="new-swarm-back-to-swarms"
+      >
+        <ChevronLeft className="size-3.5" />
+        Swarms
+      </button>
+      <ProgressStepper
+        steps={CREATE_STEPS}
+        activeIndex={activeStepIndex}
+        onStepSelect={goToStep}
+        isStepSelectable={canReturnToStep}
+        ariaLabel="New swarm progress"
+        testId="new-swarm-progress"
+      />
+    </>
+  );
+
   const runningFallbackColumns = useMemo(() => {
     return environmentIds.flatMap((environmentId) => {
       const env = envListForPayload.find(
@@ -1656,11 +1697,10 @@ export function NewSwarmCreateFlow({
       className="flex h-full min-h-0 flex-col"
       data-testid="new-swarm-create-flow"
     >
-      {/* Describe carries its own back link + stepper inside the form column
-          (BB-121's frame), so this bar is only the chrome the not-yet-redesigned
-          steps still need. Confirm and Running each own their footer actions —
-          this keeps their progress readout and their one-click exit. */}
-      {step === "describe" ? null : (
+      {/* Describe and Confirm carry `flowHeader` inside their own column, so
+          this bar is Running's alone: it is not redesigned yet, and its own
+          footer Leave sits far down a streaming matrix. */}
+      {step === "running" ? (
         <div className="shrink-0 border-b border-border/60 bg-muted/15 px-4 py-2.5 sm:px-6">
           <div className="flex min-w-0 items-center gap-4">
             <ProgressStepper
@@ -1678,13 +1718,13 @@ export function NewSwarmCreateFlow({
               size="sm"
               className="shrink-0"
               disabled={launching}
-              onClick={step === "running" ? leaveRunning : leaveFlow}
+              onClick={leaveRunning}
             >
-              {step === "running" ? "Leave" : "Cancel"}
+              Leave
             </Button>
           </div>
         </div>
-      )}
+      ) : null}
 
       <div
         className={cn(
@@ -1724,31 +1764,26 @@ export function NewSwarmCreateFlow({
             // step they just landed on.
             onBack={() => goToStep(0)}
             onLaunch={(payload) => void handleLaunch(payload)}
-            onEditExistingPersona={onEditExistingPersona}
+            header={flowHeader}
+            // Everything Confirm needs to add and edit personas without
+            // leaving the page (BB-122).
+            availablePersonas={personaList}
+            onAddReused={(personaId) =>
+              setReusedIds((ids) =>
+                ids.includes(personaId) ? ids : [...ids, personaId]
+              )
+            }
+            onSaveReusedPersona={onSaveExistingPersona}
+            onSaveReusedGoal={async (journeyRefId, goal) => {
+              await onUpdateJourney(journeyRefId, { goal });
+            }}
           />
         ) : (
           <div
             className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-8"
             data-testid="new-swarm-describe-step"
           >
-            <button
-              type="button"
-              onClick={leaveFlow}
-              className="flex w-fit items-center gap-1 text-sm font-medium text-primary hover:underline"
-              data-testid="new-swarm-back-to-swarms"
-            >
-              <ChevronLeft className="size-3.5" />
-              Swarms
-            </button>
-
-            <ProgressStepper
-              steps={CREATE_STEPS}
-              activeIndex={activeStepIndex}
-              onStepSelect={goToStep}
-              isStepSelectable={canReturnToStep}
-              ariaLabel="New swarm progress"
-              testId="new-swarm-progress"
-            />
+            {flowHeader}
 
             <div className="space-y-2">
               <h2 className="text-2xl font-semibold tracking-[-0.02em] text-foreground">

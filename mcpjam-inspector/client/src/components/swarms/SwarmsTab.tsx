@@ -980,13 +980,7 @@ export function SwarmsTab({
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
-          onEditExistingPersona={(personaRefId) => {
-            setSelectedPersonaId(personaRefId);
-            setViewMode("journeys");
-            navigate(
-              `${routePaths.swarms}?persona=${encodeURIComponent(personaRefId)}`
-            );
-          }}
+          onSaveExistingPersona={savePersonaField}
           onSetInsightsTuning={async (tuning) => {
             await setInsightsTuning({ projectId, tuning } as any);
           }}
