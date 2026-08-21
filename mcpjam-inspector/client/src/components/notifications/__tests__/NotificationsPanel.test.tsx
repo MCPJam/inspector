@@ -120,7 +120,9 @@ describe("NotificationsPanelContent", () => {
   it("still styles ordinary grants and removals distinctly", () => {
     const { container } = renderWith([
       notification({ _id: "n-org-added", type: "organization_added" }),
+      notification({ _id: "n-org-removed", type: "organization_removed" }),
     ]);
     expect(container.querySelector(".bg-success\\/10")).not.toBeNull();
+    expect(container.querySelector(".bg-destructive\\/10")).not.toBeNull();
   });
 });
