@@ -15,6 +15,8 @@ export interface Organization {
   updatedAt: number;
   myRole?: string;
   isCreator?: boolean;
+  /** Reachable only via an unclaimed email invite — visible, but not actionable. */
+  isPendingInvite?: boolean;
 }
 
 export const ORGANIZATION_CREATION_LIMIT = 1;
@@ -90,9 +92,12 @@ export function useOrganizationQueries({
   const isLoading =
     isAuthenticated && (!isUserReady || organizations === undefined);
 
+  // Every consumer treats an entry as an org the caller can act in; an unclaimed invite is not.
   const sortedOrganizations = useMemo(() => {
     if (!organizations) return [];
-    return [...organizations].sort((a, b) => b.updatedAt - a.updatedAt);
+    return organizations
+      .filter((org) => org.isPendingInvite !== true)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
   }, [organizations]);
 
   const createdCount = useMemo(
