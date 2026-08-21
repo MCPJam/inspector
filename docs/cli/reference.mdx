@@ -1519,6 +1519,128 @@ AI-generate test cases from the suite's tools (spends credits).
 
 ---
 
+## `projects` commands
+
+Manage the projects and saved servers in your hosted MCPJam account. All `projects` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `projects list`
+
+| Flag | Description |
+|------|-------------|
+| `--organization-id <id>` | Restrict the listing to one organization (see `mcpjam organizations list`) |
+
+### `projects create`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--name <name>` | Yes | Project name |
+| `--description <text>` | No | Project description |
+| `--organization-id <id>` | No | Organization ID |
+| `--visibility <visibility>` | No | `public` or `private` |
+
+### `projects update`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | Yes | Project name or ID |
+| `--name <name>` | No | New project name |
+| `--description <text>` | No | New project description |
+| `--visibility <visibility>` | No | `public` or `private` |
+
+### `projects delete`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | Yes | Project name or ID |
+
+### `projects status`
+
+Health-check every server in a project (hosted doctor per server).
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
+
+### `projects server` subcommands
+
+Manage the saved MCP servers in a project. All `projects server` subcommands accept `--project <id-or-name>` (defaults to the most recently updated project) plus the shared platform flags.
+
+#### `projects server list`
+
+No additional flags beyond `--project`.
+
+#### `projects server create`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | Yes | Project name or ID |
+| `--body <json>` | Yes | Server JSON body |
+
+#### `projects server get`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | Yes | Project name or ID |
+| `--server <id>` | Yes | Server ID |
+
+#### `projects server update`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | Yes | Project name or ID |
+| `--server <id>` | Yes | Server ID |
+| `--body <json>` | Yes | Patch JSON body |
+
+#### `projects server delete`
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | Yes | Project name or ID |
+| `--server <id>` | Yes | Server ID |
+
+#### `projects server connect`
+
+Connect an MCP server URL to a project, authorizing in a browser when needed.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--url <url>` | Yes | MCP server URL to connect |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--server <id>` | No | Existing server ID, when the project has several on this URL |
+| `--name <name>` | No | Name for the server, if one is created |
+| `--reauthorize` | No | Force a fresh authorization |
+| `--no-browser` | No | Print the authorization link instead of opening it |
+| `--no-wait` | No | Return as soon as the request is created |
+
+When the server requires browser authorization, the command prints the handoff link to stderr and then opens it in a browser (unless `--no-browser` is set). It also prints which account and deployment the link belongs to:
+
+```
+Open this link to finish connecting:
+  https://app.mcpjam.com/connect/server/...
+This link belongs to marcelo@mcpjam.com on app.mcpjam.com. Open it in a browser signed in to that account.
+```
+
+The account line is best-effort — if the `/me` lookup fails, the command still prints the link and advises `mcpjam whoami`. The link is bound to the account that created it; a browser signed into a different account will be refused.
+
+Without `--no-wait`, the command polls until the connection reaches a terminal status (`ready`, `failed`, `expired`, or `cancelled`). Ctrl-C stops the polling but not the request — the request continues in the cloud and can still be finished by opening the link.
+
+#### `projects server connect-status`
+
+Check a connection request started by `projects server connect`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--request <id>` | Yes | Connection request ID (`scr_…`) |
+
+---
+
 ## `mcp` command
 
 ### `mcp`
