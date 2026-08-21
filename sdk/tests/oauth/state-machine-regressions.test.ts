@@ -925,3 +925,109 @@ describe("OAuth state machine regressions", () => {
     },
   );
 });
+
+/**
+ * Regression: metadata discovery reported `Last error: null`.
+ *
+ * The loop probes several candidate endpoints in turn. Its 4xx branch
+ * `continue`d without recording anything, and "every candidate 404s" is the
+ * COMMON case — an authorization server that publishes metadata at none of the
+ * probed paths. So `lastError` kept the `null` it was declared with, and the
+ * throw interpolated it: the debugger told the user "Last error: null" about a
+ * run of requests it had just made and could see.
+ *
+ * Surfaced by INSPECTOR-CLIENT-22N, where it sat in a bucket of ten unrelated
+ * failures. The diagnostic has to name what was probed and what came back.
+ */
+describe("authorization-server metadata discovery diagnostics", () => {
+  const AS_URL = "https://auth.example.com";
+  const AFFECTED_ERAS: OAuthProtocolVersion[] = [
+    "2025-06-18",
+    "2025-11-25",
+    "2026-07-28",
+  ];
+
+  const driveDiscovery = async (
+    protocolVersion: OAuthProtocolVersion,
+    response: Record<string, unknown>,
+  ) => {
+    let state = {
+      ...EMPTY_OAUTH_FLOW_STATE,
+      currentStep: "request_authorization_server_metadata" as const,
+      serverUrl: SERVER_URL,
+      authorizationServerUrl: AS_URL,
+    };
+    const executor = jest.fn().mockResolvedValue(response);
+    const machine = createOAuthStateMachine({
+      protocolVersion,
+      registrationStrategy: "dcr",
+      state,
+      getState: () => state,
+      updateState: (updates) => {
+        state = { ...state, ...updates };
+      },
+      serverUrl: SERVER_URL,
+      serverName: "Test Server",
+      redirectUrl: REDIRECT_URI,
+      requestExecutor: executor,
+      dynamicRegistration: { client_name: "Test Client" },
+    });
+
+    await machine.proceedToNextStep();
+    return { getState: () => state, executor };
+  };
+
+  it.each(AFFECTED_ERAS)(
+    "names every endpoint it probed when all of them 404 (%s)",
+    async (protocolVersion) => {
+      const { getState, executor } = await driveDiscovery(protocolVersion, {
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+        headers: {},
+        body: undefined,
+      });
+
+      const error = getState().error ?? "";
+      expect(error).toContain(
+        "Could not discover authorization server metadata",
+      );
+      // The whole defect in one assertion.
+      expect(error).not.toContain("null");
+      expect(error).toContain("404");
+      // A probe the user cannot see is a probe they cannot act on.
+      expect(executor.mock.calls.length).toBeGreaterThan(0);
+      for (const [request] of executor.mock.calls) {
+        expect(error).toContain((request as { url: string }).url);
+      }
+    },
+  );
+
+  it.each(AFFECTED_ERAS)(
+    "reports a 200 that carried no metadata as such (%s)",
+    async (protocolVersion) => {
+      // The other route to the same message: a candidate answers 200, so the
+      // loop breaks, but the body is unusable. `lastError` is still null.
+      const { getState, executor } = await driveDiscovery(protocolVersion, {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        body: undefined,
+      });
+
+      const error = getState().error ?? "";
+      expect(error).toContain(
+        "Could not discover authorization server metadata",
+      );
+      expect(error).not.toContain("null");
+      expect(error).toContain("200");
+      // The endpoint that answered has to be named here too, not just on the
+      // all-404 path.
+      expect(executor.mock.calls.length).toBeGreaterThan(0);
+      for (const [request] of executor.mock.calls) {
+        expect(error).toContain((request as { url: string }).url);
+      }
+    },
+  );
+});

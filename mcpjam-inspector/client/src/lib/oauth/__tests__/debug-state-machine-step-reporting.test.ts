@@ -174,3 +174,110 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(updateState).toHaveBeenNthCalledWith(2, { authorizationCode: "abc" });
   });
 });
+
+/**
+ * Regression: INSPECTOR-CLIENT-22N.
+ *
+ * Every report here is built by ONE `new Error(...)` on ONE line, so every
+ * event carries an identical stack — and Sentry's default JS grouping is the
+ * stack, not the message. Ten unrelated failure classes across eight users
+ * collapsed into a single "escalating" issue whose alert quoted whichever
+ * event happened to fire it, while two genuine leads (a null-swallowing
+ * metadata error, an `iss` check tripping on a trailing slash) sat buried in
+ * it. The wrapper has to hand Sentry an explicit grouping key.
+ */
+describe("OAuth debugger step-failure grouping", () => {
+  beforeEach(() => {
+    reportCaught.mockReset();
+    createOAuthStateMachine.mockClear();
+  });
+
+  /** Verbatim from the issue's event list, one per distinct failure class. */
+  const PRODUCTION_FAILURES = [
+    "Dynamic Client Registration failed (403). Configure a pre-registered client or enable DCR on the authorization server.",
+    "Could not discover authorization server metadata. Last error: null",
+    "PKCE is REQUIRED for 2025-11-25 protocol, but authorization server does not advertise code_challenge_methods_supported. Server is not compliant with 2025-11-25 spec.",
+    "Token request failed: invalid_client - Client authentication failed (e.g., unknown client, no client authentication included, or unsupported authentication method).",
+    "Missing authorization code",
+    "Failed to request MCP server: Backend debug proxy error: 500 Internal Server Error: connect ECONNREFUSED 127.0.0.1:9876",
+    "Failed to request MCP server: Backend debug proxy error: 400 Bad Request: OAuth proxy target resolves to a private/reserved IP address (198.18.2.250)",
+    "Failed to request MCP server: Backend debug proxy error: 401 Unauthorized: Invalid session token.",
+    "Authorization response `iss` does not match the issuer this flow started with. Recorded from authorization-server metadata: `https://localhost:7218`; returned on the callback: `https://localhost:7218/`.",
+    "Authenticated request failed: 400 Bad Request",
+  ];
+
+  /** Clear between messages so the dedupe memo never suppresses a report. */
+  function reportEach(
+    wrapped: (u: Record<string, unknown>) => void,
+    errors: string[],
+  ) {
+    for (const error of errors) {
+      wrapped({ error: undefined });
+      wrapped({ error });
+    }
+    return reportCaught.mock.calls.map(([, options]) =>
+      JSON.stringify((options as { fingerprint?: string[] }).fingerprint),
+    );
+  }
+
+  it("groups each production failure class separately", () => {
+    const { wrapped } = wrappedUpdateState();
+
+    const fingerprints = reportEach(wrapped, PRODUCTION_FAILURES);
+
+    expect(fingerprints).toHaveLength(PRODUCTION_FAILURES.length);
+    expect(fingerprints.every(Boolean)).toBe(true);
+    expect(new Set(fingerprints).size).toBe(PRODUCTION_FAILURES.length);
+  });
+
+  it("keeps one class together when only a volatile value differs", () => {
+    // The same guard rejection reached Sentry three times with three different
+    // addresses. Fingerprinting on the raw message would split one failure
+    // class into one issue per user's LAN.
+    const { wrapped } = wrappedUpdateState();
+
+    const fingerprints = reportEach(wrapped, [
+      "Failed to request MCP server: Backend debug proxy error: 400 Bad Request: OAuth proxy target resolves to a private/reserved IP address (10.22.7.151)",
+      "Failed to request MCP server: Backend debug proxy error: 400 Bad Request: OAuth proxy target resolves to a private/reserved IP address (198.18.2.250)",
+      "Failed to request MCP server: Backend debug proxy error: 400 Bad Request: OAuth proxy target resolves to a private/reserved IP address (fd53:1c5a:1000::c8e3:cf02)",
+    ]);
+
+    // Assert they exist as well as agree: three absent fingerprints are also
+    // one distinct value, and that is the bug this suite exists to catch.
+    expect(fingerprints.every(Boolean)).toBe(true);
+    expect(new Set(fingerprints).size).toBe(1);
+  });
+
+  it("separates the same message raised at different steps", () => {
+    // No intervening clear: the dedupe memo has to key on the step too, or the
+    // second report — a distinct issue under this fingerprint — is swallowed.
+    const { wrapped } = wrappedUpdateState();
+
+    wrapped({ error: "Authenticated request failed: 400 Bad Request" });
+    wrapped({
+      error: "Authenticated request failed: 400 Bad Request",
+      currentStep: "token_request",
+    });
+
+    expect(reportCaught).toHaveBeenCalledTimes(2);
+    const [first, second] = reportCaught.mock.calls.map(
+      ([, o]) => (o as { fingerprint?: string[] }).fingerprint,
+    );
+    expect(first).not.toEqual(second);
+  });
+
+  it("tags step and protocol version so triage can filter on them", () => {
+    // `extra` is not indexed for search in Sentry; tags are. Without this the
+    // per-step dimension the reporter collects cannot be queried.
+    const { wrapped } = wrappedUpdateState(vi.fn(), "metadata");
+
+    wrapped({ error: "boom", currentStep: "token_request" });
+
+    expect(reportCaught.mock.calls[0][1]).toMatchObject({
+      tags: {
+        oauth_step: "token_request",
+        oauth_protocol_version: "2025-06-18",
+      },
+    });
+  });
+});
