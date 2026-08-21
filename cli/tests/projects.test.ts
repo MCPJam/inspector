@@ -438,14 +438,14 @@ test("projects list emits items as JSON and a table as human output", async () =
   }
 });
 
-test("projects list --organization-id sends the filter, and refuses a blank one", async () => {
+test("projects list --org sends the filter, and refuses a blank one", async () => {
   const fixture = await startPlatformFixture();
   try {
     const run = await captureProcessOutput(() =>
       main(
         [
           ...projectsArgv(fixture.baseUrl, "list"),
-          "--organization-id",
+          "--org",
           "org-1",
           "--format",
           "json",
@@ -470,7 +470,7 @@ test("projects list --organization-id sends the filter, and refuses a blank one"
       main(
         [
           ...projectsArgv(fixture.baseUrl, "list"),
-          "--organization-id",
+          "--org",
           "   ",
           "--format",
           "json",
@@ -479,6 +479,7 @@ test("projects list --organization-id sends the filter, and refuses a blank one"
       ),
     );
     assert.notEqual(blankRun.result.exitCode, 0);
+    assert.match(blankRun.stderr, /--org/);
   } finally {
     await fixture.close();
   }
