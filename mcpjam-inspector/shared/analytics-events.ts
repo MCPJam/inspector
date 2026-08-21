@@ -45,6 +45,37 @@ export const ANALYTICS_EVENTS = {
 
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
+
+  // --- Directory readiness (server-authoritative; no client twin) ---
+  /**
+   * A hosted readiness run was accepted. Fired from the v1 start route, which
+   * is the only way a hosted run is created, so it covers every surface that
+   * ever starts one (REST, MCP worker, agent approval, chat, CLI) without
+   * instrumenting each.
+   *
+   * `deduped` is why this fires on a replay too: a retried start that returned
+   * an existing run is a real request the caller made, and counting only fresh
+   * runs would understate demand while hiding a client that retries badly.
+   *
+   * The SERVER URL IS NEVER SENT — it names somebody's private endpoint, and
+   * no launch question needs it.
+   */
+  directory_readiness_run_started_server: { source: "server" },
+  /**
+   * A hosted readiness run reached a terminal state. Fired from the detached
+   * worker, so it is attributed through `captureServerEventForActor` to the
+   * identity resolved back when the request still existed.
+   *
+   * Carries the THREE AXES separately, because collapsing them is the exact
+   * misreading the product exists to prevent: `status` is whether the run
+   * completed, `overall_status` is the grade, and `llm_observation_status` /
+   * `llm_observation_reason` are whether the optional paid pass ran. A run can
+   * be `completed` + `not-ready` + `billing-blocked` and all three matter.
+   *
+   * NO REPORT CONTENTS. Findings carry the raw observation behind a verdict;
+   * an analytics pipeline is the last place that belongs.
+   */
+  directory_readiness_run_finished_server: { source: "server" },
   /**
    * One `GET /projects/{p}/sessions` search, emitted from the proxy route —
    * the chokepoint every surface (in-app chat, MCP worker, REST, CLI) funnels
@@ -230,6 +261,13 @@ export const ANALYTICS_EVENTS = {
   mcpjam_agent_tour_launch_skipped: { source: "client" },
   mcpjam_agent_tour_launched: { source: "client" },
   move_server_to_project_clicked: { source: "client" },
+  /**
+   * A connected server was offered to the organization's registry from the
+   * server card's menu. Fires on the CLICK, before the eligibility refusal —
+   * how often people reach for it and are told a header-authed server cannot
+   * be shared is the thing worth knowing.
+   */
+  share_server_to_org_registry_clicked: { source: "client" },
   /**
    * A callback arrived with a pending server name but no stored flow session,
    * so it could not be completed and the user was asked to reauthorize.

@@ -47,6 +47,17 @@ import {
   type DirectoryReadinessLaneResult,
 } from "../directory-readiness/types.js";
 
+import type { DirectoryObservationState } from "../directory-readiness/observations.js";
+// TYPE-ONLY, and that is what makes it safe: `observations.ts` imports this
+// module, so a value import would be a cycle. Erasing at compile time, the
+// narrowing survives and the cycle does not exist at runtime. Without it the
+// public result widens both parameters to `string` and a consumer cannot
+// switch exhaustively over an observation id.
+import type {
+  ClaudeObservationId,
+  ClaudeObservationKind,
+} from "./observations.js";
+
 import type { ClaudePolicySourceRef } from "./manifest.js";
 
 export {
@@ -180,7 +191,8 @@ export const CLAUDE_RUNNER_CAPABILITIES = [
   "intrusive-probes",
 ] as const;
 
-export type ClaudeRunnerCapability = (typeof CLAUDE_RUNNER_CAPABILITIES)[number];
+export type ClaudeRunnerCapability =
+  (typeof CLAUDE_RUNNER_CAPABILITIES)[number];
 
 /** A finding's verdict. `informational` carries no pass/fail meaning at all. */
 export type ClaudeFindingStatus = DirectoryFindingStatus;
@@ -238,6 +250,21 @@ export interface ClaudeReadinessResult {
   lanes: ClaudeReadinessLaneResult[];
   findings: ClaudeReadinessFinding[];
   badges: ClaudeCapabilityBadge[];
+  /**
+   * The model-observation axis, ALWAYS present.
+   *
+   * Independent of {@link status} on purpose. A run whose required lanes
+   * graded cleanly is `ready` even when the observation call was refused for
+   * credit — a payment problem belongs to the account, not to the connector
+   * under grading — and a run that could not afford to look must never render
+   * as one that looked and found nothing. Optional in the TYPE only so
+   * evidence gathered before this field existed still parses; the grader
+   * always fills it, with `not-requested` when nobody asked.
+   */
+  llmObservations?: DirectoryObservationState<
+    ClaudeObservationKind,
+    ClaudeObservationId
+  >;
   /** Snapshot date of the policy corpus this run graded against (ISO date). */
   policySnapshotDate: string;
   engineVersion: string;

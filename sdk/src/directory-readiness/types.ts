@@ -84,6 +84,14 @@ export type DirectoryLaneStatus = "ready" | "not-ready" | "incomplete";
  *   - `declared` — asserted by the submitter in a submission profile. Never
  *     independently verified by this run.
  *   - `manual` — recorded by a person.
+ *   - `llm` — a language model READ evidence this run gathered and said
+ *     something about it. Its own provenance value rather than being folded
+ *     into `static` or `manual`, because a reader deciding how much weight to
+ *     put on a line has to be able to see that a model, not a person and not
+ *     the wire, is what produced it. Findings carrying this provenance are
+ *     confined to non-dispositive classes by
+ *     `directory-readiness/observations`; the separation is enforced there,
+ *     not merely documented here.
  */
 export const DIRECTORY_EVIDENCE_PROVENANCE = [
   "wire",
@@ -91,6 +99,7 @@ export const DIRECTORY_EVIDENCE_PROVENANCE = [
   "static",
   "declared",
   "manual",
+  "llm",
 ] as const;
 
 export type DirectoryEvidenceProvenance =
@@ -383,7 +392,9 @@ export function enforceCapabilityGate<
     return {
       ...finding,
       status: "not-evaluated",
-      notEvaluatedReason: `this run had no ${missing.join(", ")} capability, so the check could not observe what it grades`,
+      notEvaluatedReason: `this run had no ${missing.join(
+        ", ",
+      )} capability, so the check could not observe what it grades`,
     };
   });
 }

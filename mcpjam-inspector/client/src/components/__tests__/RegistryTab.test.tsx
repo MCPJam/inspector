@@ -16,7 +16,7 @@ import {
 import {
   DirectoryConnectError,
   type DirectoryServer,
-} from "@/hooks/useClaudeDirectory";
+} from "@/hooks/useServerDirectory";
 import {
   readPendingQuickConnect,
   writePendingQuickConnect,
@@ -78,6 +78,8 @@ const mockDirectoryConnect = vi.fn();
 const mockLoadMore = vi.fn();
 const mockSetQuery = vi.fn();
 const mockSetTier = vi.fn();
+const mockSetSource = vi.fn();
+const mockSetConnectableOnly = vi.fn();
 let mockDirectoryReturn: Record<string, unknown>;
 
 function directoryHookReturn(
@@ -93,6 +95,12 @@ function directoryHookReturn(
     setQuery: mockSetQuery,
     tier: "all",
     setTier: mockSetTier,
+    source: "anthropic-directory",
+    setSource: mockSetSource,
+    connectableOnly: false,
+    setConnectableOnly: mockSetConnectableOnly,
+    hasTiers: true,
+    lastSyncedAt: null,
     connect: mockDirectoryConnect,
     connections: [],
     connectedCatalogIds: new Set<string>(),
@@ -100,13 +108,13 @@ function directoryHookReturn(
   };
 }
 
-vi.mock("@/hooks/useClaudeDirectory", async (importOriginal) => {
+vi.mock("@/hooks/useServerDirectory", async (importOriginal) => {
   const actual = await importOriginal<
-    typeof import("@/hooks/useClaudeDirectory")
+    typeof import("@/hooks/useServerDirectory")
   >();
   return {
     ...actual,
-    useClaudeDirectory: () => mockDirectoryReturn,
+    useServerDirectory: () => mockDirectoryReturn,
     // The real hook is Convex-backed; the mock answers only once a card is
     // actually open (a null id must stay `undefined`, like the real skip).
     useDirectoryServerDetail: (catalogServerId: string | null) =>
@@ -136,6 +144,47 @@ function createDirectoryServer(
     ...overrides,
   };
 }
+
+/**
+ * The third Convex-backed hook in this tab, mocked like the other two: this
+ * suite renders `RegistryTab` with no `ConvexProvider`, so a real `useQuery`
+ * throws before the component draws anything.
+ *
+ * The default is a project with NO organization, which is what makes every
+ * other test in this file keep asserting what it already asserted — the org
+ * section renders nothing at all in that state. Tests that care about the
+ * shelf override it.
+ */
+const mockOrgRegistryAdd = vi.fn();
+const mockOrgRegistryConnect = vi.fn();
+let mockOrgRegistryReturn: Record<string, unknown>;
+
+function orgRegistryHookReturn(
+  overrides: Partial<Record<string, unknown>> = {}
+): Record<string, unknown> {
+  return {
+    servers: [],
+    isLoading: false,
+    organizationId: null,
+    canAdd: false,
+    add: mockOrgRegistryAdd,
+    update: vi.fn(),
+    remove: vi.fn(),
+    connect: mockOrgRegistryConnect,
+    disconnect: vi.fn(),
+    ...overrides,
+  };
+}
+
+vi.mock("@/hooks/useOrgRegistryServers", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/useOrgRegistryServers")
+  >();
+  return {
+    ...actual,
+    useOrgRegistryServers: () => mockOrgRegistryReturn,
+  };
+});
 
 // Mock dropdown menu to simplify testing
 vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
@@ -206,6 +255,7 @@ describe("RegistryTab", () => {
       serverName: "Linear",
     });
     mockDirectoryReturn = directoryHookReturn();
+    mockOrgRegistryReturn = orgRegistryHookReturn();
     mockDirectoryDetail = null;
     mockHookReturn = {
       catalogCards: [],
@@ -253,6 +303,87 @@ describe("RegistryTab", () => {
       expect(
         screen.getByText("Pre-configured MCP servers you can connect quickly.")
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("organization shelf", () => {
+    const orgEntry = {
+      _id: "reg_1",
+      name: "org/org_1/internal-docs",
+      displayName: "Internal Docs",
+      description: "What the team uses.",
+      scope: "organization" as const,
+      status: "approved" as const,
+      transport: {
+        transportType: "http" as const,
+        url: "https://mcp.example.com/mcp",
+        useOAuth: true,
+      },
+      createdBy: "user_1",
+      createdAt: 1,
+      updatedAt: 1,
+      connectionStatus: "not_connected" as const,
+      connectedServerName: null,
+      derived: {
+        probedAt: 1,
+        endpointUrl: "https://mcp.example.com/mcp",
+        serverVersion: "1.4.2",
+        authRequired: true,
+        supportsDcr: true,
+      },
+      editedFields: [],
+    };
+
+    it("renders nothing at all for a project with no organization", () => {
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.queryByText("Your organization")).not.toBeInTheDocument();
+    });
+
+    it("renders the org's entries with their derived version, and no star control", () => {
+      mockOrgRegistryReturn = orgRegistryHookReturn({
+        organizationId: "org_1",
+        canAdd: true,
+        servers: [orgEntry],
+      });
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByText("Your organization")).toBeInTheDocument();
+      expect(screen.getByText("Internal Docs")).toBeInTheDocument();
+      // Version comes off the probe snapshot, not off anything typed.
+      expect(screen.getByText("v1.4.2")).toBeInTheDocument();
+      // An org row has no `registryCardKey`, so it can never carry a star.
+      expect(
+        screen.queryByRole("button", { name: /star this server/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it("invites a member with an empty shelf to add one", () => {
+      mockOrgRegistryReturn = orgRegistryHookReturn({
+        organizationId: "org_1",
+        canAdd: true,
+        servers: [],
+      });
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByText("Nothing shared yet")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Add a server" })
+      ).toBeInTheDocument();
+    });
+
+    it("hides the shelf from a member who cannot add and has nothing to see", () => {
+      mockOrgRegistryReturn = orgRegistryHookReturn({
+        organizationId: "org_1",
+        canAdd: false,
+        servers: [],
+      });
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.queryByText("Your organization")).not.toBeInTheDocument();
     });
   });
 
@@ -463,7 +594,7 @@ describe("RegistryTab", () => {
     });
   });
 
-  describe("claude directory section", () => {
+  describe("upstream directory section", () => {
     it("renders a directory card with its tier and provenance", () => {
       mockDirectoryReturn = directoryHookReturn({
         items: [createDirectoryServer()],
@@ -475,6 +606,53 @@ describe("RegistryTab", () => {
       expect(screen.getByText("From Claude directory")).toBeInTheDocument();
       expect(screen.getByText("Partner")).toBeInTheDocument();
       expect(screen.getByText("Track issues and cycles.")).toBeInTheDocument();
+    });
+
+    it("badges a row whose probe resolved to pre-registered-only OAuth", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [
+          createDirectoryServer({
+            oauthProbe: {
+              probedAt: Date.now(),
+              endpointUrl: "https://mcp.linear.app/mcp",
+              outcome: "resolved",
+              supportsDcr: false,
+              supportsCimd: false,
+            },
+          }),
+        ],
+      });
+
+      render(<RegistryTab {...defaultProps} />);
+      expect(
+        screen.getByText("Requires pre-registered client")
+      ).toBeInTheDocument();
+    });
+
+    it("shows no pre-registration badge for a self-registering server or an unprobed row", () => {
+      // A resolved verdict WITH a registration path, and a row the sweep has
+      // not reached: both must render nothing — the badge is a probe fact,
+      // not a default.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [
+          createDirectoryServer({
+            _id: "cat_dcr",
+            displayName: "Self Registering",
+            oauthProbe: {
+              probedAt: Date.now(),
+              endpointUrl: "https://mcp.linear.app/mcp",
+              outcome: "resolved",
+              supportsDcr: true,
+            },
+          }),
+          createDirectoryServer({ _id: "cat_unprobed" }),
+        ],
+      });
+
+      render(<RegistryTab {...defaultProps} />);
+      expect(
+        screen.queryByText("Requires pre-registered client")
+      ).not.toBeInTheDocument();
     });
 
     it("renders the search box and the tier filter", () => {
@@ -550,7 +728,7 @@ describe("RegistryTab", () => {
 
       render(<RegistryTab {...defaultProps} />);
       expect(
-        screen.getByTestId("claude-directory-section")
+        screen.getByTestId("server-directory-section")
       ).toBeInTheDocument();
       expect(screen.getByText("Linear")).toBeInTheDocument();
     });
@@ -570,8 +748,161 @@ describe("RegistryTab", () => {
 
       render(<RegistryTab {...defaultProps} />);
       expect(
-        screen.queryByTestId("claude-directory-section")
+        screen.queryByTestId("server-directory-section")
       ).not.toBeInTheDocument();
+    });
+
+    it("offers the source facet", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      render(<RegistryTab {...defaultProps} />);
+      expect(screen.getByTestId("directory-source-filter")).toBeInTheDocument();
+    });
+
+    it("hides the tier filter on a source that publishes no tiers", () => {
+      // An always-empty filter is worse than no filter: it reads as "this
+      // directory has no partners", which is a claim we would be inventing.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer({ source: "chatgpt-directory" })],
+        source: "chatgpt-directory",
+        hasTiers: false,
+      });
+      render(<RegistryTab {...defaultProps} />);
+      expect(screen.getByTestId("directory-source-filter")).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("directory-tier-filter")
+      ).not.toBeInTheDocument();
+    });
+
+    it("keeps an options row on screen while Connectable only is on", () => {
+      // The toggle hides what cannot be installed, not what needs a dialog
+      // first. A regional connector is connectable.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [
+          createDirectoryServer({
+            displayName: "Braze",
+            endpointKind: "options",
+            remoteUrl: undefined,
+            remoteUrlOptions: ["https://mcp.braze.com/mcp"],
+          }),
+        ],
+        connectableOnly: true,
+      });
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByText("Braze")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Connect" })
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Not connectable" })
+      ).not.toBeInTheDocument();
+    });
+
+    it("can hide the rows that cannot be installed", () => {
+      // Off by default — hiding a third of the ChatGPT directory before
+      // anyone asked would make it look smaller than it is.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      render(<RegistryTab {...defaultProps} />);
+      const toggle = screen.getByTestId("directory-connectable-filter");
+      expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+      fireEvent.click(toggle);
+      expect(mockSetConnectableOnly).toHaveBeenCalledWith(true);
+    });
+
+    it("says how fresh the selected directory is", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+        lastSyncedAt: Date.parse("2026-08-14T00:00:00.000Z"),
+      });
+      render(<RegistryTab {...defaultProps} />);
+      expect(screen.getByTestId("directory-as-of")).toHaveTextContent(
+        /Claude directory as of/
+      );
+    });
+
+    it("badges a ChatGPT row as listed, never as verified", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [
+          createDirectoryServer({
+            source: "chatgpt-directory",
+            displayName: "Acme",
+            verifiedTier: undefined,
+          }),
+        ],
+        source: "chatgpt-directory",
+        hasTiers: false,
+      });
+      render(<RegistryTab {...defaultProps} />);
+      expect(screen.getByText("Listed in ChatGPT")).toBeInTheDocument();
+    });
+  });
+
+  describe("upstream directory — rows with no endpoint", () => {
+    const hiddenRow = () =>
+      createDirectoryServer({
+        source: "chatgpt-directory",
+        displayName: "Proxied App",
+        verifiedTier: undefined,
+        endpointKind: "none",
+        remoteUrl: undefined,
+        rowType: "remote",
+        unavailableReason: "endpoint_hidden",
+      });
+
+    it("shows the row, disabled, rather than hiding it", () => {
+      // Ingesting the full census is the point; a card that simply vanished
+      // would make the directory look smaller than it is.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [hiddenRow()],
+        source: "chatgpt-directory",
+        hasTiers: false,
+      });
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByText("Proxied App")).toBeInTheDocument();
+      const action = screen.getByRole("button", { name: "Not connectable" });
+      expect(action).toBeDisabled();
+      expect(
+        screen.queryByRole("button", { name: "Connect" })
+      ).not.toBeInTheDocument();
+    });
+
+    it("says WHY, in terms true of that row", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [hiddenRow()],
+        source: "chatgpt-directory",
+        hasTiers: false,
+      });
+      render(<RegistryTab {...defaultProps} />);
+
+      const reason = screen.getByTestId("directory-unavailable-reason");
+      expect(reason).toHaveTextContent(/not published/i);
+      // The copy this replaced. A hosted server OpenAI proxies is not a
+      // desktop extension, and saying so sends people hunting for an
+      // installer that does not exist.
+      expect(reason).not.toHaveTextContent(/desktop extension/i);
+    });
+
+    it("still calls a genuine local extension what it is", () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [
+          createDirectoryServer({
+            displayName: "PDF Tools",
+            rowType: "local",
+            endpointKind: "none",
+            remoteUrl: undefined,
+          }),
+        ],
+      });
+      render(<RegistryTab {...defaultProps} />);
+      expect(
+        screen.getByTestId("directory-unavailable-reason")
+      ).toHaveTextContent(/local desktop extension/i);
     });
   });
 
@@ -1845,6 +2176,116 @@ describe("RegistryTab", () => {
       });
       expect(mockSetQuery).toHaveBeenCalledWith("invoice");
       expect(mockSetTier).toHaveBeenCalledWith("partner");
+    });
+
+    it("searchRegistryDirectory switches source, and the tier survives it", async () => {
+      // Switching TO a tier-publishing source with a tier in the same call is
+      // where the ordering is load-bearing: `setSource` runs first, and
+      // reversing the two statements would let the switch wipe the tier that
+      // arrived with it.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+        source: "chatgpt-directory",
+        hasTiers: false,
+      });
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      const response = await dispatch({
+        type: "searchRegistryDirectory",
+        payload: {
+          query: "invoice",
+          source: "anthropic-directory",
+          tier: "partner",
+        },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: {
+          status: "searching",
+          source: "anthropic-directory",
+          tier: "partner",
+        },
+      });
+      expect(mockSetSource).toHaveBeenCalledWith("anthropic-directory");
+      expect(mockSetTier).toHaveBeenCalledWith("partner");
+      expect(mockSetSource.mock.invocationCallOrder[0]).toBeLessThan(
+        mockSetTier.mock.invocationCallOrder[0]
+      );
+    });
+
+    it("searchRegistryDirectory reports the tier that will actually be in force", async () => {
+      // Switching to a tier-less source clears the tier the screen was
+      // showing. Echoing `directory.tier` here would report a filter that had
+      // just been dropped — this render's closure still holds the old value —
+      // and the model would tell the user it had narrowed a view it had not.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+        tier: "partner",
+      });
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      const response = await dispatch({
+        type: "searchRegistryDirectory",
+        payload: { source: "chatgpt-directory" },
+      });
+
+      expect(response).toMatchObject({
+        status: "success",
+        result: {
+          status: "searching",
+          source: "chatgpt-directory",
+          tier: "all",
+        },
+      });
+    });
+
+    it("searchRegistryDirectory ignores a tier the target source cannot use", async () => {
+      // Applying it would park an inert value in state that springs back the
+      // moment the user returns to a source that DOES publish tiers, silently
+      // narrowing a view they never filtered.
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      const response = await dispatch({
+        type: "searchRegistryDirectory",
+        payload: { source: "chatgpt-directory", tier: "partner" },
+      });
+
+      expect(mockSetSource).toHaveBeenCalledWith("chatgpt-directory");
+      expect(mockSetTier).not.toHaveBeenCalled();
+      expect(response).toMatchObject({
+        result: { source: "chatgpt-directory", tier: "all" },
+      });
+    });
+
+    it("searchRegistryDirectory rejects an unknown source", async () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      const response = await dispatch({
+        type: "searchRegistryDirectory",
+        payload: { source: "bing-directory" },
+      });
+      expect(response).toMatchObject({ status: "error" });
+      expect(mockSetSource).not.toHaveBeenCalled();
+    });
+
+    it("leaves the source alone when the model does not name one", async () => {
+      mockDirectoryReturn = directoryHookReturn({
+        items: [createDirectoryServer()],
+      });
+      renderWithCards([toCatalogCard([createMockServer()])]);
+
+      await dispatch({
+        type: "searchRegistryDirectory",
+        payload: { query: "invoice" },
+      });
+      expect(mockSetSource).not.toHaveBeenCalled();
     });
 
     it("searchRegistryDirectory with no query clears the box (browse)", async () => {

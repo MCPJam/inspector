@@ -12,6 +12,10 @@ import {
   ChevronDown,
   BadgeCheck,
   Star,
+  Building2,
+  Plus,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
@@ -41,16 +45,37 @@ import {
   type RegistryConnectionStatus,
 } from "@/hooks/useRegistryServers";
 import {
-  useClaudeDirectory,
+  useServerDirectory,
   useDirectoryServerDetail,
   requiresEndpointChoice,
+  requiresPreregisteredClient,
   normalizeDirectoryConnectError,
+  describeExistingConnection,
+  describeUnavailable,
+  isConnectableDirectoryRow,
+  sourceHasTiers,
+  DIRECTORY_SOURCES,
+  DIRECTORY_SOURCE_LABELS,
+  DEFAULT_DIRECTORY_SOURCE,
+  directorySourceBadge,
   DIRECTORY_TIERS,
   type DirectoryServer,
+  type DirectorySource,
   type DirectoryTier,
-} from "@/hooks/useClaudeDirectory";
+} from "@/hooks/useServerDirectory";
+import {
+  useOrgRegistryServers,
+  type EnrichedOrgRegistryServer,
+  type OrgRegistrySubmission,
+} from "@/hooks/useOrgRegistryServers";
 import { DirectoryEndpointDialog } from "./registry/DirectoryEndpointDialog";
 import { DirectoryDetailDialog } from "./registry/DirectoryDetailDialog";
+import {
+  OrgRegistryServerDialog,
+  type OrgRegistryDialogSeed,
+} from "./registry/OrgRegistryServerDialog";
+import { OrgRegistryRemoveDialog } from "./registry/OrgRegistryRemoveDialog";
+import { ErrorBoundary } from "./ui/error-boundary";
 import { toast } from "@/lib/toast";
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
 import type { ServerFormData } from "@/shared/types.js";
@@ -166,6 +191,29 @@ function resolveConnectVariant(
   );
 }
 
+/**
+ * Is the directory showing anything other than its default view?
+ *
+ * ONE definition, used by both the section (which hides itself when nothing is
+ * loaded and nothing was asked) and the screen-level empty state. Two copies
+ * drifted apart the moment a fourth control was added, and the drift is
+ * invisible: the section would vanish while the empty state insisted the
+ * screen was filtered, or the reverse.
+ */
+function isDirectoryFiltered(
+  directory: Pick<
+    ReturnType<typeof useServerDirectory>,
+    "query" | "tier" | "connectableOnly" | "source"
+  >
+): boolean {
+  return (
+    directory.query.trim().length > 0 ||
+    directory.tier !== "all" ||
+    directory.connectableOnly ||
+    directory.source !== DEFAULT_DIRECTORY_SOURCE
+  );
+}
+
 /** Cap the agent snapshot's directory list — a state overview, not a dump. */
 const AGENT_SNAPSHOT_MAX_DIRECTORY = 15;
 
@@ -197,6 +245,20 @@ function readDirectoryTier(value: unknown): DirectoryTier | undefined {
   throw createInspectorCommandClientError(
     "invalid_request",
     `'tier' must be one of ${DIRECTORY_TIERS.join(", ")} when provided.`
+  );
+}
+
+function readDirectorySource(value: unknown): DirectorySource | undefined {
+  if (value === undefined) return undefined;
+  if (
+    typeof value === "string" &&
+    (DIRECTORY_SOURCES as readonly string[]).includes(value)
+  ) {
+    return value as DirectorySource;
+  }
+  throw createInspectorCommandClientError(
+    "invalid_request",
+    `'source' must be one of ${DIRECTORY_SOURCES.join(", ")} when provided.`
   );
 }
 
@@ -239,7 +301,7 @@ export function RegistryTab({
       onDisconnect,
     });
 
-  const directory = useClaudeDirectory({
+  const directory = useServerDirectory({
     projectId,
     isAuthenticated,
     onConnect,
@@ -267,6 +329,21 @@ export function RegistryTab({
   );
   const detailServerDetail = useDirectoryServerDetail(
     detailServer?._id ?? null
+  );
+  const [orgShelfState, setOrgShelfState] = useState<{
+    hasContent: boolean;
+    isLoading: boolean;
+  } | null>(null);
+  const handleOrgShelfState = useCallback(
+    (next: { hasContent: boolean; isLoading: boolean }) => {
+      setOrgShelfState((previous) =>
+        previous?.hasContent === next.hasContent &&
+        previous?.isLoading === next.isLoading
+          ? previous
+          : next
+      );
+    },
+    []
   );
 
   // Auto-redirect to App Builder when a pending server becomes connected.
@@ -375,13 +452,18 @@ export function RegistryTab({
     async (server: DirectoryServer, endpointUrl?: string) => {
       setConnectingDirectoryIds((prev) => new Set(prev).add(server._id));
       try {
-        const { pending } = await directory.connect(server, endpointUrl);
+        const result = await directory.connect(server, endpointUrl);
         // The hook wrote the marker to localStorage (it has to survive an
         // OAuth redirect); mirror it into state so THIS session's effects —
         // auto-navigate on connect, stale cleanup — see it too, exactly as
         // they do for a curated connect.
-        setPendingQuickConnect(pending);
+        setPendingQuickConnect(result.pending);
         setEndpointPrompt(null);
+        // The workspace already talks to this endpoint through the other
+        // directory's row. Saying so beats a silent no-op that looks like a
+        // click that did nothing.
+        const reused = describeExistingConnection(result);
+        if (reused) toast.info(reused);
         return { ok: true as const };
       } catch (rawError) {
         const error = normalizeDirectoryConnectError(rawError);
@@ -526,12 +608,16 @@ export function RegistryTab({
       if (!item) return null;
 
       const serverName = item.displayName;
-      if (item.endpointKind === "none") {
+      if (!isConnectableDirectoryRow(item)) {
+        // Keyed on the row, not on the kind: `none` means "a local desktop
+        // extension" on one source and "a hosted server whose endpoint the
+        // directory will not publish" on the other, and the model relays this
+        // text to a person who would go looking for an installer.
         return {
           status: "not_connectable",
           serverName,
-          message:
-            "This directory entry is a local desktop extension, not a remote MCP server.",
+          message: describeUnavailable(item),
+          ...(item.unavailableReason ? { reason: item.unavailableReason } : {}),
         };
       }
       const status = directoryStatusFor(item);
@@ -700,15 +786,38 @@ export function RegistryTab({
           );
         }
         const tier = readDirectoryTier(payload.tier);
+        const source = readDirectorySource(payload.source);
         // DRIVES the screen's own controls rather than running a private
         // query: what the model reads back is what the person is looking at,
         // and the follow-up connect resolves against the same rows.
         directory.setQuery(payload.query ?? "");
-        if (tier) directory.setTier(tier);
+
+        // A TIER ONLY MEANS SOMETHING ON A SOURCE THAT PUBLISHES ONE.
+        //
+        // Two ways that bites. Switching to a tier-less source clears the tier
+        // the screen was showing, so a response echoing `directory.tier` would
+        // report a filter that had just been dropped — this render's closure
+        // still holds the old value. And applying a tier to a tier-less source
+        // parks an inert value in state that springs back the moment the user
+        // switches to a source that does publish tiers, silently narrowing a
+        // view they never filtered.
+        //
+        // So the effective tier is computed once, from the source that will be
+        // in force, and it is what gets both applied and reported.
+        const nextSource = source ?? directory.source;
+        const sourceTakesTiers = sourceHasTiers(nextSource);
+        const nextTier = sourceTakesTiers ? tier ?? directory.tier : "all";
+
+        // Source first: on a source that DOES take tiers it clears nothing, and
+        // ordering it after `setTier` would let the switch wipe a tier that
+        // arrived in the same call.
+        if (source) directory.setSource(source);
+        if (tier && sourceTakesTiers) directory.setTier(tier);
         return {
           status: "searching",
           query: payload.query ?? "",
-          tier: tier ?? directory.tier,
+          source: nextSource,
+          tier: nextTier,
           note: "Results are debounced — read them from ui_snapshot_app's `directory` block.",
         };
       },
@@ -741,9 +850,13 @@ export function RegistryTab({
       // model actually needs (whether a choice is required) without it.
       directory: {
         query: directory.query,
+        source: directory.source,
         tier: directory.tier,
         loadedCount: directory.items.length,
         hasMore: directory.canLoadMore,
+        ...(directory.lastSyncedAt
+          ? { asOf: new Date(directory.lastSyncedAt).toISOString() }
+          : {}),
         visible: directory.items
           .slice(0, AGENT_SNAPSHOT_MAX_DIRECTORY)
           .map((item) => ({
@@ -751,26 +864,42 @@ export function RegistryTab({
             ...(item.verifiedTier ? { tier: item.verifiedTier } : {}),
             status: directoryStatusFor(item),
             requiresEndpointChoice: requiresEndpointChoice(item),
+            // So the model does not offer to install something that cannot be
+            // installed. The REASON travels too: "endpoint not published" and
+            // "local extension" call for different things to say.
+            ...(isConnectableDirectoryRow(item)
+              ? {}
+              : {
+                  connectable: false as const,
+                  ...(item.unavailableReason
+                    ? { unavailableReason: item.unavailableReason }
+                    : {}),
+                }),
           })),
       },
     }),
   });
 
-  // Per-SECTION emptiness, not per-screen. The two halves have independent
+  // Per-SECTION emptiness, not per-screen. The two public shelves have independent
   // backends: an empty curated catalog must not blank a directory that loaded
-  // fine, and vice versa. Only when BOTH are empty and neither is still
-  // loading is there genuinely nothing to show.
+  // fine, and neither may blank an organization's own entries. Only when ALL
+  // of them are empty and none is still loading is there genuinely nothing to
+  // show.
+  //
   const curatedEmpty = !isLoading && catalogCards.length === 0;
   const directoryEmpty =
     !directory.isLoadingFirstPage && directory.items.length === 0;
-  const directoryFiltered =
-    directory.query.trim().length > 0 || directory.tier !== "all";
+  const directoryFiltered = isDirectoryFiltered(directory);
+  const orgShelfEmpty =
+    orgShelfState !== null &&
+    !orgShelfState.isLoading &&
+    !orgShelfState.hasContent;
 
   if (isLoading && directory.isLoadingFirstPage) {
     return <LoadingSkeleton />;
   }
 
-  if (curatedEmpty && directoryEmpty && !directoryFiltered) {
+  if (curatedEmpty && directoryEmpty && orgShelfEmpty && !directoryFiltered) {
     return (
       <EmptyState
         icon={Package}
@@ -790,6 +919,27 @@ export function RegistryTab({
             Pre-configured MCP servers you can connect quickly.
           </p>
         </div>
+
+        {/*
+          The organization's own shelf, above the curated one: it is the
+          smaller list and the one a team put there on purpose.
+
+          Behind its OWN boundary. This section is the only part of the tab
+          that reads functions the deployed backend may not have yet — a
+          browser can outlive a rollback, and `useQuery` for a missing function
+          throws during render. Without the boundary that takes the entire
+          Registry tab, curated catalog and directory included, down with it.
+        */}
+        <ErrorBoundary name="org-registry-section" fallback={null}>
+          <OrgRegistrySectionContainer
+            projectId={projectId}
+            isAuthenticated={isAuthenticated}
+            liveServers={servers}
+            onConnect={onConnect}
+            onDisconnect={onDisconnect}
+            onState={handleOrgShelfState}
+          />
+        </ErrorBoundary>
 
         {/* Curated cards grid */}
         {isLoading ? (
@@ -816,7 +966,7 @@ export function RegistryTab({
           </div>
         ) : null}
 
-        <ClaudeDirectorySection
+        <ServerDirectorySection
           directory={directory}
           statusFor={directoryStatusFor}
           onConnect={handleDirectoryConnect}
@@ -870,25 +1020,397 @@ export function RegistryTab({
 }
 
 /**
- * The mirrored Claude connectors directory, beneath the curated catalog.
- *
- * ~2,000 entries, so it is search-first: no all-at-once grid, a debounced
- * query, a tier filter, and an explicit Load more. Rows a curated card already
- * covers are filtered out upstream in the hook — one connector, one card.
+ * Keeps every Convex-backed org-registry query and mutation below the section
+ * boundary. A missing function or provider throws during render, so the hook
+ * itself must be a descendant of the ErrorBoundary rather than a sibling.
  */
-function ClaudeDirectorySection({
+function OrgRegistrySectionContainer({
+  projectId,
+  isAuthenticated,
+  liveServers,
+  onConnect,
+  onDisconnect,
+  onState,
+}: {
+  projectId: string | null;
+  isAuthenticated: boolean;
+  liveServers?: Record<string, ServerWithName>;
+  onConnect: (formData: ServerFormData) => void;
+  onDisconnect?: (serverName: string) => void;
+  onState: (state: { hasContent: boolean; isLoading: boolean }) => void;
+}) {
+  const orgRegistry = useOrgRegistryServers({
+    projectId,
+    isAuthenticated,
+    liveServers,
+    onConnect,
+    onDisconnect,
+  });
+  const [orgDialog, setOrgDialog] = useState<{
+    seed: OrgRegistryDialogSeed | null;
+  } | null>(null);
+  const [orgRemoveTarget, setOrgRemoveTarget] =
+    useState<EnrichedOrgRegistryServer | null>(null);
+  const [orgRemoving, setOrgRemoving] = useState(false);
+
+  useEffect(() => {
+    onState({
+      hasContent:
+        Boolean(orgRegistry.organizationId) &&
+        (orgRegistry.servers.length > 0 || orgRegistry.canAdd),
+      isLoading: orgRegistry.isLoading,
+    });
+  }, [
+    onState,
+    orgRegistry.canAdd,
+    orgRegistry.isLoading,
+    orgRegistry.organizationId,
+    orgRegistry.servers.length,
+  ]);
+
+  const handleOrgSubmit = useCallback(
+    async (submission: OrgRegistrySubmission) => {
+      if (submission.registryServerId) {
+        await orgRegistry.update(submission);
+        toast.success("Registry entry updated");
+        return;
+      }
+      await orgRegistry.add(submission);
+      toast.success("Added to your organization's registry");
+    },
+    [orgRegistry]
+  );
+
+  const handleOrgConnect = useCallback(
+    async (server: EnrichedOrgRegistryServer) => {
+      try {
+        await orgRegistry.connect(server);
+      } catch (error) {
+        const message =
+          error instanceof Error &&
+          /already exists in this workspace/i.test(error.message)
+            ? `A server named "${server.displayName}" already exists in this project. Rename it, or rename the registry entry.`
+            : error instanceof Error
+            ? error.message
+            : "Could not connect this server.";
+        toast.error(message);
+      }
+    },
+    [orgRegistry]
+  );
+
+  const handleOrgDisconnect = useCallback(
+    async (server: EnrichedOrgRegistryServer) => {
+      try {
+        await orgRegistry.disconnect(server);
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Could not disconnect this server."
+        );
+      }
+    },
+    [orgRegistry]
+  );
+
+  const handleOrgRemoveConfirmed = useCallback(async () => {
+    if (!orgRemoveTarget) return;
+    setOrgRemoving(true);
+    try {
+      await orgRegistry.remove(orgRemoveTarget._id);
+      toast.success("Removed from your organization's registry");
+      setOrgRemoveTarget(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not remove this entry."
+      );
+    } finally {
+      setOrgRemoving(false);
+    }
+  }, [orgRegistry, orgRemoveTarget]);
+
+  return (
+    <>
+      <OrgRegistrySection
+        registry={orgRegistry}
+        onAdd={() => setOrgDialog({ seed: null })}
+        onEdit={(server) =>
+          setOrgDialog({
+            seed: {
+              registryServerId: server._id,
+              displayName: server.displayName,
+              description: server.description,
+              url: server.transport.url ?? "",
+              useOAuth: server.transport.useOAuth,
+              oauthScopes: server.transport.oauthScopes,
+              derived: server.derived,
+            },
+          })
+        }
+        onRemove={setOrgRemoveTarget}
+        onConnect={handleOrgConnect}
+        onDisconnect={handleOrgDisconnect}
+      />
+      {orgRemoveTarget && (
+        <OrgRegistryRemoveDialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !orgRemoving) setOrgRemoveTarget(null);
+          }}
+          displayName={orgRemoveTarget.displayName}
+          isRemoving={orgRemoving}
+          onConfirm={() => void handleOrgRemoveConfirmed()}
+        />
+      )}
+      {orgDialog && (
+        <OrgRegistryServerDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setOrgDialog(null);
+          }}
+          projectId={projectId}
+          seed={orgDialog.seed}
+          onSubmit={handleOrgSubmit}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * The organization's own shelf.
+ *
+ * Renders nothing at all for a project outside an organization, or for
+ * somebody who is neither a member nor looking at any entries — an empty
+ * "Your organization" heading over a project that has no organization is
+ * noise, not information. It DOES render for a member with an empty shelf,
+ * because that is the state the invitation to add belongs in.
+ *
+ * The cards carry no star control. Stars are the identity of a consolidated
+ * PUBLIC card (`registryCardKey`), an org entry has none, and the backend's
+ * star mutation refuses a synthetic key outright — so a star here would be a
+ * button that cannot work.
+ */
+function OrgRegistrySection({
+  registry,
+  onAdd,
+  onEdit,
+  onRemove,
+  onConnect,
+  onDisconnect,
+}: {
+  registry: ReturnType<typeof useOrgRegistryServers>;
+  onAdd: () => void;
+  onEdit: (server: EnrichedOrgRegistryServer) => void;
+  onRemove: (server: EnrichedOrgRegistryServer) => void | Promise<void>;
+  onConnect: (server: EnrichedOrgRegistryServer) => void | Promise<void>;
+  onDisconnect: (server: EnrichedOrgRegistryServer) => void | Promise<void>;
+}) {
+  const { servers, isLoading, organizationId, canAdd } = registry;
+
+  if (!organizationId) return null;
+  if (!canAdd && servers.length === 0 && !isLoading) return null;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold flex items-center gap-1.5">
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+            Your organization
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Servers your team has shared. Visible in every project in this
+            organization.
+          </p>
+        </div>
+        {canAdd && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1"
+            onClick={onAdd}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add a server
+          </Button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <Skeleton key={i} className="h-28 w-full rounded-lg" />
+          ))}
+        </div>
+      ) : servers.length === 0 ? (
+        <Card className="px-4 py-6 text-center">
+          <p className="text-sm font-medium">Nothing shared yet</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Paste a remote server&rsquo;s address and we&rsquo;ll read the rest
+            off it — or share one you already have connected from its menu on
+            the Servers tab.
+          </p>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {servers.map((server) => (
+            <OrgRegistryServerCard
+              key={server._id}
+              server={server}
+              canManage={canAdd}
+              onEdit={() => onEdit(server)}
+              onRemove={() => void onRemove(server)}
+              onConnect={() => void onConnect(server)}
+              onDisconnect={() => void onDisconnect(server)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One org entry.
+ *
+ * Deliberately a sibling of `RegistryServerCard` rather than a prop on it. The
+ * curated card REQUIRES star props and a `registryCardKey`, and an org row has
+ * neither; threading "no stars" through it would leave a component whose two
+ * modes disagree about what identifies a card. The shapes are close enough to
+ * read as one family and different enough that one component would be lying.
+ */
+function OrgRegistryServerCard({
+  server,
+  canManage,
+  onEdit,
+  onRemove,
+  onConnect,
+  onDisconnect,
+}: {
+  server: EnrichedOrgRegistryServer;
+  canManage: boolean;
+  onEdit: () => void;
+  onRemove: () => void;
+  onConnect: () => void;
+  onDisconnect: () => void;
+}) {
+  const version = server.derived?.serverVersion ?? server.version;
+  const authRequired =
+    server.derived?.authRequired ?? server.transport.useOAuth ?? false;
+  /**
+   * Same rule the directory badge uses: only a server that demands auth AND
+   * resolved no way to register a client dynamically needs one in advance. An
+   * entry with no probe snapshot says nothing rather than making a claim the
+   * probe never backed.
+   */
+  const needsPreregisteredClient =
+    authRequired &&
+    server.derived !== undefined &&
+    !server.derived.supportsDcr &&
+    !server.derived.supportsCimd;
+
+  return (
+    <Card className="px-4 py-3 flex flex-col gap-2">
+      <div className="flex items-center gap-3">
+        <div className="h-8 w-8 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+          <Building2 className="h-4 w-4 text-muted-foreground" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-semibold truncate">
+            {server.displayName}
+          </h3>
+          <p className="text-xs text-muted-foreground truncate">
+            {server.transport.url}
+          </p>
+        </div>
+        <div className="flex-shrink-0 flex items-center gap-1">
+          <TopRightAction
+            status={server.connectionStatus}
+            onConnect={onConnect}
+            onDisconnect={onDisconnect}
+          />
+          {canManage && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  aria-label={`Manage ${server.displayName}`}
+                >
+                  <MoreVertical className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={onEdit}>
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit entry
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onClick={onRemove}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Remove from registry
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {version && (
+          <Badge variant="secondary" className="text-[10px]">
+            v{version}
+          </Badge>
+        )}
+        <AuthBadge useOAuth={authRequired} />
+        {needsPreregisteredClient && (
+          <Badge variant="outline" className="text-[10px]">
+            Requires pre-registered client
+          </Badge>
+        )}
+      </div>
+
+      {server.description && (
+        <p className="text-xs text-muted-foreground line-clamp-2">
+          {server.description}
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/**
+ * The mirrored upstream directories, beneath the curated catalog.
+ *
+ * Thousands of entries per source, so it is search-first: no all-at-once grid,
+ * a debounced query, a source facet, a tier filter, and an explicit Load more.
+ * Rows a curated card already covers are filtered out upstream in the hook —
+ * one connector, one card.
+ *
+ * ONE SOURCE AT A TIME (Claude by default). Cross-directory listing overlap
+ * stays visible when someone switches — a connector listed in both is a
+ * signal, not a duplicate to hide — and only CONNECT collapses the two, in the
+ * backend.
+ */
+function ServerDirectorySection({
   directory,
   statusFor,
   onConnect,
   onOpenDetail,
 }: {
-  directory: ReturnType<typeof useClaudeDirectory>;
+  directory: ReturnType<typeof useServerDirectory>;
   statusFor: (server: DirectoryServer) => RegistryConnectionStatus | "error";
   onConnect: (server: DirectoryServer) => void;
   onOpenDetail: (server: DirectoryServer) => void;
 }) {
-  const { items, query, setQuery, tier, setTier } = directory;
-  const filtering = query.trim().length > 0 || tier !== "all";
+  const { items, query, setQuery, tier, setTier, source, setSource } =
+    directory;
+  const filtering = isDirectoryFiltered(directory);
 
   // Nothing loaded and nothing asked for: the section stays out of the way
   // rather than advertising an empty directory (the gated-off case).
@@ -897,12 +1419,21 @@ function ClaudeDirectorySection({
   }
 
   return (
-    <section className="space-y-4" data-testid="claude-directory-section">
+    <section className="space-y-4" data-testid="server-directory-section">
       <div>
-        <h3 className="text-sm font-semibold">Claude directory</h3>
+        <h3 className="text-sm font-semibold">Connector directories</h3>
         <p className="text-xs text-muted-foreground">
-          Connectors mirrored from Anthropic&rsquo;s public directory. Search to
-          find one, then connect it into this project.
+          Connectors mirrored from a public directory. Search to find one, then
+          connect it into this project.
+          {directory.lastSyncedAt ? (
+            <>
+              {" "}
+              <span data-testid="directory-as-of">
+                {DIRECTORY_SOURCE_LABELS[source]} as of{" "}
+                {new Date(directory.lastSyncedAt).toLocaleDateString()}.
+              </span>
+            </>
+          ) : null}
         </p>
       </div>
 
@@ -910,28 +1441,64 @@ function ClaudeDirectorySection({
         <SearchInput
           value={query}
           onValueChange={setQuery}
-          placeholder="Search the Claude directory…"
+          placeholder={`Search the ${DIRECTORY_SOURCE_LABELS[source]}…`}
           className="w-full sm:w-72"
         />
         <Select
-          value={tier}
-          onValueChange={(value) => setTier(value as DirectoryTier)}
+          value={source}
+          onValueChange={(value) => setSource(value as DirectorySource)}
         >
           <SelectTrigger
-            data-testid="directory-tier-filter"
-            className="h-8 w-[min(100%,9rem)] text-xs"
-            aria-label="Filter the directory by tier"
+            data-testid="directory-source-filter"
+            className="h-8 w-[min(100%,11rem)] text-xs"
+            aria-label="Choose which directory to browse"
           >
-            <SelectValue placeholder="All tiers" />
+            <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {DIRECTORY_TIERS.map((value) => (
+            {DIRECTORY_SOURCES.map((value) => (
               <SelectItem key={value} value={value}>
-                {TIER_LABELS[value]}
+                {DIRECTORY_SOURCE_LABELS[value]}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+        <Button
+          variant={directory.connectableOnly ? "default" : "outline"}
+          size="sm"
+          className="h-8 text-xs"
+          aria-pressed={directory.connectableOnly}
+          data-testid="directory-connectable-filter"
+          onClick={() =>
+            directory.setConnectableOnly(!directory.connectableOnly)
+          }
+        >
+          Connectable only
+        </Button>
+        {/* Verification tiers are a Claude concept. Rendering the filter for a
+            source that publishes none would offer a control that can only ever
+            empty the list. */}
+        {sourceHasTiers(source) && (
+          <Select
+            value={tier}
+            onValueChange={(value) => setTier(value as DirectoryTier)}
+          >
+            <SelectTrigger
+              data-testid="directory-tier-filter"
+              className="h-8 w-[min(100%,9rem)] text-xs"
+              aria-label="Filter the directory by tier"
+            >
+              <SelectValue placeholder="All tiers" />
+            </SelectTrigger>
+            <SelectContent>
+              {DIRECTORY_TIERS.map((value) => (
+                <SelectItem key={value} value={value}>
+                  {TIER_LABELS[value]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
       {directory.isLoadingFirstPage ? (
@@ -987,6 +1554,8 @@ function DirectoryServerCard({
 }) {
   const [iconFailed, setIconFailed] = useState(false);
   const showIcon = Boolean(server.iconUrl) && !iconFailed;
+  const connectable = isConnectableDirectoryRow(server);
+  const unavailable = connectable ? null : describeUnavailable(server);
 
   return (
     <Card
@@ -1031,19 +1600,48 @@ function DirectoryServerCard({
             <span className="truncate">{server.displayName}</span>
             {server.verifiedTier === "anthropic" && <VerifiedBadge />}
           </h4>
-          <p className="text-xs text-muted-foreground">From Claude directory</p>
+          {/* PROVENANCE, not endorsement: "Listed in ChatGPT" says OpenAI
+              accepted a submission, which is not a tier of ours. */}
+          <p className="text-xs text-muted-foreground">
+            {directorySourceBadge(server.source)}
+          </p>
         </div>
         <div
           className="flex-shrink-0"
           onClick={(event) => event.stopPropagation()}
         >
-          <DirectoryAction status={status} onConnect={onConnect} />
+          {connectable ? (
+            <DirectoryAction status={status} onConnect={onConnect} />
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs cursor-default"
+              disabled
+              title={unavailable ?? undefined}
+            >
+              Not connectable
+            </Button>
+          )}
         </div>
       </div>
 
       <div className="flex items-center gap-1.5 flex-wrap">
         <DirectoryBadges server={server} />
       </div>
+
+      {/* Why, in the row's own terms. A hidden hosted endpoint and a desktop
+          extension are different situations and were both `endpointKind:
+          'none'`; one line of wrong copy here sends someone hunting for an
+          installer that does not exist. */}
+      {unavailable && (
+        <p
+          className="text-xs text-muted-foreground italic"
+          data-testid="directory-unavailable-reason"
+        >
+          {unavailable}
+        </p>
+      )}
 
       {server.description && (
         <p className="text-xs text-muted-foreground line-clamp-2">
@@ -1067,6 +1665,19 @@ function DirectoryBadges({ server }: { server: DirectoryServer }) {
           {server.endpointKind === "options"
             ? "Choose endpoint"
             : "Your instance"}
+        </Badge>
+      )}
+      {/* A probe FACT, not upstream metadata: this server's authorization
+          server answered and offers neither DCR nor CIMD, so connecting will
+          need credentials issued by the vendor. Only `resolved` verdicts
+          badge — see `requiresPreregisteredClient`. */}
+      {requiresPreregisteredClient(server) && (
+        <Badge
+          variant="outline"
+          className="text-[11px] px-1.5 py-0.5 gap-1 border-warning/30 text-warning"
+        >
+          <KeyRound className="h-3 w-3" />
+          Requires pre-registered client
         </Badge>
       )}
     </>

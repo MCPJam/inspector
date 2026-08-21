@@ -37,6 +37,7 @@ import scenarios from "./scenarios.js";
 import userTesting from "./user-testing.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
+import conformanceIngest from "./conformance-ingest.js";
 import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
@@ -48,6 +49,7 @@ import capabilities from "./capabilities.js";
 import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
 import tunnels from "./tunnels.js";
+import readiness from "./readiness.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
 const v1 = new Hono();
@@ -105,6 +107,7 @@ v1.route("/", prompts);
 v1.route("/", resources);
 v1.route("/", exporter);
 v1.route("/", evals);
+v1.route("/", readiness);
 v1.route("/", hosts);
 v1.route("/", harness);
 // Project Environments (named execution bundles for suites and journeys) stay
@@ -153,6 +156,7 @@ v1.route("/", userTesting);
 // project-scoped caller.
 v1.route("/", sandboxImages);
 v1.route("/", evalIngest);
+v1.route("/", conformanceIngest);
 // Headless agent turn (Slack bot terminal). Guest-DENIED by default (no
 // GUEST_ALLOWED_V1_RULES entry) — every turn spends hosted-model credits.
 v1.route("/", agent);

@@ -88,6 +88,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/servers/{serverId}/resources/read":
     "readServerResource",
 
+  // Directory readiness
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
+    "startClaudeReadinessRun",
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
+    "startOpenAIReadinessRun",
+  "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
+  "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
+  "get /projects/{projectId}/readiness-runs/{runId}/report":
+    "getReadinessReport",
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel":
+    "cancelReadinessRun",
+
   // Hosts
   "get /projects/{projectId}/hosts": "listHosts",
   "post /projects/{projectId}/hosts": "createHost",
@@ -267,6 +279,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Tunnels
   "post /projects/{projectId}/tunnels": "createTunnel",
   "post /projects/{projectId}/tunnels/{serverId}/close": "closeTunnel",
+
+  // Directory readiness
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
+    "startClaudeReadinessRun",
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
+    "startOpenAIReadinessRun",
+  "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
+  "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
+  "get /projects/{projectId}/readiness-runs/{runId}/report":
+    "getReadinessReport",
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel":
+    "cancelReadinessRun",
 };
 
 /**
@@ -303,6 +327,16 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Incremental-ingestion transport; the reporter closes the run it opened.",
   "post /projects/{projectId}/eval-ingest/artifacts/upload-url":
     "Mints a short-lived artifact upload URL as part of the ingestion handshake. Useless outside it, and a standalone method would hand out signed URLs on request.",
+  "post /projects/{projectId}/conformance-ingest/report":
+    "SDK conformance-run INGESTION. Already covered by `reportConformanceRun`; a second, lower-level client method would let the two drift.",
+  "post /projects/{projectId}/conformance-ingest/runs/start":
+    "Incremental conformance ingestion, driven by the SDK reporter.",
+  "post /projects/{projectId}/conformance-ingest/runs/reports":
+    "Incremental conformance ingestion; one suite report per call.",
+  "post /projects/{projectId}/conformance-ingest/runs/heartbeat":
+    "Keeps a long-running uploaded conformance run from looking stale.",
+  "post /projects/{projectId}/conformance-ingest/runs/finalize":
+    "Closes the incremental conformance ingest the reporter opened.",
 };
 
 describe("/api/v1 -> SDK coverage", () => {

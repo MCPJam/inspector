@@ -2,6 +2,11 @@
  * What the OpenAI readiness reader is told about an ARCHIVE, as opposed to the
  * files inside it.
  *
+ * Moved here with its implementation: the adapters left the inspector server
+ * so the CLI's local package modes could reach them without depending on a web
+ * server, and a test that stayed behind would be guarding a re-export shim
+ * rather than the rules it is about.
+ *
  * The distinction is the point. Every path rule the portal enforces is checked
  * against the names the archive's central directory recorded, BEFORE anything
  * normalizes them — because normalization repairs a backslash separator and a
@@ -19,7 +24,8 @@ import JSZip from "jszip";
 import {
   DIRECTORY_ARCHIVE_OBSERVATIONS,
   collectZipArchiveObservations,
-} from "../bundle-file-sources.js";
+  createZipPluginFileSource,
+} from "../src/plugin-bundle/node-file-sources.js";
 
 const encoder = new TextEncoder();
 
@@ -218,3 +224,130 @@ describe("collectZipArchiveObservations", () => {
     expect(observed.encryptedEntryPaths).toBeUndefined();
   });
 });
+
+/**
+ * The output ceiling, which is the part that has to hold when the archive
+ * lies.
+ *
+ * A zip bomb's whole trick is that the cheap check — the central directory's
+ * declared uncompressed size — is a number the archive supplies about itself.
+ * These cases are the ones where that number is useless: absent, or smaller
+ * than what actually inflates. If the read is bounded only by the declaration,
+ * every one of them passes while the heap fills.
+ */
+describe("createZipPluginFileSource — the read ceiling", () => {
+  it("reads a file that fits", async () => {
+    const source = await createZipPluginFileSource(
+      await zipOf({ "mcpjam-plugin.json": "{}" }),
+    );
+    const bytes = await source.readBytes("mcpjam-plugin.json", 1024);
+    expect(new TextDecoder().decode(bytes)).toBe("{}");
+  });
+
+  it("refuses on the DECLARED size, before inflating anything", async () => {
+    const source = await createZipPluginFileSource(
+      await zipOf({ big: "x".repeat(4096) }),
+    );
+    await expect(source.readBytes("big", 128)).rejects.toThrow(/declares/);
+  });
+
+  it("refuses output past the limit even when the declaration is honest but the limit is smaller", async () => {
+    // Distinct from the case above only in WHICH guard fires; both must, and a
+    // regression that removed the streaming bound would still pass that one.
+    const source = await createZipPluginFileSource(
+      await zipOf({ big: "y".repeat(2048) }),
+    );
+    await expect(source.readBytes("big", 2047)).rejects.toThrow(
+      /declares|exceeds/,
+    );
+  });
+
+  it("still refuses when the archive UNDER-REPORTS its uncompressed size", async () => {
+    // The bomb case. A crafted central directory claims one byte; the entry
+    // inflates to far more. The declared check waves it through, so only the
+    // counted stream can stop it.
+    const source = await createZipPluginFileSource(
+      storedEntryZip("liar", "z".repeat(4096), 1),
+    );
+    // The message matters: `exceeds` is the STREAM's refusal. `declares` would
+    // mean the cheap check fired, which it cannot here — the archive claims
+    // one byte, comfortably under the limit.
+    await expect(source.readBytes("liar", 64)).rejects.toThrow(/exceeds/);
+  });
+
+  it("reports a missing entry as missing rather than as oversized", async () => {
+    const source = await createZipPluginFileSource(await zipOf({ a: "1" }));
+    await expect(source.readBytes("b", 1024)).rejects.toThrow(/is missing/);
+  });
+
+  it("lists a directory as zero bytes and a file by its declaration", async () => {
+    const zip = new JSZip();
+    zip.folder("dir");
+    zip.file("dir/file.txt", encoder.encode("hello"));
+    const source = await createZipPluginFileSource(
+      await zip.generateAsync({ type: "uint8array" }),
+    );
+    const entries = await source.list();
+    const dir = entries.find((e) => e.path === "dir");
+    const file = entries.find((e) => e.path === "dir/file.txt");
+    expect(dir?.kind).toBe("directory");
+    expect(dir?.size).toBe(0);
+    expect(file?.kind).toBe("file");
+    expect(file?.size).toBe(5);
+  });
+});
+
+/**
+ * A hand-built STORED zip whose central directory declares a chosen
+ * uncompressed size, honest or not.
+ *
+ * `JSZip.generateAsync` always tells the truth, so a bomb cannot be expressed
+ * through it — the bytes have to be assembled by hand.
+ */
+function storedEntryZip(
+  name: string,
+  body: string,
+  declaredSize: number,
+): Uint8Array {
+  const n = encoder.encode(name);
+  const b = encoder.encode(body);
+
+  const local = new Uint8Array(30 + n.length + b.length);
+  const lv = new DataView(local.buffer);
+  lv.setUint32(0, 0x04034b50, true);
+  lv.setUint16(4, 20, true);
+  lv.setUint16(8, 0, true); // stored, no compression
+  lv.setUint32(14, 0, true); // crc left at 0 — jszip does not verify by default
+  lv.setUint32(18, b.length, true);
+  lv.setUint32(22, declaredSize, true);
+  lv.setUint16(26, n.length, true);
+  local.set(n, 30);
+  local.set(b, 30 + n.length);
+
+  const central = new Uint8Array(46 + n.length);
+  const cv = new DataView(central.buffer);
+  cv.setUint32(0, 0x02014b50, true);
+  cv.setUint16(4, 20, true);
+  cv.setUint16(6, 20, true);
+  cv.setUint16(10, 0, true);
+  cv.setUint32(16, 0, true);
+  cv.setUint32(20, b.length, true);
+  cv.setUint32(24, declaredSize, true);
+  cv.setUint16(28, n.length, true);
+  cv.setUint32(42, 0, true);
+  central.set(n, 46);
+
+  const eocd = new Uint8Array(22);
+  const ev = new DataView(eocd.buffer);
+  ev.setUint32(0, 0x06054b50, true);
+  ev.setUint16(8, 1, true);
+  ev.setUint16(10, 1, true);
+  ev.setUint32(12, central.length, true);
+  ev.setUint32(16, local.length, true);
+
+  const out = new Uint8Array(local.length + central.length + eocd.length);
+  out.set(local, 0);
+  out.set(central, local.length);
+  out.set(eocd, local.length + central.length);
+  return out;
+}

@@ -78,6 +78,10 @@ export const routePaths = {
   skills: "/skills",
   learning: "/learning",
   conformance: "/conformance",
+  /** Immutable detail URL for one project-owned conformance run. */
+  conformanceRuns: "/conformance/runs",
+  /** Revocable read-only share of a conformance run. The token IS the credential. */
+  conformanceShared: "/conformance/shared",
   compatibility: "/compatibility",
   oauthFlow: "/oauth-flow",
   xaaFlow: "/xaa-flow",
@@ -528,9 +532,10 @@ export function useActiveTab(): string {
  * unreachable by `ui_navigate` while `pathnameToActiveTab` quietly resolves
  * it to Servers. Now the manifest is the single place to add.
  *
- * The hosted policy lists (`hosted-tab-policy.ts`) stay as a FILTER over
- * these segments — availability is a separate question from existence — and
- * a test asserts every policy entry still names a real segment.
+ * The hosted policy (`hosted-tab-policy.ts`) stays as a FILTER over these
+ * segments — availability is a separate question from existence — and it is
+ * derived from the same manifests, so it cannot name a segment that no
+ * longer exists.
  */
 const KNOWN_APP_TAB_SEGMENTS = new Set<string>(listAppSurfaceNavSegments());
 
@@ -564,6 +569,20 @@ export function isDebugOAuthCallbackPath(pathname: string): boolean {
     pathname === "/oauth/callback/debug" ||
     pathname.startsWith("/oauth/callback/debug/")
   );
+}
+
+export function buildConformanceRunPath(
+  runId: string,
+  projectId?: string | null
+): string {
+  const base = `${routePaths.conformanceRuns}/${encodeURIComponent(runId)}`;
+  return projectId
+    ? `${base}?project=${encodeURIComponent(projectId)}`
+    : base;
+}
+
+export function buildConformanceSharePath(token: string): string {
+  return `${routePaths.conformanceShared}/${encodeURIComponent(token)}`;
 }
 
 export function pathnameToActiveTab(pathname: string): string {
