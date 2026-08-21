@@ -126,3 +126,117 @@ describe("driveHostedEvalTurn pre-turn failure mapping (CodeRabbit, PR 2610)", (
 // NOTE: widget `ui/message` follow-up driving moved OUT of driveHostedEvalTurn
 // (R3 deleted its internal recursion) into the step-executor's
 // `drainAndDriveFollowUps` — covered by `step-executor-followup.test.ts`.
+
+describe("harness execution options reach the engine", () => {
+  beforeEach(() => {
+    runAssistantTurnMock.mockClear();
+  });
+
+  /** Capture the engine options for one turn, then stop it cheaply. */
+  async function engineOptionsFor(
+    overrides: Partial<DriveHostedEvalTurnParams>,
+  ): Promise<Record<string, unknown>> {
+    let captured: Record<string, unknown> = {};
+    runAssistantTurnMock.mockImplementationOnce(async (...args: unknown[]) => {
+      captured = args[0] as Record<string, unknown>;
+      // The engine result's shape as the caller reads it — `spans` hang off
+      // `turnTrace`, and omitting the trace would send the turn down its
+      // cycle-failure branch. What happens after capture does not matter to
+      // these tests, which assert on the options handed IN.
+      return { messages: [], usage: {}, turnTrace: { spans: [] } } as never;
+    });
+    await driveHostedEvalTurn(baseParams(overrides)).catch(() => {});
+    return captured;
+  }
+
+  const HARNESS_OPTIONS = {
+    harness: "claude-code" as const,
+    harnessSandboxBinding: { sandboxRowId: "row-1", sandboxId: "sbx-1" },
+    harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
+    builtInTools: { web_search: {} },
+  } as unknown as Partial<DriveHostedEvalTurnParams>;
+
+  it("forwards the box, the proxy strategy and the built-ins", async () => {
+    const options = await engineOptionsFor(HARNESS_OPTIONS);
+
+    // ONE box per iteration: the same sandbox the tool resolver exposes as
+    // `bash`, handed to the harness so it does not reserve a personal computer.
+    expect(options.harnessSandboxBinding).toEqual({
+      sandboxRowId: "row-1",
+      sandboxId: "sbx-1",
+    });
+    // An eval suite always has servers, and runHarnessTurn throws without a
+    // proxy strategy when any are selected.
+    expect(options.harnessMcpProxy).toEqual({
+      plane: "web-authorized",
+      mode: "relay",
+    });
+    // runHarnessTurn reads built-ins off THIS field and nowhere else — passing
+    // only `tools` would silently give the runtime none.
+    expect(options.builtInTools).toEqual({ web_search: {} });
+    expect(options.harness).toBe("claude-code");
+  });
+
+  it("forwards a PRESENT-BUT-EMPTY pinnedHarnessSkills — the A/B arm", async () => {
+    // The one harness field gated on `!== undefined` rather than truthiness,
+    // and deliberately so: an empty array is how `skillsOverride: "exclude"`
+    // says "this arm runs with NO skills". A truthiness regression would drop
+    // it, the harness would fall back to its own project-wide skill fetch, and
+    // the skill-free arm would quietly run with skills — while every other
+    // assertion in this file still passed.
+    const options = await engineOptionsFor({
+      ...HARNESS_OPTIONS,
+      pinnedHarnessSkills: [],
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+    expect(options.pinnedHarnessSkills).toEqual([]);
+  });
+
+  it("delivers the run's pins on the FROZEN channel, not the live-environment one", async () => {
+    // `selectHarnessSkillSource` ranks pinned → environment → live, and only
+    // the top rank promises that nothing live is consulted. Sending a frozen
+    // run's skills as `runtimeSkillsOverride` would work in the happy case and
+    // be wrong in the one that matters: `runtimeSkillsOverride` is documented
+    // as the channel for a turn whose environment re-resolves each time.
+    const options = await engineOptionsFor({
+      ...HARNESS_OPTIONS,
+      pinnedHarnessSkills: [
+        {
+          name: "deploy",
+          description: "ship it",
+          content: "# Deploy",
+          contentHash: "sha-1",
+        },
+      ],
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+
+    expect(options.pinnedHarnessSkills).toEqual([
+      {
+        name: "deploy",
+        description: "ship it",
+        content: "# Deploy",
+        contentHash: "sha-1",
+      },
+    ]);
+    expect(options.runtimeSkillsOverride).toBeUndefined();
+  });
+
+  it("keeps an EMULATED turn byte-identical — none of it leaks through", async () => {
+    // Every harness option is gated on the selector, so a non-harness eval
+    // sends exactly what it sent before.
+    const options = await engineOptionsFor({
+      harnessSandboxBinding: {
+        sandboxRowId: "row-1",
+        sandboxId: "sbx-1",
+      },
+      harnessMcpProxy: { plane: "web-authorized", mode: "relay" },
+      builtInTools: { web_search: {} },
+      pinnedHarnessSkills: [],
+    } as unknown as Partial<DriveHostedEvalTurnParams>);
+
+    expect(options.harness).toBeUndefined();
+    expect(options.harnessSandboxBinding).toBeUndefined();
+    expect(options.harnessMcpProxy).toBeUndefined();
+    expect(options.builtInTools).toBeUndefined();
+    expect(options.pinnedHarnessSkills).toBeUndefined();
+  });
+});
