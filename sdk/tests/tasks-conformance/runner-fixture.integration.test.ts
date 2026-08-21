@@ -9,7 +9,7 @@
  * test wants. Both bugs this file exists to pin were exactly that shape —
  * a `tools/list` the modern decoder refused (so DISCOVERY died before any
  * Tasks check ran) and an undeclared-capability probe that threw locally (so
- * the `-32003` requirement was never put to the server).
+ * the `-32021` requirement was never put to the server).
  *
  * So the assertions here are deliberately about the WIRE: the fixture's
  * `received` log is the witness that each probe actually left the process,
