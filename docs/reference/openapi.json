@@ -96,6 +96,10 @@
     {
       "name": "User testing",
       "description": "Publishing an environment for real visitors, and controlling who can reach it. Several of these NARROW access and take effect immediately."
+    },
+    {
+      "name": "Directory readiness",
+      "description": "Grade a saved server against a publisher's listing requirements: Anthropic's connector directory or OpenAI's plugin directory. Reported as lane status and coverage, never as a numeric score, and excluded from `pooledConformanceScore`. Deterministic grading is free; model-backed experience observations are an explicit opt-in that consumes MCPJam credits and can never decide a verdict."
     }
   ],
   "paths": {
@@ -1959,7 +1963,7 @@
           "Eval runs"
         ],
         "summary": "Compare a run against a baseline",
-        "description": "Compare this run against a baseline run: per-case status (`regressed`, `fixed`, `new_case`, `removed_case`, `changed`), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. Omit `baseRunId` to compare against the nearest earlier **completed** run in the same suite. Returns `404` with `details.reason` = `BASELINE_NOT_FOUND` when there is no comparable predecessor — that is an incomplete comparison, not a failing one. A scorer whose `definitionChanged` is `true` was graded by a different definition on each side, so its delta is not a regression.",
+        "description": "Compare this run against a baseline run: per-case status (`regressed`, `fixed`, `new_case`, `removed_case`, `changed`), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. Omit `baseRunId` to compare against the nearest earlier **completed** run in the same suite. Returns `404` with `details.reason` = `BASELINE_NOT_FOUND` when there is no comparable predecessor \u2014 that is an incomplete comparison, not a failing one. A scorer whose `definitionChanged` is `true` was graded by a different definition on each side, so its delta is not a regression.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -2522,7 +2526,7 @@
           "Catalog"
         ],
         "summary": "List organizations",
-        "description": "The organizations the caller belongs to — the source of the `organizationId` that `GET /projects` filters by and `POST /projects` accepts. An API key is bound to one organization and only ever sees that one. Read-only: organization, member, role and billing changes are not part of the public API.",
+        "description": "The organizations the caller belongs to \u2014 the source of the `organizationId` that `GET /projects` filters by and `POST /projects` accepts. An API key is bound to one organization and only ever sees that one. Read-only: organization, member, role and billing changes are not part of the public API.",
         "responses": {
           "200": {
             "description": "The caller's organizations.",
@@ -2548,6 +2552,96 @@
           },
           "502": {
             "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/organizations/{organizationId}/eval-check-repos": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/organizationId"
+        }
+      ],
+      "get": {
+        "operationId": "listEvalCheckRepos",
+        "tags": [
+          "Evals"
+        ],
+        "summary": "List GitHub Checks repositories",
+        "description": "The repositories in this organization whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach (the choices a connect has).\n\n`available: false` means GitHub Checks is not enabled for this organization at all \u2014 connecting a repository will not help. `connectable: null` means the App could not be asked (GitHub unavailable, or no installation), which is different from an empty list meaning it reaches nothing; the already-connected list needs no GitHub call and is returned either way.",
+        "responses": {
+          "200": {
+            "description": "Connected and connectable repositories.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCheckRepos"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "connectEvalCheckRepo",
+        "tags": [
+          "Evals"
+        ],
+        "summary": "Run an eval suite on a repository's pull requests",
+        "description": "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. **Affects everyone who opens a pull request on that repository**, and with `outagePolicy: fail_closed` it can block their merges.\n\nThe repository is verified against the organization's GitHub App installation before it is stored. A repository that does not exist and one the App cannot see answer identically, on purpose: answering differently would make this an oracle for private repository names.\n\nDeliberately narrow: retargeting a repository at a different suite, pausing it, and disconnecting are repo-level decisions and live in the app's Settings \u2192 Integrations, where every connected repository is visible at once.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalCheckRepoConnectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Connected.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCheckRepoConnected"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
@@ -2760,6 +2854,171 @@
           },
           "502": {
             "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites/{suiteId}/environments": {
+      "post": {
+        "operationId": "attachEvalSuiteEnvironment",
+        "tags": [
+          "Eval suites"
+        ],
+        "summary": "Attach one environment to a suite (atomic append)",
+        "description": "APPEND one project environment to the suite's attachments, if it is not already there.\n\nDistinct from `PATCH /eval-suites/{suiteId}` with `environmentIds`, which REPLACES the whole list. An append built on the replace door is a read-modify-write across two round trips, and a concurrent attach landing in between is silently DETACHED. The compose-and-run path attaches on every launch, which makes that race ordinary rather than theoretical, so the append happens inside one transaction instead.\n\nIdempotent: attaching an already-attached environment reports `attached: false` and changes nothing, which is what lets a retried launch converge instead of erroring. Subject to the same cap, membership and schedule-pin rules as the replace door \u2014 growing a single-environment suite to two is exactly the edit that strands an enabled unpinned schedule.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalSuiteEnvironmentAttachRequest"
+              },
+              "example": {
+                "environmentId": "env_abc123"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The suite's attachments after the call.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSuiteEnvironmentAttached"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-run-groups": {
+      "post": {
+        "operationId": "createEvalRunGroup",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Launch one run per target as a group (async)",
+        "description": "Launches ONE run per target \u2014 attached project environments, or attached named hosts \u2014 under a single **server-minted** `runGroupId`, then detaches execution and responds `202` with a per-target receipt.\n\nThis is the only endpoint with grouped-launch semantics. `POST /eval-runs` also accepts a `runGroupId`, but purely as a display label: it groups sibling rows in the UI and gives N separate launches no group treatment. Here the server bounds the fan-out (max 10 targets), validates EVERY target before launching any of them (an unattached target, a heterogeneous target list, or a target whose host selects an unavailable harness returns `400` with zero runs started), and holds exactly ONE organization concurrency slot for the whole group \u2014 released only when the last sibling finishes.\n\nTargets fan out along ONE axis: all `environmentId` or all `namedHostId`, never a mix. Duplicates are deduplicated by id, preserving order.\n\nA per-target failure does NOT abort its siblings, so read `outcome` rather than treating the `202` as \"everything started\": `started` means every target launched, `partial` means some did, `failed` means none did.\n\nSend `Idempotency-Key` (or `idempotencyKey`) to make the launch replayable: the group id is DERIVED from the key, and each target carries a run key derived from that, so a retry after a crash mid-launch returns the original run ids instead of double-launching the targets that already started.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalRunGroupCreateRequest"
+              },
+              "example": {
+                "suiteId": "suite_def456",
+                "targets": [
+                  {
+                    "namedHostId": "host_claude"
+                  },
+                  {
+                    "namedHostId": "host_chatgpt"
+                  }
+                ],
+                "iterationOverride": 3
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Group accepted. Each target's outcome is in `targets`; execution continues in the background.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunGroupCreated"
+                },
+                "example": {
+                  "runGroupId": "6f1a2b3c4d5e6f708192a3b4c5d6e7f8",
+                  "suiteId": "suite_def456",
+                  "outcome": "partial",
+                  "startedCount": 1,
+                  "failedCount": 1,
+                  "targets": [
+                    {
+                      "target": {
+                        "namedHostId": "host_claude",
+                        "name": "Claude"
+                      },
+                      "status": "started",
+                      "runId": "run_abc123",
+                      "runStatus": "running"
+                    },
+                    {
+                      "target": {
+                        "namedHostId": "host_chatgpt",
+                        "name": "ChatGPT"
+                      },
+                      "status": "failed",
+                      "error": {
+                        "code": "VALIDATION_ERROR",
+                        "message": "Suite has no saved server selection to rerun against."
+                      }
+                    }
+                  ],
+                  "runId": "run_abc123",
+                  "status": "running"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
           }
         }
       }
@@ -3172,6 +3431,124 @@
           },
           "409": {
             "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/eval-suites/{suiteId}/cases/batch": {
+      "post": {
+        "operationId": "createEvalCases",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Create several eval cases",
+        "description": "Adds up to 100 cases to the suite in one call \u2014 the bulk form of the single create, and the way to import a suite or convert a repo's test files without a round trip per case. Every entry needs a `title` and a non-empty `steps` array. Cases are validated together and reported individually: a `failed` entry does not roll back its committed siblings, so the response is `201` even when some entries were refused \u2014 read `failed` rather than branching on the status alone. Send an `Idempotency-Key` header to make a retry land on the same rows.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "description": "Makes the write retry-safe. A repeat of the same request under the same key lands on the rows the first attempt authored instead of creating a second copy; those entries come back with `replayed: true`.",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalCasesBatchCreateRequest"
+              },
+              "example": {
+                "cases": [
+                  {
+                    "id": "c_lists_files",
+                    "title": "lists files",
+                    "steps": [
+                      {
+                        "id": "s1",
+                        "kind": "prompt",
+                        "prompt": "List the files in the project root."
+                      },
+                      {
+                        "id": "s2",
+                        "kind": "assert",
+                        "assertion": {
+                          "type": "toolCalledWith",
+                          "toolName": "list_files",
+                          "args": {
+                            "args": {}
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "title": "reads a file",
+                    "steps": [
+                      {
+                        "id": "s1",
+                        "kind": "prompt",
+                        "prompt": "Read README.md."
+                      },
+                      {
+                        "id": "s2",
+                        "kind": "assert",
+                        "assertion": {
+                          "type": "toolCalledWith",
+                          "toolName": "read_file",
+                          "args": {
+                            "args": {}
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Per-case outcomes. Some entries may have failed; see `failed`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalCasesBatchResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
@@ -3706,7 +4083,7 @@
             "$ref": "#/components/parameters/projectId"
           },
           {
-            "$ref": "#/components/parameters/scenarioId"
+            "$ref": "#/components/parameters/projectScenarioId"
           }
         ],
         "responses": {
@@ -4178,6 +4555,130 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/environments/ensure-adhoc": {
+      "post": {
+        "operationId": "ensureAdhocEnvironment",
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Get or create an unnamed environment for a composed stack",
+        "description": "GET-OR-CREATE an UNNAMED, content-addressed environment for a composed stack \u2014 a host plus an optional server group, model override, computer image and pinned skills.\n\nDistinct from `POST /environments`, which mints a NAMED row that lands in the project's environment list forever. A composed stack is a throwaway: the caller wants to run this exact combination, not to add a permanent entry someone else has to reason about.\n\nDeduplicated by a server-side fingerprint of the stack, so the same stack always returns the same environment. `created` says which happened \u2014 the status is `200` either way, because get-or-create cannot honestly answer `201` on the dedupe path.\n\nA deployment that predates ad-hoc environments answers `400` with `details.reason: \"ADHOC_UNAVAILABLE\"`.\n\nRequires project membership (admin only when the stack pins plugin versions). Promote one to a named environment with `POST /environments/{environmentId}/name`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdhocEnvironmentRequest"
+              },
+              "example": {
+                "hostId": "host_abc123",
+                "sandboxImageId": "img_def456"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The environment for this stack, created or reused.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdhocEnvironmentEnsured"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/environments/{environmentId}/name": {
+      "post": {
+        "operationId": "nameEnvironment",
+        "tags": [
+          "Environments"
+        ],
+        "summary": "Promote an unnamed environment",
+        "description": "Give an UNNAMED (ad-hoc) environment a name, promoting it IN PLACE \u2014 the same environment, now a permanent entry in the project's list, with the same id every existing run still points at.\n\nThe ONLY promotion path. `PATCH /environments/{environmentId}` renames an already-named environment and is admin-gated; this is member-gated and refuses a row that already has a name (`409`). The platform keeps them apart on purpose: routing promotion through the rename would either open it to members or leave ad-hoc rows unnameable.\n\nPromotion also drops the content fingerprint, because a named environment is mutable: keeping it would let a later identical composition deduplicate onto a row that has since been edited into something else.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/environmentId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EnvironmentNameRequest"
+              },
+              "example": {
+                "expectedRevision": 1,
+                "name": "Claude Code smoke"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The promoted environment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectEnvironment"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
@@ -8149,6 +8650,64 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/judge": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/runId"
+        }
+      ],
+      "post": {
+        "operationId": "requestEvalRunJudge",
+        "tags": [
+          "Evals"
+        ],
+        "summary": "Grade an eval run with LLM as Judge",
+        "description": "**Spends.** Runs the goal-completion judge over the finished run, scoring each case's final answer against its expected output.\n\n`202`: scheduled, not done. Read the grades from the run detail's `judges.goalCompletion` rather than re-requesting \u2014 a second POST only spends again.\n\nA run's grading config is pinned when the run is created, so turning the judge on for the suite does not reach an already-recorded run: `enable: true` is what grades one, and it changes nothing beyond that run. Omitting `model` and `threshold` clears any override a previous request left on the run.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalRunJudgeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Scheduled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalRunJudgeRequested"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/capabilities": {
       "parameters": [
         {
@@ -8190,6 +8749,401 @@
           }
         }
       }
+    },
+    "/projects/{projectId}/servers/{serverId}/readiness-runs/claude": {
+      "post": {
+        "operationId": "startClaudeReadinessRun",
+        "tags": [
+          "Directory readiness"
+        ],
+        "summary": "Start a Claude directory-readiness run",
+        "description": "Grades the saved server against Anthropic's connector-directory requirements and returns `202` with a run id. The target comes from the saved server the path names: a body cannot supply a URL, an actor, an organization, a model or a cost. Poll the run detail for the verdict. Deterministic grading is free.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "idempotencyKey": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Deduplicates a retried POST. More load-bearing here than usual: a readiness run dials a third party's server, and a retried start that created a second run would do that twice."
+                  },
+                  "includeLlmObservations": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Add model-backed experience observations. **Consumes MCPJam credits.** Off by default, and deliberately: a billed opt-in that defaulted on would start charging every existing caller on the day it shipped. Observations are non-dispositive and can never make a server not-ready; a refused reservation makes no provider call and completes the run with `llmObservations.reason` set to `billing_limit_reached`."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The run was accepted and is executing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessRunReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body carried an unknown key, or the server uses a transport no directory can list."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/servers/{serverId}/readiness-runs/openai": {
+      "post": {
+        "operationId": "startOpenAIReadinessRun",
+        "tags": [
+          "Directory readiness"
+        ],
+        "summary": "Start an OpenAI plugin-directory readiness run",
+        "description": "Grades the saved server against OpenAI's plugin-directory requirements and returns `202` with a run id. `submissionMode` is required and never inferred: inferring it would read a forgotten package as `mcp-only` and report the package lane not-applicable, turning a missing input into a clean bill of health. Hosted runs grade the two wire-safe shapes; the package shapes need an upload this API cannot receive and are available from the CLI.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "submissionMode"
+                ],
+                "properties": {
+                  "submissionMode": {
+                    "type": "string",
+                    "enum": [
+                      "mcp-only",
+                      "mcp-imported-skills"
+                    ],
+                    "description": "The declared submission shape."
+                  },
+                  "idempotencyKey": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Deduplicates a retried POST. More load-bearing here than usual: a readiness run dials a third party's server, and a retried start that created a second run would do that twice."
+                  },
+                  "includeLlmObservations": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Add model-backed experience observations. **Consumes MCPJam credits.** Off by default, and deliberately: a billed opt-in that defaulted on would start charging every existing caller on the day it shipped. Observations are non-dispositive and can never make a server not-ready; a refused reservation makes no provider call and completes the run with `llmObservations.reason` set to `billing_limit_reached`."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The run was accepted and is executing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessRunReceipt"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "`submissionMode` was missing, named a package shape a hosted run cannot grade, or the body carried an unknown key."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/readiness-runs": {
+      "get": {
+        "operationId": "listReadinessRuns",
+        "tags": [
+          "Directory readiness"
+        ],
+        "summary": "List readiness runs",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "name": "readinessKind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "claude",
+                "openai"
+              ]
+            },
+            "description": "Narrow to one publisher. Omitted lists both, newest first."
+          },
+          {
+            "name": "serverId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ReadinessRun"
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/readiness-runs/{runId}": {
+      "get": {
+        "operationId": "getReadinessRun",
+        "tags": [
+          "Directory readiness"
+        ],
+        "summary": "Read one readiness run",
+        "description": "Lane statuses, coverage and the observation axis. The full report \u2014 every finding with its citation and provenance \u2014 is a separate fetch.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessRun"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/readiness-runs/{runId}/cancel": {
+      "post": {
+        "operationId": "cancelReadinessRun",
+        "tags": [
+          "Directory readiness"
+        ],
+        "summary": "Cancel an in-flight readiness run",
+        "description": "The executing node learns about this on its next heartbeat and aborts the run in flight, which matters more than the row's status: the thing being stopped is traffic to somebody else's server.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run was cancelled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "runId",
+                    "projectId",
+                    "status"
+                  ],
+                  "properties": {
+                    "runId": {
+                      "type": "string"
+                    },
+                    "projectId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "cancelled"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The run already reached a terminal status."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/readiness-runs/{runId}/report": {
+      "get": {
+        "operationId": "getReadinessReport",
+        "tags": [
+          "Directory readiness"
+        ],
+        "summary": "Fetch a readiness run's full report",
+        "description": "Every finding, with its class, provenance, publisher-documentation citation and remediation. AI-derived findings carry `provenance` of `llm` and are confined to the experience lane as `heuristic` or `manual-review`; they can never decide a lane. `404` when the run has no stored report: it may be in flight, it may have failed, or its report may have aged past retention.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report document.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -8201,6 +9155,15 @@
       }
     },
     "parameters": {
+      "organizationId": {
+        "name": "organizationId",
+        "in": "path",
+        "required": true,
+        "description": "ID of the organization, from `GET /organizations`.",
+        "schema": {
+          "type": "string"
+        }
+      },
       "projectId": {
         "name": "projectId",
         "in": "path",
@@ -8246,7 +9209,7 @@
           "type": "string"
         }
       },
-      "scenarioId": {
+      "projectScenarioId": {
         "name": "scenarioId",
         "in": "path",
         "required": true,
@@ -8448,6 +9411,10 @@
           "id": {
             "type": "string"
           },
+          "declaredId": {
+            "type": "string",
+            "description": "The case's effective declared id. Absent on cases authored before declared identity existed."
+          },
           "title": {
             "type": "string"
           },
@@ -8541,6 +9508,11 @@
             "type": "string",
             "minLength": 1
           },
+          "id": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9_-]{1,128}$",
+            "description": "Stable declared id for the case \u2014 the id it answers to in a suite file, an import or a CLI argument. Minted for you when omitted, and unique within the suite. Distinct from the `id` on the response, which is the case's platform row id."
+          },
           "steps": {
             "type": "array",
             "minItems": 1,
@@ -8609,6 +9581,170 @@
                   "type": "object"
                 }
               }
+            }
+          }
+        }
+      },
+      "EvalCaseWarning": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "description": "Names something that would otherwise have to be inferred from silence. A warning never changes what was written.",
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "EvalCasesBatchCreateRequest": {
+        "type": "object",
+        "required": [
+          "cases"
+        ],
+        "description": "Author several cases in one call. Each entry takes the same fields as a single create. The 100-case cap is deliberately smaller than a suite file's 500-case limit, so a maximal file uploads in several calls.",
+        "properties": {
+          "cases": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 100,
+            "items": {
+              "$ref": "#/components/schemas/EvalCaseCreateRequest"
+            }
+          },
+          "duplicatePolicy": {
+            "type": "string",
+            "enum": [
+              "block",
+              "warn",
+              "create_anyway"
+            ],
+            "default": "block",
+            "description": "What to do with a case whose definition already matches one in the suite. An unrecognized value coerces to `block` and reports the coercion in the response's `duplicatePolicy` rather than failing the call."
+          },
+          "overrideReason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Required by `warn` and `create_anyway`. Recorded on the case's revision."
+          }
+        }
+      },
+      "EvalCasesBatchResult": {
+        "type": "object",
+        "required": [
+          "created",
+          "failed",
+          "duplicatePolicy"
+        ],
+        "description": "A partial outcome by design: the cases in `created` were written even when `failed` is non-empty. Both arrays carry the `index` of the request entry they describe.",
+        "properties": {
+          "created": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "index",
+                "id",
+                "title",
+                "replayed"
+              ],
+              "properties": {
+                "index": {
+                  "type": "integer",
+                  "description": "Position in the request's `cases` array."
+                },
+                "id": {
+                  "type": "string",
+                  "description": "Platform case id \u2014 the path parameter for the per-case routes."
+                },
+                "declaredId": {
+                  "type": "string",
+                  "description": "The effective declared id. On a replay this is the stored case's, not the one just sent."
+                },
+                "title": {
+                  "type": "string"
+                },
+                "replayed": {
+                  "type": "boolean",
+                  "description": "True when an idempotent retry landed on an already-authored case; nothing new was written."
+                },
+                "warnings": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/EvalCaseWarning"
+                  }
+                }
+              }
+            }
+          },
+          "failed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "index",
+                "code",
+                "message"
+              ],
+              "properties": {
+                "index": {
+                  "type": "integer"
+                },
+                "title": {
+                  "type": "string"
+                },
+                "declaredId": {
+                  "type": "string"
+                },
+                "code": {
+                  "type": "string",
+                  "description": "Stable machine-readable reason.",
+                  "enum": [
+                    "INVALID_ITEM",
+                    "INVALID_CASE_ID",
+                    "DUPLICATE_CASE_ID",
+                    "DUPLICATE_IDEMPOTENCY_KEY",
+                    "IDEMPOTENCY_CONFLICT",
+                    "DUPLICATE_CONTENT",
+                    "OVERRIDE_REASON_REQUIRED",
+                    "INVALID_CASE",
+                    "UNSTORABLE_ITEM",
+                    "ITEM_TOO_LARGE"
+                  ]
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "duplicatePolicy": {
+            "type": "object",
+            "required": [
+              "effectivePolicy",
+              "coerced"
+            ],
+            "description": "What policy actually applied, so a coercion is never silent.",
+            "properties": {
+              "requestedPolicy": {
+                "type": "string"
+              },
+              "effectivePolicy": {
+                "type": "string"
+              },
+              "coerced": {
+                "type": "boolean"
+              }
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalCaseWarning"
             }
           }
         }
@@ -9635,13 +10771,24 @@
           },
           "environment": {
             "type": "object",
-            "description": "LEGACY server bag, kept as rollback data. Unrelated to `environmentIds`.",
+            "description": "LEGACY server bag, kept as rollback data, plus the suite's sandbox-image pin. Unrelated to `environmentIds`.",
             "properties": {
               "servers": {
                 "type": "array",
                 "items": {
                   "type": "string"
                 }
+              },
+              "computerEnvironment": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/EvalSuiteComputerEnvironment"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "The custom sandbox image this suite's eval runs boot a fresh computer from. `null` means the provider's default base image. PATCH it by name or id (see `GET /projects/{projectId}/images`); PATCH `null` to clear the pin."
               }
             }
           },
@@ -9703,6 +10850,13 @@
                 ],
                 "description": "Minimum pass rate for the suite to count as passing."
               },
+              "minimumIterations": {
+                "type": [
+                  "number",
+                  "null"
+                ],
+                "description": "Suite-level floor on per-case iterations, 1\u201310: every case runs at least this many times (`max(case.iterations, minimumIterations)`). `null` means no floor \u2014 the suite's real state, not a stand-in for 1. PATCH `null` to remove it."
+              },
               "matchOptions": {
                 "type": [
                   "object",
@@ -9717,16 +10871,26 @@
               },
               "judge": {
                 "type": "object",
-                "description": "Goal-completion judge. Absent config reads as enabled.",
+                "description": "Goal-completion judge (LLM as Judge), FULLY RESOLVED: every field is the platform default where the suite set none, so this is what a run on this suite would actually grade with.",
                 "properties": {
                   "enabled": {
-                    "type": "boolean"
+                    "type": "boolean",
+                    "description": "Judge is available on the suite. On its own this grades nothing."
                   },
                   "model": {
                     "type": [
                       "string",
                       "null"
-                    ]
+                    ],
+                    "description": "Resolved judge model. `null` only from deployments that predate resolution."
+                  },
+                  "autoRun": {
+                    "type": "boolean",
+                    "description": "The flag that makes grading HAPPEN: grade every run as it completes. Spends per run."
+                  },
+                  "threshold": {
+                    "type": "number",
+                    "description": "Advisory pass threshold, 0\u20131 (`passed = score >= threshold`)."
                   }
                 }
               }
@@ -9827,9 +10991,388 @@
           "environmentId": {
             "type": "string",
             "description": "Run against one of the suite's attached project environments. Requires `suiteId`, and must be a member of that suite's `environmentIds` \u2014 otherwise `400` with `details.reason: \"ENVIRONMENT_NOT_ATTACHED\"`, raised before any case is authored or any server connected.\n\nOmission is meaningful: a suite with no attached environments runs legacy; a suite with exactly ONE attached environment runs against it automatically (the response's `environment` says which); a suite with several returns `400` with `details.reason: \"ENVIRONMENT_REQUIRED\"`, naming the candidates.\n\nThe environment supplies the closed server set (so `serverIds` is not required, and is rejected alongside it), and the run is pinned to the revision resolved at launch \u2014 if the environment changes in between, the run is rejected with `409` rather than executing against a different configuration."
+          },
+          "namedHostId": {
+            "type": "string",
+            "description": "Run against ONE host attached to the suite. The platform snapshots that host's current config onto the run and derives the run's server set from it, so a host launch needs no `serverIds`. Without this, a suite with host attachments runs under the suite's own default host config \u2014 the run executes, but the result is attributed to the wrong host.\n\nTo run SEVERAL attached hosts, use `POST /eval-run-groups` rather than N calls here: it is the surface that bounds the fan-out and meters it as one launch."
+          },
+          "caseIds": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Narrow the run to these suite cases. The persisted suite is untouched \u2014 this filters the run's snapshot only. Every id must belong to the suite; none matching returns `404`.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "matchOptionsOverride": {
+            "description": "One-off tool-call match options for this run only, layered over suite defaults and per-case overrides. Does NOT mutate the suite or its cases.\n\nAccepts EITHER the public vocabulary (`toolCallOrder: any|in-order|exact`, `extraToolCalls`, `arguments`) or the internal one (`toolCallOrder: ignore|superset|strict`, `maxExtraToolCalls`, `argumentMatching`). The two are disjoint, so a body can only be one of them; public bodies are normalized server-side.",
+            "type": "object",
+            "properties": {
+              "toolCallOrder": {
+                "type": "string",
+                "description": "Public: `any` (order ignored) | `in-order` (expected calls appear in order, extras allowed) | `exact` (exact sequence). Internal equivalents: `ignore` | `superset` | `strict`.",
+                "enum": [
+                  "any",
+                  "in-order",
+                  "exact",
+                  "ignore",
+                  "superset",
+                  "strict"
+                ]
+              },
+              "extraToolCalls": {
+                "description": "Public form: `\"unlimited\"`, or a maximum count of unexpected extra tool calls.",
+                "oneOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "unlimited"
+                    ]
+                  },
+                  {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                ]
+              },
+              "arguments": {
+                "type": "string",
+                "description": "Public form of argument-comparison strictness.",
+                "enum": [
+                  "ignore",
+                  "partial",
+                  "exact"
+                ]
+              },
+              "maxExtraToolCalls": {
+                "description": "Internal form of `extraToolCalls`: `null` is unlimited.",
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "minimum": 0
+              },
+              "argumentMatching": {
+                "type": "string",
+                "description": "Internal form of `arguments`.",
+                "enum": [
+                  "ignore",
+                  "partial",
+                  "exact"
+                ]
+              }
+            }
+          },
+          "skillsOverride": {
+            "type": "string",
+            "enum": [
+              "exclude"
+            ],
+            "description": "The \"without skills\" arm of an A/B comparison: the run pins NO skills from any channel and is marked `skillsExcluded`, so the arm is labelled rather than merely empty. Scoped to skill DELIVERY \u2014 a pinned plugin's MCP servers stay connected, because which servers an arm connects is the one variable a skills A/B has to hold fixed."
+          },
+          "refreshSnapshot": {
+            "type": "boolean",
+            "description": "**PERSISTS A SUITE MUTATION.** Re-derives and stores the suite's host-config snapshot from this request's server list, so future runs of the suite use it too. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target launches only \u2014 it is not accepted on `POST /eval-run-groups`, where last-writer-wins on a frozen snapshot is never what a fan-out means."
+          },
+          "runGroupId": {
+            "type": "string",
+            "description": "A LABEL that groups sibling run rows for display. It has NO quota or launch semantics here: N calls carrying one id are still N independent launches, each metered separately. Grouped-launch behaviour lives on `POST /eval-run-groups`, which mints the id itself. Echoed back on the `202`."
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Write-idempotency key. A repeat call with the same key (same actor and suite) returns the EXISTING run instead of creating and billing a second one. The `Idempotency-Key` header carries the same value and WINS over this field \u2014 it is the transport-level channel unattended clients control, whereas a body key could be shaped by model output."
           }
         },
         "additionalProperties": true
+      },
+      "EvalSuiteEnvironmentAttachRequest": {
+        "type": "object",
+        "required": [
+          "environmentId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "environmentId": {
+            "type": "string"
+          }
+        }
+      },
+      "EvalSuiteEnvironmentAttached": {
+        "type": "object",
+        "required": [
+          "suiteId",
+          "attached",
+          "environmentIds"
+        ],
+        "properties": {
+          "suiteId": {
+            "type": "string"
+          },
+          "attached": {
+            "type": "boolean",
+            "description": "`false` when it was ALREADY attached \u2014 a no-op, not a failure, which is what lets a retried compose-and-run converge."
+          },
+          "environmentIds": {
+            "type": "array",
+            "description": "The suite's attachments after the call, in attach order.",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "EvalRunGroupCreateRequest": {
+        "type": "object",
+        "required": [
+          "suiteId",
+          "targets"
+        ],
+        "description": "Launch one run per target under a single server-minted group id.\n\n`targets` fan out along ONE axis: every entry is an `environmentId`, or every entry is a `namedHostId`. A mixed list returns `400` with `details.reason: \"HETEROGENEOUS_TARGETS\"` \u2014 mixing them would have to answer whether a host runs inside an environment or beside it, and every answer to that is a cross product nobody asked for. Duplicates are deduplicated by id, preserving order.\n\nThe knobs below apply UNIFORMLY to every run in the group. `serverIds` and `refreshSnapshot` are deliberately absent: an environment supplies its own closed server set, a host derives one from its config, and last-writer-wins on a frozen suite snapshot is never what a fan-out means. Inline `tests` are absent for the same reason \u2014 a group runs a persisted suite.",
+        "properties": {
+          "suiteId": {
+            "type": "string",
+            "description": "The suite every target runs."
+          },
+          "targets": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 10,
+            "description": "One entry per run. Every target must be ATTACHED to the suite; an unattached one returns `400` with zero runs started.",
+            "items": {
+              "type": "object",
+              "oneOf": [
+                {
+                  "required": [
+                    "environmentId"
+                  ]
+                },
+                {
+                  "required": [
+                    "namedHostId"
+                  ]
+                }
+              ],
+              "properties": {
+                "environmentId": {
+                  "type": "string",
+                  "description": "A project environment in the suite's `environmentIds`."
+                },
+                "namedHostId": {
+                  "type": "string",
+                  "description": "A host attached to the suite."
+                }
+              }
+            }
+          },
+          "iterationOverride": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Override the per-case `runs` count for every run in the group."
+          },
+          "caseIds": {
+            "type": "array",
+            "minItems": 1,
+            "description": "Narrow every run in the group to these suite cases.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "matchOptionsOverride": {
+            "description": "Match options for every run in the group. Same public-or-internal vocabulary as `POST /eval-runs`.",
+            "type": "object"
+          },
+          "skillsOverride": {
+            "type": "string",
+            "enum": [
+              "exclude"
+            ],
+            "description": "Run every target as the \"without skills\" arm."
+          },
+          "notes": {
+            "type": "string"
+          },
+          "passCriteria": {
+            "type": "object",
+            "properties": {
+              "minimumPassRate": {
+                "type": "number"
+              }
+            }
+          },
+          "idempotencyKey": {
+            "type": "string",
+            "maxLength": 256,
+            "description": "Makes the whole launch replayable. The `runGroupId` is DERIVED from this key and each target's run key is derived from that, so a retry after a crash mid-launch returns the original run ids rather than double-launching the targets that already started. The `Idempotency-Key` header carries the same value and wins over this field."
+          }
+        },
+        "additionalProperties": false
+      },
+      "EvalRunGroupCreated": {
+        "type": "object",
+        "required": [
+          "runGroupId",
+          "suiteId",
+          "outcome",
+          "startedCount",
+          "failedCount",
+          "targets"
+        ],
+        "description": "One entry per target. A per-target failure does NOT abort its siblings, so read `outcome` rather than treating the `202` as \"everything started\".",
+        "properties": {
+          "runGroupId": {
+            "type": "string",
+            "description": "Server-minted. Every sibling run carries it, and the hosted UI collapses them into one row."
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`started` \u2014 every target launched; `partial` \u2014 some did and some did not; `failed` \u2014 none did (still a `202`: the group itself was valid, and the per-target reasons are in `targets`).",
+            "enum": [
+              "started",
+              "partial",
+              "failed"
+            ]
+          },
+          "startedCount": {
+            "type": "integer"
+          },
+          "failedCount": {
+            "type": "integer"
+          },
+          "targets": {
+            "type": "array",
+            "description": "Discriminated on `status`, so a target that failed can never be mistaken for one that started with an unread `runId`.",
+            "items": {
+              "type": "object",
+              "required": [
+                "target",
+                "status"
+              ],
+              "properties": {
+                "target": {
+                  "type": "object",
+                  "description": "Which target this entry is for. Exactly one id is set.",
+                  "properties": {
+                    "environmentId": {
+                      "type": "string"
+                    },
+                    "namedHostId": {
+                      "type": "string"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "started",
+                    "failed"
+                  ]
+                },
+                "runId": {
+                  "type": "string",
+                  "description": "Present when `status` is `started`."
+                },
+                "runStatus": {
+                  "type": "string",
+                  "description": "The RUN's status. `running` for a target that just launched; on a target whose run was REPLAYED (see `deduped`), that run's own status. Named apart from the entry's own `status` on purpose \u2014 two fields called `status` in one object is how a reader ends up branching on the wrong one."
+                },
+                "deduped": {
+                  "type": "boolean",
+                  "description": "Present and true when this target REPLAYED an existing run instead of starting one. A replayed run is not executed again, so the target costs no further credits."
+                },
+                "servers": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "environment": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/EvalRunEnvironment"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "caseUpsert": {
+                  "type": "object"
+                },
+                "error": {
+                  "type": "object",
+                  "description": "Present when `status` is `failed`. The code is preserved so a caller can tell a retryable conflict from a genuine internal error.",
+                  "properties": {
+                    "code": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "runId": {
+            "type": "string",
+            "deprecated": true,
+            "description": "Mirror of the FIRST started run, so readers written against the single-run receipt keep working. Absent when nothing started. Read `targets` instead \u2014 this describes one run out of several."
+          },
+          "status": {
+            "type": "string",
+            "deprecated": true,
+            "description": "See `runId`."
+          },
+          "servers": {
+            "type": "array",
+            "deprecated": true,
+            "description": "See `runId`.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "environment": {
+            "deprecated": true,
+            "description": "See `runId`.",
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EvalRunEnvironment"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "caseUpsert": {
+            "type": "object",
+            "deprecated": true,
+            "description": "See `runId`."
+          }
+        }
       },
       "EvalRunCreated": {
         "type": "object",
@@ -9848,7 +11391,15 @@
           },
           "status": {
             "type": "string",
-            "const": "running"
+            "description": "The run's status. `running` on a fresh launch; on a replay (see `deduped`), the existing run's own status, which may already be terminal."
+          },
+          "deduped": {
+            "type": "boolean",
+            "description": "Present and true when this request REPLAYED an existing run instead of starting one (an idempotency-key hit, or the short keyless dedupe window). A replayed run is not executed again, so no further credits are spent; read `status` for what that run actually is. Absent on a fresh launch."
+          },
+          "runGroupId": {
+            "type": "string",
+            "description": "Echo of the request's `runGroupId`, when one was sent. A LABEL only \u2014 it groups sibling rows for display and carries no quota or launch semantics."
           },
           "servers": {
             "type": "array",
@@ -10014,7 +11565,7 @@
               "string",
               "null"
             ],
-            "description": "Whether the run's score evidence verified at ingest. TRI-STATE, and the third state matters: `valid` means the backend checked and definitions and results agree; `invalid` means they do not; `null` (or absent) means NO VERDICT was produced, on a deployment that predates integrity checking. A score gate must treat `null` exactly like `invalid` — absent evidence is not valid evidence.",
+            "description": "Whether the run's score evidence verified at ingest. TRI-STATE, and the third state matters: `valid` means the backend checked and definitions and results agree; `invalid` means they do not; `null` (or absent) means NO VERDICT was produced, on a deployment that predates integrity checking. A score gate must treat `null` exactly like `invalid` \u2014 absent evidence is not valid evidence.",
             "enum": [
               "valid",
               "invalid",
@@ -10032,6 +11583,10 @@
               }
             ]
           },
+          "executionEngine": {
+            "type": "string",
+            "description": "Which engine executed the run: `emulated` (the platform's own turn loop) or `harness:<id>` (a real agent runtime such as Claude Code). ABSENT means the run recorded no engine \u2014 a run created before the platform attributed one. Treat that as UNKNOWN, never as `emulated`: those are different claims, and the runs whose engine was never recorded are exactly the ones a reader must not vouch for."
+          },
           "insights": {
             "allOf": [
               {
@@ -10039,6 +11594,376 @@
               }
             ],
             "description": "The common actionable-insights envelope. Present on the DETAIL response only \u2014 lists stay compact \u2014 and absent when the caller may not have it or the deployment cannot produce one. Treat absence exactly like `status: \"not_available\"`."
+          },
+          "judges": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EvalRunJudges"
+              }
+            ],
+            "description": "Advisory LLM graders on this run. Present on the DETAIL response only \u2014 lists stay compact \u2014 and absent on deployments that predate the envelope."
+          }
+        }
+      },
+      "EvalRunJudges": {
+        "type": "object",
+        "description": "Advisory graders on a run, keyed by judge. An envelope rather than a bare `judge` field because goal completion is one of several; a future judge is a new key here, not a reshaped response.",
+        "properties": {
+          "goalCompletion": {
+            "$ref": "#/components/schemas/EvalRunGoalCompletionJudge"
+          },
+          "groundedness": {
+            "$ref": "#/components/schemas/EvalRunGroundednessJudge"
+          }
+        }
+      },
+      "EvalRunJudgeState": {
+        "type": "object",
+        "description": "The state every advisory judge reports on a run.",
+        "required": [
+          "status",
+          "errorCode",
+          "summary",
+          "generatedAt",
+          "modelUsed",
+          "threshold"
+        ],
+        "properties": {
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "pending",
+              "completed",
+              "failed",
+              null
+            ],
+            "description": "`null` means this judge was NEVER requested for the run \u2014 a different answer from \"requested and graded nothing\". Poll rather than re-requesting while `pending`."
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Machine-readable failure reason, set alongside `status: \"failed\"`."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generatedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "modelUsed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The threshold these results were scored against (`passed = score >= threshold`)."
+          }
+        }
+      },
+      "EvalRunGoalCompletionJudge": {
+        "type": "object",
+        "description": "Goal completion: grades each case's final answer against its expected output.",
+        "required": [
+          "status",
+          "errorCode",
+          "summary",
+          "generatedAt",
+          "modelUsed",
+          "threshold",
+          "cases"
+        ],
+        "properties": {
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "pending",
+              "completed",
+              "failed",
+              null
+            ],
+            "description": "`null` means this judge was NEVER requested for the run \u2014 a different answer from \"requested and graded nothing\". Poll rather than re-requesting while `pending`."
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Machine-readable failure reason, set alongside `status: \"failed\"`."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generatedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "modelUsed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The threshold these results were scored against (`passed = score >= threshold`)."
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalRunGoalCompletionCase"
+            },
+            "description": "Per-case grades. EMPTY unless `status` is `completed` \u2014 a pending or failed judge carries no cases, and `status` is what says which."
+          }
+        }
+      },
+      "EvalRunGroundednessJudge": {
+        "type": "object",
+        "description": "Groundedness: grades whether each answer is SUPPORTED by its tool trajectory.",
+        "required": [
+          "status",
+          "errorCode",
+          "summary",
+          "generatedAt",
+          "modelUsed",
+          "threshold",
+          "cases"
+        ],
+        "properties": {
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "pending",
+              "completed",
+              "failed",
+              null
+            ],
+            "description": "`null` means this judge was NEVER requested for the run \u2014 a different answer from \"requested and graded nothing\". Poll rather than re-requesting while `pending`."
+          },
+          "errorCode": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Machine-readable failure reason, set alongside `status: \"failed\"`."
+          },
+          "summary": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "generatedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "modelUsed": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "threshold": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "The threshold these results were scored against (`passed = score >= threshold`)."
+          },
+          "cases": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalRunGroundednessCase"
+            },
+            "description": "Per-case grades. EMPTY unless `status` is `completed`."
+          }
+        }
+      },
+      "EvalRunJudgeCase": {
+        "type": "object",
+        "description": "The per-case fields every judge reports.",
+        "required": [
+          "caseKey",
+          "score",
+          "passed",
+          "reason"
+        ],
+        "properties": {
+          "caseKey": {
+            "type": "string",
+            "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id \u2014 do not join it against the ids the per-case routes take."
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "EvalRunGoalCompletionCase": {
+        "type": "object",
+        "required": [
+          "caseKey",
+          "score",
+          "passed",
+          "reason",
+          "rubricHits"
+        ],
+        "properties": {
+          "caseKey": {
+            "type": "string",
+            "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id \u2014 do not join it against the ids the per-case routes take."
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rubricHits": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Rubric criteria the answer satisfied."
+          }
+        }
+      },
+      "EvalRunGroundednessCase": {
+        "type": "object",
+        "required": [
+          "caseKey",
+          "score",
+          "passed",
+          "reason",
+          "unsupportedClaims"
+        ],
+        "properties": {
+          "caseKey": {
+            "type": "string",
+            "description": "The stable AUTHORED-case identity, as persisted. NOT a case row id \u2014 do not join it against the ids the per-case routes take."
+          },
+          "score": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "unsupportedClaims": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Claims the tool trajectory does not support."
+          }
+        }
+      },
+      "EvalRunJudgeRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Optional. A bodyless POST grades with the suite's own config.",
+        "properties": {
+          "force": {
+            "type": "boolean",
+            "description": "Re-grade a run that already has a result. SPENDS AGAIN. Must be a real boolean \u2014 `\"false\"` is rejected rather than read as consent."
+          },
+          "enable": {
+            "type": "boolean",
+            "description": "Grade this run even though the judge was off when it ran. A per-RUN answer, not a suite edit: grading reads the config pinned when the run was created, so enabling the judge on the suite does not reach an already-recorded run."
+          },
+          "model": {
+            "type": "string",
+            "description": "Judge model for this run only."
+          },
+          "threshold": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Pass threshold for this run only."
+          }
+        }
+      },
+      "EvalRunJudgeRequested": {
+        "type": "object",
+        "required": [
+          "runId",
+          "projectId",
+          "status"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending"
+            ]
           }
         }
       },
@@ -10097,7 +12022,7 @@
               "invalid",
               null
             ],
-            "description": "`null` means no verdict was produced. A gate must treat it exactly like `invalid` — absent evidence is not valid evidence."
+            "description": "`null` means no verdict was produced. A gate must treat it exactly like `invalid` \u2014 absent evidence is not valid evidence."
           },
           "scoredIterations": {
             "type": "integer"
@@ -10128,7 +12053,7 @@
           },
           "definitionChanged": {
             "type": "boolean",
-            "description": "The same scorer id was graded under a different definition hash on each side. Its delta is NOT a regression — the two runs did not measure the same thing."
+            "description": "The same scorer id was graded under a different definition hash on each side. Its delta is NOT a regression \u2014 the two runs did not measure the same thing."
           },
           "passRate": {
             "$ref": "#/components/schemas/NumericDiff"
@@ -10437,7 +12362,7 @@
             "$ref": "#/components/schemas/EvalRunCompareSide"
           },
           "passSummary": {
-            "description": "Run-summary counters. Named `passSummary`, not `scores`, so it cannot be confused with `scoreContract` — the two answer different questions.",
+            "description": "Run-summary counters. Named `passSummary`, not `scores`, so it cannot be confused with `scoreContract` \u2014 the two answer different questions.",
             "type": "object",
             "properties": {
               "passRatePercent": {
@@ -10651,7 +12576,7 @@
               "array",
               "null"
             ],
-            "description": "Per-scorer verdicts for this iteration. `null` when the run predates scoring, or when the stored payload failed validation at the boundary — partially-trusted score data is never projected.",
+            "description": "Per-scorer verdicts for this iteration. `null` when the run predates scoring, or when the stored payload failed validation at the boundary \u2014 partially-trusted score data is never projected.",
             "items": {
               "$ref": "#/components/schemas/ScoreResult"
             }
@@ -10682,7 +12607,7 @@
       },
       "ScoreResult": {
         "type": "object",
-        "description": "One scorer's verdict for one iteration. `passed` is DERIVED as `value >= passThreshold` — never asserted by the scorer or the model.",
+        "description": "One scorer's verdict for one iteration. `passed` is DERIVED as `value >= passThreshold` \u2014 never asserted by the scorer or the model.",
         "required": [
           "scorerId",
           "scorerVersion",
@@ -10705,7 +12630,7 @@
           },
           "status": {
             "type": "string",
-            "description": "`error` is never a low score — a crashed judge is not a disagreeing judge. `not_applicable` never gates and is excluded from aggregation denominators, which is what distinguishes it from `skipped`.",
+            "description": "`error` is never a low score \u2014 a crashed judge is not a disagreeing judge. `not_applicable` never gates and is excluded from aggregation denominators, which is what distinguishes it from `skipped`.",
             "enum": [
               "scored",
               "error",
@@ -10793,7 +12718,7 @@
           },
           "implementationHash": {
             "type": "string",
-            "description": "Digest of what the scorer actually does — the canonicalized predicate, or the judge prompt plus template version. Required so two judges with different prompts cannot hash identically."
+            "description": "Digest of what the scorer actually does \u2014 the canonicalized predicate, or the judge prompt plus template version. Required so two judges with different prompts cannot hash identically."
           },
           "label": {
             "type": "string",
@@ -10842,7 +12767,7 @@
       },
       "EvaluationConfigSnapshot": {
         "type": "object",
-        "description": "The scorer definitions a run graded with, plus their hash. Changing scorer configuration changes this hash but NOT the case identity — a threshold edit must not fork a scenario's history.",
+        "description": "The scorer definitions a run graded with, plus their hash. Changing scorer configuration changes this hash but NOT the case identity \u2014 a threshold edit must not fork a scenario's history.",
         "required": [
           "hash",
           "definitions"
@@ -10850,7 +12775,7 @@
         "properties": {
           "hash": {
             "type": "string",
-            "description": "`evaluationConfigHash` over the resolved definitions. Order-independent — the hash sorts internally."
+            "description": "`evaluationConfigHash` over the resolved definitions. Order-independent \u2014 the hash sorts internally."
           },
           "definitions": {
             "type": "array",
@@ -11315,6 +13240,199 @@
             "items": {
               "$ref": "#/components/schemas/EvalSuite"
             }
+          }
+        }
+      },
+      "EvalCheckRepo": {
+        "type": "object",
+        "description": "A repository whose pull requests run an eval suite.",
+        "required": [
+          "id",
+          "repo",
+          "enabled",
+          "suiteId",
+          "projectId",
+          "outagePolicy",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string",
+            "description": "`owner/repo`, canonicalized by the platform."
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "suiteId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The eval suite this repository's pull requests run."
+          },
+          "projectId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "outagePolicy": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "fail_open",
+              "fail_closed",
+              null
+            ],
+            "description": "What the check reports when MCPJam cannot conclude. `null` is a REAL state \u2014 nobody chose a policy, because the repository was connected before the choice existed. The effective behaviour is `fail_open`, but reporting `fail_open` would say someone picked it."
+          },
+          "createdAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "updatedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          }
+        }
+      },
+      "EvalCheckRepos": {
+        "type": "object",
+        "required": [
+          "organizationId",
+          "available",
+          "items",
+          "connectable"
+        ],
+        "properties": {
+          "organizationId": {
+            "type": "string"
+          },
+          "available": {
+            "type": "boolean",
+            "description": "Whether GitHub Checks is available for this organization at all. `false` and \"available, nothing connected\" are different situations, and only one of them is fixed by connecting a repository."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalCheckRepo"
+            },
+            "description": "The repositories already connected."
+          },
+          "connectable": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "object",
+              "required": [
+                "repo"
+              ],
+              "properties": {
+                "repo": {
+                  "type": "string"
+                }
+              }
+            },
+            "description": "The repositories the MCPJam GitHub App can reach \u2014 the choices a connect has. `null` means the question could not be ASKED: the lookup itself failed (GitHub unreachable, or the call errored); the connected `items` still stand, as they need no GitHub call. An EMPTY list means it was asked and came back with nothing, which covers two situations the platform does not distinguish: the App is installed but reaches no repository, and this deployment has no App installation at all. If a connect is failing against an empty list, check the installation before assuming a permissions problem."
+          }
+        }
+      },
+      "EvalCheckRepoConnectRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "projectId",
+          "suiteId",
+          "repo",
+          "outagePolicy"
+        ],
+        "properties": {
+          "projectId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string",
+            "description": "The eval suite this repository's pull requests will run."
+          },
+          "repo": {
+            "type": "string",
+            "description": "`owner/repo`. Canonicalized and VERIFIED against the App's installation before it is stored."
+          },
+          "outagePolicy": {
+            "type": "string",
+            "enum": [
+              "fail_open",
+              "fail_closed"
+            ],
+            "description": "REQUIRED here, though the platform leaves it optional for a deploy window: a surface that defaults it is the one that quietly produces repositories nobody chose a policy for."
+          }
+        }
+      },
+      "EvalCheckRepoConnected": {
+        "type": "object",
+        "required": [
+          "id",
+          "organizationId",
+          "projectId",
+          "suiteId",
+          "repo",
+          "outagePolicy"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "organizationId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "suiteId": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "outagePolicy": {
+            "type": "string",
+            "enum": [
+              "fail_open",
+              "fail_closed"
+            ]
+          }
+        }
+      },
+      "EvalSuiteComputerEnvironment": {
+        "type": "object",
+        "description": "The sandbox image a suite's eval runs boot from.",
+        "required": [
+          "id",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The image's name, resolved for you so a caller can echo back what it set. `null` when the pinned image could not be resolved (deleted, or not visible to this caller)."
           }
         }
       },
@@ -11806,7 +13924,7 @@
           }
         }
       },
-      "Scenario": {
+      "ProjectScenario": {
         "type": "object",
         "description": "Summary of a published scenario, as returned by the list endpoint.",
         "required": [
@@ -12037,7 +14155,7 @@
           "items": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/Scenario"
+              "$ref": "#/components/schemas/ProjectScenario"
             }
           }
         }
@@ -12662,7 +14780,7 @@
           },
           "modelId": {
             "type": "string",
-            "description": "The environment's model override. ABSENT means the environment INHERITS the model pinned on its host — not that it has no model. Resolve the environment and read `effectiveModelId` to learn what will actually run."
+            "description": "The environment's model override. ABSENT means the environment INHERITS the model pinned on its host \u2014 not that it has no model. Resolve the environment and read `effectiveModelId` to learn what will actually run."
           },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
@@ -12926,6 +15044,155 @@
           }
         }
       },
+      "AdhocEnvironment": {
+        "type": "object",
+        "description": "An UNNAMED, content-addressed environment: a composed client/model/computer/skills stack rather than a saved entry in the project's environment list. Its own shape rather than `ProjectEnvironment` with a nullable name, because that schema's `name` is required and every environment listing filters ad-hoc rows out precisely so that promise holds.",
+        "required": [
+          "id",
+          "projectId",
+          "name",
+          "adhoc",
+          "hostId",
+          "revision",
+          "archived",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "name": {
+            "type": [
+              "null"
+            ],
+            "description": "Always `null` \u2014 an ad-hoc environment is unnamed by construction."
+          },
+          "adhoc": {
+            "type": "boolean",
+            "const": true,
+            "description": "Always `true`. Present so a reader never has to infer it from the null name."
+          },
+          "description": {
+            "type": "string"
+          },
+          "hostId": {
+            "type": "string"
+          },
+          "serverAttachmentId": {
+            "type": "string"
+          },
+          "modelId": {
+            "type": "string",
+            "description": "The stack's model override. Absent means it inherits the host's."
+          },
+          "skillSelection": {
+            "$ref": "#/components/schemas/EnvironmentSkillSelection"
+          },
+          "pluginVersionIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sandboxImageId": {
+            "type": "string"
+          },
+          "revision": {
+            "type": "integer",
+            "description": "Pass back as `expectedRevision` when promoting it with a name."
+          },
+          "archived": {
+            "type": "boolean"
+          },
+          "archivedAt": {
+            "type": "integer"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          }
+        }
+      },
+      "AdhocEnvironmentEnsured": {
+        "type": "object",
+        "required": [
+          "environment",
+          "created"
+        ],
+        "properties": {
+          "environment": {
+            "$ref": "#/components/schemas/AdhocEnvironment"
+          },
+          "created": {
+            "type": "boolean",
+            "description": "`false` when the same stack had already been composed. The only way to tell a first compose from a repeat \u2014 the status line cannot, because get-or-create answers `200` either way."
+          }
+        }
+      },
+      "AdhocEnvironmentRequest": {
+        "type": "object",
+        "description": "A composed stack: the same execution axes a named environment carries, minus the name.",
+        "required": [
+          "hostId"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "hostId": {
+            "type": "string",
+            "description": "The host the stack runs as."
+          },
+          "serverAttachmentId": {
+            "type": "string",
+            "description": "Standalone server group to pin. Omit to use the host's own servers."
+          },
+          "modelId": {
+            "type": "string",
+            "description": "Model to run instead of the host's pinned one. Stored verbatim."
+          },
+          "skillSelection": {
+            "$ref": "#/components/schemas/EnvironmentSkillSelection"
+          },
+          "pluginVersionIds": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string"
+            },
+            "description": "Pinning plugin versions requires project ADMIN; the rest of a stack needs only membership."
+          },
+          "sandboxImageId": {
+            "type": "string",
+            "description": "Project-shared sandbox image to pin, so runs boot a fresh computer from it."
+          }
+        }
+      },
+      "EnvironmentNameRequest": {
+        "type": "object",
+        "required": [
+          "expectedRevision",
+          "name"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "type": "integer",
+            "description": "The revision you last read. Stale \u21d2 `409`."
+          },
+          "name": {
+            "type": "string",
+            "description": "Must be unique among the project's live environments."
+          },
+          "description": {
+            "type": "string"
+          }
+        }
+      },
       "ProjectEnvironmentCreateRequest": {
         "type": "object",
         "description": "Unknown fields are rejected.",
@@ -12952,7 +15219,7 @@
             "type": "string",
             "minLength": 1,
             "pattern": ".*\\S.*",
-            "description": "Model to run instead of the host's; omit to inherit the host's. Stored verbatim — no alias canonicalization — so pass exactly the id the provider request should carry."
+            "description": "Model to run instead of the host's; omit to inherit the host's. Stored verbatim \u2014 no alias canonicalization \u2014 so pass exactly the id the provider request should carry."
           },
           "skillSelection": {
             "$ref": "#/components/schemas/EnvironmentSkillSelection"
@@ -13007,7 +15274,7 @@
             "minLength": 1,
             "pattern": ".*\\S.*",
             "nullable": true,
-            "description": "New model override, or `null` to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected — it is not a way to clear."
+            "description": "New model override, or `null` to CLEAR it and fall back to the host's model. Omit to leave unchanged. An empty string is rejected \u2014 it is not a way to clear."
           },
           "skillSelection": {
             "allOf": [
@@ -13103,7 +15370,7 @@
           },
           "effectiveModelId": {
             "type": "string",
-            "description": "The model this environment WILL RUN — the override if it has one, else the host config's. Always present on a successful resolve: an environment with no model anywhere cannot be resolved for launch and fails with 409 `details.reason: \"environment_model_required\"`."
+            "description": "The model this environment WILL RUN \u2014 the override if it has one, else the host config's. Always present on a successful resolve: an environment with no model anywhere cannot be resolved for launch and fails with 409 `details.reason: \"environment_model_required\"`."
           },
           "modelSource": {
             "type": "string",
@@ -17176,7 +19443,13 @@
               "unpublishUserTestingScenario",
               "changeUserTestingExposure",
               "manageUserTestingGuestExecution",
-              "requestInsights"
+              "requestInsights",
+              "readEvals",
+              "writeEvalSuites",
+              "launchEvalRun",
+              "deleteAnyEvalSuite",
+              "deleteAnyEvalRun",
+              "exportEvalTraces"
             ],
             "description": "The booleans to branch on, derived server-side rather than left for each caller to re-derive from `role` plus flag state.",
             "properties": {
@@ -17215,8 +19488,366 @@
               },
               "requestInsights": {
                 "type": "boolean"
+              },
+              "readEvals": {
+                "type": "boolean",
+                "description": "Reading eval suites, runs, iterations and traces."
+              },
+              "writeEvalSuites": {
+                "type": "boolean",
+                "description": "Authoring suites and cases \u2014 every eval write short of deleting. Unlike the swarm keys this counts a project GRANT, not organization rank alone."
+              },
+              "launchEvalRun": {
+                "type": "boolean",
+                "description": "Starting a suite or case run."
+              },
+              "deleteAnyEvalSuite": {
+                "type": "boolean",
+                "description": "Deleting a suite SOMEONE ELSE created \u2014 the project admin tier. The creator of a suite may always delete it whatever their role, so `false` here does not mean you cannot delete your own."
+              },
+              "deleteAnyEvalRun": {
+                "type": "boolean",
+                "description": "Same tier and same creator exception, for runs."
+              },
+              "exportEvalTraces": {
+                "type": "boolean",
+                "description": "Whether the trace export surface is open. Export still filters row by row against the caller, so this does not promise every session in the project lands in the file."
               }
             }
+          }
+        }
+      },
+      "ReadinessLaneCoverage": {
+        "type": "object",
+        "description": "What one lane managed to look at, reported separately from what it found. A lane with zero violations and zero evaluated checks is not a pass, and publishing the denominator is the only way to keep those apart.",
+        "required": [
+          "lane",
+          "status",
+          "evaluated",
+          "notEvaluated",
+          "notApplicable",
+          "missingInputs"
+        ],
+        "properties": {
+          "lane": {
+            "type": "string",
+            "enum": [
+              "runtime-compatibility",
+              "directory-policy",
+              "optional-features",
+              "submission-artifacts",
+              "experience-insights",
+              "plugin-package",
+              "release-contract"
+            ],
+            "description": "Anthropic defines five lanes and OpenAI seven, overlapping on four. Which subset applies is decided by the run's `readinessKind`."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not-ready",
+              "incomplete"
+            ]
+          },
+          "evaluated": {
+            "type": "integer",
+            "description": "Findings that reached a satisfied or violated verdict."
+          },
+          "notEvaluated": {
+            "type": "integer",
+            "description": "Applicable but never exercised. Each one is an unanswered question."
+          },
+          "notApplicable": {
+            "type": "integer",
+            "description": "Could not apply to this target; not a gap."
+          },
+          "missingInputs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Named inputs the caller could supply to close the gap, for example `toolListing`. Empty when the gap is not the caller's to close."
+          }
+        }
+      },
+      "ReadinessStageResult": {
+        "type": "object",
+        "description": "One staged rollup. OpenAI grades a quick technical preflight and a full submission-ready verdict from the same findings; Claude has one rollup, already reported as `overallStatus`.",
+        "required": [
+          "stage",
+          "status",
+          "lanes"
+        ],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "technical-preflight",
+              "submission-ready"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ready",
+              "not-ready",
+              "incomplete"
+            ]
+          },
+          "lanes": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "runtime-compatibility",
+                "directory-policy",
+                "optional-features",
+                "submission-artifacts",
+                "experience-insights",
+                "plugin-package",
+                "release-contract"
+              ]
+            },
+            "description": "The lanes this stage rolled up, so the verdict is reproducible by hand."
+          }
+        }
+      },
+      "ReadinessObservationState": {
+        "type": "object",
+        "description": "The model-observation axis, independent of the run's own status. A run whose lanes graded cleanly is `completed` even when the observation call was refused for credit: a payment problem belongs to the account, never to the server under grading.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "not-requested",
+              "pending",
+              "completed",
+              "billing-blocked",
+              "provider-failed",
+              "invalid-output"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "not_requested",
+              "billing_limit_reached",
+              "provider_error",
+              "provider_timeout",
+              "schema_invalid",
+              "no_evidence",
+              "cancelled"
+            ],
+            "description": "Machine-readable, so a client branches rather than string-matching. `billing_limit_reached` is the value to key a top-up prompt on."
+          },
+          "detail": {
+            "type": "string",
+            "description": "A sentence for a human. Never parse it; branch on `reason`."
+          }
+        }
+      },
+      "ReadinessRun": {
+        "type": "object",
+        "description": "A directory-readiness run. Readiness carries no numeric score and is excluded from `pooledConformanceScore`: it answers whether a publisher would list this server, which is a different question from whether the server speaks MCP correctly.",
+        "required": [
+          "id",
+          "readinessKind",
+          "serverId",
+          "serverUrl",
+          "submissionMode",
+          "status",
+          "overallStatus",
+          "lanes",
+          "stages",
+          "authMode",
+          "capabilities",
+          "attemptCount",
+          "terminalReason",
+          "errorMessage",
+          "policySnapshotDate",
+          "engineVersion",
+          "sdkVersion",
+          "includeLlmObservations",
+          "llmObservations",
+          "hasReport",
+          "reportUrl",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "readinessKind": {
+            "type": "string",
+            "enum": [
+              "claude",
+              "openai"
+            ]
+          },
+          "serverId": {
+            "type": "string",
+            "nullable": true,
+            "description": "The saved project server this run graded. Null only on rows written before the field existed."
+          },
+          "serverUrl": {
+            "type": "string",
+            "description": "The saved server's URL exactly as stored. Canonicalizing it would change the grade."
+          },
+          "submissionMode": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "mcp-only",
+              "mcp-imported-skills"
+            ],
+            "description": "The declared submission shape, for an OpenAI run. Never inferred."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "description": "`cancelled` is distinct from `failed`: a person who stopped a run has learned nothing about their server."
+          },
+          "overallStatus": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "ready",
+              "not-ready",
+              "incomplete"
+            ],
+            "description": "The headline verdict. `incomplete` means nothing was violated and something the run needed was never evaluated."
+          },
+          "lanes": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReadinessLaneCoverage"
+            }
+          },
+          "stages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ReadinessStageResult"
+            }
+          },
+          "authMode": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "headless",
+              "interactive",
+              "provided-token"
+            ]
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What the executing surface could actually do. Two surfaces grading one target agree only on their shared capability subset."
+          },
+          "attemptCount": {
+            "type": "integer"
+          },
+          "terminalReason": {
+            "type": "string",
+            "nullable": true
+          },
+          "errorMessage": {
+            "type": "string",
+            "nullable": true
+          },
+          "policySnapshotDate": {
+            "type": "string",
+            "nullable": true,
+            "description": "The publisher-documentation snapshot this run graded against, so a stale grade says so."
+          },
+          "engineVersion": {
+            "type": "string",
+            "nullable": true
+          },
+          "sdkVersion": {
+            "type": "string",
+            "nullable": true
+          },
+          "includeLlmObservations": {
+            "type": "boolean",
+            "description": "Whether this run was started with the paid observation opt-in."
+          },
+          "llmObservations": {
+            "$ref": "#/components/schemas/ReadinessObservationState"
+          },
+          "hasReport": {
+            "type": "boolean"
+          },
+          "reportUrl": {
+            "type": "string",
+            "nullable": true
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          }
+        }
+      },
+      "ReadinessRunReceipt": {
+        "type": "object",
+        "description": "The 202 receipt. Poll the run detail; do not re-POST.",
+        "required": [
+          "runId",
+          "projectId",
+          "serverId",
+          "readinessKind",
+          "status",
+          "deduped",
+          "includeLlmObservations"
+        ],
+        "properties": {
+          "runId": {
+            "type": "string"
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "serverId": {
+            "type": "string"
+          },
+          "readinessKind": {
+            "type": "string",
+            "enum": [
+              "claude",
+              "openai"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ],
+            "description": "The run's status when the start returned. `pending` for a fresh start; for a deduped start, whatever the existing run is already at \u2014 which may be `completed`, because a replayed idempotency key can name a run that finished long ago."
+          },
+          "deduped": {
+            "type": "boolean",
+            "description": "This request replayed an existing run rather than starting one."
+          },
+          "includeLlmObservations": {
+            "type": "boolean"
           }
         }
       }

@@ -113,6 +113,14 @@ const PLAIN_TOOLS = [
   "read_server_resource",
   // Host-compat check: agent-oriented per-host verdict payload, no widget view.
   "check_host_compatibility",
+  // Directory readiness: receipts and run rows are agent-oriented payloads,
+  // and a report is a document to read rather than a card to render.
+  "start_claude_readiness_run",
+  "start_openai_readiness_run",
+  "get_readiness_run",
+  "list_readiness_runs",
+  "cancel_readiness_run",
+  "get_readiness_report",
   "run_eval_case",
   "run_eval_suite",
   "create_eval_suite",
@@ -124,6 +132,7 @@ const PLAIN_TOOLS = [
   "list_eval_cases",
   "get_eval_case",
   "create_eval_case",
+  "create_eval_cases",
   "update_eval_case",
   "delete_eval_case",
   "generate_eval_cases",
@@ -132,6 +141,9 @@ const PLAIN_TOOLS = [
   "list_project_environments",
   "get_project_environment",
   "resolve_project_environment",
+  // Sandbox image reads: the picker behind a suite's computer image.
+  "list_sandbox_images",
+  "get_sandbox_image",
   // Agent Plugins reads: agent-oriented payloads, no widget view.
   "list_project_plugins",
   "get_plugin_version",
@@ -139,6 +151,10 @@ const PLAIN_TOOLS = [
   "compare_eval_run",
   "get_eval_run_steps",
   "cancel_eval_run",
+  "request_eval_run_judge",
+  // GitHub Checks: agent-oriented payloads, no widget view.
+  "list_eval_check_repos",
+  "connect_eval_check_repo",
   "list_chat_sessions",
   "search_sessions",
   // Swarms + user testing. No widget views yet: these are agent-oriented
@@ -246,6 +262,35 @@ describe("platform tool registration", () => {
     }
   });
 
+  it("warns that a spend operation costs money, derived from its risk facet", () => {
+    // MCP has no "this costs money" annotation, so the honest place for it is
+    // the description every client renders. Derived from the operation's own
+    // `risk`, never a second name list here: that list would go stale the
+    // first time an operation is re-classified, silently and in the direction
+    // that drops the warning.
+    const { registrar, registrations } = fakeRegistrar();
+    registerPlatformCatalogTools(
+      registrar,
+      fakeToolContext({ bearerToken: "jwt" })
+    );
+    const byName = new Map(
+      registrations.map((registration) => [registration.name, registration])
+    );
+    for (const operation of PLATFORM_CATALOG_OPERATIONS) {
+      const description = String(byName.get(operation.name)?.config.description);
+      expect(description.includes("COSTS MONEY")).toBe(
+        operation.risk === "spend"
+      );
+    }
+    // The two eval launches are the ones this exists for.
+    expect(String(byName.get("run_eval_suite")?.config.description)).toContain(
+      "COSTS MONEY"
+    );
+    expect(String(byName.get("list_eval_suites")?.config.description)).not.toContain(
+      "COSTS MONEY"
+    );
+  });
+
   it("registers show_servers with the MCP Apps UI resource", () => {
     const { registrar, registrations } = fakeRegistrar();
 
@@ -289,6 +334,12 @@ describe("platform tool registration", () => {
       "list_server_resources",
       "read_server_resource",
       "check_host_compatibility",
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "get_readiness_run",
+      "list_readiness_runs",
+      "cancel_readiness_run",
+      "get_readiness_report",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_case",
@@ -302,6 +353,7 @@ describe("platform tool registration", () => {
       "list_eval_cases",
       "get_eval_case",
       "create_eval_case",
+      "create_eval_cases",
       "update_eval_case",
       "delete_eval_case",
       "generate_eval_cases",
@@ -311,9 +363,14 @@ describe("platform tool registration", () => {
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
+      "request_eval_run_judge",
+      "list_eval_check_repos",
+      "connect_eval_check_repo",
       "list_project_environments",
       "get_project_environment",
       "resolve_project_environment",
+      "list_sandbox_images",
+      "get_sandbox_image",
       "list_project_plugins",
       "get_plugin_version",
       "list_scenarios",
@@ -413,6 +470,11 @@ describe("platform tool registration", () => {
     );
 
     const NON_DESTRUCTIVE_WRITES = new Set([
+      // Starting dials a third party's server and can spend; cancelling stops
+      // one. Neither destroys a record, so both annotate as plain writes.
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "cancel_readiness_run",
       "run_eval_case",
       "run_eval_suite",
       "create_eval_suite",
@@ -420,8 +482,16 @@ describe("platform tool registration", () => {
       "set_eval_suite_schedule",
       "set_eval_suite_environments",
       "create_eval_case",
+      "create_eval_cases",
       "update_eval_case",
       "generate_eval_cases",
+      // Grading SPENDS but writes only an advisory result onto the run — the
+      // deterministic verdict stays authoritative, so nothing is destroyed.
+      "request_eval_run_judge",
+      // Additive: it creates a repository connection. Its hazard is REACH (a
+      // shared repository, everyone's pull requests), not destruction — the
+      // annotation says write, and the gated tier is what warns.
+      "connect_eval_check_repo",
       "create_project_server",
       "update_project_server",
       // Project create/update: both are cheap, both are metadata-only (the

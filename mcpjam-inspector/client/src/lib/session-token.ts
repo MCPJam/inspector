@@ -332,6 +332,11 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   "/api/mcp/computers/local-consent",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
+  // Registry catalog/star routes are Convex HTTP actions called via absolute
+  // URL, and every one of them requires an identity (the catalog resolves
+  // per-viewer `isStarred`). Without this prefix the bearer is never attached
+  // and they all 401 with "Missing or invalid bearer token".
+  "/web/registry/",
 ];
 
 /**
@@ -361,7 +366,30 @@ function isHostedAuthAllowedOrigin(parsed: URL): boolean {
   return false;
 }
 
+/**
+ * Paths whose SCOPE sits in the middle, so no prefix can name them.
+ *
+ * `/api/v1/projects/{projectId}/readiness-runs...` and its server-scoped start
+ * carry ids the UI substitutes at call time, and the interesting segment comes
+ * after them. The alternative was the prefix `/api/v1/projects/`, which would
+ * hand the user's bearer to every project-scoped public-API route that ever
+ * ships — the exact opposite of the path-by-path scoping the list above
+ * exists to maintain. A pattern keeps the grant as narrow as the prefixes are.
+ *
+ * Anchored at both ends, and the id segments match one segment each: nothing
+ * with an extra path component can slip through.
+ */
+const HOSTED_AUTH_PATH_PATTERNS = [
+  // The /conformance page starting, polling, cancelling and reading a
+  // directory-readiness run.
+  /^\/api\/v1\/projects\/[^/]+\/readiness-runs(\/[^/]+(\/(cancel|report))?)?$/,
+  /^\/api\/v1\/projects\/[^/]+\/servers\/[^/]+\/readiness-runs\/(claude|openai)$/,
+];
+
 function pathMatchesHostedPrefix(pathname: string): boolean {
+  if (HOSTED_AUTH_PATH_PATTERNS.some((pattern) => pattern.test(pathname))) {
+    return true;
+  }
   return HOSTED_AUTH_PATH_PREFIXES.some((prefix) => {
     if (prefix.endsWith("/")) return pathname.startsWith(prefix);
     // Non-trailing-slash entries match the literal path AND any sub-path

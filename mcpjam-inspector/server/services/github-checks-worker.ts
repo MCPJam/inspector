@@ -41,7 +41,9 @@ import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
 import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
-import { prepareEvalRun } from "../routes/shared/evals.js";
+import { prepareEvalRun,
+  shouldSkipExecution,
+} from "../routes/shared/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
 import type { CheckRecipe } from "./github-checks/recipes.js";
 import {
@@ -49,6 +51,7 @@ import {
   clampOutput,
   isGithubChecksSandboxConfigured,
   killCheckSandbox,
+  redactCloneCredential,
   type CheckSandbox,
 } from "./github-checks/sandbox.js";
 import { resolveAndStart } from "./github-checks/resolve-and-start.js";
@@ -92,6 +95,16 @@ export type ClaimedGithubCheck = {
   projectId: string;
   createdByExternalId: string;
   suiteId: string;
+  /**
+   * Whether the checkout needs an installation token to clone.
+   *
+   * A REQUIRED boolean, matching the backend, which always sends one (`false`
+   * for a row that never recorded a visibility). Optional-with-a-default would
+   * mean a wire regression silently degrades to "public" — and "public" is the
+   * value that clones without a credential, so the failure mode of guessing
+   * would be a private repository's check failing rather than the reverse.
+   */
+  repoPrivate: boolean;
 };
 
 export type CheckSummary = {
@@ -214,8 +227,99 @@ export class LeaseLostError extends Error {
   }
 }
 
+/**
+ * The backend could not give us a credential for a private repository.
+ *
+ * A DISTINCT type, because the response it demands is distinct from every other
+ * failure in this file: it happens after `/plan/begin` and before anything is
+ * provisioned, so it is reported as a ladder-level `clone` attempt on the plan
+ * that already exists — never through the planless path, and never as the pull
+ * request's fault. Nothing about a PR can cause it.
+ */
+export class CloneTokenUnavailableError extends Error {
+  constructor(readonly detail: string) {
+    super(`clone token unavailable: ${detail}`);
+    this.name = "CloneTokenUnavailableError";
+  }
+}
+
+/**
+ * Mint the clone credential for THIS claim, or find out we no longer hold it.
+ *
+ * Three answers, and the difference between them is the whole contract:
+ *
+ *   200 + `cloneToken: null`   nothing was needed. Only legal for a public
+ *                              repository; for a private one the caller treats
+ *                              it as a mint failure, because a null token and a
+ *                              502 leave us equally unable to clone.
+ *   200 + `cloneToken: string` use it for clone/fetch and nothing else.
+ *   409                        this worker is not the claim holder any more.
+ *                              LEASE LOSS — the check has already been
+ *                              concluded by somebody else, so we must not
+ *                              manufacture a competing completion.
+ *   502 (or anything else)     the mint failed backend-side. The message is
+ *                              deliberately flat there and stays flat here.
+ *   no answer at all           a transport failure or the route's deadline.
+ *                              Typed as the 502 case, so it reaches the same
+ *                              ladder-level `clone_failed` rather than falling
+ *                              through as an untyped throw.
+ *
+ * The token is NEVER logged, and no branch of this function puts the response
+ * body into an error — a 502's body is a constant string, and a 200's body is
+ * the secret itself.
+ */
+async function mintCloneToken(
+  triggerId: string,
+  claimedBy: string
+): Promise<string | null> {
+  let status: number;
+  let body: any;
+  try {
+    ({ status, body } = await postServiceRoute(`${SERVICE_BASE}/clone-token`, {
+      triggerId,
+      claimedBy,
+    }));
+  } catch (error) {
+    // THE ROUTE NEVER ANSWERED — a network failure, a missing service-token
+    // env, or the service-route's own 15s deadline. Materially identical to a
+    // 502: we hold no credential and cannot clone. It is typed as the same
+    // failure so it takes the same branch, because an untyped throw here would
+    // fall through to the generic catch, which has no degraded marker for it
+    // either — and would complete the freshly opened plan with an EMPTY attempt
+    // log. A check that ran nothing and reported nothing is the one shape the
+    // plan shell exists to prevent.
+    throw new CloneTokenUnavailableError(
+      `the clone-token route could not be reached: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+  if (status === 409) {
+    throw new LeaseLostError(String(body?.error ?? "not_the_claim_holder"));
+  }
+  if (status !== 200 || !body?.ok) {
+    throw new CloneTokenUnavailableError(
+      `the backend could not mint a clone token (${status})`
+    );
+  }
+  const token = body.cloneToken;
+  return typeof token === "string" && token.length > 0 ? token : null;
+}
+
 /** Test seam: the heartbeat's response validation is the whole point of it. */
 export const sendHeartbeatForTests = sendHeartbeat;
+
+/**
+ * Test seam: the clone-token contract is a two-repo hand-mirror, so the status
+ * mapping (409 ⇒ lease loss, 502 ⇒ mint failure) is worth pinning at the wire.
+ */
+export const mintCloneTokenForTests = mintCloneToken;
+
+/**
+ * Test seam: `repoPrivate` arriving intact is the difference between cloning a
+ * private repository and not, and the claim body is where it can get dropped.
+ */
+export const claimNextForTests = claimNext;
 
 /**
  * Test seam for the real eval integration. The worker tests replace
@@ -308,6 +412,38 @@ export function describeCheckFailure(error: unknown): {
 }
 
 /**
+ * The error, with any clone credential removed from its message AND its stack.
+ *
+ * A COPY rather than a mutation: the original is what the `finally` and the
+ * caller still hold, and rewriting a thrown object's message under them is the
+ * kind of action at a distance that is impossible to reason about later.
+ *
+ * This is the second line of defence, not the first. `sandbox.ts` redacts at the
+ * boundary where the credential-bearing text first becomes ours, so the error
+ * arriving here is already clean; this exists because `logger.error` is the
+ * server's single Sentry capture path, and a secret that reaches Sentry cannot
+ * be recalled from it. The constant `AUTHORIZATION:` sweep runs whether or not
+ * a token is held; the token-derived forms are removed only when one is.
+ */
+function redactErrorForLog(error: unknown, cloneToken: string | null): unknown {
+  if (!(error instanceof Error)) return error;
+  const message = redactCloneCredential(error.message, cloneToken);
+  const stack = error.stack
+    ? redactCloneCredential(error.stack, cloneToken)
+    : error.stack;
+  // UNCHANGED ⇒ the ORIGINAL, class and all. Only a genuinely
+  // credential-bearing error is replaced, so the overwhelming majority of
+  // failures still reach the logger as the typed error they were thrown as —
+  // and the constant `AUTHORIZATION:` sweep still runs on every one of them,
+  // whether or not a token is currently held.
+  if (message === error.message && stack === error.stack) return error;
+  const copy = new Error(message);
+  copy.name = error.name;
+  if (stack) copy.stack = stack;
+  return copy;
+}
+
+/**
  * Cap on the resolver's own failure copy. Bounded by construction already
  * (constant strings plus one clamped parser message), so this is a backstop
  * against a future message growing without anyone noticing, not a sanitizer.
@@ -379,6 +515,15 @@ export type CheckExecutionDeps = {
    * planless completion contract forever.
    */
   beginPlan: (claimed: ClaimedGithubCheck) => Promise<CheckPlanSession>;
+  /**
+   * Mint the private-repository clone credential. Called ONLY when the claim
+   * says `repoPrivate`, and only between `beginPlan` and the first provision —
+   * see the ordering note in `executeClaimedCheck`.
+   */
+  mintCloneToken: (
+    triggerId: string,
+    claimedBy: string
+  ) => Promise<string | null>;
   /**
    * The deterministic ladder plus the sandboxes it needs — provisioning,
    * cloning, building, the runtime verification, and a FRESH BOX PER CANDIDATE
@@ -894,7 +1039,21 @@ async function defaultRunEvalSuite(args: {
     }
 
     try {
-      await prepared.execute();
+      // A redelivered claim replays the run its trigger id already started. If
+      // that run FINISHED, re-executing would run the suite a second time and
+      // bill for it — and the verdict this check needs is already recorded on
+      // it. Only the execution is skipped; everything below still reads the
+      // run's terminality and reports it, which is exactly what a redelivery
+      // should do.
+      if (shouldSkipExecution(prepared)) {
+        logger.info("[github-checks] trigger already ran — not re-executing", {
+          triggerId: args.claimed.triggerId,
+          runId: prepared.runId,
+          status: prepared.status,
+        });
+      } else {
+        await prepared.execute();
+      }
     } catch (error) {
       // A throw from `execute()` is NOT an eval verdict, and must not be read as
       // one. `runEvalSuiteWithAiSdk` finalizes a normal run — pass or fail —
@@ -988,6 +1147,7 @@ function defaultDeps(): CheckExecutionDeps {
         repoFullName: claimed.repoFullName,
         headSha: claimed.headSha,
       }),
+    mintCloneToken,
     resolveAndStart,
     killSandbox: killCheckSandbox,
     getBearer: getConvexBearerForDelegation,
@@ -1157,7 +1317,61 @@ export async function executeClaimedCheck(
   /** The in-box diagnostic for an eval that died. DISPLAY text, no authority. */
   let evalFailureDetails: string | undefined;
 
+  /**
+   * The clone credential, for a private repository only. Held in a local, never
+   * written to a field of any long-lived object, and passed exactly one place:
+   * the clone.
+   */
+  let cloneToken: string | null = null;
+
   try {
+    // ═══════════════════════════════════════════════════════════════════════
+    // STEP 3 — MINT THE CLONE CREDENTIAL, AFTER THE PLAN AND BEFORE THE BOX.
+    // ═══════════════════════════════════════════════════════════════════════
+    //
+    // The ordering is load-bearing in BOTH directions:
+    //
+    //   after `beginPlan`   so a mint failure has a plan to be reported
+    //                       against, and lands as an ordinary `clone` attempt
+    //                       rather than a second planless completion;
+    //   before `provision`  so a check we already know cannot clone never costs
+    //                       an E2B box, and the failure cannot be confused with
+    //                       one the sandbox caused.
+    //
+    // A PUBLIC claim never calls the route at all. That is not an optimization:
+    // it is what keeps the blast radius of a `contents: read` mint proportional
+    // to the number of checks that genuinely need one.
+    if (claimed.repoPrivate) {
+      try {
+        cloneToken = await deps.mintCloneToken(claimed.triggerId, claimedBy);
+      } catch (error) {
+        // THE PHASE DECIDES THE ATTRIBUTION, NOT THE ERROR'S TYPE. `mintCloneToken`
+        // already types its own failures, but this step must hold whatever the
+        // dep throws: anything that is not a lease loss means we reached the
+        // clone with no credential, and it has to land as `clone_failed` on the
+        // plan we just opened. Letting an untyped throw through would take the
+        // generic path, which has no degraded marker for it either — and would
+        // complete a fresh plan with an EMPTY attempt log, a check that ran
+        // nothing and reported nothing.
+        if (error instanceof LeaseLostError) throw error;
+        throw error instanceof CloneTokenUnavailableError
+          ? error
+          : new CloneTokenUnavailableError(
+              error instanceof Error ? error.message : String(error)
+            );
+      }
+      if (!cloneToken) {
+        // A null token is only ever legal for a public repository. Here it means
+        // the same thing a 502 does — we cannot clone — so it gets the same
+        // answer rather than a silent anonymous attempt that would 404 and read
+        // as the repository having vanished.
+        throw new CloneTokenUnavailableError(
+          "the backend returned no clone token for a private repository"
+        );
+      }
+      assertLeaseHeld();
+    }
+
     // Runs the deterministic ladder against the checkout, then executes the
     // BACKEND'S candidates in the BACKEND'S order, reporting every phase, and
     // leaves the accepted box running a verified server. Provisioning, cloning,
@@ -1170,6 +1384,7 @@ export async function executeClaimedCheck(
         repoFullName: claimed.repoFullName,
         prNumber: claimed.prNumber,
         headSha: claimed.headSha,
+        ...(cloneToken ? { cloneToken } : {}),
       },
       {
         plan: session,
@@ -1311,18 +1526,61 @@ export async function executeClaimedCheck(
       });
       return;
     }
+    if (error instanceof CloneTokenUnavailableError) {
+      // Reported ON THE PLAN, as a LADDER-scoped `clone` attempt: no candidate
+      // exists yet (nothing has been provisioned, let alone detected), and the
+      // backend attributes a ladder `clone_failed` as `infra_error`. It is ours
+      // — an app installation, a GitHub outage, a minting bug — and there is no
+      // reading of it that is the pull request's fault.
+      const detail = redactCloneCredential(error.detail, cloneToken).slice(
+        0,
+        500
+      );
+      logger.error(
+        "[github-checks] could not mint a clone token",
+        redactErrorForLog(error, cloneToken),
+        { ...logContext, planId: session.planId, detail }
+      );
+      await safeComplete({
+        detailsMarkdown:
+          "MCPJam could not obtain a credential to clone this private repository, so nothing was built or evaluated. This is an MCPJam-side failure, not a problem with the pull request — check that the MCPJam GitHub App is still installed on this repository and retry the check.",
+        terminalAttempt: {
+          phase: "clone",
+          ok: false,
+          failureKind: "clone_failed",
+          durationMs: 0,
+          detailsClamped: detail,
+        },
+      });
+      return;
+    }
     const described = describeCheckFailure(error);
-    logger.error("[github-checks] check failed", error, {
-      ...logContext,
-      planId: session.planId,
-      reason: described.failureReason,
-      candidate: acceptedCandidateId,
-    });
+    // Redacted BEFORE any of it is logged, completed or clamped. A clone that
+    // failed inside the box is the one failure whose text can have touched the
+    // credential, and `describeCheckFailure` is a formatter — it has no idea a
+    // secret is in play.
+    const failureReason = redactCloneCredential(
+      described.failureReason,
+      cloneToken
+    );
+    logger.error(
+      "[github-checks] check failed",
+      redactErrorForLog(error, cloneToken),
+      {
+        ...logContext,
+        planId: session.planId,
+        reason: failureReason,
+        candidate: acceptedCandidateId,
+      }
+    );
     // NO OUTCOME. Every failure that got this far was reported as an attempt at
     // the phase it happened at; the backend derives what it adds up to. The only
     // things travelling here are display text and — when the backend went away
     // mid-flight — the degraded marker.
-    const details = described.detailsMarkdown ?? evalFailureDetails;
+    const rawDetails = described.detailsMarkdown ?? evalFailureDetails;
+    const details = rawDetails
+      ? redactCloneCredential(rawDetails, cloneToken)
+      : undefined;
     const marker = degradedMarker(error);
     await safeComplete({
       ...(details
@@ -1332,7 +1590,21 @@ export async function executeClaimedCheck(
               : clampOutput(rawOf(details)),
           }
         : {}),
-      ...(marker ? { terminalAttempt: marker } : {}),
+      ...(marker
+        ? {
+            terminalAttempt: {
+              ...marker,
+              ...(marker.detailsClamped
+                ? {
+                    detailsClamped: redactCloneCredential(
+                      marker.detailsClamped,
+                      cloneToken
+                    ),
+                  }
+                : {}),
+            },
+          }
+        : {}),
     });
   } finally {
     clearInterval(heartbeat);
