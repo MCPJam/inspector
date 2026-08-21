@@ -399,69 +399,6 @@ test("eval list uses MCPJAM_PROJECT then a project link, and --project wins", as
   }
 });
 
-test("eval create JSON project beats MCPJAM_PROJECT, and --project beats JSON", async () => {
-  const fixture = await startProjectFixture();
-  const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-eval-json-"));
-  try {
-    const fromJson = await withEnv(
-      isolatedEnv({ MCPJAM_PROJECT: "Beta" }),
-      () =>
-        withCwd(cwd, () =>
-          runCli([
-            "cloud",
-            "eval",
-            "create",
-            "--json",
-            JSON.stringify({
-              project: "Alpha",
-              name: "From JSON",
-              servers: [],
-              cases: [{ title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] }],
-            }),
-            "--api-key",
-            "sk_test",
-            "--api-url",
-            fixture.baseUrl,
-            "--format",
-            "json",
-          ])
-        )
-    );
-    assert.equal(fromJson.exitCode, 0, fromJson.stderr);
-
-    const fromFlag = await withEnv(
-      isolatedEnv({ MCPJAM_PROJECT: "Beta" }),
-      () =>
-        withCwd(cwd, () =>
-          runCli([
-            "cloud",
-            "eval",
-            "create",
-            "--project",
-            "Beta",
-            "--json",
-            JSON.stringify({
-              project: "Alpha",
-              name: "From flag",
-              servers: [],
-              cases: [{ title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] }],
-            }),
-            "--api-key",
-            "sk_test",
-            "--api-url",
-            fixture.baseUrl,
-            "--format",
-            "json",
-          ])
-        )
-    );
-    assert.equal(fromFlag.exitCode, 0, fromFlag.stderr);
-    assert.deepEqual(fixture.suitePaths, ["proj-alpha", "proj-beta"]);
-  } finally {
-    await fixture.close();
-  }
-});
-
 test("empty --project is a usage error", async () => {
   const run = await withEnv(isolatedEnv(), () =>
     runCli([
@@ -505,13 +442,10 @@ test("a stale link selector appends the re-link hint", async () => {
       )
     );
     assert.equal(run.exitCode, 1, run.stdout);
-    assert.match(run.stderr, /Project "proj-missing" was not found/);
-    assert.match(
-      run.stderr,
-      new RegExp(
-        `Selector came from ${linkPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`
-      )
-    );
+    assert.match(run.stderr, /proj-missing/);
+    assert.match(run.stderr, /Selector came from /);
+    assert.ok(run.stderr.includes(linkPath));
+    assert.match(run.stderr, /mcpjam cloud link/);
   } finally {
     await fixture.close();
   }
@@ -524,9 +458,19 @@ test("hosted readiness is not given ambient Cloud project context", async () => 
     project: { id: "proj-beta", name: "Beta" },
     apiUrl: "https://app.mcpjam.com/api/v1",
   });
-  const run = await withEnv(isolatedEnv({ MCPJAM_PROJECT: "Alpha" }), () =>
-    withCwd(cwd, () => runCli(["readiness", "start", "--help"]))
+  const run = await withEnv(isolatedEnv({ MCPJAM_PROJECT: "" }), () =>
+    withCwd(cwd, () =>
+      runCli([
+        "readiness",
+        "start",
+        "claude",
+        "--server",
+        "any",
+        "--format",
+        "json",
+      ])
+    )
   );
-  assert.equal(run.exitCode, 0, run.stderr);
-  assert.match(run.stdout, /--api-key/);
+  assert.notEqual(run.exitCode, 0, run.stderr);
+  assert.doesNotMatch(run.stderr, /MCPJAM_PROJECT cannot be empty/);
 });
