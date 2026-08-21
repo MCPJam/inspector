@@ -169,6 +169,17 @@ describe("UserTestingOverviewPanel", () => {
     expect(copy.split("—").length - 1).toBeLessThan(2);
   });
 
+  it("fills the panel so it can centre in it, like the Swarm empty state", () => {
+    // jsdom has no layout, so the class is the only observable: without a
+    // height of its own the box is content-tall and `justify-center` does
+    // nothing, which left the notice pinned to the top of the panel.
+    render(<UserTestingOverviewPanel {...defaults} scenarios={[]} />);
+
+    const empty = screen.getByTestId("user-testing-overview-empty");
+    expect(empty.className).toContain("min-h-full");
+    expect(empty.className).toContain("justify-center");
+  });
+
   it("leads with an illustration, not a stock glyph", () => {
     // BB-125 asks for an illustration; the frame's bitmap lives in the design
     // file, so this is one of the project's pixel characters instead.

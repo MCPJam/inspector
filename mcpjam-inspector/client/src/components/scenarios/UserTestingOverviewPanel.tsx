@@ -194,7 +194,7 @@ function LoadFailureState({
 }) {
   return (
     <div
-      className="flex flex-col items-center justify-center px-6 py-16 text-center"
+      className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
       data-testid="user-testing-overview-error"
     >
       <AlertTriangle className="size-8 text-amber-500" />
@@ -237,7 +237,7 @@ function EmptyState({
 }) {
   return (
     <div
-      className="flex flex-col items-center justify-center px-6 py-16 text-center"
+      className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
       data-testid="user-testing-overview-empty"
     >
       <div
