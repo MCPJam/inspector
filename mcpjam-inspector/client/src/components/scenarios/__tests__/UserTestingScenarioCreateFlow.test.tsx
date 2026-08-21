@@ -122,6 +122,7 @@ function renderFlow(
     created: true,
   }),
   onCreateEnvironment = vi.fn(),
+  onSetPerTurnFeedback = vi.fn().mockResolvedValue(undefined),
 ) {
   render(
     <UserTestingScenarioCreateFlow
@@ -129,9 +130,10 @@ function renderFlow(
       onCancel={vi.fn()}
       onCreateEnvironment={onCreateEnvironment}
       onCreateScenario={onCreateScenario}
+      onSetPerTurnFeedback={onSetPerTurnFeedback}
     />,
   );
-  return { onCreateScenario, onCreateEnvironment };
+  return { onCreateScenario, onCreateEnvironment, onSetPerTurnFeedback };
 }
 
 beforeEach(() => {
@@ -537,5 +539,135 @@ describe("UserTestingScenarioCreateFlow — without Project Environments", () =>
     expect(
       screen.getByTestId("user-testing-create-environment-required"),
     ).toHaveTextContent(/pick the client a tester will see/i);
+  });
+});
+
+/**
+ * BB-126: create-study copy, and the per-turn ratings choice moved forward from
+ * post-create settings into the screen that publishes the study.
+ */
+describe("UserTestingScenarioCreateFlow — create study (Production Redesign)", () => {
+  it("uses the frame's chrome and study language", () => {
+    renderFlow();
+
+    expect(
+      screen.getByRole("heading", { name: /create a new study/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /publish one of your environments, hand them to users, then read what happened in their sessions/i
+      )
+    ).toBeVisible();
+    expect(screen.getByTestId("user-testing-create-back")).toHaveTextContent(
+      "Acceptance Testing"
+    );
+    expect(screen.getByLabelText(/^study name/i)).toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-create-save")).toHaveTextContent(
+      "Create study"
+    );
+  });
+
+  it("names the target strip the same thing Swarm does, flag on or off", () => {
+    // It used to read "Environment" flag-on and "Where it runs" flag-off, which
+    // made one control two different things depending on a flag.
+    renderFlow();
+    expect(screen.getByText("Where it runs")).toBeVisible();
+
+    flagState.environments = false;
+    render(
+      <UserTestingScenarioCreateFlow
+        projectId="p1"
+        onCancel={vi.fn()}
+        onCreateEnvironment={vi.fn()}
+        onCreateScenario={vi.fn()}
+        onSetPerTurnFeedback={vi.fn()}
+      />
+    );
+    expect(screen.getAllByText("Where it runs")).toHaveLength(2);
+  });
+
+  it("offers per-turn ratings on by default, with stars selected", () => {
+    renderFlow();
+
+    const toggle = screen.getByTestId("user-testing-create-ratings");
+    expect(toggle).toBeChecked();
+    expect(
+      screen.getByText(/testers will be able to rate each response/i)
+    ).toBeVisible();
+    expect(
+      screen.getByRole("radio", { name: "1-5 Star Ratings" })
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("radio", { name: "Thumbs-Up/Down Ratings" })
+    ).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("hides the style choice while ratings are off", () => {
+    // A widget style is a question about a widget nobody is being shown.
+    renderFlow();
+
+    fireEvent.click(screen.getByTestId("user-testing-create-ratings"));
+    expect(
+      screen.queryByTestId("user-testing-create-rating-style")
+    ).not.toBeInTheDocument();
+  });
+
+  it("applies the ratings choice to the study it just created", async () => {
+    const { onSetPerTurnFeedback } = renderFlow();
+
+    fireEvent.click(screen.getByRole("radio", { name: /thumbs/i }));
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => {
+      expect(onSetPerTurnFeedback).toHaveBeenCalledWith("cb-1", {
+        enabled: true,
+        style: "thumbs",
+      });
+    });
+  });
+
+  it("leaves an already-published study's ratings alone", async () => {
+    // Publishing is idempotent per environment, so a collision opens someone
+    // else's study — rewriting its rating widget from here would reconfigure it.
+    const { onSetPerTurnFeedback } = renderFlow(
+      vi.fn().mockResolvedValue({ scenarioId: "cb-existing", created: false })
+    );
+
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => {
+      expect(toastSuccess).toHaveBeenCalled();
+    });
+    expect(onSetPerTurnFeedback).not.toHaveBeenCalled();
+  });
+
+  it("keeps the study when only the ratings write fails, and says which half", async () => {
+    const { onSetPerTurnFeedback } = renderFlow(
+      undefined,
+      undefined,
+      vi.fn().mockRejectedValue(new Error("nope"))
+    );
+
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => {
+      expect(onSetPerTurnFeedback).toHaveBeenCalled();
+    });
+    // The study exists, so this is not reported as a failed creation.
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringMatching(/study created, but the per-turn ratings setting/i)
+    );
+    expect(toastSuccess).toHaveBeenCalledWith(
+      expect.stringMatching(/study created/i)
+    );
   });
 });

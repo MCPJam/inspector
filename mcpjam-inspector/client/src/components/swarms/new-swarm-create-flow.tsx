@@ -22,6 +22,7 @@ import {
 import { Textarea } from "@mcpjam/design-system/textarea";
 import { ChevronLeft, Loader2, Plus, X } from "lucide-react";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
+import { RequiredMark } from "@/components/shared/required-mark";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SwarmTargetComposer } from "@/components/swarms/swarm-target-composer";
 import {
@@ -136,21 +137,6 @@ export function suggestSwarmName(now: Date): string {
 
 /** Backend cap on `swarms.name`. */
 const SWARM_NAME_MAX = 120;
-
-/**
- * The required marker beside a field label.
- *
- * `aria-hidden` because the asterisk is a visual convention, not a label: the
- * field's own `required`/gating is what a screen reader should hear, and
- * "Swarm name star" is noise.
- */
-function RequiredMark() {
-  return (
-    <span aria-hidden className="font-medium text-primary">
-      *
-    </span>
-  );
-}
 
 // Prefixed with "e.g." on purpose: the un-prefixed sentence read as filled-in
 // content, so users hit a disabled button with no idea the box was empty.

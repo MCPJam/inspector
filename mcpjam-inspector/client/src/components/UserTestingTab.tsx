@@ -219,7 +219,7 @@ export function UserTestingTab({
   // hydration) would advertise the tools before any query can run, so the
   // agent would get an empty snapshot and failing commands.
   const agentOperable = effectiveAuth && shouldQueryProjectId(projectId);
-  const { deleteScenario } = useScenarioMutations();
+  const { deleteScenario, updateScenario } = useScenarioMutations();
   const { publishEnvironmentScenario } = useEnvironmentScenarioMutations();
   // Session rows for the snapshot only — the same list query the Sessions view
   // reads, unfiltered, redacted at read time.
@@ -516,6 +516,16 @@ export function UserTestingTab({
             replace: true,
           });
           return { scenarioId: result.scenarioId, created: result.created };
+        }}
+        onSetPerTurnFeedback={async (scenarioId, settings) => {
+          // A second write, because `publishEnvironmentScenario` takes no
+          // `chatUi`. Both fields go together: this is the study's first and
+          // only statement about its rating widget, so there is no stored
+          // value for a partial patch to preserve.
+          await updateScenario({
+            scenarioId,
+            chatUi: { surfaces: { perTurnFeedback: settings } },
+          } as any);
         }}
       />
     );

@@ -8,6 +8,7 @@
 import { useCallback } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
+import { RequiredMark } from "@/components/shared/required-mark";
 import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
 import { CloudUnreachableNotice } from "@/components/computer/CloudUnreachableNotice";
 import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
@@ -99,11 +100,7 @@ export function SwarmTargetComposer({
         <div className="flex flex-wrap items-center gap-2">
           <Label>
             Where it runs
-            {required ? (
-              <span aria-hidden className="font-medium text-primary">
-                *
-              </span>
-            ) : null}
+            {required ? <RequiredMark /> : null}
           </Label>
           {computersEnabled ? (
             <CloudRunBadge
