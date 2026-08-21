@@ -615,12 +615,12 @@ export function UserTestingTab({
           </h1>
           <Button size="sm" onClick={goCreate}>
             <Plus className="mr-1.5 size-4" />
-            New scenario
+            Create new study
           </Button>
         </div>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Share a scenario with real people, then read what happened in their
-          sessions.
+          Create a study with real users or internal testers, then read what
+          happened in their sessions.
         </p>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 sm:px-8">
@@ -631,7 +631,7 @@ export function UserTestingTab({
           isLoading={listLoading}
           onOpenScenario={(id) => navigate(buildUserTestingScenarioPath(id))}
           onCreateScenario={goCreate}
-          createLabel="New scenario"
+          createLabel="Create new study"
         />
       </div>
     </div>
