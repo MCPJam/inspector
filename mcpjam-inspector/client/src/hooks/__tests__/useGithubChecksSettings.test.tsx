@@ -72,6 +72,7 @@ import { ConvexError } from "convex/values";
 import {
   useGithubChecksAvailability,
   useGithubChecksSettings,
+  useGithubInstallCallbacks,
 } from "../useGithubChecksSettings";
 
 function AvailabilityProbe({
@@ -190,13 +191,14 @@ describe("useGithubChecksAvailability", () => {
  * The write surface: WHICH backend functions this hook binds, and exactly what
  * it sends them.
  *
- * Both halves are load-bearing. Connecting a repository moved to a Node action
- * that proves the pinned installation can actually reach the repository before
- * it writes anything; the unverified `checkRepoConfigs:connectRepo` mutation is
- * still deployed for the two-deploy window and would work if it were bound
- * again, silently giving back a config row nobody verified. And the arguments
- * are the contract — `organizationId` is added here so no call site can forget
- * it, and `installationId` is a server-side fact the client never names.
+ * Both halves are load-bearing. Connecting a repository goes through a Node
+ * action that proves the selected installation can actually reach the
+ * repository before it writes anything; the unverified
+ * `checkRepoConfigs:connectRepo` mutation is now REMOVED from the backend, and
+ * binding it again would be binding a dead id. And the arguments are the
+ * contract — `organizationId` is added here so no call site can forget it, and
+ * the GitHub installation id is a server-side fact the client never names: it
+ * selects with an opaque `installationRef` instead.
  */
 describe("useGithubChecksSettings writes", () => {
   function SettingsProbe() {
@@ -211,6 +213,8 @@ describe("useGithubChecksSettings writes", () => {
               projectId: "proj-1",
               suiteId: "suite-1",
               outagePolicy: "fail_closed",
+              installationRef: "bind-1",
+              repositoryId: 4242,
             })
           }
         >
@@ -226,6 +230,17 @@ describe("useGithubChecksSettings writes", () => {
           }
         >
           set policy
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void settings.unbindInstallation({ installationRef: "bind-1" })
+          }
+        >
+          unbind
+        </button>
+        <button type="button" onClick={() => void settings.startInstallation()}>
+          install
         </button>
         <div data-testid="exposed">
           {Object.keys(settings).sort().join(",")}
@@ -259,6 +274,13 @@ describe("useGithubChecksSettings writes", () => {
       [
         "action:github/checkRepoConfigsNode:connectVerifiedRepo",
         "action:github/checkRepoConfigsNode:listInstallationRepos",
+        // The org ↔ installation binding surface. Note what is NOT here: the
+        // two GitHub CALLBACK actions live in `useGithubInstallCallbacks`,
+        // because the callback page has no organization to hand them — it
+        // arrives back from GitHub with query parameters and nothing else.
+        "action:github/appInstallLinkNode:startInstallation",
+        "action:github/appInstallLinkNode:startDirectClaim",
+        "mutation:github/appInstallLink:unbindInstallation",
         "mutation:github/checkRepoConfigs:disconnectRepo",
         "mutation:github/checkRepoConfigs:setRepoEnabled",
         "mutation:github/checkRepoConfigs:setRepoOutagePolicy",
@@ -288,16 +310,50 @@ describe("useGithubChecksSettings writes", () => {
       {
         kind: "action",
         name: "github/checkRepoConfigsNode:connectVerifiedRepo",
-        // Exactly these five. No `installationId`: which installation can reach
-        // the repository is resolved and proved server-side, and a client that
-        // could name one would be a client that could pick the wrong one.
+        // No GitHub `installationId`, ever. Which installation can reach the
+        // repository is resolved and proved server-side, and a client that
+        // could name one would be a client that could name the wrong one —
+        // `installationRef` is an opaque row id the backend resolves and
+        // re-checks, not an assertion about GitHub.
         args: {
           organizationId: "org-1",
           repoFullName: "mcpjam/mcp-check-fixture",
           projectId: "proj-1",
           suiteId: "suite-1",
           outagePolicy: "fail_closed",
+          installationRef: "bind-1",
+          repositoryId: 4242,
         },
+      },
+    ]);
+  });
+
+  it("unbinds with the OPAQUE ref, scoped to the org", () => {
+    render(<SettingsProbe />);
+
+    screen.getByText("unbind").click();
+
+    expect(mocks.requests).toEqual([
+      {
+        kind: "mutation",
+        name: "github/appInstallLink:unbindInstallation",
+        args: { organizationId: "org-1", installationRef: "bind-1" },
+      },
+    ]);
+  });
+
+  it("starts an installation with nothing but the org", () => {
+    render(<SettingsProbe />);
+
+    screen.getByText("install").click();
+
+    // The one-time state is minted and hashed SERVER-side; there is nothing for
+    // the client to contribute and nothing for it to get wrong.
+    expect(mocks.requests).toEqual([
+      {
+        kind: "action",
+        name: "github/appInstallLinkNode:startInstallation",
+        args: { organizationId: "org-1" },
       },
     ]);
   });
@@ -316,6 +372,94 @@ describe("useGithubChecksSettings writes", () => {
           configId: "cfg-1",
           outagePolicy: "fail_open",
         },
+      },
+    ]);
+  });
+});
+
+/**
+ * The CALLBACK surface, and why it is a second hook rather than three more
+ * fields on the first.
+ *
+ * The callback page arrives back from GitHub with query parameters and nothing
+ * else — no organization, no app state worth trusting. Which organization a
+ * binding belongs to is recovered from the link session SERVER-side, so a hook
+ * that required an org id here would have to invent one, and a page that read
+ * it from app state could disagree with the session and then be asserting an
+ * organization nobody proved anything about.
+ */
+describe("useGithubInstallCallbacks", () => {
+  function CallbackProbe() {
+    const callbacks = useGithubInstallCallbacks();
+    return (
+      <div>
+        <button
+          type="button"
+          onClick={() =>
+            void callbacks.completeInstallSetup({
+              installationId: 4242,
+              state: "raw-install-state",
+            })
+          }
+        >
+          setup
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void callbacks.completeUserAuthorization({
+              code: "raw-code",
+              state: "raw-oauth-state",
+            })
+          }
+        >
+          oauth
+        </button>
+      </div>
+    );
+  }
+
+  beforeEach(() => {
+    mocks.user.value = { id: "user-1" };
+    mocks.isAuthenticated.value = true;
+    mocks.isUserReady.value = true;
+    mocks.resetConvexBindings();
+    vi.clearAllMocks();
+  });
+
+  it("binds exactly the two callback actions and the claim", () => {
+    render(<CallbackProbe />);
+
+    // An exact set. Anything org-scoped appearing here would mean the callback
+    // page had acquired an organization it has no way to have proved.
+    expect([...mocks.handles.keys()].sort()).toEqual(
+      [
+        "action:github/appInstallLinkNode:claimProvenInstallation",
+        "action:github/appInstallLinkNode:completeInstallSetup",
+        "action:github/appInstallLinkNode:completeUserAuthorization",
+      ].sort()
+    );
+  });
+
+  it("forwards GitHub's parameters verbatim, adding nothing", () => {
+    render(<CallbackProbe />);
+
+    screen.getByText("setup").click();
+    screen.getByText("oauth").click();
+
+    // No `organizationId`, and no normalization of the states: the backend
+    // matches them by hash, so anything done to them here could only stop a
+    // legitimate one from matching.
+    expect(mocks.requests).toEqual([
+      {
+        kind: "action",
+        name: "github/appInstallLinkNode:completeInstallSetup",
+        args: { installationId: 4242, state: "raw-install-state" },
+      },
+      {
+        kind: "action",
+        name: "github/appInstallLinkNode:completeUserAuthorization",
+        args: { code: "raw-code", state: "raw-oauth-state" },
       },
     ]);
   });
