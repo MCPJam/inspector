@@ -22,7 +22,28 @@ import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
 import { getHarnessAdapter, type HarnessId } from "./registry.js";
 
-export type HarnessAvailability = { ok: true } | { ok: false; reason: string };
+/**
+ * Why a harness was refused, as a value rather than a sentence.
+ *
+ * `reason` is the human copy and changes freely with the wording; `kind` is
+ * what code branches on. Callers need the distinction: eval admission runs
+ * this gate twice — once from the host config alone, before the run's per-case
+ * models are known — and has to tell a MODEL refusal (re-decide it later, with
+ * the real models) from a host-level one (final either way). Matching that on
+ * the message text made a copy edit silently change admission behaviour.
+ */
+export type HarnessUnavailableKind =
+  | "broker-disabled"
+  | "enterprise-policy"
+  | "computers-unconfigured"
+  | "tool-approval"
+  | "mcp-servers"
+  | "model-not-hosted"
+  | "model-unsupported";
+
+export type HarnessAvailability =
+  | { ok: true }
+  | { ok: false; kind: HarnessUnavailableKind; reason: string };
 
 export function checkHarnessRuntimeAvailable(args: {
   /** The harness this host runs — selects the capability set. */
@@ -71,6 +92,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (!harnessBrokerDeliveryEnabled()) {
     return {
       ok: false,
+      kind: "broker-disabled",
       reason:
         `the ${name} harness delivers model credentials via the broker, ` +
         "and broker delivery is disabled on this server " +
@@ -82,6 +104,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (args.xaaEnterprisePolicyOn) {
     return {
       ok: false,
+      kind: "enterprise-policy",
       reason:
         `the ${name} harness can't run on an enterprise-managed host yet — ` +
         "the harness reaches MCP servers through a signed proxy that can't " +
@@ -94,6 +117,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (adapter.requiresComputer && !isComputersDataPlaneConfigured()) {
     return {
       ok: false,
+      kind: "computers-unconfigured",
       reason:
         `the ${name} harness needs a computer, but this server is not a ` +
         "computers data plane (deployed servers bootstrap credentials from " +
@@ -107,6 +131,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (args.requireToolApproval && !adapter.supportsNativeToolApproval) {
     return {
       ok: false,
+      kind: "tool-approval",
       reason:
         `the ${name} harness doesn't support interactive tool approval yet — ` +
         "turn off requireToolApproval on this host",
@@ -119,6 +144,7 @@ export function checkHarnessRuntimeAvailable(args: {
   ) {
     return {
       ok: false,
+      kind: "tool-approval",
       reason:
         `the ${name} harness can't pause for approval of MCP-server tools — ` +
         "turn off requireToolApproval on this host",
@@ -130,6 +156,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (args.hasSelectedMcpServers && !adapter.supportsSelectedMcpServers) {
     return {
       ok: false,
+      kind: "mcp-servers",
       reason:
         `the ${name} harness doesn't support MCP servers yet — remove the ` +
         "selected servers from this host to run it",
@@ -149,6 +176,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (!isHostedCatalogModel(args.model.id, args.model.provider)) {
     return {
       ok: false,
+      kind: "model-not-hosted",
       reason:
         `the ${name} harness only runs MCPJam-provided models — pick one on ` +
         "this host to run the real runtime",
@@ -161,6 +189,7 @@ export function checkHarnessRuntimeAvailable(args: {
   if (!adapter.supportsModel(canonicalModelId)) {
     return {
       ok: false,
+      kind: "model-unsupported",
       reason:
         `the ${name} harness can't run this host's model — pick a ` +
         `${name}-compatible model to run the real runtime`,
