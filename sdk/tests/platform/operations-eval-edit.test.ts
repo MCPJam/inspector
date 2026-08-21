@@ -26,15 +26,31 @@ const ENVIRONMENTS = [
 
 function makeClient(): {
   client: PlatformApiClient;
-  calls: Array<{ method: string; path: string; body?: any }>;
+  calls: Array<{
+    method: string;
+    path: string;
+    body?: any;
+    headers: Record<string, string>;
+  }>;
 } {
-  const calls: Array<{ method: string; path: string; body?: any }> = [];
+  const calls: Array<{
+    method: string;
+    path: string;
+    body?: any;
+    headers: Record<string, string>;
+  }> = [];
   const fetchMock = vi.fn(async (target: unknown, init?: RequestInit) => {
     const url = new URL(String(target));
     const path = url.pathname;
     const method = init?.method ?? "GET";
     const body = init?.body ? JSON.parse(String(init.body)) : undefined;
-    calls.push({ method, path, body });
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(
+      (init?.headers ?? {}) as Record<string, string>
+    )) {
+      headers[key.toLowerCase()] = value;
+    }
+    calls.push({ method, path, body, headers });
 
     if (path === "/api/v1/projects") return Response.json({ items: PROJECTS });
     if (/\/environments$/.test(path))
@@ -223,6 +239,38 @@ describe("eval-edit operation execution", () => {
       caseMix: { simple: 3, negative: 1 },
       varyUserStyles: true,
     });
+  });
+
+  it("generate_eval_cases forwards the idempotency key on BOTH channels", async () => {
+    // The bug this pins: the operation used to send no key at all, so the
+    // surfaces most likely to time out (CLI, MCP plugin, direct SDK) re-spent
+    // on every retry. The body is the channel the route reads by schema —
+    // matching run_eval_suite and run_eval_case, the two closest siblings that
+    // also spend — and the header is the one the client already speaks. They
+    // must carry the SAME key: two channels that could disagree would be a
+    // worse bug than the one being fixed.
+    const { client, calls } = makeClient();
+    await generateEvalCasesOperation.execute(
+      { suite: "s1", idempotencyKey: "cli-run-7" },
+      { client }
+    );
+    const gen = calls.find((c) => /\/cases\/generate$/.test(c.path));
+    expect(gen?.body).toEqual({ idempotencyKey: "cli-run-7" });
+    expect(gen?.headers["idempotency-key"]).toBe("cli-run-7");
+  });
+
+  it("generate_eval_cases sends no key when the caller passes none", async () => {
+    const { client, calls } = makeClient();
+    await generateEvalCasesOperation.execute({ suite: "s1" }, { client });
+    const gen = calls.find((c) => /\/cases\/generate$/.test(c.path));
+    expect(gen?.body).toEqual({});
+    expect(gen?.headers["idempotency-key"]).toBeUndefined();
+  });
+
+  it("generate_eval_cases is labelled as spending", () => {
+    // `operationDescription` appends the "COSTS MONEY" warning to the MCP tool
+    // off this facet, and the operation spends the organization's credits.
+    expect(generateEvalCasesOperation.risk).toBe("spend");
   });
 
   it("generate_eval_cases omits varyUserStyles when not enabled", async () => {

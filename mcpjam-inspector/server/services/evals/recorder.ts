@@ -314,6 +314,28 @@ export const createSuiteRunRecorder = ({
   };
 };
 
+/**
+ * What THIS runner build can actually execute — declared to the backend at run
+ * creation (the mixed-version-rollout handshake).
+ *
+ * The backend pins a run's host config at run start and stamps the run's
+ * `executionEngine` from it. If it pinned `harness` unconditionally, a run
+ * created by an OLDER runner — a desktop or local inspector that predates the
+ * harness execution wiring but talks to the same hosted Convex — would be
+ * stamped `harness:claude-code` while that runner went on quietly emulating.
+ * That is worse than the bug this program is fixing: today's silent emulation
+ * at least isn't labelled, and a false stamp would make it unfalsifiable.
+ *
+ * So the backend copies `harness` into the run snapshot only when the creating
+ * runner says it can honour it. A runner that declares nothing keeps today's
+ * behavior — stripped selector, `emulated` stamp — which is honest about what
+ * it will do.
+ *
+ * TEMPORARY. Retire the arg (and this constant) once every runner version in
+ * the wild declares it; the backend can then pin `harness` unconditionally.
+ */
+const RUNNER_CAPABILITIES = ["harness-execution"] as const;
+
 export const startSuiteRunWithRecorder = async ({
   convexClient,
   suiteId,
@@ -474,6 +496,7 @@ export const startSuiteRunWithRecorder = async ({
         ...(source ? { source } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
+        runnerCapabilities: RUNNER_CAPABILITIES,
       }
     );
   } catch (error) {
@@ -704,6 +727,20 @@ export const startSuiteRunWithRecorder = async ({
     suiteId,
     config,
     recorder,
+    /**
+     * This start was a REPLAY of an existing run (idempotency key hit, or the
+     * keyless fingerprint window), not a launch.
+     *
+     * Absent from a backend that predates the field, which callers must read
+     * as "unknown", NOT as "fresh": treating an old backend's silence as a
+     * launch is exactly the assumption that had retries re-running a finished
+     * suite. Skew therefore keeps the old behaviour rather than gaining the
+     * new refusal.
+     */
+    deduped: response?.deduped as boolean | undefined,
+    /** The run's status as the platform holds it — `completed` on a replay of
+     *  a finished run, not the `running` a launch would report. */
+    status: response?.status as string | undefined,
     hostConfig: response?.hostConfig as
       | Record<string, unknown>
       | null
