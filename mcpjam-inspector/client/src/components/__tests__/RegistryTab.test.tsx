@@ -145,6 +145,47 @@ function createDirectoryServer(
   };
 }
 
+/**
+ * The third Convex-backed hook in this tab, mocked like the other two: this
+ * suite renders `RegistryTab` with no `ConvexProvider`, so a real `useQuery`
+ * throws before the component draws anything.
+ *
+ * The default is a project with NO organization, which is what makes every
+ * other test in this file keep asserting what it already asserted — the org
+ * section renders nothing at all in that state. Tests that care about the
+ * shelf override it.
+ */
+const mockOrgRegistryAdd = vi.fn();
+const mockOrgRegistryConnect = vi.fn();
+let mockOrgRegistryReturn: Record<string, unknown>;
+
+function orgRegistryHookReturn(
+  overrides: Partial<Record<string, unknown>> = {}
+): Record<string, unknown> {
+  return {
+    servers: [],
+    isLoading: false,
+    organizationId: null,
+    canAdd: false,
+    add: mockOrgRegistryAdd,
+    update: vi.fn(),
+    remove: vi.fn(),
+    connect: mockOrgRegistryConnect,
+    disconnect: vi.fn(),
+    ...overrides,
+  };
+}
+
+vi.mock("@/hooks/useOrgRegistryServers", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/useOrgRegistryServers")
+  >();
+  return {
+    ...actual,
+    useOrgRegistryServers: () => mockOrgRegistryReturn,
+  };
+});
+
 // Mock dropdown menu to simplify testing
 vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => (
@@ -214,6 +255,7 @@ describe("RegistryTab", () => {
       serverName: "Linear",
     });
     mockDirectoryReturn = directoryHookReturn();
+    mockOrgRegistryReturn = orgRegistryHookReturn();
     mockDirectoryDetail = null;
     mockHookReturn = {
       catalogCards: [],
@@ -261,6 +303,87 @@ describe("RegistryTab", () => {
       expect(
         screen.getByText("Pre-configured MCP servers you can connect quickly.")
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("organization shelf", () => {
+    const orgEntry = {
+      _id: "reg_1",
+      name: "org/org_1/internal-docs",
+      displayName: "Internal Docs",
+      description: "What the team uses.",
+      scope: "organization" as const,
+      status: "approved" as const,
+      transport: {
+        transportType: "http" as const,
+        url: "https://mcp.example.com/mcp",
+        useOAuth: true,
+      },
+      createdBy: "user_1",
+      createdAt: 1,
+      updatedAt: 1,
+      connectionStatus: "not_connected" as const,
+      connectedServerName: null,
+      derived: {
+        probedAt: 1,
+        endpointUrl: "https://mcp.example.com/mcp",
+        serverVersion: "1.4.2",
+        authRequired: true,
+        supportsDcr: true,
+      },
+      editedFields: [],
+    };
+
+    it("renders nothing at all for a project with no organization", () => {
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.queryByText("Your organization")).not.toBeInTheDocument();
+    });
+
+    it("renders the org's entries with their derived version, and no star control", () => {
+      mockOrgRegistryReturn = orgRegistryHookReturn({
+        organizationId: "org_1",
+        canAdd: true,
+        servers: [orgEntry],
+      });
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByText("Your organization")).toBeInTheDocument();
+      expect(screen.getByText("Internal Docs")).toBeInTheDocument();
+      // Version comes off the probe snapshot, not off anything typed.
+      expect(screen.getByText("v1.4.2")).toBeInTheDocument();
+      // An org row has no `registryCardKey`, so it can never carry a star.
+      expect(
+        screen.queryByRole("button", { name: /star this server/i })
+      ).not.toBeInTheDocument();
+    });
+
+    it("invites a member with an empty shelf to add one", () => {
+      mockOrgRegistryReturn = orgRegistryHookReturn({
+        organizationId: "org_1",
+        canAdd: true,
+        servers: [],
+      });
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.getByText("Nothing shared yet")).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Add a server" })
+      ).toBeInTheDocument();
+    });
+
+    it("hides the shelf from a member who cannot add and has nothing to see", () => {
+      mockOrgRegistryReturn = orgRegistryHookReturn({
+        organizationId: "org_1",
+        canAdd: false,
+        servers: [],
+      });
+
+      render(<RegistryTab {...defaultProps} />);
+
+      expect(screen.queryByText("Your organization")).not.toBeInTheDocument();
     });
   });
 
