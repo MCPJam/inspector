@@ -809,6 +809,100 @@ describe("private authorization server fallback", () => {
     expect(localRefreshMock).not.toHaveBeenCalled();
   });
 
+  it("does not use the cache when the backend REFUSES rather than fails", async () => {
+    // GUARDRAIL. The cache exists for a backend that could not answer (429, or
+    // unreachable). A 401 is an answer: the credential was revoked, the bearer
+    // expired, or the user pressed Disconnect. Serving that from cache kept a
+    // revoked connection minting tokens until the process restarted.
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: any) => {
+        if (String(input).includes("/import-tokens")) {
+          return new Response("{}", { status: 200 });
+        }
+        call += 1;
+        return call === 1
+          ? privateAuthServer409({ refresh: REFRESH_MATERIAL })
+          : new Response(
+              JSON.stringify({
+                success: false,
+                code: "refresh_token_invalid",
+                message: "Hosted OAuth refresh token is invalid.",
+              }),
+              { status: 401, headers: { "Content-Type": "application/json" } }
+            );
+      })
+    );
+
+    // First call populates the cache for this exact subject/project/server.
+    localRefreshMock.mockResolvedValue({ access_token: "locally-refreshed" });
+    await refreshHostedOAuthAccessTokenWithLocalFallback(
+      "bearer-token",
+      "project-1",
+      "server-1"
+    );
+    expect(localRefreshMock).toHaveBeenCalledTimes(1);
+
+    // Second call: the backend now refuses. The cached material must not be
+    // touched, and the refusal must reach the caller intact.
+    const error = await refreshHostedOAuthAccessTokenWithLocalFallback(
+      "bearer-token",
+      "project-1",
+      "server-1"
+    ).catch((e) => e);
+
+    expect(error.status).toBe(401);
+    expect(error.details?.refreshTokenInvalid).toBe(true);
+    expect(localRefreshMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not serve one subject's cached material to another", async () => {
+    // GUARDRAIL. The credential is (userId, projectId, serverId); a self-hosted
+    // non-hosted-mode deployment serves many users from one process. On a
+    // subject-less key, user B's rate-limited refresh was answered with user
+    // A's refresh token — and importRefreshedTokens then wrote A's rotated
+    // token into B's credential.
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: any) => {
+        if (String(input).includes("/import-tokens")) {
+          return new Response("{}", { status: 200 });
+        }
+        call += 1;
+        return call === 1
+          ? privateAuthServer409({ refresh: REFRESH_MATERIAL })
+          : new Response(
+              JSON.stringify({
+                success: false,
+                code: "RATE_LIMITED",
+                message: "Too many OAuth refresh attempts.",
+              }),
+              { status: 429, headers: { "Content-Type": "application/json" } }
+            );
+      })
+    );
+
+    localRefreshMock.mockResolvedValue({ access_token: "locally-refreshed" });
+    await refreshHostedOAuthAccessTokenWithLocalFallback(
+      "bearer-a",
+      "project-1",
+      "server-1"
+    );
+    expect(localRefreshMock).toHaveBeenCalledTimes(1);
+
+    // Same project and server, DIFFERENT bearer. Nothing cached for them.
+    const error = await refreshHostedOAuthAccessTokenWithLocalFallback(
+      "bearer-b",
+      "project-1",
+      "server-1"
+    ).catch((e) => e);
+
+    expect(error.status).toBe(429);
+    expect(localRefreshMock).toHaveBeenCalledTimes(1);
+  });
+
   it("does not read a rejected-grant code out of a raw response body", async () => {
     // The SDK embeds a non-JSON error response verbatim
     // (`Invalid OAuth error response: ${body}`). A dev proxy's HTML error page

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { UnauthorizedRefreshHandler } from "@mcpjam/sdk";
 import type { OAuthTokens } from "@modelcontextprotocol/client";
 import {
@@ -91,11 +92,52 @@ function parseRefreshMaterial(
  * an entry can be superseded by a refresh this process never saw. Treat a
  * cache hit as a guess: `cachedMaterialFallback` below is what keeps a stale
  * guess from being reported as a dead credential.
+ *
+ * Keyed by SUBJECT as well as project and server. The credential the backend
+ * resolves is `(userId, projectId, serverId)`, and the same self-hosted
+ * deployment this comment already contemplates serves more than one user from
+ * one process — so a `projectId:serverId` key would let one user's refresh be
+ * served from another's cached refresh token, and `importRefreshedTokens`
+ * would then write the rotated result into the caller's credential. The
+ * bearer is hashed, never stored: a rotated bearer simply misses and falls
+ * back to the backend, which is the safe direction.
  */
 const privateAuthorizationServerMaterialCache = new Map<
   string,
   PrivateAuthorizationServerRefreshMaterial
 >();
+
+/**
+ * Which caller a cache entry belongs to, without keeping the bearer around.
+ *
+ * Truncated to 128 bits: this only has to separate subjects within one
+ * process, and a shorter key keeps the map readable in a heap dump.
+ */
+function subjectFingerprint(bearerToken: string): string {
+  return createHash("sha256").update(bearerToken).digest("hex").slice(0, 32);
+}
+
+/**
+ * Did the backend fail to REACH a verdict, rather than reach one we dislike?
+ *
+ * Only these may fall through to the cached material. Everything else — most
+ * sharply the 401 the backend sends for `refresh_token_invalid`, but equally a
+ * 403 or a 404 — is a decision about this caller's access, and honouring the
+ * cache past it would keep a revoked connection alive.
+ *
+ * 409 is deliberately absent: `refresh_in_progress` means another refresh
+ * holds the lease right now, and refreshing anyway would race it and rotate
+ * the token out from under the holder. That one wants a retry, not a cache.
+ */
+function isUninformativeBackendFailure(error: unknown): boolean {
+  if (!(error instanceof WebRouteError)) return false;
+  return (
+    error.status === 429 || // force-refresh budget spent
+    error.status === 502 || // could not reach the backend at all
+    error.status === 503 || // backend up, authorization server never answered
+    error.status === 504
+  );
+}
 
 /** Test seam: nothing outside tests should need to reach into the cache. */
 export function __resetPrivateAuthorizationServerMaterialCacheForTests(): void {
@@ -311,7 +353,7 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
   serverId: string,
   options?: HostedOAuthRefreshOptions
 ): Promise<string> {
-  const cacheKey = `${projectId}:${serverId}`;
+  const cacheKey = `${subjectFingerprint(bearerToken)}:${projectId}:${serverId}`;
   let material: PrivateAuthorizationServerRefreshMaterial | null = null;
   // Material read back from the cache is a GUESS about a credential this
   // process does not own — see the failure handling below.
@@ -337,10 +379,11 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
         throw error;
       }
       material = error.refreshMaterial;
-    } else {
-      // Anything else is a real failure of the backend call — EXCEPT that this
+    } else if (isUninformativeBackendFailure(error)) {
+      // The backend could not ANSWER — as opposed to answering "no". This
       // server may already be known to need a local refresh, in which case the
-      // backend has nothing to contribute and its verdict should not block us.
+      // backend has nothing to contribute and a verdict it never reached
+      // should not block us.
       //
       // The concrete case is the force-refresh rate limit (10/min per
       // subject:serverId). Every local fallback first spends a token from that
@@ -358,6 +401,14 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
         "[local oauth refresh] backend refresh unavailable; using cached private-AS material",
         { serverId, error: parseErrorMessage(error) }
       );
+    } else {
+      // The backend answered, and the answer was no. A 401 (bearer expired),
+      // 403 (membership revoked) or 404 (the user pressed Disconnect) is a
+      // decision about whether this caller may still use this credential at
+      // all — and the cached refresh token would happily mint a working access
+      // token past every one of them. Serving those from cache made revoking
+      // a connection in the UI a no-op until the process restarted.
+      throw error;
     }
   }
 
@@ -512,10 +563,23 @@ function translateLocalRefreshFailure(
 
   // Their own server isn't running. The connect was going to fail regardless;
   // say why rather than reporting a generic refresh error.
+  //
+  // Origin only, never the raw URL — the same rule
+  // `refreshTokensAgainstPrivateAuthorizationServer` applies to its debug log,
+  // and it binds harder here: this message is the HTTP response body and it
+  // reaches Sentry. An imported authorization-server URL can carry basic-auth
+  // userinfo or an `x-api-key`-style query parameter, and `.origin` drops
+  // userinfo, path and query while keeping the host the user needs to see.
+  let authorizationServerOrigin: string;
+  try {
+    authorizationServerOrigin = new URL(material.authorizationServerUrl).origin;
+  } catch {
+    authorizationServerOrigin = "the authorization server";
+  }
   return new WebRouteError(
     502,
     ErrorCode.SERVER_UNREACHABLE,
-    `Could not reach the authorization server at ${material.authorizationServerUrl}: ${message}`,
+    `Could not reach the authorization server at ${authorizationServerOrigin}: ${message}`,
     { serverId, serverName }
   );
 }

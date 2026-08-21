@@ -1399,7 +1399,7 @@ export async function createAuthorizedManager(
           recovery.serverId,
           {
             accessScope: options?.accessScope,
-            chatboxId: options?.chatboxId,
+            scenarioId: options?.scenarioId,
             accessVersion: options?.accessVersion,
             serverName: recovery.displayServerName,
           }
