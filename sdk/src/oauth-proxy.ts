@@ -4,14 +4,11 @@ import https from "node:https";
 import type { LookupFunction } from "node:net";
 import type { IncomingMessage } from "node:http";
 
-export class OAuthProxyError extends Error {
-  status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
+// Defined in its own module so `oauth/pinned-dns.ts` can throw it without an
+// import cycle; re-exported here so the public symbol and every existing
+// `instanceof` check are unchanged.
+export { OAuthProxyError } from "./oauth-proxy-error.js";
+import { OAuthProxyError } from "./oauth-proxy-error.js";
 
 export interface OAuthProxyRequest {
   url: string;
@@ -46,6 +43,13 @@ import {
   isLoopbackOAuthUrl,
   isPrivateHost,
 } from "./oauth/ssrf-guard.js";
+// The DNS half — resolve once, classify, pin — lives in its own node-only
+// module so the streaming transport in `oauth/pinned-stream-fetch.ts` shares
+// this exact implementation rather than forking a second one.
+import {
+  createPinnedLookup,
+  resolvePinnedAddresses,
+} from "./oauth/pinned-dns.js";
 export { isDisallowedIpAddress };
 
 interface ValidatedUrl {
@@ -817,121 +821,11 @@ export async function executeDebugOAuthProxy(
 const MAX_OAUTH_METADATA_REDIRECTS = 5;
 const MAX_OAUTH_METADATA_BYTES = 1024 * 1024;
 
-interface PinnedAddress {
-  address: string;
-  family: number;
-}
-
 interface RawOAuthMetadataResponse {
   status: number;
   statusText: string;
   headers: Record<string, string>;
   body: string;
-}
-
-function isLoopbackAddress(address: string): boolean {
-  const host = address.includes(":") ? `[${address}]` : address;
-  return isLoopbackOAuthUrl(`http://${host}`);
-}
-
-async function resolvePinnedAddresses(
-  targetUrl: URL,
-  allowLoopbackFlow: boolean,
-  signal: AbortSignal | undefined,
-  targetLabel = "OAuth metadata target"
-): Promise<PinnedAddress[] | null> {
-  const targetIsLoopback = isLoopbackOAuthUrl(targetUrl.toString());
-
-  if (isPrivateHost(targetUrl.hostname)) {
-    if (!(allowLoopbackFlow && targetIsLoopback)) {
-      throw new OAuthProxyError(
-        400,
-        `${targetLabel} is a private/reserved host (${targetUrl.hostname})`
-      );
-    }
-  }
-
-  // Numeric IPs are already the exact socket destination, so there is no DNS
-  // lookup to pin. The literal-host check above has classified them.
-  if (
-    /^\d+\.\d+\.\d+\.\d+$/.test(targetUrl.hostname) ||
-    targetUrl.hostname.includes(":")
-  ) {
-    return null;
-  }
-
-  const addresses = await new Promise<PinnedAddress[]>((resolve, reject) => {
-    const cleanup = () => signal?.removeEventListener("abort", onAbort);
-    const onAbort = () => {
-      cleanup();
-      reject(signal?.reason ?? new Error(`${targetLabel} request aborted`));
-    };
-
-    if (signal?.aborted) {
-      onAbort();
-      return;
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-
-    dnsLookupCb(
-      targetUrl.hostname,
-      { all: true, verbatim: true },
-      (error, resolved) => {
-        cleanup();
-        if (error) {
-          reject(
-            new OAuthProxyError(
-              400,
-              `Could not resolve ${targetLabel.toLowerCase()} ${
-                targetUrl.hostname
-              }`
-            )
-          );
-          return;
-        }
-        resolve(Array.isArray(resolved) ? resolved : [resolved]);
-      }
-    );
-  });
-
-  if (addresses.length === 0) {
-    throw new OAuthProxyError(
-      400,
-      `Could not resolve ${targetLabel.toLowerCase()} ${targetUrl.hostname}`
-    );
-  }
-
-  for (const { address } of addresses) {
-    if (targetIsLoopback) {
-      if (!isLoopbackAddress(address)) {
-        throw new OAuthProxyError(
-          400,
-          `Loopback ${targetLabel.toLowerCase()} resolved outside loopback (${address})`
-        );
-      }
-    } else if (isDisallowedIpAddress(address)) {
-      throw new OAuthProxyError(
-        400,
-        `${targetLabel} resolves to a private/reserved IP address (${address})`
-      );
-    }
-  }
-
-  return addresses;
-}
-
-function createPinnedLookup(addresses: PinnedAddress[]): LookupFunction {
-  return (_hostname, options, callback) => {
-    if (typeof options === "object" && options?.all) {
-      return (
-        callback as unknown as (
-          err: NodeJS.ErrnoException | null,
-          resolved: PinnedAddress[]
-        ) => void
-      )(null, addresses);
-    }
-    callback(null, addresses[0].address, addresses[0].family);
-  };
 }
 
 async function requestPinnedOAuthMetadata(

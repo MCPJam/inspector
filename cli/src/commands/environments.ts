@@ -3,6 +3,8 @@ import type { Command } from "commander";
 import {
   archiveEnvironmentOperation,
   createEnvironmentOperation,
+  ensureAdhocEnvironmentOperation,
+  nameEnvironmentOperation,
   getEnvironmentCapabilitiesOperation,
   getEnvironmentOperation,
   listEnvironmentsOperation,
@@ -373,6 +375,118 @@ export function registerEnvironmentsCommands(program: Command): void {
         globalOptions.timeout,
         ({ client, signal }) =>
           createEnvironmentOperation.execute(input, { client, signal })
+      );
+      writeResult(result, globalOptions.format);
+    }
+  );
+
+  addPlatformOptions(
+    environments
+      .command("ensure-adhoc")
+      .description(
+        "Get or create an UNNAMED environment for a composed stack. Deduplicated by content: the same stack always returns the same environment"
+      )
+      .requiredOption(
+        "--host <id-or-name>",
+        "Host the composed stack runs as — the client whose configuration a run is stamped with"
+      )
+      .option("--project <id-or-name>", "Project name or ID")
+      .option(
+        "--server-group <id>",
+        "Standalone server group to pin (omit to use the host's own servers)"
+      )
+      .option(
+        "--model <id>",
+        "Model to run instead of the host's pinned one (stored verbatim)"
+      )
+      .option(
+        "--computer <id-or-name>",
+        "Project-shared sandbox image to pin, so runs boot a fresh computer from it"
+      )
+      .option(
+        "--skill <id...>",
+        "Project-shared skill IDs to pin on the composed stack"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        host: string;
+        serverGroup?: string;
+        model?: string;
+        computer?: string;
+        skill?: string[];
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const input = validateInput(ensureAdhocEnvironmentOperation, {
+        ...(options.project !== undefined ? { project: options.project } : {}),
+        host: options.host,
+        ...(options.serverGroup !== undefined
+          ? { serverGroup: options.serverGroup }
+          : {}),
+        ...(options.model !== undefined ? { model: options.model } : {}),
+        ...(options.computer !== undefined
+          ? { computer: options.computer }
+          : {}),
+        ...(options.skill?.length
+          ? { skills: { mode: "explicit", skillIds: options.skill } }
+          : {}),
+      });
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          ensureAdhocEnvironmentOperation.execute(input, { client, signal })
+      );
+      writeResult(result, globalOptions.format);
+    }
+  );
+
+  addPlatformOptions(
+    environments
+      .command("name")
+      .description(
+        "Promote an UNNAMED (ad-hoc) environment to a named one, in place — the same id every existing run points at"
+      )
+      .requiredOption(
+        "--environment <id>",
+        "The ad-hoc environment to promote, by ID (an unnamed environment has no name to select it by)"
+      )
+      .requiredOption("--name <name>", "Display name for the promoted environment")
+      .requiredOption(
+        "--expected-revision <n>",
+        "The revision you last read; a stale value is rejected instead of overwriting a concurrent edit"
+      )
+      .option("--project <id-or-name>", "Project name or ID")
+      .option("--description <text>", "Optional description")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        environment: string;
+        name: string;
+        expectedRevision: string;
+        description?: string;
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const input = validateInput(nameEnvironmentOperation, {
+        ...(options.project !== undefined ? { project: options.project } : {}),
+        environment: options.environment,
+        name: options.name,
+        expectedRevision: parseRevision(options.expectedRevision),
+        ...(options.description !== undefined
+          ? { description: options.description }
+          : {}),
+      });
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          nameEnvironmentOperation.execute(input, { client, signal })
       );
       writeResult(result, globalOptions.format);
     }
