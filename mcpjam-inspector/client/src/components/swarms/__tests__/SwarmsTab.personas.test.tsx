@@ -246,12 +246,16 @@ describe("SwarmsTab — persona create/edit", () => {
 
     const aside = await screen.findByRole("complementary");
     const name = within(aside).getByText("Persona One");
+    const role = within(aside).getByText("tester");
+    const stack = name.parentElement;
 
     expect(name.className).toContain("truncate");
+    expect(role.className).toContain("truncate");
+    expect(role.parentElement).toBe(stack);
     // `truncate` only clips when the column stack lets its children fill the
     // row; sizing them to their own content (items-start) defeats it, and the
     // overflow then runs under the delete button. BB-58.
-    expect(name.parentElement?.className ?? "").not.toContain("items-start");
+    expect(stack?.className ?? "").not.toContain("items-start");
   });
 });
 
