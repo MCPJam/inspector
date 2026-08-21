@@ -18,6 +18,7 @@ function draft(overrides: Partial<NewSwarmFlowDraft> = {}): NewSwarmFlowDraft {
   return {
     step: "confirm",
     name: "Swarm · Aug 20",
+    nameEdited: false,
     description: "Support agents answering refunds",
     targetState: {
       environmentIds: ["env-1"],
@@ -85,6 +86,9 @@ describe("new swarm flow draft", () => {
     const restored = readNewSwarmFlowDraft("proj-1");
     expect(restored).not.toBeNull();
     expect(restored?.name).toBe("");
+    // Absent reads as "not edited" — the draft's other fields are what made it
+    // resumable anyway.
+    expect(restored?.nameEdited).toBe(false);
     expect(restored?.step).toBe("confirm");
   });
 

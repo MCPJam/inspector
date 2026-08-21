@@ -55,6 +55,15 @@ export type NewSwarmFlowDraft = {
   step: NewSwarmFlowStep;
   /** The Describe step's Swarm name field. */
   name: string;
+  /**
+   * Whether the user typed in the name field.
+   *
+   * Persisted rather than derived: the field is PREFILLED, so "differs from the
+   * suggestion" is the only way to tell an edit from an untouched form — and
+   * after a remount the restored name IS the starting value, which made an
+   * edited name look untouched and got its draft cleared.
+   */
+  nameEdited: boolean;
   description: string;
   targetState: EnvironmentComposerState;
   resolvedEnvironmentIds: string[] | null;
@@ -211,6 +220,9 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
   // generated slate the user paid a model call for. The flow falls back to the
   // suggested name for an empty string.
   const name = typeof value.name === "string" ? value.name : "";
+  // Tolerated like `name`: a draft written before this field existed is still
+  // resumable, and its other fields are what made it resumable anyway.
+  const nameEdited = value.nameEdited === true;
   if (!isComposerState(value.targetState)) return null;
   if (
     value.resolvedEnvironmentIds !== null &&
@@ -237,6 +249,7 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
   return {
     step: step as NewSwarmFlowStep,
     name,
+    nameEdited,
     description: value.description,
     targetState: value.targetState,
     resolvedEnvironmentIds: value.resolvedEnvironmentIds,

@@ -484,12 +484,18 @@ export function NewSwarmCreateFlow({
     () => restoredDraft?.name || suggestSwarmName(new Date())
   );
   /**
-   * What the name field started as. `hasResumableWork` compares against this so
-   * an EDITED name counts as work worth resuming, while the untouched
-   * suggestion does not — a bare non-empty check would mark every fresh form
-   * resumable and leave a draft behind for a flow nobody started.
+   * Whether the user has typed in the name field.
+   *
+   * `hasResumableWork` needs to tell an edited name from the untouched
+   * suggestion — a bare non-empty check would mark every fresh form resumable
+   * and leave a draft behind for a flow nobody started. Comparing against the
+   * initial value cannot do it across a remount: the restored name IS the
+   * initial value there, so an edited name read as untouched and its own draft
+   * was cleared. So the fact is recorded, and travels with the draft.
    */
-  const suggestedNameRef = useRef(swarmName);
+  const [nameEdited, setNameEdited] = useState(
+    restoredDraft?.nameEdited === true
+  );
   const [targetState, setTargetState] = useState<EnvironmentComposerState>(
     () => restoredDraft?.targetState ?? emptyComposerState()
   );
@@ -1512,7 +1518,7 @@ export function NewSwarmCreateFlow({
    */
   const hasResumableWork =
     step !== "describe" ||
-    swarmName.trim() !== suggestedNameRef.current.trim() ||
+    nameEdited ||
     draft.trim().length > 0 ||
     reusedIds.length > 0 ||
     proposed.length > 0 ||
@@ -1538,6 +1544,7 @@ export function NewSwarmCreateFlow({
     saveNewSwarmFlowDraft(projectId, {
       step,
       name: swarmName,
+      nameEdited,
       description: draft,
       targetState,
       resolvedEnvironmentIds,
@@ -1562,6 +1569,7 @@ export function NewSwarmCreateFlow({
     draft,
     generatingSince,
     hasResumableWork,
+    nameEdited,
     launchedRuns,
     projectId,
     proposed,
@@ -1802,7 +1810,10 @@ export function NewSwarmCreateFlow({
                 id="new-swarm-name"
                 value={swarmName}
                 maxLength={SWARM_NAME_MAX}
-                onChange={(event) => setSwarmName(event.target.value)}
+                onChange={(event) => {
+                  setSwarmName(event.target.value);
+                  setNameEdited(true);
+                }}
                 placeholder="Name this swarm"
                 data-testid="new-swarm-name"
               />

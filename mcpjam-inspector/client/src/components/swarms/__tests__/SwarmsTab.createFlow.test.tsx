@@ -1896,6 +1896,49 @@ describe("SwarmsTab create flow — survives a remount", () => {
     render(<SwarmsTab projectId="proj-1" isAuthenticated createFlow />);
   }
 
+  it("keeps a name-only edit, and keeps its draft, across repeated remounts", async () => {
+    // The regression: `hasResumableWork` compared the name against a ref
+    // seeded from the RESTORED name, so after one remount an edited name read
+    // as untouched, the draft was cleared, and the next remount fell back to
+    // the date suggestion. Two remounts is what it takes to see it.
+    openDescribe();
+    fireEvent.change(screen.getByTestId("new-swarm-name"), {
+      target: { value: "Billing swarm" },
+    });
+
+    remount();
+    await screen.findByTestId("new-swarm-describe-step");
+    expect(screen.getByTestId("new-swarm-name")).toHaveValue("Billing swarm");
+
+    remount();
+    await screen.findByTestId("new-swarm-describe-step");
+    expect(screen.getByTestId("new-swarm-name")).toHaveValue("Billing swarm");
+  });
+
+  it("does not count the prefilled name as work of its own", async () => {
+    // The other half of the same rule. The name field is PREFILLED, so a bare
+    // non-empty check would make every fresh Describe step resumable. Asserted
+    // through the flag rather than through the draft's absence, because target
+    // auto-seeding already makes this fixture resumable on open.
+    openDescribe();
+    expect(
+      (screen.getByTestId("new-swarm-name") as HTMLInputElement).value.length
+    ).toBeGreaterThan(0);
+
+    const untouched = JSON.parse(
+      sessionStorage.getItem("mcp-new-swarm-flow-draft") ?? "{}"
+    );
+    expect(untouched.draft?.nameEdited).toBe(false);
+
+    fireEvent.change(screen.getByTestId("new-swarm-name"), {
+      target: { value: "Billing swarm" },
+    });
+    const edited = JSON.parse(
+      sessionStorage.getItem("mcp-new-swarm-flow-draft") ?? "{}"
+    );
+    expect(edited.draft?.nameEdited).toBe(true);
+  });
+
   it("comes back on Confirm with the generated personas, not on Describe", async () => {
     openDescribe();
     fillDescribe();
