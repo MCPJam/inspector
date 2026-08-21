@@ -15,6 +15,8 @@ export {
   isVisibleToAppOnly,
 } from "./tool-visibility.js";
 
+export { resolveToolUiResourceUri } from "./tool-ui-resource.js";
+
 export { LoggingTransport } from "./logging-transport.js";
 
 // Pure JSON helpers shared with the inspector + widget renderer (Phase 3d-ii).
