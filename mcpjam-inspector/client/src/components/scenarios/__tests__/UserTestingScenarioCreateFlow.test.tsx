@@ -671,3 +671,24 @@ describe("UserTestingScenarioCreateFlow — create study (Production Redesign)",
     );
   });
 });
+
+describe("UserTestingScenarioCreateFlow — ratings turned off", () => {
+  it("persists the disabled setting rather than leaving it to the backend default", async () => {
+    // The backend default is already `false`, but writing it explicitly is what
+    // makes the study's setting a statement the creator made, not an absence.
+    const { onSetPerTurnFeedback } = renderFlow();
+
+    fireEvent.click(screen.getByTestId("user-testing-create-ratings"));
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => {
+      expect(onSetPerTurnFeedback).toHaveBeenCalledWith("cb-1", {
+        enabled: false,
+        style: "stars",
+      });
+    });
+  });
+});

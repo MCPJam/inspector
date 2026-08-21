@@ -483,6 +483,13 @@ export function NewSwarmCreateFlow({
     // empty string, which should still fall back to the suggestion.
     () => restoredDraft?.name || suggestSwarmName(new Date())
   );
+  /**
+   * What the name field started as. `hasResumableWork` compares against this so
+   * an EDITED name counts as work worth resuming, while the untouched
+   * suggestion does not — a bare non-empty check would mark every fresh form
+   * resumable and leave a draft behind for a flow nobody started.
+   */
+  const suggestedNameRef = useRef(swarmName);
   const [targetState, setTargetState] = useState<EnvironmentComposerState>(
     () => restoredDraft?.targetState ?? emptyComposerState()
   );
@@ -821,7 +828,11 @@ export function NewSwarmCreateFlow({
   const materializeArgs = useCallback(
     () => ({
       projectId,
-      stackName: draft.trim() || "Swarm setup",
+      // The same source `SwarmTargetComposer` gets as `draftNameHint`. Built
+      // from the description, one setup landed under two different names
+      // depending on whether the user saved a draft or let launch materialize
+      // it — and a prose paragraph is a poor environment name either way.
+      stackName: swarmName.trim() || draft.trim() || "Swarm setup",
       legos: targetState.stack,
       hostName: hostNameById,
       liveEnvironments: envList,
@@ -837,6 +848,7 @@ export function NewSwarmCreateFlow({
       hostNameById,
       projectId,
       skillsEnabled,
+      swarmName,
       targetState.stack,
     ]
   );
@@ -1500,6 +1512,7 @@ export function NewSwarmCreateFlow({
    */
   const hasResumableWork =
     step !== "describe" ||
+    swarmName.trim() !== suggestedNameRef.current.trim() ||
     draft.trim().length > 0 ||
     reusedIds.length > 0 ||
     proposed.length > 0 ||

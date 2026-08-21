@@ -2301,18 +2301,116 @@ describe("SwarmsTab — expanded persona card is the editor, not the list row", 
     ).toBeVisible();
   });
 
-  it("collapses on Escape, so a lone expanded persona is not a dead end", async () => {
-    // The design shows no close button and expects "select another persona" as
-    // the exit — which does not exist when there is only one. Escape is the
-    // keyboard escape that keeps its Remove reachable.
+  it("takes focus on open, so Escape has somewhere to fire from", async () => {
+    // The Edit button that opens the panel unmounts on the same commit, so
+    // without this focus falls to <body> and the keydown handler never sees
+    // Escape. Firing keyDown at the panel element directly — which the first
+    // version of this test did — passes either way and proves nothing.
     const detail = await expandFirstPersona();
 
-    fireEvent.keyDown(detail, { key: "Escape" });
+    await vi.waitFor(() => {
+      expect(document.activeElement).toBe(detail);
+    });
+
+    // Dispatched from wherever focus actually is, the way a user reaches it.
+    fireEvent.keyDown(document.activeElement as Element, { key: "Escape" });
 
     await vi.waitFor(() => {
       expect(
         screen.queryByTestId("new-swarm-persona-detail")
       ).not.toBeInTheDocument();
     });
+  });
+
+  it("bubbles Escape out of a field the user is typing in", async () => {
+    // Focus starts on the container but moves as soon as anyone edits, so the
+    // handler has to catch the event on its way up too.
+    const detail = await expandFirstPersona();
+    const name = within(detail).getByLabelText("Persona name");
+    name.focus();
+
+    fireEvent.keyDown(name, { key: "Escape" });
+
+    await vi.waitFor(() => {
+      expect(
+        screen.queryByTestId("new-swarm-persona-detail")
+      ).not.toBeInTheDocument();
+    });
+  });
+});
+
+describe("SwarmsTab — a reused persona whose save fails", () => {
+  const ANA = {
+    _id: "p-1",
+    personaId: "p1",
+    name: "Ana",
+    role: "Ops",
+    notes: "Closes the books monthly.",
+  };
+  const JOURNEY = {
+    _id: "j-existing",
+    name: "Reconcile payouts",
+    goal: "Reconcile",
+    hostIds: ["host-1"],
+    environmentIds: ["env-1"],
+    config: { sessionsPerTarget: 1, maxTurns: 6 },
+  };
+
+  async function openReusedPersona() {
+    existingPersonas = [ANA];
+    personaJourneys = [JOURNEY];
+    openDescribe();
+    pickExistingPersona(/include ana/i);
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-reused-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
+    return screen.findByTestId("new-swarm-persona-detail");
+  }
+
+  // `saveReused` is invoked with `void`, so before this had a catch a rejected
+  // write was an unhandled promise: no toast, no console, nothing on screen.
+  it("reports a failed persona write and keeps the draft on screen", async () => {
+    updatePersonaMock.mockRejectedValue(new Error("persona rejected"));
+    const detail = await openReusedPersona();
+
+    fireEvent.change(within(detail).getByLabelText("Persona role"), {
+      target: { value: "Finance ops" },
+    });
+    fireEvent.click(within(detail).getByTestId("new-swarm-persona-save"));
+
+    await vi.waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining("persona rejected")
+      );
+    });
+    // ONCE. `savePersonaField` also toasts and rethrows, so routing Confirm's
+    // save through it showed the same error twice; the flow gets the raw
+    // mutation instead.
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    // Still open, still holding the edit, so it can be retried.
+    expect(screen.getByTestId("new-swarm-persona-detail")).toBeInTheDocument();
+    expect(within(detail).getByLabelText("Persona role")).toHaveValue(
+      "Finance ops"
+    );
+  });
+
+  it("reports a failed goal write and keeps the draft on screen", async () => {
+    updateJourneyMock.mockRejectedValue(new Error("goal rejected"));
+    const detail = await openReusedPersona();
+
+    fireEvent.change(within(detail).getByDisplayValue("Reconcile payouts"), {
+      target: { value: "Reconcile payouts weekly" },
+    });
+    fireEvent.click(within(detail).getByTestId("new-swarm-persona-save"));
+
+    await vi.waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringContaining("goal rejected")
+      );
+    });
+    expect(screen.getByTestId("new-swarm-persona-detail")).toBeInTheDocument();
+    expect(
+      within(detail).getByDisplayValue("Reconcile payouts weekly")
+    ).toBeInTheDocument();
   });
 });

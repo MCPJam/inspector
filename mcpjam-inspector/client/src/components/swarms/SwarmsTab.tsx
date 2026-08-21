@@ -1000,7 +1000,13 @@ export function SwarmsTab({
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
-          onSaveExistingPersona={savePersonaField}
+          // Raw, NOT `savePersonaField`: that helper toasts and rethrows for
+          // the Personas library, where its toast is the only error surface.
+          // Confirm owns the message for its own panel, so routing through it
+          // would show the same error twice.
+          onSaveExistingPersona={async (personaRefId, patch) => {
+            await updatePersona({ personaRefId, ...patch } as any);
+          }}
           onSetInsightsTuning={async (tuning) => {
             await setInsightsTuning({ projectId, tuning } as any);
           }}
@@ -1092,8 +1098,12 @@ export function SwarmsTab({
                 </div>
               </div>
               {/* Only once the list is long enough to hunt through — a search
-                  box over three rows is furniture, not a tool. */}
-              {personaList.length > SEARCHABLE_PERSONA_COUNT ? (
+                  box over three rows is furniture, not a tool. Kept while a
+                  query is active regardless: deleting a persona can drop the
+                  list under the threshold, and hiding the input then would
+                  leave the filter applied with nothing to clear it. */}
+              {personaList.length > SEARCHABLE_PERSONA_COUNT ||
+              personaSearch.trim().length > 0 ? (
                 <div className="border-b px-3 py-2">
                   <Input
                     value={personaSearch}
@@ -1646,7 +1656,13 @@ function PersonaDetailHeader({
    * Commit one field on blur. Compares trimmed values so whitespace-only
    * churn never writes, and rolls the local value back if the write throws —
    * leaving the edit on screen would claim a save that did not happen.
+   *
+   * The rollback is guarded by a per-field sequence number. Blur, edit again,
+   * blur again before the first write settles, and a late failure from the
+   * FIRST would otherwise reset the field to the stale stored value and throw
+   * away the newer edit — the exact loss the rollback exists to prevent.
    */
+  const commitSeqRef = useRef<Record<string, number>>({});
   const commit = async (
     field: "name" | "role" | "notes",
     next: string,
@@ -1660,9 +1676,14 @@ function PersonaDetailHeader({
       reset(stored);
       return;
     }
+    const seq = (commitSeqRef.current[field] ?? 0) + 1;
+    commitSeqRef.current[field] = seq;
     try {
       await onSave({ [field]: trimmed });
     } catch {
+      // Stale failure: a newer commit for this field has already started, and
+      // its value is what is on screen.
+      if (commitSeqRef.current[field] !== seq) return;
       reset(stored);
     }
   };

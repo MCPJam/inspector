@@ -25,6 +25,7 @@ const {
   deletePersonaMutation,
   runningPersonaRefIds,
   personaRows,
+  journeyRows,
 } = vi.hoisted(() => ({
   createPersonaMutation: vi.fn(),
   updatePersonaMutation: vi.fn(),
@@ -39,6 +40,7 @@ const {
       notes: string;
     }[],
   },
+  journeyRows: { current: [] as Record<string, unknown>[] },
 }));
 
 vi.mock("convex/react", () => ({
@@ -48,7 +50,7 @@ vi.mock("convex/react", () => ({
       case "personas:listPersonas":
         return personaRows.current;
       case "journeys:listJourneysByPersona":
-        return [];
+        return journeyRows.current;
       case "hosts:listHosts":
         return [];
       case "journeyRuns:listRunningPersonaRefIds":
@@ -115,6 +117,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   runningPersonaRefIds.current = [];
   personaRows.current = [persona];
+  journeyRows.current = [];
   createPersonaMutation.mockResolvedValue({ _id: "persona-new" });
   updatePersonaMutation.mockResolvedValue({ ...persona });
   deletePersonaMutation.mockResolvedValue(undefined);
@@ -308,13 +311,33 @@ describe("SwarmsTab — Personas library mirrors Confirm personas", () => {
     expect(updatePersonaMutation).not.toHaveBeenCalled();
   });
 
-  it("does not put a delete control on individual goals", async () => {
+  it("does not put a delete control on a rendered goal row", async () => {
     // Deliberately absent for now: the design shows a trash icon per goal, but
     // goals here carry runs and grading, so removing one is not a row-level
     // gesture yet.
+    //
+    // A journey is mocked on purpose. The first version of this ran against the
+    // EMPTY goals state, so it asserted the absence of a control on a row that
+    // was never rendered — a test that could not fail.
+    journeyRows.current = [
+      {
+        _id: "journey-1",
+        journeyId: "j1",
+        personaRefId: "persona-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile the payouts ledger",
+        hostIds: [],
+        environmentIds: [],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
     renderPersonasTab();
-    await screen.findByText("Goals");
 
+    // The row is really on screen before anything is asserted about it. The
+    // list renders `journey.goal`, not the journey name.
+    expect(
+      await screen.findByText("Reconcile the payouts ledger")
+    ).toBeVisible();
     expect(
       screen.queryByRole("button", { name: /remove goal/i })
     ).not.toBeInTheDocument();
@@ -367,6 +390,34 @@ describe("SwarmsTab — Personas library search", () => {
     expect(screen.getByTestId("swarm-persona-search-empty")).toHaveTextContent(
       /no personas match/i
     );
+  });
+
+  it("stays available when the list shrinks under the threshold mid-search", async () => {
+    // Deleting a persona can take a 7-row library under the threshold while a
+    // query is still applied. Hiding the input then would leave the rail
+    // filtered with no control to clear it.
+    personaRows.current = many;
+    renderPersonasTab();
+
+    const search = await screen.findByTestId("swarm-persona-search");
+    fireEvent.change(search, { target: { value: "zzz" } });
+    expect(screen.getByTestId("swarm-persona-search-empty")).toBeVisible();
+
+    // Shrink the library WITHOUT remounting — a remount would reset the query
+    // and the regression would go unobserved. The second change re-renders
+    // against the shorter list with the filter still on.
+    personaRows.current = many.slice(0, 3);
+    fireEvent.change(search, { target: { value: "zzzz" } });
+
+    expect(screen.getByTestId("swarm-persona-search")).toBeVisible();
+    expect(screen.getByTestId("swarm-persona-search-empty")).toBeVisible();
+
+    // Clearing it hands the short library back, and the box retires.
+    fireEvent.change(
+      screen.getByTestId("swarm-persona-search"),
+      { target: { value: "" } }
+    );
+    expect(screen.queryByTestId("swarm-persona-search")).not.toBeInTheDocument();
   });
 
   it("keeps the editor on the selected persona when a search hides it", async () => {

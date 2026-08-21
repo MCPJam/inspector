@@ -8,6 +8,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -43,6 +44,7 @@ import {
   mintCriterionId,
   type JourneyCriterion,
 } from "@/shared/journey-rubric";
+import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
 
 /**
@@ -293,6 +295,12 @@ function CompactPersonaCard({
  * disabled one leaves the panel with no visible way out; Escape still works
  * but nobody guesses it.
  *
+ * Focus moves into the panel on mount, which is what makes Escape reachable at
+ * all: the Edit button that opened it unmounts on the same commit, so focus
+ * would otherwise fall to `<body>` and the keydown handler would never see it.
+ * The container takes focus rather than the first field — landing in a text
+ * input announces the field instead of the editor.
+ *
  * What it does before collapsing differs, because the two kinds of persona are
  * not the same thing.
  * A proposed persona only exists in memory: its edits already landed as they
@@ -356,9 +364,19 @@ function PersonaDetailPanel({
   avatarShape?: number;
   avatarPalette?: number;
 }) {
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  // An `useEffect`, not an inline ref callback: an inline callback is a new
+  // function every render, so React would re-run it on each keystroke and yank
+  // focus out of the field being typed in.
+  useEffect(() => {
+    panelRef.current?.focus({ preventScroll: true });
+  }, []);
+
   return (
     <div
-      className="rounded-xl border border-primary/50 bg-muted/30 ring-1 ring-primary/25"
+      ref={panelRef}
+      tabIndex={-1}
+      className="rounded-xl border border-primary/50 bg-muted/30 outline-none ring-1 ring-primary/25"
       data-testid="new-swarm-persona-detail"
       onKeyDown={(event) => {
         if (event.key !== "Escape") return;
@@ -986,6 +1004,16 @@ export function NewSwarmConfirmStep({
         // Only on the way out of a clean save — a throw leaves the panel open
         // with the draft still in it, so the edit is not silently lost.
         setSelected(null);
+      } catch (error) {
+        // The call site invokes this with `void`, so without this the rejection
+        // was an unhandled promise and the user saw nothing at all. The draft
+        // and the open panel are deliberately left alone: the edit is still on
+        // screen to retry, which is the whole reason it is held locally.
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Couldn't save this persona. Your changes are still here."
+        );
       } finally {
         setSavingReusedId(null);
       }

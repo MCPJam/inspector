@@ -35,6 +35,21 @@ export function progressStepperState(
   return "upcoming";
 }
 
+/**
+ * Snap `activeIndex` onto a real step.
+ *
+ * A caller that hands over a non-integer, a negative, or an index past the last
+ * step would otherwise render a rail with NO current step and no
+ * `aria-current` anywhere — a stepper that has quietly stopped saying where you
+ * are. Clamping keeps the invariant "exactly one step is current" true for any
+ * input, which is what the component's consumers actually rely on.
+ */
+export function clampStepIndex(activeIndex: number, stepCount: number): number {
+  if (stepCount <= 0) return 0;
+  if (!Number.isFinite(activeIndex)) return 0;
+  return Math.min(Math.max(Math.trunc(activeIndex), 0), stepCount - 1);
+}
+
 export function ProgressStepper({
   steps,
   activeIndex,
@@ -59,6 +74,8 @@ export function ProgressStepper({
   className?: string;
   testId?: string;
 }) {
+  const active = clampStepIndex(activeIndex, steps.length);
+
   const selectable = (index: number, state: ProgressStepperState) => {
     if (!onStepSelect) return false;
     if (isStepSelectable) return isStepSelectable(index);
@@ -72,7 +89,7 @@ export function ProgressStepper({
       data-testid={testId}
     >
       {steps.map((step, index) => {
-        const state = progressStepperState(index, activeIndex);
+        const state = progressStepperState(index, active);
         const canSelect = selectable(index, state);
         const isLast = index === steps.length - 1;
 

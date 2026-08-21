@@ -931,3 +931,37 @@ describe("Swarm header body copy", () => {
     expect(screen.getByText(SUBTITLE)).toBeTruthy();
   });
 });
+
+describe("Swarm header body copy — per tab", () => {
+  // Personas is a library of reusable personas, not a run surface, so the swarm
+  // pitch says nothing about it (BB-123).
+  const SWARM_PITCH =
+    "No recruiting, no scheduling, no setup. Agents find what breaks in every client.";
+  const PERSONAS_LINE = "The library of user personas you send into swarms.";
+
+  const switchTo = (label: RegExp) => {
+    const nav = screen.getByLabelText("Swarm view");
+    fireEvent.click(within(nav).getByRole("button", { name: label }));
+  };
+
+  it("swaps the line on the Personas tab", async () => {
+    renderTab();
+    await screen.findByTestId("swarms-tab-header-chrome");
+    expect(screen.getByText(SWARM_PITCH)).toBeVisible();
+
+    switchTo(/personas/i);
+
+    expect(screen.getByText(PERSONAS_LINE)).toBeVisible();
+    expect(screen.queryByText(SWARM_PITCH)).not.toBeInTheDocument();
+  });
+
+  it("keeps the swarm pitch on Sessions", async () => {
+    renderTab();
+    await screen.findByTestId("swarms-tab-header-chrome");
+
+    switchTo(/sessions/i);
+
+    expect(screen.getByText(SWARM_PITCH)).toBeVisible();
+    expect(screen.queryByText(PERSONAS_LINE)).not.toBeInTheDocument();
+  });
+});

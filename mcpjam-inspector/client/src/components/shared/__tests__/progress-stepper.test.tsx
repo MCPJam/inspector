@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import {
+  clampStepIndex,
   ProgressStepper,
   progressStepperState,
 } from "../progress-stepper";
@@ -94,5 +95,52 @@ describe("ProgressStepper", () => {
     const connectors = container.querySelectorAll('[aria-hidden="true"].grow');
     expect(connectors).toHaveLength(STEPS.length - 1);
     expect(screen.getByTestId("stepper")).toBeInTheDocument();
+  });
+});
+
+describe("clampStepIndex", () => {
+  it("snaps anything a caller can hand over onto a real step", () => {
+    expect(clampStepIndex(-3, 4)).toBe(0);
+    expect(clampStepIndex(9, 4)).toBe(3);
+    expect(clampStepIndex(1.7, 4)).toBe(1);
+    expect(clampStepIndex(Number.NaN, 4)).toBe(0);
+    expect(clampStepIndex(Number.POSITIVE_INFINITY, 4)).toBe(0);
+    expect(clampStepIndex(2, 4)).toBe(2);
+  });
+
+  it("survives an empty rail", () => {
+    expect(clampStepIndex(0, 0)).toBe(0);
+    expect(clampStepIndex(5, 0)).toBe(0);
+  });
+});
+
+describe("ProgressStepper — the activeIndex contract", () => {
+  // Left unclamped, an out-of-range index rendered a rail with NO current step
+  // and no `aria-current` anywhere: a stepper that had quietly stopped saying
+  // where you are.
+  const currentLabels = () =>
+    screen
+      .getAllByRole("listitem")
+      .filter((item) => item.getAttribute("aria-current") === "step")
+      .map((item) => item.textContent);
+
+  it("keeps exactly one step current for an index past the end", () => {
+    render(<ProgressStepper steps={STEPS} activeIndex={99} />);
+    expect(currentLabels()).toEqual([expect.stringContaining("Findings")]);
+  });
+
+  it("keeps exactly one step current for a negative index", () => {
+    render(<ProgressStepper steps={STEPS} activeIndex={-4} />);
+    expect(currentLabels()).toEqual([expect.stringContaining("Describe")]);
+  });
+
+  it("keeps exactly one step current for a non-integer index", () => {
+    render(<ProgressStepper steps={STEPS} activeIndex={2.6} />);
+    expect(currentLabels()).toEqual([expect.stringContaining("Running")]);
+  });
+
+  it("renders an empty rail without throwing", () => {
+    const { container } = render(<ProgressStepper steps={[]} activeIndex={0} />);
+    expect(container.querySelectorAll("li")).toHaveLength(0);
   });
 });
