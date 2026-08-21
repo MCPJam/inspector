@@ -12,6 +12,10 @@ import {
   ChevronDown,
   BadgeCheck,
   Star,
+  Building2,
+  Plus,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
@@ -59,8 +63,19 @@ import {
   type DirectorySource,
   type DirectoryTier,
 } from "@/hooks/useServerDirectory";
+import {
+  useOrgRegistryServers,
+  type EnrichedOrgRegistryServer,
+  type OrgRegistrySubmission,
+} from "@/hooks/useOrgRegistryServers";
 import { DirectoryEndpointDialog } from "./registry/DirectoryEndpointDialog";
 import { DirectoryDetailDialog } from "./registry/DirectoryDetailDialog";
+import {
+  OrgRegistryServerDialog,
+  type OrgRegistryDialogSeed,
+} from "./registry/OrgRegistryServerDialog";
+import { OrgRegistryRemoveDialog } from "./registry/OrgRegistryRemoveDialog";
+import { ErrorBoundary } from "./ui/error-boundary";
 import { toast } from "@/lib/toast";
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
 import type { ServerFormData } from "@/shared/types.js";
@@ -314,6 +329,21 @@ export function RegistryTab({
   );
   const detailServerDetail = useDirectoryServerDetail(
     detailServer?._id ?? null
+  );
+  const [orgShelfState, setOrgShelfState] = useState<{
+    hasContent: boolean;
+    isLoading: boolean;
+  } | null>(null);
+  const handleOrgShelfState = useCallback(
+    (next: { hasContent: boolean; isLoading: boolean }) => {
+      setOrgShelfState((previous) =>
+        previous?.hasContent === next.hasContent &&
+        previous?.isLoading === next.isLoading
+          ? previous
+          : next
+      );
+    },
+    []
   );
 
   // Auto-redirect to App Builder when a pending server becomes connected.
@@ -850,20 +880,26 @@ export function RegistryTab({
     }),
   });
 
-  // Per-SECTION emptiness, not per-screen. The two halves have independent
+  // Per-SECTION emptiness, not per-screen. The two public shelves have independent
   // backends: an empty curated catalog must not blank a directory that loaded
-  // fine, and vice versa. Only when BOTH are empty and neither is still
-  // loading is there genuinely nothing to show.
+  // fine, and neither may blank an organization's own entries. Only when ALL
+  // of them are empty and none is still loading is there genuinely nothing to
+  // show.
+  //
   const curatedEmpty = !isLoading && catalogCards.length === 0;
   const directoryEmpty =
     !directory.isLoadingFirstPage && directory.items.length === 0;
   const directoryFiltered = isDirectoryFiltered(directory);
+  const orgShelfEmpty =
+    orgShelfState !== null &&
+    !orgShelfState.isLoading &&
+    !orgShelfState.hasContent;
 
   if (isLoading && directory.isLoadingFirstPage) {
     return <LoadingSkeleton />;
   }
 
-  if (curatedEmpty && directoryEmpty && !directoryFiltered) {
+  if (curatedEmpty && directoryEmpty && orgShelfEmpty && !directoryFiltered) {
     return (
       <EmptyState
         icon={Package}
@@ -883,6 +919,27 @@ export function RegistryTab({
             Pre-configured MCP servers you can connect quickly.
           </p>
         </div>
+
+        {/*
+          The organization's own shelf, above the curated one: it is the
+          smaller list and the one a team put there on purpose.
+
+          Behind its OWN boundary. This section is the only part of the tab
+          that reads functions the deployed backend may not have yet — a
+          browser can outlive a rollback, and `useQuery` for a missing function
+          throws during render. Without the boundary that takes the entire
+          Registry tab, curated catalog and directory included, down with it.
+        */}
+        <ErrorBoundary name="org-registry-section" fallback={null}>
+          <OrgRegistrySectionContainer
+            projectId={projectId}
+            isAuthenticated={isAuthenticated}
+            liveServers={servers}
+            onConnect={onConnect}
+            onDisconnect={onDisconnect}
+            onState={handleOrgShelfState}
+          />
+        </ErrorBoundary>
 
         {/* Curated cards grid */}
         {isLoading ? (
@@ -959,6 +1016,371 @@ export function RegistryTab({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * Keeps every Convex-backed org-registry query and mutation below the section
+ * boundary. A missing function or provider throws during render, so the hook
+ * itself must be a descendant of the ErrorBoundary rather than a sibling.
+ */
+function OrgRegistrySectionContainer({
+  projectId,
+  isAuthenticated,
+  liveServers,
+  onConnect,
+  onDisconnect,
+  onState,
+}: {
+  projectId: string | null;
+  isAuthenticated: boolean;
+  liveServers?: Record<string, ServerWithName>;
+  onConnect: (formData: ServerFormData) => void;
+  onDisconnect?: (serverName: string) => void;
+  onState: (state: { hasContent: boolean; isLoading: boolean }) => void;
+}) {
+  const orgRegistry = useOrgRegistryServers({
+    projectId,
+    isAuthenticated,
+    liveServers,
+    onConnect,
+    onDisconnect,
+  });
+  const [orgDialog, setOrgDialog] = useState<{
+    seed: OrgRegistryDialogSeed | null;
+  } | null>(null);
+  const [orgRemoveTarget, setOrgRemoveTarget] =
+    useState<EnrichedOrgRegistryServer | null>(null);
+  const [orgRemoving, setOrgRemoving] = useState(false);
+
+  useEffect(() => {
+    onState({
+      hasContent:
+        Boolean(orgRegistry.organizationId) &&
+        (orgRegistry.servers.length > 0 || orgRegistry.canAdd),
+      isLoading: orgRegistry.isLoading,
+    });
+  }, [
+    onState,
+    orgRegistry.canAdd,
+    orgRegistry.isLoading,
+    orgRegistry.organizationId,
+    orgRegistry.servers.length,
+  ]);
+
+  const handleOrgSubmit = useCallback(
+    async (submission: OrgRegistrySubmission) => {
+      if (submission.registryServerId) {
+        await orgRegistry.update(submission);
+        toast.success("Registry entry updated");
+        return;
+      }
+      await orgRegistry.add(submission);
+      toast.success("Added to your organization's registry");
+    },
+    [orgRegistry]
+  );
+
+  const handleOrgConnect = useCallback(
+    async (server: EnrichedOrgRegistryServer) => {
+      try {
+        await orgRegistry.connect(server);
+      } catch (error) {
+        const message =
+          error instanceof Error &&
+          /already exists in this workspace/i.test(error.message)
+            ? `A server named "${server.displayName}" already exists in this project. Rename it, or rename the registry entry.`
+            : error instanceof Error
+            ? error.message
+            : "Could not connect this server.";
+        toast.error(message);
+      }
+    },
+    [orgRegistry]
+  );
+
+  const handleOrgDisconnect = useCallback(
+    async (server: EnrichedOrgRegistryServer) => {
+      try {
+        await orgRegistry.disconnect(server);
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Could not disconnect this server."
+        );
+      }
+    },
+    [orgRegistry]
+  );
+
+  const handleOrgRemoveConfirmed = useCallback(async () => {
+    if (!orgRemoveTarget) return;
+    setOrgRemoving(true);
+    try {
+      await orgRegistry.remove(orgRemoveTarget._id);
+      toast.success("Removed from your organization's registry");
+      setOrgRemoveTarget(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not remove this entry."
+      );
+    } finally {
+      setOrgRemoving(false);
+    }
+  }, [orgRegistry, orgRemoveTarget]);
+
+  return (
+    <>
+      <OrgRegistrySection
+        registry={orgRegistry}
+        onAdd={() => setOrgDialog({ seed: null })}
+        onEdit={(server) =>
+          setOrgDialog({
+            seed: {
+              registryServerId: server._id,
+              displayName: server.displayName,
+              description: server.description,
+              url: server.transport.url ?? "",
+              useOAuth: server.transport.useOAuth,
+              oauthScopes: server.transport.oauthScopes,
+              derived: server.derived,
+            },
+          })
+        }
+        onRemove={setOrgRemoveTarget}
+        onConnect={handleOrgConnect}
+        onDisconnect={handleOrgDisconnect}
+      />
+      {orgRemoveTarget && (
+        <OrgRegistryRemoveDialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !orgRemoving) setOrgRemoveTarget(null);
+          }}
+          displayName={orgRemoveTarget.displayName}
+          isRemoving={orgRemoving}
+          onConfirm={() => void handleOrgRemoveConfirmed()}
+        />
+      )}
+      {orgDialog && (
+        <OrgRegistryServerDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setOrgDialog(null);
+          }}
+          projectId={projectId}
+          seed={orgDialog.seed}
+          onSubmit={handleOrgSubmit}
+        />
+      )}
+    </>
+  );
+}
+
+/**
+ * The organization's own shelf.
+ *
+ * Renders nothing at all for a project outside an organization, or for
+ * somebody who is neither a member nor looking at any entries — an empty
+ * "Your organization" heading over a project that has no organization is
+ * noise, not information. It DOES render for a member with an empty shelf,
+ * because that is the state the invitation to add belongs in.
+ *
+ * The cards carry no star control. Stars are the identity of a consolidated
+ * PUBLIC card (`registryCardKey`), an org entry has none, and the backend's
+ * star mutation refuses a synthetic key outright — so a star here would be a
+ * button that cannot work.
+ */
+function OrgRegistrySection({
+  registry,
+  onAdd,
+  onEdit,
+  onRemove,
+  onConnect,
+  onDisconnect,
+}: {
+  registry: ReturnType<typeof useOrgRegistryServers>;
+  onAdd: () => void;
+  onEdit: (server: EnrichedOrgRegistryServer) => void;
+  onRemove: (server: EnrichedOrgRegistryServer) => void | Promise<void>;
+  onConnect: (server: EnrichedOrgRegistryServer) => void | Promise<void>;
+  onDisconnect: (server: EnrichedOrgRegistryServer) => void | Promise<void>;
+}) {
+  const { servers, isLoading, organizationId, canAdd } = registry;
+
+  if (!organizationId) return null;
+  if (!canAdd && servers.length === 0 && !isLoading) return null;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-end justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold flex items-center gap-1.5">
+            <Building2 className="h-4 w-4 text-muted-foreground" />
+            Your organization
+          </h3>
+          <p className="text-xs text-muted-foreground">
+            Servers your team has shared. Visible in every project in this
+            organization.
+          </p>
+        </div>
+        {canAdd && (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-7 text-xs gap-1"
+            onClick={onAdd}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            Add a server
+          </Button>
+        )}
+      </div>
+
+      {isLoading ? (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <Skeleton key={i} className="h-28 w-full rounded-lg" />
+          ))}
+        </div>
+      ) : servers.length === 0 ? (
+        <Card className="px-4 py-6 text-center">
+          <p className="text-sm font-medium">Nothing shared yet</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Paste a remote server&rsquo;s address and we&rsquo;ll read the rest
+            off it — or share one you already have connected from its menu on
+            the Servers tab.
+          </p>
+        </Card>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {servers.map((server) => (
+            <OrgRegistryServerCard
+              key={server._id}
+              server={server}
+              canManage={canAdd}
+              onEdit={() => onEdit(server)}
+              onRemove={() => void onRemove(server)}
+              onConnect={() => void onConnect(server)}
+              onDisconnect={() => void onDisconnect(server)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * One org entry.
+ *
+ * Deliberately a sibling of `RegistryServerCard` rather than a prop on it. The
+ * curated card REQUIRES star props and a `registryCardKey`, and an org row has
+ * neither; threading "no stars" through it would leave a component whose two
+ * modes disagree about what identifies a card. The shapes are close enough to
+ * read as one family and different enough that one component would be lying.
+ */
+function OrgRegistryServerCard({
+  server,
+  canManage,
+  onEdit,
+  onRemove,
+  onConnect,
+  onDisconnect,
+}: {
+  server: EnrichedOrgRegistryServer;
+  canManage: boolean;
+  onEdit: () => void;
+  onRemove: () => void;
+  onConnect: () => void;
+  onDisconnect: () => void;
+}) {
+  const version = server.derived?.serverVersion ?? server.version;
+  const authRequired =
+    server.derived?.authRequired ?? server.transport.useOAuth ?? false;
+  /**
+   * Same rule the directory badge uses: only a server that demands auth AND
+   * resolved no way to register a client dynamically needs one in advance. An
+   * entry with no probe snapshot says nothing rather than making a claim the
+   * probe never backed.
+   */
+  const needsPreregisteredClient =
+    authRequired &&
+    server.derived !== undefined &&
+    !server.derived.supportsDcr &&
+    !server.derived.supportsCimd;
+
+  return (
+    <Card className="px-4 py-3 flex flex-col gap-2">
+      <div className="flex items-center gap-3">
+        <div className="h-8 w-8 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+          <Building2 className="h-4 w-4 text-muted-foreground" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <h3 className="text-sm font-semibold truncate">
+            {server.displayName}
+          </h3>
+          <p className="text-xs text-muted-foreground truncate">
+            {server.transport.url}
+          </p>
+        </div>
+        <div className="flex-shrink-0 flex items-center gap-1">
+          <TopRightAction
+            status={server.connectionStatus}
+            onConnect={onConnect}
+            onDisconnect={onDisconnect}
+          />
+          {canManage && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  aria-label={`Manage ${server.displayName}`}
+                >
+                  <MoreVertical className="h-3.5 w-3.5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={onEdit}>
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit entry
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem variant="destructive" onClick={onRemove}>
+                  <Trash2 className="h-3.5 w-3.5" />
+                  Remove from registry
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-1.5 flex-wrap">
+        {version && (
+          <Badge variant="secondary" className="text-[10px]">
+            v{version}
+          </Badge>
+        )}
+        <AuthBadge useOAuth={authRequired} />
+        {needsPreregisteredClient && (
+          <Badge variant="outline" className="text-[10px]">
+            Requires pre-registered client
+          </Badge>
+        )}
+      </div>
+
+      {server.description && (
+        <p className="text-xs text-muted-foreground line-clamp-2">
+          {server.description}
+        </p>
+      )}
+    </Card>
   );
 }
 
