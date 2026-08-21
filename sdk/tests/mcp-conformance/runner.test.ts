@@ -3,6 +3,11 @@ import {
   MCP_CHECK_IDS,
   MCPConformanceTest,
 } from "../../src/mcp-conformance/index.js";
+import {
+  conformanceProfile,
+  CONFORMANCE_CHECKER_VERSION,
+} from "../../src/conformance-profile.js";
+import { scoreFromProtocolResult } from "../../src/conformance-score.js";
 import { startConformanceMockServer } from "../mock-servers/conformance-mcp-server.js";
 
 describe("MCPConformanceTest", () => {
@@ -40,6 +45,18 @@ describe("MCPConformanceTest", () => {
       expect(result.categorySummary.resources.passed).toBe(1);
       expect(result.categorySummary.security.passed).toBe(2);
       expect(result.categorySummary.transport.passed).toBe(7);
+
+      // The run stamps WHICH questions it asked. Every check in today's pool is
+      // scored by the frozen profile, so nothing is pending and the score is
+      // computed over the full applicable set — the state PR 1 must preserve.
+      const profile = conformanceProfile("mcp-protocol");
+      expect(result.profile).toMatchObject({
+        profileId: "mcp-protocol",
+        profileVersion: profile.version,
+        checkerVersion: CONFORMANCE_CHECKER_VERSION,
+        pendingCheckIds: [],
+      });
+      expect(scoreFromProtocolResult(result).pending).toBe(0);
     } finally {
       await mockServer.stop();
     }

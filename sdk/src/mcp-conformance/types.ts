@@ -2,6 +2,7 @@ import type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
 } from "../conformance-outcome.js";
+import type { ConformanceProfileStamp } from "../conformance-profile.js";
 import type {
   ManagedMcpClient,
   MCPClientManager,
@@ -404,6 +405,21 @@ export interface MCPConformanceResult {
    * real-world interop, and they NEVER affect `passed` or any check status.
    */
   readiness: MCPReadinessWarning[];
+  /**
+   * WHICH QUESTIONS THIS RUN ASKED, and which build asked them — the frozen
+   * scored-check manifest, the checker version, the revisions and (from the
+   * wire-schema check) the schema digest. See `conformance-profile.ts`.
+   *
+   * Without it, `protocolVersion` + the check list were the only identity a
+   * result carried, and two scores from two builds were incomparable by
+   * construction: the check inventory grows, and a growing inventory silently
+   * re-grades servers that never changed.
+   *
+   * Optional so every existing consumer and every stored report still reads;
+   * a result without it has no pending bucket, which is exactly the
+   * pre-profile behavior.
+   */
+  profile?: ConformanceProfileStamp;
 }
 
 export interface MCPConformanceSuiteConfig {

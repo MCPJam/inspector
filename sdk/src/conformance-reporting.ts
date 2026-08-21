@@ -12,6 +12,7 @@ import {
   type ConformanceScore,
 } from "./conformance-score.js";
 import { redactForTelemetry } from "./telemetry-redaction.js";
+import type { ConformanceProfileStamp } from "./conformance-profile.js";
 import type {
   MCPConformanceResult,
   MCPConformanceSuiteResult,
@@ -133,6 +134,14 @@ export interface ConformanceReport {
    * applicable — e.g. OAuth against a server that serves without auth.
    */
   score?: ConformanceScore;
+  /**
+   * Which questions the run asked, and which build asked them (see
+   * `conformance-profile.ts`). Present for the protocol suite; absent for the
+   * suites that carry no profile yet, and for reports produced before profiles
+   * existed. A reader comparing two reports must check this first: two scores
+   * from different profile versions are not the same measurement.
+   */
+  profile?: ConformanceProfileStamp;
   durationMs: number;
   groups: ConformanceReportGroup[];
   /**
@@ -478,6 +487,26 @@ function isOAuthSuiteResult(
   );
 }
 
+/**
+ * The profile every run in a matrix shares, if they share one. A single run
+ * without a stamp is enough to make the answer "none": the pooled score then
+ * mixes a scored check from one run with a pending one from another, and a
+ * label that hid that would be worse than no label.
+ */
+function sharedProfileFields(
+  results: ReadonlyArray<{ profile?: ConformanceProfileStamp }>,
+): { profile?: ConformanceProfileStamp } {
+  const first = results[0]?.profile;
+  if (!first) return {};
+  const same = results.every(
+    (entry) =>
+      entry.profile?.profileId === first.profileId &&
+      entry.profile?.profileVersion === first.profileVersion &&
+      entry.profile?.manifestDigest === first.manifestDigest,
+  );
+  return same ? { profile: first } : {};
+}
+
 function createProtocolReport(
   result: MCPConformanceResult | MCPConformanceSuiteResult,
 ): ConformanceReport {
@@ -491,6 +520,11 @@ function createProtocolReport(
       score: pooledConformanceScore(
         result.results.map(scoreFromProtocolResult),
       ),
+      // Only when every run in the matrix asked the same questions. A suite
+      // whose runs disagree (different profile versions, or one run without a
+      // stamp) has no single profile to name, and naming one of them would
+      // label the pooled number with an identity it does not have.
+      ...sharedProfileFields(result.results),
       durationMs: result.durationMs,
       groups: result.results.map((entry, index) =>
         mcpGroupFromResult(entry, entry.label, index),
@@ -505,6 +539,7 @@ function createProtocolReport(
     passed: result.passed,
     ...outcomeFields(result),
     score: scoreFromProtocolResult(result),
+    ...(result.profile ? { profile: result.profile } : {}),
     durationMs: result.durationMs,
     groups: [mcpGroupFromResult(result, "MCP Protocol Conformance", 0)],
   };

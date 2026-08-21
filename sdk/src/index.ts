@@ -591,6 +591,25 @@ export type {
   ConformanceScore,
   ScoredAdvisory,
 } from "./conformance-score.js";
+// The frozen scored-check manifest a score is computed over, plus the identity
+// stamp that says which questions a given number came from.
+export {
+  buildConformanceProfileStamp,
+  conformanceProfile,
+  conformanceProfileDigest,
+  partitionByProfile,
+  partitionByStamp,
+  unscoredCheckIds,
+  CONFORMANCE_CHECKER_VERSION,
+  CONFORMANCE_PROFILE_IDS,
+} from "./conformance-profile.js";
+export type {
+  ConformanceProfile,
+  ConformanceProfileId,
+  ConformanceProfileStamp,
+  ProfileCheckLike,
+} from "./conformance-profile.js";
+
 export {
   buildConformanceRunReport,
   CONFORMANCE_RUN_SCHEMA_VERSION,

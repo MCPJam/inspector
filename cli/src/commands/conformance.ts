@@ -2,6 +2,7 @@ import {
   conformanceExitCode,
   conformanceSuiteExitCode,
   reportIncomplete,
+  reportProfile,
   reportReadiness,
   reportScore,
 } from "../lib/conformance-exit-code.js";
@@ -110,6 +111,7 @@ export function registerProtocolCommands(program: Command): void {
       // terminal must not have to dig for the number, the reason a check
       // never ran, or the advice the run produced.
       reportScore(scoreFromProtocolResult(result), command);
+      reportProfile(result, command);
       reportReadiness(result, command);
       reportIncomplete(result, command);
       await maybeUploadSingleSuite({

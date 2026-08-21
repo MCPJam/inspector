@@ -3,6 +3,11 @@ import {
   decideConformanceOutcome,
   isUnrunCheck,
 } from "../conformance-outcome.js";
+import {
+  buildConformanceProfileStamp,
+  conformanceProfile,
+  partitionByProfile,
+} from "../conformance-profile.js";
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
 import { isKnownProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
@@ -498,13 +503,23 @@ export class MCPConformanceTest {
       ...transportChecks,
       ...modernChecks,
     ];
+    // The tally reports EVERYTHING that ran, pending checks included: a report
+    // that hid them would misstate what the run did. Only the VERDICT is
+    // narrowed to the scored set, below.
     const categorySummary = summarizeChecks(checks);
+
+    // Which of these checks the active profile scores. A check outside the
+    // frozen manifest still ran and still shows its verdict in `checks`, but it
+    // is excluded from the verdict and from the score: a MUST check added this
+    // week must not retroactively fail a server that was green last week.
+    const profile = conformanceProfile("mcp-protocol");
+    const { scored, pending } = partitionByProfile(checks, profile);
 
     // A check that COULD NOT RUN is neither a violation nor a pass: the
     // obligation went untested, so the run is `incomplete`. Collapsing that
     // into "nothing failed" is what let a run with unexercised checks report
     // success.
-    const verdict = decideConformanceOutcome(checks);
+    const verdict = decideConformanceOutcome(scored);
 
     return {
       // Readiness is deliberately absent from this expression: the verdict is
@@ -521,10 +536,18 @@ export class MCPConformanceTest {
         ? { protocolVersion: clientRun.config.protocolVersion }
         : {}),
       checks,
-      summary: buildSummary(checks),
+      summary:
+        pending.length > 0
+          ? `${buildSummary(scored)}, ${pending.length} pending (unscored by profile ${profile.id}@${profile.version})`
+          : buildSummary(scored),
       durationMs: Date.now() - startedAt,
       categorySummary,
       readiness: [...clientRun.readiness, ...rawReadiness],
+      profile: buildConformanceProfileStamp({
+        profile,
+        checks,
+        protocolVersion: clientRun.config.protocolVersion,
+      }),
     };
   }
 }
