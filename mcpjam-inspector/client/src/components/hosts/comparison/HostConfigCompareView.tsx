@@ -574,11 +574,15 @@ export function HostConfigCompareView({
         );
       })}
 
+      {/* Flex column: the matrix card below sizes itself with `flex-1` to
+          whatever height is actually left below the search + selector rows,
+          rather than guessing at a fixed viewport fraction. Still scrolls, so
+          a short viewport (or list view) just overflows this div instead. */}
       <div
         className={cn(
           presetOnly
-            ? "min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-3 pt-1 sm:px-4 sm:pb-4 sm:pt-2 md:px-6 md:pb-6 md:pt-2"
-            : "min-h-0 flex-1 overflow-auto p-4 md:p-8"
+            ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-3 pb-3 pt-1 sm:px-4 sm:pb-4 sm:pt-2 md:px-6 md:pb-6 md:pt-2"
+            : "flex min-h-0 flex-1 flex-col overflow-auto p-4 md:p-8"
         )}
       >
         {listLoading ? (
@@ -657,20 +661,28 @@ export function HostConfigCompareView({
                   </div>
                 )}
                 {viewMode === "table" ? (
-                  <HostConfigComparisonMatrix
-                    subjects={orderedSubjects}
-                    fields={compareFields}
-                    divergingOnly={divergingOnly}
-                    supportFilter={effectiveSupportFilter}
-                    searchQuery={fieldSearchQuery}
-                    showDescriptions={showDescriptions}
-                    themeMode={themeMode}
-                    mobileOptimized={presetOnly}
-                    onRemoveHost={
-                      selectedHostIdSet.size > 1 ? handleToggleHost : undefined
-                    }
-                    verifyBaseUrl={verifyBaseUrl}
-                  />
+                  // Table only: this div (not the matrix) claims the height
+                  // left below the search/selector rows via flex-1, and the
+                  // matrix caps itself at it with max-h-full instead of
+                  // force-filling it. Wrapping list view too would give the
+                  // grid a definite height it overflows, and the container's
+                  // bottom padding stops clearing the last card.
+                  <div className="min-h-0 flex-1">
+                    <HostConfigComparisonMatrix
+                      subjects={orderedSubjects}
+                      fields={compareFields}
+                      divergingOnly={divergingOnly}
+                      supportFilter={effectiveSupportFilter}
+                      searchQuery={fieldSearchQuery}
+                      showDescriptions={showDescriptions}
+                      themeMode={themeMode}
+                      mobileOptimized={presetOnly}
+                      onRemoveHost={
+                        selectedHostIdSet.size > 1 ? handleToggleHost : undefined
+                      }
+                      verifyBaseUrl={verifyBaseUrl}
+                    />
+                  </div>
                 ) : (
                   <HostCapabilityListView
                     subjects={orderedSubjects}

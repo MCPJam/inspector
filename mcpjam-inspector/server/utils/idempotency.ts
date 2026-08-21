@@ -23,6 +23,22 @@ import type { Context } from "hono";
 export const IDEMPOTENCY_KEY_HEADER = "x-mcpjam-idempotency-key";
 
 /**
+ * The OTHER spelling, and it is not a typo.
+ *
+ * `PlatformApiClient` puts `options.idempotencyKey` on a bare
+ * `idempotency-key` header, and the journey / swarm / persona routes read it
+ * there directly. So the platform genuinely has two channels: this one, which
+ * every SDK caller reaches for free, and the prefixed one above, which the
+ * agent adapter sets on its internal fetch.
+ *
+ * The two not matching is a silent failure, not a loud one — a route that
+ * reads only the prefixed header ignores an SDK caller's key and re-spends
+ * on every retry, while the caller sees a key going out and assumes it took.
+ * A route that spends should accept both.
+ */
+export const IDEMPOTENCY_KEY_TRANSPORT_HEADER = "idempotency-key";
+
+/**
  * Convex's `idempotencyKey` columns are plain strings; a runaway key would be
  * stored verbatim on every row it touches. Long enough for
  * `${teamId}:${eventId}:${operation}:${sha256}` with room to spare.
@@ -38,7 +54,26 @@ const MAX_KEY_LENGTH = 256;
  * get its suite created.
  */
 export function readIdempotencyKey(c: Context): string | undefined {
-  const raw = c.req.header(IDEMPOTENCY_KEY_HEADER);
+  return readKeyHeader(c, IDEMPOTENCY_KEY_HEADER);
+}
+
+/**
+ * Read the key off EITHER header, prefixed first.
+ *
+ * For routes that spend, where "the caller sent a key on the other header and
+ * we ignored it" costs real money. Precedence keeps the prefixed header
+ * authoritative: the agent adapter sets it per operation, and on the agent
+ * surfaces an inbound transport header is not ours to trust over it.
+ */
+export function readAnyIdempotencyKey(c: Context): string | undefined {
+  return (
+    readKeyHeader(c, IDEMPOTENCY_KEY_HEADER) ??
+    readKeyHeader(c, IDEMPOTENCY_KEY_TRANSPORT_HEADER)
+  );
+}
+
+function readKeyHeader(c: Context, header: string): string | undefined {
+  const raw = c.req.header(header);
   if (typeof raw !== "string") return undefined;
   const trimmed = raw.trim();
   if (trimmed.length === 0 || trimmed.length > MAX_KEY_LENGTH) {
