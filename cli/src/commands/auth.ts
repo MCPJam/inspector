@@ -32,6 +32,7 @@ export function registerAuthCommands(program: Command): void {
       const result = await runPlatformLogin(
         { origin, apiUrl },
         {
+          quiet: globalOptions.quiet,
           ...(options.browser === false
             ? {
                 openUrl: async (url: string) => {
@@ -48,7 +49,10 @@ export function registerAuthCommands(program: Command): void {
         {
           status: "logged_in",
           issuer: result.issuer,
+          apiUrl: result.apiUrl,
           authFile: result.authFilePath,
+          ...(result.email !== undefined ? { email: result.email } : {}),
+          ...(result.plan !== undefined ? { plan: result.plan } : {}),
           ...(result.expiresAt !== undefined
             ? { expiresAt: new Date(result.expiresAt).toISOString() }
             : {}),
@@ -71,6 +75,18 @@ export function registerAuthCommands(program: Command): void {
         },
         globalOptions.format
       );
+
+      const envKey = process.env.MCPJAM_API_KEY?.trim();
+      if (
+        envKey &&
+        !envKey.startsWith("mcpjam_") &&
+        globalOptions.format === "human" &&
+        !globalOptions.quiet
+      ) {
+        process.stderr.write(
+          "MCPJAM_API_KEY is still set, so this CLI remains authenticated after logout.\n"
+        );
+      }
     });
 
   program
