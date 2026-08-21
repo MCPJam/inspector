@@ -864,6 +864,9 @@ function OrganizationPage({
     }
   };
 
+  const seatInviteRemovalInFlightRef = useRef(false);
+  const [isRemovingSeatInvite, setIsRemovingSeatInvite] = useState(false);
+
   const handleRetrySeatPayment = async () => {
     try {
       const result = await retrySeatPayment();
@@ -882,12 +885,24 @@ function OrganizationPage({
   };
 
   const handleCancelSeatPayment = async () => {
+    // For a terminal charge the button says "Remove invite", and that is what
+    // it has to do: cancelSeatPayment returns immediately for anything not
+    // still active, so calling it here left the invite and the notice exactly
+    // where they were while claiming success.
+    const isInviteRemoval = activeSeatPaymentIntent?.needsRetry === true;
+    // Removal has no spinner of its own — the shared one belongs to
+    // cancelSeatPayment, which this path never calls — so a second click would
+    // fire a concurrent removeMember that finds no row and reports "Member not
+    // found" on top of the first one's success. The state below disables the
+    // button and is what normally prevents that; the ref keeps the handler
+    // self-guarding rather than depending on its own button being disabled.
+    if (isInviteRemoval) {
+      if (seatInviteRemovalInFlightRef.current) return;
+      seatInviteRemovalInFlightRef.current = true;
+      setIsRemovingSeatInvite(true);
+    }
     try {
-      // For a terminal charge the button says "Remove invite", and that is
-      // what it has to do: cancelSeatPayment returns immediately for anything
-      // not still active, so calling it here left the invite and the notice
-      // exactly where they were while claiming success.
-      if (activeSeatPaymentIntent?.needsRetry) {
+      if (isInviteRemoval && activeSeatPaymentIntent) {
         await removeMember({
           organizationId: organization._id,
           email: activeSeatPaymentIntent.email,
@@ -903,6 +918,11 @@ function OrganizationPage({
           ? error.message
           : "Failed to cancel pending seat payment"
       );
+    } finally {
+      if (isInviteRemoval) {
+        seatInviteRemovalInFlightRef.current = false;
+        setIsRemovingSeatInvite(false);
+      }
     }
   };
 
@@ -1250,7 +1270,7 @@ function OrganizationPage({
         intent={activeSeatPaymentIntent}
         isFinishingSeatPayment={isFinishingSeatPayment}
         isCompletingSeatPayment={isCompletingSeatPayment}
-        isCancelingSeatPayment={isCancelingSeatPayment}
+        isCancelingSeatPayment={isCancelingSeatPayment || isRemovingSeatInvite}
         onFinish={() =>
           void (activeSeatPaymentIntent.needsRetry
             ? handleRetrySeatPayment()

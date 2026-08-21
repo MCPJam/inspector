@@ -2,6 +2,7 @@ import { useState } from "react";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -580,6 +581,107 @@ describe("OrganizationsTab billing", () => {
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.getByRole("button", { name: "Remove invite" })).toBeEnabled();
+  });
+
+  it("Remove invite removes the invite instead of cancelling a dead charge", async () => {
+    // cancelSeatPayment returns immediately for anything not still active, so
+    // routing this path through it left everything untouched but claimed
+    // success.
+    const cancelSeatPayment = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+        cancelSeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove invite" }));
+
+    await waitFor(() =>
+      expect(removeMemberMock).toHaveBeenCalledWith({
+        organizationId: "org-1",
+        email: "stranded@example.com",
+      }),
+    );
+    expect(cancelSeatPayment).not.toHaveBeenCalled();
+  });
+
+  it("ignores repeated Remove invite clicks", async () => {
+    // Without a guard a second removeMember finds no row and reports "Member
+    // not found" on top of the first one's success. This covers the guard as a
+    // whole; it cannot tell the disabled button apart from the ref, since
+    // fireEvent flushes the state update between clicks.
+    let resolveRemoval: () => void = () => {};
+    removeMemberMock.mockImplementation(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveRemoval = () => resolve();
+        }),
+    );
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    const button = screen.getByRole("button", { name: "Remove invite" });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    fireEvent.click(button);
+
+    await waitFor(() => expect(removeMemberMock).toHaveBeenCalledTimes(1));
+    await act(async () => {
+      resolveRemoval();
+    });
+  });
+
+  it("surfaces an error when removing the invite fails", async () => {
+    removeMemberMock.mockRejectedValue(new Error("Member not found"));
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Remove invite" }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(toast.success).not.toHaveBeenCalled();
+
+    // The guard released, so a corrected retry is still possible.
+    removeMemberMock.mockResolvedValue(undefined);
+    fireEvent.click(screen.getByRole("button", { name: "Remove invite" }));
+    await waitFor(() => expect(removeMemberMock).toHaveBeenCalledTimes(2));
   });
 
   it("billing view hides Manage plan for non-owners and shows owner-only copy", () => {
