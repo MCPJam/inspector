@@ -39,6 +39,7 @@ import {
   AlertCircle,
   FileText,
   FolderInput,
+  Building2,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -130,6 +131,13 @@ interface ServerConnectionCardProps {
   ) => void | Promise<void>;
   /** True while a move for this server is in flight. */
   isMovingToProject?: boolean;
+  /**
+   * Share this server on the organization's registry shelf. Injected the same
+   * way `onMoveToProject` is — the card knows the server, the parent owns the
+   * dialog and the mutation. When omitted (no organization, guest role, or a
+   * surface with no registry) the item is not rendered at all.
+   */
+  onShareToOrgRegistry?: (server: ServerWithName) => void;
 }
 
 export function ServerConnectionCard({
@@ -145,6 +153,7 @@ export function ServerConnectionCard({
   moveTargets,
   onMoveToProject,
   isMovingToProject = false,
+  onShareToOrgRegistry,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
 
@@ -157,7 +166,7 @@ export function ServerConnectionCard({
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
   const isProtocolPinFailure = isProtocolVersionPinFailure(
     server.lastNormalizedError,
-    server.lastError,
+    server.lastError
   );
   const protocolPinAction = isProtocolPinFailure
     ? {
@@ -820,6 +829,38 @@ export function ServerConnectionCard({
                           ))}
                         </DropdownMenuSubContent>
                       </DropdownMenuSub>
+                    ) : null}
+                    {/*
+                      Remote HTTP only. An org entry carries an ADDRESS, and a
+                      stdio server's address is a command on one machine —
+                      there is nothing to share.
+                    */}
+                    {onShareToOrgRegistry && server.config?.url ? (
+                      <DropdownMenuItem
+                        className="text-xs cursor-pointer"
+                        onClick={() => {
+                          track("share_server_to_org_registry_clicked", {
+                            location: "server_connection_card",
+                          });
+                          // Shown-then-refused rather than hidden. "Where did
+                          // the option go?" is a worse answer than a sentence
+                          // saying why, and the why is worth knowing: an org
+                          // entry deliberately carries no secret, and the
+                          // browser never holds these header values anyway —
+                          // a shared entry built from them would be broken as
+                          // well as unsafe.
+                          if (server.hasHeaders || server.hasBearerToken) {
+                            toast.error(
+                              "This server uses credentials that can't be shared. Organization entries carry only the address and how to sign in."
+                            );
+                            return;
+                          }
+                          onShareToOrgRegistry(server);
+                        }}
+                      >
+                        <Building2 className="h-3 w-3 mr-2" />
+                        Add to org registry
+                      </DropdownMenuItem>
                     ) : null}
                     <Separator />
                     <DropdownMenuItem
