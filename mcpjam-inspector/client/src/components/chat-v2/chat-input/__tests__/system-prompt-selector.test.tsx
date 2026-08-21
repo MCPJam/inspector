@@ -11,11 +11,7 @@ const model = (id: string): ModelDefinition => ({
 
 /** Rejects `temperature` outright (Anthropic 400s on it). */
 const REJECTING = model("claude-opus-4-8");
-/**
- * Accepts `temperature` on the wire but ignores it. Must be the BYOK id — the
- * MCPJam-provided "openai/gpt-5" is exempted by `modelSupportsTemperature` on
- * purpose, since the backend owns the body it sends upstream.
- */
+/** Accepts `temperature` on the wire but ignores anything but the default. */
 const IGNORING = model("gpt-5");
 const ACCEPTING = model("anthropic/claude-sonnet-4.6");
 

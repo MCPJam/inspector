@@ -249,17 +249,18 @@ export const isMCPJamGuestAllowedModel = (
  * Which Anthropic ids reject the sampling parameters lives in `@mcpjam/sdk`
  * ({@link modelRejectsTemperature}) rather than here, because the SDK's
  * `HostRunner` builds its own provider request and needs the same answer. The
- * carve-outs below stay inspector-side: both depend on the hosted catalog,
- * which the SDK has no view of.
+ * GPT-5 carve-out stays inspector-side: it is not a Claude family, so the SDK
+ * predicate has nothing to say about it.
+ *
+ * Hosted (MCPJam-provided) ids answer the same way as own-provider ones. They
+ * used to be exempted on the grounds that the backend owns the request body it
+ * sends upstream, but it does not strip the field — it substitutes 0.7 for a
+ * non-numeric one — so `anthropic/claude-opus-4.7`, `4.8`, `claude-sonnet-5`
+ * and `claude-fable-5` were 400ing on every hosted turn. Omitting it here is
+ * the half we own; the backend has to stop defaulting for those models too.
  */
 export const modelSupportsTemperature = (modelId: string | Model): boolean => {
   const id = String(modelId);
-  // MCPJam-provided models proxy through the backend, which owns the request
-  // body it sends upstream — "openai/gpt-5" still takes a temperature here.
-  // Only own-provider (BYOK) ids are ours to strip.
-  if (isMCPJamProvidedModel(id)) {
-    return true;
-  }
   if (id.includes("gpt-5")) {
     return false;
   }

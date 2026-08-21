@@ -177,6 +177,30 @@ describe("MCPJam-provided model classification", () => {
     }
   });
 
+  it("answers the same for a hosted id as for the model it names", () => {
+    // Hosted ids were exempted while the backend was assumed to own the
+    // request body; it substitutes 0.7 instead of stripping, so every one of
+    // these was 400ing on its first hosted turn.
+    for (const id of [
+      "anthropic/claude-opus-4.7",
+      "anthropic/claude-opus-4.8",
+      "anthropic/claude-sonnet-5",
+      "anthropic/claude-fable-5",
+      "openai/gpt-5-mini",
+    ]) {
+      expect(isMCPJamProvidedModel(id)).toBe(true);
+      expect(modelSupportsTemperature(id)).toBe(false);
+    }
+    // A hosted model whose family never dropped the parameters keeps it.
+    for (const id of [
+      "anthropic/claude-opus-4.6",
+      "anthropic/claude-sonnet-4.6",
+      "anthropic/claude-haiku-4.5",
+    ]) {
+      expect(modelSupportsTemperature(id)).toBe(true);
+    }
+  });
+
   it("gives every BYOK Anthropic row a context length", () => {
     // getDefaultModel and the token-budget UI both read contextLength; a row
     // added without one silently degrades those rather than failing loudly.
@@ -202,22 +226,23 @@ describe("modelSupportsTemperature", () => {
     expect(modelSupportsTemperature("gpt-5.1-codex")).toBe(false);
   });
 
-  it("keeps temperature for MCPJam-provided models", () => {
-    // The backend owns the body it sends upstream, and hostConfig dedupes on
-    // the value — stripping here would collapse every hosted chat onto 0.7.
-    expect(modelSupportsTemperature("openai/gpt-5")).toBe(true);
+  it("strips temperature for a hosted GPT-5 too", () => {
+    // Hosted ids used to be exempt on the grounds that the backend owns the
+    // body it sends upstream. It substitutes 0.7 rather than stripping, so the
+    // exemption only hid the field from the one side that can omit it.
+    expect(modelSupportsTemperature("openai/gpt-5")).toBe(false);
   });
 
   it("resolves a dated snapshot like the alias it pins", () => {
     expect(modelSupportsTemperature("claude-opus-5-20260401")).toBe(false);
   });
 
-  it("resolves a provider-prefixed own-provider id by its model family", () => {
+  it("resolves a provider-prefixed id by its model family, hosted or not", () => {
     // A prefixed id we don't serve ourselves still reaches the same upstream
-    // model on the caller's key, so it rejects temperature just the same.
+    // model on the caller's key, so it rejects temperature just the same — and
+    // so does the hosted twin we do serve.
     expect(modelSupportsTemperature("anthropic/claude-opus-5")).toBe(false);
-    // The hosted twin we do serve keeps it — the backend owns that body.
-    expect(modelSupportsTemperature("anthropic/claude-sonnet-5")).toBe(true);
+    expect(modelSupportsTemperature("anthropic/claude-sonnet-5")).toBe(false);
   });
 
   it("keeps temperature for models it knows nothing about", () => {
