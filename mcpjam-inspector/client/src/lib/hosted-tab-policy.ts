@@ -25,6 +25,11 @@ export const HOSTED_SIDEBAR_ALLOWED_TABS = [
   "playground",
   "client-config",
   "evals",
+  // The unified Sessions feed reads the same Convex-backed session rows the
+  // hosted surfaces already write, so there is nothing hosted-specific to
+  // block. Visibility still comes from `unified-sessions-enabled` (PostHog);
+  // this entry only makes the tab REACHABLE, same as `environments` below.
+  "sessions",
   // Project Environments are Convex-backed and hosted-first; the sidebar item
   // and route are additionally gated behind `project-environments-enabled`
   // (PostHog), so this entry only makes the tab REACHABLE — visibility still

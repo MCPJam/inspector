@@ -40,6 +40,18 @@ describe("hosted-tab-policy", () => {
     expect(isHostedHashTabBlocked("scenarios")).toBe(false);
   });
 
+  it("keeps sessions visible in hosted navigation", () => {
+    // Regression: the Sessions nav item shipped with its PostHog flag wired up
+    // but never got an allow-list entry, so `getHostedNavigationSections`
+    // stripped it on app.mcpjam.com before the flag filter ran — the item was
+    // invisible to flagged-in users and `/sessions` fell through to Servers.
+    expect(HOSTED_SIDEBAR_ALLOWED_TABS).toContain("sessions");
+    expect(HOSTED_HASH_ALLOWED_TABS).toContain("sessions");
+    expect(isHostedSidebarTabAllowed("sessions")).toBe(true);
+    expect(isHostedHashTabAllowed("sessions")).toBe(true);
+    expect(isHostedHashTabBlocked("sessions")).toBe(false);
+  });
+
   it("allows profile and organizations hashes in hosted mode", () => {
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("profile");
     expect(HOSTED_HASH_ALLOWED_TABS).toContain("organizations");
