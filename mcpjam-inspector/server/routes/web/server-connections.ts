@@ -49,6 +49,7 @@ import {
 } from "../../middleware/server-connection-claim-rate-limit.js";
 import { isAllowedRequestOrigin } from "../../middleware/origin-validation.js";
 import { getClientIp } from "../../utils/client-ip.js";
+import { claimRefusalReason } from "../../../shared/server-connection-claim-refusal.js";
 
 const serverConnections = new Hono();
 
@@ -150,7 +151,32 @@ function translate(error: unknown): WebRouteError {
     // authorization session has ended" would tell every user their link
     // expired while the real fault sat unreported, so it stays a 500.
     if (error.status === 403) {
-      return new WebRouteError(403, ErrorCode.FORBIDDEN, error.message);
+      // A refused CLAIM is the one 403 the page acts on rather than just
+      // reports, so the backend's reason travels in `details.reason`. The
+      // HTTP-level code stays `FORBIDDEN`: `reason` is the finer distinction,
+      // matching how the XAA routes already carry theirs.
+      //
+      // Unrecognized codes fall through to a bare FORBIDDEN deliberately. This
+      // deploys against a backend that may not have shipped the split yet, and
+      // an older one answers a wrong-account claim with `FORBIDDEN` and prose
+      // — which the page still renders. A default-to-mismatch guess would tell
+      // signed-out visitors the wrong thing on exactly the deployments the
+      // split was written to fix.
+      const reason = claimRefusalReason(error.code);
+      const ownerHint = error.details?.ownerHint;
+      return new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        error.message,
+        reason
+          ? {
+              reason,
+              ...(typeof ownerHint === "string" && ownerHint
+                ? { ownerHint }
+                : {}),
+            }
+          : undefined
+      );
     }
     if (error.status === 409) {
       return new WebRouteError(409, ErrorCode.CONFLICT, error.message);

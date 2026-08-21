@@ -25,14 +25,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   callbackMatchesPending,
   clearPendingAuthorization,
+  HANDOFF_SIGN_IN_STATE_KEY,
   handoffRequestPath,
   isTerminalHandoffStatus,
   isWaitingHandoffStatus,
   matchHandoffRoute,
   readCallbackParams,
   readPendingAuthorization,
+  rememberHandoffSignInReturn,
   rememberPendingAuthorization,
 } from "@/lib/server-connection-handoff";
+import {
+  readClaimRefusal,
+  type ClaimRefusalDetails,
+} from "@/shared/server-connection-claim-refusal";
 import { useAuth } from "@workos-inc/authkit-react";
 
 const API = "/api/web/server-connections";
@@ -89,6 +95,24 @@ async function bestEffortAccessToken(
   }
 }
 
+/**
+ * A failed call, with the envelope's `details` kept.
+ *
+ * The page used to throw a bare `Error` carrying only the message, which is
+ * enough to REPORT a failure and not enough to ACT on one. A refused claim is
+ * the case that needs more: whether to offer "sign in" or "switch account"
+ * lives in `details`, not in the prose.
+ */
+class HandoffCallError extends Error {
+  constructor(
+    message: string,
+    readonly details?: unknown
+  ) {
+    super(message);
+    this.name = "HandoffCallError";
+  }
+}
+
 async function call<T>(
   path: string,
   body?: unknown,
@@ -110,11 +134,12 @@ async function call<T>(
         }),
   });
   const payload = (await response.json().catch(() => null)) as
-    | (T & { message?: string })
+    | (T & { message?: string; details?: unknown })
     | null;
   if (!response.ok) {
-    throw new Error(
-      payload?.message ?? "Something went wrong. Please try again."
+    throw new HandoffCallError(
+      payload?.message ?? "Something went wrong. Please try again.",
+      payload?.details
     );
   }
   if (!payload) throw new Error("The server sent an unreadable response.");
@@ -139,10 +164,104 @@ function Spinner() {
   );
 }
 
+/**
+ * The claim was refused because of WHO is asking — the one failure on this page
+ * with something to do about it.
+ *
+ * Both branches say the link survives, because it does: the backend checks the
+ * claimant before it consumes the token, so the same URL still works after
+ * signing in or switching accounts. That is the fact the old single message
+ * left out, and the reason people treated a recoverable state as a dead end.
+ */
+function ClaimRefusal({
+  refusal,
+  signedInAs,
+  busy,
+  onSignIn,
+  onSwitchAccount,
+}: {
+  refusal: ClaimRefusalDetails;
+  signedInAs: string | null;
+  busy: boolean;
+  onSignIn: () => void;
+  onSwitchAccount: () => void;
+}) {
+  const owner = refusal.ownerHint;
+
+  if (refusal.reason === "sign-in-required") {
+    return (
+      <Shell>
+        <div className="space-y-2">
+          <h1 className="text-lg font-semibold">Sign in to finish connecting</h1>
+          <p className="text-sm text-muted-foreground">
+            {owner
+              ? `This connection request was created by ${owner}. Sign in to that account to continue.`
+              : "This connection request was created by an MCPJam account. Sign in to continue."}
+          </p>
+          <p className="text-sm text-muted-foreground">
+            This link is still valid — nothing has been used up.
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={busy}
+          className="w-full rounded-md bg-foreground px-3 py-2 text-sm text-background disabled:opacity-50"
+          onClick={onSignIn}
+        >
+          {busy ? "Opening sign-in…" : "Sign in"}
+        </button>
+      </Shell>
+    );
+  }
+
+  return (
+    <Shell>
+      <div className="space-y-2">
+        <h1 className="text-lg font-semibold">
+          This link belongs to a different account
+        </h1>
+        <p className="text-sm text-muted-foreground">
+          {signedInAs ? (
+            <>
+              You are signed in as{" "}
+              <span className="font-medium text-foreground">{signedInAs}</span>.{" "}
+            </>
+          ) : null}
+          {owner
+            ? `This connection request was created by ${owner}.`
+            : "This connection request was created by a different MCPJam account."}
+        </p>
+        {/* Named explicitly because the CLI is where these links come from, and
+            an agent driving it cannot see which account it is acting as. The
+            mismatch is almost always "the browser and the terminal are logged
+            into different accounts", and `whoami` is the one command that
+            settles it. */}
+        <p className="text-sm text-muted-foreground">
+          If you started this from the MCPJam CLI, that is the account it is
+          logged into — <code className="font-mono text-xs">mcpjam whoami</code>{" "}
+          will confirm which.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          This link is still valid. Switch accounts and open it again.
+        </p>
+      </div>
+      <button
+        type="button"
+        disabled={busy}
+        className="w-full rounded-md bg-foreground px-3 py-2 text-sm text-background disabled:opacity-50"
+        onClick={onSwitchAccount}
+      >
+        {busy ? "Signing out…" : "Switch account"}
+      </button>
+    </Shell>
+  );
+}
+
 export function ServerConnectionHandoff() {
-  const { getAccessToken } = useAuth();
+  const { getAccessToken, signIn, signOut, user } = useAuth();
   const [state, setState] = useState<HandoffState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [refusal, setRefusal] = useState<ClaimRefusalDetails | null>(null);
   const [busy, setBusy] = useState(false);
   const claimed = useRef(false);
 
@@ -196,7 +315,15 @@ export function ServerConnectionHandoff() {
           );
         }
       } catch (cause) {
-        setError(cause instanceof Error ? cause.message : String(cause));
+        // A refusal about WHO is asking is recoverable, and gets its own
+        // screen with the action that recovers it. Everything else is the
+        // existing dead-end report.
+        const claimRefusal =
+          cause instanceof HandoffCallError
+            ? readClaimRefusal(cause.details)
+            : null;
+        if (claimRefusal) setRefusal(claimRefusal);
+        else setError(cause instanceof Error ? cause.message : String(cause));
         return;
       }
       await refresh();
@@ -269,6 +396,68 @@ export function ServerConnectionHandoff() {
       setBusy(false);
     }
   }, [state]);
+
+  /**
+   * Sign in and come back to THIS link.
+   *
+   * The return path is the address bar as it stands, which on a refused claim
+   * still carries the handoff token — the page only strips it after a claim
+   * SUCCEEDS. `rememberHandoffSignInReturn` keeps that path same-origin and
+   * sends only a nonce through AuthKit; see its docblock.
+   *
+   * A `null` nonce means the return could not be stored, so the user signs in
+   * without one and lands on the app shell rather than back here. Refusing to
+   * sign them in at all would be a worse answer to "storage is unavailable".
+   */
+  const signInAndReturn = useCallback(() => {
+    setBusy(true);
+    const nonce = rememberHandoffSignInReturn(
+      `${window.location.pathname}${window.location.search}`,
+      window.location.origin
+    );
+    void Promise.resolve(
+      signIn(nonce ? { state: { [HANDOFF_SIGN_IN_STATE_KEY]: nonce } } : {})
+    ).catch((cause) => {
+      setBusy(false);
+      setError(cause instanceof Error ? cause.message : String(cause));
+    });
+  }, [signIn]);
+
+  /**
+   * Drop this session and come straight back to the link, signed out.
+   *
+   * `navigate: false` then an explicit `assign`, mirroring what the sidebar's
+   * sign-out already does: WorkOS's own logout redirect only goes to a URI the
+   * dashboard allowlists, and a per-link handoff URL will never be on that
+   * list. Clearing the session locally and navigating ourselves keeps the
+   * return exact.
+   *
+   * It lands on the SIGN_IN_REQUIRED screen, which is correct — from there the
+   * user signs in as the right account and the claim goes through.
+   */
+  const switchAccount = useCallback(() => {
+    setBusy(true);
+    const back = `${window.location.pathname}${window.location.search}`;
+    void Promise.resolve(signOut({ navigate: false }))
+      .catch(() => {
+        // A failed sign-out still gets the navigation: the page re-reads the
+        // session on load, so a session that did survive simply lands the user
+        // back on this same screen rather than on a blank one.
+      })
+      .finally(() => window.location.assign(back));
+  }, [signOut]);
+
+  if (refusal && !state) {
+    return (
+      <ClaimRefusal
+        refusal={refusal}
+        signedInAs={user?.email ?? null}
+        busy={busy}
+        onSignIn={signInAndReturn}
+        onSwitchAccount={switchAccount}
+      />
+    );
+  }
 
   if (error && !state) {
     return (

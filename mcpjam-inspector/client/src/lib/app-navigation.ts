@@ -93,6 +93,12 @@ export const routePaths = {
   settings: "/settings",
   profile: "/profile",
   projectSettings: "/project-settings",
+  /**
+   * WorkOS Initiate Login URL. AuthKit redirects IdP-initiated logins (the
+   * Okta app tile) here instead of issuing a code; the route starts a normal
+   * sign-in so the code exchange on `/callback` has a matching PKCE verifier.
+   */
+  login: "/login",
   callback: "/callback",
   billing: "/billing",
   evals: "/evals",
