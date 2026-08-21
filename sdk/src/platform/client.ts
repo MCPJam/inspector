@@ -90,6 +90,27 @@ import type {
 
 export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
 
+/**
+ * Parse a request URL, tolerating a relative `baseUrl`.
+ *
+ * The default base and every Node caller pass an absolute origin, which
+ * `new URL` parses on its own. Browser and Worker callers may instead pass a
+ * same-origin prefix like `/api/v1` so the request rides the current origin's
+ * session (see `mcpjam-inspector`'s directory-readiness client). That prefix is
+ * not a valid URL by itself: `new URL("/api/v1/...")` throws "Failed to
+ * construct 'URL': Invalid URL" and the call never reaches `fetch`. Resolving
+ * against the document/worker origin fixes the relative case while leaving an
+ * absolute spec untouched (a second `base` argument is ignored when the first
+ * argument is already absolute).
+ */
+function resolvePlatformRequestUrl(spec: string): URL {
+  const origin =
+    typeof globalThis !== "undefined"
+      ? (globalThis as { location?: { origin?: string } }).location?.origin
+      : undefined;
+  return origin ? new URL(spec, origin) : new URL(spec);
+}
+
 export interface PlatformApiClientOptions {
   /** API origin + version prefix. Defaults to the hosted production API. */
   baseUrl?: string;
@@ -2891,7 +2912,7 @@ export class PlatformApiClient {
     init: { query?: QueryParams; body?: unknown },
     options?: RequestOptions,
   ): Promise<T> {
-    const url = new URL(`${this.baseUrl}${path}`);
+    const url = resolvePlatformRequestUrl(`${this.baseUrl}${path}`);
     for (const [name, value] of Object.entries(init.query ?? {})) {
       if (value !== undefined) {
         url.searchParams.set(name, String(value));
