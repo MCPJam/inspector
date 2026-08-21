@@ -18,6 +18,7 @@ import {
   renderConformanceForCli,
   resolveConformanceOutputFormatForCli,
 } from "../lib/conformance-output.js";
+import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import { parseReporterFormat } from "../lib/reporting.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
@@ -720,6 +721,11 @@ export function registerTasksCommands(program: Command): void {
         "--reporter <reporter>",
         "Structured reporter output: json-summary or junit-xml"
       )
+      .option("--upload", "Upload this suite's result into MCPJam run history")
+      .option(
+        "--require-upload",
+        "Fail if reporting is configured but the UI record cannot be written"
+      )
   ).action(async (options, command) => {
     const reporter = parseReporterFormat(
       options.reporter as string | undefined
@@ -768,6 +774,17 @@ export function registerTasksCommands(program: Command): void {
     }
 
     const exitCode = tasksConformanceExitCode(result);
+    await maybeUploadSingleSuite({
+      suiteKind: "tasks",
+      result,
+      serverUrl:
+        "url" in config && typeof config.url === "string" ? config.url : undefined,
+      upload: Boolean((options as { upload?: boolean }).upload),
+      requireUpload: Boolean(
+        (options as { requireUpload?: boolean }).requireUpload
+      ),
+      command,
+    });
     if (exitCode !== 0) {
       setProcessExitCode(exitCode);
     }

@@ -327,6 +327,16 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Incremental-ingestion transport; the reporter closes the run it opened.",
   "post /projects/{projectId}/eval-ingest/artifacts/upload-url":
     "Mints a short-lived artifact upload URL as part of the ingestion handshake. Useless outside it, and a standalone method would hand out signed URLs on request.",
+  "post /projects/{projectId}/conformance-ingest/report":
+    "SDK conformance-run INGESTION. Already covered by `reportConformanceRun`; a second, lower-level client method would let the two drift.",
+  "post /projects/{projectId}/conformance-ingest/runs/start":
+    "Incremental conformance ingestion, driven by the SDK reporter.",
+  "post /projects/{projectId}/conformance-ingest/runs/reports":
+    "Incremental conformance ingestion; one suite report per call.",
+  "post /projects/{projectId}/conformance-ingest/runs/heartbeat":
+    "Keeps a long-running uploaded conformance run from looking stale.",
+  "post /projects/{projectId}/conformance-ingest/runs/finalize":
+    "Closes the incremental conformance ingest the reporter opened.",
 };
 
 describe("/api/v1 -> SDK coverage", () => {
