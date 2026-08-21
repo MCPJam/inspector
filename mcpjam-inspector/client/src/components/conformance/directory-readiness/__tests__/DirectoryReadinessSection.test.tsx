@@ -63,7 +63,7 @@ function claudeResult(overrides: Record<string, unknown> = {}) {
   return {
     status: "not-ready",
     summary: "runtime-compatibility has unmet requirements.",
-    context: { target: "https://demo.example.com/mcp" },
+    context: { target: "https://demo.example.com/mcp", authMode: "headless" },
     lanes: [
       {
         lane: "runtime-compatibility",
@@ -159,6 +159,68 @@ describe("local mode", () => {
       <DirectoryReadinessSection publisher="claude" server={HTTP_SERVER} />,
     );
     expect(screen.queryByText(/uses MCPJam credits/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("an auth-walled server", () => {
+  it("invites the connect instead of leaving the gap implicit", async () => {
+    // Two facts must agree: this run carried no token, AND the server
+    // challenged correctly (a green mark, not a red one). Together they mean
+    // one action closes the gaps, and the section says it out loud.
+    mockRunLocal.mockResolvedValue({
+      success: true,
+      result: claudeResult({
+        findings: [
+          {
+            id: "claude.auth.unauthenticated-challenge",
+            title: "An unauthenticated request is challenged",
+            lane: "runtime-compatibility",
+            class: "required",
+            status: "satisfied",
+          },
+          {
+            id: "claude.auth.rfc8707-resource-canonical",
+            title: "The RFC 8707 resource is canonical",
+            lane: "runtime-compatibility",
+            class: "required",
+            status: "not-evaluated",
+            notEvaluatedReason: "requires completing an authorization",
+          },
+        ],
+      }),
+    });
+    render(
+      <DirectoryReadinessSection publisher="claude" server={HTTP_SERVER} />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /run readiness/i }),
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/This server requires OAuth/i),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByText(/1 check\(s\) are waiting/i)).toBeInTheDocument();
+    expect(screen.getByText(/then run again/i)).toBeInTheDocument();
+  });
+
+  it("stays silent for a server with no auth at all", async () => {
+    // `authMode: headless` alone is every unauthenticated run against every
+    // open server; without the challenge, the banner would nag universally.
+    mockRunLocal.mockResolvedValue({ success: true, result: claudeResult() });
+    render(
+      <DirectoryReadinessSection publisher="claude" server={HTTP_SERVER} />,
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: /run readiness/i }),
+    );
+    await waitFor(() => {
+      expect(screen.getByText(/3\/8 evaluated/)).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByText(/This server requires OAuth/i),
+    ).not.toBeInTheDocument();
   });
 });
 

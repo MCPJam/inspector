@@ -43,6 +43,7 @@ import {
 } from "@/lib/apis/directory-readiness-api";
 import { DirectoryReadinessReport } from "./DirectoryReadinessReport";
 import { ReadinessLaneList } from "./ReadinessLaneList";
+import { detectAuthWall } from "./readiness-copy";
 import { ObservationNotice } from "./ObservationNotice";
 
 const PUBLISHER_LABEL: Record<DirectoryReadinessPublisher, string> = {
@@ -289,6 +290,32 @@ export function DirectoryReadinessSection({
 
             {hasResult ? (
               <>
+                {/*
+                  THE GAP, TURNED INTO ITS ACTION. The run already proved two
+                  things: we carried no token, and the server challenged
+                  correctly — which is a green mark for them, not a red one.
+                  Connecting is all it takes: a hosted run reads the saved
+                  server's token automatically, so there is nothing readiness-
+                  specific to configure. Parity note: the suites above answer
+                  the same situation with a raw 401 in a red box, so this is
+                  the page's first section to say the next step out loud.
+                */}
+                {(() => {
+                  const wall = state.report
+                    ? detectAuthWall(state.report)
+                    : null;
+                  if (!wall) return null;
+                  return (
+                    <div className="rounded-md border border-border/60 bg-muted/30 px-2 py-1.5 text-[11px] leading-relaxed">
+                      This server requires OAuth, and this run carried no token
+                      — {wall.waiting} check(s) are waiting on an authorized
+                      session.{" "}
+                      {hosted
+                        ? "Connect the server (server menu → reconnect with OAuth), then run again; the saved token is used automatically."
+                        : "Connect the server with OAuth from the server menu, then run again."}
+                    </div>
+                  );
+                })()}
                 {/* OpenAI's two staged rollups, visible beside the headline:
                     a submitter whose server is fine and whose paperwork is
                     not reads that here without opening anything. */}

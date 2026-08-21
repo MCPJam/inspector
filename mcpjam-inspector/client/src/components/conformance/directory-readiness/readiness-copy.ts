@@ -66,3 +66,38 @@ export const FINDING_STATUS_ORDER: Record<string, number> = {
   satisfied: 3,
   "not-applicable": 4,
 };
+
+/**
+ * Whether an unauthenticated run hit a server that wants OAuth.
+ *
+ * Two facts have to agree before the banner shows. `authMode: "headless"`
+ * says this run carried no token — a fact about US. A satisfied
+ * `*.unauthenticated-challenge` finding (or an `authorizationRequests` gap)
+ * says the server answered 401 with a proper challenge — a fact about THEM,
+ * and a point in their favour, since challenging correctly is what the rules
+ * require. Only together do they mean "connect and re-run closes these gaps";
+ * either alone could be a token that expired mid-run or a server with no auth
+ * at all.
+ */
+export function detectAuthWall(report: {
+  context?: { authMode?: string };
+  lanes?: Array<{ coverage: { missingInputs: string[] } }>;
+  findings?: Array<{ id: string; status: string; details?: unknown }>;
+}): { waiting: number } | null {
+  if (report.context?.authMode !== "headless") return null;
+
+  const challenged = (report.findings ?? []).some(
+    (finding) =>
+      finding.id.includes("unauthenticated-challenge") &&
+      finding.status === "satisfied",
+  );
+  const authGap = (report.lanes ?? []).some((lane) =>
+    lane.coverage.missingInputs.includes("authorizationRequests"),
+  );
+  if (!challenged && !authGap) return null;
+
+  const waiting = (report.findings ?? []).filter(
+    (finding) => finding.status === "not-evaluated",
+  ).length;
+  return { waiting };
+}
