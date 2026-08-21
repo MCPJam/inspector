@@ -43,6 +43,11 @@ const BODYLESS_WRITES = new Set([
   "post /projects/{projectId}/eval-runs/{runId}/cancel",
   // Same shape on the swarm side, for the same reason.
   "post /projects/{projectId}/journey-runs/{runId}/cancel",
+  // And the same on readiness. There is nothing to say about a cancellation
+  // beyond which run — the executing node learns about it on its next
+  // heartbeat, and a body could only be a place to pass options a cancellation
+  // does not have.
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel",
   // Dismissal is addressed entirely by the path findingId — there is nothing
   // to say about it beyond which finding.
   "post /projects/{projectId}/journey-findings/{findingId}/dismiss",

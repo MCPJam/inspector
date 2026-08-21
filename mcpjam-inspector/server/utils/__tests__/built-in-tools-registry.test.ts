@@ -101,6 +101,46 @@ describe("resolveHostTools — computer-backed bash", () => {
     expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
   });
 
+  // ── Eval snapshots now carry `builtInToolIds` AND an ephemeral `computer`.
+  //
+  // Both halves are new at once, so the hazard is that `bash` gets registered
+  // TWICE for one iteration: once here (the host grants the id and the config
+  // carries a computer) and once out of band, where the eval runner injects a
+  // sandbox-bound `bash` into `prepared.allTools` after provisioning the box.
+  //
+  // It cannot happen, and these pin the reason: the personal resolver refuses a
+  // non-personal kind outright. The two paths are mutually exclusive by
+  // construction rather than by ordering luck.
+
+  it("does NOT advertise bash off an EPHEMERAL computer — the per-run box is not a personal resource", () => {
+    // An eval iteration's pinned config carries `{ kind: "ephemeral" }`. If
+    // this resolved a personal machine from it, the iteration would get a
+    // second `bash` pointed at the ACTING MEMBER's own computer, alongside the
+    // sandbox-bound one the runner injects.
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME],
+        computer: { kind: "ephemeral" },
+      },
+      ctx
+    );
+    expect(Object.keys(tools ?? {})).toEqual([WEB_SEARCH_TOOL_NAME]);
+  });
+
+  it("binds exactly ONE bash when the turn owns a sandbox, even with an ephemeral computer on the config", () => {
+    // The binding arrives out of band on `ctx` and is checked before every
+    // other gate, so it wins outright — one entry, bound to that box.
+    const tools = resolveHostTools(
+      {
+        builtInToolIds: [BASH_TOOL_NAME],
+        computer: { kind: "ephemeral" },
+      },
+      { ...ctx, sandboxBinding: { sandboxId: "sbx_eval_1" } }
+    );
+    expect(Object.keys(tools ?? {})).toEqual([BASH_TOOL_NAME]);
+    expect(typeof tools![BASH_TOOL_NAME].execute).toBe("function");
+  });
+
   it("skips bash for an anonymous guest on the personal-project path (backend rejects the reserve)", () => {
     const tools = resolveHostTools(
       { builtInToolIds: [BASH_TOOL_NAME, WEB_SEARCH_TOOL_NAME], computer },
