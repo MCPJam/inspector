@@ -42,7 +42,7 @@ function validateOpInput<TInput>(
 async function executeOp<TInput, TOutput>(
   op: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  _options: PlatformOptions,
+  options: PlatformOptions & { project?: string },
   command: Command,
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
@@ -50,6 +50,17 @@ async function executeOp<TInput, TOutput>(
     platformOptionsOf(command),
     globalOptions.timeout,
     ({ client, signal }) => op.execute(input, { client, signal }),
+    {
+      quiet: globalOptions.quiet,
+      cloudScope:
+        options.project !== undefined
+          ? {
+              kind: "project",
+              selector: options.project,
+              source: "flag",
+            }
+          : { kind: "all-projects" },
+    },
   );
   writeResult(result, globalOptions.format);
 }

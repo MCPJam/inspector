@@ -145,7 +145,13 @@ export function registerProjectsCommands(program: Command): void {
         listProjectsOperation.execute(
           organizationId ? { organizationId } : {},
           { client, signal }
-        )
+        ),
+      {
+        quiet: globalOptions.quiet,
+        cloudScope: organizationId
+          ? { kind: "organization", organization: organizationId }
+          : { kind: "all-projects" },
+      }
     );
 
     if (globalOptions.format === "human") {
@@ -190,7 +196,8 @@ export function registerProjectsCommands(program: Command): void {
         platformOptionsOf<PlatformOptions>(command),
         globalOptions.timeout,
         ({ client, signal }) =>
-          createProjectOperation.execute(input, { client, signal })
+          createProjectOperation.execute(input, { client, signal }),
+        { cloudScope: { kind: "account" }, quiet: globalOptions.quiet }
       );
       writeResult(result, globalOptions.format);
     }
@@ -499,7 +506,8 @@ export function registerProjectsCommands(program: Command): void {
           getProjectServerConnectionStatusOperation.execute(input, {
             client,
             signal,
-          })
+          }),
+        { cloudScope: { kind: "account" }, quiet: globalOptions.quiet }
       );
       writeResult(payload, globalOptions.format);
     }

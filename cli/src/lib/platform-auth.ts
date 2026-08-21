@@ -27,6 +27,7 @@ import {
   writeStoredAuth,
   type StoredPlatformAuth,
 } from "./auth-store.js";
+import { MISSING_CLOUD_CREDENTIAL_MESSAGE } from "./cloud-context.js";
 import { operationalError, usageError } from "./output.js";
 
 export const DEFAULT_PLATFORM_ORIGIN = "https://app.mcpjam.com";
@@ -97,9 +98,7 @@ export async function getOAuthAccessToken(deps: {
 }): Promise<string> {
   const stored = readStoredAuth(deps.authFilePath);
   if (!stored) {
-    throw operationalError(
-      "Not logged in. Run `mcpjam cloud login`, or pass an sk_ API key via --api-key / MCPJAM_API_KEY."
-    );
+    throw operationalError(MISSING_CLOUD_CREDENTIAL_MESSAGE);
   }
 
   const now = deps.now ?? Date.now;

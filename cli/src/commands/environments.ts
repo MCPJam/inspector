@@ -85,7 +85,8 @@ async function assertModelOverridesSupported(
       getEnvironmentCapabilitiesOperation.execute(
         { project: args.project },
         { client, signal }
-      )
+      ),
+    { announce: false }
   );
   const supported = result.capabilities.modelOverrides;
   if (!supported) {
