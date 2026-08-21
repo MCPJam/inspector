@@ -20,10 +20,9 @@ describe("conformance run bundle", () => {
       "apps",
       "tasks",
     ]);
-    expect(normalizeConformanceSuites(["oauth", "protocol", "oauth", "nope"])).toEqual([
-      "oauth",
-      "protocol",
-    ]);
+    expect(
+      normalizeConformanceSuites(["oauth", "protocol", "oauth", "nope"])
+    ).toEqual(["oauth", "protocol"]);
   });
 
   it("pools missing requested suites as incomplete, not failed", () => {
@@ -85,7 +84,7 @@ describe("conformance run bundle", () => {
       detectConformanceCiMetadata({
         ...env,
         GITHUB_SERVER_URL: "https://github.com/",
-      })?.runUrl,
+      })?.runUrl
     ).toBe("https://github.com/acme/widgets/actions/runs/99");
     expect(detectConformanceCiMetadata({})).toBeUndefined();
   });
@@ -95,7 +94,7 @@ describe("conformance run bundle", () => {
       runConformance({
         server: { url: "https://example.com/mcp" },
         suites: ["oauth"],
-      }),
+      })
     ).rejects.toThrow(/OAuth is opt-in/);
   });
 });
@@ -118,24 +117,41 @@ describe("conformance run reporter", () => {
 
   it("uploads start/report/finalize and does not change a safe-path failure into a throw", async () => {
     process.env.MCPJAM_API_KEY = "sk_test";
-    const fetchMock = vi.fn()
+    const fetchMock = vi
+      .fn()
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ ok: true, runId: "run_1", runUrl: "https://app.mcpjam.com/conformance/runs/run_1" }), {
-          status: 200,
-          headers: { "content-type": "application/json" },
-        }),
+        new Response(
+          JSON.stringify({
+            ok: true,
+            runId: "run_1",
+            runUrl: "https://app.mcpjam.com/conformance/runs/run_1",
+          }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        )
       )
       .mockResolvedValueOnce(
         new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: { "content-type": "application/json" },
-        }),
+        })
       )
       .mockResolvedValueOnce(
-        new Response(JSON.stringify({ ok: true, runId: "run_1", outcome: "passed" }), {
+        new Response(JSON.stringify({ ok: true }), {
           status: 200,
           headers: { "content-type": "application/json" },
-        }),
+        })
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ ok: true, runId: "run_1", outcome: "passed" }),
+          {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }
+        )
       );
     global.fetch = fetchMock as never;
 
@@ -165,16 +181,21 @@ describe("conformance run reporter", () => {
       startedAt: Date.now(),
     });
 
-    const { reportConformanceRun } = await import("../src/report-conformance-run.js");
+    const { reportConformanceRun } = await import(
+      "../src/report-conformance-run.js"
+    );
     const uploaded = await reportConformanceRun(report, {
       apiKey: "sk_test",
       baseUrl: "https://app.example",
       serverUrl: "https://mcp.example/mcp",
     });
     expect(uploaded.runId).toBe("run_1");
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain(
-      "/api/v1/projects/default/conformance-ingest/runs/start",
+      "/api/v1/projects/default/conformance-ingest/runs/start"
+    );
+    expect(String(fetchMock.mock.calls[2]?.[0])).toContain(
+      "/api/v1/projects/default/conformance-ingest/runs/heartbeat"
     );
 
     fetchMock.mockReset();

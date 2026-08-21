@@ -77,7 +77,7 @@ function resolveApiKey(input: Pick<ReportConformanceRunOptions, "apiKey">) {
 
 function resolveBaseUrl(input: Pick<ReportConformanceRunOptions, "baseUrl">) {
   return trimTrailingSlash(
-    input.baseUrl ?? process.env.MCPJAM_BASE_URL ?? DEFAULT_MCPJAM_BASE_URL,
+    input.baseUrl ?? process.env.MCPJAM_BASE_URL ?? DEFAULT_MCPJAM_BASE_URL
   );
 }
 
@@ -88,14 +88,19 @@ function resolveProject(input: Pick<ReportConformanceRunOptions, "project">) {
 }
 
 function ingestPath(config: RuntimeConfig, suffix: string): string {
-  return `/api/v1/projects/${encodeURIComponent(config.project)}/conformance-ingest/${suffix}`;
+  return `/api/v1/projects/${encodeURIComponent(
+    config.project
+  )}/conformance-ingest/${suffix}`;
 }
 
 function detectSource(
-  options: ReportConformanceRunOptions,
+  options: ReportConformanceRunOptions
 ): ConformanceRunSource {
   if (options.source) return options.source;
-  if (process.env.GITHUB_ACTIONS === "true" || process.env.GITHUB_ACTIONS === "1") {
+  if (
+    process.env.GITHUB_ACTIONS === "true" ||
+    process.env.GITHUB_ACTIONS === "1"
+  ) {
     return "github_action";
   }
   return "sdk";
@@ -104,7 +109,7 @@ function detectSource(
 async function postJson(
   config: RuntimeConfig,
   suffix: string,
-  body: unknown,
+  body: unknown
 ): Promise<Record<string, unknown>> {
   const endpoint = `${config.baseUrl}${ingestPath(config, suffix)}`;
   const controller = new AbortController();
@@ -128,8 +133,8 @@ async function postJson(
         typeof parsed.message === "string"
           ? parsed.message
           : typeof parsed.error === "string"
-            ? parsed.error
-            : `Conformance ingest failed (${response.status})`;
+          ? parsed.error
+          : `Conformance ingest failed (${response.status})`;
       throw new Error(message);
     }
     return parsed;
@@ -139,7 +144,7 @@ async function postJson(
 }
 
 export function isConformanceReportingConfigured(
-  options: Pick<ReportConformanceRunOptions, "apiKey"> = {},
+  options: Pick<ReportConformanceRunOptions, "apiKey"> = {}
 ): boolean {
   return Boolean(resolveApiKey(options));
 }
@@ -149,7 +154,7 @@ export async function startConformanceRun(
     ConformanceRunReportV1,
     "requestedSuites" | "protocolVersion" | "engineVersion"
   >,
-  options: ReportConformanceRunOptions = {},
+  options: ReportConformanceRunOptions = {}
 ): Promise<ReportConformanceRunOutput> {
   const apiKey = resolveApiKey(options);
   if (!apiKey) {
@@ -193,7 +198,7 @@ export async function uploadConformanceSuiteReport(
   runId: string,
   suiteKind: ConformanceSuiteKind,
   report: ConformanceReport,
-  options: ReportConformanceRunOptions = {},
+  options: ReportConformanceRunOptions = {}
 ): Promise<void> {
   const apiKey = resolveApiKey(options);
   if (!apiKey) {
@@ -213,9 +218,26 @@ export async function uploadConformanceSuiteReport(
   });
 }
 
+export async function heartbeatConformanceRun(
+  runId: string,
+  options: ReportConformanceRunOptions = {}
+): Promise<void> {
+  const apiKey = resolveApiKey(options);
+  if (!apiKey) {
+    throw new Error("MCPJAM_API_KEY is required to upload conformance results");
+  }
+  const config: RuntimeConfig = {
+    apiKey,
+    baseUrl: resolveBaseUrl(options),
+    project: resolveProject(options),
+    timeoutMs: options.timeoutMs ?? 30_000,
+  };
+  await postJson(config, "runs/heartbeat", { runId });
+}
+
 export async function finalizeConformanceRun(
   runId: string,
-  options: ReportConformanceRunOptions = {},
+  options: ReportConformanceRunOptions = {}
 ): Promise<ReportConformanceRunOutput> {
   const apiKey = resolveApiKey(options);
   if (!apiKey) {
@@ -244,7 +266,7 @@ export async function finalizeConformanceRun(
 
 export async function reportConformanceRun(
   report: ConformanceRunReportV1,
-  options: ReportConformanceRunOptions = {},
+  options: ReportConformanceRunOptions = {}
 ): Promise<ReportConformanceRunOutput> {
   const started = await startConformanceRun(report, options);
   const suites = Object.entries(report.reports) as Array<
@@ -255,15 +277,16 @@ export async function reportConformanceRun(
       started.runId,
       suiteKind,
       suiteReport,
-      options,
+      options
     );
+    await heartbeatConformanceRun(started.runId, options);
   }
   return await finalizeConformanceRun(started.runId, options);
 }
 
 export async function reportConformanceRunSafely(
   report: ConformanceRunReportV1,
-  options: ReportConformanceRunOptions = {},
+  options: ReportConformanceRunOptions = {}
 ): Promise<ReportConformanceRunOutput | null> {
   try {
     return await reportConformanceRun(report, options);

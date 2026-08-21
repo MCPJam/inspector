@@ -614,6 +614,7 @@ export {
 export type { ConformanceCiMetadata } from "./conformance-ci.js";
 export {
   finalizeConformanceRun,
+  heartbeatConformanceRun,
   isConformanceReportingConfigured,
   reportConformanceRun,
   reportConformanceRunSafely,

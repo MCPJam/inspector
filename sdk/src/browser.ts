@@ -728,6 +728,12 @@ export {
   scoreFromProtocolResult,
   scoreFromTasksResult,
 } from "./conformance-score.js";
+export { toConformanceReport } from "./conformance-reporting.js";
+export type {
+  ConformanceReport,
+  ConformanceReportCase,
+  ConformanceReportGroup,
+} from "./conformance-reporting.js";
 export type {
   ConformanceAdvisoryTier,
   ConformanceScore,

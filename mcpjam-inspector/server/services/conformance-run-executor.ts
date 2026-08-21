@@ -63,10 +63,10 @@ function syntheticIncompleteReport(
     kind === "protocol"
       ? "protocol-conformance"
       : kind === "apps"
-        ? "apps-conformance"
-        : kind === "tasks"
-          ? "tasks-conformance"
-          : "oauth-conformance";
+      ? "apps-conformance"
+      : kind === "tasks"
+      ? "tasks-conformance"
+      : "oauth-conformance";
   return {
     schemaVersion: 1,
     kind: reportKind,
@@ -108,23 +108,29 @@ export async function executePersistedConformanceRun(
       kind === "tasks" ||
       kind === "oauth"
   );
-  // GitHub App has no interactive OAuth. Unselected/unsupported OAuth is
-  // dropped from the requested snapshot so it is not incomplete.
-  const suites =
-    args.source === "github_app"
-      ? requestedSuites.filter((kind) => kind !== "oauth")
-      : requestedSuites;
+  // GitHub App has no interactive OAuth. Keep OAuth in the persisted requested
+  // snapshot, but record it as an explicit incomplete suite instead of silently
+  // dropping a configured gate.
+  const suites = requestedSuites;
+  const unsupportedOAuth =
+    args.source === "github_app" && suites.includes("oauth");
+  const executionSuites = unsupportedOAuth
+    ? suites.filter((kind) => kind !== "oauth")
+    : suites;
 
-  const started = (await client.mutation("conformanceRuns:startRun" as never, {
-    projectId: args.projectId,
-    target: args.target,
-    source: args.source,
-    requestedSuites: suites,
-    protocolVersion: args.protocolVersion,
-    engineVersion: args.engineVersion,
-    actorLabel: args.actorLabel,
-    githubCheckTriggerId: args.githubCheckTriggerId,
-  } as never)) as {
+  const started = (await client.mutation(
+    "conformanceRuns:startRun" as never,
+    {
+      projectId: args.projectId,
+      target: args.target,
+      source: args.source,
+      requestedSuites: suites,
+      protocolVersion: args.protocolVersion,
+      engineVersion: args.engineVersion,
+      actorLabel: args.actorLabel,
+      githubCheckTriggerId: args.githubCheckTriggerId,
+    } as never
+  )) as {
     runId: string;
     reused?: boolean;
     status?: string;
@@ -143,9 +149,12 @@ export async function executePersistedConformanceRun(
 
   const heartbeat = setInterval(() => {
     void client
-      .mutation("conformanceRuns:heartbeat" as never, {
-        runId: started.runId,
-      } as never)
+      .mutation(
+        "conformanceRuns:heartbeat" as never,
+        {
+          runId: started.runId,
+        } as never
+      )
       .catch((error: unknown) => {
         logger.warn("[conformance-run] heartbeat failed", {
           runId: started.runId,
@@ -156,28 +165,51 @@ export async function executePersistedConformanceRun(
   (heartbeat as unknown as { unref?: () => void }).unref?.();
 
   try {
-    const report = await runConformance({
-      server: args.server,
-      suites,
-      protocolVersion: args.protocolVersion as never,
-      engineVersion: args.engineVersion,
-      onProgress: async (event) => {
-        if (event.status === "running") return;
-        const body =
-          event.report ??
-          syntheticIncompleteReport(
-            event.suiteKind,
-            event.error ?? "suite did not produce a report"
-          );
-        await client.action("conformanceRuns:upsertReportAction" as never, {
+    const report =
+      executionSuites.length > 0
+        ? await runConformance({
+            server: args.server,
+            suites: executionSuites,
+            protocolVersion: args.protocolVersion as never,
+            engineVersion: args.engineVersion,
+            onProgress: async (event) => {
+              if (event.status === "running") return;
+              const body =
+                event.report ??
+                syntheticIncompleteReport(
+                  event.suiteKind,
+                  event.error ?? "suite did not produce a report"
+                );
+              await client.action(
+                "conformanceRuns:upsertReportAction" as never,
+                {
+                  runId: started.runId,
+                  suiteKind: event.suiteKind,
+                  report: body,
+                  status: event.status === "completed" ? "completed" : "failed",
+                  durationMs: body.durationMs,
+                } as never
+              );
+            },
+          })
+        : null;
+
+    if (unsupportedOAuth) {
+      const body = syntheticIncompleteReport(
+        "oauth",
+        "GitHub App checks cannot complete interactive OAuth authorization"
+      );
+      await client.action(
+        "conformanceRuns:upsertReportAction" as never,
+        {
           runId: started.runId,
-          suiteKind: event.suiteKind,
+          suiteKind: "oauth",
           report: body,
-          status: event.status === "completed" ? "completed" : "failed",
+          status: "failed",
           durationMs: body.durationMs,
-        } as never);
-      },
-    });
+        } as never
+      );
+    }
 
     const finalized = (await client.mutation(
       "conformanceRuns:finalizeRun" as never,
@@ -186,8 +218,8 @@ export async function executePersistedConformanceRun(
 
     return {
       runId: started.runId,
-      outcome: finalized.outcome ?? report.outcome,
-      score: finalized.score ?? report.score.score,
+      outcome: finalized.outcome ?? report?.outcome,
+      score: finalized.score ?? report?.score.score,
     };
   } finally {
     clearInterval(heartbeat);

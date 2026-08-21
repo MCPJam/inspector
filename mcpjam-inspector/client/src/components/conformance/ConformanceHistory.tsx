@@ -46,9 +46,15 @@ export type ConformanceRunListItem = {
   protocolVersion: string | null;
   actorLabel: string | null;
   ciMetadata: {
-    githubSha?: string;
-    githubRef?: string;
-    githubRunUrl?: string;
+    provider?: string;
+    repository?: string;
+    commitSha?: string;
+    branch?: string;
+    pullRequestNumber?: number;
+    workflow?: string;
+    job?: string;
+    runUrl?: string;
+    runId?: string;
   } | null;
   createdAt: number;
   completedAt: number | null;
@@ -83,7 +89,11 @@ function OutcomeIcon({
   outcome: ConformanceRunListItem["outcome"];
   status: string;
 }) {
-  if (status !== "completed" && status !== "timed_out" && status !== "cancelled") {
+  if (
+    status !== "completed" &&
+    status !== "timed_out" &&
+    status !== "cancelled"
+  ) {
     return <Loader2 className="size-4 animate-spin text-muted-foreground" />;
   }
   if (outcome === "passed") {
@@ -109,6 +119,7 @@ export function ConformanceHistory({
   const [source, setSource] = useState<string>("");
   const [protocolVersion, setProtocolVersion] = useState<string>("");
   const [cursor, setCursor] = useState<string | null>(null);
+  const [rows, setRows] = useState<ConformanceRunListItem[]>([]);
   const navigate = useAppNavigate();
 
   const targetKey =
@@ -134,16 +145,24 @@ export function ConformanceHistory({
       }
     | undefined;
 
-  const rows = page?.page ?? [];
+  useEffect(() => {
+    if (!page) return;
+    setRows((previous) => {
+      if (cursor === null) return page.page;
+      const seen = new Set(previous.map((row) => row._id));
+      return [...previous, ...page.page.filter((row) => !seen.has(row._id))];
+    });
+  }, [cursor, page]);
+
   const loading = page === undefined;
 
   return (
-    <section className="space-y-3" aria-labelledby="conformance-history-heading">
+    <section
+      className="space-y-3"
+      aria-labelledby="conformance-history-heading"
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2
-          id="conformance-history-heading"
-          className="text-sm font-medium"
-        >
+        <h2 id="conformance-history-heading" className="text-sm font-medium">
           Run history
         </h2>
         <div className="flex flex-wrap items-center gap-2">
@@ -155,7 +174,9 @@ export function ConformanceHistory({
             <button
               type="button"
               className={`rounded px-2 py-1 ${
-                scope === "current" ? "bg-muted font-medium" : "text-muted-foreground"
+                scope === "current"
+                  ? "bg-muted font-medium"
+                  : "text-muted-foreground"
               }`}
               disabled={!serverId}
               onClick={() => {
@@ -168,7 +189,9 @@ export function ConformanceHistory({
             <button
               type="button"
               className={`rounded px-2 py-1 ${
-                scope === "all" ? "bg-muted font-medium" : "text-muted-foreground"
+                scope === "all"
+                  ? "bg-muted font-medium"
+                  : "text-muted-foreground"
               }`}
               onClick={() => {
                 setScope("all");
@@ -284,12 +307,12 @@ export function ConformanceHistory({
                     {run.protocolVersion ? (
                       <span>{run.protocolVersion}</span>
                     ) : null}
-                    {run.ciMetadata?.githubRef ? (
-                      <span>{run.ciMetadata.githubRef}</span>
+                    {run.ciMetadata?.branch ? (
+                      <span>{run.ciMetadata.branch}</span>
                     ) : null}
-                    {run.ciMetadata?.githubSha ? (
+                    {run.ciMetadata?.commitSha ? (
                       <span className="font-mono">
-                        {run.ciMetadata.githubSha.slice(0, 7)}
+                        {run.ciMetadata.commitSha.slice(0, 7)}
                       </span>
                     ) : null}
                   </div>
@@ -425,7 +448,9 @@ export function ConformanceRunDetailPage({
             {coverage}
             {detail.score != null ? ` · score ${Math.round(detail.score)}` : ""}
             {scoreDelta != null
-              ? ` · ${scoreDelta > 0 ? "+" : ""}${Math.round(scoreDelta)} vs previous`
+              ? ` · ${scoreDelta > 0 ? "+" : ""}${Math.round(
+                  scoreDelta
+                )} vs previous`
               : ""}
           </p>
         </div>
@@ -495,10 +520,10 @@ export function ConformanceRunDetailPage({
               </span>
             </button>
             {open ? (
-                <SuiteReportBody
-                  incompleteReason={report.incompleteReason}
-                  reportUrl={report.reportUrl}
-                />
+              <SuiteReportBody
+                incompleteReason={report.incompleteReason}
+                reportUrl={report.reportUrl}
+              />
             ) : null}
           </section>
         );
@@ -568,8 +593,9 @@ export function ConformanceSharedPage({ token }: { token: string }) {
           });
           return;
         }
-        const artifact = ((body.artifact as Record<string, unknown> | undefined) ??
-          body) as Record<string, unknown>;
+        const artifact = ((body.artifact as
+          | Record<string, unknown>
+          | undefined) ?? body) as Record<string, unknown>;
         setState({ status: "ready", artifact });
       })
       .catch(() => {

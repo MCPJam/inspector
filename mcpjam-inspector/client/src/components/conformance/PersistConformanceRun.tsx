@@ -12,6 +12,10 @@ import { useMutation, useAction } from "convex/react";
 import type { ServerWithName } from "@/hooks/use-app-state";
 import type { useConformanceRun } from "@/hooks/use-conformance-run";
 import { isHttpServer } from "@/hooks/use-conformance-run";
+import {
+  toConformanceReport,
+  type ConformanceReport,
+} from "@mcpjam/sdk/browser";
 
 export type ConformancePersistConfig = {
   projectId: string;
@@ -26,53 +30,77 @@ function suiteReport(
   kind: "protocol" | "apps" | "tasks" | "oauth",
   state: {
     status: string;
+    error?: string;
     verdict?: string;
-    result?: { checks?: unknown[]; steps?: unknown[]; durationMs?: number };
-  },
-  score: unknown
-) {
-  const items = (
-    kind === "oauth"
-      ? (state.result?.steps ?? [])
-      : (state.result?.checks ?? [])
-  ) as Array<{
-    id?: string;
-    title?: string;
-    status?: string;
-    skipReason?: string;
-  }>;
-  const cases = items.map((item) => ({
-    id: item.id,
-    title: item.title,
-    status:
-      item.status === "passed" || item.status === "failed"
-        ? item.status
-        : "skipped",
-    skipReason:
-      item.skipReason === "could-not-run" || item.skipReason === "not-applicable"
-        ? item.skipReason
-        : state.status === "error"
-          ? ("could-not-run" as const)
-          : undefined,
-  }));
-  if (cases.length === 0 && state.status === "error") {
-    cases.push({
-      id: `${kind}-could-not-run`,
-      title: `${kind} could not run`,
-      status: "skipped",
-      skipReason: "could-not-run",
-    });
+    result?: unknown;
   }
+): ConformanceReport {
+  if (state.result) {
+    try {
+      const report = toConformanceReport(state.result as never);
+      if (state.status === "error" && report.outcome === "passed") {
+        return {
+          ...report,
+          passed: false,
+          outcome: "incomplete",
+          incompleteReason:
+            state.error ?? `${kind} suite ended with an execution error`,
+        };
+      }
+      return report;
+    } catch {
+      // Fall through to a diagnostic synthetic report for malformed results.
+    }
+  }
+
+  const reportKind =
+    kind === "protocol"
+      ? "protocol-conformance"
+      : kind === "apps"
+      ? "apps-conformance"
+      : kind === "tasks"
+      ? "tasks-conformance"
+      : "oauth-conformance";
+  const error = state.error ?? `${kind} suite did not produce a report`;
   return {
     schemaVersion: 1,
-    kind: `${kind}-conformance`,
+    kind: reportKind,
     name: kind,
-    passed: state.verdict === "passed",
-    outcome: state.verdict,
-    score,
-    durationMs: state.result?.durationMs,
-    cases,
-    groups: [{ name: kind, cases }],
+    passed: false,
+    outcome: "incomplete",
+    incompleteReason: error,
+    score: {
+      score: null,
+      outcome: "incomplete",
+      applicable: 1,
+      passed: 0,
+      failed: 0,
+      couldNotRun: 1,
+      notApplicable: 0,
+      advisories: [],
+      advicePointsLost: 0,
+    },
+    durationMs: 0,
+    groups: [
+      {
+        id: `${kind}-execution`,
+        title: "Execution",
+        target: "",
+        passed: false,
+        durationMs: 0,
+        cases: [
+          {
+            id: `${kind}-could-not-run`,
+            title: `${kind} could not run`,
+            category: "execution",
+            status: "skipped",
+            skipReason: "could-not-run",
+            durationMs: 0,
+            error,
+          },
+        ],
+      },
+    ],
   };
 }
 
@@ -113,21 +141,12 @@ export function PersistConformanceRun({
   const [runId, setRunId] = useState<string | null>(null);
   const runIdRef = useRef<string | null>(null);
   const uploadedRef = useRef<Set<string>>(new Set());
+  const pendingUploadsRef = useRef<Map<string, Promise<unknown>>>(new Map());
   const startingRef = useRef(false);
   const finalizedRef = useRef(false);
+  const finalizationScheduledRef = useRef(false);
 
-  const {
-    protocol,
-    apps,
-    tasks,
-    oauth,
-    protocolScore,
-    appsScore,
-    tasksScore,
-    oauthScore,
-    isRunning,
-    runVersion,
-  } = snapshot;
+  const { protocol, apps, tasks, oauth, isRunning, runVersion } = snapshot;
 
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
@@ -139,7 +158,9 @@ export function PersistConformanceRun({
     runIdRef.current = null;
     setRunId(null);
     uploadedRef.current = new Set();
+    pendingUploadsRef.current = new Map();
     finalizedRef.current = false;
+    finalizationScheduledRef.current = false;
     const suites = [...requestedSuitesFor(server, snapshotRef.current)];
     const target = persist.serverId
       ? { kind: "server" as const, serverId: persist.serverId }
@@ -175,6 +196,16 @@ export function PersistConformanceRun({
   useEffect(() => {
     if (!runId) return;
 
+    const queueUpload = (key: string, payload: Record<string, unknown>) => {
+      const operation = Promise.resolve()
+        .then(() => upsertReport(payload))
+        .catch(() => undefined)
+        .finally(() => {
+          pendingUploadsRef.current.delete(key);
+        });
+      pendingUploadsRef.current.set(key, operation);
+    };
+
     const maybeUpload = (
       kind: "protocol" | "apps" | "tasks" | "oauth",
       state: {
@@ -182,21 +213,30 @@ export function PersistConformanceRun({
         waitingForAuth?: boolean;
         verdict?: string;
         result?: { checks?: unknown[]; steps?: unknown[]; durationMs?: number };
-      },
-      score: unknown
+      }
     ) => {
-      if (uploadedRef.current.has(`${kind}:done`) || uploadedRef.current.has(`${kind}:error`)) {
+      if (
+        uploadedRef.current.has(`${kind}:done`) ||
+        uploadedRef.current.has(`${kind}:error`)
+      ) {
         return;
       }
-      if (state.status === "running" && !uploadedRef.current.has(`${kind}:running`)) {
+      if (
+        state.status === "running" &&
+        !uploadedRef.current.has(`${kind}:running`)
+      ) {
         uploadedRef.current.add(`${kind}:running`);
-        void upsertReport({ runId, suiteKind: kind, status: "running" });
+        queueUpload(`${kind}:running`, {
+          runId,
+          suiteKind: kind,
+          status: "running",
+        });
         return;
       }
       if (state.status === "needs-authorization" || state.waitingForAuth) {
         if (!uploadedRef.current.has(`${kind}:awaiting`)) {
           uploadedRef.current.add(`${kind}:awaiting`);
-          void upsertReport({
+          queueUpload(`${kind}:awaiting`, {
             runId,
             suiteKind: kind,
             status: "awaiting_authorization",
@@ -206,31 +246,20 @@ export function PersistConformanceRun({
       }
       if (state.status === "done" || state.status === "error") {
         uploadedRef.current.add(`${kind}:${state.status}`);
-        void upsertReport({
+        queueUpload(`${kind}:${state.status}`, {
           runId,
           suiteKind: kind,
           status: state.status === "error" ? "failed" : "completed",
-          report: suiteReport(kind, state, score),
+          report: suiteReport(kind, state),
         });
       }
     };
 
-    maybeUpload("protocol", protocol, protocolScore);
-    maybeUpload("apps", apps, appsScore);
-    maybeUpload("tasks", tasks, tasksScore);
-    maybeUpload("oauth", oauth, oauthScore);
-  }, [
-    apps,
-    appsScore,
-    oauth,
-    oauthScore,
-    protocol,
-    protocolScore,
-    tasks,
-    tasksScore,
-    upsertReport,
-    runId,
-  ]);
+    maybeUpload("protocol", protocol);
+    maybeUpload("apps", apps);
+    maybeUpload("tasks", tasks);
+    maybeUpload("oauth", oauth);
+  }, [apps, oauth, protocol, tasks, upsertReport, runId]);
 
   useEffect(() => {
     if (!runId || !isRunning) return;
@@ -247,8 +276,14 @@ export function PersistConformanceRun({
       isSettled(snapshotRef.current[kind].status)
     );
     if (!settled) return;
-    finalizedRef.current = true;
-    void finalizeRun({ runId });
+    if (finalizationScheduledRef.current) return;
+    finalizationScheduledRef.current = true;
+    const uploads = [...pendingUploadsRef.current.values()];
+    void Promise.allSettled(uploads).then(() => {
+      if (finalizedRef.current) return;
+      finalizedRef.current = true;
+      void finalizeRun({ runId });
+    });
   }, [finalizeRun, isRunning, runVersion, server, runId]);
 
   return null;
