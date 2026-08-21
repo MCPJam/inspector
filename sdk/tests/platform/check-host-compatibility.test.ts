@@ -68,7 +68,10 @@ describe("checkHostCompatibilityOperation", () => {
     expect(result.widgets.total).toBe(1);
     const byId = verdictById(result);
     expect(byId.claude).toBe("works"); // renders MCP Apps + clean scan
-    expect(byId.codex).toBe("degraded"); // headless → widget falls back to text
+    // Codex renders MCP Apps as of the 2026-08-19 probe (same runtime as
+    // ChatGPT), so it is no longer the headless example here.
+    expect(byId.codex).toBe("works");
+    expect(byId.perplexity).toBe("degraded"); // headless → falls back to text
   });
 
   it("scans the widget HTML and surfaces capability findings", async () => {
