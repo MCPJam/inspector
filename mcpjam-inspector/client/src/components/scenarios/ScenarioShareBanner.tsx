@@ -30,15 +30,34 @@ import { cn } from "@/lib/utils";
 
 const INVITE_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/**
+ * What stands in for the URL. "No share link yet" is only true before one has
+ * been minted — saying it while a link exists but is withheld reads as a
+ * missing feature rather than a scenario the author needs to fix.
+ */
+function withheldOrAbsentLinkLabel(scenario: ScenarioSettings): string {
+  if (scenario.link?.token && scenario.environmentError) {
+    return "Withheld — this scenario can't run.";
+  }
+  return "No share link yet.";
+}
+
 function useScenarioShareInvite(scenario: ScenarioSettings) {
   const { upsertScenarioMember } = useScenarioMutations();
   const [email, setEmail] = useState("");
   const [inviteOpen, setInviteOpen] = useState(false);
   const [isInviting, setIsInviting] = useState(false);
 
-  const shareLink = scenario.link?.token
-    ? buildScenarioLink(scenario.link.token, scenario.name)
-    : null;
+  // Withheld on the same condition `ScenarioShareSection` withholds it: a
+  // scenario whose environment doesn't resolve won't open for a tester, so
+  // handing the link out here made the two surfaces disagree — the Edit tab
+  // refused to give the link while this strip copied it out anyway. Nothing is
+  // rotated or revoked; the token returns when the scenario can run again.
+  const unrunnableReason = scenario.environmentError?.message ?? null;
+  const shareLink =
+    scenario.link?.token && !unrunnableReason
+      ? buildScenarioLink(scenario.link.token, scenario.name)
+      : null;
   const displayLink = shareLink?.replace(/^https?:\/\//, "") ?? null;
   const normalizedEmail = email.trim().toLowerCase();
   const emailInvalid =
@@ -52,7 +71,11 @@ function useScenarioShareInvite(scenario: ScenarioSettings) {
   };
 
   const handleInvite = async () => {
-    if (!normalizedEmail || emailInvalid || isInviting) return;
+    // Inviting mails the same withheld link out, so it stops on the same
+    // condition: an invite to a scenario that can't run is a broken session
+    // with someone else's name on it.
+    if (!normalizedEmail || emailInvalid || isInviting || unrunnableReason)
+      return;
     setIsInviting(true);
     try {
       await upsertScenarioMember({
@@ -72,6 +95,7 @@ function useScenarioShareInvite(scenario: ScenarioSettings) {
 
   return {
     shareLink,
+    unrunnableReason,
     displayLink,
     email,
     setEmail,
@@ -94,6 +118,7 @@ function InviteByEmailControl({
   isInviting,
   normalizedEmail,
   emailInvalid,
+  unrunnableReason,
   handleInvite,
 }: {
   id: string;
@@ -104,6 +129,7 @@ function InviteByEmailControl({
   isInviting: boolean;
   normalizedEmail: string;
   emailInvalid: boolean;
+  unrunnableReason: string | null;
   handleInvite: () => void;
 }) {
   return (
@@ -130,6 +156,7 @@ function InviteByEmailControl({
             type="email"
             placeholder="name@company.com"
             value={email}
+            disabled={Boolean(unrunnableReason)}
             onChange={(event) => setEmail(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
@@ -144,12 +171,28 @@ function InviteByEmailControl({
           <Button
             type="button"
             size="sm"
-            disabled={!normalizedEmail || emailInvalid || isInviting}
+            disabled={
+              !normalizedEmail ||
+              emailInvalid ||
+              isInviting ||
+              Boolean(unrunnableReason)
+            }
             onClick={() => void handleInvite()}
           >
             {isInviting ? "…" : "Invite"}
           </Button>
         </div>
+        {/* The trigger stays live so the reason is reachable — a popover that
+            refuses to open leaves the author guessing why. */}
+        {unrunnableReason ? (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid={`${id}-invite-unrunnable`}
+          >
+            {unrunnableReason} Point this scenario at a working environment to
+            invite testers again.
+          </p>
+        ) : null}
         {emailInvalid ? (
           <p
             id={`${id}-email-error`}
@@ -174,6 +217,7 @@ function ShareActions({
   isInviting,
   normalizedEmail,
   emailInvalid,
+  unrunnableReason,
   handleCopyLink,
   handleInvite,
   showInvite,
@@ -188,6 +232,7 @@ function ShareActions({
   isInviting: boolean;
   normalizedEmail: string;
   emailInvalid: boolean;
+  unrunnableReason: string | null;
   handleCopyLink: () => void;
   handleInvite: () => void;
   showInvite: boolean;
@@ -205,6 +250,7 @@ function ShareActions({
           isInviting={isInviting}
           normalizedEmail={normalizedEmail}
           emailInvalid={emailInvalid}
+          unrunnableReason={unrunnableReason}
           handleInvite={handleInvite}
         />
       ) : null}
@@ -265,7 +311,7 @@ export function ScenarioShareBanner({
           )}
           data-testid="user-testing-share-link"
         >
-          {share.displayLink ?? "No share link yet."}
+          {share.displayLink ?? withheldOrAbsentLinkLabel(scenario)}
         </button>
       </div>
       <ShareActions id="user-testing-share" showInvite {...share} />
@@ -292,9 +338,9 @@ export function ScenarioShareEmptyPanel({
 }) {
   const { isAuthenticated } = useConvexAuth();
   const share = useScenarioShareInvite(scenario);
-  // Same gate as the header Open preview: a broken environment won't open
-  // for testers either, so framing it here would only mislead.
-  const canOpenPreview = Boolean(share.shareLink && !scenario.environmentError);
+  // `shareLink` is already withheld while the environment can't resolve, so
+  // this is the same gate the header Open preview uses.
+  const canOpenPreview = Boolean(share.shareLink);
 
   return (
     <div
@@ -356,7 +402,7 @@ export function ScenarioShareEmptyPanel({
             className="mt-6 rounded-xl border border-border/60 bg-muted/30 px-4 py-3 text-sm text-muted-foreground"
             data-testid="user-testing-share-empty-blocked"
           >
-            {share.shareLink
+            {scenario.link?.token && scenario.environmentError
               ? "This scenario can't be opened right now — its environment isn't resolving, so the link won't load for you or a tester."
               : "No share link yet."}
           </p>
@@ -375,7 +421,7 @@ export function ScenarioShareEmptyPanel({
             className="min-w-0 flex-1 basis-full truncate rounded-lg border border-border/60 bg-muted/30 px-3 py-1.5 font-mono text-xs text-muted-foreground sm:basis-0"
             title={share.shareLink ?? undefined}
           >
-            {share.displayLink ?? "No share link yet."}
+            {share.displayLink ?? withheldOrAbsentLinkLabel(scenario)}
           </span>
           <ShareActions
             id="user-testing-share-empty"

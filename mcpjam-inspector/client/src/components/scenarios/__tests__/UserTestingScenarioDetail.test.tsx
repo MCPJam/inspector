@@ -36,6 +36,7 @@ const {
   environmentState,
   namedListState,
   flagState,
+  serverReadinessState,
 } = vi.hoisted(() => ({
   navigateMock: vi.fn(),
   locationState: { search: "" },
@@ -57,6 +58,9 @@ const {
   // loading, an array once settled.
   namedListState: { value: [] as unknown },
   flagState: { environmentsEnabled: true },
+  // What `useCloudServerReadiness` answers with. "ok" for every spec that
+  // isn't about hosted reachability.
+  serverReadinessState: { value: { status: "ok" } as unknown },
 }));
 
 vi.mock("react-router", () => ({
@@ -216,6 +220,12 @@ vi.mock("@/hooks/useClients", () => ({
   useHost: () => hostState,
 }));
 
+// The real hook reads the project's server catalog through four Convex-backed
+// queries; these specs drive its verdict directly.
+vi.mock("@/components/environment-composer/use-cloud-server-readiness", () => ({
+  useCloudServerReadiness: () => serverReadinessState.value,
+}));
+
 import { UserTestingScenarioDetail } from "../UserTestingScenarioDetail";
 import { toast } from "@/lib/toast";
 
@@ -283,6 +293,7 @@ beforeEach(() => {
   environmentState.row = undefined;
   namedListState.value = [];
   flagState.environmentsEnabled = true;
+  serverReadinessState.value = { status: "ok" };
 });
 
 describe("UserTestingScenarioDetail", () => {
@@ -438,6 +449,33 @@ describe("UserTestingScenarioDetail", () => {
     expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1?tab=sessions", {
       replace: true,
     });
+  });
+
+  it("warns on Edit when no tester could reach the scenario's servers", () => {
+    // The environment resolves — nothing above catches this — but every server
+    // behind it is stdio or a localhost URL, so it works for the author and
+    // fails for everyone they send the link to.
+    serverReadinessState.value = {
+      status: "local_only",
+      labels: ["Checkout flow"],
+      serverNames: ["excalidraw"],
+    };
+
+    renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
+
+    const notice = screen.getByTestId(
+      "user-testing-detail-unreachable-servers",
+    );
+    expect(notice).toHaveTextContent("excalidraw");
+    expect(notice).toHaveTextContent(/can't reach a stdio server/i);
+  });
+
+  it("says nothing about reachability when the servers are reachable", () => {
+    renderEdit({ environmentId: "env-1", environmentName: "Checkout flow" });
+
+    expect(
+      screen.queryByTestId("user-testing-detail-unreachable-servers"),
+    ).not.toBeInTheDocument();
   });
 
   it("hides Edit setup on a host-backed scenario (composer can't run)", () => {
