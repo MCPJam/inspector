@@ -3,6 +3,7 @@ import type {
   ConformanceSkipReason,
 } from "../conformance-outcome.js";
 import type { ConformanceProfileStamp } from "../conformance-profile.js";
+import type { WireObservationRecorder } from "./wire-observations.js";
 import type {
   ManagedMcpClient,
   MCPClientManager,
@@ -76,6 +77,12 @@ export const MCP_CHECK_IDS = [
   "modern-subscription-ack-precedes-notifications",
   "modern-subscription-filter-and-tagging",
   "modern-subscription-graceful-close",
+  // The one check whose subject is the RUN rather than a probe of its own: it
+  // sends nothing and grades every message the other families already made the
+  // server say against the revision's published JSON Schema. Both eras — each
+  // revision ships its own schema, so the requirement is the same statement on
+  // either wire and only the document changes.
+  "wire-schema-valid",
 ] as const;
 
 export type MCPCheckId = (typeof MCP_CHECK_IDS)[number];
@@ -222,6 +229,7 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "modern-subscription-ack-precedes-notifications": ["modern"],
   "modern-subscription-filter-and-tagging": ["modern"],
   "modern-subscription-graceful-close": ["modern"],
+  "wire-schema-valid": ["legacy", "modern"],
 } as const satisfies Record<MCPCheckId, MCPCheckEras>;
 
 export interface MCPCheckResult {
@@ -458,6 +466,16 @@ export interface RawHttpCheckContext {
   fetchFn: typeof fetch;
   /** Absent when the run selected raw-only checks and never connected. */
   surface?: MCPServerSurfaceSnapshot;
+  /**
+   * The run-wide wire record every raw probe feeds (see
+   * `wire-observations.ts`). Threaded on the CONTEXT rather than passed per
+   * call so that recording happens at one seam inside `rawRequest` — a new
+   * raw check is covered by construction and cannot forget to opt in.
+   *
+   * Optional because the raw harness is also driven directly by tests, which
+   * have nothing to record into.
+   */
+  recorder?: WireObservationRecorder;
 }
 
 export interface MCPClientCheckDefinition {

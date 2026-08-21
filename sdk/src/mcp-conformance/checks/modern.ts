@@ -1200,6 +1200,17 @@ async function probeSubscription(
     };
   }
 
+  // Stream frames reach the run-wide record here rather than at the
+  // `rawRequest` seam: the listen body is read INCREMENTALLY and legitimately
+  // never ends, so the buffering capture that feeds every other raw probe
+  // cannot see it. Without this the schema check would silently skip every
+  // subscription notification a run observed.
+  ctx.recorder?.recordStreamMessages(observation.messages, {
+    origin: `${LISTEN_METHOD} stream`,
+    requestMethod: LISTEN_METHOD,
+    requestId: observation.subscriptionId,
+  });
+
   return { kind: "observed", observation };
 }
 

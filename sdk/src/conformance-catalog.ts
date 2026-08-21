@@ -195,6 +195,11 @@ export const PROTOCOL_CHECK_CATALOG = {
     description:
       "Closing a subscription gracefully returns the subscriptions/listen completion result.",
   },
+  "wire-schema-valid": {
+    title: "Wire Schema Valid",
+    description:
+      "Every JSON-RPC message the run observed validates against the protocol revision's published JSON Schema, with responses graded against their method's result definition.",
+  },
 } as const satisfies Record<MCPCheckId, ConformanceCheckInfo>;
 
 /** MCP Apps suite. Keys follow `MCP_APPS_CHECK_IDS` order. */

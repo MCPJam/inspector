@@ -31,13 +31,18 @@ describe("conformance profile manifest", () => {
     expect(unknown).toEqual([]);
   });
 
-  it("scores exactly today's 36-check pool, so PR 1 moves no score", () => {
-    // The profile is FROZEN at the pre-gap-program pool on purpose. If a check
-    // is added without a profile bump this stays green (the check lands
-    // pending, which is the intent); if a check is added AND silently promoted,
-    // the count moves and this fails.
+  it("scores exactly the 36-check pool it was frozen at", () => {
+    // The profile is FROZEN at the pre-gap-program pool on purpose. Adding a
+    // check without a profile bump keeps this green (the check lands pending,
+    // which is the intent); silently PROMOTING one moves the count and fails.
     expect(PROFILE.scored).toHaveLength(36);
-    expect(unscoredCheckIds(PROFILE)).toEqual([]);
+  });
+
+  it("states exactly which shipped checks it leaves unscored", () => {
+    // The reviewable record. Every id here ran against real servers and
+    // reported a real verdict this profile version chose not to grade yet;
+    // promoting one is a version bump, and this list is where that shows up.
+    expect(unscoredCheckIds(PROFILE)).toEqual(["wire-schema-valid"]);
   });
 
   it("has no duplicate entries", () => {

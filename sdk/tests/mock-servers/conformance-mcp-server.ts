@@ -95,6 +95,19 @@ async function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
   return JSON.parse(bodyText);
 }
 
+/**
+ * The request's JSON-RPC id, or `null` when the body named none.
+ *
+ * JSON-RPC 2.0: an error response's id "MUST be the same as the value of the
+ * id member in the Request Object", and `null` is reserved for the case where
+ * detecting it failed. A fixture that always answered `null` would train the
+ * suite to accept a real violation.
+ */
+function requestIdOf(body: unknown): string | number | null {
+  const id = (body as { id?: unknown } | undefined)?.id;
+  return typeof id === "string" || typeof id === "number" ? id : null;
+}
+
 function isInitializeRequest(body: unknown): boolean {
   return (
     !!body &&
@@ -870,7 +883,13 @@ export async function startConformanceMockServer(
               code: -32000,
               message: "Invalid or missing session ID",
             },
-            id: null,
+            // ECHO the request's id. JSON-RPC 2.0 permits `null` only when the
+            // id could not be DETECTED (a parse error, an invalid request);
+            // here the body parsed and named one, so dropping it violates the
+            // base protocol — and `RequestId` in every MCP schema is
+            // `["string","integer"]`, with no null branch. The wire-schema
+            // check caught this fixture doing it.
+            id: requestIdOf(body),
           }),
         );
         return;

@@ -22,6 +22,7 @@ import { MODERN_CHECK_METADATA, runModernChecks } from "./checks/modern.js";
 import { runProtocolChecks } from "./checks/protocol.js";
 import { runSecurityChecks } from "./checks/security.js";
 import { runTransportChecks } from "./checks/transport.js";
+import { runWireSchemaCheck, WIRE_SCHEMA_CHECK_ID } from "./checks/wire.js";
 import { TOOL_CHECKS } from "./checks/tools.js";
 import { PROMPT_CHECKS } from "./checks/prompts.js";
 import {
@@ -50,6 +51,8 @@ import {
   collectClientReadiness,
   collectRawReadiness,
 } from "./readiness.js";
+import { WireObservationRecorder } from "./wire-observations.js";
+import { createCapturingFetch } from "./raw-capture.js";
 import {
   eraForProtocolVersion,
   normalizeMCPConformanceConfig,
@@ -75,6 +78,7 @@ const RAW_CHECK_CATEGORY_ENTRIES: ReadonlyArray<
   ["get-stream-or-405", "transport"],
   ["session-id-visible-ascii", "transport"],
   ["post-response-content-type", "transport"],
+  [WIRE_SCHEMA_CHECK_ID, "protocol"],
   ...Object.values(MODERN_CHECK_METADATA).map(
     (check): readonly [MCPCheckId, MCPCheckCategory] => [
       check.id,
@@ -131,7 +135,25 @@ const buildSummary = buildOutcomeSummary;
 
 function createServerConfig(
   config: NormalizedMCPConformanceConfig,
+  recorder: WireObservationRecorder,
 ): HttpServerConfig {
+  // The client's traffic is only visible UNNORMALIZED here: by the time a
+  // result reaches app code the official Client has consumed the wire-only
+  // members (`resultType`, the cache hints, the `_meta` envelope) that the
+  // schema check exists to inspect. Wrapping its base fetch is the one seam
+  // that sees them.
+  //
+  // No double-counting with the raw path: `rawRequest` builds its own
+  // capturing fetch over `config.fetchFn` and records there, while this
+  // wrapper sits on the Client's `baseFetch`. The two stacks never share an
+  // exchange.
+  const capture = createCapturingFetch(config.fetchFn);
+  const recordingFetch: typeof fetch = async (input, init) => {
+    const response = await capture.fetch(input, init);
+    const exchange = capture.exchanges[capture.exchanges.length - 1];
+    if (exchange) recorder.recordExchange(exchange);
+    return response;
+  };
   return {
     url: config.serverUrl,
     accessToken: config.accessToken,
@@ -150,7 +172,7 @@ function createServerConfig(
     // hosted-mode SSRF hole this file's own comment used to document. Threading
     // it in as the transport's base fetch closes it: one guard, one target, no
     // second resolution.
-    baseFetch: config.fetchFn,
+    baseFetch: recordingFetch,
   };
 }
 
@@ -231,6 +253,7 @@ async function safeListResources(
 async function runClientChecks(
   config: NormalizedMCPConformanceConfig,
   selectedCheckIds: Set<MCPCheckId>,
+  recorder: WireObservationRecorder,
 ): Promise<{
   checks: MCPCheckResult[];
   config: NormalizedMCPConformanceConfig;
@@ -253,7 +276,7 @@ async function runClientChecks(
 
   try {
     return await withEphemeralClient(
-      createServerConfig(config),
+      createServerConfig(config, recorder),
       async (manager, serverId) => {
         // `getManagedClient()` works for every era — the modern pin and the
         // legacy path both resolve to a `ManagedMcpClient` (the stateless
@@ -470,9 +493,15 @@ export class MCPConformanceTest {
   async run(): Promise<MCPConformanceResult> {
     const startedAt = Date.now();
     const selectedCheckIds = buildCheckSelection(this.config);
+    // ONE record for the whole run, opened before the first byte moves. The
+    // raw families run concurrently and each builds its own requests, so
+    // "everything this run observed" only exists if something collects it —
+    // which is what the wire-schema check reads.
+    const recorder = new WireObservationRecorder();
     const clientRun = await runClientChecks(
       this.config,
       selectedCheckIds,
+      recorder,
     );
 
     const rawContext: RawHttpCheckContext = {
@@ -480,6 +509,7 @@ export class MCPConformanceTest {
       serverUrl: clientRun.config.serverUrl,
       fetchFn: clientRun.config.fetchFn,
       surface: clientRun.surface,
+      recorder,
     };
 
     const [
@@ -496,12 +526,22 @@ export class MCPConformanceTest {
       collectRawReadiness(rawContext),
     ]);
 
+    // LAST, and deliberately not inside the `Promise.all` above: its subject is
+    // everything the other families made the server say, so it has to run after
+    // all of them or it would grade a partial record and call it complete.
+    const wireSchema = await runWireSchemaCheck(
+      rawContext,
+      selectedCheckIds,
+      recorder,
+    );
+
     const checks = [
       ...clientRun.checks,
       ...protocolChecks,
       ...securityChecks,
       ...transportChecks,
       ...modernChecks,
+      ...wireSchema.results,
     ];
     // The tally reports EVERYTHING that ran, pending checks included: a report
     // that hid them would misstate what the run did. Only the VERDICT is
@@ -547,6 +587,17 @@ export class MCPConformanceTest {
         profile,
         checks,
         protocolVersion: clientRun.config.protocolVersion,
+        // Only when the schema pass actually ran: a digest on a run that
+        // validated nothing would claim provenance for a measurement that
+        // never happened.
+        ...(wireSchema.report
+          ? {
+              schemaDigest: wireSchema.report.schemaDigest,
+              ...(wireSchema.report.extensionIds.length > 0
+                ? { extensionVersions: wireSchema.report.extensionRevisions }
+                : {}),
+            }
+          : {}),
       }),
     };
   }

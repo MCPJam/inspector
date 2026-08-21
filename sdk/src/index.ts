@@ -1027,6 +1027,24 @@ export type {
   ConformanceSuiteId,
   ConformanceSupport,
 } from "./mcp-conformance/index.js";
+// Wire-schema validation: the run-wide message record and the validator that
+// grades it against the revision's published JSON Schema. Node-only (Ajv),
+// which is why it is absent from `@mcpjam/sdk/browser`.
+export {
+  WireObservationRecorder,
+  WireSchemaValidator,
+  CORE_WIRE_SCHEMAS,
+  EXTENSION_SCHEMA_REVISIONS,
+  EXTENSION_WIRE_SCHEMAS,
+  TASKS_EXTENSION_ID,
+} from "./mcp-conformance/index.js";
+export type {
+  ObservedRequestId,
+  ObservedWireMessage,
+  WireSchemaDocument,
+  WireSchemaValidationReport,
+  WireSchemaViolation,
+} from "./mcp-conformance/index.js";
 
 // MCP Apps conformance
 export {
