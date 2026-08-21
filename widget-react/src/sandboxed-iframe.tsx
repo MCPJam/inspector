@@ -31,6 +31,7 @@ import type {
   McpUiResourceCsp,
   McpUiResourcePermissions,
 } from "@modelcontextprotocol/ext-apps/app-bridge";
+import type { CspSubtypePolicy } from "./widget-host";
 
 function isRecorderDebugEnabled() {
   try {
@@ -89,6 +90,8 @@ interface SandboxedIframeProps {
    * (`["'unsafe-eval'", "'wasm-unsafe-eval'"]`).
    */
   cspDirectives?: Record<string, string[]>;
+  /** Probe-derived host policy for individual CSP-backed browser APIs. */
+  cspSubtypePolicy?: CspSubtypePolicy;
   /** Skip CSP injection entirely (for permissive/testing mode) */
   permissive?: boolean;
   /**
@@ -145,6 +148,7 @@ export const SandboxedIframe = forwardRef<
     sandboxAttrs,
     allowFeatures,
     cspDirectives,
+    cspSubtypePolicy,
     permissive,
     recordMode,
     onProxyReady,
@@ -346,6 +350,7 @@ export const SandboxedIframe = forwardRef<
       stableStringifyJson({
         csp: csp ?? null,
         cspDirectives: cspDirectives ?? null,
+        cspSubtypePolicy: cspSubtypePolicy ?? null,
         html: html ?? null,
         permissive: permissive ?? null,
         permissions: permissions ?? null,
@@ -358,6 +363,7 @@ export const SandboxedIframe = forwardRef<
     [
       csp,
       cspDirectives,
+      cspSubtypePolicy,
       html,
       permissive,
       permissions,
@@ -396,6 +402,7 @@ export const SandboxedIframe = forwardRef<
           // can't accidentally widen the inner grant by reading a stale
           // field.
           cspDirectives,
+          cspSubtypePolicy,
           permissive,
           colorScheme,
           recordMode,
