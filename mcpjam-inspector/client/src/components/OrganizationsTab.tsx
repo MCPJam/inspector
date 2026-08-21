@@ -883,6 +883,18 @@ function OrganizationPage({
 
   const handleCancelSeatPayment = async () => {
     try {
+      // For a terminal charge the button says "Remove invite", and that is
+      // what it has to do: cancelSeatPayment returns immediately for anything
+      // not still active, so calling it here left the invite and the notice
+      // exactly where they were while claiming success.
+      if (activeSeatPaymentIntent?.needsRetry) {
+        await removeMember({
+          organizationId: organization._id,
+          email: activeSeatPaymentIntent.email,
+        });
+        toast.success(`Invite for ${activeSeatPaymentIntent.email} removed.`);
+        return;
+      }
       await cancelSeatPayment();
       toast.success("Pending seat payment canceled.");
     } catch (error) {
