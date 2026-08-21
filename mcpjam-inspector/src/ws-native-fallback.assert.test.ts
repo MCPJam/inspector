@@ -15,7 +15,7 @@ const BUILD = resolve("/build");
 /** An in-memory tree: path -> file contents. Directories are inferred. */
 function fakeFs(
   files: Record<string, string>,
-  overrides: Partial<ReadFsBits> = {}
+  overrides: Partial<ReadFsBits> = {},
 ): ReadFsBits {
   const paths = Object.keys(files).map((p) => resolve(p));
   const isDir = (p: string) => paths.some((f) => f.startsWith(p + "/"));
@@ -64,12 +64,24 @@ describe("assertWsNativeFallback", () => {
     expect(() => assertWsNativeFallback(BUILD, fs)).not.toThrow();
   });
 
-  it("finds chunks nested in subdirectories", () => {
-    const fs = fakeFs({
-      "/build/chunks/deep/app-abc.cjs": STUB,
-      "/build/chunks/main.cjs": FIX,
+  it("descends into subdirectories to find both halves", () => {
+    // Both assertions are load-bearing, and neither is on its own: a walk that
+    // never recursed would find NOTHING nested, and "found nothing" is
+    // indistinguishable from "no stub" — it returns early and throws nothing.
+    // So each direction has to be the one that would notice.
+
+    // Stub nested, no assignment anywhere: only a walk that descended can see
+    // the stub, and seeing it is what makes this throw.
+    const stubNested = fakeFs({ "/build/chunks/deep/app-abc.cjs": STUB });
+    expect(() => assertWsNativeFallback(BUILD, stubNested)).toThrow(/#4208/);
+
+    // Assignment nested, stub at the top: the stub is found either way, so a
+    // walk that stopped short would miss only the fix — and throw.
+    const fixNested = fakeFs({
+      "/build/app-abc.cjs": STUB,
+      "/build/chunks/deep/main.cjs": FIX,
     });
-    expect(() => assertWsNativeFallback(BUILD, fs)).not.toThrow();
+    expect(() => assertWsNativeFallback(BUILD, fixNested)).not.toThrow();
   });
 
   it("throws when the stub is bundled with nothing setting the env var", () => {
