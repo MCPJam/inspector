@@ -908,6 +908,82 @@ With `--format json`, a single machine-readable startup object (public URL, serv
 
 ---
 
+## `readiness` hosted commands
+
+Grade a saved server against a publisher's directory as the platform reaches it — through the saved server row and the authorize exchange. This is the hosted half of `readiness check`: it answers a different question (what the platform sees, not what your machine sees), can optionally spend credits for model observations, and leaves a persistent record.
+
+All `readiness` hosted commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `readiness start claude`
+
+Start a hosted readiness run that grades a saved server against Anthropic's connector-directory rules. Returns immediately with a run id; poll with `readiness status`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <idOrName>` | Yes | Saved server to grade |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+| `--idempotency-key <key>` | No | Replay guard: a retry with the same key returns the run already started |
+
+### `readiness start openai`
+
+Start a hosted readiness run that grades a saved server against OpenAI's app-directory rules. `--submission-mode` is required and never inferred — omitting it would silently report the package lane as not-applicable.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--server <idOrName>` | Yes | Saved server to grade |
+| `--submission-mode <mode>` | Yes | Declared submission shape: `mcp-only` or `mcp-imported-skills`. The two package shapes need a local package — use `readiness check openai` for those. |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--ai-observations` | No | Add optional model observations. **Consumes MCPJam credits.** |
+| `--idempotency-key <key>` | No | Replay guard |
+
+### `readiness status`
+
+Read one hosted readiness run. The response carries three independent axes: `status` (whether the run finished), `overallStatus` (the grade — a `completed` run can be `not-ready`), and `llmObservations` (whether the optional model pass ran).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Readiness run id |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `readiness list`
+
+List hosted readiness runs, newest first.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--project <id-or-name>` | No | Project name or ID |
+| `--kind <publisher>` | No | Narrow to `claude` or `openai` |
+| `--server <idOrName>` | No | Narrow to one saved server |
+| `--limit <n>` | No | Rows to return (1–100) |
+
+### `readiness cancel`
+
+Stop a hosted readiness run that is still going. The run's real terminal state arrives on a later `readiness status` — this response reports the request, not the outcome.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Readiness run id |
+| `--project <id-or-name>` | No | Project name or ID |
+
+### `readiness report`
+
+Read a finished run's findings, ordered most-consequential-first and capped. `truncated` and `totalFindings` indicate when you are seeing a subset.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Readiness run id |
+| `--project <id-or-name>` | No | Project name or ID |
+
+---
+
 ## `eval` commands
 
 All `eval` commands accept the shared platform flags below.

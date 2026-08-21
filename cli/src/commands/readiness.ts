@@ -62,6 +62,23 @@ import {
   resolveCredentialsFileAccessToken,
 } from "../lib/credentials-file.js";
 import { setProcessExitCode, usageError } from "../lib/output.js";
+import {
+  addProjectOption,
+  bindOperation,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
+import {
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  type ListReadinessRunsInput,
+  type ReadinessRunScopedInput,
+  type StartClaudeReadinessInput,
+  type StartOpenAIReadinessInput,
+} from "@mcpjam/sdk/platform";
 
 interface ReadinessCheckOptions {
   submissionMode?: string;
@@ -360,5 +377,167 @@ export function registerReadinessCommands(program: Command): Command {
       },
     );
 
+  registerHostedReadinessCommands(readiness);
+
   return readiness;
+}
+
+/**
+ * The hosted half: the same grade, run by the platform.
+ *
+ * NOT a remote copy of `check`. A hosted run reaches the server through the
+ * SAVED row and the authorize exchange, which is how the platform itself
+ * reaches it — a different question from "can this machine grade it", and the
+ * only one whose answer predicts what a hosted host will see. It is also the
+ * only half that can spend for optional model observations, and the only one
+ * that leaves a record to come back to.
+ *
+ * Every command here returns immediately. A run takes minutes, so `start`
+ * hands back an id and says to poll, exactly as `journeys run` does — no
+ * `--wait` in this version, because a flag that blocks a terminal for fifteen
+ * minutes deserves its own design rather than a default.
+ */
+interface HostedStartOptions extends PlatformOptions {
+  project?: string;
+  server: string;
+  /**
+   * Commander guarantees this for the OpenAI start via `requiredOption`, so
+   * the operation's own enum is what validates the VALUE — a bad mode is a
+   * schema error naming the legal ones, which beats a hand-rolled check that
+   * would drift from the union it copies.
+   */
+  submissionMode: HostedSubmissionMode;
+  aiObservations?: boolean;
+  idempotencyKey?: string;
+}
+
+/** The two shapes a hosted run can grade; the package pair is CLI-local. */
+type HostedSubmissionMode = "mcp-only" | "mcp-imported-skills";
+
+interface HostedRunOptions extends PlatformOptions {
+  project?: string;
+  run: string;
+}
+
+interface HostedListOptions extends PlatformOptions {
+  project?: string;
+  kind?: "claude" | "openai";
+  server?: string;
+  limit?: number;
+}
+
+function registerHostedReadinessCommands(readiness: Command): void {
+  const start = readiness
+    .command("start")
+    .description("Start a hosted readiness run against a saved server");
+
+  const startClaude = addProjectOption(
+    start
+      .command("claude")
+      .description("Grade a saved server against Anthropic's directory")
+      .requiredOption("--server <idOrName>", "Saved server to grade")
+      .option(
+        "--ai-observations",
+        "Add optional model observations. CONSUMES MCPJam credits.",
+      )
+      .option("--idempotency-key <key>", "Replay guard for a retried start"),
+  );
+  bindOperation<HostedStartOptions, StartClaudeReadinessInput>(
+    startClaude,
+    startClaudeReadinessRunOperation,
+    (options) => ({
+      project: options.project,
+      server: options.server,
+      ...(options.aiObservations ? { includeLlmObservations: true } : {}),
+      ...(options.idempotencyKey
+        ? { idempotencyKey: options.idempotencyKey }
+        : {}),
+    }),
+  );
+
+  const startOpenAI = addProjectOption(
+    start
+      .command("openai")
+      .description("Grade a saved server against OpenAI's directory")
+      .requiredOption("--server <idOrName>", "Saved server to grade")
+      .requiredOption(
+        "--submission-mode <mode>",
+        "Declared submission shape: mcp-only | mcp-imported-skills. Never inferred. Package shapes run locally — see `readiness check openai`.",
+      )
+      .option(
+        "--ai-observations",
+        "Add optional model observations. CONSUMES MCPJam credits.",
+      )
+      .option("--idempotency-key <key>", "Replay guard for a retried start"),
+  );
+  bindOperation<HostedStartOptions, StartOpenAIReadinessInput>(
+    startOpenAI,
+    startOpenAIReadinessRunOperation,
+    (options) => ({
+      project: options.project,
+      server: options.server,
+      submissionMode: options.submissionMode,
+      ...(options.aiObservations ? { includeLlmObservations: true } : {}),
+      ...(options.idempotencyKey
+        ? { idempotencyKey: options.idempotencyKey }
+        : {}),
+    }),
+  );
+
+  const status = addProjectOption(
+    readiness
+      .command("status")
+      .description("Read one hosted readiness run")
+      .requiredOption("--run <id>", "Readiness run id"),
+  );
+  bindOperation<HostedRunOptions, ReadinessRunScopedInput>(
+    status,
+    getReadinessRunOperation,
+    (options) => ({ project: options.project, run: options.run }),
+  );
+
+  const list = addProjectOption(
+    readiness
+      .command("list")
+      .description("List hosted readiness runs, newest first")
+      .option("--kind <publisher>", "Narrow to claude or openai")
+      .option("--server <idOrName>", "Narrow to one saved server")
+      .option("--limit <n>", "Rows to return (1-100)", (value: string) =>
+        parsePositiveInteger(value, "Limit"),
+      ),
+  );
+  bindOperation<HostedListOptions, ListReadinessRunsInput>(
+    list,
+    listReadinessRunsOperation,
+    (options) => ({
+      project: options.project,
+      ...(options.kind ? { readinessKind: options.kind } : {}),
+      ...(options.server ? { server: options.server } : {}),
+      ...(options.limit !== undefined ? { limit: options.limit } : {}),
+    }),
+  );
+
+  const cancel = addProjectOption(
+    readiness
+      .command("cancel")
+      .description("Stop a hosted readiness run that is still going")
+      .requiredOption("--run <id>", "Readiness run id"),
+  );
+  bindOperation<HostedRunOptions, ReadinessRunScopedInput>(
+    cancel,
+    cancelReadinessRunOperation,
+    (options) => ({ project: options.project, run: options.run }),
+  );
+
+  const report = addProjectOption(
+    readiness
+      .command("report")
+      .description("Read a finished hosted run's findings")
+      .requiredOption("--run <id>", "Readiness run id"),
+  );
+  bindOperation<HostedRunOptions, ReadinessRunScopedInput>(
+    report,
+    getReadinessReportOperation,
+    (options) => ({ project: options.project, run: options.run }),
+  );
 }
