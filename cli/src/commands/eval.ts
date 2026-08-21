@@ -1698,7 +1698,7 @@ export function registerEvalCommands(program: Command): void {
         "Suite-level default provider (overrides the file; needed for bare/custom model ids)"
       )
       .option(
-        "--server <name...>",
+        "--server <id-or-name...>",
         "Project HTTP server names or IDs (overrides the file)"
       ).action(async (options: CreateOptions, command) => {
     const globalOptions = getGlobalOptions(command);
@@ -2615,14 +2615,14 @@ export function registerEvalCommands(program: Command): void {
       .option("--name <name>", "Rename the suite")
       .option("--description <text>", "Suite description")
       .option(
-        "--server <name...>",
-        "Replace the suite's server selection (project server names)"
+        "--server <id-or-name...>",
+        "Replace the suite's server selection (project server names or IDs)"
       )
       .option(
-        "--computer-image <name-or-id|off>",
+        "--computer-image <id-or-name|off>",
         "Sandbox image eval runs boot from (see `mcpjam cloud images list`); off uses the default base image"
       )
-      .option("--host <name...>", "Replace host attachments (by name/ID)")
+      .option("--host <id-or-name...>", "Replace host attachments (by name or ID)")
       .option("--model <id>", "Execution model id")
       .option("--system-prompt <text>", "Execution system prompt")
       .option("--temperature <n>", "Execution temperature")

@@ -22,6 +22,7 @@ import {
 import { writeResult } from "../lib/output.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
+  addOrgOption,
   addProjectOption,
   bindOperation,
   buildCloudClientContext,
@@ -115,6 +116,7 @@ export function registerProjectsCommands(program: Command): void {
       "Operate the MCP servers saved in your hosted MCPJam projects"
     );
 
+      addOrgOption(
       projects
       .command("list")
       .description("List the projects you can access")
@@ -122,22 +124,17 @@ export function registerProjectsCommands(program: Command): void {
       // it, and no way to learn an id to pass either. `organizations list`
       // supplies the id, so the flag is finally usable end to end.
       //
-      // Named `--organization-id`, matching `projects create`, because both
-      // take an ID and only an ID. (`--project` elsewhere is a name-OR-id
-      // selector, which is why that one has no `-id` suffix.)
-      .option(
-        "--organization-id <id>",
-        "Restrict the listing to one organization (see `mcpjam cloud organizations list`)"
+      // Named `--org`, matching `projects create`. Both take an ID and only
+      // an ID. (`--project` elsewhere is a name-OR-id selector.)
       ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const rawOrganization = (command.opts() as { organizationId?: string })
-      .organizationId;
+    const rawOrganization = (command.opts() as { org?: string }).org;
     // A supplied-but-blank value is a typo, not "no filter". Silently widening
     // it to every accessible project is the wrong answer to a request that
     // asked to narrow — same reasoning as `requireProject` above.
     if (rawOrganization !== undefined && rawOrganization.trim() === "") {
       command.error(
-        "error: option '--organization-id <id>' cannot be empty"
+        "error: option '--org <id>' cannot be empty"
       );
     }
     const organizationId = rawOrganization?.trim();
@@ -166,18 +163,19 @@ export function registerProjectsCommands(program: Command): void {
     }
   });
 
+      addOrgOption(
       projects
       .command("create")
       .description("Create a hosted MCPJam project")
       .requiredOption("--name <name>", "Project name")
       .option("--description <text>", "Project description")
-      .option("--organization-id <id>", "Organization ID")
+      )
       .option("--visibility <visibility>", "public or private").action(
     async (
       options: PlatformOptions & {
         name: string;
         description?: string;
-        organizationId?: string;
+        org?: string;
         visibility?: string;
       },
       command
@@ -188,9 +186,9 @@ export function registerProjectsCommands(program: Command): void {
         ...(options.description === undefined
           ? {}
           : { description: options.description }),
-        ...(options.organizationId === undefined
+        ...(options.org === undefined
           ? {}
-          : { organizationId: options.organizationId }),
+          : { organizationId: options.org }),
         ...(options.visibility === undefined
           ? {}
           : { visibility: options.visibility }),

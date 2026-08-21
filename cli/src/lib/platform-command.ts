@@ -365,6 +365,17 @@ export function addProjectOption(command: Command): Command {
 }
 
 /**
+ * Organization filter. ID-only — unlike `--project`, which is a name-or-id
+ * selector. `mcpjam cloud organizations list` is how you learn the id.
+ */
+export function addOrgOption(command: Command): Command {
+  return command.option(
+    "--org <id>",
+    "Organization ID (see `mcpjam cloud organizations list`)"
+  );
+}
+
+/**
  * Parse an integer flag, or fail with a message that names the flag.
  *
  * Commander hands option values through as strings, and `Number("abc")` is

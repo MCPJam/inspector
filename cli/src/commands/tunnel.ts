@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { addRequiredOptionWithHiddenAlias } from "../lib/commander-options.js";
 import {
   createTunnelOperation,
   type CreateTunnelResult,
@@ -17,7 +18,7 @@ import { RelayConnection } from "../lib/tunnel/relay-client.js";
 import { TunnelSession } from "../lib/tunnel/tunnel-session.js";
 
 type TunnelCommandOptions = {
-  id: string;
+  server: string;
   project?: string;
   apiKey?: string;
   apiUrl?: string;
@@ -38,7 +39,7 @@ export function parseTunnelTarget(tokens: string[]): ParsedTunnelTarget {
   const isUrl = (token: string) => /^https?:\/\//i.test(token);
   if (tokens.length === 0) {
     throw usageError(
-      "Specify a target: a local server URL (mcpjam cloud tunnel http://localhost:9090/mcp --id my-server) or a stdio command (mcpjam cloud tunnel --id my-server -- npx -y @modelcontextprotocol/server-everything).",
+      "Specify a target: a local server URL (mcpjam cloud tunnel http://localhost:9090/mcp --server my-server) or a stdio command (mcpjam cloud tunnel --server my-server -- npx -y @modelcontextprotocol/server-everything).",
     );
   }
   if (isUrl(tokens[0])) {
@@ -78,7 +79,7 @@ function publicHost(url: string): string {
 }
 
 export function registerTunnelCommands(program: Command): void {
-  program
+  const tunnel = program
     .command("tunnel")
     .description(
       "Expose a local MCP server through an MCPJam tunnel and register it as a server in your project",
@@ -86,11 +87,14 @@ export function registerTunnelCommands(program: Command): void {
     .argument(
       "[target...]",
       "Local http(s) MCP server URL, or a stdio command after `--`",
-    )
-    .requiredOption(
-      "--id <name>",
-      "Server name to register in the project (an existing server with this name is pointed at the tunnel)",
-    )
+    );
+  addRequiredOptionWithHiddenAlias(
+    tunnel,
+    "--server <name>",
+    "--id",
+    "Server name to register in the project (an existing server with this name is pointed at the tunnel)",
+  );
+  tunnel
     .option(
       "--project <id-or-name>",
       "Project name or ID (defaults to the most recently updated project)",
@@ -162,7 +166,7 @@ export function registerTunnelCommands(program: Command): void {
           if (globalOptions.format === "human") {
             process.stdout.write(
               `Tunnel live: ${result.grant.url}\n` +
-                `Registered server "${result.grant.name ?? options.id}" in project "${result.project.name}" (${result.grant.serverId})\n`,
+                `Registered server "${result.grant.name ?? options.server}" in project "${result.project.name}" (${result.grant.serverId})\n`,
             );
             status("Press Ctrl-C to stop the tunnel.");
           } else {
@@ -170,7 +174,7 @@ export function registerTunnelCommands(program: Command): void {
               {
                 url: result.grant.url,
                 serverId: result.grant.serverId,
-                name: result.grant.name ?? options.id,
+                name: result.grant.name ?? options.server,
                 slug: result.grant.slug,
                 project: result.project,
                 existed: result.grant.existed ?? false,
@@ -200,7 +204,7 @@ export function registerTunnelCommands(program: Command): void {
         const session = new TunnelSession({
           createGrant: (signal) =>
             createTunnelOperation.execute(
-              { project: resolved.project, name: options.id },
+              { project: resolved.project, name: options.server },
               { client, signal },
             ),
           closeGrant: async (result, signal) => {

@@ -257,11 +257,11 @@ export function registerHostsCommands(program: Command): void {
       .description("Replace a host's required and optional server attachments")
       .requiredOption("--host <id-or-name>", "Host name or ID")
       .requiredOption(
-        "--server-ids <ids>",
+        "--server-ids <id,...>",
         "Comma-separated required server IDs"
       )
       .option(
-        "--optional-server-ids <ids>",
+        "--optional-server-ids <id,...>",
         "Comma-separated optional server IDs"
       )
       .option("--project <id-or-name>", "Project name or ID").action(
