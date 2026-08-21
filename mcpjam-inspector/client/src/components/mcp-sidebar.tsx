@@ -632,9 +632,12 @@ export function MCPSidebar({
                   type="button"
                   onClick={() => handleNavClick(hubNavHash)}
                   className={cn(
-                    "relative z-0 flex w-full cursor-pointer items-center justify-center py-2 transition-opacity duration-200",
-                    /* Reserve space for the collapse control so the logo stays visually centered and
-                       clicks on the logo never compete with the invisible hit target. */
+                    "relative z-0 flex w-full cursor-pointer items-center justify-start py-2 transition-opacity duration-200",
+                    /* Left-aligned, which lands the mark 16px from the sidebar edge — the
+                       same inset the nav rows and the divider use, so the whole rail shares
+                       one left margin. It used to be centered, which read as pushed right.
+                       `pr-10` still reserves the collapse control's slot so a wider logo
+                       can never slide under its hit target. */
                     "px-2 pr-10 hover:opacity-80"
                   )}
                 >
