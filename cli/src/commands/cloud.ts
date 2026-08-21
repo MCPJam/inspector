@@ -1,4 +1,5 @@
 import type { Command } from "commander";
+import { addPlatformOptions } from "../lib/platform-command.js";
 import { registerAuthCommands } from "./auth.js";
 import { registerChatCommands } from "./chat.js";
 import { registerEnvironmentsCommands } from "./environments.js";
@@ -25,6 +26,8 @@ export function registerCloudCommands(program: Command): Command {
     .description(
       "MCPJam Cloud account commands (login, projects, evals, tunnels). Local MCP testing stays at the top level — `mcpjam oauth login` is MCP OAuth; `mcpjam cloud login` is your MCPJam account."
     );
+
+  addPlatformOptions(cloud);
 
   registerAuthCommands(cloud);
   registerOrganizationsCommands(cloud);

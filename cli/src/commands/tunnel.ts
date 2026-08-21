@@ -4,7 +4,7 @@ import {
   type CreateTunnelResult,
 } from "@mcpjam/sdk/platform";
 import { cliError, usageError, writeResult } from "../lib/output.js";
-import { buildCloudClientContext } from "../lib/platform-command.js";
+import { buildCloudClientContext, platformOptionsOf } from "../lib/platform-command.js";
 import { toCliError } from "../lib/platform-client.js";
 import { getGlobalOptions, parseServerConfig } from "../lib/server-config.js";
 import { startLocalBridge, type TunnelTarget } from "../lib/tunnel/local-bridge.js";
@@ -90,11 +90,6 @@ export function registerTunnelCommands(program: Command): void {
       "--project <id-or-name>",
       "Project name or ID (defaults to the most recently updated project)",
     )
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)",
-    )
     .option(
       "-e, --env <env...>",
       'Stdio environment assignment in "KEY=VALUE" format. Pass multiple values or repeat the flag.',
@@ -141,10 +136,7 @@ export function registerTunnelCommands(program: Command): void {
         let client;
         try {
           ({ client } = buildCloudClientContext(
-            {
-              apiKey: options.apiKey,
-              apiUrl: options.apiUrl,
-            },
+            platformOptionsOf(command),
             globalOptions.timeout,
           ));
         } catch (error) {

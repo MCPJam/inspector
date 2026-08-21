@@ -6,10 +6,13 @@ import {
   listJourneyRunSessionsOperation,
   listJourneyRunsOperation,
   listJourneysOperation,
-  PlatformApiError,
 } from "@mcpjam/sdk/platform";
 import { usageError, writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import {
+  platformOptionsOf,
+  runPlatformOperation as runPlatformCommand,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
@@ -28,57 +31,8 @@ import { getGlobalOptions } from "../lib/server-config.js";
  * `environments` and `images` behave for features an org lacks.
  */
 
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
-};
 
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
 
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
-  } catch (error) {
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
-}
 
 /** Commander's collector for a repeatable option (`--environment a --environment b`). */
 function collectRepeatable(value: string, previous: string[]): string[] {
@@ -136,18 +90,16 @@ export function registerJourneysCommands(program: Command): Command {
       "List journeys and inspect their runs (the Swarms product) in your hosted MCPJam projects"
     );
 
-  addPlatformOptions(
-    journeys
+      journeys
       .command("list")
       .description("List the journeys in a project")
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
-      )
-  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+      ).action(async (options: PlatformOptions & { project?: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         listJourneysOperation.execute(
@@ -158,15 +110,13 @@ export function registerJourneysCommands(program: Command): Command {
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    addPageOptions(
+      addPageOptions(
       journeys
         .command("runs")
         .description("List a journey's runs, newest first")
         .requiredOption("--journey <id>", "Journey ID (from `journeys list`)")
         .option("--project <id-or-name>", "Project name or ID")
-    )
-  ).action(
+    ).action(
     async (
       options: PlatformOptions &
         PageOptions & {
@@ -177,7 +127,7 @@ export function registerJourneysCommands(program: Command): Command {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           listJourneyRunsOperation.execute(
@@ -193,22 +143,20 @@ export function registerJourneysCommands(program: Command): Command {
     }
   );
 
-  addPlatformOptions(
-    journeys
+      journeys
       .command("status")
       .description(
         "Show one run's status, target rollups, and per-session attempts. Poll this after launching; `status` leaves 'running' once every attempt has settled. A run someone stopped reports 'failed' with canceled: true."
       )
       .requiredOption("--run <id>", "Journey run ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; run: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getJourneyRunOperation.execute(
@@ -220,8 +168,7 @@ export function registerJourneysCommands(program: Command): Command {
     }
   );
 
-  addPlatformOptions(
-    journeys
+      journeys
       .command("run")
       .description(
         "Launch a journey. Returns as soon as the run exists — poll `journeys status` for progress."
@@ -241,8 +188,7 @@ export function registerJourneysCommands(program: Command): Command {
         "Fan out across this project environment instead of the journey's authored targets (repeatable)",
         collectRepeatable,
         [] as string[]
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -255,7 +201,7 @@ export function registerJourneysCommands(program: Command): Command {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           launchJourneyRunOperation.execute(
@@ -277,22 +223,20 @@ export function registerJourneysCommands(program: Command): Command {
     }
   );
 
-  addPlatformOptions(
-    journeys
+      journeys
       .command("cancel")
       .description(
         "Stop a running journey run. Idempotent — cancelling an already-cancelled run succeeds; a run that finished on its own conflicts instead."
       )
       .requiredOption("--run <id>", "Journey run ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; run: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           cancelJourneyRunOperation.execute(
@@ -304,8 +248,7 @@ export function registerJourneysCommands(program: Command): Command {
     }
   );
 
-  addPlatformOptions(
-    addPageOptions(
+      addPageOptions(
       journeys
         .command("sessions")
         .description(
@@ -313,8 +256,7 @@ export function registerJourneysCommands(program: Command): Command {
         )
         .requiredOption("--run <id>", "Journey run ID")
         .option("--project <id-or-name>", "Project name or ID")
-    )
-  ).action(
+    ).action(
     async (
       options: PlatformOptions &
         PageOptions & {
@@ -325,7 +267,7 @@ export function registerJourneysCommands(program: Command): Command {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           listJourneyRunSessionsOperation.execute(
