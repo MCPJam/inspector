@@ -18,7 +18,7 @@ function parseAuthParams(paramsString: string): Record<string, string> {
   const params: Record<string, string> = {};
   const pattern = new RegExp(
     `(${TOKEN})\\s*=\\s*(?:"((?:\\\\.|[^"\\\\])*)"|([^,\\s]+))`,
-    "g"
+    "g",
   );
 
   for (
@@ -47,7 +47,7 @@ function parseAuthParams(paramsString: string): Record<string, string> {
  * derived from the server URL.
  */
 export function parseBearerAuthenticateParameters(
-  header?: string
+  header?: string,
 ): Record<string, string> {
   return parseBearerChallenges(header)[0] ?? {};
 }
@@ -72,7 +72,7 @@ export function parseScopeString(scopeValue?: string): string[] | undefined {
  */
 export function computeScopeUnion(
   previous?: string[],
-  challenged?: string[]
+  challenged?: string[],
 ): string[] {
   const union: string[] = [];
   const seen = new Set<string>();
@@ -306,7 +306,7 @@ export function isUnauthenticatedProbeChallenge(input: {
 }
 
 export function parseInsufficientScopeChallenge(
-  header?: string
+  header?: string,
 ): InsufficientScopeChallenge {
   const bearerChallenges = parseBearerChallenges(header);
   // Select the insufficient_scope challenge among ALL Bearer challenges — a
