@@ -273,4 +273,16 @@ describe("credentialRetryable on a validation context", () => {
       ).resolves.toMatchObject({ credentialRetryable: expected });
     });
   }
+
+  it("propagates a transport failure instead of defaulting the flag", async () => {
+    // A call that never reached the backend says nothing about the credential.
+    // Answering with a context would hand the worker `credentialRetryable:
+    // false` — "consent again" — on the strength of a dropped connection.
+    const transportError = new TypeError("fetch failed");
+    fetchMock.mockRejectedValue(transportError);
+
+    await expect(fetchValidationContext("scr_1", "lease_1")).rejects.toBe(
+      transportError
+    );
+  });
 });
