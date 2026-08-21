@@ -316,7 +316,14 @@ export function useDirectoryReadinessRun({
     }
   }, [hosted, initialState]);
 
-  /** Fetch the report on first expand — it can be megabytes. */
+  /**
+   * Fetch the full report. Kept callable for retries, but the effect below is
+   * the normal path — the first version wired this to the section's expand
+   * CLICK, then made the sections open by default, so the click never came
+   * and a finished run rendered lane counts with no findings under them. A
+   * fetch that only a collapse-and-reopen could trigger is a fetch that never
+   * happens.
+   */
   const loadReport = useCallback(async () => {
     const runId = state.run?.id;
     if (!runId || state.report || state.reportLoading) return;
@@ -340,6 +347,16 @@ export function useDirectoryReadinessRun({
       }));
     }
   }, [isCurrent, state.report, state.reportLoading, state.run]);
+
+  // THE FINDINGS ARRIVE WITH THE VERDICT. The moment a hosted run is terminal
+  // and a report exists, fetch it — the row alone renders coverage numbers
+  // with nothing under them, which reads as "nothing found" when the truth is
+  // "49 findings you cannot see".
+  useEffect(() => {
+    if (!state.run || !isTerminalRunStatus(state.run.status)) return;
+    if (!state.run.hasReport || state.report || state.reportLoading) return;
+    void loadReport();
+  }, [loadReport, state.report, state.reportLoading, state.run]);
 
   /**
    * Adopt the newest run for this server after a reload.
