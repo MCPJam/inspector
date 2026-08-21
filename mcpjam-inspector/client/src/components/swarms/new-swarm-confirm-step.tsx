@@ -281,6 +281,12 @@ function CompactPersonaCard({
 /**
  * Expanded persona card — every field editable in place.
  *
+ * The header carries Save changes and nothing else: Remove belongs to the
+ * collapsed card, which is the list row, while this is the editor. Escape
+ * closes the panel — the design shows no close control, and selecting another
+ * persona is its intended exit, so this is the keyboard escape that keeps a
+ * lone expanded persona from being a dead end.
+ *
  * Two save models, because the two kinds of persona are not the same thing.
  * A proposed persona only exists in memory, so edits land immediately and
  * there is nothing to save until launch. A reused persona is a database row
@@ -298,8 +304,6 @@ function PersonaDetailPanel({
   loadingGoals,
   draftEditable,
   onClose,
-  onRemove,
-  removeLabel,
   onRemoveGoal,
   onRemoveCheck,
   onChangeName,
@@ -327,9 +331,8 @@ function PersonaDetailPanel({
   loadingGoals?: boolean;
   /** In-memory row: edits apply immediately, no Save. */
   draftEditable?: boolean;
+  /** Collapse the editor. Reached by Escape — the design shows no close button. */
   onClose: () => void;
-  onRemove: () => void;
-  removeLabel: string;
   onRemoveGoal?: (goalKey: string) => void;
   onRemoveCheck?: (goalKey: string, checkId: string) => void;
   onChangeName?: (name: string) => void;
@@ -348,6 +351,11 @@ function PersonaDetailPanel({
     <div
       className="rounded-xl border border-primary/50 bg-muted/30 ring-1 ring-primary/25"
       data-testid="new-swarm-persona-detail"
+      onKeyDown={(event) => {
+        if (event.key !== "Escape") return;
+        event.stopPropagation();
+        onClose();
+      }}
     >
       <div className="flex items-start justify-between gap-3 px-4 pt-4">
         <PersonaPixelAvatar
@@ -377,26 +385,6 @@ function PersonaDetailPanel({
               )}
             </Button>
           ) : null}
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8 bg-background px-3 text-[13px]"
-            aria-label={removeLabel}
-            onClick={onRemove}
-          >
-            Remove
-          </Button>
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="size-8 p-0 text-muted-foreground"
-            aria-label="Close persona detail"
-            onClick={onClose}
-          >
-            <X className="size-3.5" />
-          </Button>
         </div>
       </div>
 
@@ -1077,8 +1065,6 @@ export function NewSwarmConfirmStep({
                       avatarShape={persona.avatarShape}
                       avatarPalette={persona.avatarPalette}
                       onClose={() => setSelected(null)}
-                      onRemove={() => removePersona(persona.key)}
-                      removeLabel={`Remove persona ${persona.name}`}
                       onRemoveGoal={(goalKey) =>
                         removeJourney(persona.key, goalKey)
                       }
@@ -1192,8 +1178,6 @@ export function NewSwarmConfirmStep({
                             avatarShape={persona.avatarShape}
                             avatarPalette={persona.avatarPalette}
                             onClose={() => setSelected(null)}
-                            onRemove={() => removeReused(persona._id)}
-                            removeLabel={`Remove ${persona.name} from this swarm`}
                             onChangeName={(name) =>
                               patchReusedDraft(persona, goals, { name })
                             }

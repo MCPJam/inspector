@@ -2227,3 +2227,48 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     expect(screen.getByRole("button", { name: /^back$/i })).toBeVisible();
   });
 });
+
+describe("SwarmsTab — expanded persona card is the editor, not the list row", () => {
+  async function expandFirstPersona() {
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getAllByTestId("new-swarm-persona-compact")[0]);
+    return screen.findByTestId("new-swarm-persona-detail");
+  }
+
+  it("carries no Remove and no close control — those belong to the collapsed card", async () => {
+    const detail = await expandFirstPersona();
+
+    expect(
+      within(detail).queryByRole("button", { name: /^remove persona /i })
+    ).not.toBeInTheDocument();
+    expect(
+      within(detail).queryByRole("button", { name: /close persona detail/i })
+    ).not.toBeInTheDocument();
+
+    // Remove is still one click away, on the sibling row.
+    expect(
+      within(screen.getAllByTestId("new-swarm-persona-compact")[0]).getByRole(
+        "button",
+        { name: /^remove persona /i }
+      )
+    ).toBeVisible();
+  });
+
+  it("collapses on Escape, so a lone expanded persona is not a dead end", async () => {
+    // The design shows no close button and expects "select another persona" as
+    // the exit — which does not exist when there is only one. Escape is the
+    // keyboard escape that keeps its Remove reachable.
+    const detail = await expandFirstPersona();
+
+    fireEvent.keyDown(detail, { key: "Escape" });
+
+    await vi.waitFor(() => {
+      expect(
+        screen.queryByTestId("new-swarm-persona-detail")
+      ).not.toBeInTheDocument();
+    });
+  });
+});
