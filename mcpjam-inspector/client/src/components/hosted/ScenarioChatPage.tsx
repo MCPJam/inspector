@@ -1184,13 +1184,21 @@ export function ScenarioChatPage({
                               </h1>
                             </>
                           ) : (
-                            // Placeholder rather than the default host's mark:
-                            // painting one brand and swapping to another once
-                            // the redeem lands reads as a glitch.
-                            <div
-                              aria-hidden
-                              className="h-5 w-28 animate-pulse rounded bg-muted"
-                            />
+                            <>
+                              {/* The skeleton is decorative, so the header
+                                  would have no heading at all while the
+                                  redeem is in flight. Name the shell for a
+                                  screen reader without naming a vendor. */}
+                              <h1 className="sr-only">Loading scenario</h1>
+                              {/* Placeholder rather than the default host's
+                                  mark: painting one brand and swapping to
+                                  another once the redeem lands reads as a
+                                  glitch. */}
+                              <div
+                                aria-hidden
+                                className="h-5 w-28 animate-pulse rounded bg-muted"
+                              />
+                            </>
                           )}
                         </div>
                         <button

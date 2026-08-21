@@ -310,6 +310,11 @@ describe("ScenarioChatPage", () => {
     // painting one brand and swapping to another reads as a glitch.
     expect(screen.queryByText("Claude")).not.toBeInTheDocument();
     expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
+    // The visible placeholder is decorative, so the heading has to carry the
+    // shell's name for a screen reader in the meantime.
+    expect(
+      screen.getByRole("heading", { name: "Loading scenario" })
+    ).toBeInTheDocument();
   });
 
   it("does not wear the previous scenario's brand while a new link redeems", async () => {
