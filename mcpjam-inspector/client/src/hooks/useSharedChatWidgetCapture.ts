@@ -15,7 +15,10 @@ import {
   sanitizeWidgetForBackend,
   type SharedChatWidgetSnapshotPayload,
 } from "@/shared/widget-snapshot";
-import { isStaleHostedAccessError } from "@/lib/hosted-access-errors";
+import {
+  isServerOutsideScenarioError,
+  isStaleHostedAccessError,
+} from "@/lib/hosted-access-errors";
 
 interface UseSharedChatWidgetCaptureOptions {
   enabled: boolean;
@@ -233,6 +236,11 @@ export function useSharedChatWidgetCapture({
   // until an unrelated widget/message change happens to retrigger the
   // debounced sweep.
   const pendingStaleRetryRef = useRef(new Set<string>());
+  // ToolCallIds whose snapshot the backend refused for good — their server is
+  // not in the scenario allowlist and the transcript naming it won't change.
+  // Hook-owned rather than folded into `persistedSnapshotToolCallIdsRef`,
+  // which is rebuilt from props on every change and would drop the entry.
+  const abandonedToolCallIdsRef = useRef(new Set<string>());
   // Bounded backoff state for re-asking the parent to redeem. Tracks how
   // many times the timer has refired (without an accessVersion bump in
   // between) and the currently-scheduled timer. Reset to zero whenever
@@ -339,6 +347,7 @@ export function useSharedChatWidgetCapture({
       cachedBlobsRef.current.clear();
       retryCountRef.current.clear();
       pendingStaleRetryRef.current.clear();
+      abandonedToolCallIdsRef.current.clear();
       clearPendingStaleRefresh();
       for (const timer of pendingTimersRef.current.values()) {
         clearTimeout(timer);
@@ -398,6 +407,9 @@ export function useSharedChatWidgetCapture({
       return;
     }
     if (persistedSnapshotToolCallIdsRef.current.has(toolCallId)) {
+      return;
+    }
+    if (abandonedToolCallIdsRef.current.has(toolCallId)) {
       return;
     }
     if (!toolSource.serverId) {
@@ -552,7 +564,39 @@ export function useSharedChatWidgetCapture({
         // belong to a different scope now.
         return;
       }
-      if (isStaleHostedAccessError(error)) {
+      if (isServerOutsideScenarioError(error)) {
+        // TERMINAL. This widget's server left the scenario allowlist, and the
+        // transcript that names it is not going to change, so every sweep
+        // re-offers the same doomed toolCallId. Checked BEFORE the retry
+        // ladder below, which `shouldRetryPendingSnapshot` would otherwise
+        // arm: its `result == null` early return makes the catch path retry
+        // on any error, so one dead snapshot burned six backend calls (the
+        // shape visible in Sentry CONVEX-19N — bursts of exactly six).
+        //
+        // Abandoned so the debounced sweep stops re-picking it. Not a
+        // stale-access case: there is no fresher accessVersion to redeem for.
+        abandonedToolCallIdsRef.current.add(toolCallId);
+        cachedBlobsRef.current.delete(toolCallId);
+        retryCountRef.current.delete(toolCallId);
+        const abandonedTimer = pendingTimersRef.current.get(toolCallId);
+        if (abandonedTimer) {
+          clearTimeout(abandonedTimer);
+          pendingTimersRef.current.delete(toolCallId);
+        }
+        // It can already be queued for stale replay: an earlier attempt hit
+        // `scenario_access_stale`, and this one came back terminal before the
+        // parent's re-redeem landed. Leaving it queued keeps the backoff timer
+        // asking for a fresh accessVersion on behalf of work that will never
+        // run again.
+        pendingStaleRetryRef.current.delete(toolCallId);
+        if (pendingStaleRetryRef.current.size === 0) {
+          clearPendingStaleRefresh();
+        }
+        console.warn(
+          "[useSharedChatWidgetCapture] Server is no longer in the scenario allowlist; dropping snapshot for",
+          toolCallId,
+        );
+      } else if (isStaleHostedAccessError(error)) {
         // Drop cached blobs uploaded under the stale accessVersion, queue
         // this toolCallId for replay once the fresh accessVersion arrives,
         // and ask the owner to re-redeem. The reset effect drains the
@@ -628,7 +672,12 @@ export function useSharedChatWidgetCapture({
 
     for (const [toolCallId, widget] of widgets) {
       const existingTimer = pendingTimersRef.current.get(toolCallId);
-      if (persistedSnapshotToolCallIdsRef.current.has(toolCallId)) {
+      // Already stored, or refused for good — either way there is nothing left
+      // to capture, so don't keep re-arming a timer whose attempt bails.
+      if (
+        persistedSnapshotToolCallIdsRef.current.has(toolCallId) ||
+        abandonedToolCallIdsRef.current.has(toolCallId)
+      ) {
         if (existingTimer) {
           clearTimeout(existingTimer);
           pendingTimersRef.current.delete(toolCallId);
