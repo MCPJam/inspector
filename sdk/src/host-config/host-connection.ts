@@ -61,7 +61,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * (Not the public `Host.toJSON()` shape, which uses `mcp.protocolVersion` etc.)
  */
 export function hostConnectionProfile(
-  hostConfig: Record<string, unknown>,
+  hostConfig: Record<string, unknown>
 ): HostConnectionProfile {
   const mcpProfile = isRecord(hostConfig.mcpProfile)
     ? hostConfig.mcpProfile
@@ -79,15 +79,16 @@ export function hostConnectionProfile(
     : undefined;
 
   const supportedProtocolVersions = Array.isArray(
-    initialize?.supportedProtocolVersions,
+    initialize?.supportedProtocolVersions
   )
     ? (initialize.supportedProtocolVersions as unknown[]).filter(
-        (v): v is string => typeof v === "string",
+        (v): v is string => typeof v === "string"
       )
     : undefined;
 
   const mcpProtocolVersion =
-    typeof mcpProfile?.mcpProtocolVersion === "string"
+    typeof mcpProfile?.mcpProtocolVersion === "string" &&
+    mcpProfile.mcpProtocolVersion !== "auto"
       ? mcpProfile.mcpProtocolVersion
       : undefined;
 
