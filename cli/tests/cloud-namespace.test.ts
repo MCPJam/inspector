@@ -101,7 +101,12 @@ test("cloud images validate help names the Cloud image linter", async () => {
 });
 
 test("cloud capabilities moved under projects; chat-sessions is gone", async () => {
-  const capabilities = await runCli(["cloud", "capabilities", "--help"]);
+  const capabilities = await runCli([
+    "--format",
+    "json",
+    "cloud",
+    "capabilities",
+  ]);
   assert.equal(capabilities.exitCode, 2);
   assert.match(capabilities.stderr, /unknown command 'capabilities'/);
 
@@ -109,7 +114,12 @@ test("cloud capabilities moved under projects; chat-sessions is gone", async () 
   assert.equal(nested.exitCode, 0, nested.stderr);
   assert.match(nested.stdout, /Usage: mcpjam cloud projects capabilities/);
 
-  const chatSessions = await runCli(["cloud", "chat-sessions", "--help"]);
+  const chatSessions = await runCli([
+    "--format",
+    "json",
+    "cloud",
+    "chat-sessions",
+  ]);
   assert.equal(chatSessions.exitCode, 2);
   assert.match(chatSessions.stderr, /unknown command 'chat-sessions'/);
 
@@ -119,7 +129,13 @@ test("cloud capabilities moved under projects; chat-sessions is gone", async () 
 });
 
 test("projects server alias is gone; servers remains", async () => {
-  const alias = await runCli(["cloud", "projects", "server", "--help"]);
+  const alias = await runCli([
+    "--format",
+    "json",
+    "cloud",
+    "projects",
+    "server",
+  ]);
   assert.equal(alias.exitCode, 2);
   assert.match(alias.stderr, /unknown command 'server'/);
 
