@@ -31,6 +31,7 @@ vi.mock("../internal-backend.js", async () => {
 
 const {
   acquireLease,
+  fetchValidationContext,
   reportValidation,
   ServerConnectionBackendError,
 } = await import("../server-connections-backend.js");
@@ -236,5 +237,52 @@ describe("what a refusal carries", () => {
     const error = await acquireLease("scr_1", "lease_1").catch((cause) => cause);
     expect(error).toBeInstanceOf(ServerConnectionBackendError);
     expect(error.details).toBeUndefined();
+  });
+});
+
+describe("credentialRetryable on a validation context", () => {
+  // The flag decides whether the worker retries an unreachable authorization
+  // server or sends the user back through consent. A truthy-but-not-true value
+  // from a backend of any vintage must not be read as "retry".
+  const cases: Array<[string, unknown, boolean]> = [
+    ["true", true, true],
+    ["false", false, false],
+    ["omitted", undefined, false],
+    ["null", null, false],
+    ["an empty string", "", false],
+    ['the string "true"', "true", false],
+    ["1", 1, false],
+    ["0", 0, false],
+  ];
+
+  for (const [label, value, expected] of cases) {
+    it(`reads ${label} as ${expected}`, async () => {
+      const payload: Record<string, unknown> = {
+        ok: true,
+        serverUrl: "https://mcp.test/sse",
+        accessToken: "token",
+        authMethod: "oauth",
+      };
+      if (value !== undefined) {
+        payload.credentialRetryable = value;
+      }
+      fetchMock.mockResolvedValue(jsonResponse(200, payload));
+
+      await expect(
+        fetchValidationContext("scr_1", "lease_1")
+      ).resolves.toMatchObject({ credentialRetryable: expected });
+    });
+  }
+
+  it("propagates a transport failure instead of defaulting the flag", async () => {
+    // A call that never reached the backend says nothing about the credential.
+    // Answering with a context would hand the worker `credentialRetryable:
+    // false` — "consent again" — on the strength of a dropped connection.
+    const transportError = new TypeError("fetch failed");
+    fetchMock.mockRejectedValue(transportError);
+
+    await expect(fetchValidationContext("scr_1", "lease_1")).rejects.toBe(
+      transportError
+    );
   });
 });
