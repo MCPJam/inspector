@@ -8,6 +8,38 @@ import {
   startConformanceMockServer,
 } from "../mock-servers/conformance-mcp-server.js";
 
+/**
+ * A manager exposing one UI tool and one UI resource, where the caller decides
+ * exactly what `resources/read` hands back and how the resource is declared in
+ * `resources/list`. Lets a test isolate one Content Requirement at a time.
+ */
+function uiResourceManager(
+  contents: unknown[],
+  options: { listedMimeType?: string } = {},
+) {
+  return {
+    listTools: jest.fn().mockResolvedValue({
+      tools: [
+        {
+          name: "ui_tool",
+          inputSchema: { type: "object" },
+          _meta: { ui: { resourceUri: CONFORMANCE_UI_RESOURCE_URI } },
+        },
+      ],
+    }),
+    listResources: jest.fn().mockResolvedValue({
+      resources: [
+        {
+          name: "UI Dashboard",
+          uri: CONFORMANCE_UI_RESOURCE_URI,
+          mimeType: options.listedMimeType ?? "text/html;profile=mcp-app",
+        },
+      ],
+    }),
+    readResource: jest.fn().mockResolvedValue({ contents }),
+  };
+}
+
 describe("MCPAppsConformanceTest", () => {
   it("passes the full apps conformance suite against the dedicated mock server", async () => {
     const mockServer = await startConformanceMockServer();
@@ -97,7 +129,7 @@ describe("MCPAppsConformanceTest", () => {
     }
   });
 
-  it("fails when resources/read returns more than one HTML payload for a UI resource", async () => {
+  it("accepts more than one HTML payload when every entry is a valid UI content", async () => {
     const withEphemeralClientSpy = jest
       .spyOn(operations, "withEphemeralClient")
       .mockImplementation(async (_config, fn) => {
@@ -152,19 +184,122 @@ describe("MCPAppsConformanceTest", () => {
 
       const result = await test.run();
 
-      expect(result.passed).toBe(false);
+      // apps.mdx states its Content Requirements per content item and never
+      // caps the array — the single-element `contents: [{…}]` in the spec is
+      // an example. Two conforming entries are not a violation.
+      expect(result.passed).toBe(true);
       expect(result.checks).toHaveLength(1);
       expect(result.checks[0]).toEqual(
         expect.objectContaining({
           id: "ui-resource-contents-valid",
-          status: "failed",
-          details: expect.objectContaining({
-            violations: [
-              `${CONFORMANCE_UI_RESOURCE_URI} must return exactly one content entry from resources/read (got 2)`,
-            ],
-          }),
+          status: "passed",
         }),
       );
+    } finally {
+      withEphemeralClientSpy.mockRestore();
+    }
+  });
+
+  /**
+   * Dropping the exactly-one rule must not become "only the first entry is
+   * graded" — every returned entry still has to satisfy the four Content
+   * Requirements, and an empty array is still a violation.
+   */
+  it("still grades every content entry once more than one is allowed", async () => {
+    const withEphemeralClientSpy = jest
+      .spyOn(operations, "withEphemeralClient")
+      .mockImplementation(async (_config, fn) =>
+        fn(
+          uiResourceManager([
+            {
+              uri: CONFORMANCE_UI_RESOURCE_URI,
+              mimeType: "text/html;profile=mcp-app",
+              text: "<!DOCTYPE html><html><body>First</body></html>",
+            },
+            {
+              uri: CONFORMANCE_UI_RESOURCE_URI,
+              mimeType: "text/plain",
+              text: "<!DOCTYPE html><html><body>Second</body></html>",
+            },
+          ]) as never,
+          "__apps_conformance__",
+        ),
+      );
+
+    try {
+      const result = await new MCPAppsConformanceTest({
+        url: "https://example.com/mcp",
+        timeout: 10_000,
+        checkIds: ["ui-resource-contents-valid"],
+      }).run();
+
+      expect(result.passed).toBe(false);
+      expect(result.checks[0]?.details?.violations).toEqual([
+        `${CONFORMANCE_UI_RESOURCE_URI} contents[1] returned mimeType "text/plain" instead of "text/html;profile=mcp-app"`,
+      ]);
+    } finally {
+      withEphemeralClientSpy.mockRestore();
+    }
+  });
+
+  it("fails a resources/read that returns no content entries at all", async () => {
+    const withEphemeralClientSpy = jest
+      .spyOn(operations, "withEphemeralClient")
+      .mockImplementation(async (_config, fn) =>
+        fn(uiResourceManager([]) as never, "__apps_conformance__"),
+      );
+
+    try {
+      const result = await new MCPAppsConformanceTest({
+        url: "https://example.com/mcp",
+        timeout: 10_000,
+        checkIds: ["ui-resource-contents-valid"],
+      }).run();
+
+      expect(result.passed).toBe(false);
+      expect(result.checks[0]?.details?.violations).toEqual([
+        `${CONFORMANCE_UI_RESOURCE_URI} returned no content entries from resources/read`,
+      ]);
+    } finally {
+      withEphemeralClientSpy.mockRestore();
+    }
+  });
+
+  /**
+   * apps.mdx makes the listing-level mimeType a SHOULD and the read-level one a
+   * MUST. A server that gets the listing "wrong" is still conformant, so the
+   * check has to warn without failing — otherwise the suite reports a defect
+   * the spec does not describe.
+   */
+  it("warns without failing when a listed UI resource declares another mimeType", async () => {
+    const withEphemeralClientSpy = jest
+      .spyOn(operations, "withEphemeralClient")
+      .mockImplementation(async (_config, fn) =>
+        fn(
+          uiResourceManager(
+            [
+              {
+                uri: CONFORMANCE_UI_RESOURCE_URI,
+                mimeType: "text/html;profile=mcp-app",
+                text: "<!DOCTYPE html><html><body>ok</body></html>",
+              },
+            ],
+            { listedMimeType: "text/html" },
+          ) as never,
+          "__apps_conformance__",
+        ),
+      );
+
+    try {
+      const result = await new MCPAppsConformanceTest({
+        url: "https://example.com/mcp",
+        timeout: 10_000,
+        checkIds: ["ui-listed-resources-valid"],
+      }).run();
+
+      expect(result.passed).toBe(true);
+      expect(result.checks[0]?.status).toBe("passed");
+      expect(result.checks[0]?.warnings?.[0]).toContain("is a SHOULD");
     } finally {
       withEphemeralClientSpy.mockRestore();
     }
