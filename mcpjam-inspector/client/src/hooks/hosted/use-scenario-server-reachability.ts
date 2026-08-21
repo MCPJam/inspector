@@ -22,6 +22,10 @@ export type ScenarioServerReachability =
  * server ids, so the first probes lose that race. These cost nothing — the
  * builder throws synchronously, without a round trip — so they are counted
  * separately from attempts that actually reached the server.
+ *
+ * Running out of them is not a verdict: no request was ever made, so the
+ * server is left reported as reachable rather than branded on evidence that
+ * does not exist.
  */
 const BOOTSTRAP_ATTEMPTS = 6;
 const BOOTSTRAP_RETRY_DELAY_MS = 300;
@@ -32,7 +36,8 @@ const BOOTSTRAP_RETRY_DELAY_MS = 300;
  * drops the server from the turn, and it tells the tester something false. One
  * retry covers the blips that would otherwise do that — a 502, a dropped
  * connection, a server slow to wake — without making a genuinely dead server
- * take a minute to report.
+ * take a minute to report. A lost response is the exception; see
+ * `ProbeTimeoutError`.
  */
 const PROBE_ATTEMPTS = 2;
 const PROBE_RETRY_DELAY_MS = 500;
@@ -44,7 +49,21 @@ const PROBE_RETRY_DELAY_MS = 500;
  * the server's connect timeout so this only fires when the response itself is
  * lost.
  */
-const PROBE_TIMEOUT_MS = 15_000;
+export const PROBE_TIMEOUT_MS = 15_000;
+
+/**
+ * A probe that outlived the deadline. Distinct from the wire failures around
+ * it because it is not retried: the deadline sits above the route's own connect
+ * timeout, so reaching it means the response was lost rather than that the
+ * server was slow, and a second full wait buys the same answer while the
+ * composer stays shut for twice as long.
+ */
+class ProbeTimeoutError extends Error {
+  constructor() {
+    super(`Probe timed out after ${PROBE_TIMEOUT_MS}ms`);
+    this.name = "ProbeTimeoutError";
+  }
+}
 
 export interface ScenarioServerReachabilityInput {
   serverId: string;
@@ -61,11 +80,11 @@ function withProbeTimeout<T>(
 ): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timeoutId = window.setTimeout(() => {
-      // Abort as well as reject. Rejecting only frees this caller: the request
-      // it gave up on keeps its connection open on the server, and the retry
-      // below opens a second one against the same server.
+      // Abort as well as reject. Rejecting only frees this caller — the
+      // request it gave up on would keep its connection open on the server for
+      // the rest of the route's connect timeout.
       controller.abort();
-      reject(new Error(`Probe timed out after ${PROBE_TIMEOUT_MS}ms`));
+      reject(new ProbeTimeoutError());
     }, PROBE_TIMEOUT_MS);
     promise.then(
       (value) => {
@@ -181,17 +200,34 @@ export function useScenarioServerReachability(
             reachability = "reachable";
             break;
           } catch (error) {
+            // Nobody is left to read this verdict, and the abort that tore the
+            // probe down says nothing about the server.
+            if (isUnmountedRef.current) return;
+
             const isBootstrap = error instanceof BootstrapNotReadyError;
-            const exhausted = isBootstrap
-              ? ++bootstrapAttempts >= BOOTSTRAP_ATTEMPTS
-              : ++probeAttempts >= PROBE_ATTEMPTS;
+            const exhausted =
+              error instanceof ProbeTimeoutError ||
+              (isBootstrap
+                ? ++bootstrapAttempts >= BOOTSTRAP_ATTEMPTS
+                : ++probeAttempts >= PROBE_ATTEMPTS);
 
             if (exhausted) {
+              if (isBootstrap) {
+                // Nothing ever reached the wire, so there is no evidence about
+                // this server either way. Reporting it unreachable would show
+                // the tester a failure this session never observed and drop a
+                // healthy server from the turn — the same lie this hook exists
+                // to remove, arriving from the other direction. Let the turn
+                // make its own attempt and report its own failure.
+                reachability = "reachable";
+              }
               // Transport details are never shown to a tester — they followed a
               // link and cannot act on an SSE status code. The banner names the
               // server; the detail stays here for whoever debugs it.
               console.error(
-                "[useScenarioServerReachability] server did not connect",
+                isBootstrap
+                  ? "[useScenarioServerReachability] never got to probe the server"
+                  : "[useScenarioServerReachability] server did not connect",
                 {
                   serverId: server.serverId,
                   serverName: server.serverName,
