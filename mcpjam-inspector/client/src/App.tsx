@@ -84,6 +84,7 @@ import {
   useSidebar,
 } from "./components/ui/sidebar";
 import { AgentSidePanelMount } from "./components/mcpjam-agent/AgentSidePanelMount";
+import { AppChromePanel } from "@/components/app-chrome-panel";
 import {
   Alert,
   AlertDescription,
@@ -4629,6 +4630,11 @@ export default function App() {
     oauthServerModalNonce,
   };
 
+  // Shared by the top bar and the middle panel: the panel's 16px top radius +
+  // shadow are only correct when the bar is above them.
+  const appChromeHeaderHidden =
+    playgroundOnboarding || (activeTab === "home" && !!workOsUser);
+
   const appContent = (
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
@@ -4653,19 +4659,20 @@ export default function App() {
         createProjectDisabledReason={createProjectDisabledReason}
         onBeforeSignOut={disconnectRuntimeServersForAuthExit}
       />
-      <SidebarInset className="flex flex-col min-h-0">
+      {/* The inset is the linen shell: the sidebar and top bar read as one
+          continuous outer chrome and the off-white panel below is the working
+          surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
+      <SidebarInset className="bg-sidebar flex flex-col min-h-0">
         <AppChromeHeader
           // "make nux clean" (#2868) hid this on Home for everyone, but that
           // also hid guests' only Sign in / Create account affordance there
           // (PUR-35). Keep Home clean for signed-in users; show the header
           // for guests so they still get sign-in/sign-up.
-          hidden={
-            playgroundOnboarding || (activeTab === "home" && !!workOsUser)
-          }
+          hidden={appChromeHeaderHidden}
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <AppChromePanel headerHidden={appChromeHeaderHidden}>
           {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
               <Alert>
@@ -4685,7 +4692,7 @@ export default function App() {
               <NoRouterRouteBody activeTab={activeTab} />
             )}
           </AppRouteReactContext.Provider>
-        </div>
+        </AppChromePanel>
       </SidebarInset>
       <AgentSidePanelMount
         projectId={activeProjectId ?? null}

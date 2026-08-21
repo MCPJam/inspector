@@ -256,12 +256,12 @@ export const TASKS_CHECK_CATALOG = {
   "tasks-undeclared-creation-refused": {
     title: "Undeclared Task Creation Refused",
     description:
-      "On the extension wire, a tools/call that did not carry the extension declaration must not come back as a CreateTaskResult: the server either answers normally or rejects with -32003.",
+      "On the extension wire, a tools/call that did not carry the extension declaration must not come back as a CreateTaskResult: the server either answers normally or rejects with -32021.",
   },
   "tasks-undeclared-capability-rejected": {
     title: "Undeclared Capability Rejected",
     description:
-      "tasks/get, tasks/update, tasks/cancel and a task-filtered subscriptions/listen sent WITHOUT the extension declaration must each be rejected with -32003 (Missing Required Client Capability).",
+      "tasks/get, tasks/update, tasks/cancel and a task-filtered subscriptions/listen sent WITHOUT the extension declaration must each be rejected with -32021 (Missing Required Client Capability).",
   },
   "tasks-ttl-shape": {
     title: "TTL And Poll Interval Shapes",
