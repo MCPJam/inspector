@@ -13,9 +13,17 @@ export type SwarmViewOption = {
  * Always shown, on every Swarm view — not just the empty state (BB-120). It is
  * the one line that explains what a swarm buys you, so it has to survive the
  * page having data.
+ *
+ * Personas gets its own line (BB-123): the tab is a library of reusable
+ * personas, not a run surface, and the swarm pitch says nothing about it.
  */
-const SWARM_SUBTITLE =
-  "No recruiting, no scheduling, no setup. Agents find what breaks in every client.";
+const SWARM_SUBTITLE: Record<SwarmViewMode, string> = {
+  overview:
+    "No recruiting, no scheduling, no setup. Agents find what breaks in every client.",
+  journeys: "The library of user personas you send into swarms.",
+  sessions:
+    "No recruiting, no scheduling, no setup. Agents find what breaks in every client.",
+};
 
 interface SwarmsTabHeaderProps {
   projectId: string | null;
@@ -56,7 +64,7 @@ export function SwarmsTabHeader({
         </Button>
       </div>
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-        {SWARM_SUBTITLE}
+        {SWARM_SUBTITLE[viewMode]}
       </p>
       <ViewModeSelector
         value={viewMode}

@@ -45,7 +45,11 @@ import {
 } from "@/shared/journey-rubric";
 import { cn } from "@/lib/utils";
 
-function SectionLabel({ children }: { children: ReactNode }) {
+/**
+ * Field-group label shared with the Personas library (BB-123), so a persona
+ * reads the same in the library as it does on Confirm.
+ */
+export function SectionLabel({ children }: { children: ReactNode }) {
   return (
     <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
       {children}
