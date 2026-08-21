@@ -4,6 +4,7 @@ import {
   getProjectServerConnectionStatusOperation,
   createProjectOperation,
   deleteProjectOperation,
+  getCapabilitiesOperation,
   listProjectsOperation,
   listProjectServersOperation,
   createProjectServerOperation,
@@ -21,6 +22,8 @@ import {
 import { writeResult } from "../lib/output.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
+  addProjectOption,
+  bindOperation,
   buildCloudClientContext,
   platformOptionsOf,
   runPlatformCommand,
@@ -258,9 +261,20 @@ export function registerProjectsCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
+  bindOperation(
+    addProjectOption(
+      projects
+        .command("capabilities")
+        .description(
+          "Show what you may do in a project: your role, which betas the organization has, your plan's limits, and a can-block of booleans. Ask this before scripting anything that authors, launches or publishes."
+        )
+    ),
+    getCapabilitiesOperation,
+    (options: PlatformOptions) => ({ project: options.project })
+  );
+
   const servers =     projects
       .command("servers")
-      .alias("server")
       .description("List and manage the servers saved in a project").option(
     "--project <id-or-name>",
     "Project name or ID (defaults to the most recently updated project)"
@@ -461,7 +475,7 @@ export function registerProjectsCommands(program: Command): void {
       if (options.wait === false || isTerminalConnectionStatus(created.status)) {
         if (options.wait === false && !isTerminalConnectionStatus(created.status)) {
           process.stderr.write(
-            `Not waiting. Follow it with:\n  mcpjam cloud projects server connect-status --request ${created.connectionRequestId}\n`
+            `Not waiting. Follow it with:\n  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n`
           );
         }
         writeResult(created, globalOptions.format);
@@ -483,7 +497,7 @@ export function registerProjectsCommands(program: Command): void {
         // watching". Returning the last poll silently made those identical.
         process.stderr.write(
           `Stopped waiting; the request is still ${latest.status} and continues in the cloud.\n` +
-            `  mcpjam cloud projects server connect-status --request ${created.connectionRequestId}\n`
+            `  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n`
         );
         process.exitCode = 1;
       }

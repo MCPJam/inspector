@@ -1,7 +1,6 @@
 import type { Command } from "commander";
 import { addPlatformOptions } from "../lib/platform-command.js";
 import { registerAuthCommands } from "./auth.js";
-import { registerChatCommands } from "./chat.js";
 import { registerCloudLinkCommands } from "./cloud-link.js";
 import { registerEnvironmentsCommands } from "./environments.js";
 import { registerEvalCommands } from "./eval.js";
@@ -37,7 +36,6 @@ export function registerCloudCommands(program: Command): Command {
   cloud.commandsGroup("Workspace:");
   registerOrganizationsCommands(cloud);
   registerProjectsCommands(cloud);
-  registerChatCommands(cloud);
   registerSessionsCommands(cloud);
   registerTunnelCommands(cloud);
 

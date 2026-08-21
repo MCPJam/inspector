@@ -713,7 +713,7 @@ test("server connect rejects a URL that is not http(s) at the keyboard", async (
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "file:///etc/passwd",
@@ -748,7 +748,7 @@ test("server connect prints the authorization link even with --no-browser", asyn
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -788,7 +788,7 @@ test("server connect names the account and deployment the link belongs to", asyn
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -830,7 +830,7 @@ test("server connect still prints the link when the account lookup fails", async
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -864,7 +864,7 @@ test("server connect-status reads an existing request", async () => {
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect-status",
             "--request",
             "scr_1",
@@ -902,7 +902,7 @@ test("server connect stops watching once the request settles", async () => {
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -939,7 +939,7 @@ test("server connect exits non-zero when it gave up rather than finished", async
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -1039,7 +1039,7 @@ test("server connect honors --project instead of silently ignoring it", async ()
         [
           ...projectsArgv(
             fixture.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -1086,7 +1086,7 @@ test("a failing command does not leave its exit code on the next main()", async 
         [
           ...projectsArgv(
             gaveUp.baseUrl,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",
@@ -1160,7 +1160,7 @@ test("Ctrl-C during an in-flight poll returns without waiting out the request", 
         [
           ...projectsArgv(
             `http://127.0.0.1:${port}/api/v1`,
-            "server",
+            "servers",
             "connect",
             "--url",
             "https://example.com/mcp",

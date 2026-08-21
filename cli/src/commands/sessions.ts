@@ -1,33 +1,30 @@
 /**
- * `mcpjam sessions` — find a conversation across every surface.
+ * `mcpjam cloud sessions` — find a conversation, or list Playground chat
+ * sessions.
  *
- * A group with one subcommand today (`search`), and a group rather than a
- * top-level `mcpjam search-sessions` because the noun is the thing being
- * scripted: `sessions get` and `sessions export` are the obvious neighbours,
- * and moving a shipped top-level command under a group later is a breaking
- * rename.
- *
- * SEARCH-ONLY, deliberately: there is no `sessions list`. A project's whole
- * session history is not a useful thing to page from a terminal, and the
- * older `mcpjam chat-sessions list` already covers the Playground-only case
- * that people actually script against. What has no other answer is "which
- * session was the one where…", which is what this is.
+ * `search` spans every surface (Playground, user testing, evals, swarms).
+ * `list` is the older Playground-only listing (`chat-sessions list`): all
+ * accessible projects unless `--project` is given. Ambient `.mcpjam/project.json`
+ * does not narrow `list`; that stays an explicit flag until the shared
+ * project-selection rule lands.
  */
 import type { Command } from "commander";
-import { searchSessionsOperation } from "@mcpjam/sdk/platform";
-import { usageError } from "../lib/output.js";
+import {
+  listChatSessionsOperation,
+  searchSessionsOperation,
+  type PlatformOperation,
+} from "@mcpjam/sdk/platform";
+import { usageError, writeResult } from "../lib/output.js";
 import {
   addProjectOption,
   bindOperation,
   parseIntegerOption,
+  platformOptionsOf,
+  runPlatformOperation as runPlatformCommand,
   type PlatformOptions,
 } from "../lib/platform-command.js";
+import { getGlobalOptions } from "../lib/server-config.js";
 
-/**
- * Extends `PlatformOptions` because `bindOperation` reads `--api-key` /
- * `--api-url` from the `cloud` parent via `platformOptionsOf`. `--project`
- * stays on this leaf so account-scoped commands do not pretend to have one.
- */
 type SearchOptions = PlatformOptions & {
   project?: string;
   query?: string;
@@ -38,17 +35,6 @@ type SearchOptions = PlatformOptions & {
   cursor?: string;
 };
 
-/**
- * `--source` is comma-separated on the command line and an array on the wire.
- *
- * Three distinct inputs, three distinct answers: absent means "every surface",
- * a list of names means those names, and a value that parses to NOTHING
- * (`--source ,` or `--source " "`) is a mistake. Collapsing that last case into
- * `undefined` would silently widen a deliberately narrowed search to every
- * surface — the exact failure the API's unknown-`sourceType` 400 exists to
- * prevent, arriving through the CLI instead.
- */
-/** A search with no terms is not a search. See the call site. */
 function requireQuery(value: string | undefined): string {
   const trimmed = value?.trim() ?? "";
   if (trimmed.length === 0) {
@@ -71,11 +57,73 @@ function parseSources(value: string | undefined): string[] | undefined {
   return parsed;
 }
 
+function validateOpInput<TInput>(
+  op: PlatformOperation<TInput, unknown>,
+  raw: unknown
+): TInput {
+  const parsed = op.inputSchema.safeParse(raw);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+      .join("; ");
+    const error = new Error(`Invalid input: ${detail}`);
+    (error as { exitCode?: number }).exitCode = 2;
+    throw error;
+  }
+  return parsed.data;
+}
+
 export function registerSessionsCommands(program: Command): void {
   const sessions = program
     .command("sessions")
     .description(
-      "Search the conversations recorded in a project — Playground, user testing, evals and swarms in one place."
+      "List Playground chat sessions, or search conversations across Playground, user testing, evals and swarms."
+    );
+
+  sessions
+    .command("list")
+    .description(
+      "List Playground chat sessions, newest first (all accessible projects unless --project is given)"
+    )
+    .option("--project <id-or-name>", "Restrict to one project")
+    .option("--status <status>", "Filter by session status")
+    .option("--limit <n>", "Maximum sessions to return (1-200)", (value) =>
+      Number.parseInt(value, 10)
+    )
+    .action(
+      async (
+        options: PlatformOptions & {
+          project?: string;
+          status?: string;
+          limit?: number;
+        },
+        command
+      ) => {
+        const input = validateOpInput(listChatSessionsOperation, {
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(options.status === undefined ? {} : { status: options.status }),
+          ...(options.limit === undefined ? {} : { limit: options.limit }),
+        });
+        const globalOptions = getGlobalOptions(command);
+        const result = await runPlatformCommand(
+          platformOptionsOf(command),
+          globalOptions.timeout,
+          ({ client, signal }) =>
+            listChatSessionsOperation.execute(input, { client, signal }),
+          {
+            quiet: globalOptions.quiet,
+            cloudScope:
+              options.project !== undefined
+                ? {
+                    kind: "project",
+                    selector: options.project,
+                    source: "flag",
+                  }
+                : { kind: "all-projects" },
+          }
+        );
+        writeResult(result, globalOptions.format);
+      }
     );
 
   bindOperation(
@@ -103,15 +151,8 @@ export function registerSessionsCommands(program: Command): void {
     ),
     searchSessionsOperation,
     (options: SearchOptions) => ({
-      // `.requiredOption` guarantees the flag is PRESENT, not that it says
-      // anything — `--query ""` satisfies Commander. The operation rejects a
-      // blank query too (it is search-only), but failing here names the flag
-      // the user typed instead of reporting a validation error about `q`.
       query: requireQuery(options.query),
       project: options.project,
-      // Passed through unvalidated: the operation's schema owns the vocabulary
-      // for these, and re-listing the allowed values here would be a second
-      // place to update when one is added.
       scope: options.scope as "titles" | "transcripts" | undefined,
       sourceTypes: parseSources(options.source) as
         | ("direct" | "scenario" | "eval" | "swarm")[]

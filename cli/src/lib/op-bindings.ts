@@ -34,19 +34,19 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   update_project: { command: "cloud projects update" },
   delete_project: { command: "cloud projects delete" },
   list_project_servers: { command: "cloud projects servers" },
-  create_project_server: { command: "cloud projects server add" },
-  connect_project_server: { command: "cloud projects server connect" },
-  // Its OWN command, not `server connect`. `connect` does poll this operation
+  create_project_server: { command: "cloud projects servers add" },
+  connect_project_server: { command: "cloud projects servers connect" },
+  // Its OWN command, not `servers connect`. `connect` does poll this operation
   // while it waits, but `--no-wait` and Ctrl-C both hand back a request id, and
   // pointing the binding at `connect` claimed a command that could not follow
   // one — re-running `connect` starts a second request rather than reading the
   // first.
   get_project_server_connection_status: {
-    command: "cloud projects server connect-status",
+    command: "cloud projects servers connect-status",
   },
-  get_project_server: { command: "cloud projects server get" },
-  update_project_server: { command: "cloud projects server update" },
-  delete_project_server: { command: "cloud projects server remove" },
+  get_project_server: { command: "cloud projects servers get" },
+  update_project_server: { command: "cloud projects servers update" },
+  delete_project_server: { command: "cloud projects servers remove" },
   show_servers: { command: "cloud projects status" },
 
   // ── Journeys (the Swarms product) ───────────────────────────────────────
@@ -91,10 +91,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   archive_swarm: { command: "cloud swarms archive" },
 
   // ── Capabilities ────────────────────────────────────────────────────────
-  // Top-level rather than nested: the answer spans Swarms, user testing and
-  // the plan, so filing it under one of them would suggest it only describes
-  // that one.
-  get_capabilities: { command: "cloud capabilities" },
+  // Nested under projects: the answer is project-scoped (role, org betas,
+  // plan limits) even though it spans Swarms, user testing, and the plan.
+  get_capabilities: { command: "cloud projects capabilities" },
 
   // ── Scenarios (user testing) ────────────────────────────────────────────
   // Publishing and taking down. The reads (`scenarios list` / `scenarios get`)
@@ -207,7 +206,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // ── Chat surfaces ───────────────────────────────────────────────────────
   list_scenarios: { command: "cloud scenarios list" },
   get_scenario: { command: "cloud scenarios get" },
-  list_chat_sessions: { command: "cloud chat-sessions list" },
+  list_chat_sessions: { command: "cloud sessions list" },
   search_sessions: { command: "cloud sessions search" },
 
   // ── Tunnels ─────────────────────────────────────────────────────────────
