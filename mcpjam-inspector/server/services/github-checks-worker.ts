@@ -1169,14 +1169,17 @@ async function defaultRunConformance(args: {
   candidateId: string;
   onRunStarted?: (runId: string) => Promise<void>;
 }): Promise<{ runId: string }> {
-  const suites = (args.claimed.conformanceSuiteKinds ?? [
+  // The configured snapshot is passed through INTACT, `oauth` included. The
+  // backend refuses to configure OAuth for a check, but a row written before
+  // that refusal existed must not be quietly narrowed here: dropping a
+  // configured suite greens a check that never examined it. The executor
+  // records an OAuth the App cannot perform as an explicit incomplete, which
+  // is a non-green verdict and an honest one.
+  const suites = args.claimed.conformanceSuiteKinds ?? [
     "protocol",
     "apps",
     "tasks",
-  ]).filter(
-    (kind): kind is "protocol" | "apps" | "tasks" =>
-      kind === "protocol" || kind === "apps" || kind === "tasks"
-  );
+  ];
   const target = args.claimed.repoConfigId
     ? {
         kind: "github_repo" as const,

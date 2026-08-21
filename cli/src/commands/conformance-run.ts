@@ -136,10 +136,10 @@ export function registerConformanceRunCommand(program: Command): void {
       const serverUrl = String(server.url);
       try {
         const uploaded = options.requireUpload
-          ? await reportConformanceRun(report, { serverUrl, source: "cli" })
+          ? await reportConformanceRun(report, { serverUrl, defaultSource: "cli" })
           : await reportConformanceRunSafely(report, {
               serverUrl,
-              source: "cli",
+              defaultSource: "cli",
             });
         if (uploaded?.runUrl && !command.optsWithGlobals().quiet) {
           process.stderr.write(`Uploaded: ${uploaded.runUrl}\n`);

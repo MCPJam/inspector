@@ -1,6 +1,5 @@
 import {
   buildConformanceRunReport,
-  isConformanceReportingConfigured,
   reportConformanceRun,
   reportConformanceRunSafely,
   toConformanceReport,
@@ -30,10 +29,13 @@ export async function maybeUploadSingleSuite(args: {
   requireUpload?: boolean;
   command: Command;
 }): Promise<void> {
-  const shouldUpload =
-    args.upload === true ||
-    args.requireUpload === true ||
-    isConformanceReportingConfigured();
+  // EXPLICIT ONLY. These commands were local-only before this feature existed,
+  // and having an API key exported is not a decision to publish: someone with
+  // MCPJAM_API_KEY in their shell running `mcpjam mcp protocol conformance`
+  // against a staging server has not asked for that result to land in a
+  // project's shared history. `mcpjam conformance run` is the command that
+  // treats configured reporting as consent.
+  const shouldUpload = args.upload === true || args.requireUpload === true;
   if (!shouldUpload) return;
 
   const suiteReport =
@@ -47,11 +49,11 @@ export async function maybeUploadSingleSuite(args: {
     const uploaded = args.requireUpload
       ? await reportConformanceRun(report, {
           serverUrl: args.serverUrl,
-          source: "cli",
+          defaultSource: "cli",
         })
       : await reportConformanceRunSafely(report, {
           serverUrl: args.serverUrl,
-          source: "cli",
+          defaultSource: "cli",
         });
     if (uploaded?.runUrl && !args.command.optsWithGlobals().quiet) {
       process.stderr.write(`Uploaded: ${uploaded.runUrl}\n`);

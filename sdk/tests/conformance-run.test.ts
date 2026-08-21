@@ -115,6 +115,58 @@ describe("conformance run reporter", () => {
     expect(isConformanceReportingConfigured({ apiKey: "sk_test" })).toBe(true);
   });
 
+  it("files a CLI run inside GitHub Actions as CI, with a re-run-stable id", async () => {
+    // `defaultSource` is the caller naming ITSELF. The environment still wins,
+    // or a CLI invocation from a workflow would upload as a plain local run:
+    // wrong source facet, and — because the idempotent external run id is
+    // derived only for CI — a duplicate history row on every re-run.
+    process.env.GITHUB_ACTIONS = "true";
+    process.env.GITHUB_RUN_ID = "42";
+    process.env.GITHUB_RUN_ATTEMPT = "2";
+    process.env.GITHUB_JOB = "conformance";
+    process.env.GITHUB_REPOSITORY = "MCPJam/inspector";
+
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, runId: "run_ci" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      })
+    );
+    global.fetch = fetchMock as never;
+
+    const { startConformanceRun } = await import(
+      "../src/report-conformance-run.js"
+    );
+    await startConformanceRun(
+      { requestedSuites: ["protocol"] },
+      {
+        apiKey: "sk_test",
+        baseUrl: "https://app.example",
+        defaultSource: "cli",
+      }
+    );
+    const body = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(body.source).toBe("github_action");
+    expect(body.externalRunId).toBe("gha:42:conformance:2");
+    expect(body.ci?.repository).toBe("MCPJam/inspector");
+
+    // Outside CI the same call files as the CLI, not as a bare SDK run.
+    delete process.env.GITHUB_ACTIONS;
+    delete process.env.GITHUB_RUN_ID;
+    fetchMock.mockClear();
+    await startConformanceRun(
+      { requestedSuites: ["protocol"] },
+      {
+        apiKey: "sk_test",
+        baseUrl: "https://app.example",
+        defaultSource: "cli",
+      }
+    );
+    const localBody = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+    expect(localBody.source).toBe("cli");
+    expect(localBody.externalRunId).toBeUndefined();
+  });
+
   it("uploads start/report/finalize and does not change a safe-path failure into a throw", async () => {
     process.env.MCPJAM_API_KEY = "sk_test";
     const fetchMock = vi

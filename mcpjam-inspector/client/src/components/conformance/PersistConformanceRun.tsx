@@ -142,7 +142,15 @@ export function PersistConformanceRun({
   const runIdRef = useRef<string | null>(null);
   const uploadedRef = useRef<Set<string>>(new Set());
   const pendingUploadsRef = useRef<Map<string, Promise<unknown>>>(new Map());
-  const startingRef = useRef(false);
+  /**
+   * The `runVersion` a run was already created for. Keyed by the run attempt
+   * itself rather than by "a start is in flight", so neither a StrictMode
+   * double-mount nor a re-render that merely changes the `server` object's
+   * identity can open a second Convex run for one click of Run — the extra
+   * row would sit unfinalized until the sweep timed it out, littering the
+   * history with runs the user never started.
+   */
+  const startedVersionRef = useRef(0);
   const finalizedRef = useRef(false);
   const finalizationScheduledRef = useRef(false);
 
@@ -153,8 +161,8 @@ export function PersistConformanceRun({
 
   useEffect(() => {
     if (runVersion === 0) return;
-    if (startingRef.current) return;
-    startingRef.current = true;
+    if (startedVersionRef.current === runVersion) return;
+    startedVersionRef.current = runVersion;
     runIdRef.current = null;
     setRunId(null);
     uploadedRef.current = new Set();
@@ -187,9 +195,6 @@ export function PersistConformanceRun({
       })
       .catch(() => {
         // Persistence is best-effort for the live panel; the suites still run.
-      })
-      .finally(() => {
-        startingRef.current = false;
       });
   }, [persist.projectId, persist.serverId, runVersion, server, startRun]);
 
@@ -261,13 +266,19 @@ export function PersistConformanceRun({
     maybeUpload("oauth", oauth);
   }, [apps, oauth, protocol, tasks, upsertReport, runId]);
 
+  // A run parked on the consent screen is ALIVE. `isRunning` is false there —
+  // no suite is executing — so heartbeating on it alone lets the backend sweep
+  // declare the pause abandoned while the user is still authorizing.
+  const awaitingAuthorization =
+    oauth.status === "needs-authorization" || oauth.waitingForAuth === true;
+
   useEffect(() => {
-    if (!runId || !isRunning) return;
+    if (!runId || (!isRunning && !awaitingAuthorization)) return;
     const timer = window.setInterval(() => {
       void heartbeat({ runId });
     }, HEARTBEAT_MS);
     return () => window.clearInterval(timer);
-  }, [heartbeat, isRunning, runId]);
+  }, [awaitingAuthorization, heartbeat, isRunning, runId]);
 
   useEffect(() => {
     if (!runId || isRunning || runVersion === 0 || finalizedRef.current) return;

@@ -64,3 +64,33 @@ test("conformance run rejects an unknown suite", () => {
       error instanceof CliError && error.message.includes("Unknown suite"),
   );
 });
+
+test("a single-suite command does not publish just because a key is exported", async () => {
+  // These commands were local-only before conformance history existed, and an
+  // exported MCPJAM_API_KEY is not a decision to publish a staging result into
+  // a project's shared history. Only an explicit flag is.
+  const { maybeUploadSingleSuite } = await import(
+    "../src/lib/conformance-upload.js"
+  );
+  const originalKey = process.env.MCPJAM_API_KEY;
+  const originalFetch = globalThis.fetch;
+  let called = false;
+  process.env.MCPJAM_API_KEY = "sk_test";
+  globalThis.fetch = (async () => {
+    called = true;
+    return new Response("{}", { status: 200 });
+  }) as typeof globalThis.fetch;
+  try {
+    await maybeUploadSingleSuite({
+      suiteKind: "protocol",
+      result: { passed: true, outcome: "passed", checks: [] },
+      serverUrl: "https://mcp.example/mcp",
+      command: new Command(),
+    });
+    assert.equal(called, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.MCPJAM_API_KEY;
+    else process.env.MCPJAM_API_KEY = originalKey;
+  }
+});

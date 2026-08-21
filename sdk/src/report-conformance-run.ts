@@ -41,7 +41,19 @@ export type ReportConformanceRunOptions = {
   apiKey?: string;
   baseUrl?: string;
   project?: string;
+  /**
+   * Force the source. Overrides CI detection — pass it only when the caller
+   * genuinely knows better than the environment does.
+   */
   source?: ConformanceRunSource;
+  /**
+   * What to file as when the environment says nothing. A caller that is
+   * merely naming ITSELF (the CLI saying "cli") wants this, not `source`:
+   * running that same CLI inside GitHub Actions should still be recorded as
+   * `github_action`, which is what carries the CI identity and the
+   * re-run-idempotent external run id.
+   */
+  defaultSource?: ConformanceRunSource;
   target?: ConformanceTargetInput;
   serverUrl?: string;
   serverRef?: string;
@@ -103,7 +115,7 @@ function detectSource(
   ) {
     return "github_action";
   }
-  return "sdk";
+  return options.defaultSource ?? "sdk";
 }
 
 async function postJson(
