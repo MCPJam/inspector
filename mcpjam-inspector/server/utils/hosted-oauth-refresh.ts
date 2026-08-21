@@ -93,14 +93,15 @@ function parseRefreshMaterial(
  * cache hit as a guess: `cachedMaterialFallback` below is what keeps a stale
  * guess from being reported as a dead credential.
  *
- * Keyed by SUBJECT as well as project and server. The credential the backend
- * resolves is `(userId, projectId, serverId)`, and the same self-hosted
- * deployment this comment already contemplates serves more than one user from
- * one process — so a `projectId:serverId` key would let one user's refresh be
- * served from another's cached refresh token, and `importRefreshedTokens`
- * would then write the rotated result into the caller's credential. The
- * bearer is hashed, never stored: a rotated bearer simply misses and falls
- * back to the backend, which is the safe direction.
+ * Keyed by SUBJECT as well as project and server. NOT because one process
+ * serves several users concurrently — a non-hosted process binds to 127.0.0.1
+ * and only serves its session token to localhost. Because one process outlives
+ * one signed-in user: sign out, sign in as someone else with access to the
+ * same project, and a `projectId:serverId` key hands the second user the
+ * first's cached refresh token, after which `importRefreshedTokens` writes the
+ * rotated result into the second user's credential. The bearer is hashed,
+ * never stored: a rotated bearer simply misses and falls back to the backend,
+ * which is the safe direction.
  */
 const privateAuthorizationServerMaterialCache = new Map<
   string,

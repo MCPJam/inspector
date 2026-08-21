@@ -858,11 +858,12 @@ describe("private authorization server fallback", () => {
   });
 
   it("does not serve one subject's cached material to another", async () => {
-    // GUARDRAIL. The credential is (userId, projectId, serverId); a self-hosted
-    // non-hosted-mode deployment serves many users from one process. On a
-    // subject-less key, user B's rate-limited refresh was answered with user
-    // A's refresh token — and importRefreshedTokens then wrote A's rotated
-    // token into B's credential.
+    // GUARDRAIL. The credential is (userId, projectId, serverId), and one
+    // local process outlives one signed-in user — sign out, sign in as someone
+    // else with access to the same project. On a subject-less key the second
+    // user's rate-limited refresh was answered with the first's refresh token,
+    // and importRefreshedTokens then wrote the rotated result into the second
+    // user's credential.
     let call = 0;
     vi.stubGlobal(
       "fetch",
