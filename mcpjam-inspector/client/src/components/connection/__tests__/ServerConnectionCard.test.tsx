@@ -164,6 +164,114 @@ describe("ServerConnectionCard", () => {
       expect(onMoveToProject).toHaveBeenCalledWith("test-server", "project-2");
     });
 
+    /**
+     * "Add to org registry" is the promote door. Its eligibility rules are
+     * the interesting part: an org entry carries an ADDRESS and an auth
+     * posture and nothing else, so a stdio server has nothing to share and a
+     * header-authed one has something that cannot be shared.
+     */
+    describe("add to org registry", () => {
+      const remoteServer = () =>
+        createServer({
+          name: "remote-server",
+          config: { url: "https://mcp.example.com/mcp" },
+        });
+
+      const openMenu = async (name: string) => {
+        fireEvent.pointerDown(
+          screen.getByRole("button", {
+            name: `Open actions menu for ${name}`,
+          }),
+          { button: 0, ctrlKey: false }
+        );
+        return await screen.findByText("Add to org registry");
+      };
+
+      it("offers a remote HTTP server to the organization", async () => {
+        const onShareToOrgRegistry = vi.fn();
+        const server = remoteServer();
+        render(
+          <ServerConnectionCard
+            server={server}
+            {...defaultProps}
+            onShareToOrgRegistry={onShareToOrgRegistry}
+          />
+        );
+
+        fireEvent.click(await openMenu("remote-server"));
+
+        expect(onShareToOrgRegistry).toHaveBeenCalledWith(server);
+      });
+
+      it("hides the action for a stdio server — there is no address to share", () => {
+        render(
+          <ServerConnectionCard
+            server={createServer()}
+            {...defaultProps}
+            onShareToOrgRegistry={vi.fn()}
+          />
+        );
+
+        fireEvent.pointerDown(
+          screen.getByRole("button", {
+            name: "Open actions menu for test-server",
+          }),
+          { button: 0, ctrlKey: false }
+        );
+
+        expect(screen.queryByText("Add to org registry")).toBeNull();
+      });
+
+      it.each([
+        ["custom headers", { hasHeaders: true }],
+        ["a bearer token", { hasBearerToken: true }],
+      ])(
+        "refuses a server authed with %s, and says why",
+        async (_label, credentialFlags) => {
+          const onShareToOrgRegistry = vi.fn();
+          render(
+            <ServerConnectionCard
+              server={createServer({
+                name: "remote-server",
+                config: { url: "https://mcp.example.com/mcp" },
+                ...credentialFlags,
+              })}
+              {...defaultProps}
+              onShareToOrgRegistry={onShareToOrgRegistry}
+            />
+          );
+
+          fireEvent.click(await openMenu("remote-server"));
+
+          // Shown then refused, rather than hidden: "where did the option go?"
+          // is a worse answer than a sentence saying why.
+          expect(onShareToOrgRegistry).not.toHaveBeenCalled();
+          // The app's toast wrapper renders the message inside a copyable
+          // element, so the assertion reads the element's text rather than
+          // the first argument.
+          const [rendered] = vi.mocked(toast.error).mock.calls[0] as [
+            { props?: { text?: string } }
+          ];
+          expect(rendered?.props?.text).toContain("can't be shared");
+        }
+      );
+
+      it("hides the action entirely when the caller cannot add", () => {
+        render(
+          <ServerConnectionCard server={remoteServer()} {...defaultProps} />
+        );
+
+        fireEvent.pointerDown(
+          screen.getByRole("button", {
+            name: "Open actions menu for remote-server",
+          }),
+          { button: 0, ctrlKey: false }
+        );
+
+        expect(screen.queryByText("Add to org registry")).toBeNull();
+      });
+    });
+
     it("hides the move action when there are no target projects", () => {
       render(
         <ServerConnectionCard
@@ -253,7 +361,7 @@ describe("ServerConnectionCard", () => {
 
       expect(screen.getByText("Authorizing in browser...")).toBeInTheDocument();
       expect(
-        screen.queryByText(/Complete sign-in in the browser/),
+        screen.queryByText(/Complete sign-in in the browser/)
       ).not.toBeInTheDocument();
     });
 
@@ -1076,7 +1184,7 @@ describe("ServerConnectionCard", () => {
 describe("ServerConnectionCard — protocol version pin", () => {
   const failedServer = (
     slug: string,
-    message = "MCP server \"acme\" doesn't support MCP protocol version 2026-07-28, which this client is pinned to.",
+    message = 'MCP server "acme" doesn\'t support MCP protocol version 2026-07-28, which this client is pinned to.'
   ): ServerWithName => ({
     name: "acme",
     lastConnectionTime: new Date(),
@@ -1114,11 +1222,11 @@ describe("ServerConnectionCard — protocol version pin", () => {
         server={failedServer("sdk/protocol_version_pin_unsupported")}
         projectId="proj_1"
         {...props}
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: /change protocol version/i }),
+      screen.getByRole("button", { name: /change protocol version/i })
     ).toBeInTheDocument();
   });
 
@@ -1129,15 +1237,15 @@ describe("ServerConnectionCard — protocol version pin", () => {
       <ServerConnectionCard
         server={failedServer(
           "transport/econnrefused",
-          "connect ECONNREFUSED 127.0.0.1:8080",
+          "connect ECONNREFUSED 127.0.0.1:8080"
         )}
         projectId="proj_1"
         {...props}
-      />,
+      />
     );
 
     expect(
-      screen.queryByRole("button", { name: /change protocol version/i }),
+      screen.queryByRole("button", { name: /change protocol version/i })
     ).not.toBeInTheDocument();
   });
 
@@ -1151,11 +1259,11 @@ describe("ServerConnectionCard — protocol version pin", () => {
         server={failedServer("transport/fetch_failed")}
         projectId="proj_1"
         {...props}
-      />,
+      />
     );
 
     expect(
-      screen.getByRole("button", { name: /change protocol version/i }),
+      screen.getByRole("button", { name: /change protocol version/i })
     ).toBeInTheDocument();
   });
 });
