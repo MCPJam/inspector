@@ -132,10 +132,48 @@ function validateOptionalStringRecord(value: unknown, label: string): void {
   }
 }
 
+/**
+ * Fixtures name primitives the operator says are SAFE TO EXECUTE, so the
+ * validation is deliberately strict about the NAMES and permissive about the
+ * arguments (arbitrary JSON by definition). A misspelled key would otherwise
+ * yield an empty fixture set, and the fixture-gated checks would skip — which
+ * an operator reads as "my server does not support this" rather than "my config
+ * has a typo".
+ */
+function validateFixtures(value: unknown, label: string): void {
+  if (value === undefined) {
+    return;
+  }
+  assertObject(value, label);
+  const fixtures = value as JsonObject;
+
+  for (const [key, nameField] of [
+    ["toolCalls", "toolName"],
+    ["promptGets", "promptName"],
+  ] as const) {
+    const entries = fixtures[key];
+    if (entries === undefined) continue;
+    if (!Array.isArray(entries)) {
+      throw usageError(`${label}.${key} must be an array`);
+    }
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      assertObject(entry, `${label}.${key}[${index}]`);
+      const name = (entry as JsonObject)[nameField];
+      if (typeof name !== "string" || name.trim() === "") {
+        throw usageError(
+          `${label}.${key}[${index}].${nameField} must be a non-empty string`,
+        );
+      }
+    }
+  }
+}
+
 function validateProtocolRun(run: JsonObject, label: string): void {
   validateOptionalString(run.label, `${label}.label`);
   validateEnumArray(run.categories, MCP_CHECK_CATEGORIES, `${label}.categories`);
   validateEnumArray(run.checkIds, MCP_CHECK_IDS, `${label}.checkIds`);
+  validateFixtures(run.fixtures, `${label}.fixtures`);
   if (run.protocolVersion !== undefined) {
     if (
       typeof run.protocolVersion !== "string" ||

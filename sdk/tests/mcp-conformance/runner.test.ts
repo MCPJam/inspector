@@ -66,13 +66,14 @@ describe("MCPConformanceTest", () => {
           "modern-header-names-case-insensitive",
           "modern-missing-method-header-rejected",
           "modern-resource-read-no-empty-contents",
+          "modern-tool-output-schema-conformant",
           "wire-schema-valid",
         ],
       });
       // The digest is stamped only because the schema pass actually ran.
       expect(result.profile?.schemaDigest).toMatch(/^[0-9a-f]{64}$/);
       const score = scoreFromProtocolResult(result);
-      expect(score.pending).toBe(7);
+      expect(score.pending).toBe(8);
       // Every legacy-applicable check EXCEPT the pending one is in the
       // denominator; the modern-only checks era-skipped out of it, which is the
       // pre-existing behavior this must not disturb.

@@ -49,6 +49,7 @@ describe("conformance profile manifest", () => {
       "modern-header-names-case-insensitive",
       "modern-missing-method-header-rejected",
       "modern-resource-read-no-empty-contents",
+      "modern-tool-output-schema-conformant",
       "wire-schema-valid",
     ]);
   });

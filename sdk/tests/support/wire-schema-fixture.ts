@@ -11,6 +11,7 @@
 
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { readJsonRpcBody } from "./json-rpc-fixture.js";
 
 export interface WireFixtureOptions {
   /** Drop `ttlMs` and `cacheScope` from list results (the hubspot shape). */
@@ -73,24 +74,9 @@ export async function serveWireFixture(
       res.writeHead(405).end();
       return;
     }
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
-      let parsed: { id?: unknown; method?: unknown } = {};
-      try {
-        parsed = JSON.parse(body);
-      } catch {
-        // A parse failure genuinely leaves no id to echo — the one case where
-        // `id: null` is what JSON-RPC 2.0 requires.
-        res.writeHead(400, { "Content-Type": "application/json" }).end(
-          JSON.stringify({
-            jsonrpc: "2.0",
-            id: null,
-            error: { code: -32700, message: "Parse error" },
-          }),
-        );
-        return;
-      }
+    void (async () => {
+      const parsed = await readJsonRpcBody(req, res);
+      if (!parsed) return;
 
       const method = String(parsed.method ?? "");
       const id = options.nullEnvelopeId ? null : (parsed.id ?? null);
@@ -110,7 +96,7 @@ export async function serveWireFixture(
       res
         .writeHead(200, { "Content-Type": "application/json" })
         .end(JSON.stringify({ jsonrpc: "2.0", id, result }));
-    });
+    })();
   });
 
   await new Promise<void>((resolve) =>

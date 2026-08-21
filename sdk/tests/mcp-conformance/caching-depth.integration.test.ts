@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { readJsonRpcBody, requestId } from "../support/json-rpc-fixture.js";
 import {
   MCPConformanceTest,
   type MCPCheckId,
@@ -47,33 +48,14 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
   };
 
   const server = http.createServer((req, res) => {
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
-      // The readiness lane deliberately POSTs an unparseable body. Letting
-      // that throw here kills the handler and every probe after it hangs to
-      // its timeout, which is a fixture bug that reads as a product one.
-      let parsed: {
-        id?: unknown;
-        method?: string;
-        params?: { uri?: string; cursor?: string };
-      };
-      try {
-        parsed = JSON.parse(body);
-      } catch {
-        res
-          .writeHead(400, { "Content-Type": "application/json" })
-          .end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              id: null,
-              error: { code: -32700, message: "Parse error" },
-            }),
-          );
-        return;
-      }
-      const id = (parsed.id as string | number | null) ?? null;
+    void (async () => {
+      const parsed = await readJsonRpcBody(req, res);
+      if (!parsed) return;
+      const id = requestId(parsed);
       const method = parsed.method ?? "";
+      const params = parsed.params as
+        | { uri?: string; cursor?: string }
+        | undefined;
       const send = (payload: unknown, status = 200) =>
         res
           .writeHead(status, { "Content-Type": "application/json" })
@@ -93,7 +75,7 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
           });
         case "tools/list": {
           if (options.toolsPageScopes) {
-            const page = parsed.params?.cursor === "p2" ? 1 : 0;
+            const page = params?.cursor === "p2" ? 1 : 0;
             return send({
               jsonrpc: "2.0",
               id,
@@ -117,7 +99,7 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
         case "resources/templates/list":
           return ok({ resourceTemplates: [] });
         case "resources/read": {
-          const uri = parsed.params?.uri ?? "";
+          const uri = params?.uri ?? "";
           if (uri === LISTED_RESOURCE) {
             return ok({
               contents: [{ uri, mimeType: "text/plain", text: "hello" }],
@@ -146,7 +128,7 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
             404,
           );
       }
-    });
+    })();
   });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

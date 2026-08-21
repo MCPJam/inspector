@@ -1026,6 +1026,7 @@ export {
 export type {
   ConformanceSuiteId,
   ConformanceSupport,
+  MCPConformanceFixtures,
 } from "./mcp-conformance/index.js";
 // Wire-schema validation: the run-wide message record and the validator that
 // grades it against the revision's published JSON Schema. Node-only (Ajv),

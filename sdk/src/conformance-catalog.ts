@@ -205,6 +205,11 @@ export const PROTOCOL_CHECK_CATALOG = {
     description:
       "Reading a non-existent resource never answers with an empty contents array, which cannot be told apart from an existing but empty resource.",
   },
+  "modern-tool-output-schema-conformant": {
+    title: "Tool Output Schema Honored",
+    description:
+      "For every operator-supplied fixture call whose tool declares an outputSchema, the result's structuredContent validates against that schema.",
+  },
   "modern-logs-require-log-level": {
     title: "Logs Require A Log Level",
     description:

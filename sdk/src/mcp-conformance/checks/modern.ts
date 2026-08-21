@@ -57,6 +57,7 @@ import {
   type RawHttpResult,
 } from "../raw-http.js";
 import { scanXMcpHeaderDeclarations } from "../../mcp-client-manager/mcp-header-mirror.js";
+import { DialectAwareJsonSchemaValidator } from "../../mcp-client-manager/dialect-aware-json-schema-validator.js";
 import {
   filterRequests,
   isSubscriptionNotificationMethod,
@@ -242,6 +243,13 @@ const MODERN_CHECK_METADATA = {
     title: "No Empty Contents For A Missing Resource",
     description:
       "Reading a non-existent resource never answers with an empty contents array, which cannot be told apart from an existing but empty resource.",
+  },
+  "modern-tool-output-schema-conformant": {
+    id: "modern-tool-output-schema-conformant",
+    category: "tools",
+    title: "Tool Output Schema Honored",
+    description:
+      "For every operator-supplied fixture call whose tool declares an outputSchema, the result's structuredContent validates against that schema.",
   },
   "modern-removed-methods-not-found": {
     id: "modern-removed-methods-not-found",
@@ -1437,6 +1445,238 @@ function alternatingCase(name: string): string {
     .join("");
 }
 
+/**
+ * "If an output schema is provided: Servers **MUST** provide structured results
+ * that conform to this schema."
+ *
+ * FIXTURE-GATED, and unavoidably so. The obligation binds a value the server
+ * only produces by EXECUTING the tool, and nothing in a tool's advertised
+ * metadata says whether executing it is safe — a run that guessed would
+ * eventually charge a card or delete a row on somebody's production server. So
+ * the operator names the calls that are safe, and without them the check
+ * reports a skip that says exactly what it needs.
+ *
+ * The declared schema is validated with the same dialect-aware validator the
+ * MCP client uses for tool inputs, so a tool declaring draft-07 (which
+ * `zod-to-json-schema` emits by default) is judged under draft-07 rather than
+ * rejected for not being 2020-12.
+ */
+async function runToolOutputSchemaCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-tool-output-schema-conformant"];
+  const startedAt = Date.now();
+  const fixtures = ctx.config.fixtures.toolCalls;
+
+  if (fixtures.length === 0) {
+    return couldNotRunResult(
+      meta,
+      "No tools/call fixtures configured: set fixtures.toolCalls to tools that are safe to execute so the declared outputSchema can be checked against a real result"
+    );
+  }
+
+  const capabilities = advertisedCapabilities(await discoverOnce(ctx, state));
+  if (capabilities.tools === undefined) {
+    return notApplicableResult(
+      meta,
+      "Server does not advertise the tools capability"
+    );
+  }
+
+  const declared = await toolOutputSchemas(ctx, state);
+  const validator = new DialectAwareJsonSchemaValidator({
+    // The default handler console.warns per unknown dialect. A conformance run
+    // reports, it does not print.
+    onUnknownDialect: () => undefined,
+  });
+
+  const problems: string[] = [];
+  const graded: Array<{ tool: string; outcome: string }> = [];
+  let id = 7950;
+
+  for (const fixture of fixtures) {
+    const outputSchema = declared.get(fixture.toolName);
+    const result = await track(
+      state,
+      modernProbe(ctx, {
+        id: id++,
+        method: "tools/call",
+        params: {
+          name: fixture.toolName,
+          arguments: fixture.arguments ?? {},
+        },
+        name: fixture.toolName,
+      })
+    );
+
+    if (outputSchema === undefined) {
+      // Still worth calling: the frame reaches the run-wide wire record, so
+      // `wire-schema-valid` grades it against `CallToolResult` — a result shape
+      // an unfixtured run never observes at all.
+      graded.push({
+        tool: fixture.toolName,
+        outcome: "no outputSchema declared; nothing to validate against",
+      });
+      continue;
+    }
+
+    const payload = jsonRpcResult(result);
+    if (!payload) {
+      const error = jsonRpcError(result);
+      problems.push(
+        `${fixture.toolName} returned no result to validate (HTTP ${result.status}${
+          error ? `, JSON-RPC ${error.code}: ${error.message}` : ""
+        })`
+      );
+      continue;
+    }
+    // An `isError: true` result reports a TOOL failure, which is a normal
+    // outcome the server is entitled to return — and the spec's own example of
+    // one carries no `structuredContent`. Grading it against the output schema
+    // would fail servers for correctly reporting that the weather API was down.
+    if (payload.isError === true) {
+      graded.push({
+        tool: fixture.toolName,
+        outcome: "tool reported isError: true; output schema does not bind",
+      });
+      continue;
+    }
+
+    const structured = payload.structuredContent;
+    if (structured === undefined) {
+      problems.push(
+        `${fixture.toolName} declares an outputSchema but returned no structuredContent`
+      );
+      continue;
+    }
+
+    const validate = validator.getValidator(
+      outputSchema as Parameters<typeof validator.getValidator>[0]
+    );
+    const outcome = validate(structured);
+    if (!outcome.valid) {
+      problems.push(
+        `${fixture.toolName} structuredContent does not conform to its declared outputSchema: ${
+          outcome.errorMessage ?? "validation failed"
+        }`
+      );
+      continue;
+    }
+    graded.push({ tool: fixture.toolName, outcome: "structuredContent conforms" });
+  }
+
+  const withSchema = graded.filter((entry) =>
+    entry.outcome.startsWith("structuredContent")
+  ).length;
+  const details = { graded, problems, fixtureCount: fixtures.length };
+
+  if (problems.length > 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      `Tool results do not honor their declared output schemas: ${problems.join("; ")}`,
+      details
+    );
+  }
+
+  if (withSchema === 0) {
+    // Every fixture ran and nothing was ever BOUND by an output schema —
+    // because none declared one, or because the ones that did reported
+    // `isError: true`, which the schema does not bind. A pass would claim the
+    // MUST was established when it was never exercised.
+    return couldNotRunResult(
+      meta,
+      `None of the ${fixtures.length} configured tool fixture(s) produced a result bound by a declared outputSchema, so the requirement was never exercised (${graded
+        .map((entry) => `${entry.tool}: ${entry.outcome}`)
+        .join("; ")}). Their results still widened the wire-schema coverage.`,
+      details
+    );
+  }
+
+  return passedResult(meta, Date.now() - startedAt, details);
+}
+
+/**
+ * Tool name → declared `outputSchema`, read from the client phase's snapshot
+ * when there was one and otherwise from a raw `tools/list` walk. The raw
+ * fallback matters: a raw-only check selection opens no client session, and a
+ * check that only worked inside a full run would be untestable on its own.
+ */
+async function toolOutputSchemas(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<Map<string, unknown>> {
+  const schemas = new Map<string, unknown>();
+  for (const tool of ctx.surface?.tools ?? []) {
+    const outputSchema = (tool as { outputSchema?: unknown }).outputSchema;
+    if (outputSchema !== undefined) schemas.set(tool.name, outputSchema);
+  }
+  if (schemas.size > 0 || (ctx.surface?.tools.length ?? 0) > 0) {
+    return schemas;
+  }
+
+  const walk = await walkToolsList({
+    startId: 7960,
+    request: ({ id, cursor }) =>
+      track(
+        state,
+        modernProbe(ctx, {
+          id,
+          method: "tools/list",
+          ...(cursor !== undefined ? { params: { cursor } } : {}),
+        })
+      ),
+  });
+  for (const entry of walk.tools) {
+    if (typeof entry.name === "string" && entry.outputSchema !== undefined) {
+      schemas.set(entry.name, entry.outputSchema);
+    }
+  }
+  return schemas;
+}
+
+/**
+ * Render the operator's `prompts/get` fixtures. This asserts nothing on its
+ * own — every structural requirement on a `GetPromptResult` is stated by the
+ * revision's JSON Schema, and `wire-schema-valid` already grades that. What it
+ * does is make the frame EXIST: an unfixtured run never issues a `prompts/get`
+ * with real arguments, so `GetPromptResult` is a shape our conformance path has
+ * never once looked at. Driving it through the raw harness puts it in the
+ * run-wide wire record, where the schema check picks it up.
+ */
+export async function drivePromptFixtures(
+  ctx: RawHttpCheckContext
+): Promise<number> {
+  const fixtures = ctx.config.fixtures.promptGets;
+  if (fixtures.length === 0 || ctx.config.era !== "modern") return 0;
+
+  // Its own discover rather than the modern track's shared one: this is driven
+  // by the wire-schema check, which runs after the modern track has finished
+  // (and may not have run at all — a run can select the schema check alone).
+  const discover = await modernProbe(ctx, {
+    id: 7969,
+    method: "server/discover",
+  });
+  if (advertisedCapabilities(discover).prompts === undefined) return 0;
+
+  let id = 7970;
+  let driven = 0;
+  for (const fixture of fixtures) {
+    await modernProbe(ctx, {
+      id: id++,
+      method: "prompts/get",
+      params: {
+        name: fixture.promptName,
+        ...(fixture.arguments ? { arguments: fixture.arguments } : {}),
+      },
+      name: fixture.promptName,
+    });
+    driven += 1;
+  }
+  return driven;
+}
+
 async function runRemovedMethodsCheck(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -2108,6 +2348,8 @@ async function runModernCheck(
       return await runResourceNotFoundCheck(ctx, state);
     case "modern-resource-read-no-empty-contents":
       return await runResourceEmptyContentsCheck(ctx, state);
+    case "modern-tool-output-schema-conformant":
+      return await runToolOutputSchemaCheck(ctx, state);
     case "modern-logs-require-log-level":
       return await runLogLevelCheck(ctx, state);
     case "modern-no-session-id":

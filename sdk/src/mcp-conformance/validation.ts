@@ -94,6 +94,40 @@ function normalizeToolProbe(
   return { toolName, arguments: probe.arguments };
 }
 
+/**
+ * Normalize the operator's safe-to-execute fixtures.
+ *
+ * Names are trimmed and empty ones REJECTED rather than dropped: a fixture that
+ * silently vanishes turns a fixture-gated check into a skip, and the operator
+ * would read that as "the server does not support this" instead of "your config
+ * has a typo".
+ */
+function normalizeFixtures(
+  fixtures: MCPConformanceConfig["fixtures"],
+): NormalizedMCPConformanceConfig["fixtures"] {
+  const toolCalls = (fixtures?.toolCalls ?? []).map((entry, index) => {
+    const toolName = entry.toolName?.trim();
+    if (!toolName) {
+      throw new Error(
+        `MCP conformance fixtures.toolCalls[${index}] requires a non-empty toolName`,
+      );
+    }
+    return { toolName, arguments: entry.arguments };
+  });
+
+  const promptGets = (fixtures?.promptGets ?? []).map((entry, index) => {
+    const promptName = entry.promptName?.trim();
+    if (!promptName) {
+      throw new Error(
+        `MCP conformance fixtures.promptGets[${index}] requires a non-empty promptName`,
+      );
+    }
+    return { promptName, arguments: entry.arguments };
+  });
+
+  return { toolCalls, promptGets };
+}
+
 export function normalizeMCPConformanceConfig(
   config: MCPConformanceConfig,
 ): NormalizedMCPConformanceConfig {
@@ -130,5 +164,6 @@ export function normalizeMCPConformanceConfig(
       "inputRequiredProbe",
     ),
     logProbe: normalizeToolProbe(config.logProbe, "logProbe"),
+    fixtures: normalizeFixtures(config.fixtures),
   };
 }

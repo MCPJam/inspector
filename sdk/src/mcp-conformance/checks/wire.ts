@@ -33,6 +33,7 @@ import {
   couldNotRunResult,
   notApplicableResult,
 } from "./helpers.js";
+import { drivePromptFixtures } from "./modern.js";
 import { WireSchemaValidator } from "../wire-schema.js";
 import type { WireObservationRecorder } from "../wire-observations.js";
 import type { WireSchemaValidationReport } from "../wire-schema.js";
@@ -97,6 +98,22 @@ export async function runWireSchemaCheck(
     };
   }
 
+  // Populate the record with the operator's `prompts/get` fixtures before
+  // reading it. They assert nothing on their own — every structural
+  // requirement on a `GetPromptResult` is stated by the revision's schema, and
+  // this check already grades that. What they do is make the frame EXIST: an
+  // unfixtured run never issues a `prompts/get` with real arguments, so
+  // `GetPromptResult` is a shape our conformance path has never once looked at.
+  //
+  // Swallowed on failure, because a fixture that turns out not to work must not
+  // take down a check that had other traffic to grade.
+  let promptFixturesDriven = 0;
+  try {
+    promptFixturesDriven = await drivePromptFixtures(ctx);
+  } catch {
+    // Those frames simply do not appear in the record.
+  }
+
   const observations = recorder.observations;
   if (observations.length === 0) {
     return {
@@ -125,6 +142,7 @@ export async function runWireSchemaCheck(
     // able to see that rather than read a pass as a strong statement.
     methodCorrelated: report.correlated,
     violationCount: report.violations.length,
+    promptFixturesDriven,
   };
 
   if (report.violations.length === 0) {

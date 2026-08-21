@@ -91,6 +91,10 @@ export const MCP_CHECK_IDS = [
   // SEP-2164's other half: the right error CODE and a non-ambiguous answer are
   // separate obligations, and a server can satisfy one without the other.
   "modern-resource-read-no-empty-contents",
+  // Fixture-gated: the only way to observe a declared `outputSchema` being
+  // honored is to CALL the tool, and no advertised metadata says which tools
+  // are safe to call. Skips with an explanation when no fixture is supplied.
+  "modern-tool-output-schema-conformant",
   "modern-logs-require-log-level",
   "modern-subscription-ack-precedes-notifications",
   "modern-subscription-filter-and-tagging",
@@ -249,6 +253,7 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "modern-removed-methods-not-found": ["modern"],
   "modern-resource-not-found-invalid-params": ["modern"],
   "modern-resource-read-no-empty-contents": ["modern"],
+  "modern-tool-output-schema-conformant": ["modern"],
   "modern-logs-require-log-level": ["modern"],
   "modern-subscription-ack-precedes-notifications": ["modern"],
   "modern-subscription-filter-and-tagging": ["modern"],
@@ -316,6 +321,42 @@ export interface MCPConformanceConfig {
     toolName: string;
     arguments?: Record<string, unknown>;
   };
+  /**
+   * Operator-supplied primitives that are SAFE TO EXECUTE, generalizing the
+   * opt-in pattern {@link MCPConformanceConfig.inputRequiredProbe} and
+   * {@link MCPConformanceConfig.logProbe} already use.
+   *
+   * WHY THIS IS OPT-IN AND STAYS OPT-IN. A whole family of requirements can
+   * only be observed on a result the server produces by DOING something — a
+   * tool's declared `outputSchema` binds its `structuredContent`, and
+   * `CallToolResult` / `GetPromptResult` have shapes no listing can show. A
+   * default run cannot reach any of it, because nothing in a tool's advertised
+   * metadata says whether calling it charges a card or deletes a row, and a
+   * conformance run that guessed would be an outage waiting to happen.
+   *
+   * So the operator names what is safe. Absent ⇒ the fixture-gated checks
+   * report a skip that says exactly what they need, and the default run
+   * behaves as it always has: no arbitrary tool is ever called.
+   *
+   * The probes also flow into the run-wide wire record, so supplying them
+   * widens `wire-schema-valid`'s coverage to `CallToolResult` and
+   * `GetPromptResult` — result shapes an unfixtured run never sees at all.
+   */
+  fixtures?: MCPConformanceFixtures;
+}
+
+/** @see {@link MCPConformanceConfig.fixtures} */
+export interface MCPConformanceFixtures {
+  /** `tools/call` targets the operator declares safe to execute. */
+  toolCalls?: Array<{
+    toolName: string;
+    arguments?: Record<string, unknown>;
+  }>;
+  /** `prompts/get` targets the operator declares safe to render. */
+  promptGets?: Array<{
+    promptName: string;
+    arguments?: Record<string, string>;
+  }>;
 }
 
 export interface NormalizedMCPConformanceConfig {
@@ -341,6 +382,12 @@ export interface NormalizedMCPConformanceConfig {
     toolName: string;
     arguments?: Record<string, unknown>;
   };
+  /**
+   * See {@link MCPConformanceConfig.fixtures}. Always present after
+   * normalization (with empty arrays when the caller supplied none), so a check
+   * reads `fixtures.toolCalls.length` rather than a chain of optionals.
+   */
+  fixtures: Required<MCPConformanceFixtures>;
 }
 
 /**

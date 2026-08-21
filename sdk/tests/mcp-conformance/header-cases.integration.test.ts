@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
+import { readJsonRpcBody, requestId } from "../support/json-rpc-fixture.js";
 import {
   MCPConformanceTest,
   type MCPCheckId,
@@ -51,16 +52,10 @@ async function serveHeaderFixture(options: HeaderFixtureOptions) {
             (name) => name.toLowerCase() === canonical.toLowerCase(),
           );
 
-    let body = "";
-    req.on("data", (chunk) => (body += chunk));
-    req.on("end", () => {
-      let parsed: { id?: unknown; method?: unknown } = {};
-      try {
-        parsed = JSON.parse(body);
-      } catch {
-        /* the probes here always send well-formed JSON */
-      }
-      const id = (parsed.id as string | number | null) ?? null;
+    void (async () => {
+      const parsed = await readJsonRpcBody(req, res);
+      if (!parsed) return;
+      const id = requestId(parsed);
 
       const missing = CANONICAL_NAMES.filter((name) => {
         if (name === "Mcp-Method" && !options.requireMethodHeader) return false;
@@ -100,7 +95,7 @@ async function serveHeaderFixture(options: HeaderFixtureOptions) {
           },
         }),
       );
-    });
+    })();
   });
 
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

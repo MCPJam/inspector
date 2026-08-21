@@ -206,3 +206,109 @@ test("buildConfig rejects credentials-file auth conflicts", async () => {
       error.message.includes("--credentials-file cannot be used together"),
   );
 });
+
+test("fixtures: no flags means the SDK sees no fixtures key at all", () => {
+  // The load-bearing default. An empty `fixtures: {}` would be harmless today,
+  // but "absent" is the shape that says explicitly that nothing on the server
+  // under test may be executed.
+  const config = buildConfig({ url: "https://example.com/mcp" });
+  assert.equal("fixtures" in config, false);
+});
+
+test("fixtures: --fixture-tool and --fixture-prompt name no-argument primitives", () => {
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    fixtureTool: ["echo", "ping"],
+    fixturePrompt: ["welcome"],
+  });
+  assert.deepEqual(config.fixtures?.toolCalls, [
+    { toolName: "echo" },
+    { toolName: "ping" },
+  ]);
+  assert.deepEqual(config.fixtures?.promptGets, [{ promptName: "welcome" }]);
+});
+
+test("fixtures: --fixtures-file carries arguments the flags cannot", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-fixtures-"));
+  const file = path.join(dir, "fixtures.json");
+  await writeFile(
+    file,
+    JSON.stringify({
+      toolCalls: [{ toolName: "weather", arguments: { city: "Lisbon" } }],
+      promptGets: [{ promptName: "greet", arguments: { name: "Ada" } }],
+    }),
+  );
+
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    fixturesFile: file,
+  });
+  assert.deepEqual(config.fixtures?.toolCalls, [
+    { toolName: "weather", arguments: { city: "Lisbon" } },
+  ]);
+  assert.deepEqual(config.fixtures?.promptGets, [
+    { promptName: "greet", arguments: { name: "Ada" } },
+  ]);
+});
+
+test("fixtures: file entries and flag entries merge", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-fixtures-"));
+  const file = path.join(dir, "fixtures.json");
+  await writeFile(
+    file,
+    JSON.stringify({ toolCalls: [{ toolName: "weather", arguments: {} }] }),
+  );
+
+  const config = buildConfig({
+    url: "https://example.com/mcp",
+    fixturesFile: file,
+    fixtureTool: ["echo"],
+  });
+  assert.deepEqual(
+    config.fixtures?.toolCalls?.map((entry) => entry.toolName),
+    ["weather", "echo"],
+  );
+});
+
+test("fixtures: a malformed file is a usage error, never a silent empty set", async () => {
+  // A fixture set that silently vanished would turn the fixture-gated checks
+  // into skips, and the operator would read that as "my server does not support
+  // this" rather than "my config is wrong".
+  const dir = await mkdtemp(path.join(os.tmpdir(), "mcpjam-fixtures-"));
+
+  const notJson = path.join(dir, "bad.json");
+  await writeFile(notJson, "{ not json");
+  assert.throws(
+    () => buildConfig({ url: "https://example.com/mcp", fixturesFile: notJson }),
+    (error: unknown) =>
+      error instanceof CliError && /not valid JSON/.test(error.message),
+  );
+
+  const notObject = path.join(dir, "array.json");
+  await writeFile(notObject, "[]");
+  assert.throws(
+    () =>
+      buildConfig({ url: "https://example.com/mcp", fixturesFile: notObject }),
+    (error: unknown) =>
+      error instanceof CliError && /must contain a JSON object/.test(error.message),
+  );
+
+  const wrongShape = path.join(dir, "shape.json");
+  await writeFile(wrongShape, JSON.stringify({ toolCalls: "echo" }));
+  assert.throws(
+    () =>
+      buildConfig({ url: "https://example.com/mcp", fixturesFile: wrongShape }),
+    (error: unknown) =>
+      error instanceof CliError && /must be an array/.test(error.message),
+  );
+
+  assert.throws(
+    () =>
+      buildConfig({
+        url: "https://example.com/mcp",
+        fixturesFile: path.join(dir, "missing.json"),
+      }),
+    (error: unknown) =>
+      error instanceof CliError && /Could not read fixtures file/.test(error.message),
+  );
+});

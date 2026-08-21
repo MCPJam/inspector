@@ -3,6 +3,7 @@ export { MCPConformanceSuite } from "./suite.js";
 
 export type {
   MCPCheckCategory,
+  MCPConformanceFixtures,
   MCPCheckEra,
   MCPCheckEras,
   MCPCheckId,

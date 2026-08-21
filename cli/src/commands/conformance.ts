@@ -16,6 +16,7 @@ import {
   MCPConformanceSuite,
   MCPConformanceTest,
 } from "@mcpjam/sdk";
+import { readFileSync } from "node:fs";
 import { Command } from "commander";
 import { loadProtocolSuiteConfig } from "../lib/config-file.js";
 import {
@@ -47,6 +48,9 @@ export interface ProtocolConformanceOptions {
   category?: string[];
   checkId?: string[];
   protocolVersion?: string;
+  fixturesFile?: string;
+  fixtureTool?: string[];
+  fixturePrompt?: string[];
 }
 
 export function registerProtocolCommands(program: Command): void {
@@ -90,6 +94,22 @@ export function registerProtocolCommands(program: Command): void {
     .option(
       "--protocol-version <version>",
       "Pin the MCP protocol version to conform against. Default: legacy (2025-era) behavior.",
+    )
+    .option(
+      "--fixtures-file <path>",
+      'JSON file naming primitives that are SAFE TO EXECUTE, so checks that need a real result can run: {"toolCalls":[{"toolName":"echo","arguments":{}}],"promptGets":[{"promptName":"welcome"}]}. Nothing is ever called without this.',
+    )
+    .option(
+      "--fixture-tool <name>",
+      "Name of a tool that is safe to call with no arguments. Repeat for multiple. For tools that need arguments, use --fixtures-file.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
+    )
+    .option(
+      "--fixture-prompt <name>",
+      "Name of a prompt that is safe to render with no arguments. Repeat for multiple. For prompts that need arguments, use --fixtures-file.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      [],
     )
     .option(
       "--reporter <reporter>",
@@ -182,6 +202,99 @@ function collectInvalidEntries(
   return (values ?? []).filter((value) => !allowedValues.includes(value));
 }
 
+/**
+ * Merge the two ways an operator declares safe-to-execute primitives.
+ *
+ * `--fixture-tool NAME` covers the common case (a read-only tool taking no
+ * arguments) without making anyone write JSON on a command line;
+ * `--fixtures-file` covers everything else, because arguments are arbitrary
+ * JSON and a flag syntax for them would be a parser nobody asked for.
+ *
+ * Returns `undefined` when neither was supplied, so the SDK sees no `fixtures`
+ * key at all and the default run keeps behaving exactly as it did: nothing on
+ * the server is ever executed.
+ */
+function resolveFixtures(
+  options: ProtocolConformanceOptions,
+): MCPConformanceConfig["fixtures"] | undefined {
+  const fromFile = options.fixturesFile
+    ? readFixturesFile(options.fixturesFile)
+    : undefined;
+
+  const toolCalls = [
+    ...(fromFile?.toolCalls ?? []),
+    ...(options.fixtureTool ?? [])
+      .filter(Boolean)
+      .map((toolName) => ({ toolName })),
+  ];
+  const promptGets = [
+    ...(fromFile?.promptGets ?? []),
+    ...(options.fixturePrompt ?? [])
+      .filter(Boolean)
+      .map((promptName) => ({ promptName })),
+  ];
+
+  if (toolCalls.length === 0 && promptGets.length === 0) {
+    return undefined;
+  }
+  return { toolCalls, promptGets };
+}
+
+function readFixturesFile(
+  path: string,
+): NonNullable<MCPConformanceConfig["fixtures"]> {
+  let raw: string;
+  try {
+    raw = readFileSync(path, "utf8");
+  } catch (error) {
+    throw usageError(
+      `Could not read fixtures file ${path}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    throw usageError(
+      `Fixtures file ${path} is not valid JSON: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw usageError(
+      `Fixtures file ${path} must contain a JSON object with toolCalls and/or promptGets`,
+    );
+  }
+
+  const document = parsed as {
+    toolCalls?: unknown;
+    promptGets?: unknown;
+  };
+  // Shape-checked here rather than left to the SDK: a typo'd key would
+  // otherwise produce an empty fixture set, and the operator would read the
+  // resulting skip as "my server does not support this".
+  for (const key of ["toolCalls", "promptGets"] as const) {
+    const value = document[key];
+    if (value !== undefined && !Array.isArray(value)) {
+      throw usageError(`Fixtures file ${path}: ${key} must be an array`);
+    }
+  }
+
+  return {
+    toolCalls: (document.toolCalls ?? []) as NonNullable<
+      MCPConformanceConfig["fixtures"]
+    >["toolCalls"],
+    promptGets: (document.promptGets ?? []) as NonNullable<
+      MCPConformanceConfig["fixtures"]
+    >["promptGets"],
+  };
+}
+
 export function buildConfig(
   options: ProtocolConformanceOptions,
 ): MCPConformanceConfig {
@@ -222,6 +335,8 @@ export function buildConfig(
     );
   }
 
+  const fixtures = resolveFixtures(options);
+
   const protocolVersion = options.protocolVersion?.trim();
   if (
     options.protocolVersion !== undefined &&
@@ -246,5 +361,6 @@ export function buildConfig(
     ...(protocolVersion
       ? { protocolVersion: protocolVersion as MCPConformanceConfig["protocolVersion"] }
       : {}),
+    ...(fixtures ? { fixtures } : {}),
   };
 }
