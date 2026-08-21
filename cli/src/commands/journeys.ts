@@ -13,6 +13,7 @@ import {
   runPlatformOperation as runPlatformCommand,
   type PlatformOptions,
 } from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
@@ -103,7 +104,7 @@ export function registerJourneysCommands(program: Command): Command {
       globalOptions.timeout,
       ({ client, signal }) =>
         listJourneysOperation.execute(
-          { project: options.project },
+          { project: resolveCloudProjectArgs(options).project },
           { client, signal }
         )
     );
@@ -132,7 +133,7 @@ export function registerJourneysCommands(program: Command): Command {
         ({ client, signal }) =>
           listJourneyRunsOperation.execute(
             {
-              project: options.project,
+              project: resolveCloudProjectArgs(options).project,
               journey: options.journey,
               ...pageArgs(options),
             },
@@ -160,7 +161,7 @@ export function registerJourneysCommands(program: Command): Command {
         globalOptions.timeout,
         ({ client, signal }) =>
           getJourneyRunOperation.execute(
-            { project: options.project, run: options.run },
+            { project: resolveCloudProjectArgs(options).project, run: options.run },
             { client, signal }
           )
       );
@@ -206,7 +207,7 @@ export function registerJourneysCommands(program: Command): Command {
         ({ client, signal }) =>
           launchJourneyRunOperation.execute(
             {
-              project: options.project,
+              project: resolveCloudProjectArgs(options).project,
               journey: options.journey,
               ...(options.idempotencyKey
                 ? { idempotencyKey: options.idempotencyKey }
@@ -240,7 +241,7 @@ export function registerJourneysCommands(program: Command): Command {
         globalOptions.timeout,
         ({ client, signal }) =>
           cancelJourneyRunOperation.execute(
-            { project: options.project, run: options.run },
+            { project: resolveCloudProjectArgs(options).project, run: options.run },
             { client, signal }
           )
       );
@@ -272,7 +273,7 @@ export function registerJourneysCommands(program: Command): Command {
         ({ client, signal }) =>
           listJourneyRunSessionsOperation.execute(
             {
-              project: options.project,
+              project: resolveCloudProjectArgs(options).project,
               run: options.run,
               ...pageArgs(options),
             },

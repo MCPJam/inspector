@@ -18,6 +18,7 @@ import {
   runPlatformOperation as runPlatformCommand,
   type PlatformOptions,
 } from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 
@@ -101,7 +102,7 @@ export function registerHostsCommands(program: Command): void {
       globalOptions.timeout,
       ({ client, signal }) =>
         listHostsOperation.execute(
-          { project: options.project },
+          { project: resolveCloudProjectArgs(options).project },
           { client, signal }
         )
     );
@@ -123,7 +124,7 @@ export function registerHostsCommands(program: Command): void {
         globalOptions.timeout,
         ({ client, signal }) =>
           getHostOperation.execute(
-            { project: options.project, host: options.host },
+            { project: resolveCloudProjectArgs(options).project, host: options.host },
             { client, signal }
           )
       );
@@ -162,7 +163,7 @@ export function registerHostsCommands(program: Command): void {
       const globalOptions = getGlobalOptions(command);
       const config = loadConfigObject(options);
       const input = validateInput(createHostOperation, {
-        project: options.project,
+        project: resolveCloudProjectArgs(options).project,
         name: options.name,
         ...(options.template !== undefined
           ? { template: options.template }
@@ -207,7 +208,7 @@ export function registerHostsCommands(program: Command): void {
       const globalOptions = getGlobalOptions(command);
       const config = loadConfigObject(options);
       const input = validateInput(updateHostOperation, {
-        project: options.project,
+        project: resolveCloudProjectArgs(options).project,
         host: options.host,
         ...(options.name !== undefined ? { name: options.name } : {}),
         ...(config !== undefined ? { config } : {}),
@@ -241,7 +242,7 @@ export function registerHostsCommands(program: Command): void {
         ({ client, signal }) =>
           deleteHostOperation.execute(
             {
-              project: options.project,
+              project: resolveCloudProjectArgs(options).project,
               host: options.host,
             },
             { client, signal }
@@ -280,7 +281,7 @@ export function registerHostsCommands(program: Command): void {
           .map((id) => id.trim())
           .filter(Boolean);
       const input = validateInput(setHostServersOperation, {
-        project: options.project,
+        project: resolveCloudProjectArgs(options).project,
         host: options.host,
         serverIds: splitIds(options.serverIds),
         ...(options.optionalServerIds
@@ -313,7 +314,7 @@ export function registerHostsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const input = validateInput(duplicateHostOperation, {
-        project: options.project,
+        project: resolveCloudProjectArgs(options).project,
         host: options.host,
         ...(options.name === undefined ? {} : { name: options.name }),
       });

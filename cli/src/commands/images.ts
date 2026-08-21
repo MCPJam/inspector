@@ -20,6 +20,7 @@ import {
   runPlatformOperation as runPlatformCommand,
   type PlatformOptions,
 } from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 
@@ -74,7 +75,7 @@ export function registerImagesCommands(program: Command): void {
       globalOptions.timeout,
       ({ client, signal }) =>
         listImagesOperation.execute(
-          { project: options.project },
+          { project: resolveCloudProjectArgs(options).project },
           { client, signal }
         )
     );
@@ -98,7 +99,7 @@ export function registerImagesCommands(program: Command): void {
         globalOptions.timeout,
         ({ client, signal }) =>
           getImageOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );
@@ -128,7 +129,7 @@ export function registerImagesCommands(program: Command): void {
       const globalOptions = getGlobalOptions(command);
       const blueprint = loadBlueprintText(options.file);
       const input = validateInput(createImageOperation, {
-        project: options.project,
+        project: resolveCloudProjectArgs(options).project,
         name: options.name,
         blueprint,
       });
@@ -159,7 +160,7 @@ export function registerImagesCommands(program: Command): void {
       const globalOptions = getGlobalOptions(command);
       const blueprint = loadBlueprintText(options.file);
       const input = validateInput(validateImageBlueprintOperation, {
-        project: options.project,
+        project: resolveCloudProjectArgs(options).project,
         blueprint,
       });
       const result = await runPlatformCommand(
@@ -194,7 +195,7 @@ export function registerImagesCommands(program: Command): void {
           ? loadBlueprintText(options.file)
           : undefined;
       const input = validateInput(updateImageOperation, {
-        project: options.project,
+        project: resolveCloudProjectArgs(options).project,
         image: options.image,
         ...(options.name !== undefined ? { name: options.name } : {}),
         ...(blueprint !== undefined ? { blueprint } : {}),
@@ -226,7 +227,7 @@ export function registerImagesCommands(program: Command): void {
         globalOptions.timeout,
         ({ client, signal }) =>
           buildImageOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );
@@ -251,7 +252,7 @@ export function registerImagesCommands(program: Command): void {
         globalOptions.timeout,
         ({ client, signal }) =>
           listImageBuildsOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );
@@ -276,7 +277,7 @@ export function registerImagesCommands(program: Command): void {
         globalOptions.timeout,
         ({ client, signal }) =>
           useImageOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );
@@ -296,7 +297,7 @@ export function registerImagesCommands(program: Command): void {
       globalOptions.timeout,
       ({ client, signal }) =>
         resetComputerOperation.execute(
-          { project: options.project },
+          { project: resolveCloudProjectArgs(options).project },
           { client, signal }
         )
     );
@@ -320,7 +321,7 @@ export function registerImagesCommands(program: Command): void {
         globalOptions.timeout,
         ({ client, signal }) =>
           promoteImageOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );
@@ -343,7 +344,7 @@ export function registerImagesCommands(program: Command): void {
         globalOptions.timeout,
         ({ client, signal }) =>
           deleteImageOperation.execute(
-            { project: options.project, image: options.image },
+            { project: resolveCloudProjectArgs(options).project, image: options.image },
             { client, signal }
           )
       );

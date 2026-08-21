@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { addPlatformOptions } from "../lib/platform-command.js";
 import { registerAuthCommands } from "./auth.js";
 import { registerChatCommands } from "./chat.js";
+import { registerCloudLinkCommands } from "./cloud-link.js";
 import { registerEnvironmentsCommands } from "./environments.js";
 import { registerEvalCommands } from "./eval.js";
 import { registerHostsCommands } from "./hosts.js";
@@ -30,6 +31,7 @@ export function registerCloudCommands(program: Command): Command {
   addPlatformOptions(cloud);
 
   registerAuthCommands(cloud);
+  registerCloudLinkCommands(cloud);
   registerOrganizationsCommands(cloud);
   registerProjectsCommands(cloud);
   registerEvalCommands(cloud);

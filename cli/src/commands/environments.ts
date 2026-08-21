@@ -17,9 +17,11 @@ import { JsonInputContext } from "../lib/json-input.js";
 import { usageError, writeResult } from "../lib/output.js";
 import {
   platformOptionsOf,
+  runCloudOp,
   runPlatformOperation as runPlatformCommand,
   type PlatformOptions,
 } from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
@@ -95,18 +97,17 @@ async function assertModelOverridesSupported(
 
 /**
  * The project the command will actually write to, in the SAME precedence the
- * write itself uses: the explicit `--project` flag over the JSON body's
- * `project`. Absent when neither names one, which is the only case where
- * resolving the caller's default project is correct.
+ * write itself uses: `--project`, then the JSON body's `project`, then
+ * `MCPJAM_PROJECT`, a project link, then automatic selection.
  */
 function projectSelector(
   options: { project?: string },
-  body: Record<string, unknown>
+  body: Record<string, unknown> = {}
 ): { project?: string } {
-  if (options.project !== undefined) return { project: options.project };
-  return typeof body.project === "string" && body.project.trim()
-    ? { project: body.project }
-    : {};
+  const resolved = resolveCloudProjectArgs(options, {
+    inputProject: typeof body.project === "string" ? body.project : undefined,
+  });
+  return resolved.project !== undefined ? { project: resolved.project } : {};
 }
 
 /** Read a JSON object from --file (literal path or `-` for stdin) / --json. */
@@ -190,13 +191,13 @@ export function registerEnvironmentsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const result = await runPlatformCommand(
-        platformOptionsOf(command),
-        globalOptions.timeout,
-        ({ client, signal }) =>
+      const result = await runCloudOp(
+        command,
+        options,
+        ({ client, signal }, project) =>
           listEnvironmentsOperation.execute(
             {
-              project: options.project,
+              ...project,
               ...(options.includeArchived ? { includeArchived: true } : {}),
             },
             { client, signal }
@@ -218,12 +219,12 @@ export function registerEnvironmentsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const result = await runPlatformCommand(
-        platformOptionsOf(command),
-        globalOptions.timeout,
-        ({ client, signal }) =>
+      const result = await runCloudOp(
+        command,
+        options,
+        ({ client, signal }, project) =>
           getEnvironmentOperation.execute(
-            { project: options.project, environment: options.environment },
+            { ...project, environment: options.environment },
             { client, signal }
           )
       );
@@ -243,12 +244,12 @@ export function registerEnvironmentsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const result = await runPlatformCommand(
-        platformOptionsOf(command),
-        globalOptions.timeout,
-        ({ client, signal }) =>
+      const result = await runCloudOp(
+        command,
+        options,
+        ({ client, signal }, project) =>
           resolveEnvironmentOperation.execute(
-            { project: options.project, environment: options.environment },
+            { ...project, environment: options.environment },
             { client, signal }
           )
       );
@@ -308,7 +309,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       });
       const input = validateInput(createEnvironmentOperation, {
         ...body,
-        ...(options.project !== undefined ? { project: options.project } : {}),
+        ...projectSelector(options, body),
         ...(options.name !== undefined ? { name: options.name } : {}),
         ...(options.hostId !== undefined ? { hostId: options.hostId } : {}),
         ...(options.description !== undefined
@@ -368,7 +369,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const input = validateInput(ensureAdhocEnvironmentOperation, {
-        ...(options.project !== undefined ? { project: options.project } : {}),
+        ...projectSelector(options),
         host: options.host,
         ...(options.serverGroup !== undefined
           ? { serverGroup: options.serverGroup }
@@ -419,7 +420,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const input = validateInput(nameEnvironmentOperation, {
-        ...(options.project !== undefined ? { project: options.project } : {}),
+        ...projectSelector(options),
         environment: options.environment,
         name: options.name,
         expectedRevision: parseRevision(options.expectedRevision),
@@ -506,7 +507,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       });
       const input = validateInput(updateEnvironmentOperation, {
         ...body,
-        ...(options.project !== undefined ? { project: options.project } : {}),
+        ...projectSelector(options, body),
         environment: options.environment,
         expectedRevision: parseRevision(options.expectedRevision),
         ...(options.name !== undefined ? { name: options.name } : {}),
@@ -552,13 +553,13 @@ export function registerEnvironmentsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const result = await runPlatformCommand(
-        platformOptionsOf(command),
-        globalOptions.timeout,
-        ({ client, signal }) =>
+      const result = await runCloudOp(
+        command,
+        options,
+        ({ client, signal }, project) =>
           archiveEnvironmentOperation.execute(
             {
-              project: options.project,
+              ...project,
               environment: options.environment,
               expectedRevision: parseRevision(options.expectedRevision),
             },
@@ -589,13 +590,13 @@ export function registerEnvironmentsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const result = await runPlatformCommand(
-        platformOptionsOf(command),
-        globalOptions.timeout,
-        ({ client, signal }) =>
+      const result = await runCloudOp(
+        command,
+        options,
+        ({ client, signal }, project) =>
           restoreEnvironmentOperation.execute(
             {
-              project: options.project,
+              ...project,
               environment: options.environment,
               expectedRevision: parseRevision(options.expectedRevision),
             },

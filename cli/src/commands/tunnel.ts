@@ -5,6 +5,7 @@ import {
 } from "@mcpjam/sdk/platform";
 import { cliError, usageError, writeResult } from "../lib/output.js";
 import { buildCloudClientContext, platformOptionsOf } from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { toCliError } from "../lib/platform-client.js";
 import { getGlobalOptions, parseServerConfig } from "../lib/server-config.js";
 import { startLocalBridge, type TunnelTarget } from "../lib/tunnel/local-bridge.js";
@@ -187,7 +188,7 @@ export function registerTunnelCommands(program: Command): void {
         const session = new TunnelSession({
           createGrant: (signal) =>
             createTunnelOperation.execute(
-              { project: options.project, name: options.id },
+              { project: resolveCloudProjectArgs(options).project, name: options.id },
               { client, signal },
             ),
           closeGrant: async (result, signal) => {
