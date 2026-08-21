@@ -105,6 +105,13 @@ export function useDetectedOllamaModels(getOllamaBaseUrl: () => string): {
               : "Model does not support tool calling",
           }))
         );
+      } catch (error) {
+        if (!cancelled) {
+          console.error("Ollama detection probe threw", error);
+          setIsOllamaRunning(false);
+          setOllamaModels([]);
+          consecutiveFailures += 1;
+        }
       } finally {
         inFlight = false;
         if (!cancelled) {
