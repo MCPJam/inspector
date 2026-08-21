@@ -30,8 +30,17 @@ vi.mock("@/hooks/use-available-models", () => ({
   useAvailableModels: () => ({ availableModels: [] }),
 }));
 
+/**
+ * `project-environments-enabled`, as a ref: an org can hold Swarms without it
+ * (the sidebar gates the two surfaces on different flags), and that
+ * combination has its own case below.
+ */
+const { environmentsFlagRef } = vi.hoisted(() => ({
+  environmentsFlagRef: { current: true },
+}));
+
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
-  useProjectEnvironmentsEnabled: () => true,
+  useProjectEnvironmentsEnabled: () => environmentsFlagRef.current,
 }));
 
 vi.mock("@/hooks/useSkillsEnabled", () => ({
@@ -354,6 +363,7 @@ function fillDescribe(text = "Support agents answering refunds") {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  environmentsFlagRef.current = true;
   // The flow now mirrors its resumable state into sessionStorage, so a leftover
   // draft would otherwise resume the previous case's slate.
   sessionStorage.clear();
@@ -1659,6 +1669,45 @@ describe("SwarmsTab — New swarm create flow", () => {
     );
     // One batch call for both clients, and no NAMED row is minted — the whole
     // point of the change is that Describe text never becomes an environment.
+    expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [{ hostId: "host-1" }, { hostId: "host-2" }],
+    });
+    expect(createEnvironmentMock).not.toHaveBeenCalled();
+
+    await screen.findByTestId("new-swarm-proposed-personas");
+    fireEvent.click(screen.getByTestId("new-swarm-launch"));
+    await waitFor(() => expect(createJourneyMock).toHaveBeenCalled());
+    expect(createJourneyMock.mock.calls[0][0].environmentIds).toEqual([
+      "adhoc-host-1",
+      "adhoc-host-2",
+    ]);
+  });
+
+  it("mints ad-hoc rows for an org that has Swarms but not Environments", async () => {
+    // THE regression. Ad-hoc rows are launch substrate and the backend leaves
+    // them ungated; `createEnvironment` mints a NAMED row and is gated on
+    // `project-environments-enabled`. Reading the flag here used to send
+    // exactly the org that fails that gate down the naming path, so every
+    // swarm launch died on "Environments is not currently available for your
+    // organization" — with no saved environments to pick instead, the surface
+    // was unusable rather than degraded.
+    environmentsFlagRef.current = false;
+    environmentsRef.current = [];
+    environments = environmentsRef.current;
+    openDescribe();
+
+    fireEvent.change(screen.getByLabelText("Describe swarm"), {
+      target: { value: "Support agents answering refunds" },
+    });
+    fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
+    fireEvent.click(screen.getByRole("checkbox", { name: /^cursor$/i }));
+
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+
+    await waitFor(() =>
+      expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledTimes(1)
+    );
     expect(ensureAdhocEnvironmentsMock).toHaveBeenCalledWith({
       projectId: "proj-1",
       stacks: [{ hostId: "host-1" }, { hostId: "host-2" }],
