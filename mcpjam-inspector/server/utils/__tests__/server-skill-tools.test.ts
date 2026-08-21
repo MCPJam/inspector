@@ -61,6 +61,8 @@ async function makeManager(
     inactiveServers?: string[];
     /** Additional listing entries, e.g. a second skill sharing a name. */
     extraSkills?: Array<Record<string, unknown>>;
+    /** Declare the extension but return an empty `skills/list`. */
+    emptySkills?: boolean;
     unlistedSkills?: Record<
       string,
       { name: string; markdown: string; tamper?: boolean }
@@ -116,6 +118,7 @@ async function makeManager(
     },
     listServerSkills: vi.fn(async () => {
       calls.push("skills/list");
+      if (options.emptySkills) return { skills: [] };
       return {
         skills: options.extraSkills ? [entry, ...options.extraSkills] : [entry],
       };
@@ -196,12 +199,6 @@ async function makeManager(
 
 function baseTools() {
   return {
-    listSkills: {
-      description: "base list",
-      execute: vi.fn(
-        async () => "Available skills:\n\n- **local-skill**: A local one."
-      ),
-    },
     loadSkill: {
       execute: vi.fn(async (input: { name?: string }) => `BASE:${input.name}`),
     },
@@ -354,19 +351,31 @@ describe("withServerSkills — attachment", () => {
 });
 
 describe("withServerSkills — listSkills", () => {
-  it("appends an origin-framed section to the base listing", async () => {
+  it("returns the server section alone when the base has no listSkills", async () => {
     const base = baseTools();
     const manager = await makeManager();
     const wrapped = withServerSkills(base, { manager, servers: SERVERS });
     const text = String(
       await (wrapped.listSkills as { execute: Function }).execute({}, {})
     );
-    expect(text).toContain("local-skill");
+    expect(text).not.toContain("local-skill");
     expect(text).toContain("acme-billing/refunds");
     expect(text).toContain('MCP server "Acme Billing"');
     // The description is framed as server-provided, so a description that
     // imitates a system instruction reads as third-party text.
     expect(text).toContain("untrusted descriptions");
+  });
+
+  it("says so when no MCP-server-provided skills are available", async () => {
+    const base = baseTools();
+    const manager = await makeManager({ emptySkills: true });
+    const wrapped = withServerSkills(base, { manager, servers: SERVERS });
+    const text = String(
+      await (wrapped.listSkills as { execute: Function }).execute({}, {})
+    );
+    expect(text).toBe(
+      "No MCP-server-provided skills are available for this turn."
+    );
   });
 
   it("drains each provider only once per turn", async () => {
