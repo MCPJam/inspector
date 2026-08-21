@@ -139,6 +139,13 @@ function createServerConfig(
     // connect at all. Absent ⇒ `auto` (automatic negotiation is always on), so
     // an unconfigured conformance run detects the era the server negotiates.
     mcpProtocolVersion: config.protocolVersion,
+    // THE SAME GUARD THE RAW PROBES GET. `fetchFn` used to reach only the raw
+    // HTTP/SSE probes, so the one real MCP connection this suite opens dialled
+    // through the global fetch and followed its redirects unchecked — a
+    // hosted-mode SSRF hole this file's own comment used to document. Threading
+    // it in as the transport's base fetch closes it: one guard, one target, no
+    // second resolution.
+    baseFetch: config.fetchFn,
   };
 }
 

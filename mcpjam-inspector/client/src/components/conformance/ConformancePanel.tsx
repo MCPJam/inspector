@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { Button } from "@mcpjam/design-system/button";
+import { DirectoryReadinessSection } from "@/components/conformance/directory-readiness/DirectoryReadinessSection";
 import {
   Select,
   SelectContent,
@@ -507,7 +508,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
 
   const protocolChecks = useMemo(
     () => protocolCatalog(versionPin),
-    [versionPin]
+    [versionPin],
   );
 
   return (
@@ -515,7 +516,9 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
       <div className="space-y-1 border-b border-border/50 pb-4">
         <h2 className="text-lg font-semibold">Conformance</h2>
         <p className="text-sm text-muted-foreground">
-          Run Protocol, Apps, Tasks, and OAuth checks against {server.name}.
+          Run Protocol, Apps, Tasks, and OAuth checks against {server.name}.{" "}
+          Directory readiness grades it against Anthropic's and OpenAI's
+          published rules.
         </p>
       </div>
 
@@ -678,6 +681,17 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
             </div>
           ) : null}
         </SuiteSection>
+
+        {/*
+          DELIBERATELY OUTSIDE `runAll` AND THE POOLED SCORE. A hosted
+          readiness run takes minutes, so joining the shared `isRunning` would
+          hold the Run button and the protocol-version select hostage for its
+          duration — and readiness produces lanes and coverage rather than
+          passed/failed checks, so there is no number to pool. Each section
+          owns its own run control.
+        */}
+        <DirectoryReadinessSection publisher="claude" server={server} />
+        <DirectoryReadinessSection publisher="openai" server={server} />
       </div>
     </div>
   );
