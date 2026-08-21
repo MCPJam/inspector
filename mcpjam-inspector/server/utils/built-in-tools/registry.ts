@@ -192,9 +192,22 @@ export interface HostComputerResource {
 }
 
 /**
- * Narrow an untrusted runtime-config `computer` value to the resource shape.
- * Tolerates (and ignores) the legacy `toolset` key that pre-split backends
- * still persist; rejects everything else by returning null.
+ * Narrow an untrusted runtime-config `computer` value to the PERSONAL resource
+ * shape. Tolerates (and ignores) the legacy `toolset` key that pre-split
+ * backends still persist; rejects everything else by returning null.
+ *
+ * `kind: "personal"` is required, and that requirement is LOAD-BEARING now that
+ * the column carries a second kind. `kind: "ephemeral"` names a per-run box the
+ * platform provisioned; it is not a resource this resolver can reach — the
+ * personal path below resolves a machine per (project, user), and a per-run box
+ * has neither. A turn that owns one passes it out of band as
+ * `ctx.sandboxBinding`, which is checked FIRST and returns before any of this.
+ *
+ * So the two paths cannot both fire: an eval iteration whose pinned config
+ * carries an ephemeral computer gets its `bash` from the binding, or from the
+ * runner's own out-of-band injection, and never a second one from here.
+ * Returning the ephemeral kind as a personal resource would be the double
+ * registration — and worse, would point the tool at the caller's own machine.
  */
 export function narrowHostComputer(
   value: unknown
