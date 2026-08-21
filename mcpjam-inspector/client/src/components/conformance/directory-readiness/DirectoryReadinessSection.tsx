@@ -289,23 +289,11 @@ export function DirectoryReadinessSection({
 
             {hasResult ? (
               <>
+                {/* OpenAI's two staged rollups, visible beside the headline:
+                    a submitter whose server is fine and whose paperwork is
+                    not reads that here without opening anything. */}
                 <ReadinessLaneList
-                  lanes={
-                    state.report
-                      ? // FIELD BY FIELD rather than spreading `coverage`.
-                        // Coverage carries its own `lane`, so a spread after
-                        // `lane:` writes the same key twice — harmless at
-                        // runtime, and a `tsc` error that fails the build.
-                        state.report.lanes.map((entry) => ({
-                          lane: entry.lane,
-                          status: entry.status,
-                          evaluated: entry.coverage.evaluated,
-                          notEvaluated: entry.coverage.notEvaluated,
-                          notApplicable: entry.coverage.notApplicable,
-                          missingInputs: entry.coverage.missingInputs,
-                        }))
-                      : (state.run?.lanes ?? [])
-                  }
+                  lanes={state.report ? [] : state.run?.lanes ?? []}
                   stages={
                     state.report && isOpenAIReadinessResult(state.report)
                       ? state.report.stages
@@ -316,9 +304,6 @@ export function DirectoryReadinessSection({
                   report={state.report}
                   loading={state.reportLoading}
                   error={state.reportError}
-                  // A terminal run with no stored report is a fact worth
-                  // stating: it failed before it graded, or its report aged
-                  // out. Silence would read as "no findings".
                   hasReport={
                     state.report ? true : state.run?.hasReport ?? false
                   }

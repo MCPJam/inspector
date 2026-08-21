@@ -14,6 +14,7 @@
  */
 
 import { CheckCircle2, MinusCircle, XCircle } from "lucide-react";
+import { describeMissingInputs } from "./readiness-copy";
 
 type LaneStatus = "ready" | "not-ready" | "incomplete";
 
@@ -60,7 +61,9 @@ export function ReadinessLaneList({
   lanes: ReadinessLaneRow[];
   stages?: ReadinessStageRow[];
 }) {
-  if (lanes.length === 0) return null;
+  // Stages render even with no lane rows: when the full report is mounted
+  // below, this component's only remaining job is the two OpenAI rollup chips.
+  if (lanes.length === 0 && (!stages || stages.length === 0)) return null;
 
   return (
     <div className="space-y-2">
@@ -112,9 +115,7 @@ export function ReadinessLaneList({
               {hasGap && (
                 <div className="pl-5 pt-0.5 text-[10px] text-amber-600 dark:text-amber-500">
                   {lane.missingInputs.length > 0
-                    ? `Supply ${lane.missingInputs.join(
-                        ", ",
-                      )} to close this gap.`
+                    ? describeMissingInputs(lane.missingInputs).join(" ")
                     : `${lane.notEvaluated} requirement(s) could not be evaluated.`}
                 </div>
               )}
