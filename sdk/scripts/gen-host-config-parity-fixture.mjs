@@ -287,6 +287,24 @@ const inputs = [
     },
   },
   {
+    // Runtime-minted kind: the platform stamps `{ kind: "ephemeral" }` at a
+    // run-snapshot boundary (one box per eval iteration, booted from the
+    // run's frozen environment image). Authors can never write it, but it is
+    // persisted and content-addressed, so it needs a golden vector. Hashes
+    // distinctly from the personal vector above.
+    label: "computer-ephemeral",
+    input: { ...base(), computer: { kind: "ephemeral" } },
+  },
+  {
+    // `toolset` is legacy input for EVERY kind, not just personal: accepted
+    // then dropped. This vector proves `{ kind: "ephemeral", toolset }` and
+    // `{ kind: "ephemeral" }` are the same identity — the backend runs the
+    // same `shimLegacyComputerToolset` pipeline, so the two canonicalizers
+    // must not diverge on it.
+    label: "computer-ephemeral-with-toolset-dropped",
+    input: { ...base(), computer: { kind: "ephemeral", toolset: "bash" } },
+  },
+  {
     // Optional harness selector. Absent ⇒ emulated (base-minimal proves that
     // hash is unchanged); an explicit "claude-code" writes the key and hashes
     // distinctly. Validated pass-through, like progressiveToolDiscovery.

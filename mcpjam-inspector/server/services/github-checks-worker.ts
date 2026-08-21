@@ -41,7 +41,9 @@ import { WEB_CALL_TIMEOUT_MS } from "../config.js";
 import { logger } from "../utils/logger";
 import { getConvexBearerForDelegation } from "../utils/v1-convex-token.js";
 import { createAuthorizedManager } from "../routes/web/auth.js";
-import { prepareEvalRun } from "../routes/shared/evals.js";
+import { prepareEvalRun,
+  shouldSkipExecution,
+} from "../routes/shared/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
 import type { CheckRecipe } from "./github-checks/recipes.js";
 import {
@@ -1037,7 +1039,21 @@ async function defaultRunEvalSuite(args: {
     }
 
     try {
-      await prepared.execute();
+      // A redelivered claim replays the run its trigger id already started. If
+      // that run FINISHED, re-executing would run the suite a second time and
+      // bill for it — and the verdict this check needs is already recorded on
+      // it. Only the execution is skipped; everything below still reads the
+      // run's terminality and reports it, which is exactly what a redelivery
+      // should do.
+      if (shouldSkipExecution(prepared)) {
+        logger.info("[github-checks] trigger already ran — not re-executing", {
+          triggerId: args.claimed.triggerId,
+          runId: prepared.runId,
+          status: prepared.status,
+        });
+      } else {
+        await prepared.execute();
+      }
     } catch (error) {
       // A throw from `execute()` is NOT an eval verdict, and must not be read as
       // one. `runEvalSuiteWithAiSdk` finalizes a normal run — pass or fail —

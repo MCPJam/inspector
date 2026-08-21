@@ -135,6 +135,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_eval_suite_runs: { command: "eval runs" },
   run_eval_suite: { command: "eval run" },
   cancel_eval_run: { command: "eval cancel" },
+  request_eval_run_judge: { command: "eval judge" },
+  list_eval_check_repos: { command: "eval checks list" },
+  connect_eval_check_repo: { command: "eval checks connect" },
   get_eval_run: { command: "eval status" },
   compare_eval_run: { command: "eval compare" },
   list_eval_run_iterations: { command: "eval iterations" },
@@ -145,7 +148,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   create_eval_case: { command: "eval cases create" },
   create_eval_cases: {
     excluded:
-      "Authoring several cases from a shell means passing a FILE, and the CLI's file path for suites is the suite-file loader still being designed — a batch command now would ship a second, throwaway format ahead of the one that is meant to last. The bulk writers today are the agent surfaces (MCP `create_eval_cases`, `POST …/cases/batch`), which take the cases inline. Bind this to whatever the suite-file commands settle on.",
+      'Authoring several cases from a shell means passing a FILE, and that file\'s format is now settled: the versioned eval suite file (`schemaVersion: "1"`, YAML canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`), which `eval validate` reads offline and `eval export` writes. What is still missing is the UPLOAD half — a suite file has cases with declared ids and the batch surface takes cases inline, and deciding which of the two owns identity on the way up is the same decision as `eval run --file`\'s ownership rules. So this binds when that command lands, not before; a batch command today would ship a second spelling of "send these cases" ahead of it. The bulk writers meanwhile are the agent surfaces (MCP `create_eval_cases`, `POST …/cases/batch`), which take the cases inline.',
   },
   update_eval_case: { command: "eval cases update" },
   delete_eval_case: { command: "eval cases delete" },
@@ -168,6 +171,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_project_environment: { command: "environments get" },
   resolve_project_environment: { command: "environments resolve" },
   create_project_environment: { command: "environments create" },
+  ensure_adhoc_environment: { command: "environments ensure-adhoc" },
+  name_environment: { command: "environments name" },
   update_project_environment: { command: "environments update" },
   archive_project_environment: { command: "environments archive" },
   restore_project_environment: { command: "environments restore" },
@@ -251,6 +256,17 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "`compat` evaluates the bundled catalog locally, so it stays fast and works offline.",
   },
+  // Directory readiness, hosted half. NOT excluded-citing-local like its
+  // neighbours above: `readiness check` grades what THIS machine can reach,
+  // and a hosted run grades the server as the platform reaches it, through the
+  // saved row and the authorize exchange. Different questions, and only the
+  // hosted one can spend for model observations or leave a record.
+  start_claude_readiness_run: { command: "readiness start claude" },
+  start_openai_readiness_run: { command: "readiness start openai" },
+  get_readiness_run: { command: "readiness status" },
+  list_readiness_runs: { command: "readiness list" },
+  cancel_readiness_run: { command: "readiness cancel" },
+  get_readiness_report: { command: "readiness report" },
 
   // ── Covered by the surrounding session, not a command ────────────────────
   get_me: {
