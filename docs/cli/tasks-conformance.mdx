@@ -48,7 +48,7 @@ mcpjam tasks conformance \
 | `tasks-wire-resolvable` | `dispatch` | The negotiated protocol version and capabilities resolve to exactly one tasks wire. |
 | `tasks-declaration-hygiene` | `dispatch` | Outbound requests carry `params.task` only on the legacy wire and the extension declaration only on the extension wire. |
 | `tasks-result-type-discipline` | `creation` | A task-eligible `tools/call` returns either a normal tool result or a flat `CreateTaskResult` with `resultType: "task"` and a non-empty `taskId`. The discriminator is required whether absent or wrong — it is the only signal that separates a task from a standard result. |
-| `tasks-undeclared-creation-refused` | `creation` | On the extension wire, a `tools/call` that did not carry the extension declaration must not come back as a `CreateTaskResult`; the server must answer normally or reject with `-32003`. |
+| `tasks-undeclared-creation-refused` | `creation` | On the extension wire, a `tools/call` that did not carry the extension declaration must not come back as a `CreateTaskResult`; the server must answer normally or reject with `-32021`. |
 | `tasks-ttl-shape` | `lifecycle` | TTL and poll interval use the era-native shapes: `ttlMs`/`pollIntervalMs` on the extension, `ttl`/`pollInterval` on the legacy wire. |
 | `tasks-inline-result` | `lifecycle` | A completed extension task carries its result inline on `tasks/get`; a legacy task exposes it via `tasks/result`. |
 | `tasks-mcp-name-routing` | `lifecycle` | Over HTTP, `tasks/get` is sent with `Mcp-Name` set to the task id. |
