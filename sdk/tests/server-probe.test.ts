@@ -481,6 +481,24 @@ describe("probeMcpServer", () => {
       expect(requestedUrls(fetchFn)).not.toContain(internal);
     });
 
+    // `blob:https://host/…` reports the origin of the URL it wraps, so an
+    // origin comparison read it as the server's own and skipped the guard.
+    it("refuses a blob: pointer wearing the server's origin", async () => {
+      const serverUrl = "https://mcp.example.com/mcp";
+      const blobUrl = "blob:https://mcp.example.com/8f1d";
+      const fetchFn: typeof fetch = jest.fn(async (input) =>
+        String(input) === serverUrl
+          ? challenge(blobUrl)
+          : jsonResponse({ error: "unexpected" }, 404)
+      ) as typeof fetch;
+
+      const result = await probeMcpServer({ url: serverUrl, fetchFn });
+
+      expect(result.status).toBe("oauth_required");
+      expect(result.oauth.discoveryError).toMatch(/http\(s\)/);
+      expect(requestedUrls(fetchFn)).not.toContain(blobUrl);
+    });
+
     it("refuses an authorization server on a private address", async () => {
       const serverUrl = "https://mcp.example.com/mcp";
       const prm =

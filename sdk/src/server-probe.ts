@@ -246,7 +246,19 @@ function assertMetadataDestinationAllowed(
   serverUrl: string
 ): void {
   try {
-    if (new URL(candidate).origin === new URL(serverUrl).origin) {
+    const target = new URL(candidate);
+    const server = new URL(serverUrl);
+    // Compare scheme and host rather than `origin`. Every non-special scheme
+    // reports the origin `"null"`, and `blob:https://host/…` reports the origin
+    // of the URL it wraps with no host of its own — so an `origin` comparison
+    // lets a `blob:` pointer at the configured server's origin skip the guard
+    // entirely. Restricting the shortcut to the schemes the probe can actually
+    // dial keeps it to what it is for: the origin the caller already named.
+    if (
+      (target.protocol === "http:" || target.protocol === "https:") &&
+      target.protocol === server.protocol &&
+      target.host === server.host
+    ) {
       return;
     }
   } catch {
