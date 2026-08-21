@@ -429,6 +429,57 @@ describe("OrganizationsTab billing", () => {
     );
   });
 
+  // A charge raised automatically when an invitee signs up fails with nobody
+  // watching. Before this, terminal charges were invisible to the owner and
+  // the invitee stayed stranded — the original bug with a nicer tooltip.
+  it("surfaces a failed seat charge with a working retry", async () => {
+    const retrySeatPayment = vi
+      .fn()
+      .mockResolvedValue({ status: "paid", seatQuantity: 4 });
+    const finishSeatPayment = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: {
+          _id: "seat-payment-failed",
+          organizationId: "org-1",
+          userId: "user-new",
+          email: "stranded@example.com",
+          role: "member",
+          source: "pending_invite_signup",
+          status: "failed",
+          needsRetry: true,
+          targetSeatQuantity: null,
+          stripeInvoiceId: null,
+          createdAt: 1,
+          updatedAt: 2,
+        },
+        finishSeatPayment,
+        retrySeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.getByTestId("failed-seat-payment-notice")).toHaveTextContent(
+      "stranded@example.com",
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Retry payment" }));
+    await waitFor(() => expect(retrySeatPayment).toHaveBeenCalled());
+    // Retry reopens the charge as a new attempt first; going straight to
+    // finish would be refused, since terminal charges are not revivable there.
+    expect(finishSeatPayment).not.toHaveBeenCalled();
+  });
+
   it("billing view hides Manage plan for non-owners and shows owner-only copy", () => {
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
