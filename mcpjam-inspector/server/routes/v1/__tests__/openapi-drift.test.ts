@@ -18,11 +18,17 @@ const spec = JSON.parse(
   )
 ) as {
   security?: unknown[];
+  components?: { parameters?: Record<string, { name?: string; in?: string }> };
   paths: Record<
     string,
     Record<
       string,
-      { operationId?: string; requestBody?: unknown; security?: unknown[] }
+      {
+        operationId?: string;
+        requestBody?: unknown;
+        security?: unknown[];
+        parameters?: Array<{ $ref?: string; name?: string; in?: string }>;
+      }
     >
   >;
 };
@@ -35,16 +41,39 @@ const BODYLESS_WRITES = new Set([
   "post /projects/{projectId}/tunnels/{serverId}/close",
   // Cancel is addressed entirely by the path runId; the body is empty.
   "post /projects/{projectId}/eval-runs/{runId}/cancel",
+  // Same shape on the swarm side, for the same reason.
+  "post /projects/{projectId}/journey-runs/{runId}/cancel",
+  // And the same on readiness. There is nothing to say about a cancellation
+  // beyond which run — the executing node learns about it on its next
+  // heartbeat, and a body could only be a place to pass options a cancellation
+  // does not have.
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel",
+  // Dismissal is addressed entirely by the path findingId — there is nothing
+  // to say about it beyond which finding.
+  "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
+  "post /projects/{projectId}/journey-findings/{findingId}/undismiss",
+  // Rotating a share link takes no options: the path scenarioId names what to
+  // rotate, and the new secret is minted server-side by definition. A body
+  // here could only be a place to pass the next secret in, which is exactly
+  // what a rotation must not accept.
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link",
+  // Scenario-side dismissal, same shape as the swarm-side pair above.
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
 ]);
 
 // Routes the v1 router serves that openapi.json deliberately does NOT describe.
 //
 // This started as a backlog — fifteen eval-suite/case and eval-ingest routes
-// that the hand-authored spec had simply not caught up with. Those are now
-// documented, and what remains is the real thing this list is for: endpoints
-// that exist but are not part of the public contract, each with the reason
-// written down. An entry without a reason is a backlog item wearing a
-// decision's clothes.
+// the hand-authored spec had not caught up with, then the whole swarms and
+// user-testing surface behind the `sandboxes-enabled` beta. All of those are
+// documented now, with the gate's behaviour stated on the page rather than the
+// routes hidden: a caller who cannot use a route yet is better served by a
+// documented refusal than by an endpoint that appears not to exist.
+//
+// What remains is the real thing this list is for: endpoints that exist but
+// are not part of the public contract, each with the reason written down. An
+// entry without a reason is a backlog item wearing a decision's clothes.
 //
 // The test enforces both directions — a new undocumented route fails, and a
 // baselined route that gets documented (or deleted) must lose its entry here.
@@ -62,22 +91,6 @@ const KNOWN_UNDOCUMENTED = new Set([
   // contract — documenting it would invite external callers to depend on the
   // shape of an internal list that changes with every tool we add.
   "get /agent-ops",
-  // Flag-gated beta (`sandboxes-enabled`); document at GA. The public docs are
-  // the one surface a flag CANNOT gate — a Mintlify page is visible to
-  // everyone regardless of who the flag is on for — so a beta surface that is
-  // enforced server-side per organization must stay out of the spec until the
-  // flag comes off. Reads are ungated at the API (an empty list leaks
-  // nothing); the WRITES these support are enforced in
-  // `mcpjam-backend/convex/lib/sandboxesGate.ts`.
-  "get /projects/{projectId}/journeys",
-  "get /projects/{projectId}/journeys/{journeyId}/runs",
-  "get /projects/{projectId}/journey-runs/{runId}",
-  "get /projects/{projectId}/journey-runs/{runId}/sessions",
-  "post /projects/{projectId}/journeys/{journeyId}/runs",
-  "post /projects/{projectId}/journey-runs/{runId}/cancel",
-  // Same flag, same reason (`sandboxes-enabled` gates both products).
-  "put /projects/{projectId}/environments/{environmentId}/scenario",
-  "delete /projects/{projectId}/environments/{environmentId}/scenario",
 ]);
 
 /**
@@ -277,5 +290,56 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
         "\n  "
       )}`
     ).toEqual([]);
+  });
+
+  it("declares a path parameter for every placeholder, and no phantoms", () => {
+    // A path item can name a parameter its URL does not contain, or contain one
+    // it never names, and nothing else notices: the route still serves, the
+    // drift check above still matches on path+method, and the playground just
+    // renders the wrong field. `requestEvalRunInsights` shipped with a phantom
+    // `scenarioId` and no `runId` — a copy-paste from the surrounding
+    // user-testing operations — and was found by a person reading, which is not
+    // a mechanism.
+    //
+    // Both directions, because they are different bugs: a MISSING parameter
+    // makes the operation uncallable from a generated client, and a PHANTOM one
+    // asks the caller for an id the route will never read.
+    const shared = spec.components?.parameters ?? {};
+    const resolve = (p: { $ref?: string; name?: string; in?: string }) =>
+      p.$ref ? shared[p.$ref.split("/").pop() ?? ""] ?? {} : p;
+
+    const problems: string[] = [];
+    for (const [path, item] of Object.entries(spec.paths)) {
+      const placeholders = new Set(
+        [...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!)
+      );
+      const itemLevel = (
+        (item as { parameters?: Array<{ $ref?: string }> }).parameters ?? []
+      ).map(resolve);
+
+      for (const [method, op] of Object.entries(item)) {
+        if (!HTTP_METHODS.has(method.toUpperCase())) continue;
+        const declared = [...itemLevel, ...(op.parameters ?? []).map(resolve)];
+        const named = new Set(
+          declared.filter((p) => p.in === "path").map((p) => p.name)
+        );
+        for (const placeholder of placeholders) {
+          if (!named.has(placeholder)) {
+            problems.push(
+              `${method} ${path}: no parameter for {${placeholder}}`
+            );
+          }
+        }
+        for (const name of named) {
+          if (name && !placeholders.has(name)) {
+            problems.push(
+              `${method} ${path}: declares {${name}}, not in the path`
+            );
+          }
+        }
+      }
+    }
+
+    expect(problems.sort(), problems.sort().join("\n")).toEqual([]);
   });
 });

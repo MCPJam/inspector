@@ -37,13 +37,26 @@
 import {
   callServerToolOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   createEvalCaseOperation,
+  createEvalCasesOperation,
   createEvalSuiteOperation,
   diagnoseServerOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
   generateEvalCasesOperation,
+  ensureAdhocEnvironmentOperation,
   getEnvironmentOperation,
+  nameEnvironmentOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
+  compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
@@ -55,6 +68,8 @@ import {
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
   listHostsOperation,
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,
@@ -62,6 +77,46 @@ import {
   readServerResourceOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
+  getCapabilitiesOperation,
+  listPersonasOperation,
+  getPersonaOperation,
+  createPersonaOperation,
+  updatePersonaOperation,
+  listJourneysOperation,
+  getJourneyOperation,
+  createJourneyOperation,
+  updateJourneyOperation,
+  listSwarmsOperation,
+  getSwarmOperation,
+  createSwarmOperation,
+  updateSwarmOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  launchJourneyRunOperation,
+  cancelJourneyRunOperation,
+  getSwarmOverviewOperation,
+  getJourneyRunScorecardOperation,
+  listSwarmFindingsOperation,
+  dismissSwarmFindingOperation,
+  undismissSwarmFindingOperation,
+  getWaveInsightsOperation,
+  requestWaveInsightsOperation,
+  cancelWaveInsightsOperation,
+  generatePersonasOperation,
+  generateJourneysOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  cancelUserTestingInsightsOperation,
+  requestUserTestingInsightsOperation,
+  updateUserTestingScenarioOperation,
+  upsertUserTestingMemberOperation,
+  rebindUserTestingScenarioOperation,
+  setUserTestingGuestExecutionOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
@@ -73,7 +128,9 @@ import type {
   ProposedActionSeverity,
   ProposedActionTarget,
 } from "@mcpjam/sdk/public-api";
+import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
+import { logger } from "../../utils/logger.js";
 
 /** Any catalog operation, input type erased — the registry is heterogeneous. */
 export type AnyPlatformOperation = PlatformOperation<any, unknown>;
@@ -121,7 +178,7 @@ export interface GatedProposalMeta {
    */
   resource?(
     result: unknown,
-    context: { projectId: string }
+    context: { projectId: string },
   ): ExecutedActionResource | undefined;
   /**
    * What the proposal is ABOUT, from validated input, when that is a nameable
@@ -132,6 +189,27 @@ export interface GatedProposalMeta {
    * must treat as match-unknown.
    */
   target?(input: Record<string, unknown>): ProposedActionTarget | undefined;
+  /**
+   * FREEZE the arguments at PROPOSAL-MINT time, resolving anything whose
+   * meaning could change before a human clicks.
+   *
+   * A proposal is a contract about a specific action, and the approval route
+   * executes exactly the arguments stored with it. That is safe only while the
+   * stored arguments MEAN the same thing later — and `allAttached: true` does
+   * not: attaching a fourth environment between the proposal and the click
+   * silently widens an approved 3-run spend to 4. Resolving it to an explicit
+   * ID list here makes the approved set the frozen set, so a later attachment
+   * edit can add nothing to it.
+   *
+   * The ONE async hook in an otherwise synchronous registry, because resolving
+   * names to ids needs the platform. It runs best-effort at the call site: a
+   * failure leaves the arguments as the model wrote them rather than losing the
+   * proposal, so the worst case is today's behaviour and not a dropped action.
+   */
+  normalizeProposalArgs?(
+    input: Record<string, unknown>,
+    context: { projectId: string; client: PlatformApiClient },
+  ): Promise<Record<string, unknown>>;
 }
 
 /** Read a string off an unknown result, at a dotted path. */
@@ -150,7 +228,7 @@ function readString(source: unknown, path: string): string | undefined {
  * model-authored proposal may pass a name — hosts match against both).
  */
 function evalSuiteTarget(
-  input: Record<string, unknown>
+  input: Record<string, unknown>,
 ): ProposedActionTarget | undefined {
   const selector = named(input, "suite");
   return selector ? { type: "eval_suite", selector } : undefined;
@@ -165,20 +243,256 @@ function evalSuiteTarget(
  */
 function evalRunResource(
   result: unknown,
-  { projectId }: { projectId: string }
+  { projectId }: { projectId: string },
 ): ExecutedActionResource | undefined {
-  const runId = readString(result, "runId");
   const suiteId =
     readString(result, "suite.id") ?? readString(result, "suiteId");
-  if (!runId || !suiteId) return undefined;
+  if (!suiteId) return undefined;
+  const suiteUrl = `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
+    suiteId,
+  )}`;
+
+  // A GROUPED launch links to the group, not to one of its runs. The contract
+  // carries a single resource, and linking to the first run would hide the
+  // fact that a sibling failed — the one thing the approver most needs to see
+  // after approving N paid runs.
+  const runGroupId = readString(result, "runGroupId");
+  if (runGroupId) {
+    return {
+      type: "eval_run_group",
+      id: runGroupId,
+      url: `${suiteUrl}?view=runs&project=${encodeURIComponent(projectId)}`,
+    };
+  }
+
+  const runId = readString(result, "runId");
+  if (!runId) return undefined;
   return {
     type: "eval_run",
     id: runId,
     url:
-      `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}` +
-      `/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(
-        projectId
-      )}`,
+      `${suiteUrl}/runs/${encodeURIComponent(runId)}` +
+      `?project=${encodeURIComponent(projectId)}`,
+  };
+}
+
+/**
+ * The approval line for an eval-suite run, which must say HOW MANY paid runs a
+ * click starts.
+ *
+ * The count is honest because `freezeEvalRunTargets` has already resolved
+ * `allAttached` into an explicit list by the time this renders — so this is
+ * reading a decided set, not estimating one. When normalization could not run
+ * (an offline platform), the copy says the run fans out without claiming a
+ * number it does not have.
+ */
+function describeEvalSuiteRun(input: Record<string, unknown>): string {
+  const suite = named(input, "suite") ?? "(unnamed)";
+  // COMPOSE is the one target that also EDITS the suite: it creates an ad-hoc
+  // environment and appends it to the suite's attachments. An approver reading
+  // "Run eval suite smoke" would authorise a persistent change nobody
+  // mentioned, so the line says it.
+  const compose = input.compose;
+  if (compose && typeof compose === "object") {
+    const host = named(compose as Record<string, unknown>, "host");
+    return (
+      `Run eval suite ${suite} on a composed setup${host ? ` (${host})` : ""}` +
+      " — one paid run, and the composed environment is attached to the suite"
+    );
+  }
+  const targets = [
+    ...readStringList(input, "environments"),
+    ...readStringList(input, "hosts"),
+  ];
+  if (targets.length > 1) {
+    return `Start ${
+      targets.length
+    } paid eval runs of suite ${suite}: ${targets.join(", ")}`;
+  }
+  const single =
+    targets[0] ?? named(input, "environment") ?? named(input, "host");
+  if (input.allAttached === true) {
+    return `Run eval suite ${suite} against every attached target — one paid run each`;
+  }
+  return single
+    ? `Run eval suite ${suite} against ${single}`
+    : `Run eval suite ${suite}`;
+}
+
+/**
+ * Resolve a run proposal's targets to explicit IDs, so approval executes the
+ * set that was approved.
+ *
+ * `allAttached` is the whole reason this exists: it means "every target
+ * attached RIGHT NOW", and "right now" moves between the proposal and the
+ * click. Storing it verbatim would let an attachment edit widen an approved
+ * 3-run spend to 4 with nobody approving the fourth. Resolved here into an
+ * `environments`/`hosts` id list, and `allAttached` is DROPPED — leaving it
+ * would let the re-expansion happen anyway.
+ *
+ * Name selectors are resolved for the same reason: a name is a pointer, and
+ * the row it points at can be renamed or replaced. Every spelling of them —
+ * `environment`/`environments` and `host`/`hosts` — because a rename repoints
+ * a single target exactly as readily as it repoints several, and a guarantee
+ * that depended on which form the caller used would be no guarantee.
+ */
+async function freezeEvalRunTargets(
+  input: Record<string, unknown>,
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const suiteSelector = named(input, "suite");
+  if (!suiteSelector) return input;
+  const wantsAll = input.allAttached === true;
+  const namedEnvironments = readStringList(input, "environments");
+  const namedHosts = readStringList(input, "hosts");
+  const namedEnvironment = named(input, "environment");
+  const namedHost = named(input, "host");
+  if (
+    !wantsAll &&
+    namedEnvironments.length === 0 &&
+    namedHosts.length === 0 &&
+    !namedEnvironment &&
+    !namedHost
+  ) {
+    // Nothing to freeze: no target named at all.
+    return input;
+  }
+
+  const suites = await client.listEvalSuites({ projectId });
+  const suite = suites.items.find(
+    (candidate) =>
+      candidate.id === suiteSelector ||
+      candidate.name?.toLocaleLowerCase() === suiteSelector.toLocaleLowerCase(),
+  );
+  if (!suite) return input;
+  const detail = await client.getEvalSuite({ projectId, suiteId: suite.id });
+
+  const { allAttached: _dropped, ...rest } = input;
+  if (wantsAll) {
+    // ONE axis, environments first — the same precedence the operation itself
+    // applies, so the frozen set is the set that would have run.
+    const environmentIds = detail.environmentIds ?? [];
+    if (environmentIds.length > 0) {
+      return { ...rest, environments: environmentIds };
+    }
+    const hostIds = (detail.hosts ?? []).map((host) => host.id);
+    // Nothing attached: there is no set to freeze. Returning `rest` here would
+    // strip `allAttached` and leave a proposal that no longer says what the
+    // describer announced, so leave the request exactly as written.
+    return hostIds.length > 0 ? { ...rest, hosts: hostIds } : input;
+  }
+
+  const next: Record<string, unknown> = { ...rest };
+  if (namedHosts.length > 0 || namedHost) {
+    const byName = new Map(
+      (detail.hosts ?? []).map((host) => [
+        host.name.toLocaleLowerCase(),
+        host.id,
+      ]),
+    );
+    const freeze = (selector: string) =>
+      byName.get(selector.toLocaleLowerCase()) ?? selector;
+    // Singular and plural alike. A rename repoints ONE target just as readily
+    // as it repoints several — the count is unchanged, but the run is not the
+    // run that was approved — so the guarantee cannot depend on which spelling
+    // the model happened to emit.
+    if (namedHosts.length > 0) next.hosts = namedHosts.map(freeze);
+    if (namedHost) next.host = freeze(namedHost);
+  }
+  if (namedEnvironments.length > 0 || namedEnvironment) {
+    // Same reason as hosts, one axis over: an environment name is a pointer,
+    // and the row it points at can be renamed or replaced between the proposal
+    // and the click. Narrowed to the suite's ATTACHED environments, so a name
+    // that matches some other environment in the project cannot be frozen into
+    // a target the suite could not have run anyway. Ids pass through untouched,
+    // and an unresolvable selector is left as-is for the operation to reject
+    // with its own (better) message.
+    const attached = new Set(detail.environmentIds ?? []);
+    let byName = new Map<string, string>();
+    try {
+      const environments = await client.listEnvironments({ projectId });
+      byName = new Map(
+        environments.items
+          .filter((environment) => attached.has(environment.id))
+          .map((environment) => [
+            (environment.name ?? "").toLocaleLowerCase(),
+            environment.id,
+          ]),
+      );
+    } catch {
+      // Same posture as the suite lookup above: freezing is a narrowing, and a
+      // platform that cannot answer must not cost the caller the proposal. The
+      // operation still resolves and validates these selectors on the click.
+    }
+    const freeze = (selector: string) =>
+      (attached.has(selector) ? selector : undefined) ??
+      byName.get(selector.toLocaleLowerCase()) ??
+      selector;
+    if (namedEnvironments.length > 0) {
+      next.environments = namedEnvironments.map(freeze);
+    }
+    if (namedEnvironment) next.environment = freeze(namedEnvironment);
+  }
+  return next;
+}
+
+/** Read a string array off validated input, dropping non-strings. */
+function readStringList(input: Record<string, unknown>, key: string): string[] {
+  const value = input[key];
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+/**
+ * The run a launch produces, as a linkable resource.
+ *
+ * Built here rather than by the host for the reason the eval builder above
+ * documents: a host assembling URLs from a result payload would have to know
+ * each operation's result shape, and would silently link to nothing the moment
+ * one changed.
+ */
+/**
+ * The /conformance section a finished readiness run is read on.
+ *
+ * The EXACT run id travels in the link, not just the page. The section can
+ * rediscover "the newest run for this server" when it has nothing better, but
+ * that is the wrong run for somebody following a link about a specific one —
+ * two runs started minutes apart would send an approver to the other one's
+ * verdict.
+ */
+function readinessRunResource(
+  result: unknown,
+  { projectId }: { projectId: string },
+): ExecutedActionResource | undefined {
+  const runId = readString(result, "run.runId") ?? readString(result, "run.id");
+  if (!runId) return undefined;
+  return {
+    type: "readiness_run",
+    id: runId,
+    url:
+      `${MCPJAM_HOSTED_ORIGIN}/conformance` +
+      `?project=${encodeURIComponent(projectId)}` +
+      `&readinessRun=${encodeURIComponent(runId)}`,
+  };
+}
+
+function journeyRunResource(
+  result: unknown,
+  { projectId }: { projectId: string },
+): ExecutedActionResource | undefined {
+  const runId = readString(result, "run.id") ?? readString(result, "runId");
+  if (!runId) return undefined;
+  return {
+    type: "journey_run",
+    id: runId,
+    // `/swarms/<runId>` — the client routes on the FIRST segment after
+    // `/swarms/` (App.tsx takes `.split("/")[0]` as the run id), so a
+    // `/swarms/runs/<id>` link resolves to a run named literally "runs" and
+    // dead-links the approver.
+    url:
+      `${MCPJAM_HOSTED_ORIGIN}/swarms/${encodeURIComponent(runId)}` +
+      `?project=${encodeURIComponent(projectId)}`,
   };
 }
 
@@ -226,7 +540,7 @@ const UNTRUSTED_SERVER_CONTENT_NOTE =
  */
 function named(
   input: Record<string, unknown>,
-  key: string
+  key: string,
 ): string | undefined {
   const value = input[key];
   return typeof value === "string" && value.trim() ? value : undefined;
@@ -356,7 +670,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
   const keys = Object.keys(args).sort();
   const shown = keys.slice(0, PREVIEW_MAX_ARGS);
   const parts = shown.map(
-    (key) => `${previewIdentifier(key)}: ${previewValue(args[key])}`
+    (key) => `${previewIdentifier(key)}: ${previewValue(args[key])}`,
   );
   const omitted = keys.slice(PREVIEW_MAX_ARGS);
   if (omitted.length > 0) {
@@ -368,7 +682,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
     parts.push(
       `+${omitted.length} more: ${omitted
         .map((key) => previewIdentifier(key))
-        .join(", ")}`
+        .join(", ")}`,
     );
   }
   // The NAME is capped (inside previewIdentifier) before the whole preview
@@ -378,7 +692,7 @@ function previewToolCall(toolName: string, parameters: unknown): string {
   // is being called with. That is exactly the state this preview exists to
   // prevent, and it is reachable by an agent choosing a long name.
   const rendered = toSafeLine(
-    `${previewIdentifier(toolName)}(${parts.join(", ")})`
+    `${previewIdentifier(toolName)}(${parts.join(", ")})`,
   );
   return capChars(rendered, PREVIEW_TOTAL_CHARS);
 }
@@ -392,10 +706,125 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // project and one that guesses at it.
   { operation: listProjectServersOperation, tier: "direct" },
   {
+    // GATED, because the registry's own rule says anything reaching outside
+    // MCPJam is gated — and this one genuinely does. An earlier revision
+    // argued itself into `direct` on the theory that the handoff page is the
+    // real approval: the operation "cannot connect anything on its own". That
+    // is true for the OAuth path and FALSE for the other one. A server whose
+    // discovered auth method is `none`, named alongside a project, runs
+    // discovering → validating → ready with no handoff page and no human step
+    // — the server lands in the project, enabled, on nothing but the model's
+    // say-so. Prompt-injected content plus a project name learned from
+    // `list_projects` is all that takes. The dial at the target also fires the
+    // moment the model calls, human or no human. In-app chat already requires
+    // approval for this operation (`APPROVAL_REQUIRED_IDS`); the tier now
+    // agrees with it.
+    //
+    // The OAuth path does end up asking twice. That is the acceptable cost:
+    // the first click authorizes "start probing this URL as me", the second
+    // authorizes the credential — different questions, and only the flow
+    // itself knows in advance whether the second one will exist.
+    //
+    // The link staying private remains the adapter's job, not the tier's: the
+    // agent adapter strips `handoffUrl` from model-visible text and moves it
+    // into a structured part, so the surfaces deliver it ephemerally instead
+    // of a model pasting it into a thread.
+    operation: connectProjectServerOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const url = named(input, "url");
+        let host: string | undefined;
+        try {
+          host = url ? new URL(url).host : undefined;
+        } catch {
+          host = undefined;
+        }
+        const project = named(input, "project");
+        return `Connect MCP server ${host ?? "(unparseable url)"}${
+          project ? ` to project ${project}` : ""
+        }`;
+      },
+      buttonLabel: "Start the connection",
+      kind: "external",
+      confirmSeverity: "external",
+    },
+    promptNotes: [
+      "- `connect_project_server` starts a connection and usually cannot finish it: an OAuth server needs the person to authorize in a browser. Say that a private authorization button will be shown, and NEVER write the authorization URL into your reply — the surface delivers it privately, and repeating it in a channel would let anyone there authorize on the requester's behalf.",
+      "- After connecting, poll `get_project_server_connection_status` rather than assuming success. `ready` means the server was validated with real credentials; `awaiting_authorization` means the person has not finished yet.",
+    ],
+  },
+  { operation: getProjectServerConnectionStatusOperation, tier: "direct" },
+  {
     operation: diagnoseServerOperation,
     tier: "direct",
     promptNotes: [
       "- When a server is erroring, won't connect, or behaves unexpectedly, run `diagnose_server` on it before guessing. It probes the URL, connects, initializes, and reports exactly what failed — which is usually the whole answer.",
+    ],
+  },
+  {
+    operation: startClaudeReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade ${
+          named(input, "server") ?? "a server"
+        } against Anthropic's connector directory`,
+      buttonLabel: "Run it",
+      kind: "start",
+      // A FUNCTION because the hazard is in the input. The deterministic grade
+      // is free; only the opt-in model pass spends. Static `"spend"` would
+      // warn about money on every free run, and `"none"` would stay silent on
+      // the one run that costs something.
+      confirmSeverity: (input) =>
+        (input as { includeLlmObservations?: boolean }).includeLlmObservations
+          ? "spend"
+          : "none",
+      resource: readinessRunResource,
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
+      "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
+      "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
+      "- When a readiness run reports `authMode: \"headless\"` and a lane's `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.",
+    ],
+  },
+  {
+    operation: startOpenAIReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade ${
+          named(input, "server") ?? "a server"
+        } against OpenAI's app directory`,
+      buttonLabel: "Run it",
+      kind: "start",
+      confirmSeverity: (input) =>
+        (input as { includeLlmObservations?: boolean }).includeLlmObservations
+          ? "spend"
+          : "none",
+      resource: readinessRunResource,
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
+    ],
+  },
+  { operation: getReadinessRunOperation, tier: "direct" },
+  { operation: listReadinessRunsOperation, tier: "direct" },
+  { operation: getReadinessReportOperation, tier: "direct" },
+  {
+    operation: cancelReadinessRunOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Cancelling a readiness run STOPS traffic to somebody else's server, so it needs no approval. The run's real terminal state arrives on a later `get_readiness_run` — the cancel response reports the request, not the outcome.",
     ],
   },
   { operation: listServerToolsOperation, tier: "direct" },
@@ -420,6 +849,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getEvalCaseOperation, tier: "direct" },
   { operation: listEvalSuiteRunsOperation, tier: "direct" },
   { operation: getEvalRunOperation, tier: "direct" },
+  {
+    operation: compareEvalRunOperation,
+    tier: "direct",
+    promptNotes: [
+      "- A scorer whose `definitionChanged` is true was graded by a DIFFERENT definition on each side. Its delta is not a regression — the two runs did not measure the same thing — so do not report it as one.",
+    ],
+  },
   { operation: listEvalRunIterationsOperation, tier: "direct" },
   { operation: getEvalRunStepsOperation, tier: "direct" },
   {
@@ -436,8 +872,17 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
 
   // ── WRITE — persists, but spends nothing. Every one is picked up by the
   // derived idempotency set below and echoed in the response envelope.
+  {
+    operation: ensureAdhocEnvironmentOperation,
+    tier: "direct",
+    promptNotes: [
+      "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
+    ],
+  },
+  { operation: nameEnvironmentOperation, tier: "direct" },
   { operation: createEvalSuiteOperation, tier: "direct" },
   { operation: createEvalCaseOperation, tier: "direct" },
+  { operation: createEvalCasesOperation, tier: "direct" },
   { operation: updateEvalCaseOperation, tier: "direct" },
   { operation: updateEvalSuiteOperation, tier: "direct" },
 
@@ -453,12 +898,18 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: runEvalSuiteOperation,
     tier: "gated",
     proposal: {
-      describe: (input) =>
-        `Run eval suite ${named(input, "suite") ?? "(unnamed)"}`,
+      describe: describeEvalSuiteRun,
       buttonLabel: "Run it",
       kind: "start",
+      // Every eval run consumes credits, and a fan-out consumes them N times.
+      // Stated here rather than derived from the operation's `risk` facet:
+      // severity is not a function of risk (`external` has no risk value, and
+      // the schedule entry below decides per argument), so the two are
+      // deliberately separate fields that happen to agree here.
+      confirmSeverity: "spend",
       resource: evalRunResource,
       target: evalSuiteTarget,
+      normalizeProposalArgs: freezeEvalRunTargets,
     },
   },
   {
@@ -469,6 +920,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Run eval case ${named(input, "case") ?? "(unnamed)"}`,
       buttonLabel: "Run it",
       kind: "start",
+      confirmSeverity: "spend",
       resource: evalRunResource,
       target: evalSuiteTarget,
     },
@@ -481,6 +933,11 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Generate eval cases for ${named(input, "suite") ?? "(unnamed)"}`,
       buttonLabel: "Generate them",
       kind: "generate",
+      // Generation calls the authoring model, so it spends credits exactly
+      // like the two run operations above. Without this the Slack and Discord
+      // approval cards omit the spend warning for the one operation whose
+      // cost is least obvious from its name.
+      confirmSeverity: "spend",
     },
   },
   {
@@ -491,6 +948,65 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Cancel the run",
       kind: "cancel",
     },
+  },
+  // GATED because it SPENDS. `kind: "generate"` matches the other
+  // request-an-analysis ops: nothing starts running that a person is waiting
+  // on, an advisory result is authored in the background.
+  {
+    operation: requestEvalRunJudgeOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const run = named(input, "runId") ?? "(unnamed)";
+        // `force` re-grades a run that already has a result — the same spend
+        // a second time. An approval button that said only "Grade run X"
+        // would hide the fact that X was already graded.
+        const again = input.force === true ? " again" : "";
+        // `enable` is the reason a run recorded with the judge off can be
+        // graded at all, and it is exactly the case where a reader would
+        // otherwise expect the click to do nothing.
+        const despite =
+          input.enable === true ? " (judge was off when it ran)" : "";
+        return `Grade run ${run}${again} with LLM as Judge${despite}`;
+      },
+      buttonLabel: "Grade it",
+      kind: "generate",
+    },
+    promptNotes: [
+      "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
+    ],
+  },
+
+  // ── GitHub Checks. The read is free and is what makes the write
+  // answerable: `connectable` names the repositories the App can actually
+  // reach, so a proposal can quote a real one instead of a guess.
+  { operation: listEvalCheckReposOperation, tier: "direct" },
+  // GATED for REACH, not spend. Connecting changes what happens in a SHARED
+  // repository for everyone who opens a pull request against it, and with
+  // `fail_closed` it can block their merges. `kind: "external"` is the honest
+  // one: the effect lands on GitHub, where MCPJam cannot describe or undo it.
+  {
+    operation: connectEvalCheckRepoOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const repo = named(input, "repo") ?? "(unnamed repository)";
+        const suite = named(input, "suite") ?? "(unnamed)";
+        // The policy is the half of this decision that outlives the click, so
+        // it is in the sentence rather than buried in the arguments.
+        const policy =
+          input.outagePolicy === "fail_closed"
+            ? " (failing checks closed when MCPJam cannot conclude)"
+            : " (passing checks open when MCPJam cannot conclude)";
+        return `Run eval suite ${suite} on every pull request to ${repo}${policy}`;
+      },
+      buttonLabel: "Connect the repository",
+      kind: "external",
+      confirmSeverity: "external",
+    },
+    promptNotes: [
+      "- `connect_eval_check_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_check_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do.",
+    ],
   },
 
   // ── GATED because the spend RECURS.
@@ -557,6 +1073,281 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       UNTRUSTED_SERVER_CONTENT_NOTE,
     ],
   },
+
+  // ── SWARMS ────────────────────────────────────────────────────────────
+  //
+  // The tiers below are NOT a fresh per-operation judgement — they follow
+  // from `operation.risk` in the SDK catalog (none → direct, spend/exposure
+  // → gated, destructive → excluded), and the rule is ENFORCED, not prose:
+  // the "tier derives from operation.risk" suite in agent-op-registry.test.ts
+  // runs the derivation over every risk-classified operation. The only
+  // lawful deviations are the ones NAMED in that suite's `TIER_EXCEPTIONS`
+  // map, each with a written reason (`cancel_journey_run` stays gated so
+  // stopping spend is approvable; `publish_scenario` stays excluded because
+  // who may talk to your servers is a human call). Re-tiering an entry
+  // against its risk fails CI until the exception is written down there.
+  //
+  // Deriving from shared metadata rather than re-deciding here is the fix for
+  // a real failure: `cancel_journey_run` was once excluded from this surface
+  // citing a reason that only applied to the MCP catalog, because each
+  // partition file argued the case independently and one of them got it wrong.
+  {
+    operation: getCapabilitiesOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Before planning anything that authors, launches or publishes, call `get_capabilities` for the project. Your tool list is identical for every caller, so it cannot tell you that this organization is not in the Swarms beta or that you are a member where the action needs an admin. The `can` block answers both. Finding out from a 403 means you have already told someone you were doing it.",
+    ],
+  },
+  { operation: listPersonasOperation, tier: "direct" },
+  { operation: getPersonaOperation, tier: "direct" },
+  { operation: createPersonaOperation, tier: "direct" },
+  { operation: updatePersonaOperation, tier: "direct" },
+  { operation: listJourneysOperation, tier: "direct" },
+  {
+    operation: getJourneyOperation,
+    tier: "direct",
+    promptNotes: [
+      "- A journey run produces `targets x sessionsPerTarget` conversations, and that total is what spends. Read `get_journey` before proposing a launch so the number in your proposal is the real one.",
+    ],
+  },
+  { operation: createJourneyOperation, tier: "direct" },
+  { operation: updateJourneyOperation, tier: "direct" },
+  { operation: listSwarmsOperation, tier: "direct" },
+  { operation: getSwarmOperation, tier: "direct" },
+  { operation: createSwarmOperation, tier: "direct" },
+  { operation: updateSwarmOperation, tier: "direct" },
+  { operation: listJourneyRunsOperation, tier: "direct" },
+  {
+    operation: getJourneyRunOperation,
+    tier: "direct",
+    promptNotes: [
+      "- After a launch is approved, poll `get_journey_run`. It leaves `running` once every attempt has settled; `canceled` and `stale` are separate booleans, so a deliberate stop and a runner that went silent do not both read as failure.",
+    ],
+  },
+  {
+    operation: getSwarmOverviewOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_swarms_overview` is the right first read for 'how are our swarms doing'. Every rate in it is over GRADED sessions, never attempted ones, and `passRate: null` means nothing has been graded yet — it does not mean everything failed.",
+    ],
+  },
+  {
+    operation: getJourneyRunScorecardOperation,
+    tier: "direct",
+    promptNotes: [
+      "- To explain why a run failed, read `get_journey_run_scorecard` first. It is deterministic, free, and usually the whole answer. `failedGradingCount` is grading that BROKE — never add it to `failCount`, or you will report a crashed judge as a product regression.",
+    ],
+  },
+  { operation: listSwarmFindingsOperation, tier: "direct" },
+  { operation: dismissSwarmFindingOperation, tier: "direct" },
+  { operation: undismissSwarmFindingOperation, tier: "direct" },
+  { operation: getWaveInsightsOperation, tier: "direct" },
+  { operation: cancelWaveInsightsOperation, tier: "direct" },
+
+  // ── GATED — the swarm operations that SPEND.
+  {
+    operation: launchJourneyRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Launch journey ${named(input, "journey") ?? "(unnamed)"}`,
+      buttonLabel: "Launch it",
+      kind: "start",
+      confirmSeverity: "spend",
+      resource: journeyRunResource,
+      target: (input) => {
+        const journey = named(input, "journey");
+        return journey ? { type: "journey", selector: journey } : undefined;
+      },
+    },
+    promptNotes: [
+      "- Launching a journey fans out real model conversations and spends credits for every one. Calling `launch_journey_run` PROPOSES the launch; a person approves it. Say how many sessions it will produce in the message around the proposal — you can compute it from `get_journey`.",
+    ],
+  },
+  {
+    operation: cancelJourneyRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Stop journey run ${named(input, "run") ?? "(unnamed)"}`,
+      buttonLabel: "Stop the run",
+      kind: "cancel",
+      // Stopping SAVES money. A host's default approval copy is worded around
+      // cost, so leaving this absent would warn about spend on the one action
+      // that reduces it.
+      confirmSeverity: "none",
+    },
+  },
+  {
+    operation: generatePersonasOperation,
+    tier: "gated",
+    proposal: {
+      describe: () => "Draft personas with a model",
+      buttonLabel: "Draft them",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+  },
+  {
+    operation: generateJourneysOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const persona = input.persona;
+        const name =
+          persona && typeof persona === "object"
+            ? named(persona as Record<string, unknown>, "name")
+            : undefined;
+        return name
+          ? `Draft journeys for ${name} with a model`
+          : "Draft journeys with a model";
+      },
+      buttonLabel: "Draft them",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+  },
+  {
+    operation: requestWaveInsightsOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Analyze wave ${named(input, "wave") ?? "(unnamed)"} with a model`,
+      buttonLabel: "Analyze it",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+    promptNotes: [
+      "- `request_wave_insights` spends against a daily budget SHARED with user-testing insights — burning it here takes it from there. Read the run scorecards first; they are free and usually explain the failure without a model pass.",
+    ],
+  },
+
+  // ── USER TESTING ──────────────────────────────────────────────────────
+  //
+  // Same derivation as Swarms above: the tier comes off `operation.risk`.
+  //
+  // The reads here are the AGGREGATE ones. Session listings and transcripts
+  // are excluded below for privacy rather than risk — they are real visitors'
+  // conversations, and the metrics answer "how is this going" without pulling
+  // anyone's words into a turn.
+  {
+    operation: getUserTestingMetricsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- For user testing, read `get_user_testing_metrics` and `list_user_testing_findings` first. They answer how a scenario is going without pulling real visitors' conversations into the turn, which is both the privacy-preserving move and the cheaper one.",
+    ],
+  },
+  {
+    operation: getUserTestingUsageOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_user_testing_usage` carries a `scan.truncated` flag. When it is true the rates were computed over the most recent sessions rather than all of them — say so if you quote them, or you turn a conditional number into a claim about the whole scenario.",
+    ],
+  },
+  { operation: listUserTestingFindingsOperation, tier: "direct" },
+  { operation: getUserTestingSignalsOperation, tier: "direct" },
+  { operation: getUserTestingInsightsOperation, tier: "direct" },
+  { operation: dismissUserTestingFindingOperation, tier: "direct" },
+  { operation: undismissUserTestingFindingOperation, tier: "direct" },
+  { operation: cancelUserTestingInsightsOperation, tier: "direct" },
+  {
+    operation: requestUserTestingInsightsOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Analyze user testing on ${
+          named(input, "scenario") ?? "(unnamed)"
+        } with a model`,
+      buttonLabel: "Analyze it",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+  },
+  {
+    operation: updateUserTestingScenarioOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const scenario = named(input, "scenario") ?? "(unnamed)";
+        const mode = named(input, "mode");
+        // The MODE is the thing the approver is really deciding about, so it
+        // goes in the sentence rather than being folded into "update".
+        // `anyone_with_link` in particular means anyone holding the URL, and
+        // an approval that said only "update scenario" would hide that.
+        return mode
+          ? `Set ${scenario} access to ${mode}`
+          : `Rename scenario ${scenario}`;
+      },
+      buttonLabel: "Apply it",
+      kind: "schedule",
+      // A rename costs nothing and exposes nothing. ANY mode change does:
+      // `project_members` → `invited_only` also puts the scenario in front of
+      // people outside the project, and only a change TO `project_members` is
+      // a narrowing. Singling out `anyone_with_link` gave the mildest possible
+      // prompt to a genuine widening.
+      confirmSeverity: (input) => {
+        const mode = named(input, "mode");
+        if (mode === undefined || mode === "project_members") return "none";
+        return "external";
+      },
+    },
+  },
+  {
+    operation: upsertUserTestingMemberOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Invite ${named(input, "email") ?? "(unnamed)"} to scenario ${
+          named(input, "scenario") ?? "(unnamed)"
+        }`,
+      buttonLabel: "Invite them",
+      kind: "schedule",
+      // Granting a named outsider access to a live scenario is the exposure
+      // change this operation's own `risk: "exposure"` describes. `none` would
+      // have the host render its neutral prompt for it.
+      confirmSeverity: "external",
+    },
+  },
+  {
+    operation: rebindUserTestingScenarioOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Point scenario ${
+          named(input, "scenario") ?? "(unnamed)"
+        } at environment ${named(input, "environmentId") ?? "(unnamed)"}`,
+      buttonLabel: "Rebind it",
+      kind: "schedule",
+      // Visitors keep the link they already have and start talking to
+      // something else. That is a change about what MCPJam reaches on their
+      // behalf, which is what `external` warns about.
+      confirmSeverity: "external",
+    },
+  },
+  {
+    operation: setUserTestingGuestExecutionOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const scenario = named(input, "scenario") ?? "(unnamed)";
+        const cap = input.dailyCreditCap;
+        return input.enabled === true
+          ? `Allow guests on ${scenario} to run tools${
+              typeof cap === "number" ? `, up to ${cap} credits a day` : ""
+            }`
+          : `Turn off guest execution on ${scenario}`;
+      },
+      buttonLabel: "Apply it",
+      kind: "schedule",
+      // The cap is a CEILING on recurring spend by strangers, so enabling is
+      // the only thing here that warrants a spend warning; turning it off
+      // stops spend and must not inherit one.
+      confirmSeverity: (input) => (input.enabled === true ? "spend" : "none"),
+    },
+    promptNotes: [
+      "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
+    ],
+  },
 ];
 
 /**
@@ -573,26 +1364,46 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
  * `AGENT_OP_REGISTRY` with a tier, or add it below with a reason.
  */
 export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
-  launch_journey_run:
-    "Pre-GA product, held out with the rest of the journey surface. (It is also the one journey operation that SPENDS — at GA it wants a tier that requires approval, not one that lets the agent start a fan-out unattended.)",
-  cancel_journey_run:
-    "Pre-GA product, held out with the rest of the journey surface — NOT a per-call judgement about cancellation. (`EXCLUDED_FROM_AGENT` means the agent cannot even PROPOSE it for approval, so a rationale about proposing would describe the opposite of what this does. At GA it should register as a gated write, like the eval cancellation it mirrors.)",
+  // Swarms operations the agent may not even PROPOSE. All three are
+  // `risk: destructive` in the SDK catalog, and the rule this surface applies
+  // is the one the gated block above states: a proposal makes spend
+  // deliberate, it does not make a removal recoverable.
+  delete_persona:
+    "Removes a persona from the roster; the agent proposes authoring, never destruction.",
+  archive_journey:
+    "Removes a journey from the roster; the agent proposes authoring, never destruction.",
+  archive_swarm:
+    "Removes a container from the roster; the agent proposes authoring, never destruction.",
+  // Session listings and their transcripts. Excluded for PRIVACY, not risk:
+  // these are conversations, synthetic or otherwise, and a chat surface that
+  // can page through them turns an agent turn into a transcript reader.
+  // Mirrors the `list_chat_sessions` precedent below. Still available on REST,
+  // the CLI and MCP, where the caller is asking for them explicitly.
+  list_journey_run_sessions:
+    "Session bodies are conversations; reading them is not a turn concern. Available on REST/CLI/MCP.",
+  // User testing: session listings and transcripts. PRIVACY, not risk — real
+  // visitors' conversations, and a chat surface that can page them is a
+  // transcript reader. Mirrors the `list_chat_sessions` precedent below.
+  // Available on REST/CLI/MCP, where the caller asked for them explicitly.
+  list_user_testing_sessions:
+    "Visitor conversations; not a turn concern. Available on REST/CLI/MCP.",
+  get_user_testing_session:
+    "A real person's conversation with your product. Available on REST/CLI/MCP.",
+  get_user_testing_scenario:
+    "Its actionable-findings envelope quotes visitors verbatim — feedback comments and transcript fragments as evidence — so it carries the same third-party content as the two reads above, and membership authorization does not change what lands in the turn. Available on REST/CLI/MCP.",
+  // Access REMOVAL. The agent proposes authoring, never destruction — and
+  // these two take access away from people who currently have it, with no way
+  // to hand it back except by re-inviting them individually.
+  rotate_user_testing_link:
+    "Immediate and irreversible: every holder of the old link loses access and every live session dies.",
+  remove_user_testing_member:
+    "Revokes a named person's access; the agent proposes authoring, never destruction.",
+
   // Scenarios (user testing).
   publish_scenario:
     "Publishing exposes an environment to people outside the project. That is a human decision about who may talk to your servers, not a turn concern.",
   unpublish_scenario:
     "Tears down a live scenario and every guest session on it — destructive, and the agent proposes authoring rather than destruction.",
-
-  // Journeys (the Swarms product). Excluded WHOLESALE while the
-  // `sandboxes-enabled` beta flag is on: what we advertise must match what we
-  // enforce, and the flag is enforced per organization server-side. Advertising
-  // these to every caller would mean most of them get a FEATURE_UNAVAILABLE
-  // error from a tool we told them they had. Revisit at GA.
-  list_journeys: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  list_journey_runs: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  get_journey_run: "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
-  list_journey_run_sessions:
-    "Flag-gated beta (`sandboxes-enabled`) — expose at GA.",
 
   // Identity and catalogs the agent turn is already scoped by. Re-offering them
   // as tools would let the model shop for a different project mid-turn.
@@ -600,6 +1411,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "The turn already runs as a resolved actor; re-reading identity adds no capability.",
   list_projects:
     "The turn is pinned to one project; project shopping is not a turn concern.",
+  list_organizations:
+    "The turn is pinned to one project inside one organization; organization shopping is a step further out than even project shopping, and nothing the agent can do with the answer stays inside the turn.",
   list_models:
     "Model choice belongs to the host that started the turn, not the turn itself.",
 
@@ -642,6 +1455,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Attachment changes silently redirect every later run of the suite.",
   resolve_project_environment:
     "Resolution detail the agent has no use for; get_environment suffices.",
+  get_project_environment_capabilities:
+    "A deployment-compatibility probe, not an action. It answers whether this platform accepts an environment model override — a question the write paths already ask on the caller's behalf, and one the agent could do nothing useful with.",
 
   // Agent Plugins. Read-only inventory, shipped for the MCP catalog surface
   // first; registering them here is a deliberate widening of the public
@@ -683,20 +1498,28 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "A widget-bearing variant for MCP Apps hosts; the agent uses list_project_servers.",
 
   // Chat surfaces the agent must not read: another person's conversations.
-  list_chatboxes: "Published chatboxes are a human sharing surface.",
-  get_chatbox: "Published chatboxes are a human sharing surface.",
+  list_scenarios: "Published scenarios are a human sharing surface.",
+  get_scenario: "Published scenarios are a human sharing surface.",
   list_chat_sessions:
     "Other people's conversations are not the agent's to read.",
+  // Same doctrine, and search does not soften it: a query that returns titles
+  // and transcript previews across every surface reads MORE of other people's
+  // conversations than the listing does, not less. The in-app chat surface has
+  // its own narrowed copy (WORKSPACE_OPERATIONS, minus scenario rows via the
+  // input clamp); this registry has no input-transform seam, so the only
+  // honest options here are all-or-nothing.
+  search_sessions:
+    "Other people's conversations are not the agent's to read. Available on REST/CLI/MCP.",
 };
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(
   (entry): entry is Extract<AgentOpEntry, { tier: "direct" }> =>
-    entry.tier === "direct"
+    entry.tier === "direct",
 );
 
 const GATED_ENTRIES = AGENT_OP_REGISTRY.filter(
   (entry): entry is Extract<AgentOpEntry, { tier: "gated" }> =>
-    entry.tier === "gated"
+    entry.tier === "gated",
 );
 
 /**
@@ -731,17 +1554,17 @@ export const AGENT_API_GATED_OPERATIONS: ReadonlyArray<AnyPlatformOperation> =
  */
 export const WRITE_OPERATION_NAMES: ReadonlySet<string> = new Set(
   DIRECT_ENTRIES.filter((entry) => !entry.operation.readOnly).map(
-    (entry) => entry.operation.name
-  )
+    (entry) => entry.operation.name,
+  ),
 );
 
 const GATED_BY_NAME = new Map(
-  GATED_ENTRIES.map((entry) => [entry.operation.name, entry])
+  GATED_ENTRIES.map((entry) => [entry.operation.name, entry]),
 );
 
 /** The gated entry for an operation name, or undefined if it is not gated. */
 export function gatedEntryFor(
-  operationName: string
+  operationName: string,
 ): Extract<AgentOpEntry, { tier: "gated" }> | undefined {
   return GATED_BY_NAME.get(operationName);
 }
@@ -759,12 +1582,23 @@ export function proposalMetaFor(operationName: string): {
   kind: ProposedActionKind;
   /** Resolved per proposal — the hazard can depend on the arguments. */
   severityFor: (
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
   ) => ProposedActionSeverity | undefined;
   /** What the proposal is about, when that is a nameable resource. */
   targetFor: (
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
   ) => ProposedActionTarget | undefined;
+  /**
+   * Freeze the arguments before they are persisted, or return them unchanged.
+   *
+   * BEST-EFFORT BY CONSTRUCTION: a normalizer that throws leaves the arguments
+   * as the model wrote them, which is exactly today's behaviour — a failed
+   * resolution must not cost the user the proposal itself.
+   */
+  normalizeArgs: (
+    input: Record<string, unknown>,
+    context: { projectId: string; client: PlatformApiClient },
+  ) => Promise<Record<string, unknown>>;
 } {
   const entry = GATED_BY_NAME.get(operationName);
   if (!entry) {
@@ -774,6 +1608,7 @@ export function proposalMetaFor(operationName: string): {
       kind: "start",
       severityFor: () => undefined,
       targetFor: () => undefined,
+      normalizeArgs: async (input) => input,
     };
   }
   const severity = entry.proposal.confirmSeverity;
@@ -791,10 +1626,23 @@ export function proposalMetaFor(operationName: string): {
     description: (input: Record<string, unknown>) =>
       capChars(
         toSafeLine(entry.proposal.describe(input)),
-        DESCRIPTION_TOTAL_CHARS
+        DESCRIPTION_TOTAL_CHARS,
       ),
     buttonLabel: entry.proposal.buttonLabel,
     kind: entry.proposal.kind,
+    normalizeArgs: async (input, context) => {
+      const normalize = entry.proposal.normalizeProposalArgs;
+      if (!normalize) return input;
+      try {
+        return await normalize(input, context);
+      } catch (error) {
+        logger.warn("[v1/agent] could not normalize proposal arguments", {
+          operation: operationName,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        return input;
+      }
+    },
   };
 }
 

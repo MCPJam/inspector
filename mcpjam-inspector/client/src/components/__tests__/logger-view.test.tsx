@@ -1,6 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({
@@ -20,6 +27,46 @@ vi.mock("@/stores/traffic-log-store", async () => {
     subscribeToRpcStream: vi.fn(() => () => {}),
   };
 });
+
+// Real dropdown menu is a Radix popover; swap it for plain markup so the
+// source-filter radio items are directly clickable in jsdom.
+vi.mock("@mcpjam/design-system/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DropdownMenuTrigger: ({ children }: { children: ReactNode }) => (
+    <>{children}</>
+  ),
+  DropdownMenuContent: ({ children }: { children: ReactNode }) => (
+    <>{children}</>
+  ),
+  DropdownMenuRadioGroup: ({
+    children,
+    onValueChange,
+  }: {
+    children: ReactNode;
+    onValueChange: (value: string) => void;
+  }) => (
+    <div data-testid="source-filter-group">
+      {Children.map(children, (child) =>
+        isValidElement(child)
+          ? cloneElement(child as ReactElement<{ value: string }>, {
+              onClick: () => onValueChange((child.props as { value: string }).value),
+            } as Record<string, unknown>)
+          : child,
+      )}
+    </div>
+  ),
+  DropdownMenuRadioItem: ({
+    children,
+    onClick,
+  }: {
+    children: ReactNode;
+    onClick?: () => void;
+  }) => (
+    <button type="button" role="menuitemradio" onClick={onClick}>
+      {children}
+    </button>
+  ),
+}));
 
 import { LoggerView } from "../logger-view";
 import {
@@ -323,5 +370,70 @@ describe("LoggerView hosted rpc logs", () => {
 
     expect(screen.getByText("initialize")).toBeInTheDocument();
     expect(screen.queryByText("Old OAuth Flow")).not.toBeInTheDocument();
+  });
+
+  it("surfaces a hidden-matches banner when the source filter hides a search match, and clears it on click", async () => {
+    const user = userEvent.setup();
+
+    // Only lives on an `http` exchange row, not a JSON-RPC frame.
+    useTrafficLogStore.getState().addMcpServerLog({
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "SEND",
+      method: "POST",
+      timestamp: "2026-04-10T12:00:00.000Z",
+      payload: { headers: { "mcp-session-id": "abc-123" } },
+      kind: "http",
+    });
+
+    render(<LoggerView />);
+
+    await user.click(screen.getByTitle("Filter Source"));
+    await user.click(screen.getByRole("menuitemradio", { name: "Server" }));
+
+    await user.type(
+      screen.getByPlaceholderText("Search logs"),
+      "mcp-session-id",
+    );
+
+    expect(
+      screen.getByText("1 match hidden by the source filter"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("No matches in this view")).toBeInTheDocument();
+
+    await user.click(screen.getByText("Clear filter"));
+
+    expect(
+      screen.queryByText("1 match hidden by the source filter"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText("POST")).toBeInTheDocument();
+  });
+
+  it("shows 'No matches in this view' (not 'No logs yet') when the source filter hides all logs and search is empty", async () => {
+    const user = userEvent.setup();
+
+    useTrafficLogStore.getState().addMcpServerLog({
+      serverId: "srv-1",
+      serverName: "Notion",
+      direction: "SEND",
+      method: "POST",
+      timestamp: "2026-04-10T12:00:00.000Z",
+      payload: { headers: {} },
+      kind: "http",
+    });
+
+    render(<LoggerView />);
+
+    await user.click(screen.getByTitle("Filter Source"));
+    await user.click(screen.getByRole("menuitemradio", { name: "Server" }));
+
+    expect(screen.getByText("No matches in this view")).toBeInTheDocument();
+    expect(screen.queryByText("No logs yet")).not.toBeInTheDocument();
+  });
+
+  it("still shows 'No logs yet' when there are no logs at all", () => {
+    render(<LoggerView />);
+
+    expect(screen.getByText("No logs yet")).toBeInTheDocument();
   });
 });

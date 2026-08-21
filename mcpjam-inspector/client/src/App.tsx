@@ -11,9 +11,10 @@ import {
   type ComponentProps,
 } from "react";
 import { useAuth } from "@workos-inc/authkit-react";
-import { AlertTriangle, Loader2, Users } from "lucide-react";
+import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
+import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -36,9 +37,11 @@ import {
   useViewerProjectRole,
 } from "./hooks/useProjects";
 import { ProjectEnvironmentsRoute } from "./components/project-environments/ProjectEnvironmentsRoute";
+import { SessionsPanel } from "./components/sessions/SessionsPanel";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
+import { GithubInstallCallbackRoute } from "./components/settings/GithubInstallCallbackRoute";
 import { IntegrationsRoute } from "./components/settings/IntegrationsRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
@@ -107,6 +110,7 @@ import { usePostHog, useFeatureFlagEnabled } from "posthog-js/react";
 import { usePostHogIdentify } from "./hooks/usePostHogIdentify";
 import { useSessionRecordingPathGuard } from "./hooks/useSessionRecordingPathGuard";
 import { usePostHogOrgContext } from "./hooks/usePostHogOrgContext";
+import { useSentryOrgContext } from "./hooks/useSentryOrgContext";
 import { useDbUserBootstrapStatus } from "./contexts/db-user-ready-context";
 import { AppStateProvider } from "./state/app-state-context";
 import { ServerActionsProvider } from "./state/server-actions-context";
@@ -136,9 +140,10 @@ import { useProjectServers } from "./hooks/useViews";
 import { HostedShellGate } from "./components/hosted/HostedShellGate";
 import { resolveHostedShellGateState } from "./components/hosted/hosted-shell-gate-state";
 import {
-  ChatboxChatPage,
-  getChatboxPathTokenFromLocation,
-} from "./components/hosted/ChatboxChatPage";
+  ScenarioChatPage,
+  getScenarioPathTokenFromLocation,
+} from "./components/hosted/ScenarioChatPage";
+import { isEmbeddedPreview } from "./lib/embedded-preview";
 import { useApiContext } from "./hooks/hosted/use-hosted-api-context";
 import { useHostedClientCapabilities } from "./hooks/hosted/use-hosted-client-capabilities";
 import { useLocalStateMigration } from "./hooks/use-local-state-migration";
@@ -201,11 +206,11 @@ import {
   resolveHostedOAuthReturnPath,
 } from "./lib/hosted-oauth-callback";
 import {
-  clearChatboxSignInReturnPath,
-  readChatboxSession,
-  readChatboxSignInReturnPath,
-  writeChatboxSignInReturnPath,
-} from "./lib/chatbox-session";
+  clearScenarioSignInReturnPath,
+  readScenarioSession,
+  readScenarioSignInReturnPath,
+  writeScenarioSignInReturnPath,
+} from "./lib/scenario-session";
 import {
   clearCliSignInReturnPath,
   readCliSignInReturnPath,
@@ -247,6 +252,7 @@ import {
   useHostMutations,
 } from "@/hooks/useClients";
 import { useSandboxesEnabledState } from "@/hooks/useSandboxesEnabled";
+import { useUnifiedSessionsEnabledState } from "@/hooks/useUnifiedSessionsEnabled";
 import {
   HOST_TEMPLATES,
   seedFromHostTemplate,
@@ -565,12 +571,14 @@ function NoRouterRouteBody({ activeTab }: { activeTab: string }) {
       return <HostCompareRoute />;
     case "computer":
       return <ComputerRoute />;
-    case "chatboxes":
-      return <ChatboxesRoute />;
+    case "scenarios":
+      return <ScenariosRoute />;
     case "swarms":
       return <SwarmsRoute />;
     case "environments":
       return <EnvironmentsRoute />;
+    case "sessions":
+      return <SessionsRoute />;
     case "playground":
       return <PlaygroundRoute />;
     case "support":
@@ -818,10 +826,10 @@ export function HostsRoute() {
     idShapedHostId === null
       ? "none"
       : isRouteHostListLoading
-        ? "pending"
-        : routeHosts.some((h) => h.hostId === idShapedHostId)
-          ? "live"
-          : "dead";
+      ? "pending"
+      : routeHosts.some((h) => h.hostId === idShapedHostId)
+      ? "live"
+      : "dead";
 
   // The id the canvas may open. A dead id resolves to null HERE, before it
   // reaches shared state, which is what keeps this route out of a fight with
@@ -1382,7 +1390,7 @@ export function CompatibilityRoute() {
 // The User Testing surface: `/user-testing` (the project's scenarios) and
 // `/user-testing/:scenarioId` (one scenario). Same billing feature and
 // `sandboxes-enabled` flag as Swarms below.
-export function ChatboxesRoute() {
+export function ScenariosRoute() {
   const {
     billingUiEnabled,
     activeTabBillingLocked,
@@ -1416,8 +1424,8 @@ export function ChatboxesRoute() {
   // a router (the legacy hash path), where `useParams` yields {} — fall back
   // to the pathname there. Deliberately NOT `useLocation`: that throws its
   // router invariant on the no-router path.
-  const rawScenarioId =
-    params.scenarioId ?? scenarioIdFromPathname(getRouteFallbackPathname());
+  const pathname = getRouteFallbackPathname();
+  const rawScenarioId = params.scenarioId ?? scenarioIdFromPathname(pathname);
   // `new` is the create route, never a scenario id. The dedicated
   // `user-testing/new` route already keeps it out of `params.scenarioId`, but
   // reserving the word here means route-ordering can't quietly turn the create
@@ -1433,7 +1441,8 @@ export function ChatboxesRoute() {
       projectId={convexProjectId}
       isAuthenticated={isAuthenticated}
       scenarioId={scenarioId}
-      createOpen={isUserTestingCreatePath(getRouteFallbackPathname())}
+      createOpen={isUserTestingCreatePath(pathname)}
+      editOpen={isUserTestingEditPath(pathname)}
     />
   );
 }
@@ -1442,16 +1451,24 @@ function isUserTestingCreatePath(pathname: string): boolean {
   return pathname.replace(/\/+$/, "") === "/user-testing/new";
 }
 
+function isUserTestingEditPath(pathname: string): boolean {
+  return /^\/user-testing\/[^/]+\/edit$/.test(pathname.replace(/\/+$/, ""));
+}
+
 function getRouteFallbackPathname(): string {
   return typeof window === "undefined" ? "" : window.location.pathname;
 }
 
 /**
- * `/user-testing/<id>` → `<id>`. `/user-testing/new` is the create route, not
- * a scenario — it must never reach the chatbox query as an id.
+ * `/user-testing/<id>` or `/user-testing/<id>/edit` → `<id>`.
+ * `/user-testing/new` is the create route, not a scenario — it must never
+ * reach the scenario query as an id.
  */
 function scenarioIdFromPathname(pathname: string): string | null {
-  const match = pathname.match(/^\/user-testing\/([^/]+)\/?$/);
+  const normalized = pathname.replace(/\/+$/, "");
+  const editMatch = normalized.match(/^\/user-testing\/([^/]+)\/edit$/);
+  if (editMatch?.[1] && editMatch[1] !== "new") return editMatch[1];
+  const match = normalized.match(/^\/user-testing\/([^/]+)$/);
   const segment = match?.[1];
   if (!segment || segment === "new") return null;
   return segment;
@@ -1468,7 +1485,7 @@ function decodeParam(raw: string): string | null {
 
 export function SwarmsRoute() {
   // Project-scoped Swarms surface (Persona → Journey → Run redesign) — no
-  // longer a per-host chatbox tab. Keeps the same billing gate as the chatbox
+  // longer a per-host scenario tab. Keeps the same billing gate as the scenario
   // product surface, and re-mounts per project so selection state can't leak
   // across a project switch.
   const {
@@ -1624,6 +1641,52 @@ export function EnvironmentsRoute() {
       canManage={canManage}
       isAuthenticated={isAuthenticated}
     />
+  );
+}
+
+export function SessionsRoute() {
+  // The cross-surface Sessions feed. Flag-gated while the backing backend
+  // queries (`sessionsFeed:*`) roll out; row-level visibility (who sees whose
+  // Playground sessions, swarm's member gate) is entirely server-side, so no
+  // role gate here — the backend fail-softs a non-member to an empty page.
+  const { convexProjectId } = useAppRouteContext();
+  const unifiedSessionsEnabled = useUnifiedSessionsEnabledState();
+
+  // Only redirect on an explicit `false`. While PostHog hydrates the flag is
+  // `undefined`; bouncing then would strand a flagged-in user who cold-loads
+  // /sessions directly. (Same tradeoff as SwarmsRoute.)
+  if (unifiedSessionsEnabled === false) {
+    return <Navigate to={routePaths.servers} replace />;
+  }
+  if (unifiedSessionsEnabled === undefined) {
+    return null;
+  }
+
+  if (!convexProjectId) {
+    return (
+      <EmptyState
+        icon={MessageSquare}
+        title="Sessions needs a project"
+        description="Sign in and select a project to browse its sessions across Playground, User Testing, Evals, and Swarms."
+      />
+    );
+  }
+
+  return (
+    // Dark-ship guard: `usePaginatedQuery` against a not-yet-deployed backend
+    // query throws. Degrade to copy instead of white-screening the page.
+    <ErrorBoundary
+      name="sessions-panel"
+      fallback={
+        <EmptyState
+          icon={MessageSquare}
+          title="Sessions isn't available yet"
+          description="This project's deployment doesn't serve the unified sessions feed yet. It becomes available with the next backend release."
+        />
+      }
+    >
+      <SessionsPanel key={convexProjectId} projectId={convexProjectId} />
+    </ErrorBoundary>
   );
 }
 
@@ -1926,6 +1989,7 @@ export function PlaygroundRoute() {
     handleConnect,
     handleUpdateHostContext,
     isAuthenticated,
+    isClientConfigSyncPending,
     isSelectedServerSyncing,
     isWorkOsLoading,
     playgroundServerSelectorProps,
@@ -1948,6 +2012,7 @@ export function PlaygroundRoute() {
       isWorkOsAuthLoading={isWorkOsLoading}
       isConvexAuthenticated={isAuthenticated}
       isProjectProvisioned={Boolean(activeProject?.sharedProjectId)}
+      isClientConfigSyncPending={isClientConfigSyncPending}
       hasSeenFirstRunOnboarding={remoteFirstRunOnboardingShown}
       isServerSyncing={isSelectedServerSyncing}
       onConnect={handleConnect}
@@ -2037,6 +2102,37 @@ export function GithubChecksSettingsRoute() {
       fallback={<Navigate to="/settings" replace />}
     >
       <GithubChecksRoute activeOrganizationId={activeOrganizationId} />
+    </ErrorBoundary>
+  );
+}
+
+/**
+ * `/settings/integrations/github/callback` — GitHub's return path, both legs.
+ *
+ * Same `ErrorBoundary` doctrine as the settings page: this page's actions THROW
+ * when the backend cannot answer (not deployed yet, or the caller is not a
+ * member), and without a boundary that unmounts the whole app. It redirects to
+ * `/settings` for the same reason too — a gated surface that cannot confirm it
+ * is available is not available.
+ *
+ * No `activeOrganizationId` is passed, and none is needed: the browser arrives
+ * back from GitHub carrying only query parameters, and which organization the
+ * binding belongs to is recovered server-side from the link session. A page
+ * that read it from app state could disagree with the session and would then be
+ * asserting an organization nobody proved anything about.
+ */
+export function GithubInstallCallbackSettingsRoute() {
+  return (
+    <ErrorBoundary
+      onError={(error) =>
+        console.error(
+          "[settings/integrations/github/callback] unavailable:",
+          error
+        )
+      }
+      fallback={<Navigate to="/settings" replace />}
+    >
+      <GithubInstallCallbackRoute />
     </ErrorBoundary>
   );
 }
@@ -2169,34 +2265,34 @@ export default function App() {
     isAuthenticated ? ({} as any) : "skip"
   );
   // Keyed off the stored callback context rather than the platform: the
-  // chatbox runtime (and its OAuth flows) runs on local/desktop builds too,
+  // scenario runtime (and its OAuth flows) runs on local/desktop builds too,
   // and the completion effect below is already context-gated.
   const [hostedOAuthHandling, setHostedOAuthHandling] = useState(() => {
     const callbackContext = getHostedOAuthCallbackContext();
     return callbackContext != null && callbackContext.surface !== "project";
   });
-  const [exitedChatboxChat, setExitedChatboxChat] = useState(false);
-  // The published-chatbox runtime route (`/chatbox/<slug>/<token>`, plus the
+  const [exitedScenarioChat, setExitedScenarioChat] = useState(false);
+  // The published-scenario runtime route (`/user-testing/<slug>/<token>`, plus the
   // sessionStorage fallback that survives the post-redeem token strip) is
   // platform-uniform: it resolves on hosted, local, and desktop builds
   // alike. Capability gating happens downstream — redeem failures surface
-  // through ChatboxChatPage's error states — so local dev gets the same
+  // through ScenarioChatPage's error states — so local dev gets the same
   // share-link and Preview-pane behavior as production.
-  const chatboxPathToken = getChatboxPathTokenFromLocation();
-  const chatboxSession = readChatboxSession();
+  const scenarioPathToken = getScenarioPathTokenFromLocation();
+  const scenarioSession = readScenarioSession();
   const hostedRouteKind = useMemo(() => {
-    if (chatboxPathToken) {
-      return "chatbox" as const;
+    if (scenarioPathToken) {
+      return "scenario" as const;
     }
 
-    if (chatboxSession) {
-      return "chatbox" as const;
+    if (scenarioSession) {
+      return "scenario" as const;
     }
 
     return null;
-  }, [chatboxPathToken, chatboxSession]);
-  const isChatboxChatRoute =
-    !exitedChatboxChat && hostedRouteKind === "chatbox";
+  }, [scenarioPathToken, scenarioSession]);
+  const isScenarioChatRoute =
+    !exitedScenarioChat && hostedRouteKind === "scenario";
 
   // Chrome-less vanity surfaces (caniuse.dev, score.mcpjam.com): render
   // full-bleed without the sidebar/header, and suppress first-run onboarding
@@ -2217,11 +2313,20 @@ export default function App() {
     barePathname === routePaths.embedScore ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
+  // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
+  // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
+  // fresh sign-in. `/login` is not a known tab segment, so it resolves to the
+  // `servers` fallback — which is a first-run-eligible route, and a hosted
+  // guest session is Convex-authenticated. Without this the onboarding redirect
+  // below can fire on the very commit that mounts the route and navigate the
+  // visitor to Playground mid-sign-in, stranding exactly the enterprise entry
+  // point this route exists to fix.
+  const isLoginInitiationRoute = barePathname === routePaths.login;
 
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
   }, []);
-  const isHostedChatRoute = isChatboxChatRoute;
+  const isHostedChatRoute = isScenarioChatRoute;
   const locationContext = useContext(UNSAFE_LocationContext);
   const routeOrganizationId = currentOrgRoute?.orgId;
   const routeOrganizationSection = currentOrgRoute?.orgSection;
@@ -2263,7 +2368,7 @@ export default function App() {
     // bearer. On post-redirect mount the first render sees
     // isAuthenticated=false while isAuthLoading=true; routing a signed-in
     // user's completion through the guest-bearer branch materializes a fresh
-    // anonymous user with no chatboxAccess row and 403s on
+    // anonymous user with no scenarioAccess row and 403s on
     // /web/oauth/complete + /web/oauth/session/progress, then clears the
     // pending marker so the post-settle re-run can't recover.
     if (isAuthLoading) {
@@ -2331,12 +2436,12 @@ export default function App() {
 
     const hasHostedServerContext =
       !!callbackContext.projectId && !!callbackContext.serverId;
-    const isGuestChatboxSessionCallback =
+    const isGuestScenarioSessionCallback =
       !isAuthenticated &&
-      !!callbackContext.chatboxId &&
+      !!callbackContext.scenarioId &&
       !!callbackContext.sessionId;
     // score.mcpjam.com: a guest authorizing a server in their OWN guest
-    // project. There is no chatbox here, so the chatbox branch above can never
+    // project. There is no scenario here, so the scenario branch above can never
     // match — but the completion is otherwise identical, and without this the
     // callback would fall through to the legacy client-side token exchange,
     // which has no hosted server context to exchange against.
@@ -2347,13 +2452,13 @@ export default function App() {
     const shouldUseHostedCompletion =
       hasHostedServerContext &&
       (isAuthenticated ||
-        isGuestChatboxSessionCallback ||
+        isGuestScenarioSessionCallback ||
         isGuestScoreCallback);
 
     const completeCallback = shouldUseHostedCompletion
       ? (async () => {
           let authorizationHeader: string | undefined;
-          if (isGuestChatboxSessionCallback || isGuestScoreCallback) {
+          if (isGuestScenarioSessionCallback || isGuestScoreCallback) {
             const guestBearerToken = await getGuestBearerToken();
             if (!guestBearerToken) {
               return {
@@ -2365,14 +2470,14 @@ export default function App() {
             }
             authorizationHeader = `Bearer ${guestBearerToken}`;
           } else if (workOsUser) {
-            // On chatbox routes, `useApiContext` is disabled (App.tsx
+            // On scenario routes, `useApiContext` is disabled (App.tsx
             // `enabled: !isHostedChatRoute`), so the module-level apiContext
             // is EMPTY_CONTEXT. authFetch's default header resolver then sees
             // `!apiContext.isAuthenticated && !apiContext.hasSession`, decides
             // the actor is a guest, and attaches a guest bearer — even though
             // the user is WorkOS-signed-in. The backend then materializes a
-            // fresh anonymous user and 403s on chatboxAccess lookup. Explicitly
-            // attach the WorkOS bearer here so the chatbox-route gating of
+            // fresh anonymous user and 403s on scenarioAccess lookup. Explicitly
+            // attach the WorkOS bearer here so the scenario-route gating of
             // apiContext cannot demote a signed-in user to a guest.
             try {
               const accessToken = await getAccessToken();
@@ -2496,21 +2601,21 @@ export default function App() {
 
     // Let AuthKit + Convex auth settle before leaving /callback.
     if (!isAuthLoading && isAuthenticated) {
-      const chatboxReturnPath = readChatboxSignInReturnPath();
+      const scenarioReturnPath = readScenarioSignInReturnPath();
       const persistedCheckoutIntent = readPersistedCheckoutIntent();
       const billingReturnPath = persistedCheckoutIntent
         ? readBillingSignInReturnPath()
         : null;
       const cliReturnPath = readCliSignInReturnPath();
       const apiKeysReturnPath = readApiKeysSignInReturnPath();
-      clearChatboxSignInReturnPath();
+      clearScenarioSignInReturnPath();
       clearBillingSignInReturnPath();
       clearCliSignInReturnPath();
       clearApiKeysSignInReturnPath();
       window.history.replaceState(
         {},
         "",
-        chatboxReturnPath ??
+        scenarioReturnPath ??
           billingReturnPath ??
           cliReturnPath ??
           apiKeysReturnPath ??
@@ -2665,9 +2770,9 @@ export default function App() {
   // agent (the registry's only consumer); the always-available side panel
   // drives whichever inspector surface is open, so registration lives at the
   // App root. Never exposed to browser-native agents. Disabled on the
-  // standalone chatbox chat route: its end user is not the inspector
+  // standalone scenario chat route: its end user is not the inspector
   // operator, so inspector-driving tools must not exist on that page.
-  useRegisterUiTools({ enabled: !isChatboxChatRoute });
+  useRegisterUiTools({ enabled: !isScenarioChatRoute });
   // One-time migration from legacy localStorage state to Convex. No-op in
   // hosted mode and after the first successful run; safe to keep in the tree.
   useLocalStateMigration({
@@ -2676,6 +2781,7 @@ export default function App() {
     organizationId: activeOrganizationId,
   });
   usePostHogOrgContext(activeOrganizationId);
+  useSentryOrgContext(activeOrganizationId);
   const oauthDebuggerServersRef = useRef(appState.servers);
   oauthDebuggerServersRef.current = appState.servers;
   const projectServersRef = useRef(projectServers);
@@ -2737,6 +2843,10 @@ export default function App() {
   const hostedShellGateState = resolveHostedShellGateState({
     hostedMode: HOSTED_MODE,
     nonProdLockdown: NON_PROD_LOCKDOWN,
+    // Read on every render, like `scenarioPathToken` above: framing is a fact
+    // about this document, fixed for its lifetime, so there is nothing to
+    // memoize and nothing that can change under us.
+    embeddedPreview: isScenarioChatRoute && isEmbeddedPreview(),
     isConvexAuthLoading: isAuthLoading,
     isConvexAuthenticated: isAuthenticated,
     isWorkOsLoading,
@@ -2819,6 +2929,7 @@ export default function App() {
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
+    !isLoginInitiationRoute &&
     !hasHostTemplateVerifyParam &&
     !hasProjectSwitchDeepLinkParam &&
     !isWorkOsLoading &&
@@ -2946,7 +3057,7 @@ export default function App() {
   // hook for the full chain.
   const hostedClientCapabilities = useHostedClientCapabilities(
     activeHost?.clientCapabilities,
-    activeProject?.clientConfig,
+    activeProject?.clientConfig
   );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
   const projectServerConfigDto = useQuery(
@@ -3039,7 +3150,7 @@ export default function App() {
   });
   const sidebarGateDenied = useMemo(() => {
     const denied: Partial<Record<BillingFeatureName, boolean>> = {};
-    for (const key of ["evals", "chatboxes"] as const) {
+    for (const key of ["evals", "scenarios"] as const) {
       denied[key] = isGateAccessDenied(navPremiumness, key);
     }
     return denied;
@@ -3842,7 +3953,7 @@ export default function App() {
     if (
       activeTabBillingLocked &&
       activeTabBillingFeature &&
-      activeTab !== "chatboxes"
+      activeTab !== "scenarios"
     ) {
       toast.error(
         `${formatBillingFeatureName(
@@ -4320,7 +4431,7 @@ export default function App() {
     // there. User Testing and Swarms are project-scoped lists, not per-host
     // screens, so a global host selector would be selecting nothing.
     activeTab !== "playground" &&
-    activeTab !== "chatboxes" &&
+    activeTab !== "scenarios" &&
     activeTab !== "swarms" &&
     // The OAuth / XAA debuggers target a specific server via their own server
     // picker; the global host/client bar is irrelevant there.
@@ -4420,6 +4531,7 @@ export default function App() {
     hostsTabSelectedHostId,
     isAuthLoading,
     isAuthenticated,
+    isClientConfigSyncPending,
     isGuestProjectActor,
     isBillingContextPending,
     isLoadingRemoteProjects,
@@ -4627,6 +4739,7 @@ export default function App() {
           >
             <Toaster />
             <MCPJamLimitDialog />
+            <PlanLimitDialog />
             <div
               data-testid="app-shell"
               aria-hidden={shouldShowBillingHandoffOverlay || undefined}
@@ -4645,8 +4758,8 @@ export default function App() {
                     : undefined
                 }
                 onSignIn={() => {
-                  if (chatboxPathToken) {
-                    writeChatboxSignInReturnPath(window.location.pathname);
+                  if (scenarioPathToken) {
+                    writeScenarioSignInReturnPath(window.location.pathname);
                   }
                   signIn();
                 }}
@@ -4660,10 +4773,10 @@ export default function App() {
                   })();
                 }}
               >
-                {isChatboxChatRoute ? (
-                  <ChatboxChatPage
-                    pathToken={chatboxPathToken}
-                    onExitChatboxChat={() => setExitedChatboxChat(true)}
+                {isScenarioChatRoute ? (
+                  <ScenarioChatPage
+                    pathToken={scenarioPathToken}
+                    onExitScenarioChat={() => setExitedScenarioChat(true)}
                   />
                 ) : isBareCaniuseRoute ? (
                   bareCompareContent

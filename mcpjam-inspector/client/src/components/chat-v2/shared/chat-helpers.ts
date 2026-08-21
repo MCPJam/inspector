@@ -421,6 +421,24 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
 
       // Connection failures get human copy; the server's own wording stays
       // reachable under "More details" rather than leading the banner. Copy
+      // A hosted chat failure arrives as a JSON envelope, and this branch
+      // returns before the string-shaped checks below ever run — so the
+      // pinned-version recognition has to happen HERE too, or it only ever
+      // fires for the bare-sentence case a test can construct by hand and a
+      // real turn never produces.
+      const envelopePin = summarizeProtocolVersionPin(message);
+      if (envelopePin) {
+        return {
+          ...envelopePin,
+          // Keep the server's own envelope fields where they exist: `details`
+          // carries the normalized block the card renders, and the status is
+          // worth surfacing even though the action does not depend on it.
+          details: details ?? envelopePin.details,
+          ...(parsed.statusCode !== undefined
+            ? { statusCode: parsed.statusCode }
+            : {}),
+        };
+      }
       // only — `isRetryable` and every other field keep whatever the server
       // sent, so the banner's affordances are unchanged.
       const humanized = humanizeConnectionError(code, parsed.details);
@@ -459,6 +477,9 @@ export function formatErrorMessage(error: unknown): FormattedError | null {
   if (isMCPJamModelLimit(undefined, errorString)) {
     return formatMCPJamModelLimit(extractRetryPhrase(errorString));
   }
+
+  const protocolPin = summarizeProtocolVersionPin(errorString);
+  if (protocolPin) return protocolPin;
 
   const opaque = summarizeOpaquePayload(errorString);
   if (opaque) return opaque;
@@ -511,6 +532,62 @@ function looksLikeErrorPage(trimmed: string): boolean {
 }
 
 /**
+ * `code` carried by a formatted upstream-error-page failure.
+ *
+ * The chat surfaces key their retry affordance off this rather than off
+ * `isRetryable`, which the server also sets on failures that resending the
+ * last message cannot help with.
+ */
+export const UPSTREAM_ERROR_PAGE_CODE = "upstream_error_page";
+
+/**
+ * `code` for "this connection pins an MCP protocol version the server does not
+ * offer" — the SDK's `ProtocolVersionPinUnsupported`.
+ *
+ * Chat surfaces key the "Change protocol version" affordance off this. It is a
+ * separate code from `UPSTREAM_ERROR_PAGE_CODE` because the two want opposite
+ * actions: an error page is transient and wants a retry, a version pin is a
+ * SETTING and resending the same message will fail identically forever.
+ */
+export const PROTOCOL_VERSION_PIN_CODE = "protocol_version_pin_unsupported";
+
+/**
+ * The clause `ProtocolVersionPinUnsupported` authors into its own message.
+ *
+ * Matched as text because that is all that survives: the AI SDK turns a failed
+ * chat response into `new Error(await response.text())`, so the class, the
+ * `normalized` block and the response headers are gone by the time a chat
+ * surface sees anything. The SDK-side describer keys off the same clause and
+ * says so; reword one and the paired tests on both sides fail together.
+ */
+const PROTOCOL_VERSION_PIN_MARKER = /which this client is pinned to/i;
+
+/** `2026-07-28` out of the sentence, for the banner's own wording. */
+const PROTOCOL_VERSION_PATTERN = /protocol version (\d{4}-\d{2}-\d{2})/i;
+
+/**
+ * Recognize a pinned-version refusal and hand the banner an actionable code.
+ *
+ * Returns `null` for everything else, so ordinary errors are untouched.
+ */
+function summarizeProtocolVersionPin(raw: string): FormattedError | null {
+  if (!PROTOCOL_VERSION_PIN_MARKER.test(raw)) return null;
+  const version = raw.match(PROTOCOL_VERSION_PATTERN)?.[1];
+  return {
+    // The SDK's sentence already names the server and the version, and it is
+    // the one place that wording lives. Passed through rather than rebuilt
+    // here, where the server id is not available.
+    message: raw.trim(),
+    code: PROTOCOL_VERSION_PIN_CODE,
+    // NOT retryable: the pin is a stored setting, so the identical turn fails
+    // identically until someone changes it. Offering a retry here would be
+    // offering a button that cannot work.
+    isRetryable: false,
+    ...(version ? { details: JSON.stringify({ protocolVersion: version }) } : {}),
+  };
+}
+
+/**
  * Pull the status out of an error page's `<title>` or `<h1>` — the two places
  * gateways put it verbatim ("502 Bad Gateway"). Deliberately not a scan of the
  * whole document: a bare `\b\d{3}\b` match anywhere would happily return a
@@ -536,6 +613,24 @@ function extractErrorPageStatus(html: string): number | undefined {
 }
 
 /**
+ * Pull the gateway's own request handle out of an error page — Cloudflare's
+ * `Ray ID`, and the `Request ID` / `Correlation ID` its peers print instead.
+ * It is the one field on the page worth keeping: it is what support can join
+ * against, and it is the reason "More details" can be status + id rather than
+ * page source.
+ *
+ * The capture group cannot contain `<`, and the markup between the label and
+ * the value is consumed by a group we throw away, so no fragment of the
+ * document can reach the UI through this.
+ */
+const ERROR_PAGE_REQUEST_ID =
+  /\b(?:ray|request|correlation)[\s_-]?id\b\s*[:#]?\s*(?:<[^>]*>|\s)*([0-9A-Za-z][0-9A-Za-z-]{5,63})/i;
+
+function extractErrorPageRequestId(html: string): string | undefined {
+  return html.match(ERROR_PAGE_REQUEST_ID)?.[1];
+}
+
+/**
  * Last-resort formatting for a body that is not an error message at all.
  *
  * When an upstream hop fails — a gateway 502, a proxy timeout — the response
@@ -544,34 +639,47 @@ function extractErrorPageStatus(html: string): number | undefined {
  * `message`, which rendered verbatim and unbounded.
  *
  * Returns `null` for ordinary error text so every existing message is
- * untouched; only genuinely opaque or oversized payloads are summarized, with
- * the original preserved in `details` for the existing collapsible.
+ * untouched; only genuinely opaque or oversized payloads are summarized. An
+ * oversized message keeps its original in `details` for the existing
+ * collapsible — an error PAGE does not, because a response body we never
+ * asked for has no business being in a transcript at all.
  */
 function summarizeOpaquePayload(raw: string): FormattedError | null {
   const trimmed = raw.trim();
-  const isHtml = looksLikeErrorPage(trimmed);
 
-  if (!isHtml && trimmed.length <= INLINE_MESSAGE_MAX) return null;
+  if (looksLikeErrorPage(trimmed)) {
+    const statusCode = extractErrorPageStatus(trimmed);
+    const requestId = extractErrorPageRequestId(trimmed);
+    // The page itself is DISCARDED here, not truncated into `details`. A
+    // gateway interstitial is markup, a timestamp and a datacentre name; the
+    // only two facts in it a developer can act on are the status and the
+    // request id, and keeping the rest meant pasting a document into a
+    // transcript that someone is trying to read a conversation out of.
+    //
+    // The copy names reachability, not blame. Whichever hop answered, what
+    // the person in the chat needs to know is that the failure was transient
+    // and that their session survived it — hence `isRetryable`, which is what
+    // puts a retry beside the reset the banner would otherwise offer alone.
+    return {
+      message:
+        "MCPJam was briefly unreachable. Nothing in this chat was lost — retry to send your message again.",
+      code: UPSTREAM_ERROR_PAGE_CODE,
+      isRetryable: true,
+      details: JSON.stringify({
+        upstreamResponse: "Error page (HTML body discarded)",
+        ...(statusCode !== undefined ? { status: statusCode } : {}),
+        ...(requestId !== undefined ? { requestId } : {}),
+      }),
+      ...(statusCode !== undefined ? { statusCode } : {}),
+    };
+  }
+
+  if (trimmed.length <= INLINE_MESSAGE_MAX) return null;
 
   const details =
     trimmed.length > RAW_PAYLOAD_MAX
       ? `${trimmed.slice(0, RAW_PAYLOAD_MAX)}…`
       : trimmed;
-
-  if (isHtml) {
-    const statusCode = extractErrorPageStatus(trimmed);
-    // "An upstream service", not "the server": the page comes from whatever
-    // hop failed — a gateway, a proxy, our own infrastructure — and naming
-    // "the server" in an MCP debugger reads as the user's MCP server, which
-    // is the one party we have no evidence against.
-    return {
-      message: statusCode
-        ? `The request failed with HTTP ${statusCode}. An upstream service returned an error page instead of a response.`
-        : "The request failed. An upstream service returned an error page instead of a response.",
-      details,
-      ...(statusCode !== undefined ? { statusCode } : {}),
-    };
-  }
 
   return {
     message: `${trimmed.slice(0, INLINE_MESSAGE_MAX).trimEnd()}…`,

@@ -12,8 +12,10 @@ import type {
   SwarmOverviewRun,
 } from "@/lib/swarm-api";
 import {
+  SWARM_COLUMN_HEADER,
   filterAndSortSwarmWaves,
   groupRunsIntoSwarmWaves,
+  waveLiveProgress,
 } from "../swarm-overview-panel";
 
 /**
@@ -304,7 +306,7 @@ vi.mock("@/hooks/useViews", () => ({
   useDbUserReady: () => true,
   useProjectServers: () => ({ servers: [], isLoading: false }),
 }));
-vi.mock("@/lib/chatbox-session", () => ({
+vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/lib/toast", () => ({
@@ -372,6 +374,41 @@ describe("Overview — wire contract", () => {
     expect(within(nav).getByRole("button", { name: "Overview" })).toBeTruthy();
     expect(within(nav).getByRole("button", { name: "Personas" })).toBeTruthy();
     expect(within(nav).getByRole("button", { name: "Sessions" })).toBeTruthy();
+  });
+});
+
+describe("waveLiveProgress", () => {
+  it("counts every terminal attempt while at least one run is live", () => {
+    const [newest, second] = overview.runs;
+    expect(
+      waveLiveProgress([
+        {
+          ...newest!,
+          status: "running",
+          summary: { total: 5, succeeded: 1, failed: 0, rateLimited: 0 },
+        },
+        {
+          ...second!,
+          status: "completed",
+          summary: { total: 5, succeeded: 2, failed: 1, rateLimited: 1 },
+        },
+      ])
+    ).toEqual({ done: 5, total: 10, liveRuns: 1 });
+  });
+
+  it("returns null when every run is terminal, and 0-total live runs stay live", () => {
+    const [newest] = overview.runs;
+    expect(waveLiveProgress([newest!])).toBeNull();
+    // A run that has not published its fan-out yet is starting, not finished.
+    expect(
+      waveLiveProgress([
+        {
+          ...newest!,
+          status: "pending",
+          summary: { total: 0, succeeded: 0, failed: 0, rateLimited: 0 },
+        },
+      ])
+    ).toEqual({ done: 0, total: 0, liveRuns: 1 });
   });
 });
 
@@ -521,6 +558,36 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
     expect(screen.getByTestId("swarm-overview-env-filter")).toBeTruthy();
   });
 
+  /**
+   * Asserted on classes rather than pixels because the regression is invisible
+   * to jsdom layout: the filtering headers kept `SelectTrigger`'s
+   * `dark:bg-input/30` (tailwind-merge won't drop it for an unprefixed
+   * `bg-transparent`), so in dark mode Client and Score sat in form-field
+   * boxes while the inert Model label stayed flat.
+   */
+  it("gives every column header the same ghost treatment, dark mode included", async () => {
+    renderTab();
+    await screen.findByTestId("swarm-overview-filters");
+
+    const headers = [
+      screen.getByTestId("swarm-overview-env-filter"),
+      screen.getByTestId("swarm-overview-client-filter"),
+      screen.getByTestId("swarm-overview-model-label"),
+      screen.getByTestId("swarm-overview-sort"),
+    ];
+
+    for (const header of headers) {
+      for (const className of SWARM_COLUMN_HEADER.split(" ")) {
+        expect(header.classList.contains(className)).toBe(true);
+      }
+      expect(
+        [...header.classList].filter((className) =>
+          /(^|:)bg-(?!transparent)/.test(className)
+        )
+      ).toEqual([]);
+    }
+  });
+
   it("filterAndSortSwarmWaves filters by client / env and sorts by lowest score", () => {
     const waves = groupRunsIntoSwarmWaves(overview.runs);
     expect(waves.map((w) => w.waveId)).toEqual(["run-2b", "run-1", "run-old"]);
@@ -607,7 +674,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
       "Swarm run-2b"
     );
     expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
-    expect(await screen.findByTestId("swarm-insights-statline")).toBeTruthy();
+    expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Personas" })).toBeNull();
     expect(screen.getByRole("button", { name: "Insights" })).toBeTruthy();
@@ -634,7 +701,7 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
       projectId: "proj-1",
       journeyRunIds: expect.arrayContaining(["run-2b", "run-2"]),
     });
-    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    expect(await screen.findByTestId("swarm-insights-scorecard")).toBeTruthy();
     expect(await screen.findByTestId("swarm-overview-wave-findings")).toBeTruthy();
 
     const findings = screen.getAllByTestId("swarm-overview-finding");
@@ -660,11 +727,65 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(screen.getByText(/Swarm run not found/)).toBeTruthy();
   });
 
+  /**
+   * A finding followed out of the create wizard lands here, and the wizard's
+   * Running step has no URL to go back to — so this page is the ONLY thing that
+   * can say the run is still going and offer the way back to it. Asserted on the
+   * deep-linked shape (`?tab=sessions&session=`) because that is what the
+   * "Look now" link mints.
+   */
+  it("shows live progress and a way back to the run while the wave is running", async () => {
+    const [newest, second, ...rest] = overview.runs;
+    overviewData = {
+      ...overview,
+      runs: [
+        {
+          ...newest!,
+          status: "running",
+          summary: { total: 5, succeeded: 1, failed: 0, rateLimited: 0 },
+        },
+        {
+          ...second!,
+          status: "running",
+          summary: { total: 15, succeeded: 3, failed: 1, rateLimited: 0 },
+        },
+        ...rest,
+      ],
+    };
+    window.history.replaceState(
+      {},
+      "",
+      "/swarms/run-2b?tab=sessions&session=thread-fail"
+    );
+    renderTab("run-2b");
+
+    const live = await screen.findByTestId("swarm-run-detail-live");
+    expect(live.textContent).toMatch(/still running/i);
+    // Terminal attempts, not just successes: 1 + 3 + 1 of 20.
+    expect(live.textContent).toMatch(/5 of 20 sessions/);
+    expect(
+      screen
+        .getByTestId("swarm-run-detail-live-progress")
+        .getAttribute("aria-valuenow")
+    ).toBe("25");
+
+    fireEvent.click(screen.getByTestId("swarm-run-detail-back-to-run"));
+    // Same tab, minus the focused session: back to the whole run.
+    expect(window.location.pathname).toBe("/swarms/run-2b");
+    expect(window.location.search).toBe("?tab=sessions");
+  });
+
+  it("shows no live strip once every run in the wave is terminal", async () => {
+    renderTab("run-2b");
+    await screen.findByTestId("swarm-run-detail");
+    expect(screen.queryByTestId("swarm-run-detail-live")).toBeNull();
+  });
+
   it("expands finding sessions on the Insights tab", async () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
     fireEvent.click(screen.getByRole("button", { name: "Insights" }));
-    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    await screen.findByTestId("swarm-insights-scorecard");
 
     const finding = (
       await screen.findAllByTestId("swarm-overview-finding")
@@ -676,6 +797,71 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     );
     expect(sessions).toHaveLength(1);
     expect(sessions[0]!.getAttribute("data-session-id")).toBe("thread-fail");
+  });
+});
+
+describe("Overview — goal completion trend", () => {
+  it("renders the daily trend strip when the window has graded days", async () => {
+    overviewData = {
+      ...overviewData!,
+      goalCompletion: {
+        gradedCount: 20,
+        passedCount: 11,
+        passRate: 11 / 20,
+        runsWithGrades: 3,
+        trend: [
+          { dayStartMs: NOW - 2 * 86_400_000, gradedCount: 8, passedCount: 4, passRate: 0.5 },
+          { dayStartMs: NOW - 86_400_000, gradedCount: 12, passedCount: 7, passRate: 7 / 12 },
+        ],
+      },
+    };
+    renderTab();
+    const strip = await screen.findByTestId("swarm-overview-goal-trend");
+    // Window pass rate headline (11/20 = 55%), with its denominators.
+    expect(within(strip).getByText("55%")).toBeTruthy();
+    expect(strip.textContent).toContain("11/20 graded sessions");
+    expect(
+      within(strip).getByTestId("swarm-overview-goal-trend-sparkline"),
+    ).toBeTruthy();
+  });
+
+  it("renders NO strip for a single graded day — one day is a number, not a trend", async () => {
+    overviewData = {
+      ...overviewData!,
+      goalCompletion: {
+        gradedCount: 8,
+        passedCount: 4,
+        passRate: 0.5,
+        runsWithGrades: 1,
+        trend: [
+          { dayStartMs: NOW - 86_400_000, gradedCount: 8, passedCount: 4, passRate: 0.5 },
+        ],
+      },
+    };
+    renderTab();
+    await screen.findByTestId("swarm-overview-runs");
+    expect(screen.queryByTestId("swarm-overview-goal-trend")).toBeNull();
+  });
+
+  it("renders NO strip when the window pass rate is null — nothing honest to headline", async () => {
+    // Can't happen from today's server (trend buckets imply grades), but the
+    // strip reads wire data and must not render "—%" over a sparkline.
+    overviewData = {
+      ...overviewData!,
+      goalCompletion: {
+        gradedCount: 0,
+        passedCount: 0,
+        passRate: null,
+        runsWithGrades: 0,
+        trend: [
+          { dayStartMs: NOW - 2 * 86_400_000, gradedCount: 1, passedCount: 1, passRate: 1 },
+          { dayStartMs: NOW - 86_400_000, gradedCount: 1, passedCount: 0, passRate: 0 },
+        ],
+      },
+    };
+    renderTab();
+    await screen.findByTestId("swarm-overview-runs");
+    expect(screen.queryByTestId("swarm-overview-goal-trend")).toBeNull();
   });
 });
 

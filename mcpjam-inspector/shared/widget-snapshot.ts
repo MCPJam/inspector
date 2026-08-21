@@ -4,7 +4,7 @@ import type { EvalTraceWidgetSnapshot } from "./eval-trace";
 /**
  * Wire shape of a `sharedChatWidgetSnapshots` row, less the
  * session/scope context that varies by writer (the playground threads
- * `chatboxId`/`accessVersion`/`chatSessionId`; the eval per-turn fanout
+ * `scenarioId`/`accessVersion`/`chatSessionId`; the eval per-turn fanout
  * embeds widgets in `appendEvalTurnTrace.turn.widgets`; the synthetic
  * runner adds its own ambient scope at the mutation site).
  *

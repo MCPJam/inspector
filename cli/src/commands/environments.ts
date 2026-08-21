@@ -3,6 +3,9 @@ import type { Command } from "commander";
 import {
   archiveEnvironmentOperation,
   createEnvironmentOperation,
+  ensureAdhocEnvironmentOperation,
+  nameEnvironmentOperation,
+  getEnvironmentCapabilitiesOperation,
   getEnvironmentOperation,
   listEnvironmentsOperation,
   resolveEnvironmentOperation,
@@ -94,6 +97,62 @@ function validateInput<TInput>(
     throw usageError(`Invalid input: ${detail}`);
   }
   return parsed.data;
+}
+
+/**
+ * Refuse a model-bearing write against a deployment that cannot accept one.
+ *
+ * The CLI ships independently of the platform, so `modelId` may be a field the
+ * target deployment's validator has never heard of — which surfaces there as an
+ * opaque "unexpected argument" rather than as anything a user can act on. Ask
+ * first and fail with a sentence that names the cause.
+ *
+ * ONLY when model input was actually supplied. An ordinary `environments
+ * create` has no reason to pay for a preflight round-trip, and a CLI that got
+ * slower for everyone in order to guard a field most calls never send would be
+ * a bad trade.
+ *
+ * A preflight that itself fails remains an operational error. The capability
+ * route answers `false` for an old backend, so collapsing auth/network failures
+ * into "unsupported" would hide the real problem from the caller.
+ */
+async function assertModelOverridesSupported(
+  options: PlatformOptions,
+  timeoutMs: number,
+  args: { supplied: boolean; project?: string }
+): Promise<void> {
+  if (!args.supplied) return;
+  const result = await runPlatformCommand(
+    options,
+    timeoutMs,
+    ({ client, signal }) =>
+      getEnvironmentCapabilitiesOperation.execute(
+        { project: args.project },
+        { client, signal }
+      )
+  );
+  const supported = result.capabilities.modelOverrides;
+  if (!supported) {
+    throw usageError(
+      'This MCPJam deployment does not support environment model overrides. Upgrade the platform, or omit --model / --clear-model / "modelId".'
+    );
+  }
+}
+
+/**
+ * The project the command will actually write to, in the SAME precedence the
+ * write itself uses: the explicit `--project` flag over the JSON body's
+ * `project`. Absent when neither names one, which is the only case where
+ * resolving the caller's default project is correct.
+ */
+function projectSelector(
+  options: { project?: string },
+  body: Record<string, unknown>
+): { project?: string } {
+  if (options.project !== undefined) return { project: options.project };
+  return typeof body.project === "string" && body.project.trim()
+    ? { project: body.project }
+    : {};
 }
 
 /** Read a JSON object from --file (literal path or `-` for stdin) / --json. */
@@ -260,12 +319,16 @@ export function registerEnvironmentsCommands(program: Command): void {
       .option("--host-id <id>", "ID of the host this environment runs against")
       .option("--description <text>", "Optional description")
       .option(
+        "--model <id>",
+        "Model this environment runs, overriding the model pinned on its host. Omit to inherit the host's. Stored verbatim — pass exactly the id the provider request should carry"
+      )
+      .option(
         "--sandbox-image <id>",
         "Project-shared sandbox image (see `mcpjam images`) to pin: eval runs boot a fresh sandbox from it"
       )
       .option(
         "--file <path>",
-        "Environment JSON file with any of name/hostId/description/serverAttachmentId/skillSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
+        "Environment JSON file with any of name/hostId/description/serverAttachmentId/modelId/skillSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
       )
       .option("--json <json>", "Inline environment JSON (or @file, or -)")
   ).action(
@@ -275,6 +338,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         name?: string;
         hostId?: string;
         description?: string;
+        model?: string;
         sandboxImage?: string;
         file?: string;
         json?: string;
@@ -285,6 +349,14 @@ export function registerEnvironmentsCommands(program: Command): void {
       // Explicit flags win over the same key in the JSON body, so a scripted
       // template file can be reused with a per-run --name override.
       const body = loadJsonObject(options) ?? {};
+      // Version skew: a deployment that predates model overrides rejects an
+      // unknown `modelId` with an opaque validator error. Ask first, and only
+      // when the caller actually supplied model input — an ordinary create has
+      // no reason to pay for a round-trip.
+      await assertModelOverridesSupported(options, globalOptions.timeout, {
+        supplied: options.model !== undefined || "modelId" in body,
+        ...projectSelector(options, body),
+      });
       const input = validateInput(createEnvironmentOperation, {
         ...body,
         ...(options.project !== undefined ? { project: options.project } : {}),
@@ -293,6 +365,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         ...(options.description !== undefined
           ? { description: options.description }
           : {}),
+        ...(options.model !== undefined ? { modelId: options.model } : {}),
         ...(options.sandboxImage !== undefined
           ? { sandboxImageId: options.sandboxImage }
           : {}),
@@ -309,9 +382,121 @@ export function registerEnvironmentsCommands(program: Command): void {
 
   addPlatformOptions(
     environments
+      .command("ensure-adhoc")
+      .description(
+        "Get or create an UNNAMED environment for a composed stack. Deduplicated by content: the same stack always returns the same environment"
+      )
+      .requiredOption(
+        "--host <id-or-name>",
+        "Host the composed stack runs as — the client whose configuration a run is stamped with"
+      )
+      .option("--project <id-or-name>", "Project name or ID")
+      .option(
+        "--server-group <id>",
+        "Standalone server group to pin (omit to use the host's own servers)"
+      )
+      .option(
+        "--model <id>",
+        "Model to run instead of the host's pinned one (stored verbatim)"
+      )
+      .option(
+        "--computer <id-or-name>",
+        "Project-shared sandbox image to pin, so runs boot a fresh computer from it"
+      )
+      .option(
+        "--skill <id...>",
+        "Project-shared skill IDs to pin on the composed stack"
+      )
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        host: string;
+        serverGroup?: string;
+        model?: string;
+        computer?: string;
+        skill?: string[];
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const input = validateInput(ensureAdhocEnvironmentOperation, {
+        ...(options.project !== undefined ? { project: options.project } : {}),
+        host: options.host,
+        ...(options.serverGroup !== undefined
+          ? { serverGroup: options.serverGroup }
+          : {}),
+        ...(options.model !== undefined ? { model: options.model } : {}),
+        ...(options.computer !== undefined
+          ? { computer: options.computer }
+          : {}),
+        ...(options.skill?.length
+          ? { skills: { mode: "explicit", skillIds: options.skill } }
+          : {}),
+      });
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          ensureAdhocEnvironmentOperation.execute(input, { client, signal })
+      );
+      writeResult(result, globalOptions.format);
+    }
+  );
+
+  addPlatformOptions(
+    environments
+      .command("name")
+      .description(
+        "Promote an UNNAMED (ad-hoc) environment to a named one, in place — the same id every existing run points at"
+      )
+      .requiredOption(
+        "--environment <id>",
+        "The ad-hoc environment to promote, by ID (an unnamed environment has no name to select it by)"
+      )
+      .requiredOption("--name <name>", "Display name for the promoted environment")
+      .requiredOption(
+        "--expected-revision <n>",
+        "The revision you last read; a stale value is rejected instead of overwriting a concurrent edit"
+      )
+      .option("--project <id-or-name>", "Project name or ID")
+      .option("--description <text>", "Optional description")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        environment: string;
+        name: string;
+        expectedRevision: string;
+        description?: string;
+      },
+      command
+    ) => {
+      const globalOptions = getGlobalOptions(command);
+      const input = validateInput(nameEnvironmentOperation, {
+        ...(options.project !== undefined ? { project: options.project } : {}),
+        environment: options.environment,
+        name: options.name,
+        expectedRevision: parseRevision(options.expectedRevision),
+        ...(options.description !== undefined
+          ? { description: options.description }
+          : {}),
+      });
+      const result = await runPlatformCommand(
+        options,
+        globalOptions.timeout,
+        ({ client, signal }) =>
+          nameEnvironmentOperation.execute(input, { client, signal })
+      );
+      writeResult(result, globalOptions.format);
+    }
+  );
+
+  addPlatformOptions(
+    environments
       .command("update")
       .description(
-        "Edit an environment. Only the fields you pass change; use --file/--json with a null value to clear serverAttachmentId, skillSelection, pluginVersionIds, or sandboxImageId"
+        "Edit an environment. Only the fields you pass change; use --clear-model, or --file/--json with a null value, to clear serverAttachmentId, modelId, skillSelection, pluginVersionIds, or sandboxImageId"
       )
       .requiredOption("--environment <id-or-name>", "Environment name or ID")
       .requiredOption(
@@ -324,6 +509,14 @@ export function registerEnvironmentsCommands(program: Command): void {
       .option(
         "--description <text>",
         "New description (empty string clears it)"
+      )
+      .option(
+        "--model <id>",
+        "New model override, replacing the host's pinned model"
+      )
+      .option(
+        "--clear-model",
+        "Clear the model override so the environment inherits its host's model again"
       )
       .option(
         "--sandbox-image <id>",
@@ -343,6 +536,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         name?: string;
         hostId?: string;
         description?: string;
+        model?: string;
+        clearModel?: boolean;
         sandboxImage?: string;
         file?: string;
         json?: string;
@@ -351,6 +546,18 @@ export function registerEnvironmentsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const body = loadJsonObject(options) ?? {};
+      // The two flags say opposite things about the same field, and picking a
+      // winner would silently discard half of what was asked for.
+      if (options.model !== undefined && options.clearModel) {
+        throw usageError("Provide either --model or --clear-model, not both.");
+      }
+      await assertModelOverridesSupported(options, globalOptions.timeout, {
+        supplied:
+          options.model !== undefined ||
+          options.clearModel === true ||
+          "modelId" in body,
+        ...projectSelector(options, body),
+      });
       const input = validateInput(updateEnvironmentOperation, {
         ...body,
         ...(options.project !== undefined ? { project: options.project } : {}),
@@ -361,6 +568,10 @@ export function registerEnvironmentsCommands(program: Command): void {
         ...(options.description !== undefined
           ? { description: options.description }
           : {}),
+        // `--clear-model` is the flag spelling of the JSON `"modelId": null`
+        // both this command and the API already accept; neither is removed.
+        ...(options.clearModel ? { modelId: null } : {}),
+        ...(options.model !== undefined ? { modelId: options.model } : {}),
         ...(options.sandboxImage !== undefined
           ? { sandboxImageId: options.sandboxImage }
           : {}),

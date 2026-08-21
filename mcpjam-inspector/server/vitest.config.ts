@@ -22,6 +22,11 @@ const sdkPredicatesEntry = path.resolve(
   rootDir,
   "../sdk/src/predicates/index.ts",
 );
+// Versioned evaluation contract. Needs its own alias for the same reason every
+// other subpath here does: the generic "@mcpjam/sdk" find is a PREFIX
+// replacement, so without this entry the specifier rewrites to
+// `sdk/src/index.ts/contract` and fails to resolve.
+const sdkContractEntry = path.resolve(rootDir, "../sdk/src/contract/index.ts");
 const sdkHostConfigInternalEntry = path.resolve(
   rootDir,
   "../sdk/src/host-config/internal.ts",
@@ -31,6 +36,11 @@ const sdkHostConfigTemplatesEntry = path.resolve(
   "../sdk/src/host-config/templates/index.ts",
 );
 const sdkPlatformEntry = path.resolve(rootDir, "../sdk/src/platform/index.ts");
+// Node-only SSRF guard + DNS-pinned transport. Needs its own alias for the
+// same reason every other subpath here does: the generic "@mcpjam/sdk" find is
+// a PREFIX replacement, so without this entry the specifier rewrites to
+// `sdk/src/index.ts/oauth/node` and fails to resolve.
+const sdkOAuthNodeEntry = path.resolve(rootDir, "../sdk/src/oauth/node.ts");
 const sdkHostCompatEntry = path.resolve(
   rootDir,
   "../sdk/src/host-compat/index.ts",
@@ -82,9 +92,11 @@ export default defineConfig({
           "@mcpjam/sdk/model-factory",
           "@mcpjam/sdk/matchers",
           "@mcpjam/sdk/predicates",
+          "@mcpjam/sdk/contract",
           "@mcpjam/sdk/host-config/internal",
           "@mcpjam/sdk/host-config/templates",
           "@mcpjam/sdk/platform",
+          "@mcpjam/sdk/oauth/node",
           "@mcpjam/sdk/public-api",
           "@mcpjam/sdk/host-compat",
           "@mcpjam/sdk/plugin-bundle",
@@ -113,6 +125,7 @@ export default defineConfig({
       { find: "@mcpjam/sdk/model-factory", replacement: sdkModelFactoryEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
       { find: "@mcpjam/sdk/predicates", replacement: sdkPredicatesEntry },
+      { find: "@mcpjam/sdk/contract", replacement: sdkContractEntry },
       {
         find: "@mcpjam/sdk/host-config/internal",
         replacement: sdkHostConfigInternalEntry,
@@ -122,6 +135,7 @@ export default defineConfig({
         replacement: sdkHostConfigTemplatesEntry,
       },
       { find: "@mcpjam/sdk/platform", replacement: sdkPlatformEntry },
+      { find: "@mcpjam/sdk/oauth/node", replacement: sdkOAuthNodeEntry },
       { find: "@mcpjam/sdk/host-compat", replacement: sdkHostCompatEntry },
       { find: "@mcpjam/sdk/public-api", replacement: sdkPublicApiEntry },
       { find: "@mcpjam/sdk/plugin-bundle", replacement: sdkPluginBundleEntry },

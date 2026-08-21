@@ -69,7 +69,9 @@ describe("describeEnvironmentError", () => {
       message: NO_SERVERS_SENTENCE,
       code: "ENV_NO_SERVERS",
     });
-    expect(normalized.title).toBe("This environment has no servers");
+    expect(normalized.title).toBe(
+      "This environment has no servers to run against"
+    );
     expect(normalized.severity).toBe("warning");
     // The backend's own sentence survives verbatim — it names the specific
     // environment, which no client-side copy can do.
@@ -77,6 +79,13 @@ describe("describeEnvironmentError", () => {
     expect(normalized.rawCode).toBe("ENV_NO_SERVERS");
     expect(normalized.likelyCauses.length).toBeGreaterThan(0);
     expect(normalized.nextSteps.length).toBeGreaterThan(0);
+    // SUTB-5: the same code covers an environment whose only server is LOCAL,
+    // which the sentence cannot distinguish and which needs a different fix
+    // than connecting a server. The card is where the user learns that.
+    expect(normalized.likelyCauses.join(" ")).toMatch(
+      /local .*cloud run can't reach/i
+    );
+    expect(normalized.nextSteps.join(" ")).toMatch(/tunnel/i);
   });
 
   // An ENV_ code we have no bespoke copy for still beats describeError: it

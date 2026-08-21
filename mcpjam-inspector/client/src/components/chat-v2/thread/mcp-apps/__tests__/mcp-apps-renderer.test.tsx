@@ -263,10 +263,10 @@ import {
 import { useWidgetSurfaceStore } from "../widget-surface-store";
 import { authFetch } from "@/lib/session-token";
 import {
-  ChatboxHostStyleProvider,
-  ChatboxHostThemeProvider,
-} from "@/contexts/chatbox-client-style-context";
-import { ChatboxHostCapabilitiesOverrideProvider } from "@/contexts/chatbox-client-capabilities-override-context";
+  ScenarioHostStyleProvider,
+  ScenarioHostThemeProvider,
+} from "@/contexts/scenario-client-style-context";
+import { ScenarioHostCapabilitiesOverrideProvider } from "@/contexts/scenario-client-capabilities-override-context";
 import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context";
 import { WidgetSurfaceProvider } from "@/contexts/widget-surface-context";
 import type { McpUiHostCapabilities } from "@modelcontextprotocol/ext-apps/app-bridge";
@@ -445,9 +445,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("advertises hostCapabilities from the active host style preset (claude)", async () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -522,11 +522,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("does not rebuild when the host capabilities override is recreated without semantic changes", async () => {
     const renderTree = () => (
-      <ChatboxHostCapabilitiesOverrideProvider
+      <ScenarioHostCapabilitiesOverrideProvider
         value={{ openLinks: {}, logging: {}, serverTools: {} }}
       >
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     const { rerender } = render(renderTree());
@@ -917,7 +917,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   });
 
   it("falls back to the spec-default 'no claims' blob when no style is resolvable", async () => {
-    // No ChatboxHostStyleProvider, isPlaygroundActive is false in this test
+    // No ScenarioHostStyleProvider, isPlaygroundActive is false in this test
     // setup, so effectiveHostStyle is null. The resolver MUST NOT silently
     // impersonate Claude here — it returns the spec-default {}.
     render(<HostedRenderer {...baseProps} />);
@@ -931,13 +931,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(vendorOnly).toEqual({});
   });
 
-  it("flips advertised hostCapabilities when host style switches to chatgpt", async () => {
+  it("uses ChatGPT's current advertised hostCapabilities", async () => {
     render(
-      <ChatboxHostStyleProvider value="chatgpt">
-        <ChatboxHostThemeProvider value="dark">
+      <ScenarioHostStyleProvider value="chatgpt">
+        <ScenarioHostThemeProvider value="dark">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostThemeProvider>
-      </ChatboxHostStyleProvider>
+        </ScenarioHostThemeProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -947,13 +947,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
       expect.objectContaining(getHostCapabilitiesForStyle("chatgpt"))
     );
-    // Sanity: profiles differ — switching is observable. Use a
-    // distinguishing key (Claude advertises serverResources / logging;
-    // ChatGPT doesn't) rather than full-blob inequality, which would
-    // false-positive on shared keys.
     const advertised = appBridgeArgsRef.current?.hostCapabilities;
-    expect(advertised).not.toHaveProperty("serverResources");
-    expect(advertised).not.toHaveProperty("logging");
+    expect(advertised).toHaveProperty("serverResources");
+    expect(advertised).toHaveProperty("logging");
   });
 
   it("passes the same effectiveHostCapabilities to the modal as the inline AppBridge advertises", async () => {
@@ -965,9 +961,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // in mcpProfile.apps.mcpAppsOverrides.
     mcpAppsModalPropsRef.current = null;
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -990,9 +986,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("includes HostContext.toolInfo when the matrix has toolInfo: true (Claude default)", async () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1011,9 +1007,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // per its published Component-bridge table. A widget that probes
     // for that field must see undefined — same as real Copilot.
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1033,9 +1029,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     };
 
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1053,9 +1049,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // widgets inline by default, so the host advertises
     // ["inline", "fullscreen"] (dropping the inspector's permissive pip).
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1069,11 +1065,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
     ]);
   });
 
-  it("advertises all three modes on Claude (full surface matrix)", async () => {
+  it("advertises Claude's probed inline and fullscreen modes", async () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1084,7 +1080,6 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(hostContext?.availableDisplayModes).toEqual([
       "inline",
       "fullscreen",
-      "pip",
     ]);
   });
 
@@ -1100,9 +1095,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // ["inline", "fullscreen"], so an unsupported pip coerces to the
     // first allowed mode (inline), not fullscreen.
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} displayMode="pip" pipWidgetId="call-1" />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(mockBridge.connect).toHaveBeenCalled();
@@ -1133,13 +1128,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
     render(
       <ActiveMcpProfileProvider value={profile}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer
             {...baseProps}
             displayMode="fullscreen"
             fullscreenWidgetId="call-1"
           />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
@@ -1181,9 +1176,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       headers: new Headers(),
     } as Response);
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.csp).toBeDefined();
@@ -1201,8 +1196,8 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(csp?.resourceDomains).toEqual(["https://cdn.example.com"]);
   });
 
-  it("preserves frameDomains and baseUriDomains on Claude (full surface matrix)", async () => {
-    // Counter-test: same CSP, but Claude's matrix honors both sub-
+  it("preserves frameDomains and baseUriDomains on Cursor", async () => {
+    // Counter-test: same CSP, but Cursor's matrix honors both sub-
     // fields, so they round-trip into the iframe CSP. Guards
     // against the gate over-stripping.
     vi.mocked(authFetch).mockResolvedValueOnce({
@@ -1225,9 +1220,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       headers: new Headers(),
     } as Response);
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="cursor">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.csp).toBeDefined();
@@ -1237,6 +1232,99 @@ describe("MCPAppsRenderer tool input streaming", () => {
       | undefined;
     expect(csp?.frameDomains).toEqual(["https://embed.example.com"]);
     expect(csp?.baseUriDomains).toEqual(["https://base.example.com"]);
+  });
+
+  it("forwards one resolved subtype policy to inline and modal sandboxes", async () => {
+    mcpAppsModalPropsRef.current = null;
+    render(
+      <ScenarioHostStyleProvider value="chatgpt">
+        <HostedRenderer {...baseProps} />
+      </ScenarioHostStyleProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.cspSubtypePolicy).toBeDefined();
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+    // ChatGPT honors the declared connect list (one directive, proven by the
+    // declared wss endpoint connecting while an undeclared one was blocked)
+    // and its resource subtypes are unknown, so they never reach the proxy.
+    const expected = {
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: undefined,
+    };
+    expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toEqual(expected);
+    expect(mcpAppsModalPropsRef.current?.widgetCspSubtypePolicy).toEqual(
+      expected
+    );
+  });
+
+  it("keeps a permissive replay permissive when the host's subtype policy allows everything", async () => {
+    // Claude and Cursor ship all-true subtype matrices. Those restrict
+    // nothing, so treating the policy's mere presence as a host restriction
+    // flipped `permissive` off and handed the proxy an undefined CSP — which
+    // falls back to the locked-down policy (`connect-src 'none'`,
+    // `img-src data:`) and breaks the replayed widget.
+    render(
+      <ScenarioHostStyleProvider value="claude">
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      </ScenarioHostStyleProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>"
+      );
+    });
+    expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toEqual({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    });
+    expect(sandboxedIframePropsRef.current.permissive).toBe(true);
+    expect(sandboxedIframePropsRef.current.csp).toBeUndefined();
+  });
+
+  it("locks a permissive replay down when the host actually blocks a subtype", async () => {
+    // Counter-test: Goose blocks every connect subtype, so the emulation MUST
+    // win over the widget's permissive flag. Guards against the fix above
+    // disabling the feature outright.
+    render(
+      <ScenarioHostStyleProvider value="goose">
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      </ScenarioHostStyleProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>"
+      );
+    });
+    expect(sandboxedIframePropsRef.current.permissive).toBe(false);
+  });
+
+  it("bypasses subtype emulation for the explicit Playground permissive toggle", async () => {
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+      mcpAppsCspMode: "permissive",
+    });
+    render(
+      <WidgetSurfaceProvider value="playground">
+        <ScenarioHostStyleProvider value="chatgpt">
+          <HostedRenderer {...baseProps} />
+        </ScenarioHostStyleProvider>
+      </WidgetSurfaceProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+    expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toBeUndefined();
+    expect(
+      mcpAppsModalPropsRef.current?.widgetCspSubtypePolicy
+    ).toBeUndefined();
   });
 
   it("ignores widget-declared permissions on Copilot (sandboxPermissions: false)", async () => {
@@ -1264,9 +1352,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       headers: new Headers(),
     } as Response);
     render(
-      <ChatboxHostStyleProvider value="copilot">
+      <ScenarioHostStyleProvider value="copilot">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
@@ -1283,7 +1371,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
   it("suppresses widget-declared permissions in the playground permissive escape hatch (Copilot)", async () => {
     // Regression: three review bots independently flagged the same
     // miss on #2242 — the `userTogglePermissive` branch (playground
-    // + cspMode === "permissive" + non-chatbox surface + non-
+    // + cspMode === "permissive" + non-scenario surface + non-
     // minimal) still read raw `widgetPermissions`. On a Copilot
     // host with `sandboxPermissions: false`, the gate is supposed
     // to ignore widget-declared permissions; the permissive escape
@@ -1299,7 +1387,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       mcpAppsCspMode: "permissive" as const,
     });
     // In playground mode the matrix resolves against the
-    // preferences-store `sharedHostStyle`, not the chatbox provider
+    // preferences-store `sharedHostStyle`, not the scenario provider
     // — set it to a host whose `mcpAppsCapabilities.sandboxPermissions`
     // is false. Copilot isn't in the `mockPreferencesState` enum
     // (claude | chatgpt), so we route through chatgpt — its matrix
@@ -1331,7 +1419,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     // ActiveMcpProfileProvider sets the matrix override directly,
     // simulating a user who configured `sandboxPermissions: false`
     // via the matrix UI. This avoids the
-    // playground-vs-chatbox-host-style routing wrinkle entirely:
+    // playground-vs-scenario-host-style routing wrinkle entirely:
     // the override path always wins regardless of which host style
     // is resolved.
     const copilotPermissionsOff: HostConfigMcpProfileV1 = {
@@ -1374,9 +1462,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       headers: new Headers(),
     } as Response);
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
     await vi.waitFor(() => {
       expect(sandboxedIframePropsRef.current?.html).toBe(
@@ -1394,14 +1482,14 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("does not block pure MCP Apps from booting while ChatGPT compat is enabled", async () => {
     render(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           toolState="input-streaming"
           toolInput={{ query: "yellow" }}
           toolOutput={undefined}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1414,7 +1502,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("waits for completed tool output before booting legacy OpenAI outputTemplate widgets", async () => {
     const { rerender } = render(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           toolState="input-streaming"
@@ -1422,7 +1510,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           toolOutput={undefined}
           toolMetadata={{ "openai/outputTemplate": "ui://widget/test.html" }}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await act(async () => {
@@ -1433,7 +1521,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockBridge.connect).not.toHaveBeenCalled();
 
     rerender(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           toolState="output-available"
@@ -1444,7 +1532,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           }}
           toolMetadata={{ "openai/outputTemplate": "ui://widget/test.html" }}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1466,7 +1554,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("still waits for completed compat output when live fetch is preferred over a cached URL", async () => {
     const { rerender } = render(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           toolState="input-streaming"
@@ -1476,7 +1564,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           cachedWidgetHtmlUrl="blob:cached"
           liveFetchPreferred
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await act(async () => {
@@ -1488,7 +1576,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(mockBridge.connect).not.toHaveBeenCalled();
 
     rerender(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           toolState="output-available"
@@ -1501,7 +1589,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           cachedWidgetHtmlUrl="blob:cached"
           liveFetchPreferred
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1530,9 +1618,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
       // so the resolved blob is observably distinct from both presets.
     };
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={override}>
+      <ScenarioHostCapabilitiesOverrideProvider value={override}>
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -1544,13 +1632,13 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(vendorOnly).toEqual(override);
   });
 
-  it("uses chatbox host style for SEP-1865 host context outside the playground", async () => {
+  it("uses scenario host style for SEP-1865 host context outside the playground", async () => {
     render(
-      <ChatboxHostStyleProvider value="chatgpt">
-        <ChatboxHostThemeProvider value="dark">
+      <ScenarioHostStyleProvider value="chatgpt">
+        <ScenarioHostThemeProvider value="dark">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostThemeProvider>
-      </ChatboxHostStyleProvider>
+        </ScenarioHostThemeProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1599,11 +1687,11 @@ describe("MCPAppsRenderer tool input streaming", () => {
     };
 
     render(
-      <ChatboxHostStyleProvider value="claude">
-        <ChatboxHostThemeProvider value="dark">
+      <ScenarioHostStyleProvider value="claude">
+        <ScenarioHostThemeProvider value="dark">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostThemeProvider>
-      </ChatboxHostStyleProvider>
+        </ScenarioHostThemeProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1717,9 +1805,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     };
 
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -1768,9 +1856,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("aligns the sandbox iframe with the host surface while providing host chrome", async () => {
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
@@ -1808,9 +1896,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     } as Response);
 
     render(
-      <ChatboxHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} prefersBorder={false} />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     const iframe = await screen.findByTestId("sandboxed-iframe");
@@ -1830,6 +1918,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       displayMode: "pip",
       deviceType: "desktop",
     });
+    mockPreferencesState.hostStyle = "mcpjam";
 
     render(
       <HostedRenderer
@@ -2126,7 +2215,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
 
   it("uses the current live compat recipe for live-preferred cached revisits", async () => {
     render(
-      <ChatboxHostStyleProvider value="chatgpt">
+      <ScenarioHostStyleProvider value="chatgpt">
         <HostedRenderer
           {...baseProps}
           cachedWidgetHtmlUrl="blob:cached"
@@ -2134,7 +2223,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           injectedOpenAiCompat={false}
           injectedOpenAiCompatCapabilities={{ callTool: false }}
         />
-      </ChatboxHostStyleProvider>
+      </ScenarioHostStyleProvider>
     );
 
     await vi.waitFor(() => {
@@ -2877,6 +2966,345 @@ describe("MCPAppsRenderer tool input streaming", () => {
     warnSpy.mockRestore();
     errorSpy.mockRestore();
   });
+
+  // ── Scenario surface × declared host profile ────────────────────────────
+  // The "MCP Apps render blank in User Testing" regression. A scenario
+  // surface forces `cspMode: "permissive"`; the server used to answer that
+  // request by withholding the resource's declared CSP. Every host template
+  // seeds `apps.sandbox.csp.mode: "declared"`, so `resolveSandboxCsp` then
+  // ran with `resourceCsp: undefined`, fell back to the empty secure
+  // default, and forced `permissive: false` — the sandbox proxy emitted
+  // `script-src 'unsafe-inline' data: blob:` and every esm.sh module load
+  // in the App was refused. The tester saw an empty bordered box.
+  const declaredCspProfile = (): HostConfigMcpProfileV1 => ({
+    profileVersion: 1,
+    apps: { sandbox: { csp: { mode: "declared" } } },
+  });
+
+  it("keeps the resource-declared CSP on a scenario surface under a 'declared' host profile", async () => {
+    // Server response as it now stands: a scenario surface asks for
+    // permissive, and the route reports the declaration regardless.
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: {
+            resourceDomains: ["https://esm.sh"],
+            connectDomains: ["https://esm.sh"],
+          },
+          permissive: true,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+
+    render(
+      <WidgetSurfaceProvider value="scenario">
+        <ActiveMcpProfileProvider value={declaredCspProfile()}>
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      </WidgetSurfaceProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.csp).toBeTruthy();
+    });
+
+    // Before the fix both lists came back `[]` — the empty secure default.
+    expect(sandboxedIframePropsRef.current.csp.resourceDomains).toEqual([
+      "https://esm.sh",
+    ]);
+    expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([
+      "https://esm.sh",
+    ]);
+    // The host policy is in force, so the meta-CSP is injected — with the
+    // declared origins in it, which is the whole point.
+    expect(sandboxedIframePropsRef.current.permissive).toBe(false);
+  });
+
+  it("keeps empty domain lists on a scenario surface when the App declares no CSP", async () => {
+    // The inverse, and a spec MUST: "if `ui.csp` is omitted" the host keeps
+    // the restrictive default, and "Host MAY further restrict but MUST NOT
+    // allow undeclared domains." An undeclared App stays blocked — Change 3
+    // makes that legible rather than blank.
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: undefined,
+          permissive: true,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+
+    render(
+      <WidgetSurfaceProvider value="scenario">
+        <ActiveMcpProfileProvider value={declaredCspProfile()}>
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      </WidgetSurfaceProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.csp).toBeTruthy();
+    });
+
+    expect(sandboxedIframePropsRef.current.csp.resourceDomains).toEqual([]);
+    expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
+  });
+
+  // ── Blocked-App notice ──────────────────────────────────────────────────
+  // An App whose own resources are refused never signals ready, so the
+  // iframe stays at `opacity: 0`. Without a notice that is indistinguishable
+  // from a hang — the two-hour-investigation failure mode this replaces.
+  const postCspViolation = (overrides: Record<string, unknown> = {}): void => {
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcp-apps:csp-violation",
+          directive: "script-src-elem",
+          effectiveDirective: "script-src-elem",
+          blockedUri: "https://esm.sh/react@19",
+          ...overrides,
+        },
+      } as MessageEvent);
+    });
+  };
+
+  it("explains a CSP-blocked App that never signals ready", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<HostedRenderer {...baseProps} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation();
+      // Grace period: the notice must not race a View that is merely slow.
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      const notice = screen.getByTestId("mcp-app-csp-blocked-notice");
+      expect(notice.textContent).toContain("Content Security Policy");
+      // Names the blocked directive and the first blocked origin — the two
+      // facts that turn this into a five-second diagnosis.
+      expect(notice.textContent).toContain("script-src-elem");
+      expect(notice.textContent).toContain("https://esm.sh/react@19");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the blocked-App notice plain-language in minimal mode", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<HostedRenderer {...baseProps} minimalMode={true} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      const notice = screen.getByTestId("mcp-app-csp-blocked-notice");
+      // Testers get a sentence, not a debug dump.
+      expect(notice.textContent).toContain("couldn't load its resources");
+      expect(notice.textContent).not.toContain("Content Security Policy");
+      expect(notice.textContent).not.toContain("script-src-elem");
+      expect(notice.textContent).toContain("https://esm.sh/react@19");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not show the blocked-App notice when the App boots anyway", async () => {
+    // A blocked optional asset (an analytics beacon, a webfont) still
+    // reports a violation. If the View initializes, there is nothing wrong
+    // to report and the notice must never appear.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<HostedRenderer {...baseProps} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation({ blockedUri: "https://analytics.example.com/beacon" });
+      act(() => triggerReady());
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not carry a blocked-App notice onto freshly committed HTML", async () => {
+    // A violation belongs to the bytes that reported it. Once new HTML is
+    // committed the notice must not keep explaining the old ones — it would
+    // misdiagnose the new render outright if that failed for an unrelated
+    // reason. Covers both the resource swap and a refetch under the same
+    // identity, which the identity-keyed reset effect cannot see.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { rerender } = render(<HostedRenderer {...baseProps} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation({ blockedUri: "https://resource-a.example/app.js" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByTestId("mcp-app-csp-blocked-notice")).toBeTruthy();
+
+      // Same renderer, different live resource.
+      rerender(
+        <HostedRenderer
+          {...baseProps}
+          toolCallId="call-2"
+          resourceUri="mcp-app://other"
+        />
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      // Nothing has been reported against the new bytes, so there is nothing
+      // to explain about them.
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("explains a block after a TIGHTENED policy breaks a previously-working App", async () => {
+    // End-to-end guard on the case the notice most needs to cover: the App
+    // boots fine, the policy is then narrowed, and the reloaded App can't
+    // initialize. This works because `effectiveSandboxKey` is a dependency
+    // of the bridge-connect effect, which resets readiness when it re-runs —
+    // pinning that here so a refactor that decouples the two (leaving
+    // `isReady` true across a policy reload) turns the notice back into a
+    // silent blank surface.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const renderTree = (connectDomains: string[]) => (
+        <ActiveMcpProfileProvider
+          value={{
+            profileVersion: 1,
+            apps: {
+              sandbox: {
+                csp: { mode: "declared", restrictTo: { connectDomains } },
+              },
+            },
+          }}
+        >
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      );
+
+      const { rerender } = render(renderTree(["https://api.example.com"]));
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+      act(() => triggerReady());
+
+      // Narrow the policy — the iframe reloads and the App is now blocked.
+      rerender(renderTree([]));
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
+      });
+
+      postCspViolation({ blockedUri: "https://api.example.com/data" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      const notice = screen.getByTestId("mcp-app-csp-blocked-notice");
+      expect(notice.textContent).toContain("https://api.example.com/data");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears a stale blocked-App notice when the sandbox policy changes", async () => {
+    // Widening a profile to unblock an App re-posts the resource-ready
+    // payload (SandboxedIframe keys it on the resolved csp), so the View
+    // boots again. A violation recorded against the PREVIOUS policy must not
+    // keep naming an origin that is now allowed.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const renderTree = (connectDomains: string[]) => (
+        <ActiveMcpProfileProvider
+          value={{
+            profileVersion: 1,
+            apps: {
+              sandbox: {
+                csp: { mode: "declared", restrictTo: { connectDomains } },
+              },
+            },
+          }}
+        >
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      );
+
+      // `restrictTo` INTERSECTS the declared baseline, so the widened value
+      // must be one the baseline actually contains — otherwise the resolved
+      // policy is unchanged and no reload happens.
+      const { rerender } = render(renderTree([]));
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+      expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
+
+      postCspViolation();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByTestId("mcp-app-csp-blocked-notice")).toBeTruthy();
+
+      // Profile edit → new resolved CSP → iframe reload.
+      rerender(renderTree(["https://api.example.com"]));
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([
+          "https://api.example.com",
+        ]);
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      // Stale violation dropped: nothing has been reported against the new
+      // policy yet, so there is nothing to explain.
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ── Host capability gating ─────────────────────────────────────────────────
@@ -2905,9 +3333,9 @@ describe("MCPAppsRenderer host capability enforcement", () => {
 
   it("does not register chip-bound handlers when no capability is advertised", async () => {
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={{}}>
+      <ScenarioHostCapabilitiesOverrideProvider value={{}}>
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -2926,9 +3354,9 @@ describe("MCPAppsRenderer host capability enforcement", () => {
 
   it("keeps non-gated handlers wired regardless of cap surface", async () => {
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={{}}>
+      <ScenarioHostCapabilitiesOverrideProvider value={{}}>
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -2958,9 +3386,9 @@ describe("MCPAppsRenderer host capability enforcement", () => {
     "registers the %s handler when the cap is advertised",
     async (cap, handlerKey) => {
       render(
-        <ChatboxHostCapabilitiesOverrideProvider value={{ [cap]: {} }}>
+        <ScenarioHostCapabilitiesOverrideProvider value={{ [cap]: {} }}>
           <HostedRenderer {...baseProps} />
-        </ChatboxHostCapabilitiesOverrideProvider>
+        </ScenarioHostCapabilitiesOverrideProvider>
       );
 
       await vi.waitFor(() => {
@@ -2978,13 +3406,13 @@ describe("MCPAppsRenderer host capability enforcement", () => {
     const onAppToolInvocationChange = vi.fn();
 
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={{ serverTools: {} }}>
+      <ScenarioHostCapabilitiesOverrideProvider value={{ serverTools: {} }}>
         <HostedRenderer
           {...baseProps}
           onCallTool={onCallTool}
           onAppToolInvocationChange={onAppToolInvocationChange}
         />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -3024,9 +3452,9 @@ describe("MCPAppsRenderer host capability enforcement", () => {
 
   it("registers all three serverResources handlers under a single cap", async () => {
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={{ serverResources: {} }}>
+      <ScenarioHostCapabilitiesOverrideProvider value={{ serverResources: {} }}>
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -3040,9 +3468,9 @@ describe("MCPAppsRenderer host capability enforcement", () => {
 
   it("leaves serverResources handlers unregistered without the cap", async () => {
     render(
-      <ChatboxHostCapabilitiesOverrideProvider value={{ openLinks: {} }}>
+      <ScenarioHostCapabilitiesOverrideProvider value={{ openLinks: {} }}>
         <HostedRenderer {...baseProps} />
-      </ChatboxHostCapabilitiesOverrideProvider>
+      </ScenarioHostCapabilitiesOverrideProvider>
     );
 
     await vi.waitFor(() => {
@@ -3077,9 +3505,9 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
   it("accept: grants the widget's fullscreen request", async () => {
     render(
       <ActiveMcpProfileProvider value={profileWith("accept")}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
@@ -3095,9 +3523,9 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
   it("decline: returns the current mode instead of the requested fullscreen", async () => {
     render(
       <ActiveMcpProfileProvider value={profileWith("decline")}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
@@ -3117,9 +3545,9 @@ describe("MCPAppsRenderer widgetDisplayModeRequests policy", () => {
     // picker. This is the behavior Claude exhibits.
     render(
       <ActiveMcpProfileProvider value={profileWith("user-initiated-only")}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
@@ -3149,7 +3577,7 @@ describe("MCPAppsRenderer display-mode requests after a user close", () => {
     mockHostContextStoreState.draftHostContext = {};
     Object.assign(mockPreferencesState, {
       themeMode: "light",
-      hostStyle: "claude",
+      hostStyle: "mcpjam",
     });
     Object.assign(mockPlaygroundStoreState, {
       isPlaygroundActive: true,
@@ -3271,9 +3699,9 @@ describe("MCPAppsRenderer display-mode requests after a user close", () => {
   ) {
     render(
       <ActiveMcpProfileProvider value={profileWith(policy)}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="mcpjam">
           <ControlledHost />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
     await vi.waitFor(() => {
@@ -3519,12 +3947,12 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
     const onRequestTeardown = vi.fn();
     render(
       <ActiveMcpProfileProvider value={profileWithRequestTeardown(true)}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer
             {...baseProps}
             onRequestTeardown={onRequestTeardown}
           />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
 
@@ -3546,13 +3974,13 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
     render(
       <WidgetSurfaceHostProvider>
         <ActiveMcpProfileProvider value={profileWithRequestTeardown(true)}>
-          <ChatboxHostStyleProvider value="claude">
+          <ScenarioHostStyleProvider value="claude">
             <HostedRenderer
               {...baseProps}
               onRequestTeardown={onRequestTeardown}
             />
             <HostedSurfaceHost />
-          </ChatboxHostStyleProvider>
+          </ScenarioHostStyleProvider>
         </ActiveMcpProfileProvider>
       </WidgetSurfaceHostProvider>
     );
@@ -3578,9 +4006,9 @@ describe("MCPAppsRenderer requestTeardown policy", () => {
   it("leaves request teardown unhandled when disabled", async () => {
     render(
       <ActiveMcpProfileProvider value={profileWithRequestTeardown(false)}>
-        <ChatboxHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="claude">
           <HostedRenderer {...baseProps} />
-        </ChatboxHostStyleProvider>
+        </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>
     );
 

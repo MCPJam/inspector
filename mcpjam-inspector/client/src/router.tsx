@@ -3,9 +3,10 @@ import { RouteErrorScreen } from "./components/RouteErrorScreen";
 import App, {
   ApiKeysSettingsRoute,
   GithubChecksSettingsRoute,
+  GithubInstallCallbackSettingsRoute,
   IntegrationsSettingsRoute,
   ChatAliasRoute,
-  ChatboxesRoute,
+  ScenariosRoute,
   ConformanceRoute,
   CaniuseCapabilityRoute,
   EnvironmentsRoute,
@@ -28,6 +29,7 @@ import App, {
   ScoreRunnerRoute,
   ServersRedirectRoute,
   ServersRoute,
+  SessionsRoute,
   SettingsRoute,
   SkillsRoute,
   SupportRoute,
@@ -37,6 +39,7 @@ import App, {
   TracingRoute,
   XAAFlowRoute,
 } from "./App";
+import { LoginInitiationRoute } from "./components/auth/login-initiation-route";
 import { getAppRouter, setAppRouter } from "./router-ref";
 import {
   buildHostsPath,
@@ -63,6 +66,15 @@ function ciEvalsRedirect({ request }: { request: Request }) {
  * live in a module the coverage tests import.
  *
  * Loaders (redirects) live here for the same reason.
+ */
+/**
+ * EVERY key here must also be a path in `APP_ROUTES`.
+ *
+ * `buildRouteChildren` iterates `APP_ROUTES`, not this map, so a route
+ * registered ONLY here is never mounted — the URL falls through to the `"*"`
+ * catch-all and renders something else entirely, with no error anywhere.
+ * The reverse direction throws loudly; this one fails silently, which is why
+ * `router.test.tsx` asserts it.
  */
 const ROUTE_ELEMENTS: Record<
   string,
@@ -115,25 +127,26 @@ const ROUTE_ELEMENTS: Record<
   // render ServersRoute while `pathnameToActiveTab` still resolves
   // "chat" → "playground" — sidebar/content mismatch).
   "chat/*": { element: <ChatAliasRoute /> },
-  // `/user-testing` — the scenario list; `/user-testing/:scenarioId` one
-  // scenario's detail (share band + Sessions | Clusters). Same element: the
-  // route param is what selects the view, so a deep-linked scenario survives
-  // the auth-gate remounts a cold boot puts it through.
-  "user-testing": { element: <ChatboxesRoute /> },
+  // `/user-testing` — the scenario list; `/user-testing/:scenarioId` detail
+  // (Insights | Sessions); `/user-testing/:scenarioId/edit` setup/share.
+  // Same element: the route param is what selects the view, so a deep-linked
+  // scenario survives the auth-gate remounts a cold boot puts it through.
+  "user-testing": { element: <ScenariosRoute /> },
   // Static segment, so it outranks `:scenarioId` in React Router's matcher.
-  "user-testing/new": { element: <ChatboxesRoute /> },
-  "user-testing/:scenarioId": { element: <ChatboxesRoute /> },
+  "user-testing/new": { element: <ScenariosRoute /> },
+  "user-testing/:scenarioId/edit": { element: <ScenariosRoute /> },
+  "user-testing/:scenarioId": { element: <ScenariosRoute /> },
   // Old bookmarks and every session link copied before the rename. Search and
-  // hash come along: `/chatboxes?host=X&session=Y` has to land on that
+  // hash come along: `/scenarios?host=X&session=Y` has to land on that
   // scenario's session, not just on the list.
-  chatboxes: {
+  scenarios: {
     loader: ({ request }: { request: Request }) => {
       const url = new URL(request.url);
       return redirect(`${routePaths.userTesting}${url.search}${url.hash}`);
     },
   },
   // `/swarms` — project-scoped Persona → Journey → Run surface (`SwarmsTab`)
-  // with Journeys + Sessions views. Same billing feature as chatboxes.
+  // with Journeys + Sessions views. Same billing feature as scenarios.
   // `/swarms/:swarmId` — one Swarm Run (wave) detail; same surface element.
   swarms: { element: <SwarmsRoute /> },
   // Static segment, so it outranks `:swarmId`.
@@ -143,12 +156,24 @@ const ROUTE_ELEMENTS: Record<
   // enforces the `project-environments-enabled` flag itself (redirects when
   // off), so registration here does not expose the dark feature.
   environments: { element: <EnvironmentsRoute /> },
+  // `/sessions` — cross-surface project session feed. The route component
+  // enforces the `unified-sessions-enabled` flag itself (redirects when off),
+  // so registration here does not expose the dark feature.
+  sessions: { element: <SessionsRoute /> },
   playground: { element: <PlaygroundRoute /> },
   support: { element: <SupportRoute /> },
   settings: { element: <SettingsRoute /> },
   "settings/api-keys": { element: <ApiKeysSettingsRoute /> },
   "settings/integrations": { element: <IntegrationsSettingsRoute /> },
   "settings/integrations/github": { element: <GithubChecksSettingsRoute /> },
+  // Where GitHub sends the browser back — BOTH the App's setup URL and its
+  // OAuth callback point here, and the page tells them apart by which query
+  // parameters arrived. One path because GitHub App settings take one of
+  // each, and because a second route would be a second place to keep the
+  // "pass everything through verbatim" rule.
+  "settings/integrations/github/callback": {
+    element: <GithubInstallCallbackSettingsRoute />,
+  },
   // Legacy: the page moved under Integrations. Kept as a redirect because the
   // path shipped in docs and in the backend runbook, so links to it exist
   // outside this app. A loader redirect (not an element) so it resolves before
@@ -198,6 +223,10 @@ const ROUTE_ELEMENTS: Record<
   "ci-evals": { loader: ciEvalsRedirect },
   "ci-evals/*": { loader: ciEvalsRedirect },
   billing: { element: <ServersRoute /> },
+  // The WorkOS Initiate Login URL. Unlike the entries around it this renders a
+  // component of its own rather than Servers: it must call `signIn()` so
+  // authkit-js writes a PKCE verifier before the code lands on `/callback`.
+  login: { element: <LoginInitiationRoute /> },
   callback: { element: <ServersRoute /> },
   "oauth/callback/*": { element: <ServersRoute /> },
   "*": { element: <ServersRoute /> },
@@ -205,6 +234,24 @@ const ROUTE_ELEMENTS: Record<
 
 /** Route table → react-router children, preserving declaration order. */
 function buildRouteChildren() {
+  // THE OTHER DIRECTION, and the one that used to fail silently. This function
+  // iterates `APP_ROUTES`, so a path registered only in `ROUTE_ELEMENTS` is
+  // never mounted: the URL falls through to the `"*"` catch-all and renders a
+  // different screen, with nothing in the console and no failing test — a
+  // component test mounts the component directly, so it never notices.
+  //
+  // Checked here rather than only in a test because this is where the asymmetry
+  // lives, and because a route that cannot be reached should stop the app at
+  // startup rather than reach a user as a wrong page.
+  const tablePaths = new Set(APP_ROUTES.map((route) => route.path));
+  for (const path of Object.keys(ROUTE_ELEMENTS)) {
+    if (!tablePaths.has(path)) {
+      throw new Error(
+        `[router] element registered for "${path}", which is not in APP_ROUTES — it would never be mounted`
+      );
+    }
+  }
+
   return APP_ROUTES.map((route) => {
     const rendered = ROUTE_ELEMENTS[route.path];
     if (!rendered) {

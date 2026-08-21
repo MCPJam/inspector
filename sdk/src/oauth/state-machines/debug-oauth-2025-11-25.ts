@@ -8,6 +8,10 @@
  * - Client ID Metadata Documents (CIMD) support per draft-parecki-oauth-client-id-metadata-document-03
  */
 
+import {
+  describeAuthenticatedRequestFailure,
+  describeTokenRequestFailure,
+} from "./shared/response-error.js";
 import { decodeJWT, formatJWTTimestamp } from "./shared/jwt.js";
 import { EMPTY_OAUTH_FLOW_STATE, buildResetFlowState } from "./types.js";
 import type {
@@ -37,6 +41,7 @@ import {
 } from "./shared/pkce.js";
 import { buildResourceMetadataUrl } from "./shared/urls.js";
 import {
+  AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER,
   describePkceMetadataNonConformance,
   selectAuthorizationServerFromResourceMetadata,
 } from "./shared/required-metadata.js";
@@ -848,7 +853,7 @@ export const createDebugOAuthStateMachine = (
             // Validate required AS metadata fields per RFC 8414
             if (!authServerMetadata.issuer) {
               throw new Error(
-                "Authorization server metadata missing required 'issuer' field"
+                AUTHORIZATION_SERVER_METADATA_MISSING_ISSUER
               );
             }
             if (!authServerMetadata.authorization_endpoint) {
@@ -1625,7 +1630,7 @@ export const createDebugOAuthStateMachine = (
                   httpHistory: updatedHistoryToken,
                   // Clear the authorization code so it won't be retried
                   authorizationCode: undefined,
-                  error: `Token request failed: ${response.body?.error || response.statusText} - ${response.body?.error_description || "Unknown error"}`,
+                  error: describeTokenRequestFailure(response),
                   isInitiatingAuth: false,
                 });
                 return;
@@ -1927,7 +1932,7 @@ export const createDebugOAuthStateMachine = (
                 updateState({
                   lastResponse: mcpResponseData,
                   httpHistory: updatedHistoryMcp,
-                  error: `Authenticated request failed: ${response.status} ${response.statusText}`,
+                  error: describeAuthenticatedRequestFailure(response),
                   isInitiatingAuth: false,
                 });
                 return;

@@ -1,7 +1,7 @@
 /**
  * Project-scoped Swarms surface (redesign): Persona → Journey → Run.
  *
- * Replaces the old host-anchored `ChatboxesTab product="swarm"`. Personas and
+ * Replaces the old host-anchored `ScenariosTab product="swarm"`. Personas and
  * journeys live at the project level; a journey targets one-or-more hosts and,
  * when run, fans out one single-host session per (host × sessionsPerTarget).
  *
@@ -106,7 +106,7 @@ import {
   swarmsCreatePath,
   useAppNavigate,
 } from "@/lib/app-navigation";
-import { getShareableAppOrigin } from "@/lib/chatbox-session";
+import { getShareableAppOrigin } from "@/lib/scenario-session";
 import { SwarmsSessionsPanel } from "@/components/swarms/SwarmsSessionsPanel";
 import { SwarmOverviewPanel } from "@/components/swarms/swarm-overview-panel";
 import { SwarmRunDetail } from "@/components/swarms/swarm-run-detail";
@@ -958,6 +958,25 @@ export function SwarmsTab({
             // regardless, so a remount (or a reload) still lands correctly —
             // it just falls back to run-id labels.
             setSwarmRunLabels(runLabels);
+            setViewMode("sessions");
+            navigate(`${routePaths.swarms}?view=sessions`);
+          }}
+          onOpenSession={({ sessionId, swarmRunGroupId, runLabels }) => {
+            setSwarmRunLabels(runLabels);
+            if (swarmRunGroupId) {
+              // The wave's own page, on the session that produced the finding.
+              // It is a real URL, so this leave is reversible — and the run
+              // keeps streaming into that page while the user reads.
+              navigate(
+                buildSwarmPath(swarmRunGroupId, {
+                  tab: "sessions",
+                  session: sessionId,
+                })
+              );
+              return;
+            }
+            // No wave id means nothing launched under one, so there is no run
+            // page to open — fall back to the handoff `onDone` already makes.
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}

@@ -24,6 +24,7 @@ import {
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
 import { getInspectorClientRuntimeConfig } from "../../env.js";
+import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { logger } from "../../utils/logger.js";
 
 const servers = new Hono();
@@ -103,16 +104,45 @@ servers.post("/check-oauth", async (c) =>
       body.serverId,
       {
         accessScope: body.accessScope,
-        chatboxId: body.chatboxId,
+        scenarioId: body.scenarioId,
         accessVersion: body.accessVersion,
       }
     );
-    return {
-      useOAuth: auth.serverConfig.useOAuth ?? false,
-      serverUrl: auth.serverConfig.url ?? null,
-    };
+    return buildOAuthRequirementProjection(auth.serverConfig);
   })
 );
+
+/**
+ * What a caller asking "does this server need authorizing before I can use
+ * it?" must read.
+ *
+ * `useOAuth` is a DERIVED COMPAT MIRROR of the canonical `authMethod`
+ * (mcpjam-backend `deriveAuthBooleans`): an `auto` row that is not
+ * XAA-configured is stored with `useOAuth: true` even though `auto` resolves
+ * to the discover ladder — connect unauthenticated, and escalate only when the
+ * target actually answers 401. So the mirror answers "could this server ever
+ * use OAuth", never "must someone authorize it first", and a caller that gates
+ * on it demands consent from servers that have no authorization server at all.
+ * `requiresAuthorization` is that second question, resolved through the shared
+ * connect-time predicate; the mirror stays on the response for existing
+ * consumers.
+ */
+export function buildOAuthRequirementProjection(serverConfig: {
+  useOAuth?: boolean;
+  url?: string;
+  authMethod?: "auto" | "oauth" | "xaa" | "bearer" | "none";
+  useXaa?: boolean;
+  authServerMode?: "mcpjam" | "own";
+  clientId?: string;
+}) {
+  const effectiveAuthMethod = resolveEffectiveAuthMethod(serverConfig);
+  return {
+    useOAuth: serverConfig.useOAuth ?? false,
+    requiresAuthorization: effectiveAuthMethod === "oauth",
+    effectiveAuthMethod,
+    serverUrl: serverConfig.url ?? null,
+  };
+}
 
 servers.post("/doctor", async (c) => {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
@@ -156,7 +186,7 @@ export async function runHostedDoctor(
     body.serverId,
     {
       accessScope: body.accessScope,
-      chatboxId: body.chatboxId,
+      scenarioId: body.scenarioId,
       accessVersion: body.accessVersion,
     }
   );

@@ -33,7 +33,7 @@ import {
   serverConnectionOverridesEqual,
   type HostConfigInputV2,
 } from "@/lib/client-config-v2";
-import { getChatboxShellStyle } from "@/lib/chatbox-client-style";
+import { getScenarioShellStyle } from "@/lib/scenario-client-style";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { RedesignedHostCanvas } from "./canvas/RedesignedHostCanvas";
 import { HostCanvasSelector } from "./HostCanvasSelector";
@@ -224,7 +224,10 @@ export function HostBuilderViewRedesigned({
   // Validation: recompute issues whenever draft or host display name changes.
   const attention = useHostDraftValidation(
     draftConfig ?? emptyHostConfigInputV2(),
-    draftName
+    draftName,
+    // The SAVED model, so clearing a pinned model blocks Save while a legacy
+    // host that never had one keeps saving unrelated edits.
+    { savedModelId: savedConfig?.modelId }
   );
 
   // Runtime connection state lives in `appState.servers` keyed by server
@@ -278,7 +281,7 @@ export function HostBuilderViewRedesigned({
   const canvasShellStyle = useMemo(
     () =>
       draftConfig?.hostStyle
-        ? getChatboxShellStyle(
+        ? getScenarioShellStyle(
             draftConfig.hostStyle,
             themeMode,
             draftConfig.chatUiOverride
@@ -558,7 +561,7 @@ export function HostBuilderViewRedesigned({
         className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background text-foreground"
         style={canvasShellStyle}
       >
-        {/* Canvas + side focus panel (mirrors the ChatboxBuilderView layout:
+        {/* Canvas + side focus panel (mirrors the ScenarioBuilderView layout:
           left = canvas, right = setup/focus rail). Resizable so the user
           can grow the editor without losing the canvas context. */}
         <div className="min-h-0 flex-1 p-4">

@@ -50,6 +50,7 @@ import {
   resolveXaaConnectIssuer,
   resolveXaaConnectRegistrationMode,
 } from "../services/xaa-mint.js";
+import { toXaaConnectFailure } from "../services/xaa-connect-error.js";
 import {
   getLocalConfidentialCimdProvider,
   withSkillsExtensionCapability,
@@ -186,7 +187,7 @@ export interface WorkosApiKeyActingAs {
 /**
  * Call Convex `/web/authorize-batch-local` with the user's bearer.
  * Returns the full server config for each requested serverId, including
- * STDIO command/args/env. Hosted-only fields (share/chatbox tokens) are not
+ * STDIO command/args/env. Hosted-only fields (share/scenario tokens) are not
  * accepted by this endpoint by design.
  *
  * `c` is only a request-log sink; callers without a live Hono context (the
@@ -303,7 +304,7 @@ export async function authorizeBatchLocal(
       // the batch instead.
       partial.serverId = null;
       partial.serverTransport = null;
-      partial.chatboxId = null;
+      partial.scenarioId = null;
     }
     setRequestLogContext(c, partial);
   }
@@ -855,7 +856,7 @@ async function applyLocalRuntimeResolution<
     serverDisplayName?: string;
     /** Secret-reveal scope; must match what the hosted mint path would send. */
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
     accessVersion?: number;
     workosApiKeyActingAs?: WorkosApiKeyActingAs;
     /**
@@ -880,7 +881,7 @@ async function applyLocalRuntimeResolution<
       projectId,
       serverId,
       accessScope: args.accessScope,
-      chatboxId: args.chatboxId,
+      scenarioId: args.scenarioId,
       accessVersion: args.accessVersion,
       workosApiKeyActingAs: args.workosApiKeyActingAs,
     });
@@ -993,7 +994,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
   serverId: string;
   serverDisplayName?: string;
   accessScope?: "project_member" | "chat_v2";
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
 }): Promise<PluginStdioLaunchSpec> {
   const result = await authorizeServerLocal(
@@ -1024,7 +1025,7 @@ export async function readAuthorizedStdioLaunchSpec(args: {
             projectId: args.projectId,
             serverId: args.serverId,
             accessScope: args.accessScope,
-            chatboxId: args.chatboxId,
+            scenarioId: args.scenarioId,
             accessVersion: args.accessVersion,
           })
         ).env ??
@@ -1072,11 +1073,11 @@ export async function resolveLocalStdioServerConfig(
      * Secret-reveal scope + delegated identity, threaded from
      * `createAuthorizedManager`'s options and caller context so the local
      * reread and reveal follow the same trust model as the hosted batch —
-     * a chatbox-scoped or WorkOS-API-key caller must not get a lesser (or
+     * a scenario-scoped or WorkOS-API-key caller must not get a lesser (or
      * failing) resolution just because the deployment is local.
      */
     accessScope?: "project_member" | "chat_v2";
-    chatboxId?: string;
+    scenarioId?: string;
     accessVersion?: number;
     workosApiKeyActingAs?: WorkosApiKeyActingAs;
     /**
@@ -1114,7 +1115,7 @@ export async function resolveLocalStdioServerConfig(
     managerKey: serverId,
     serverDisplayName: options?.serverDisplayName,
     accessScope: options?.accessScope,
-    chatboxId: options?.chatboxId,
+    scenarioId: options?.scenarioId,
     accessVersion: options?.accessVersion,
     workosApiKeyActingAs: options?.workosApiKeyActingAs,
     onPluginLease: options?.onPluginLease,
@@ -1299,18 +1300,20 @@ export async function resolveLocalServerForConnect(
     const registrationMode = resolveXaaConnectRegistrationMode(
       sc.registrationMode
     );
+    const xaaFailureTarget = {
+      serverId,
+      serverName: options?.serverDisplayName ?? serverId,
+      ...(sc.url ? { serverUrl: sc.url } : {}),
+    };
     // Backend-resolved identity failure (legacy partial per-server
     // override): a distinct configuration error, surfaced BEFORE any mint.
     // No silent fallback to the demo identity, no silent XAA→OAuth fallback.
+    // Framed for this surface (the stored sentence is written for the server's
+    // auth form and names neither the server nor where to fix it).
     if (sc.xaaIdentityError) {
-      throw new WebRouteError(
-        400,
-        ErrorCode.VALIDATION_ERROR,
-        sc.xaaIdentityError,
-        {
-          serverId,
-          serverName: options?.serverDisplayName ?? null,
-        }
+      throw toXaaConnectFailure(
+        new WebRouteError(400, ErrorCode.VALIDATION_ERROR, sc.xaaIdentityError),
+        xaaFailureTarget
       );
     }
     const mintArgs = buildXaaMintArgs({
@@ -1346,7 +1349,10 @@ export async function resolveLocalServerForConnect(
           resource: sc.url,
         });
       }
-      throw error;
+      // Re-framed AFTER the log above: the debugger-worded original still
+      // reaches Sentry/Axiom (as `cause`), the caller gets one sentence that
+      // names this server and the action that fixes it.
+      throw toXaaConnectFailure(error, xaaFailureTarget);
     }
     // Bounded re-mint: the SDK invokes this once on a 401 and retries; a second
     // 401 surfaces to the caller rather than looping mint→401→mint.
@@ -1362,8 +1368,12 @@ export async function resolveLocalServerForConnect(
         );
       }
       reMinted = true;
-      const minted = await mintXaaAccessToken(mintArgs);
-      return { accessToken: minted.accessToken };
+      try {
+        const minted = await mintXaaAccessToken(mintArgs);
+        return { accessToken: minted.accessToken };
+      } catch (error) {
+        throw toXaaConnectFailure(error, xaaFailureTarget);
+      }
     };
   }
 
@@ -1730,7 +1740,10 @@ export async function executeLocalServerConnect(
           new WebRouteError(
             401,
             ErrorCode.UNAUTHORIZED,
-            `Connection failed for server ${serverDisplayName}: the server requires authorization (HTTP 401). Switch Authentication to Auto or OAuth to sign in.`,
+            // Same reasoning as the envelope below: no "Connection failed for
+            // server X:" preamble. `serverName` is already in the details bag
+            // for anyone who needs to attribute it.
+            `This server requires authorization (HTTP 401). Switch Authentication to Auto or OAuth to sign in.`,
             {
               upstreamAuthRequired: true,
               serverId,
@@ -1742,13 +1755,25 @@ export async function executeLocalServerConnect(
         );
       }
     }
+    const failureMessage =
+      error instanceof Error ? error.message : "Unknown error";
     return c.json(
       {
         success: false,
-        error: `Connection failed for server ${serverDisplayName}: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
-        details: error instanceof Error ? error.message : "Unknown error",
+        // No "Connection failed for server X:" preamble. It was added to say
+        // WHICH server failed, but every surface that renders this already
+        // knows: the toast fires from that server's own connect, and the error
+        // sits on that server's card. What it actually did was push the
+        // sentence that explains the failure to the second half of the line —
+        // and against an error that names the server itself, repeat it
+        // ("Connection failed for server champions: MCP server "champions"
+        // doesn't support …").
+        //
+        // `serverName` rides in the response for any caller that does need to
+        // attribute it without parsing prose.
+        error: failureMessage,
+        serverName: serverDisplayName,
+        details: failureMessage,
         normalized: describeError(error),
       },
       500

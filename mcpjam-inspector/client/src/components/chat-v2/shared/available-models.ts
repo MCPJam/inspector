@@ -1,5 +1,6 @@
 import type { ProviderTokens } from "@/hooks/use-ai-provider-keys";
 import {
+  hostedModelDefinitionsFromSnapshot,
   isMCPJamGuestAllowedModel,
   type ModelDefinition,
 } from "@/shared/types";
@@ -47,7 +48,7 @@ export function applyGuestModelLocks(
 }
 
 export const OUT_OF_CREDITS_MODEL_REASON =
-  "You're out of credits. Top up or use your own key.";
+  "You're out of credits. Upgrade, buy credits, or use your own key.";
 
 /**
  * Once the org/guest is out of MCPJam credits, MCPJam-provided ("free")
@@ -90,6 +91,23 @@ export function appendDetectedLocalOllamaModels(
         !models.some((model) => String(model.id) === String(ollamaModel.id))
     )
   );
+}
+
+/**
+ * Every picker surface treats the model list as non-empty: `getDefaultModel`
+ * ends in `availableModels[0]`, so an empty list hands the chat an `undefined`
+ * `selectedModel`, which the surfaces then read unguarded — `isOrgManagedModel`
+ * in useChatSession, `currentModel.disabled` in ModelSelector. That is
+ * INSPECTOR-CLIENT-222: a blank Playground behind a route error screen.
+ *
+ * `useHostedModelCatalog` already promises a non-empty hosted source; this is
+ * the floor for every other way the composition can still come out empty
+ * (a caller passing an empty `hostedCatalog`, a future filter). Applied BEFORE
+ * the guest/credit locks so floor models carry the same locks as any other
+ * hosted row.
+ */
+function withHostedFloor(models: ModelDefinition[]): ModelDefinition[] {
+  return models.length > 0 ? models : hostedModelDefinitionsFromSnapshot();
 }
 
 /**
@@ -139,7 +157,10 @@ export function composeAvailableModels(params: {
       ollamaModels
     );
     return applyOutOfCreditsLocks(
-      applyGuestModelLocks(orgModelsWithLocalOllama, isAuthenticated),
+      applyGuestModelLocks(
+        withHostedFloor(orgModelsWithLocalOllama),
+        isAuthenticated
+      ),
       outOfCredits
     );
   }
@@ -153,9 +174,12 @@ export function composeAvailableModels(params: {
     customProviders,
     hostedCatalog,
   });
-  const guestLockedModels = applyGuestModelLocks(localModels, isAuthenticated);
   const visibleModels = HOSTED_MODE
-    ? guestLockedModels.filter((model) => isMCPJamProvidedModelMenuItem(model))
-    : guestLockedModels;
-  return applyOutOfCreditsLocks(visibleModels, outOfCredits);
+    ? localModels.filter((model) => isMCPJamProvidedModelMenuItem(model))
+    : localModels;
+  const guestLockedModels = applyGuestModelLocks(
+    withHostedFloor(visibleModels),
+    isAuthenticated
+  );
+  return applyOutOfCreditsLocks(guestLockedModels, outOfCredits);
 }

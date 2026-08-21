@@ -6,6 +6,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import {
   buildLocalStepHandlers,
@@ -37,6 +38,7 @@ import {
 } from "../utils/chat-helpers";
 import { resolveExecutionContext } from "../utils/host-execution-context";
 import { resolveHostTools } from "../utils/built-in-tools/registry.js";
+import { resolveWebAuthorizedHarnessStrategy } from "../utils/harness/harness-proxy-strategy.js";
 import {
   buildEvalBashTool,
   EVAL_BASH_TOOL_NAME,
@@ -72,7 +74,7 @@ import {
   type PredicateResult,
   type ToolErrorRecord,
 } from "@/shared/eval-matching";
-import type { PinnableSkill } from "@/shared/skill-types";
+import type { PinnableSkill, PinnedSkillArtifact } from "@/shared/skill-types";
 import type { ConvexHttpClient } from "convex/browser";
 import { ErrorCode, WebRouteError } from "../routes/web/errors";
 import {
@@ -268,6 +270,62 @@ export type EvalPinnedSkillSource =
       capabilities: import("./environments/effective-capabilities.js").EffectiveCapabilitySet;
     };
 
+/**
+ * How a run's FROZEN skills reach one case — both channels, together.
+ *
+ * There are two, and they are not interchangeable:
+ *   - `pinnedSkillSource` feeds the EMULATED path, where skills become
+ *     in-memory tool definitions.
+ *   - `pinnedHarnessSkills` feeds the HARNESS path, where they are materialized
+ *     as SKILL.md files on the box.
+ *
+ * They are bundled here because forwarding one without the other is a silent
+ * failure rather than a loud one: a case that receives no `pinnedHarnessSkills`
+ * does not error, it falls through to the harness's LIVE project-wide fetch —
+ * so a frozen run quietly stops being frozen, and the
+ * `skillsOverride: "exclude"` arm quietly runs with the whole project pool.
+ * That is exactly the bug this helper exists to make structurally impossible:
+ * one place decides, and both channels leave together or not at all.
+ *
+ * `pinnedHarnessSkills` is included when DEFINED rather than truthy — `[]` is
+ * the "this run delivers no skills" answer and must survive.
+ */
+export function runFrozenSkillOptions(run: {
+  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+}): {
+  pinnedSkillSource?: EvalPinnedSkillSource;
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
+} {
+  // Presence selects the pinned source at every hop below, so a non-array that
+  // is not `undefined` would sail through all of them and only fail inside
+  // `pinnedArtifactsToRuntimeSkills`'s `.map` — deep in the harness turn, after
+  // a sandbox has been provisioned and paid for. The type forbids it, but the
+  // value crosses a route boundary and a persisted-data conversion on the way
+  // here, so it is worth one loud check at the seam rather than a confusing
+  // crash later. `undefined` stays legal: it means "this run pinned nothing".
+  if (
+    run.pinnedHarnessSkills !== undefined &&
+    !Array.isArray(run.pinnedHarnessSkills)
+  ) {
+    throw new Error(
+      `runFrozenSkillOptions: pinnedHarnessSkills must be an array or undefined (got ${
+        run.pinnedHarnessSkills === null
+          ? "null"
+          : typeof run.pinnedHarnessSkills
+      })`
+    );
+  }
+  return {
+    ...(run.pinnedSkillSource
+      ? { pinnedSkillSource: run.pinnedSkillSource }
+      : {}),
+    ...(run.pinnedHarnessSkills !== undefined
+      ? { pinnedHarnessSkills: run.pinnedHarnessSkills }
+      : {}),
+  };
+}
+
 export type RunEvalSuiteOptions = {
   suiteId: string;
   runId: string | null; // null for quick runs
@@ -331,6 +389,22 @@ export type RunEvalSuiteOptions = {
    * not a per-iteration choice — see {@link EvalPinnedSkillSource}.
    */
   pinnedSkillSource?: EvalPinnedSkillSource;
+  /**
+   * The run's frozen skills in HARNESS shape, materialized ON BOX.
+   *
+   * A separate channel from {@link RunEvalSuiteOptions.pinnedSkillSource}, and
+   * deliberately so: `pinnedSkillSource` feeds the EMULATED path, where skills
+   * become in-memory tool definitions; a harness turn writes SKILL.md files
+   * into the runtime's skills root instead, so it needs complete artifacts
+   * (identity, complete-envelope hash, preserved frontmatter, inline file
+   * bodies) rather than the body-only projection that path takes.
+   *
+   * Presence, not length, is what selects the pinned source in the harness. An
+   * empty list says "this run delivers no skills"; ABSENT falls through to a
+   * live project-wide fetch, which would unfreeze the run. So the boundary sets
+   * this for every runId-bearing run, empty included.
+   */
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -1109,6 +1183,9 @@ type RunIterationBaseParams = {
    * skills (decision 10) — the runner passes this or `skillsSource: none`.
    */
   pinnedSkillSource?: EvalPinnedSkillSource;
+  /** The run's frozen skills in harness shape (see
+   *  {@link RunEvalSuiteOptions.pinnedHarnessSkills}). */
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
 };
 
 type RunIterationAiSdkParams = RunIterationBaseParams & {
@@ -1468,6 +1545,9 @@ const executeTestCase = async (params: {
   environment?: RunEvalSuiteOptions["config"]["environment"];
   /** Pinned skill delivery for this run (see RunEvalSuiteOptions.pinnedSkillSource). */
   pinnedSkillSource?: EvalPinnedSkillSource;
+  /** The run's frozen skills in harness shape (see
+   *  RunEvalSuiteOptions.pinnedHarnessSkills). */
+  pinnedHarnessSkills?: PinnedSkillArtifact[];
 }) => {
   const {
     test,
@@ -1494,6 +1574,7 @@ const executeTestCase = async (params: {
     suiteHostConfig,
     environment,
     pinnedSkillSource,
+    pinnedHarnessSkills,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -1576,6 +1657,7 @@ const executeTestCase = async (params: {
         suiteHostConfig,
         environment,
         pinnedSkillSource,
+        pinnedHarnessSkills,
       };
       outcomes.push(
         await runSingleIteration(
@@ -1699,6 +1781,7 @@ const executeTestCase = async (params: {
         suiteHostConfig,
         environment,
         pinnedSkillSource,
+        pinnedHarnessSkills,
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -1747,6 +1830,7 @@ const executeTestCase = async (params: {
         suiteHostConfig,
         environment,
         pinnedSkillSource,
+        pinnedHarnessSkills,
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -1792,6 +1876,7 @@ const executeTestCase = async (params: {
       environment,
       convexAuthToken,
       pinnedSkillSource,
+      pinnedHarnessSkills,
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -1833,6 +1918,7 @@ export const runEvalSuiteWithAiSdk = async ({
   hostExecutionPolicy,
   suiteHostConfig,
   pinnedSkillSource,
+  pinnedHarnessSkills,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -1975,7 +2061,10 @@ export const runEvalSuiteWithAiSdk = async ({
         toolSignals: resolvedToolSignals,
         suiteHostConfig,
         environment: config.environment,
-        ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
+        // BOTH frozen-skill channels, from one place — see
+        // `runFrozenSkillOptions`. Forwarding only the emulated one used to
+        // leave the harness path falling through to a live project-wide fetch.
+        ...runFrozenSkillOptions({ pinnedSkillSource, pinnedHarnessSkills }),
       });
     const testPromises = tests.map((test) =>
       // Cap concurrent headless browsers for every model-free render check
@@ -2919,6 +3008,11 @@ const runLocalIteration = async ({
       evaluation,
       usage: usageFinal,
       messages: acc.conversationMessages,
+      // Same gate as the `model` field above: a model-free case reaches this
+      // runner with a DISPLAY-ONLY sentinel (`executeTestCase` hands it a
+      // `pinned-only` definition and never resolves a real id), and attributing
+      // the session to that sentinel would label it with a model that never ran.
+      ...(caseNeedsModel ? { modelId: test.model } : {}),
       ...(streamEnhancedSystemPromptForPersist
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
@@ -3086,6 +3180,11 @@ const runLocalIteration = async ({
         totalTokens: acc.accumulatedUsage.totalTokens,
       },
       messages: failMessages,
+      // Gated exactly as on the success path: a model-free case carries a
+      // DISPLAY-ONLY sentinel, and a case that throws mid-iteration must not be
+      // attributed to a model it never called just because it failed rather
+      // than finished.
+      ...(caseNeedsModel ? { modelId: test.model } : {}),
       ...(streamEnhancedSystemPromptForPersist
         ? { systemPrompt: streamEnhancedSystemPromptForPersist }
         : {}),
@@ -3171,6 +3270,7 @@ const runHostedIterationWithBrowser = async (
     // the local runner).
     environment,
     pinnedSkillSource,
+    pinnedHarnessSkills,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
@@ -3350,6 +3450,39 @@ const runHostedIterationWithBrowser = async (
       ? { authHeader: convexAuthToken, projectId: builtInTarget.projectId }
       : null
   );
+  // ── Harness execution inputs, resolved once per iteration.
+  //
+  // Both are cheap and harness-gated: `resolveWebAuthorizedHarnessStrategy`
+  // only makes a deploy-topology decision, and the pinned-skill projection is a
+  // map over an already-fetched list. Resolving them here (rather than inside
+  // the turn) keeps the decision with the run's other frozen inputs.
+  //
+  // An eval run builds an ephemeral authorized manager exactly as the hosted
+  // chat routes do, so it is a WEB-authorized plane request and resolves the
+  // same strategy they do. Deriving a different one here is how a sandbox ends
+  // up pointed at the wrong manager.
+  const harnessMcpProxy = resolvedExecution.harness
+    ? resolveWebAuthorizedHarnessStrategy()
+    : undefined;
+  // The run's PINNED skills, in the shape the harness materializes on box.
+  //
+  // Built once at the run boundary (`prepareEvalRun` → `runPinnedSkillsToHarnessArtifacts`),
+  // where the full pin rows and their signed file URLs are in hand, so the
+  // supporting-file download happens before any model call rather than N times
+  // mid-run. Nothing is synthesized here: identity, the complete-envelope hash,
+  // preserved frontmatter and file bodies all come off the pin.
+  //
+  // Rides `pinnedHarnessSkills` — the FROZEN-RUN channel — and not
+  // `runtimeSkillsOverride`, which is the live-environment channel one rank
+  // below it in `selectHarnessSkillSource`. The distinction is the whole point:
+  // an eval run must deliver exactly what it pinned, and must not consult
+  // anything live.
+  //
+  // Forwarded when DEFINED rather than truthy: `[]` is a real answer ("this run
+  // delivers no skills", which is what `skillsOverride: "exclude"` means), and
+  // dropping it would fall through to the live project-wide fetch and hand the
+  // without-skills arm every skill in the project.
+
   // Reproducible-eval sandbox for this hosted iteration (parity with the local
   // runner). Provisioned inside the prepareChatV2 try so a failure records a
   // clean failed iteration; released right after the agent run below.
@@ -3403,10 +3536,18 @@ const runHostedIterationWithBrowser = async (
     const pinnedEnvironmentId = (
       environment as { computerEnvironmentId?: string } | undefined
     )?.computerEnvironmentId;
-    if (pinnedEnvironmentId && runId !== null) {
+    if (
+      needsEphemeralEvalSandbox({
+        pinnedEnvironmentId,
+        harness: resolvedExecution.harness,
+        runId,
+      })
+    ) {
       if (!isComputersDataPlaneConfigured()) {
         throw new Error(
-          "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+          pinnedEnvironmentId
+            ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+            : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
         );
       }
       evalSandbox = await provisionEvalSandbox({
@@ -3561,6 +3702,37 @@ const runHostedIterationWithBrowser = async (
     isAborted,
     harness: resolvedExecution.harness,
     requireToolApproval: resolvedExecution.requireToolApproval,
+    // ── Harness execution (harness hosts only; every field below is inert on
+    // the emulated path, which is why they are all conditional).
+    //
+    // THE SAME BOX the tool resolver already exposes as `bash`, handed to the
+    // harness as well: one box per iteration, never two. It rides the handler
+    // options rather than the host config because the run's config snapshot is
+    // member-readable, so a binding writable there would be forgeable.
+    ...(resolvedExecution.harness && evalSandbox?.ok
+      ? {
+          harnessSandboxBinding: {
+            sandboxRowId: evalSandbox.value.sandboxRowId,
+            sandboxId: evalSandbox.value.sandboxId,
+          },
+        }
+      : {}),
+    // How the sandbox reaches this inspector's MCP proxy. An eval run builds
+    // an ephemeral authorized manager exactly as the hosted chat routes do, so
+    // it resolves the SAME strategy rather than re-deriving the plane — and
+    // `runHarnessTurn` throws without one whenever servers are selected, which
+    // for an eval suite is always.
+    ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // The run's FROZEN skills, materialized on box. Forwarded when DEFINED,
+    // not when truthy: `[]` says "this run delivers no skills" (the
+    // `skillsOverride: "exclude"` arm), while absent falls through to the
+    // harness's live project-wide fetch — which would let a project skill
+    // edited mid-run change what a running iteration sees.
+    ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+    // Passed EXPLICITLY: `runHarnessTurn` reads built-ins off this field and
+    // nowhere else, so supplying only `tools` would hand the runtime a turn
+    // with no built-ins and no way to notice.
+    ...(builtInTools ? { builtInTools } : {}),
     ...(builtInTarget && "projectId" in builtInTarget
       ? { projectId: builtInTarget.projectId }
       : {}),
@@ -3716,6 +3888,11 @@ const runHostedIterationWithBrowser = async (
     evaluation,
     usage: accumulatedUsage,
     messages: messageHistory,
+    // The RESOLVED id, not `test.model`: `modelId` is what `executeTestCase`
+    // canonicalized and what the hosted `/stream` call actually billed, so
+    // attribution here agrees with the provider request. (This runner is never
+    // reached by a model-free case — those dispatch to the local runner.)
+    modelId,
     ...(backendEnhancedSystemPromptForPersist
       ? { systemPrompt: backendEnhancedSystemPromptForPersist }
       : {}),

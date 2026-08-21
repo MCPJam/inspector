@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toServerFilters } from "@/hooks/useUsageInsights";
-import type { UsageFilterState } from "@/hooks/chatbox-usage-filters";
+import type { UsageFilterState } from "@/hooks/scenario-usage-filters";
 
 /**
  * The serialization boundary between the client's filter state and the Convex

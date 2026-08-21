@@ -4,8 +4,8 @@
  * Central wrapper around React Router's navigate/location primitives.
  *
  * URLs are path-based (`/servers`, `/organizations/:orgId/billing`, etc.)
- * matching `react-router` semantics. Chatbox session hashes
- * (`#chatbox-slug`) are NOT app navigation and are preserved verbatim.
+ * matching `react-router` semantics. Scenario session hashes
+ * (`#scenario-slug`) are NOT app navigation and are preserved verbatim.
  */
 import { useCallback, useContext, useLayoutEffect, useState } from "react";
 import { UNSAFE_LocationContext, UNSAFE_NavigationContext } from "react-router";
@@ -83,15 +83,22 @@ export const routePaths = {
   xaaFlow: "/xaa-flow",
   tracing: "/tracing",
   /** Legacy path. Still routed (it redirects), but never build links with it. */
-  chatboxes: "/chatboxes",
+  scenarios: "/scenarios",
   userTesting: "/user-testing",
   swarms: "/swarms",
   environments: "/environments",
+  sessions: "/sessions",
   playground: "/playground",
   support: "/support",
   settings: "/settings",
   profile: "/profile",
   projectSettings: "/project-settings",
+  /**
+   * WorkOS Initiate Login URL. AuthKit redirects IdP-initiated logins (the
+   * Okta app tile) here instead of issuing a code; the route starts a normal
+   * sign-in so the code exchange on `/callback` has a matching PKCE verifier.
+   */
+  login: "/login",
   callback: "/callback",
   billing: "/billing",
   evals: "/evals",
@@ -119,24 +126,25 @@ export function buildHostComparePath(
   return `${routePaths.hostCompare}?${search.toString()}`;
 }
 
-
 /** The create route. A static segment, so it outranks `:scenarioId`. */
 export const userTestingCreatePath = `${routePaths.userTesting}/new`;
 
-/** Sub-tabs on `/user-testing/:scenarioId`. Sessions is the landing tab. */
-export type UserTestingDetailTab = "edit" | "sessions" | "insights";
+/**
+ * Detail sub-tabs on `/user-testing/:scenarioId`. Insights is the landing tab.
+ * Edit is a sibling route (`/edit`), not a tab.
+ */
+export type UserTestingDetailTab = "sessions" | "insights";
 
 const USER_TESTING_DETAIL_TABS: ReadonlySet<string> = new Set([
-  "edit",
   "sessions",
   "insights",
 ]);
 
 /**
  * Build a path to one User Testing scenario. `scenarioId` is the scenario's
- * CHATBOX id — the identity host-backed and environment-backed scenarios
+ * SCENARIO id — the identity host-backed and environment-backed scenarios
  * share. A HOST id is still accepted by the surface (links minted under the
- * older scheme redirect onto the chatbox id), but new links should never be
+ * older scheme redirect onto the scenario id), but new links should never be
  * built with one. `session` opens straight into one tester session, which is
  * what a copied session link carries; `sel` and `view` carry an Insights
  * selection and which diagram it was made on, so a link to "this cluster, in
@@ -155,7 +163,7 @@ export function buildUserTestingScenarioPath(
 ): string {
   const base = `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}`;
   const search = new URLSearchParams();
-  if (opts.tab && opts.tab !== "sessions") search.set("tab", opts.tab);
+  if (opts.tab && opts.tab !== "insights") search.set("tab", opts.tab);
   if (opts.session) search.set("session", opts.session);
   if (opts.sel) search.set("sel", opts.sel);
   // `flow` is the default; only the non-default view needs saying.
@@ -164,18 +172,37 @@ export function buildUserTestingScenarioPath(
   return query ? `${base}?${query}` : base;
 }
 
-/** Parse the sub-tab query on a scenario path. Unknown / missing → sessions. */
+/** Setup / share / preview for one scenario — sibling of the detail tabs. */
+export function buildUserTestingScenarioEditPath(scenarioId: string): string {
+  return `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}/edit`;
+}
+
+/**
+ * Legacy `?tab=edit` / `share` / `preview` query — Edit is now its own route.
+ * Callers should redirect these to {@link buildUserTestingScenarioEditPath}.
+ */
+export function isLegacyUserTestingEditTab(search: string): boolean {
+  const tab = new URLSearchParams(search).get("tab");
+  return tab === "edit" || tab === "share" || tab === "preview";
+}
+
+/**
+ * Parse the sub-tab query on a scenario path. Missing / unknown → insights.
+ * A `session` deep-link without an explicit tab still opens Sessions.
+ * Legacy edit/share/preview queries are NOT returned here — use
+ * {@link isLegacyUserTestingEditTab} and redirect to `/edit`.
+ */
 export function parseUserTestingDetailTab(
   search: string
 ): UserTestingDetailTab {
-  const tab = new URLSearchParams(search).get("tab");
-  // Legacy slugs: `share` / `preview` → Edit (Preview docks beside Edit);
-  // `clusters` → Insights (label aligned with Swarm run detail).
-  if (tab === "share" || tab === "preview") return "edit";
+  const params = new URLSearchParams(search);
+  const tab = params.get("tab");
   if (tab === "clusters") return "insights";
-  return tab && USER_TESTING_DETAIL_TABS.has(tab)
-    ? (tab as UserTestingDetailTab)
-    : "sessions";
+  if (tab && USER_TESTING_DETAIL_TABS.has(tab)) {
+    return tab as UserTestingDetailTab;
+  }
+  if (params.get("session")) return "sessions";
+  return "insights";
 }
 
 /** The Swarms create route. Static, so it outranks `:swarmId`. */
@@ -194,7 +221,7 @@ export function buildSwarmPath(
     tab?: SwarmDetailTab;
     session?: string;
     sel?: string;
-  } = {},
+  } = {}
 ): string {
   const base = `${routePaths.swarms}/${encodeURIComponent(swarmId)}`;
   const search = new URLSearchParams();
@@ -206,17 +233,23 @@ export function buildSwarmPath(
 }
 
 /**
- * Parse the detail-tab query on a Swarm Run path. Unknown / missing / legacy
- * `overview` or `personas` → insights (personas now live on Insights).
+ * Parse the detail-tab query on a Swarm Run path. Missing / unknown →
+ * insights. Legacy `overview` / `personas` → insights (personas live there).
+ * A `session` deep-link without an explicit tab still opens Sessions.
  */
 export function parseSwarmDetailTab(search: string): SwarmDetailTab {
-  const value = new URLSearchParams(search).get("tab");
-  if (value === "sessions") return value;
+  const params = new URLSearchParams(search);
+  const value = params.get("tab");
+  if (value === "sessions") return "sessions";
+  if (value === "insights" || value === "personas" || value === "overview") {
+    return "insights";
+  }
+  if (params.get("session")) return "sessions";
   return "insights";
 }
 
 /**
- * Build a Swarms deep-link to one synthetic session. Unlike the chatbox
+ * Build a Swarms deep-link to one synthetic session. Unlike the scenario
  * Sessions tab (host-anchored), the Swarms surface is Persona → Journey → Run →
  * Session, so a link that only carried `host`/`session` couldn't restore the
  * persona + run selection the recipient needs to reach the session. This
@@ -260,6 +293,32 @@ export function parseSwarmSessionParams(search: string): {
     hostId: pick("host"),
     threadId: pick("session"),
   };
+}
+
+/**
+ * Build a deep-link to the cross-surface Sessions page, optionally focused on
+ * one session.
+ *
+ * Unlike {@link buildSwarmSessionPath} this carries no selection chain: the
+ * Sessions detail pane loads by `threadId` alone (`ShareUsageThreadDetail`
+ * subscribes per-thread), so a link never has to describe how to page a list
+ * to the row. That is what lets the backend mint `/sessions?session=…` as the
+ * universal permalink fallback for a session whose surface-native target does
+ * not exist (an eval Quick Run, a session whose parent run was deleted).
+ *
+ * `project` is threaded explicitly rather than inherited from the recipient's
+ * picker: `/sessions` has no project segment in its path, so without it the
+ * page renders whatever project the viewer was last parked on rather than the
+ * one the session belongs to.
+ */
+export function buildSessionsPath(
+  opts: { session?: string; project?: string } = {}
+): string {
+  const search = new URLSearchParams();
+  if (opts.session) search.set("session", opts.session);
+  if (opts.project) search.set("project", opts.project);
+  const query = search.toString();
+  return query ? `${routePaths.sessions}?${query}` : routePaths.sessions;
 }
 
 /** Build a path for a specific organization route. */
@@ -514,7 +573,7 @@ export function pathnameToActiveTab(pathname: string): string {
   }
   const firstSegment = pathname.replace(/^\/+/, "").split("/")[0] || "home";
   const normalized = normalizeHostedHashTab(firstSegment);
-  // Unknown first segments include chatbox slugs; App handles those surfaces
+  // Unknown first segments include scenario slugs; App handles those surfaces
   // before route rendering, so the shell falls back to the safe servers body.
   return KNOWN_APP_TAB_SEGMENTS.has(normalized) ? normalized : "servers";
 }
@@ -560,7 +619,8 @@ export function useCurrentSearchParam(name: string): string | null {
   // and leave the component rendering the previous tab.
   useLayoutEffect(() => {
     if (locationContext || typeof window === "undefined") return;
-    const syncFallbackSearch = () => setFallbackSearch(getWindowFallbackSearch());
+    const syncFallbackSearch = () =>
+      setFallbackSearch(getWindowFallbackSearch());
     window.addEventListener("popstate", syncFallbackSearch);
     return () => {
       window.removeEventListener("popstate", syncFallbackSearch);
@@ -597,11 +657,11 @@ export function navigationTargetToPath(
   const normalizedTab = normalizeHostedHashTab(segments[0] || "servers");
   if (!KNOWN_APP_TAB_SEGMENTS.has(normalizedTab)) return fallback;
   // The tab id and the public path segment agree everywhere except User
-  // Testing, whose tab id stayed `chatboxes`. Emit the canonical path so
+  // Testing, whose tab id stayed `scenarios`. Emit the canonical path so
   // agent navigation and legacy bookmarks land directly instead of bouncing
-  // through the `/chatboxes` redirect.
+  // through the `/scenarios` redirect.
   const pathSegment =
-    normalizedTab === "chatboxes" ? "user-testing" : normalizedTab;
+    normalizedTab === "scenarios" ? "user-testing" : normalizedTab;
   return `/${[pathSegment, ...segments.slice(1)].join("/")}${queryPart}`;
 }
 

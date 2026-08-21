@@ -1,10 +1,11 @@
-/**
- * Detect same-origin embed of the public chatbox runtime inside the app
- * (e.g. Chatboxes tab Preview iframe). Mirrors the exception in main.tsx
- * that allows the chatbox tree to mount instead of IframeRouterError.
- */
-const PUBLIC_CHATBOX_RUNTIME_PATH = /^\/chatbox\/[^/]+\/[^/]+\/?$/;
+import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "@/lib/tester-link-path";
 
+/**
+ * Detect same-origin embed of the public scenario runtime inside the app
+ * (e.g. User Testing Preview iframe). Mirrors the exception in main.tsx
+ * that allows the scenario tree to mount instead of IframeRouterError — both
+ * match the shared tester-link path shape.
+ */
 export function isEmbeddedPreview(): boolean {
   try {
     if (window.self === window.top) {
@@ -14,7 +15,8 @@ export function isEmbeddedPreview(): boolean {
       const sameOrigin =
         window.top!.location.origin === window.location.origin;
       return (
-        sameOrigin && PUBLIC_CHATBOX_RUNTIME_PATH.test(window.location.pathname)
+        sameOrigin &&
+        TESTER_LINK_RUNTIME_PATH_PATTERN.test(window.location.pathname)
       );
     } catch {
       return false;
@@ -24,8 +26,8 @@ export function isEmbeddedPreview(): boolean {
   }
 }
 
-/** Sync the chatbox session name hash without growing history when embedded. */
-export function syncChatboxSessionHash(slug: string): void {
+/** Sync the scenario session name hash without growing history when embedded. */
+export function syncScenarioSessionHash(slug: string): void {
   const targetHash = `#${slug}`;
   if (window.location.hash === targetHash) {
     return;
@@ -43,8 +45,8 @@ export function syncChatboxSessionHash(slug: string): void {
   window.location.hash = slug;
 }
 
-/** Bootstrap/recovery hash bookmark (standalone chatbox uses root + hash). */
-export function syncChatboxBootstrapHash(slug: string): void {
+/** Bootstrap/recovery hash bookmark (standalone scenario uses root + hash). */
+export function syncScenarioBootstrapHash(slug: string): void {
   const targetHash = `#${slug}`;
   if (window.location.hash === targetHash) {
     return;

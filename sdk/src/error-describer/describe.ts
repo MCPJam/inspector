@@ -168,6 +168,16 @@ function inspectorSentinelSlug(message: string): string | undefined {
   if (/PaginatedToolHeaderDiscoveryUnsupported/i.test(message)) {
     return "sdk/paginated_tool_header_discovery_unsupported";
   }
+  // `ProtocolVersionPinUnsupported`. Matched on the message clause rather than
+  // the class name because this error is thrown by the manager and read after
+  // crossing into the inspector's client bundle, where `instanceof` is already
+  // gone — and unlike the three above, its name never appears in its own text
+  // (`formatError` and `getErrorMessage` both read `.message` only). The
+  // clause is one MCPJam authors, not one a server can echo back at us. The
+  // class doc says to reword both together; a test holds them together.
+  if (/which this client is pinned to/i.test(message)) {
+    return "sdk/protocol_version_pin_unsupported";
+  }
   return undefined;
 }
 
@@ -433,7 +443,18 @@ function resolveSlug(error: unknown): {
   // problem, not the MCP-server-re-auth problem auth/http_401 talks about.
   // Without this pre-check the generic status branch wins and the user
   // gets the wrong docs link / next steps.
-  if (/missing\s+(?:or\s+invalid\s+)?bearer/i.test(message)) {
+  //
+  // `bearer token (is) required` is the same gate said differently: the hosted
+  // server's own 401 for a request that arrived with no `Authorization` header
+  // (`server/middleware/bearer-auth.ts`). Its body reaches the UI as a bare
+  // string — the swarm create flow renders `err.message`, so the status is
+  // gone by then — and without this the classifier fell through to
+  // `internal/unknown` and the banner read "Unknown error", offering guesses
+  // where the actual answer is "sign in again".
+  if (
+    /missing\s+(?:or\s+invalid\s+)?bearer/i.test(message) ||
+    /bearer\s+token\s+(?:is\s+)?required/i.test(message)
+  ) {
     return { slug: "auth/missing_bearer" };
   }
 

@@ -46,6 +46,61 @@ export const ANALYTICS_EVENTS = {
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
 
+  // --- Directory readiness (server-authoritative; no client twin) ---
+  /**
+   * A hosted readiness run was accepted. Fired from the v1 start route, which
+   * is the only way a hosted run is created, so it covers every surface that
+   * ever starts one (REST, MCP worker, agent approval, chat, CLI) without
+   * instrumenting each.
+   *
+   * `deduped` is why this fires on a replay too: a retried start that returned
+   * an existing run is a real request the caller made, and counting only fresh
+   * runs would understate demand while hiding a client that retries badly.
+   *
+   * The SERVER URL IS NEVER SENT — it names somebody's private endpoint, and
+   * no launch question needs it.
+   */
+  directory_readiness_run_started_server: { source: "server" },
+  /**
+   * A hosted readiness run reached a terminal state. Fired from the detached
+   * worker, so it is attributed through `captureServerEventForActor` to the
+   * identity resolved back when the request still existed.
+   *
+   * Carries the THREE AXES separately, because collapsing them is the exact
+   * misreading the product exists to prevent: `status` is whether the run
+   * completed, `overall_status` is the grade, and `llm_observation_status` /
+   * `llm_observation_reason` are whether the optional paid pass ran. A run can
+   * be `completed` + `not-ready` + `billing-blocked` and all three matter.
+   *
+   * NO REPORT CONTENTS. Findings carry the raw observation behind a verdict;
+   * an analytics pipeline is the last place that belongs.
+   */
+  directory_readiness_run_finished_server: { source: "server" },
+  /**
+   * One `GET /projects/{p}/sessions` search, emitted from the proxy route —
+   * the chokepoint every surface (in-app chat, MCP worker, REST, CLI) funnels
+   * through, so one event covers all four instead of four instrumentations
+   * that could drift.
+   *
+   * Exists to answer ONE question: does lexical search suffice, or is semantic
+   * search worth building? The signal is `scope`, `itemCount`, and whether the
+   * caller pages or re-queries. The QUERY STRING is never sent — search terms
+   * are user content and can carry names or secrets someone pasted in.
+   *
+   * RE-QUERY ANALYSIS FROM THIS EVENT IS AN APPROXIMATION, and reading it as
+   * exact will overstate what it shows. `distinct_id` plus timestamps identify
+   * NEARBY SEARCHES BY THE SAME CREDENTIAL, not true refinement chains: no
+   * conversation identity crosses the proxy, so two agents working in parallel
+   * under one API key look identical to one agent refining its query. Use it
+   * for order-of-magnitude reads ("are zero-result searches common?"), not for
+   * precise funnels. If that coarseness turns out to block the
+   * semantic-search decision, the named follow-up is a privacy-safe
+   * per-conversation search-attempt id — deliberately NOT built now, because
+   * it is a new identifier crossing a public boundary and should not be minted
+   * on the chance it might be useful.
+   */
+  api_sessions_search: { source: "server" },
+
   // --- Skills (exemplar migrated area) ---
   skill_deleted: { source: "client" },
   skill_promoted: { source: "client" },
@@ -75,6 +130,10 @@ export const ANALYTICS_EVENTS = {
   cancel_button_clicked: { source: "client" },
   chat_attachment_button_clicked: { source: "client" },
   chat_cleared: { source: "client" },
+  // "Change protocol version" on the chat error banner, shown when a
+  // connection pins an MCP protocol version the server doesn't offer; props:
+  // location, has_host_id (false ⇒ the link fell back to the clients list).
+  change_protocol_version_clicked: { source: "client" },
   chat_model_selector_clicked: { source: "client" },
   chat_model_selector_manage_org_models_clicked: { source: "client" },
   chat_options_plus_clicked: { source: "client" },
@@ -85,9 +144,9 @@ export const ANALYTICS_EVENTS = {
   chat_voice_input_recording_canceled: { source: "client" },
   chat_voice_input_recording_started: { source: "client" },
   chat_voice_input_recording_stopped: { source: "client" },
-  chatbox_bootstrap_silent_failure: { source: "client" },
-  chatbox_bootstrap_silent_success: { source: "client" },
-  chatbox_bootstrap_started: { source: "client" },
+  scenario_bootstrap_silent_failure: { source: "client" },
+  scenario_bootstrap_silent_success: { source: "client" },
+  scenario_bootstrap_started: { source: "client" },
   client_builder_viewed: { source: "client" },
   client_config_saved: { source: "client" },
   client_created: { source: "client" },
@@ -228,6 +287,26 @@ export const ANALYTICS_EVENTS = {
   playground_tool_run_clicked: { source: "client" },
   playground_tools_pane_tab_changed: { source: "client" },
   playground_tools_refresh_clicked: { source: "client" },
+  // --- Free-plan limit walls (PlanLimitDialog) ---
+  // One impression per opening, then explicit user actions and checkout
+  // outcomes. `limit_kind` distinguishes which cap was hit so we can compare
+  // which wall converts. Person data comes from the global identified profile,
+  // not duplicated PII in these events.
+  plan_limit_dialog_shown: { source: "client" },
+  plan_limit_sign_in_clicked: { source: "client" },
+  plan_limit_buy_credits_clicked: { source: "client" },
+  plan_limit_byok_clicked: { source: "client" },
+  plan_limit_interval_selected: { source: "client" },
+  plan_limit_upgrade_clicked: { source: "client" },
+  plan_limit_upgrade_failed: { source: "client" },
+  plan_limit_upgrade_resolved: { source: "client" },
+  plan_limit_upgrade_returned: { source: "client" },
+  plan_limit_dialog_dismissed: { source: "client" },
+  plan_limit_enterprise_cta_clicked: { source: "client" },
+  plan_limit_upgrade_requested: { source: "client" },
+  credit_topup_dialog_shown: { source: "client" },
+  credit_topup_package_selected: { source: "client" },
+  credit_topup_dialog_dismissed: { source: "client" },
   // --- OpenAI plugin import (Connect "Add plugin", INS-2) ---
   // Props are built by `client/src/lib/plugins/plugin-analytics.ts`, which
   // exists to keep bundle paths, server URLs, env/header names, and plugin

@@ -18,15 +18,16 @@
  */
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { InsightsWorkbench } from "../InsightsWorkbench";
-import { withHideSynthetic } from "@/components/chatboxes/user-testing-traffic";
+import { withHideSynthetic } from "@/components/scenarios/user-testing-traffic";
 import {
   chipKey,
   type InsightsSelection,
   type UsageFilterChip,
   type UsageFilterState,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 import type { GoalFacet, UsageBreakdown } from "@/hooks/useUsageInsights";
 
 const { mockUseUsageInsights, mockUseGoalOutcomeDrilldown } = vi.hoisted(
@@ -76,11 +77,14 @@ vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
   SessionFlowSankey: ({
     onSelectNode,
     onSelectLink,
+    headerActions,
   }: {
     onSelectNode: (selection: InsightsSelection) => void;
     onSelectLink: (selection: InsightsSelection) => void;
+    headerActions?: React.ReactNode;
   }) => (
     <>
+      {headerActions}
       <button type="button" onClick={() => onSelectNode(GOAL_NODE)}>
         pick goal theme
       </button>
@@ -115,21 +119,26 @@ vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
 vi.mock("@/components/shared/usage-insights/TopicMapPanel", () => ({
   TopicMapPanel: ({
     onToggleChip,
+    headerActions,
   }: {
     onToggleChip: (chip: UsageFilterChip) => void;
+    headerActions?: React.ReactNode;
   }) => (
-    <button
-      type="button"
-      onClick={() =>
-        onToggleChip({
-          kind: "cluster",
-          clusterId: "cluster-b",
-          label: "Refund status",
-        })
-      }
-    >
-      pick map community
-    </button>
+    <>
+      {headerActions}
+      <button
+        type="button"
+        onClick={() =>
+          onToggleChip({
+            kind: "cluster",
+            clusterId: "cluster-b",
+            label: "Refund status",
+          })
+        }
+      >
+        pick map community
+      </button>
+    </>
   ),
 }));
 
@@ -145,8 +154,8 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
 vi.mock("@/hooks/usePromoteCapability", () => ({
   usePromoteCapability: () => ({ canPromote: false, isLoading: false }),
 }));
-vi.mock("@/components/chatboxes/chatbox-sessions-metric-strip", () => ({
-  ChatboxSessionsMetricStrip: () => null,
+vi.mock("@/components/scenarios/scenario-sessions-metric-strip", () => ({
+  ScenarioSessionsMetricStrip: () => null,
 }));
 
 function facet(overrides: Partial<GoalFacet> = {}): GoalFacet {
@@ -214,11 +223,11 @@ function lastDrilldownArgs(): {
 function renderInsightsPanel() {
   return render(
     <InsightsWorkbench
-      scope={{ kind: "chatbox", chatboxId: "chatbox-1" }}
-      cohortKey="chatbox-1"
+      scope={{ kind: "scenario", scenarioId: "scenario-1" }}
+      cohortKey="scenario-1"
       augmentFilter={withHideSynthetic}
       autoBackfillTopicMap
-      testIdPrefix="chatbox-insights"
+      testIdPrefix="scenario-insights"
     />
   );
 }

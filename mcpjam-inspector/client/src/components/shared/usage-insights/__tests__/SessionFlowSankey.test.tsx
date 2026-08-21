@@ -221,8 +221,8 @@ describe("SessionFlowSankey", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("Outcome and sentiment disagree"),
-    ).toBeInTheDocument();
+      screen.queryByText("Outcome and sentiment disagree"),
+    ).not.toBeInTheDocument();
   });
 
   it("leaves a concordant ribbon unflagged", () => {
@@ -415,7 +415,7 @@ describe("SessionFlowSankey", () => {
 
     try {
       renderSankey({ fillHeight: true });
-      const root = screen.getByTestId("chatbox-insights-sankey");
+      const root = screen.getByTestId("scenario-insights-sankey");
       expect(root).toHaveAttribute("data-fill-height", "true");
       expect(root.className).toMatch(/h-full/);
       const svg = screen.getByRole("group", {

@@ -7,7 +7,11 @@ import {
   assertBearerToken,
   parseWithSchema,
 } from "../web/auth.js";
-import { runHostedDoctor, validateServerCore } from "../web/servers.js";
+import {
+  buildOAuthRequirementProjection,
+  runHostedDoctor,
+  validateServerCore,
+} from "../web/servers.js";
 import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import { runV1ServerOp, synthesizeServerBody } from "./adapter.js";
 import { v1Resource } from "./envelope.js";
@@ -275,14 +279,13 @@ servers.post(
       body.serverId,
       {
         accessScope: body.accessScope,
-        chatboxId: body.chatboxId,
+        scenarioId: body.scenarioId,
         accessVersion: body.accessVersion,
       }
     );
-    return v1Resource(c, {
-      useOAuth: auth.serverConfig.useOAuth ?? false,
-      serverUrl: auth.serverConfig.url ?? null,
-    });
+    // Same projection the web twin returns, so the two never drift on what
+    // "requires authorization" means.
+    return v1Resource(c, buildOAuthRequirementProjection(auth.serverConfig));
   }
 );
 

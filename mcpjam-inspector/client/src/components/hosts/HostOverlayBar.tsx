@@ -165,7 +165,7 @@ export function HostOverlayBar({
     if (hasFiredOpened.current) return;
     hasFiredOpened.current = true;
     track("connect_host_overlay_opened", {
-      location: "chatbox_overlay",
+      location: "scenario_overlay",
       host_count: hosts.length,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -174,7 +174,7 @@ export function HostOverlayBar({
   const handleChange = (next: string) => {
     if (next === effectiveHostId) return;
     track("connect_host_overlay_swapped", {
-      location: "chatbox_overlay",
+      location: "scenario_overlay",
       from: effectiveHostId ?? "__unknown__",
       to: next,
       host_count: hosts.length,
@@ -204,7 +204,7 @@ export function HostOverlayBar({
       // has already been removed.
       try {
         track("client_deleted", {
-          location: "chatbox_overlay",
+          location: "scenario_overlay",
           client_id: hostId,
           force: false,
         });
@@ -215,7 +215,7 @@ export function HostOverlayBar({
       const msg = err instanceof Error ? err.message : "Failed to delete client";
       if (msg.includes("consumer")) {
         toast.error(
-          `${msg} — use force delete or remove dependent chatboxes/evals first`
+          `${msg} — use force delete or remove dependent user testing scenarios/evals first`
         );
       } else {
         toast.error(msg);
@@ -231,7 +231,7 @@ export function HostOverlayBar({
     setMenuOpen(false);
     if (templateId) {
       track("connect_host_overlay_quick_added", {
-        location: "chatbox_overlay",
+        location: "scenario_overlay",
         template_id: templateId,
       });
     }
@@ -432,7 +432,7 @@ export function HostOverlayBar({
         initialTemplateId={createTemplateId}
         onCreated={(hostId) => {
           track("connect_host_overlay_saved_as_new", {
-            location: "chatbox_overlay",
+            location: "scenario_overlay",
             host_id: hostId,
           });
           onChangePreviewedHostId(hostId);

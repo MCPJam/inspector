@@ -124,6 +124,30 @@ export const INTERNAL_TO_V1_CODE: Record<string, V1ErrorCode> = {
   // publicly it is just a CONFLICT. Without this entry it fell through
   // `mapInternalCode`'s default and reached API callers as a 500.
   ENVIRONMENT_REVISION_CONFLICT: "CONFLICT",
+  // The target MCP server refused the credentials we presented (401/403/400
+  // per the MCP authorization spec's error table). Internally its own code so
+  // the hosted UI can say "reconnect this server"; publicly it collapses onto
+  // FORBIDDEN — the public union has no upstream-auth member, and FORBIDDEN
+  // carries the property that matters to an API caller: retrying with a
+  // different MCPJam credential will not help. Same trap as
+  // ENVIRONMENT_REVISION_CONFLICT above — without this entry it falls through
+  // `mapInternalCode`'s default and reaches API callers as a 500, which is
+  // exactly the misreport the internal code was introduced to end.
+  UPSTREAM_AUTH_FAILED: "FORBIDDEN",
+  // The organization's billing allowance is exhausted — `launch-journey-run`
+  // raises this from an upstream 402, and the reservation ledger's refusals
+  // reach the surface the same way. Publicly FORBIDDEN, for the same reason as
+  // the entry above: the public union has no billing member, and FORBIDDEN
+  // carries the property an API caller needs — the key is valid, this account
+  // may not do this right now, and retrying the same call will not change
+  // that. Without this entry it fell through to a 500, which told a customer
+  // that MCPJam broke when the truth was that their credit ran out, AND paged
+  // the on-call for a state only that customer can resolve.
+  //
+  // Deliberately not RATE_LIMITED: a daily cap that lifts at UTC midnight is a
+  // 429 with a `Retry-After` (see `convex-errors.ts`), and telling a caller to
+  // wait for money to appear would be the same lie in the other direction.
+  BILLING_LIMIT_REACHED: "FORBIDDEN",
 };
 
 export function mapInternalCode(code: string | undefined | null): V1ErrorCode {

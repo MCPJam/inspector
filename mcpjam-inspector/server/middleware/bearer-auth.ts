@@ -10,6 +10,7 @@ import {
   isSlackServiceToken,
 } from "./slack-service-auth.js";
 import { logger } from "../utils/logger.js";
+import { setRequestLogContext } from "../utils/request-logger.js";
 import {
   handleSurfaceServiceAuth,
   isDiscordServiceToken,
@@ -86,7 +87,7 @@ function consumeWorkOSToken(keyId: string): number | null {
   const elapsed = now - existing.lastRefill;
   const refilled = Math.min(
     WORKOS_RATE_BURST,
-    existing.tokens + elapsed * WORKOS_RATE_REFILL_PER_MS,
+    existing.tokens + elapsed * WORKOS_RATE_REFILL_PER_MS
   );
   if (refilled < 1) {
     existing.tokens = refilled;
@@ -114,15 +115,27 @@ type ValidateApiKeyResult = {
 
 export async function bearerAuthMiddleware(
   c: Context,
-  next: Next,
+  next: Next
 ): Promise<Response | void> {
   const authHeader = c.req.header("authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    // Label the 401 before returning it. Every branch below rejects a caller
+    // who at least presented something; this one rejects a caller who
+    // presented nothing, and that is the only 4xx class that carries no
+    // signal about our own health. Scanners and crawlers generate it in
+    // bulk against the public API, so the storm monitor has to be able to
+    // exclude it — see `credentialPresented` in `log-events.ts`.
+    setRequestLogContext(c, { credentialPresented: false });
     return c.json(
       { code: ErrorCode.UNAUTHORIZED, message: "Bearer token required" },
-      401,
+      401
     );
   }
+
+  // Set once, here, rather than per-branch: everything past this point had a
+  // bearer, so every 401 it produces is somebody's credential failing —
+  // invalid key, unknown user, orphaned key alike.
+  setRequestLogContext(c, { credentialPresented: true });
 
   const token = authHeader.slice("Bearer ".length);
 
@@ -169,7 +182,7 @@ export async function bearerAuthMiddleware(
         });
         return c.json(
           { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
-          401,
+          401
         );
       }
       setRequestLocal(c, "workosApiKeyValidation", validation);
@@ -178,7 +191,7 @@ export async function bearerAuthMiddleware(
     if (!validation.apiKey) {
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Invalid API key" },
-        401,
+        401
       );
     }
 
@@ -198,7 +211,7 @@ export async function bearerAuthMiddleware(
             message: "API key rate limit exceeded. Slow down and retry.",
           },
           429,
-          { "Retry-After": String(Math.ceil(waitMs / 1000)) },
+          { "Retry-After": String(Math.ceil(waitMs / 1000)) }
         );
       }
       setRequestLocal(c, "workosRateLimitConsumed", true);
@@ -214,13 +227,13 @@ export async function bearerAuthMiddleware(
       });
       return c.json(
         { code: ErrorCode.INTERNAL_ERROR, message: "Identity lookup failed" },
-        500,
+        500
       );
     }
     if (!mcpjamUser) {
       return c.json(
         { code: ErrorCode.UNAUTHORIZED, message: "Unknown user" },
-        401,
+        401
       );
     }
 
@@ -244,7 +257,7 @@ export async function bearerAuthMiddleware(
             code: ErrorCode.INTERNAL_ERROR,
             message: "Org binding lookup failed",
           },
-          500,
+          500
         );
       }
       setRequestLocal(c, "workosApiKeyBinding", binding);
@@ -265,7 +278,7 @@ export async function bearerAuthMiddleware(
             "This API key is not bound to an organization. Re-create it from Settings → API keys.",
           details: { reason: "ORPHANED_KEY" },
         },
-        401,
+        401
       );
     }
 
@@ -274,6 +287,13 @@ export async function bearerAuthMiddleware(
     c.set("workosUserId", workosUserId);
     c.set("mcpjamUserId", mcpjamUser._id);
     c.set("mcpjamOrganizationId", binding.mcpjamOrganizationId);
+    // Onto the LOG context as well, not just the request vars. `/api/v1/*`
+    // rows reached Axiom with no `orgId` at all, which structurally disabled
+    // the error-class-spike monitor's "affects >= 3 organizations" rule for
+    // the entire public API — the rule cannot fire on a field that is never
+    // populated, so a v1 error class spiking across every customer counted as
+    // one org forever. This is the only place the API-key path knows the org.
+    setRequestLogContext(c, { orgId: binding.mcpjamOrganizationId });
 
     logger.info("WorkOS API key request", {
       event: "auth.workos_api_key",
@@ -296,7 +316,7 @@ export async function bearerAuthMiddleware(
             code: ErrorCode.FORBIDDEN,
             message: "Guest access is disabled in this environment.",
           },
-          403,
+          403
         );
       }
       c.set("guestId", result.guestId);

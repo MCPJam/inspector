@@ -14,7 +14,7 @@
  *   - per-server header / timeout overrides: `projectServerRefs` table
  *     keyed by (projectId, serverId)
  *
- * Chatbox/eval forks do NOT read this — they keep using the per-host
+ * Scenario/eval forks do NOT read this — they keep using the per-host
  * `serverIds` / `serverConnectionOverrides` snapshotted into their
  * pinned hostConfig at creation time. See the
  * "Project-scoped server connections" memory entry for the full
@@ -24,7 +24,7 @@
 import type { McpProtocolVersion } from "./client-config-v2";
 
 /** Per-server connection override entry. Same shape as
- * `HostConfigInputV2.serverConnectionOverrides[serverId]` so a chatbox
+ * `HostConfigInputV2.serverConnectionOverrides[serverId]` so a scenario
  * fork can snapshot the project's overrides into its hostConfig without
  * re-shaping. */
 export type ProjectServerOverrideEntry = {

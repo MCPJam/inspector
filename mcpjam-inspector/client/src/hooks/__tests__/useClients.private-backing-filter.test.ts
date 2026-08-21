@@ -1,0 +1,100 @@
+/**
+ * `useHostList` hides private scenario-backing clients BY DEFAULT.
+ *
+ * The default is the whole mechanism. An earlier version of this change
+ * filtered at the five call sites that looked like pickers, which did nothing:
+ * `HostPicker`, `MultiHostPicker` and `ClientAttachmentsEditor` each call this
+ * hook themselves, so the visible dropdowns still offered backing clients while
+ * the surrounding code believed they were hidden. Filtering at the source is
+ * what makes the rule reach every picker, including ones not written yet — so
+ * the default, and the deliberate opt-out for id→row lookups, are locked here.
+ */
+import { renderHook } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { useHostList } from "../useClients";
+
+const { mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
+  mockUseMutation: vi.fn(),
+  mockUseQuery: vi.fn(),
+}));
+
+vi.mock("convex/react", () => ({
+  useMutation: mockUseMutation,
+  useQuery: mockUseQuery,
+}));
+
+const PROJECT_ID = "m17b6q9xw2tv4kz8p3r5s0dc";
+
+const HOSTS = [
+  { hostId: "plain", name: "Plain", ownerScope: null },
+  { hostId: "backing", name: "Backing", ownerScope: { type: "user_testing" } },
+  { hostId: "swarm", name: "Swarm", ownerScope: { type: "journeys" } },
+] as any[];
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe("useHostList private-backing filter", () => {
+  it("drops user_testing clients by default", () => {
+    mockUseQuery.mockReturnValue(HOSTS);
+
+    const { result } = renderHook(() =>
+      useHostList({ isAuthenticated: true, projectId: PROJECT_ID }),
+    );
+
+    expect(result.current.hosts.map((h) => h.hostId)).toEqual([
+      "plain",
+      "swarm",
+    ]);
+  });
+
+  it("keeps journeys clients — they are real clients, hidden by a different rule", () => {
+    mockUseQuery.mockReturnValue(HOSTS);
+
+    const { result } = renderHook(() =>
+      useHostList({ isAuthenticated: true, projectId: PROJECT_ID }),
+    );
+
+    expect(result.current.hosts.map((h) => h.hostId)).toContain("swarm");
+  });
+
+  it("returns every client when a lookup opts in", () => {
+    mockUseQuery.mockReturnValue(HOSTS);
+
+    const { result } = renderHook(() =>
+      useHostList({
+        isAuthenticated: true,
+        projectId: PROJECT_ID,
+        includePrivateBacking: true,
+      }),
+    );
+
+    expect(result.current.hosts.map((h) => h.hostId)).toEqual([
+      "plain",
+      "backing",
+      "swarm",
+    ]);
+  });
+
+  it("reports loading (not an empty list) while the query is in flight", () => {
+    mockUseQuery.mockReturnValue(undefined);
+
+    const { result } = renderHook(() =>
+      useHostList({ isAuthenticated: true, projectId: PROJECT_ID }),
+    );
+
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.hosts).toEqual([]);
+  });
+
+  it("handles a null result from a skipped query", () => {
+    mockUseQuery.mockReturnValue(null);
+
+    const { result } = renderHook(() =>
+      useHostList({ isAuthenticated: false, projectId: PROJECT_ID }),
+    );
+
+    expect(result.current.hosts).toEqual([]);
+  });
+});

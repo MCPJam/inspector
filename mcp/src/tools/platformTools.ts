@@ -10,7 +10,15 @@
 import {
   callServerToolOperation,
   checkHostCompatibilityOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
+  connectProjectServerOperation,
   createEvalCaseOperation,
+  createEvalCasesOperation,
   createEvalSuiteOperation,
   createProjectServerOperation,
   deleteEvalCaseOperation,
@@ -18,25 +26,36 @@ import {
   diagnoseServerOperation,
   getMeOperation,
   listModelsOperation,
+  listOrganizationsOperation,
+  createProjectOperation,
+  updateProjectOperation,
   generateEvalCasesOperation,
   cancelEvalRunOperation,
-  getChatboxOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
+  getScenarioOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
+  compareEvalRunOperation,
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   getEnvironmentOperation,
   getPluginVersionOperation,
+  getProjectServerConnectionStatusOperation,
   getProjectServerOperation,
   getServerPromptOperation,
   isPlatformApiError,
-  listChatboxesOperation,
+  listScenariosOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  listImagesOperation,
+  getImageOperation,
   listEnvironmentsOperation,
   listProjectPluginsOperation,
   listProjectsOperation,
@@ -56,6 +75,57 @@ import {
   updateProjectServerOperation,
   deleteProjectServerOperation,
   deleteProjectOperation,
+  getCapabilitiesOperation,
+  listPersonasOperation,
+  getPersonaOperation,
+  createPersonaOperation,
+  updatePersonaOperation,
+  deletePersonaOperation,
+  generatePersonasOperation,
+  listJourneysOperation,
+  getJourneyOperation,
+  createJourneyOperation,
+  updateJourneyOperation,
+  archiveJourneyOperation,
+  generateJourneysOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  listJourneyRunSessionsOperation,
+  launchJourneyRunOperation,
+  cancelJourneyRunOperation,
+  listSwarmsOperation,
+  getSwarmOperation,
+  createSwarmOperation,
+  updateSwarmOperation,
+  archiveSwarmOperation,
+  getSwarmOverviewOperation,
+  getJourneyRunScorecardOperation,
+  listSwarmFindingsOperation,
+  dismissSwarmFindingOperation,
+  undismissSwarmFindingOperation,
+  getWaveInsightsOperation,
+  requestWaveInsightsOperation,
+  cancelWaveInsightsOperation,
+  publishScenarioOperation,
+  unpublishScenarioOperation,
+  getUserTestingScenarioOperation,
+  listUserTestingSessionsOperation,
+  getUserTestingSessionOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  updateUserTestingScenarioOperation,
+  requestUserTestingInsightsOperation,
+  cancelUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  setUserTestingGuestExecutionOperation,
+  rotateUserTestingLinkOperation,
+  upsertUserTestingMemberOperation,
+  removeUserTestingMemberOperation,
+  rebindUserTestingScenarioOperation,
   ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -75,12 +145,31 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
 > = [
   getMeOperation,
   listModelsOperation,
+  // The organization read exists to make the two operations below usable: an
+  // `organizationId` was previously undiscoverable from any machine surface.
+  listOrganizationsOperation,
   listProjectsOperation,
+  // Project create/update are HERE, alongside the list, and the industry norm
+  // is why. A survey of 16 enterprise MCP servers found container creation is
+  // mainstream — GitHub ships `create_repository`, Sentry `create_project` and
+  // `update_project`, as do Linear, Supabase, Asana and Monday — while DELETE
+  // of a top-level container is near-universally withheld (GitHub omits
+  // `delete_repository` deliberately). Excluding create/update was stricter
+  // than what those servers ship, for no benefit a caller could see: both are
+  // cheap, both are visible in the UI immediately, and neither destroys
+  // anything. `delete_project` stays excluded below — that is the line.
+  createProjectOperation,
+  updateProjectOperation,
   listProjectServersOperation,
   createProjectServerOperation,
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
+  // Connecting a server is on the unattended surface deliberately: the flow
+  // cannot complete without a person at a browser, so the most an MCP host can
+  // do with it is produce a private link for the requester to open.
+  connectProjectServerOperation,
+  getProjectServerConnectionStatusOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -89,6 +178,12 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listServerResourcesOperation,
   readServerResourceOperation,
   checkHostCompatibilityOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,
@@ -102,60 +197,121 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listEvalCasesOperation,
   getEvalCaseOperation,
   createEvalCaseOperation,
+  createEvalCasesOperation,
   updateEvalCaseOperation,
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  compareEvalRunOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   listEnvironmentsOperation,
   getEnvironmentOperation,
   resolveEnvironmentOperation,
+  // Sandbox image READS. They are the picker behind `update_eval_suite`'s
+  // `environment.computerEnvironment`: without them an agent can set a
+  // suite's computer image but never enumerate the choices.
+  listImagesOperation,
+  getImageOperation,
   // Agent Plugins: the READ half only. Every plugin write (import, activate,
   // enable/disable, uninstall) stays off this unattended surface by policy —
   // there is no excluded write operation to list because the SDK ships none.
   listProjectPluginsOperation,
   getPluginVersionOperation,
-  listChatboxesOperation,
-  getChatboxOperation,
+  listScenariosOperation,
+  getScenarioOperation,
   listChatSessionsOperation,
+  searchSessionsOperation,
+
+  // ── Swarms and user testing ─────────────────────────────────────────────
+  //
+  // Advertised to EVERY caller, including organizations without the
+  // `sandboxes-enabled` beta, and that is a deliberate trade rather than an
+  // oversight. This catalog is static — one tool list, built with no
+  // organization in hand — so the alternative to advertising a beta is not
+  // advertising it selectively, it is not advertising it at all. That is what
+  // used to happen, and it meant an agent working for a flagged org had no
+  // tools for a product the org had paid attention to.
+  //
+  // What an unflagged caller gets instead is a clean FEATURE_UNAVAILABLE from
+  // the write, with a real message. The CLI reached this conclusion first
+  // (`cli/src/lib/op-bindings.ts`): a command that answers "not available for
+  // your organization" is a better answer than a command that does not exist.
+  //
+  // `get_capabilities` is what makes it survivable in practice. An agent can
+  // ask what it may do here BEFORE it plans, instead of discovering the gate
+  // halfway through a task it has already described to someone.
+  getCapabilitiesOperation,
+  listPersonasOperation,
+  getPersonaOperation,
+  createPersonaOperation,
+  updatePersonaOperation,
+  deletePersonaOperation,
+  generatePersonasOperation,
+  listJourneysOperation,
+  getJourneyOperation,
+  createJourneyOperation,
+  updateJourneyOperation,
+  archiveJourneyOperation,
+  generateJourneysOperation,
+  listJourneyRunsOperation,
+  getJourneyRunOperation,
+  listJourneyRunSessionsOperation,
+  launchJourneyRunOperation,
+  cancelJourneyRunOperation,
+  listSwarmsOperation,
+  getSwarmOperation,
+  createSwarmOperation,
+  updateSwarmOperation,
+  archiveSwarmOperation,
+  getSwarmOverviewOperation,
+  getJourneyRunScorecardOperation,
+  listSwarmFindingsOperation,
+  dismissSwarmFindingOperation,
+  undismissSwarmFindingOperation,
+  getWaveInsightsOperation,
+  requestWaveInsightsOperation,
+  cancelWaveInsightsOperation,
+  publishScenarioOperation,
+  unpublishScenarioOperation,
+  getUserTestingScenarioOperation,
+  listUserTestingSessionsOperation,
+  getUserTestingSessionOperation,
+  getUserTestingMetricsOperation,
+  getUserTestingUsageOperation,
+  listUserTestingFindingsOperation,
+  getUserTestingSignalsOperation,
+  getUserTestingInsightsOperation,
+  updateUserTestingScenarioOperation,
+  requestUserTestingInsightsOperation,
+  cancelUserTestingInsightsOperation,
+  dismissUserTestingFindingOperation,
+  undismissUserTestingFindingOperation,
+  setUserTestingGuestExecutionOperation,
+  rotateUserTestingLinkOperation,
+  upsertUserTestingMemberOperation,
+  removeUserTestingMemberOperation,
+  rebindUserTestingScenarioOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
 export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
-  launch_journey_run: "Pre-GA product — expose at GA.",
-  cancel_journey_run: "Pre-GA product — expose with the launch it pairs with.",
-  // Scenarios (user testing) and journeys (Swarms) are held out of this
-  // catalog WHOLESALE until GA — a CATALOG policy, not the flag.
-  //
-  // The distinction matters, because a maintainer who reads "flag-gated" here
-  // will reach for the flag when deciding what to expose, and the flag does
-  // not cover most of this list. `sandboxes-enabled` gates only the
-  // exposure-CREATING writes (publish, launch, authoring); the reads,
-  // `cancel_journey_run` and `unpublish_scenario` are deliberately ungated, so
-  // an organization that has just lost the flag can still see what is running,
-  // stop it, and take a live scenario down. None of them ever answers
-  // FEATURE_UNAVAILABLE. What keeps them out is that this catalog is STATIC —
-  // one tool list for every caller, built with no organization in hand — so a
-  // beta cannot be advertised selectively here at all.
-  publish_scenario:
-    "Pre-GA product, and publishing exposes an environment publicly — not an unattended-catalog action.",
-  unpublish_scenario:
-    "Pre-GA product — expose at GA, with its publish counterpart.",
-  list_journeys: "Pre-GA product — expose at GA.",
-  list_journey_runs: "Pre-GA product — expose at GA.",
-  get_journey_run: "Pre-GA product — expose at GA.",
-  list_journey_run_sessions: "Pre-GA product — expose at GA.",
-
   show_servers: "Registered by the dedicated show_servers MCP Apps tool.",
-  create_project:
-    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
-  update_project:
-    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
+  // Its create/update siblings moved INTO the catalog; this reason had to stop
+  // being the blanket one they shared, because that rationale is no longer
+  // true of project lifecycle as a category. What is true of delete
+  // specifically: it cascades across every project-owned resource — servers,
+  // credentials, suites, runs, hosts — and nothing on this surface can undo
+  // it. Every enterprise MCP server surveyed draws the same line (GitHub ships
+  // `create_repository` and omits `delete_repository`). Deleting stays on REST
+  // and the CLI, for humans who mean it.
   delete_project:
-    "Project lifecycle writes are intentionally outside the unattended MCP catalog.",
+    "Deleting a project cascades across every project-owned resource and cannot be undone; industry MCP servers ship container create but not delete. Available on REST and the CLI for humans who mean it.",
   validate_server:
     "Server validation is available through the dedicated server diagnostics surface.",
   export_server:
@@ -168,14 +324,16 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Host infrastructure writes are intentionally outside the unattended MCP catalog.",
   duplicate_host:
     "Host infrastructure writes are intentionally outside the unattended MCP catalog.",
-  list_sandbox_images:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
-  get_sandbox_image:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+  // The two READS moved INTO the catalog. The "lifecycle" rationale below is
+  // about builds and promotions — it never fit a listing and a detail read,
+  // and while it covered them an MCP agent could pin a suite's computer image
+  // (`update_eval_suite`) with no way to see which images exist. The
+  // exclusions that remain say "lifecycle WRITES", so the distinction survives
+  // the next person reading this map.
   validate_sandbox_image_blueprint:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface; blueprint linting belongs with the authoring flow that produces one.",
   list_sandbox_image_builds:
-    "Sandbox image lifecycle is intentionally outside the generic MCP catalog.",
+    "Sandbox image lifecycle writes are not offered on the unattended catalog surface, and a build log is only useful next to the build that produced it.",
   create_tunnel:
     "Tunnel lifecycle is exposed through the dedicated CLI and tunnel surface.",
   close_tunnel:
@@ -186,8 +344,14 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Project infrastructure writes are not offered on the unattended catalog surface.",
   delete_host:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
+  get_project_environment_capabilities:
+    "A deployment-compatibility probe, not an action: it answers whether this platform accepts an environment model override, which the write paths already ask on the caller's behalf.",
   create_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
+  ensure_adhoc_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface. Composing a stack to RUN it needs no separate tool here: run_eval_suite takes a `compose` object and ensures the environment itself, so excluding this costs the surface no capability.",
+  name_environment:
+    "Project infrastructure writes are not offered on the unattended catalog surface. Promotion turns a throwaway into a permanent entry in the project's environment list, which is exactly the kind of durable edit an unattended caller should not make on its own.",
   update_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
   archive_project_environment:
@@ -195,15 +359,15 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
   restore_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
   create_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   update_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   build_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   promote_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   use_sandbox_image:
-    "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+    "Sandbox image lifecycle WRITES are not offered on the unattended catalog surface. The reads (list_sandbox_images, get_sandbox_image) are in the catalog.",
   reset_computer:
     "Computer lifecycle writes are not offered on the unattended catalog surface.",
   delete_sandbox_image:
@@ -211,18 +375,21 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
 };
 
 const catalogOperationNames = new Set(
-  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
+  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name),
 );
 const allOperationNames = new Set(
-  ALL_OPERATIONS.map((operation) => operation.name)
+  ALL_OPERATIONS.map((operation) => operation.name),
 );
 const staleCatalogExclusions = Object.keys(EXCLUDED_FROM_CATALOG).filter(
-  (name) => !allOperationNames.has(name)
+  (name) => !allOperationNames.has(name),
 );
 const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
   (operation) =>
     !catalogOperationNames.has(operation.name) &&
-    !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
+    !Object.prototype.hasOwnProperty.call(
+      EXCLUDED_FROM_CATALOG,
+      operation.name,
+    ),
 );
 if (
   staleCatalogExclusions.length > 0 ||
@@ -230,20 +397,29 @@ if (
 ) {
   throw new Error(
     `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
-      ","
+      ",",
     )}; uncovered=${uncoveredCatalogOperations
       .map((operation) => operation.name)
-      .join(",")}`
+      .join(",")}`,
   );
 }
 
 /**
- * Operations that PERMANENTLY destroy a known resource. They carry an
- * explicit `destructiveHint: true` (unlike `mayBeDestructive` ops, whose
- * effects are merely unknowable). Kept here rather than on the SDK operation
- * so the wire contract stays surface-agnostic.
+ * Operations that PERMANENTLY destroy a known resource, DERIVED from the
+ * catalog's own `risk` metadata rather than listed here. They advertise an
+ * explicit `destructiveHint: true`, unlike `mayBeDestructive` operations,
+ * whose effects are merely unknowable to us.
+ *
+ * Deriving is the whole point of that field: it exists so five surfaces make
+ * one decision from one place instead of each re-deriving it, and a hand-kept
+ * copy here reinstates exactly the drift it was added to remove — the next
+ * operation shipped with `risk: "destructive"` and forgotten in this list would
+ * silently advertise `destructiveHint: false`.
+ *
+ * `LEGACY_DESTRUCTIVE_NAMES` covers the operations that predate `risk`. It
+ * shrinks to nothing as those are backfilled; it does not grow.
  */
-const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
+const LEGACY_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   deleteEvalSuiteOperation.name,
   deleteEvalCaseOperation.name,
   deleteProjectServerOperation.name,
@@ -251,6 +427,32 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set([
   // Cancelling a run terminates in-flight work — state-changing, so clients
   // should be able to confirm before it fires.
   cancelEvalRunOperation.name,
+]);
+
+const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
+  ALL_OPERATIONS.filter(
+    (operation) =>
+      operation.risk === "destructive" ||
+      LEGACY_DESTRUCTIVE_NAMES.has(operation.name),
+  ).map((operation) => operation.name),
+);
+
+/**
+ * Destructive operations a client must NOT auto-retry.
+ *
+ * `idempotentHint: true` is a promise that repeating the call is safe after a
+ * dropped response. It is false for both kinds below, in opposite ways: the
+ * soft deletes answer not-found on a second call, so an auto-retrying client
+ * surfaces a spurious error for work that succeeded; and rotating a share link
+ * MINTS A NEW ONE each time, so a retry invalidates the link the first call
+ * just handed back.
+ */
+const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
+  deletePersonaOperation.name,
+  archiveJourneyOperation.name,
+  archiveSwarmOperation.name,
+  removeUserTestingMemberOperation.name,
+  rotateUserTestingLinkOperation.name,
 ]);
 
 /**
@@ -269,13 +471,13 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
   [listEvalSuiteRunsOperation.name]: "eval_suite_runs",
   [getEvalRunOperation.name]: "eval_run",
   [listEvalRunIterationsOperation.name]: "eval_run_iterations",
-  [listChatboxesOperation.name]: "chatboxes",
-  [getChatboxOperation.name]: "chatbox",
+  [listScenariosOperation.name]: "scenarios",
+  [getScenarioOperation.name]: "scenario",
 };
 
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
-  context: PlatformToolContext
+  context: PlatformToolContext,
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
     const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
@@ -283,12 +485,12 @@ export function registerPlatformCatalogTools(
       operation.name,
       {
         title: operation.title,
-        description: operation.description,
+        description: operationDescription(operation),
         inputSchema: operation.inputSchema,
         annotations: operationAnnotations(operation),
       },
       async (input) => runPlatformOperation(context, operation, input),
-      view ? platformWidgetUi(context, operation, view) : undefined
+      view ? platformWidgetUi(context, operation, view) : undefined,
     );
   }
 }
@@ -303,7 +505,7 @@ export function registerPlatformCatalogTools(
 export function platformWidgetUi(
   context: PlatformToolContext,
   operation: PlatformOperation<any, any>,
-  view: PlatformWidgetView
+  view: PlatformWidgetView,
 ) {
   return {
     resourceUri: PLATFORM_WIDGET_RESOURCE_URIS[view],
@@ -316,20 +518,28 @@ export function platformWidgetUi(
     },
     callback: async (input: unknown) =>
       runPlatformOperation(context, operation, input, (payload) =>
-        tagPlatformWidgetPayload(view, payload)
+        tagPlatformWidgetPayload(view, payload),
       ),
   };
 }
 
 export function operationAnnotations(
-  operation: PlatformOperation<unknown, unknown>
+  operation: PlatformOperation<unknown, unknown>,
 ): ToolAnnotations {
   if (operation.readOnly) {
     return { readOnlyHint: true };
   }
   // Known-destructive deletes: announce it explicitly so clients can confirm.
   if (DESTRUCTIVE_OPERATION_NAMES.has(operation.name)) {
-    return { readOnlyHint: false, destructiveHint: true, idempotentHint: true };
+    return {
+      readOnlyHint: false,
+      destructiveHint: true,
+      // Only claim idempotent when a repeat is genuinely safe. A soft delete
+      // answers not-found on the second call and a link rotation mints a new
+      // link, so promising idempotency for those turns a dropped response into
+      // either a spurious error or an invalidated link.
+      idempotentHint: !NON_IDEMPOTENT_DESTRUCTIVE_NAMES.has(operation.name),
+    };
   }
   // Operations whose effects are unknowable upstream (call_server_tool runs
   // arbitrary third-party tools) omit destructive/idempotent hints on
@@ -343,11 +553,32 @@ export function operationAnnotations(
   return { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
 }
 
+/**
+ * The spend cue a client shows next to a tool that costs money.
+ *
+ * Read off the operation's own `risk` facet rather than a hand-kept name list:
+ * the catalog already knows which operations spend, and a second list here
+ * would go stale the first time an operation is re-classified — silently, and
+ * in the direction that omits the warning.
+ *
+ * MCP has no "this costs money" annotation, so the honest place for it is the
+ * DESCRIPTION, which every client renders. `run_eval_suite` can start several
+ * paid runs at once, and a user approving a tool call deserves to know that
+ * before the call, not from the invoice.
+ */
+export function operationDescription(
+  operation: PlatformOperation<unknown, unknown>,
+): string {
+  return operation.risk === "spend"
+    ? `${operation.description} COSTS MONEY: this consumes the organization's credits or configured provider keys.`
+    : operation.description;
+}
+
 export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  transformPayload?: (payload: TOutput) => object
+  transformPayload?: (payload: TOutput) => object,
 ) {
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
@@ -369,7 +600,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   } catch (error) {
     return toolError(
       describeOperationError(error),
-      errorStructuredContent(error)
+      errorStructuredContent(error),
     );
   }
 }
@@ -380,7 +611,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
 // calmly instead of with the alarming destructive styling. The model/CLI still
 // see `isError` plus the human-readable text message.
 function errorStructuredContent(
-  error: unknown
+  error: unknown,
 ): Record<string, unknown> | undefined {
   if (isPlatformApiError(error)) {
     return { error: { code: error.code, message: error.message } };
@@ -405,7 +636,124 @@ function describeOperationError(error: unknown): string {
 // complete — widgets and programmatic consumers read that, not the text.
 const MODEL_TEXT_CAP = 24_000;
 
+// ── insights-envelope compaction ─────────────────────────────────────────────
+// Runs BEFORE both renderings (text AND structuredContent): the generic text
+// cap is a blind character slice, and an insights envelope sliced mid-JSON
+// would read as complete while silently missing findings. This compaction is
+// deterministic and self-describing — every omission lands in the envelope's
+// own `truncation` counters, so a reader can never mistake a compacted
+// response for a complete one.
+export const MODEL_MAX_FINDINGS = 8;
+export const MODEL_MAX_EVIDENCE_PER_FINDING = 2;
+export const MODEL_CONTRACT_JSON_CAP = 600;
+
+type EnvelopeLike = {
+  schemaVersion: number;
+  findings: Array<Record<string, unknown>>;
+  truncation: {
+    truncated: boolean;
+    omittedFindings: number;
+    omittedEvidence: number;
+    contractTruncated: boolean;
+  };
+};
+
+function isInsightsEnvelope(value: unknown): value is EnvelopeLike {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as EnvelopeLike;
+  // `typeof null === "object"`, so the truncation check must reject null
+  // explicitly: a payload with `truncation: null` would otherwise pass as an
+  // envelope and throw while compaction read its counters, turning one
+  // malformed field into a failed tool call.
+  return (
+    candidate.schemaVersion === 1 &&
+    Array.isArray(candidate.findings) &&
+    typeof candidate.truncation === "object" &&
+    candidate.truncation !== null
+  );
+}
+
+function compactEnvelope(envelope: EnvelopeLike): EnvelopeLike {
+  let omittedEvidence = 0;
+  let contractTruncated = false;
+  // Findings arrive ready-first from the producer, so a head slice keeps
+  // every server-ready finding before any investigation is dropped.
+  const kept = envelope.findings.slice(0, MODEL_MAX_FINDINGS).map((finding) => {
+    const next = { ...finding };
+    const evidence = Array.isArray(finding.evidence)
+      ? (finding.evidence as unknown[])
+      : [];
+    if (evidence.length > MODEL_MAX_EVIDENCE_PER_FINDING) {
+      omittedEvidence += evidence.length - MODEL_MAX_EVIDENCE_PER_FINDING;
+      next.evidence = evidence.slice(0, MODEL_MAX_EVIDENCE_PER_FINDING);
+    }
+    const target = finding.target as
+      | { currentDefinition?: Record<string, unknown> }
+      | undefined;
+    const def = target?.currentDefinition;
+    if (def) {
+      const clipped = { ...def };
+      for (const key of ["inputSchemaJson", "outputSchemaJson"] as const) {
+        const json = clipped[key];
+        if (typeof json === "string" && json.length > MODEL_CONTRACT_JSON_CAP) {
+          clipped[key] = json.slice(0, MODEL_CONTRACT_JSON_CAP);
+          clipped.truncated = true;
+          contractTruncated = true;
+        }
+      }
+      next.target = { ...target, currentDefinition: clipped };
+    }
+    return next;
+  });
+  const omittedFindings = envelope.findings.length - kept.length;
+  if (omittedFindings === 0 && omittedEvidence === 0 && !contractTruncated) {
+    return envelope;
+  }
+  return {
+    ...envelope,
+    findings: kept,
+    truncation: {
+      truncated: true,
+      omittedFindings: envelope.truncation.omittedFindings + omittedFindings,
+      omittedEvidence: envelope.truncation.omittedEvidence + omittedEvidence,
+      contractTruncated:
+        envelope.truncation.contractTruncated || contractTruncated,
+    },
+  };
+}
+
+/** Compact every insights envelope found at the payload's top level or one
+ * level down (`{ run: { insights } }`, `{ scenario: { insights } }`). */
+export function compactInsightsForModel<T extends object>(payload: T): T {
+  let changed = false;
+  const out: Record<string, unknown> = {
+    ...(payload as Record<string, unknown>),
+  };
+  for (const [key, value] of Object.entries(out)) {
+    if (isInsightsEnvelope(value)) {
+      const compacted = compactEnvelope(value);
+      if (compacted !== value) {
+        out[key] = compacted;
+        changed = true;
+      }
+      continue;
+    }
+    if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+      const inner = value as Record<string, unknown>;
+      if (isInsightsEnvelope(inner.insights)) {
+        const compacted = compactEnvelope(inner.insights);
+        if (compacted !== inner.insights) {
+          out[key] = { ...inner, insights: compacted };
+          changed = true;
+        }
+      }
+    }
+  }
+  return changed ? (out as T) : payload;
+}
+
 function toolSuccess(payload: object) {
+  payload = compactInsightsForModel(payload);
   let text = JSON.stringify(payload, null, 2);
   if (text.length > MODEL_TEXT_CAP) {
     text = `${text.slice(0, MODEL_TEXT_CAP)}\n…[truncated ${
@@ -425,7 +773,7 @@ function toolSuccess(payload: object) {
 
 function toolError(
   message: string,
-  structuredContent?: Record<string, unknown>
+  structuredContent?: Record<string, unknown>,
 ) {
   return {
     isError: true,

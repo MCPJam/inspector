@@ -10,11 +10,16 @@ import { registerChatCommands } from "./commands/chat.js";
 import { registerEnvironmentsCommands } from "./commands/environments.js";
 import { registerJourneysCommands } from "./commands/journeys.js";
 import { registerScenariosCommands } from "./commands/scenarios.js";
+import { registerSwarmAuthoringCommands } from "./commands/swarms.js";
+import { registerUserTestingCommands } from "./commands/user-testing.js";
 import { registerEvalCommands } from "./commands/eval.js";
 import { registerHostsCommands } from "./commands/hosts.js";
 import { registerMcpCommands } from "./commands/mcp.js";
+import { registerOrganizationsCommands } from "./commands/organizations.js";
+import { registerSessionsCommands } from "./commands/sessions.js";
 import { registerProjectsCommands } from "./commands/projects.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
+import { registerReadinessCommands } from "./commands/readiness.js";
 import { registerOAuthCommands } from "./commands/oauth.js";
 import { registerXaaCommands } from "./commands/xaa.js";
 import { registerPromptCommands } from "./commands/prompts.js";
@@ -59,6 +64,15 @@ export async function main(
   argv: readonly string[] = process.argv,
   dependencies: CliMainDependencies = {},
 ): Promise<CliMainResult> {
+  // A command signals failure by setting `process.exitCode`, which this
+  // function reads back below — so the channel is a GLOBAL that outlives the
+  // call. Left alone, one command's exit 1 is still sitting there when the next
+  // `main()` runs in the same process, and that run reports failure for work
+  // that succeeded. Only the process entrypoint calls this once; tests,
+  // embedders, and anything scripting the CLI in-process call it repeatedly.
+  // Clearing here makes each invocation independent of whatever preceded it.
+  process.exitCode = 0;
+
   const program = addGlobalOptions(
     new Command()
       .name("mcpjam")
@@ -88,14 +102,21 @@ export async function main(
   registerOAuthCommands(program);
   registerXaaCommands(program);
   registerProtocolCommands(program);
+  registerReadinessCommands(program);
   registerAuthCommands(program);
+  registerOrganizationsCommands(program);
   registerProjectsCommands(program);
   registerEvalCommands(program);
   registerChatCommands(program);
+  registerSessionsCommands(program);
   registerHostsCommands(program);
   registerEnvironmentsCommands(program);
-  registerJourneysCommands(program);
+  const journeys = registerJourneysCommands(program);
   registerScenariosCommands(program);
+  // Authoring + insights hang off the same `journeys` group the run loop
+  // registered, plus their own `personas` / `swarms` / `capabilities` groups.
+  registerSwarmAuthoringCommands(program, journeys);
+  registerUserTestingCommands(program);
   registerImagesCommands(program);
   registerTunnelCommands(program);
   registerInspectorCommands(program);

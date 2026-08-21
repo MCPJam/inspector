@@ -10,7 +10,7 @@
  * Tests cover every precedence + hostConfig + overrides permutation
  * the live callers actually hit:
  *
- *   - `host-wins` with full hostConfig (chat chatbox path).
+ *   - `host-wins` with full hostConfig (chat scenario path).
  *   - `host-wins` with null hostConfig (chat direct path — degenerate).
  *   - `override-wins` with hostConfig + overrides (eval per-case).
  *   - Optional-only host fields (older backends omitting
@@ -206,7 +206,7 @@ function expectImagePolicyLeaves(
   );
 }
 
-describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", () => {
+describe("resolveExecutionContext — `host-wins` precedence (chat scenario)", () => {
   it("returns hostConfig values verbatim when host carries every field", () => {
     const result = resolveExecutionContext({
       hostConfig: {
@@ -279,8 +279,8 @@ describe("resolveExecutionContext — `host-wins` precedence (chat chatbox)", ()
   });
 
   it("falls back to overrides when hostConfig is null (direct chat path)", () => {
-    // mcp/chat-v2 direct chat (non-chatbox) skips
-    // `fetchChatboxRuntimeConfig`; callers pass `hostConfig: null` and
+    // mcp/chat-v2 direct chat (non-scenario) skips
+    // `fetchScenarioRuntimeConfig`; callers pass `hostConfig: null` and
     // the resolver returns the body fields unmodified.
     const result = resolveExecutionContext({
       hostConfig: null,

@@ -161,7 +161,7 @@ describe("areHostedSessionScopesEqual — target switch forks the session", () =
     projectId: input.projectId,
     targetKey: hostedTargetKey(input),
   });
-  const base = { projectId: "p1", chatboxId: undefined, hostId: "host-a" };
+  const base = { projectId: "p1", scenarioId: undefined, hostId: "host-a" };
 
   it("treats a different previewed hostId as a different scope (⇒ reset)", () => {
     expect(
@@ -178,7 +178,7 @@ describe("areHostedSessionScopesEqual — target switch forks the session", () =
     );
   });
 
-  it("a different project forks; a different chatbox forks", () => {
+  it("a different project forks; a different scenario forks", () => {
     expect(
       areHostedSessionScopesEqual(
         scope(base),
@@ -188,7 +188,7 @@ describe("areHostedSessionScopesEqual — target switch forks the session", () =
     expect(
       areHostedSessionScopesEqual(
         scope({ projectId: "p1" }),
-        scope({ projectId: "p1", chatboxId: "cbx" })
+        scope({ projectId: "p1", scenarioId: "cbx" })
       )
     ).toBe(false);
   });
@@ -217,7 +217,7 @@ describe("hostedTargetKey", () => {
         executionTarget: { kind: "environment", environmentId: "x" },
       })
     ).toBe("environment:x");
-    expect(hostedTargetKey({ chatboxId: "x" })).toBe("chatbox:x");
+    expect(hostedTargetKey({ scenarioId: "x" })).toBe("scenario:x");
     expect(hostedTargetKey({ projectId: "x" })).toBe("adhoc:x");
   });
 

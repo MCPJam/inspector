@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   chipKey,
   isSameSelection,
@@ -7,7 +14,7 @@ import {
   type ThemeRef,
   type UsageFilterChip,
   type UsageFilterState,
-} from "@/hooks/chatbox-usage-filters";
+} from "@/hooks/scenario-usage-filters";
 import {
   useInsightsFlowController,
   useInsightsRebuild,
@@ -16,17 +23,20 @@ import {
 import {
   useUsageInsights,
   type InsightsScope,
-  type UsageBreakdown,
 } from "@/hooks/useUsageInsights";
 import { SessionFlowSankey } from "@/components/shared/usage-insights/SessionFlowSankey";
 import { GoalOutcomeDrilldown } from "@/components/shared/usage-insights/GoalOutcomeDrilldown";
 import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel";
-import { InsightsStatline } from "@/components/shared/usage-insights/InsightsStatline";
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
 import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
+import { CriterionScorecard } from "@/components/shared/usage-insights/CriterionScorecard";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import {
+  Collapsible,
+  CollapsibleTrigger,
+} from "@mcpjam/design-system/collapsible";
 import { cn } from "@/lib/utils";
-import { X } from "lucide-react";
+import { ChevronDown, X } from "lucide-react";
 
 interface InsightsWorkbenchProps {
   /** Which surface's insights to read. Null ⇒ nothing to scope to. */
@@ -47,19 +57,17 @@ interface InsightsWorkbenchProps {
   onOpenSession?: (sessionId: string) => void;
   /** Open the Sessions tab without selecting a particular session. */
   onOpenSessionsTab?: () => void;
-  /** Leading statline content supplied by the owning page. */
-  personasSlot?: ReactNode;
   /**
-   * Pattern / findings chips supplied by the owning page. A function receives
-   * the breakdown this workbench is already subscribed to: User Testing's
-   * Feedback popover renders FROM the breakdown and must not appear when there
-   * is nothing rated to show, and the workbench owns that subscription — a
-   * plain node would force the page to duplicate the query to decide.
+   * Top-level callout above Findings / session flow (e.g. Run insights
+   * banner). Kept separate so the summary stays visible when Findings collapses.
    */
-  strugglesSlot?:
-    | ReactNode
-    | ((breakdown: UsageBreakdown | null | undefined) => ReactNode);
-  /** Extra content shown below the rubric scorecard in its popover. */
+  bannerSlot?: ReactNode;
+  /**
+   * Pattern recommendations under the scorecard (expandable rows). Rendered
+   * as a distinct subsection inside Findings when present.
+   */
+  recommendationsSlot?: ReactNode;
+  /** Extra content shown below the rubric scorecard section (e.g. findings). */
   checksExtras?: ReactNode;
   /**
    * Queue one rebuild when the Clusters view opens on a completed run whose
@@ -74,22 +82,82 @@ interface InsightsWorkbenchProps {
    * surface: Swarms want "sign in", User Testing wants "share the link".
    */
   emptyState?: ReactNode;
+  /**
+   * Fired when the workbench swaps between the empty state and the filled
+   * body. Owning pages use this to hide chrome that the empty panel already
+   * covers (e.g. User Testing's header share strip).
+   */
+  onEmptyChange?: (empty: boolean) => void;
   className?: string;
   /**
    * Prefix for every `data-testid` this renders, so each surface keeps the
-   * ids its own suites already assert (`swarm-insights-*`, `chatbox-insights-*`).
+   * ids its own suites already assert (`swarm-insights-*`, `scenario-insights-*`).
    */
   testIdPrefix: string;
+}
+
+/**
+ * Collapsible parent for the scorecard and recommendations rail. Hidden when
+ * both subsections render nothing, so a provided-but-empty slot does not
+ * leave a Findings shell. Expanded by default; the trigger is a real button
+ * (aria-expanded, focus ring) rather than hover-only.
+ *
+ * The body is one scrollable card. Subsections (scorecard, recommendations)
+ * sit inside it and are separated by a divider — they must not bring their
+ * own card chrome, or Findings reads as two stacked modules on the page.
+ */
+function InsightsFindings({
+  testId,
+  children,
+}: {
+  testId: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(true);
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      className={cn(
+        "group/findings flex max-h-[42%] min-h-0 shrink-0 flex-col gap-1 overflow-hidden",
+        "[&:not(:has([data-slot=findings-body]>*))]:hidden",
+      )}
+      data-testid={testId}
+    >
+      <CollapsibleTrigger
+        className={cn(
+          "flex min-h-11 w-full shrink-0 cursor-pointer items-center justify-between gap-2 rounded-md px-0.5 py-1.5 text-left",
+          "outline-none transition-colors hover:bg-muted/50",
+          "focus-visible:ring-2 focus-visible:ring-ring/40",
+        )}
+      >
+        <h2 className="text-sm font-semibold tracking-tight">Findings</h2>
+        <ChevronDown
+          aria-hidden
+          className="size-4 shrink-0 text-muted-foreground transition-transform duration-200 ease-out motion-reduce:transition-none group-data-[state=closed]/findings:-rotate-90"
+        />
+      </CollapsibleTrigger>
+      <div
+        data-slot="findings-body"
+        hidden={!open}
+        className="flex min-h-0 flex-1 flex-col divide-y divide-border/60 overflow-y-auto rounded-lg border border-border/60 bg-card/60"
+      >
+        {children}
+      </div>
+    </Collapsible>
+  );
 }
 
 /**
  * The Insights workbench: one body for Swarms and User Testing.
  *
  * Exclusive toggle between Session flow (Sankey) and Clusters (topic map),
- * a statline above both, a chip row for dismissible filters, and a session
- * drill-down beside the flow chart. Everything surface-specific arrives as a
- * prop — the scope the queries read, the slots the statline renders, the
- * filter policy, the empty state, and the testid prefix.
+ * a Findings rail (scorecard + recommendations) above both, a chip row for
+ * dismissible filters, and a session drill-down beside the flow chart.
+ * Everything surface-specific arrives as a prop — the scope the queries
+ * read, the slots Findings renders, the filter policy, the empty state,
+ * and the testid prefix.
  *
  * This replaces two panels that had drifted into ~250 lines of duplicated
  * shell against the same hooks. Where the two disagreed, the reconciliations
@@ -104,8 +172,8 @@ interface InsightsWorkbenchProps {
  *    version passed the raw filter, which on a surface with an augment would
  *    have shown rows the list beside it excludes.
  *  - Only the fill-viewport layout survives. The scroll-area path had no
- *    production caller, and with it goes the panel-level criterion scorecard —
- *    the statline already renders that scorecard in a popover.
+ *    production caller. The rubric scorecard and Run insights banner are
+ *    their own sections above the session flow (not chip popovers).
  *  - A topic-map dot click clears the filter on BOTH surfaces before opening
  *    the session: an active cluster chip can otherwise hide the very session
  *    the click asked for.
@@ -120,11 +188,12 @@ export function InsightsWorkbench({
   onViewChange,
   onOpenSession,
   onOpenSessionsTab,
-  personasSlot,
-  strugglesSlot,
+  bannerSlot,
+  recommendationsSlot,
   checksExtras,
   autoBackfillTopicMap = false,
   emptyState,
+  onEmptyChange,
   className,
   testIdPrefix,
 }: InsightsWorkbenchProps) {
@@ -249,7 +318,11 @@ export function InsightsWorkbench({
     flow.dismissibleChips.length > 0 || flow.flowSelection !== null;
   const nothingToShow =
     scope === null || (!userFiltered && breakdown?.totalSessions === 0);
-  if (emptyState && nothingToShow) {
+  const showingEmpty = Boolean(emptyState && nothingToShow);
+  useEffect(() => {
+    onEmptyChange?.(showingEmpty);
+  }, [showingEmpty, onEmptyChange]);
+  if (showingEmpty) {
     return (
       <div
         className={cn("flex h-full min-h-0 flex-col", className)}
@@ -268,12 +341,31 @@ export function InsightsWorkbench({
       ? scope.journeyRunIds
       : undefined;
 
-  const viewToggle = (
-    <InsightsViewToggle
-      view={flow.view}
-      onChange={handleViewChange}
-      testId={`${testIdPrefix}-view-toggle`}
-    />
+  // Freshness + Session flow | Clusters sit in the chart header (next to the
+  // Sankey / topic-map toolbar), not in Findings.
+  const viewChrome = (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {/* The chip reads `getWindowSignals` for its staleness watermark, and
+          that query ships with the backend PR — `useQuery` against an
+          undeployed function THROWS, which without this boundary would take
+          the whole Insights tab down rather than one chip. Keyed on the
+          cohort so a boundary tripped against the undeployed backend re-arms
+          on the next scenario the user opens. */}
+      <ErrorBoundary key={cohortKey} fallback={null}>
+        <InsightsFreshnessChip
+          scope={scope}
+          latestRun={breakdown?.latestRun}
+          onRebuild={handleRebuild}
+          rebuildBusy={rebuildBusy}
+          testId={`${testIdPrefix}-freshness-chip`}
+        />
+      </ErrorBoundary>
+      <InsightsViewToggle
+        view={flow.view}
+        onChange={handleViewChange}
+        testId={`${testIdPrefix}-view-toggle`}
+      />
+    </div>
   );
 
   const chipRow =
@@ -313,6 +405,7 @@ export function InsightsWorkbench({
           onApplyTuning={handleApplyTuning}
           showLinkThreshold
           fillHeight
+          headerActions={viewChrome}
         />
       </div>
       {chipRow}
@@ -342,12 +435,16 @@ export function InsightsWorkbench({
           onRebuild={handleRebuild}
           rebuildBusy={rebuildBusy}
           onOpenSession={handleOpenSessionFromMap}
+          headerActions={viewChrome}
         />
       </div>
     </div>
   );
 
   const selectionOpen = flow.flowSelection !== null;
+  const criterionFacets = breakdown?.criterionBreakdown ?? [];
+  const hasScorecard =
+    criterionFacets.length > 0 || Boolean(checksExtras);
 
   return (
     <div
@@ -357,46 +454,29 @@ export function InsightsWorkbench({
       )}
       data-testid={`${testIdPrefix}-panel`}
     >
-      <InsightsStatline
-        breakdown={breakdown}
-        filter={flow.filter}
-        flowSelection={flow.flowSelection}
-        onSelectFlow={flow.handleSelectFlow}
-        onToggleChip={flow.handleToggleChip}
-        onOpenSessionsTab={onOpenSessionsTab}
-        leadingSlot={personasSlot}
-        strugglesSlot={
-          typeof strugglesSlot === "function"
-            ? strugglesSlot(breakdown)
-            : strugglesSlot
-        }
-        checksExtras={checksExtras}
-        trailing={
-          <>
-            {/* The chip reads `getWindowSignals` for its staleness watermark,
-                and that query ships with the backend PR — `useQuery` against an
-                undeployed function THROWS, which without this boundary would
-                take the whole Insights tab down rather than one chip. Same
-                reason the findings rail is wrapped at its mount.
-                Keyed on the cohort so a boundary tripped against the
-                undeployed backend re-arms on the next scenario the user
-                opens, rather than staying latched for the life of the mount;
-                a tab left open on ONE cohort across the deploy still needs a
-                navigation to pick the chip up. */}
-            <ErrorBoundary key={cohortKey} fallback={null}>
-              <InsightsFreshnessChip
-                scope={scope}
-                latestRun={breakdown?.latestRun}
-                onRebuild={handleRebuild}
-                rebuildBusy={rebuildBusy}
-                testId={`${testIdPrefix}-freshness-chip`}
+      {bannerSlot ? (
+        <div className="shrink-0" data-testid={`${testIdPrefix}-banner`}>
+          {bannerSlot}
+        </div>
+      ) : null}
+      {hasScorecard || recommendationsSlot ? (
+        <InsightsFindings testId={`${testIdPrefix}-findings`}>
+          {hasScorecard ? (
+            <div
+              data-testid={`${testIdPrefix}-scorecard`}
+              aria-label="Scorecard"
+            >
+              <CriterionScorecard
+                facets={criterionFacets}
+                filter={flow.filter}
+                onToggleChip={flow.handleToggleChip}
               />
-            </ErrorBoundary>
-            {viewToggle}
-          </>
-        }
-        testId={`${testIdPrefix}-statline`}
-      />
+              {checksExtras}
+            </div>
+          ) : null}
+          {recommendationsSlot}
+        </InsightsFindings>
+      ) : null}
       <div className="relative flex min-h-0 flex-1 overflow-hidden">
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {flow.view === "clusters" ? clustersBlock : sankeyBlock}

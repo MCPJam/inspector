@@ -51,7 +51,15 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Identity and catalogs
   "get /me": "getMe",
   "get /models": "listModels",
+  "get /organizations": "listOrganizations",
   "get /chat-sessions": "listChatSessions",
+
+  // Server connections
+  "post /server-connections": "createServerConnection",
+  "get /server-connections/{requestId}": "getServerConnection",
+  "post /server-connections/{requestId}/cancel": "cancelServerConnection",
+  "post /server-connections/{requestId}/retry-validation":
+    "retryServerConnectionValidation",
 
   // Projects
   "get /projects": "listProjects",
@@ -80,6 +88,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/servers/{serverId}/resources/read":
     "readServerResource",
 
+  // Directory readiness
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
+    "startClaudeReadinessRun",
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
+    "startOpenAIReadinessRun",
+  "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
+  "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
+  "get /projects/{projectId}/readiness-runs/{runId}/report":
+    "getReadinessReport",
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel":
+    "cancelReadinessRun",
+
   // Hosts
   "get /projects/{projectId}/hosts": "listHosts",
   "post /projects/{projectId}/hosts": "createHost",
@@ -91,7 +111,13 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
 
   // Project environments
   "get /projects/{projectId}/environments": "listEnvironments",
+  "get /projects/{projectId}/environments/capabilities":
+    "getEnvironmentCapabilities",
   "post /projects/{projectId}/environments": "createEnvironment",
+  "post /projects/{projectId}/environments/ensure-adhoc":
+    "ensureAdhocEnvironment",
+  "post /projects/{projectId}/environments/{environmentId}/name":
+    "nameEnvironment",
   "get /projects/{projectId}/environments/{environmentId}": "getEnvironment",
   "patch /projects/{projectId}/environments/{environmentId}":
     "updateEnvironment",
@@ -120,6 +146,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/computer/reset": "resetComputer",
 
   // Eval suites and cases
+  "get /projects/{projectId}/sessions": "listSessions",
   "get /projects/{projectId}/eval-suites": "listEvalSuites",
   "post /projects/{projectId}/eval-suites": "createEvalSuite",
   "get /projects/{projectId}/eval-suites/{suiteId}": "getEvalSuite",
@@ -130,6 +157,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/eval-suites/{suiteId}/runs": "listEvalSuiteRuns",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases": "listEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases": "createEvalCase",
+  "post /projects/{projectId}/eval-suites/{suiteId}/cases/batch":
+    "createEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases/generate":
     "generateEvalCases",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases/{caseId}":
@@ -141,7 +170,11 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
 
   // Eval runs
   "post /projects/{projectId}/eval-runs": "createEvalRun",
+  "post /projects/{projectId}/eval-run-groups": "createEvalRunGroup",
+  "post /projects/{projectId}/eval-suites/{suiteId}/environments":
+    "attachEvalSuiteEnvironment",
   "get /projects/{projectId}/eval-runs/{runId}": "getEvalRun",
+  "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
   "get /projects/{projectId}/eval-runs/{runId}/iterations":
     "listEvalRunIterations",
@@ -150,9 +183,9 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/eval-runs/{runId}/iterations/{iterationId}/steps":
     "getEvalRunSteps",
 
-  // Chatboxes (deprecated publicly; superseded by scenarios at GA)
-  "get /projects/{projectId}/chatboxes": "listChatboxes",
-  "get /projects/{projectId}/chatboxes/{chatboxId}": "getChatbox",
+  // Scenarios (deprecated publicly; superseded by scenarios at GA)
+  "get /projects/{projectId}/scenarios": "listScenarios",
+  "get /projects/{projectId}/scenarios/{scenarioId}": "getScenario",
 
   // Journeys (Swarms). Flag-gated beta, but the SDK carries them.
   "get /projects/{projectId}/journeys": "listJourneys",
@@ -162,6 +195,80 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "listJourneyRunSessions",
   "post /projects/{projectId}/journeys/{journeyId}/runs": "launchJourneyRun",
   "post /projects/{projectId}/journey-runs/{runId}/cancel": "cancelJourneyRun",
+  // Swarms authoring — the create half of create -> run -> read.
+  "get /projects/{projectId}/journeys/{journeyId}": "getJourney",
+  "post /projects/{projectId}/journeys": "createJourney",
+  "patch /projects/{projectId}/journeys/{journeyId}": "updateJourney",
+  "delete /projects/{projectId}/journeys/{journeyId}": "archiveJourney",
+  "post /projects/{projectId}/journeys/generate": "generateJourneys",
+  "get /projects/{projectId}/personas": "listPersonas",
+  "get /projects/{projectId}/personas/{personaId}": "getPersona",
+  "post /projects/{projectId}/personas": "createPersona",
+  "patch /projects/{projectId}/personas/{personaId}": "updatePersona",
+  "delete /projects/{projectId}/personas/{personaId}": "deletePersona",
+  "post /projects/{projectId}/personas/generate": "generatePersonas",
+  "get /projects/{projectId}/swarms": "listSwarms",
+  "get /projects/{projectId}/swarms/{swarmId}": "getSwarm",
+  "post /projects/{projectId}/swarms": "createSwarm",
+  "patch /projects/{projectId}/swarms/{swarmId}": "updateSwarm",
+  "delete /projects/{projectId}/swarms/{swarmId}": "archiveSwarm",
+  // The insights layer over runs.
+  "get /projects/{projectId}/journeys-overview": "getSwarmOverview",
+  "get /projects/{projectId}/journey-runs/{runId}/scorecard":
+    "getJourneyRunScorecard",
+  "get /projects/{projectId}/journey-findings": "listSwarmFindings",
+  "post /projects/{projectId}/journey-findings/{findingId}/dismiss":
+    "dismissSwarmFinding",
+  "post /projects/{projectId}/journey-findings/{findingId}/undismiss":
+    "undismissSwarmFinding",
+  "post /projects/{projectId}/eval-runs/{runId}/insights":
+    "requestEvalRunInsights",
+  "post /projects/{projectId}/eval-runs/{runId}/judge": "requestEvalRunJudge",
+  "get /organizations/{organizationId}/eval-check-repos": "listEvalCheckRepos",
+  "post /organizations/{organizationId}/eval-check-repos":
+    "connectEvalCheckRepo",
+  "get /projects/{projectId}/waves/{waveId}/insights": "getWaveInsights",
+  "post /projects/{projectId}/waves/{waveId}/insights": "requestWaveInsights",
+  "delete /projects/{projectId}/waves/{waveId}/insights": "cancelWaveInsights",
+  // The planning read that makes the static agent surfaces survivable.
+  "get /projects/{projectId}/capabilities": "getCapabilities",
+  // User testing — everything you do with a scenario once it exists.
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}":
+    "getUserTestingScenario",
+  "patch /projects/{projectId}/user-testing/scenarios/{scenarioId}":
+    "updateUserTestingScenario",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions":
+    "listUserTestingSessions",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/sessions/{sessionId}":
+    "getUserTestingSession",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/metrics":
+    "getUserTestingMetrics",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/usage":
+    "getUserTestingUsage",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings":
+    "listUserTestingFindings",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/signals":
+    "getUserTestingSignals",
+  "get /projects/{projectId}/user-testing/scenarios/{scenarioId}/windows/{windowId}/insights":
+    "getUserTestingInsights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights":
+    "requestUserTestingInsights",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/insights":
+    "cancelUserTestingInsights",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss":
+    "dismissUserTestingFinding",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss":
+    "undismissUserTestingFinding",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/guest-execution":
+    "setUserTestingGuestExecution",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link":
+    "rotateUserTestingLink",
+  "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members":
+    "upsertUserTestingMember",
+  "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}":
+    "removeUserTestingMember",
+  "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rebind":
+    "rebindUserTestingScenario",
 
   // Scenarios (user testing)
   "put /projects/{projectId}/environments/{environmentId}/scenario":
@@ -172,6 +279,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Tunnels
   "post /projects/{projectId}/tunnels": "createTunnel",
   "post /projects/{projectId}/tunnels/{serverId}/close": "closeTunnel",
+
+  // Directory readiness
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
+    "startClaudeReadinessRun",
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
+    "startOpenAIReadinessRun",
+  "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
+  "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
+  "get /projects/{projectId}/readiness-runs/{runId}/report":
+    "getReadinessReport",
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel":
+    "cancelReadinessRun",
 };
 
 /**

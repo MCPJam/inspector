@@ -46,9 +46,11 @@ import {
   type SwarmOverviewTarget,
 } from "@/lib/swarm-api";
 import {
-  PREDICATE_KIND_LABELS,
-  type PredicateKind,
+  formatCriterion,
+  isKnownPredicateKind,
 } from "@/shared/predicate-kinds";
+import { EvalSparkline } from "@/components/evals/eval-sparkline";
+import { MIN_TREND_POINTS } from "@/components/evals/metric-strip-data";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 
@@ -69,17 +71,18 @@ export function formatPercent(rate: number): string {
 /**
  * Author label, else the predicate kind's label, else the raw criterion id.
  *
- * The raw-id fallback is deliberate — a finding whose criterion no longer
+ * The label rules are delegated to `formatCriterion` so they stay defined once
+ * across the authoring form, the run scorecard, and this panel. The raw-id
+ * fallback stays local and is deliberate — a finding whose check no longer
  * appears in the run snapshot still has real counts, and inventing a friendly
- * name for it would be a guess.
+ * name for it would be a guess (and `formatCriterion` has no id to fall back
+ * to).
  */
 function findingName(finding: SwarmOverviewFinding): string {
-  const label = finding.label?.trim();
-  if (label) return label;
-  if (finding.kind && finding.kind in PREDICATE_KIND_LABELS) {
-    return PREDICATE_KIND_LABELS[finding.kind as PredicateKind];
+  if (finding.kind !== undefined && isKnownPredicateKind(finding.kind)) {
+    return formatCriterion({ ...finding, kind: finding.kind });
   }
-  return finding.criterionId;
+  return finding.label?.trim() || finding.criterionId;
 }
 
 /**
@@ -249,6 +252,34 @@ export function formatSwarmId(swarmId: string): string {
  */
 export function swarmWaveTitle(wave: SwarmWave): string {
   return `Swarm ${formatSwarmId(swarmWaveRouteId(wave))}`;
+}
+
+/**
+ * Progress of a wave that is STILL GOING, or `null` once every member reached a
+ * terminal.
+ *
+ * `done` counts every terminal attempt — succeeded, failed and rate-limited —
+ * because this answers "how far along is the run", which is a different
+ * question from {@link waveSessionTotals}' "how much of it worked". A wave whose
+ * runs are all terminal returns `null` rather than a full bar: there is no live
+ * run to point at, and a 100% progress bar on a finished swarm is noise.
+ */
+export function waveLiveProgress(runs: readonly SwarmOverviewRun[]): {
+  done: number;
+  total: number;
+  liveRuns: number;
+} | null {
+  let done = 0;
+  let total = 0;
+  let liveRuns = 0;
+  for (const run of runs) {
+    if (run.status === "running" || run.status === "pending") liveRuns += 1;
+    done +=
+      run.summary.succeeded + run.summary.failed + run.summary.rateLimited;
+    total += run.summary.total;
+  }
+  if (liveRuns === 0) return null;
+  return { done, total, liveRuns };
 }
 
 export function waveSessionTotals(runs: readonly SwarmOverviewRun[]): {
@@ -498,14 +529,90 @@ function SwarmOverviewPanelBody({
         {waves.length === 0 ? (
           <NoRunsEmptyState />
         ) : (
-          <SwarmRunsList
-            waves={waves}
-            onOpenSwarm={onOpenSwarm}
-            environmentsEnabled={environmentsEnabled}
-          />
+          <>
+            <GoalTrendStrip goalCompletion={overview.goalCompletion} />
+            <SwarmRunsList
+              waves={waves}
+              onOpenSwarm={onOpenSwarm}
+              environmentsEnabled={environmentsEnabled}
+            />
+          </>
         )}
       </div>
     </ScrollArea>
+  );
+}
+
+// ── goal completion trend ───────────────────────────────────────────────────
+
+/** Short day label for trend points, e.g. "Aug 3". */
+function formatTrendDay(ms: number): string {
+  return new Date(ms).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+/**
+ * Goal-completion pass rate across the overview window, with the daily trend
+ * the backend has computed all along (`getSwarmOverview.goalCompletion.trend`)
+ * and no UI ever rendered.
+ *
+ * The buckets arrive pre-filtered: a day with no graded sessions is DROPPED
+ * server-side rather than emitted as 0% — a flat line at zero would read as
+ * "everything failed" when the truth is "nothing was graded". Never re-insert
+ * missing days here.
+ *
+ * Renders nothing until the window holds a graded pass rate and at least
+ * MIN_TREND_POINTS graded days — a single day is a number, not a trend.
+ * Optional-chained throughout so an older backend that predates the field
+ * degrades to nothing instead of throwing into the panel's ErrorBoundary.
+ */
+function GoalTrendStrip({
+  goalCompletion,
+}: {
+  goalCompletion: SwarmOverview["goalCompletion"] | undefined;
+}) {
+  const trend = goalCompletion?.trend ?? [];
+  if (
+    !goalCompletion ||
+    goalCompletion.passRate === null ||
+    trend.length < MIN_TREND_POINTS
+  ) {
+    return null;
+  }
+
+  return (
+    <section
+      data-testid="swarm-overview-goal-trend"
+      aria-label="Goal completion trend"
+      className="flex items-center gap-6 rounded-xl border border-border/40 bg-muted/10 px-4 py-3"
+    >
+      <div className="flex shrink-0 flex-col">
+        <span className="text-2xl font-semibold tabular-nums leading-none tracking-tight text-foreground">
+          {formatPercent(goalCompletion.passRate)}
+        </span>
+        <span className="mt-1 text-xs tabular-nums text-muted-foreground">
+          Goal completion · {goalCompletion.passedCount}/
+          {goalCompletion.gradedCount} graded sessions ·{" "}
+          {goalCompletion.runsWithGrades} run
+          {goalCompletion.runsWithGrades === 1 ? "" : "s"}
+        </span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <EvalSparkline
+          points={trend.map((point) => point.passRate * 100)}
+          pointLabels={trend.map((point) => formatTrendDay(point.dayStartMs))}
+          formatValue={(value) => `${Math.round(value)}%`}
+          tooltipValues={trend.map(
+            (point) =>
+              `${Math.round(point.passRate * 100)}% · ${point.passedCount}/${point.gradedCount} passed`,
+          )}
+          testId="swarm-overview-goal-trend-sparkline"
+          height={30}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -514,11 +621,27 @@ function SwarmOverviewPanelBody({
 /** Shared with row buttons so Env / Client / Model / Score line up. */
 const SWARM_RUN_ROW_PAD = "flex w-full items-center gap-3 px-4";
 
-/** Ghost select — reads as a column label / inline control, not a form field. */
+/**
+ * One treatment for every column header, whether it filters or is inert, so
+ * Env / Client / Model / Score read as a single row of column labels rather
+ * than a mix of labels and form fields.
+ */
+export const SWARM_COLUMN_HEADER =
+  "flex w-full min-w-0 items-center justify-end gap-1 text-sm font-medium text-muted-foreground";
+
+/**
+ * Ghost select — a column label that happens to open a menu. The `dark:`
+ * resets are not redundant with `bg-transparent`: tailwind-merge only drops
+ * base classes carrying the same modifiers, so `SelectTrigger`'s
+ * `dark:bg-input/30` / `dark:hover:bg-input/50` survive an unprefixed override
+ * and painted a form-field block behind the filtering headers — and only those
+ * — in dark mode.
+ */
 const SWARM_INLINE_SELECT_TRIGGER = cn(
-  "h-auto min-h-0 gap-1 border-0 bg-transparent p-0 shadow-none",
-  "text-sm font-medium text-muted-foreground hover:text-foreground",
-  "focus:ring-0 focus-visible:ring-0 data-[state=open]:text-foreground",
+  SWARM_COLUMN_HEADER,
+  "h-auto min-h-0 max-w-full border-0 bg-transparent p-0 shadow-none",
+  "dark:bg-transparent dark:hover:bg-transparent",
+  "hover:text-foreground focus:ring-0 focus-visible:ring-0 data-[state=open]:text-foreground",
   "[&_svg]:size-3.5 [&_svg]:opacity-50"
 );
 
@@ -527,7 +650,6 @@ function SwarmInlineSelect({
   onValueChange,
   ariaLabel,
   testId,
-  className,
   children,
   triggerLabel,
 }: {
@@ -535,7 +657,6 @@ function SwarmInlineSelect({
   onValueChange: (value: string) => void;
   ariaLabel: string;
   testId: string;
-  className?: string;
   children: ReactNode;
   /** Shown in the trigger (column noun or selected value). */
   triggerLabel: string;
@@ -545,12 +666,31 @@ function SwarmInlineSelect({
       <SelectTrigger
         data-testid={testId}
         aria-label={ariaLabel}
-        className={cn(SWARM_INLINE_SELECT_TRIGGER, className)}
+        className={SWARM_INLINE_SELECT_TRIGGER}
       >
         <span className="truncate">{triggerLabel}</span>
       </SelectTrigger>
       <SelectContent>{children}</SelectContent>
     </Select>
+  );
+}
+
+/**
+ * Inert column header. Keeps the chevron's slot as empty space so a column
+ * with no filter still lines its label up with the ones that have one.
+ */
+function SwarmColumnLabel({
+  children,
+  testId,
+}: {
+  children: ReactNode;
+  testId: string;
+}) {
+  return (
+    <span className={SWARM_COLUMN_HEADER} data-testid={testId}>
+      <span className="truncate">{children}</span>
+      <span className="size-3.5 shrink-0" aria-hidden />
+    </span>
   );
 }
 
@@ -634,7 +774,6 @@ function SwarmRunsList({
                   }
                   ariaLabel="Filter by environment"
                   testId="swarm-overview-env-filter"
-                  className="w-full max-w-full justify-end"
                   triggerLabel={envFilter ?? "Env"}
                 >
                   <SelectItem value="all">All envs</SelectItem>
@@ -646,9 +785,11 @@ function SwarmRunsList({
                 </SwarmInlineSelect>
               </div>
             ) : (
-              <span className="w-24 shrink-0 text-right text-sm font-medium text-muted-foreground">
-                Env
-              </span>
+              <div className="flex w-24 shrink-0 justify-end">
+                <SwarmColumnLabel testId="swarm-overview-env-label">
+                  Env
+                </SwarmColumnLabel>
+              </div>
             )
           ) : null}
 
@@ -661,7 +802,6 @@ function SwarmRunsList({
                 }
                 ariaLabel="Filter by client"
                 testId="swarm-overview-client-filter"
-                className="w-full max-w-full justify-end"
                 triggerLabel={clientFilter ?? "Client"}
               >
                 <SelectItem value="all">All clients</SelectItem>
@@ -673,14 +813,18 @@ function SwarmRunsList({
               </SwarmInlineSelect>
             </div>
           ) : (
-            <span className="w-28 shrink-0 text-right text-sm font-medium text-muted-foreground">
-              Client
-            </span>
+            <div className="flex w-28 shrink-0 justify-end">
+              <SwarmColumnLabel testId="swarm-overview-client-label">
+                Client
+              </SwarmColumnLabel>
+            </div>
           )}
 
-          <span className="w-24 shrink-0 text-right text-sm font-medium text-muted-foreground">
-            Model
-          </span>
+          <div className="flex w-24 shrink-0 justify-end">
+            <SwarmColumnLabel testId="swarm-overview-model-label">
+              Model
+            </SwarmColumnLabel>
+          </div>
           <div className="flex w-20 shrink-0 justify-end">
             <SwarmInlineSelect
               value={sort}
@@ -691,10 +835,7 @@ function SwarmRunsList({
               }}
               ariaLabel="Sort swarm runs"
               testId="swarm-overview-sort"
-              className="w-full max-w-full justify-end"
-              triggerLabel={
-                sort === "lowest-score" ? "Lowest" : "Score"
-              }
+              triggerLabel={sort === "lowest-score" ? "Lowest" : "Score"}
             >
               <SelectItem value="newest">Newest</SelectItem>
               <SelectItem value="lowest-score">Lowest score</SelectItem>
@@ -1029,7 +1170,7 @@ function FindingSessions({
     <div className="border-t border-border/40 px-2.5 py-1.5">
       {failing.length === 0 ? (
         <p className="py-1 text-[11px] text-muted-foreground">
-          No session in this run carries a failing verdict for this criterion.
+          No session in this run carries a failing verdict for this check.
         </p>
       ) : (
         <ul className="flex flex-col">
@@ -1087,7 +1228,7 @@ function NoRunsEmptyState() {
         <h3 className="text-sm font-semibold text-foreground">No runs yet</h3>
         <p className="mt-1.5 text-pretty text-xs text-muted-foreground">
           Open Personas and run one of your goals. Once a run finishes, its
-          outcomes and any failing rubric criteria show up here.
+          outcomes and any failing checks show up here.
         </p>
       </div>
     </div>

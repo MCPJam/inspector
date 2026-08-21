@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchHostRuntimeConfig } from "../host-runtime-config";
 
 // Unit coverage for the inspector → Convex host runtime-config client. Mirrors
-// the chatbox runtime-config contract: POST /web/host/runtime-config with a
+// the scenario runtime-config contract: POST /web/host/runtime-config with a
 // bearer + { hostId }, mapping ok/err shapes the chat-v2 routes branch on.
 
 const ORIGINAL_FETCH = globalThis.fetch;

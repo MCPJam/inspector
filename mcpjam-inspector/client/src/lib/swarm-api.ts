@@ -445,9 +445,31 @@ export interface SwarmWaveSignalCandidate {
   severityScore: number;
 }
 
+/**
+ * Launch outcomes for one execution target of the wave — REPORTING, not a
+ * finding.
+ *
+ * A target that refused connections or throttled the wave has no session to
+ * open and says nothing about the MCP server's tool contract, so it travels
+ * beside the candidates rather than among them. `failed` and `rateLimited`
+ * stay separate: a throttled wave is not a broken server.
+ */
+export interface SwarmWaveTargetHealth {
+  subjectKind: "environment" | "host";
+  subjectId: string;
+  subjectLabel: string;
+  attempted: number;
+  succeeded: number;
+  failed: number;
+  rateLimited: number;
+}
+
 /** Result of `swarmWaveInsights:getWaveSignals` (null ⇒ unknown wave id). */
 export interface SwarmWaveSignals {
   candidates: SwarmWaveSignalCandidate[];
+  /** Per-target launch outcomes, worst-first. Optional: a server deployed
+   * before the field existed omits it. */
+  targetHealth?: SwarmWaveTargetHealth[];
   sessionCount: number;
   /** Sessions with no usable readiness analysis (pending/failed/absent). */
   unanalyzedSessionCount: number;
@@ -620,7 +642,7 @@ export interface SwarmSessionMetrics {
 
 /**
  * Map a journey session list row into the shape `ShareUsageThreadList` /
- * chatbox Sessions cards expect. Swarm sessions are always synthetic for
+ * scenario Sessions cards expect. Swarm sessions are always synthetic for
  * badge purposes even if an older row omitted the flag.
  */
 export function journeySessionRowToThread(
@@ -724,7 +746,7 @@ export interface SwarmSessionPromoteDetail {
   /**
    * The session row's recorded host attribution. Display/compat — prefer
    * `suggestedHostAttachment.namedHostId` when seeding, because on
-   * environment-backed chatboxes this records the PUBLISH-TIME host while
+   * environment-backed scenarios this records the PUBLISH-TIME host while
    * the environment may since have been re-pointed.
    */
   hostId: string | null;

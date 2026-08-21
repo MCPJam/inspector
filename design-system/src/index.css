@@ -1,12 +1,12 @@
 @import "./tokens.css";
 
-.chatbox-host-shell {
+.scenario-host-shell {
   background-color: var(--background);
   color: var(--foreground);
 }
 
-.chatbox-host-shell .chatbox-host-user-bubble,
-.chatbox-host-shell .chatbox-host-composer {
+.scenario-host-shell .scenario-host-user-bubble,
+.scenario-host-shell .scenario-host-composer {
   transition:
     background-color 160ms ease,
     border-color 160ms ease,
@@ -14,9 +14,18 @@
     opacity 160ms ease;
 }
 
-.chatbox-host-shell[data-host-style="chatgpt"] .chatbox-host-composer,
-.chatbox-host-shell[data-host-style="claude"] .chatbox-host-composer {
+.scenario-host-shell[data-host-style="chatgpt"] .scenario-host-composer,
+.scenario-host-shell[data-host-style="claude"] .scenario-host-composer {
   border-width: 1px;
+}
+
+/* Sonner colours the description from its own theme rather than from the vars
+   we hand it, so it is the one part of a toast that can end up light-on-light.
+   Pinning it to our token keeps it readable even if the two themes drift. */
+[data-sonner-toaster][data-sonner-theme]
+  [data-sonner-toast][data-styled="true"]
+  [data-description] {
+  color: var(--foreground);
 }
 
 [data-sonner-toaster][data-sonner-theme]

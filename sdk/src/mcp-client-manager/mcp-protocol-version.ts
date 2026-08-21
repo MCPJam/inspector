@@ -52,14 +52,11 @@ const LATEST_PROTOCOL_VERSION: McpProtocolVersion | undefined =
  * cannot disagree about which revision is current:
  *
  * - **Latest** = newest known revision, derived above.
- * - **November** = the 2025-11-25 revision.
- *
- * Older revisions render bare — a fixed marker on them would be one more
- * string to walk forward by hand.
+ * - Every other revision renders bare — a fixed marker on them would be one
+ *   more string to walk forward by hand.
  */
 export function protocolVersionLabel(version: McpProtocolVersion): string {
   if (version === LATEST_PROTOCOL_VERSION) return `Latest (${version})`;
-  if (version === "2025-11-25") return `November (${version})`;
   return version;
 }
 

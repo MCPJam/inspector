@@ -75,6 +75,7 @@ import { Loader2, Trash2 } from "lucide-react";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 import type { RemoteServer } from "@/hooks/useProjects";
+import type { EvalSuiteSettingKey } from "@/shared/eval-suite-settings-manifest";
 import {
   normalizeDraftEvalCaseForExport,
   normalizeEvalCaseForExport,
@@ -110,8 +111,15 @@ export interface SuiteNavigation {
  * file-local because they encode the eyebrow-label + hairline-divider
  * pattern that's specific to this surface; if a second consumer appears,
  * lift into a shared module then.
+ *
+ * `settingKey` is REQUIRED and typed to the shared settings manifest
+ * (`@/shared/eval-suite-settings-manifest`), which declares how each row is
+ * reachable from the SDK / CLI / MCP. A new row therefore cannot be authored
+ * without answering that question: an unlisted key does not typecheck, and the
+ * stamped `data-setting-key` is what the parity tests read.
  */
 function SettingsSection({
+  settingKey,
   label,
   hint,
   labelAccessory,
@@ -119,6 +127,7 @@ function SettingsSection({
   children,
   inlineSlot,
 }: {
+  settingKey: EvalSuiteSettingKey;
   label: string;
   hint?: string;
   labelAccessory?: React.ReactNode;
@@ -135,7 +144,7 @@ function SettingsSection({
 }) {
   if (layout === "inline") {
     return (
-      <section className="py-5 first:pt-2 last:pb-2">
+      <section className="py-5 first:pt-2 last:pb-2" data-setting-key={settingKey}>
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-1">
@@ -155,7 +164,7 @@ function SettingsSection({
     );
   }
   return (
-    <section className="py-6 first:pt-2 last:pb-2">
+    <section className="py-6 first:pt-2 last:pb-2" data-setting-key={settingKey}>
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
           {label}
@@ -203,6 +212,7 @@ function SuiteGithubChecksSettingsSection({
 
   return (
     <SettingsSection
+      settingKey="githubChecks"
       label="GitHub Checks"
       hint="Run this suite on every pull request to a connected repository."
     >
@@ -252,6 +262,7 @@ export function SuiteIterationsView({
   omitRunIterationList = false,
   canDeleteSuite,
   canDeleteRuns = true,
+  canDeleteRun,
   readOnlyConfig = false,
   hideRunActions = false,
   casesSidebarHidden,
@@ -311,8 +322,13 @@ export function SuiteIterationsView({
   omitRunIterationList?: boolean;
   /** When true, show suite delete affordances. */
   canDeleteSuite: boolean;
-  /** Project admins only: run list batch delete and selection. */
+  /** Whether the run selection + batch delete surface is shown at all. */
   canDeleteRuns?: boolean;
+  /**
+   * Per ROW, because deleting a run takes the project manage tier OR
+   * authorship of that run. Omitted means every listed run may be deleted.
+   */
+  canDeleteRun?: (run: EvalSuiteRun) => boolean;
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
   readOnlyConfig?: boolean;
   /** When true, suppress suite-level run/replay entry points in shared chrome. */
@@ -474,12 +490,15 @@ export function SuiteIterationsView({
     (suitePinsSandboxImage && ephemeralCloudAvailable === false
       ? EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE
       : null);
-  // Hosts available to attach in the header's "+ Attach host" picker. The
-  // query is owned here (not inside SuiteOverviewClientBar) so the bar stays
-  // pure-props and renderable in test environments without a Convex provider.
-  const { hosts: projectHosts } = useHostList({
+  // A LOOKUP feeding `hostNamesById` below — nothing here offers a client to
+  // pick, so it opts into private scenario-backing clients. Naming and
+  // offering are different questions: a run that already resolved against a
+  // backing client should print that client's name rather than "unknown", and
+  // withholding the name hides history instead of preventing anything.
+  const { hosts: namableHosts } = useHostList({
     isAuthenticated,
     projectId: projectId ?? null,
+    includePrivateBacking: true,
   });
 
   // Use custom hooks for data calculations
@@ -529,8 +548,8 @@ export function SuiteIterationsView({
   // backed suite has none at all, yet its runs still stamp the environment's
   // resolved host.
   const hostNamesById = useMemo(
-    () => buildHostNamesById(suite.hostAttachments, projectHosts),
-    [suite.hostAttachments, projectHosts],
+    () => buildHostNamesById(suite.hostAttachments, namableHosts),
+    [suite.hostAttachments, namableHosts],
   );
 
   const omitRunDetailIdentity = useMemo(() => {
@@ -1185,6 +1204,7 @@ export function SuiteIterationsView({
                     }
                     userMap={userMap}
                     canDeleteRuns={canDeleteRuns && !hideRunActions}
+                    canDeleteRun={canDeleteRun}
                     canDeleteSuite={canDeleteSuite && !hideRunActions}
                     onDeleteSuite={() => onDelete(suite)}
                     deletingSuiteId={deletingSuiteId}
@@ -1369,6 +1389,7 @@ export function SuiteIterationsView({
 
               {/* ── Minimum accuracy (one row) ───────────────────────── */}
               <SettingsSection
+                settingKey="minimumAccuracy"
                 label="Minimum accuracy"
                 layout="inline"
                 inlineSlot={
@@ -1406,6 +1427,7 @@ export function SuiteIterationsView({
 
               {/* ── Minimum iterations ───────────────────────────────── */}
               <SettingsSection
+                settingKey="minimumIterations"
                 label="Minimum iterations"
                 layout="inline"
                 inlineSlot={
@@ -1461,6 +1483,7 @@ export function SuiteIterationsView({
                   the same image — comparable results across runs/edits. */}
               {computersEnabled && projectId ? (
                 <SettingsSection
+                  settingKey="computerEnvironment"
                   label="Computer environment"
                   labelAccessory={
                     <CloudRunBadge
@@ -1546,6 +1569,7 @@ export function SuiteIterationsView({
                   environment; the backend resolves each at launch. */}
               {projectEnvironmentsEnabled && projectId ? (
                 <SettingsSection
+                  settingKey="environments"
                   label="Environments"
                   layout="inline"
                   inlineSlot={
@@ -1568,6 +1592,7 @@ export function SuiteIterationsView({
 
               {/* ── Tool calls ───────────────────────────────────────── */}
               <SettingsSection
+                settingKey="toolCalls"
                 label="Tool calls"
                 hint="Cases and run overrides can change these."
               >
@@ -1597,7 +1622,8 @@ export function SuiteIterationsView({
 
               {/* ── Checks ───────────────────────────────────────────── */}
               <SettingsSection
-                label="Default global gates"
+                settingKey="defaultChecks"
+                label="Default checks"
                 labelAccessory={<GlobalGatesSectionInfoHint />}
                 layout="inline"
                 inlineSlot={
@@ -1637,6 +1663,7 @@ export function SuiteIterationsView({
               {/* ── Schedule (synthetic monitors, flag-gated) ────────── */}
               {syntheticMonitorsEnabled ? (
                 <SettingsSection
+                  settingKey="schedule"
                   label="Schedule"
                   hint="Run this suite automatically on a fixed interval."
                 >
@@ -1669,6 +1696,7 @@ export function SuiteIterationsView({
 
               {/* ── LLM as Judge ─────────────────────────────────────── */}
               <SettingsSection
+                settingKey="llmAsJudge"
                 label="LLM as Judge"
                 hint="Advisory scorer — grades each run automatically against its objective, inline next to pass/fail. Never changes pass/fail."
               >
@@ -1695,7 +1723,14 @@ export function SuiteIterationsView({
 
               {/* ── Delete ───────────────────────────────────────────── */}
               {canDeleteSuite ? (
-                <div className="flex items-center justify-between gap-4 py-5">
+                // Stamped directly rather than through `SettingsSection`: this
+                // is a destructive affordance, not a setting control, and it
+                // has never used the label/hint/slot layout. The manifest still
+                // covers it, so the parity tests still see it.
+                <div
+                  className="flex items-center justify-between gap-4 py-5"
+                  data-setting-key="deleteSuite"
+                >
                   <div className="min-w-0">
                     <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
                       Delete suite

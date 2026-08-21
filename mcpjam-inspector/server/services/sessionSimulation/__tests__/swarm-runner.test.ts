@@ -152,7 +152,7 @@ describe("swarm single-host runner — attempt ordering", () => {
     expect(adapter.runtime.modelDefinition.id).toBe(
       "anthropic/claude-haiku-4.5"
     );
-    expect(adapter.runtime.chatboxId).toBeUndefined();
+    expect(adapter.runtime.scenarioId).toBeUndefined();
     expect(adapter.persist).toMatchObject({
       sourceType: "swarm",
       origin: "swarm",
@@ -163,7 +163,7 @@ describe("swarm single-host runner — attempt ordering", () => {
     });
     // Per-turn widget-snapshot capture rides `onTurnPersisted`, through the
     // mutation's DIRECT auth branch: launcher bearer + session id, and NO
-    // chatboxId/accessVersion (swarm has no chatbox surface).
+    // scenarioId/accessVersion (swarm has no scenario surface).
     expect(adapter.onTurnPersisted).toBeTypeOf("function");
     const fakeMessages = [{ role: "assistant", content: "done" }];
     const fakeManager = { tag: "manager" };
@@ -225,6 +225,28 @@ describe("swarm single-host runner — outcome mapping + isolation", () => {
     expect(failed.chatSessionId).toBe("synth_run-1_host-1_0");
     // Failure of session 0 did not abort the batch.
     expect(runSyntheticHostSessionMock).toHaveBeenCalledTimes(2);
+  });
+
+  // A connect-time XAA failure is not a crashed session: the thrown route
+  // error classified itself (`details.reason`), the shared core hands that tag
+  // back, and it must reach the attempt row as the errorCode — otherwise the
+  // run banner can only re-guess it from the sentence it is about to render.
+  it("stores the thrown failure's classified reason as the attempt errorCode", async () => {
+    const message =
+      'Your sign-in no longer proves your identity to "Billing MCP", so its enterprise access token couldn\'t be issued — sign in again, then re-run.';
+    runSyntheticHostSessionMock.mockResolvedValue({
+      outcome: "failed",
+      errorMessage: message,
+      errorReason: "xaa_reauth_required",
+    });
+
+    await startJourneyRun(baseOpts({ sessionsPerTarget: 1 }));
+
+    const terminal = reportAttemptMock.mock.calls
+      .map((c) => c[2] as any)
+      .find((a) => a.status !== "running")!;
+    expect(terminal.errorCode).toBe("xaa_reauth_required");
+    expect(terminal.errorMessage).toBe(message);
   });
 
   it("maps a rate-limited session to a rate_limited terminal", async () => {

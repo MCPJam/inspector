@@ -55,7 +55,7 @@ function makeApp(): Hono {
 function request(
   method: string,
   path: string,
-  opts: { token?: string | null } = {},
+  opts: { token?: string | null } = {}
 ): Promise<Response> {
   const { token = "tok" } = opts;
   const headers: Record<string, string> = {};
@@ -86,18 +86,23 @@ describe("v1 harness routes", () => {
       const res = await request(
         "GET",
         "/api/v1/harness/claude-code/builtin-tools",
-        { token: null },
+        { token: null }
       );
       expect(res.status).toBe(401);
-      expect(((await res.json()) as { code?: string }).code).toBe("UNAUTHORIZED");
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "UNAUTHORIZED"
+      );
     });
 
     it("allows guests — the catalog is static, non-sensitive metadata (GET-only allowlist)", async () => {
-      validateGuestTokenMock.mockResolvedValue({ valid: true, guestId: "guest_1" });
+      validateGuestTokenMock.mockResolvedValue({
+        valid: true,
+        guestId: "guest_1",
+      });
       const res = await request(
         "GET",
         "/api/v1/harness/claude-code/builtin-tools",
-        { token: "guest-jwt" },
+        { token: "guest-jwt" }
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as { items: unknown[] };
@@ -110,7 +115,7 @@ describe("v1 harness routes", () => {
     it("returns the claude-code native tool catalog as a page of display DTOs", async () => {
       const res = await request(
         "GET",
-        "/api/v1/harness/claude-code/builtin-tools",
+        "/api/v1/harness/claude-code/builtin-tools"
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as { items: ToolInfo[] };

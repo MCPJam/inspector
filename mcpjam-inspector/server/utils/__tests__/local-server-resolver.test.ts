@@ -1055,7 +1055,15 @@ describe("resolveLocalServerForConnect — backend-resolved XAA identity error",
     ).rejects.toMatchObject({
       status: 400,
       code: "VALIDATION_ERROR",
-      message: identityError,
+      // Framed for the surface that is connecting: names the server, keeps the
+      // backend's actionable sentence as the reason clause, and carries the
+      // classified reason so a swarm banner can pick its tone.
+      message: expect.stringContaining(identityError),
+      details: expect.objectContaining({
+        reason: "xaa_configuration_invalid",
+        serverId: "srv-xaa",
+        serverName: "Legacy XAA server",
+      }),
     });
 
     // Exactly one outbound call — the authorize batch. No secret reveal, no
@@ -1496,7 +1504,7 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       "srv-stdio",
       {
         accessScope: "chat_v2",
-        chatboxId: "chatbox-1",
+        scenarioId: "scenario-1",
         accessVersion: 7,
       }
     );
@@ -1510,7 +1518,7 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
       projectId: "proj-1",
       serverId: "srv-stdio",
       accessScope: "chat_v2",
-      chatboxId: "chatbox-1",
+      scenarioId: "scenario-1",
       accessVersion: 7,
     });
   });

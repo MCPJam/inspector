@@ -6,13 +6,13 @@ export type HostedServerValidateContext = {
   serverId: string;
   serverName?: string;
   accessScope?: "project_member" | "chat_v2";
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   /**
    * Per-connection MCP `initialize.params.clientInfo` override resolved
    * client-side from `hostConfig.mcpProfile.initialize.clientInfo`. The
    * hosted backend serializes this verbatim into the MCP `initialize`
-   * call so hosted chatbox / inspector sessions honor the same identity
+   * call so hosted scenario / inspector sessions honor the same identity
    * pin as resolver-path local connects. Undefined → SDK defaults.
    *
    * Without this field the hosted path silently dropped `mcpProfile.
@@ -64,7 +64,19 @@ export interface HostedServerValidateResponse {
 }
 
 export interface HostedServerOAuthRequirementResponse {
+  /**
+   * Derived compat mirror of the canonical `authMethod`: true for an `auto`
+   * (discover) row too, which is why it must NOT be read as "authorize this
+   * before using it". Read `requiresAuthorization` for that.
+   */
   useOAuth: boolean;
+  /**
+   * Whether the server's stored auth configuration demands interactive
+   * authorization before it can be used at all (effective auth method
+   * `oauth`). Optional because an older inspector server does not send it.
+   */
+  requiresAuthorization?: boolean;
+  effectiveAuthMethod?: "oauth" | "xaa" | "bearer" | "none" | "discover";
   serverUrl: string | null;
 }
 
@@ -94,10 +106,10 @@ export async function validateHostedServer(
         ...(hostedContext.accessScope
           ? { accessScope: hostedContext.accessScope }
           : {}),
-        ...(hostedContext.chatboxId
-          ? { chatboxId: hostedContext.chatboxId }
+        ...(hostedContext.scenarioId
+          ? { scenarioId: hostedContext.scenarioId }
           : {}),
-        ...(hostedContext.chatboxId &&
+        ...(hostedContext.scenarioId &&
         Number.isFinite(hostedContext.accessVersion)
           ? { accessVersion: hostedContext.accessVersion }
           : {}),

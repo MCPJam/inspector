@@ -26,12 +26,17 @@ so results respect the caller's project access.
 | --- | --- | --- |
 | `get_me` | Return the account associated with the current API credential. | — |
 | `list_models` | List the public hosted model catalog available to MCPJam callers. | — |
+| `list_organizations` | List the organizations the caller belongs to — where project `organizationId`s come from. | — |
 | `list_projects` | List the MCPJam projects the caller can access, most recently updated first. | — |
+| `create_project` | Create an empty project in one of the caller's organizations. | — |
+| `update_project` | Rename a project or change its description, icon or visibility. Never touches server configs. | — |
 | `list_project_servers` | List the MCP servers saved in an MCPJam project. | — |
 | `create_project_server` | Save a new MCP server in a project, including optional credentials. | — |
 | `get_project_server` | Read one saved MCP server by project and server id. | — |
 | `update_project_server` | Update saved MCP server metadata or rotate/clear credentials. | — |
 | `delete_project_server` | Soft-delete a saved MCP server from a project. | — |
+| `connect_project_server` | Connect an MCP server URL to a project: discover its auth, save it, and return a private authorization link when a person must finish in a browser. | — |
+| `get_project_server_connection_status` | Check a connection request started by `connect_project_server`. | — |
 | `diagnose_server` | Diagnose a saved MCP server's connection: probe the URL, connect, initialize, and report capabilities and what failed. | — |
 | `list_server_tools` | List the tools a saved MCP server exposes: names, descriptions, and input schemas. | — |
 | `call_server_tool` | Execute a tool on a saved MCP server and return its result. | — |
@@ -40,35 +45,100 @@ so results respect the caller's project access.
 | `list_server_resources` | List the resources a saved MCP server exposes: uris, names, and mime types. | — |
 | `read_server_resource` | Read one resource from a saved MCP server by uri and return its contents. | — |
 | `check_host_compatibility` | Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). | — |
+| `start_claude_readiness_run` | Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; poll for the verdict. | — |
+| `start_openai_readiness_run` | Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit submission mode; starts a durable run and returns its id. | — |
+| `get_readiness_run` | Read one readiness run: whether it finished, what it graded, and whether the optional model pass ran. | — |
+| `list_readiness_runs` | List a project's readiness runs, newest first, optionally narrowed to one publisher or server. | — |
+| `cancel_readiness_run` | Stop a readiness run that is still going. | — |
+| `get_readiness_report` | Read a finished readiness run's findings, ordered most-consequential-first and capped. | — |
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
 | `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
-| `run_eval_suite` | Start an asynchronous rerun of an existing eval suite. | — |
+| `run_eval_suite` | Start an asynchronous rerun of an existing eval suite, against one target or several. Fan-out is explicit: a suite with several attached targets refuses with TARGET_REQUIRED unless you name targets or pass allAttached, and each target is one PAID run. | — |
 | `create_eval_suite` | Create a runnable eval suite from authored test cases. | — |
-| `get_eval_suite` | Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge, schedule. | — |
-| `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge. | — |
+| `get_eval_suite` | Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule. | — |
+| `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge (`autoRun` is what makes grading happen; `enabled` alone only makes the judge available). | — |
 | `delete_eval_suite` | Permanently delete an eval suite and all its cases and runs. | — |
 | `set_eval_suite_schedule` | Enable or disable automatic scheduled runs for a suite, and set the interval. | — |
 | `set_eval_suite_environments` | Attach project environments to an eval suite, replacing whatever it had. | — |
 | `list_eval_cases` | List the test cases in an eval suite, with their ids and configuration. | — |
 | `get_eval_case` | Fetch one eval test case's full definition. | — |
 | `create_eval_case` | Add one test case to an eval suite. | — |
+| `create_eval_cases` | Add several test cases to an eval suite in one call. | — |
 | `update_eval_case` | Edit an eval test case. | — |
 | `delete_eval_case` | Permanently delete one test case from an eval suite. | — |
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
 | `get_eval_run` | Get the status, pass/fail result, and summary counts of an eval run. | ✅ |
+| `compare_eval_run` | Compare an eval run against a baseline run: per-case status (regressed, fixed, new, removed, changed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. | — |
 | `list_eval_run_iterations` | List per-iteration results for an eval run: pass/fail, expected vs actual tool calls, token usage, and latency. | ✅ |
 | `get_eval_iteration_trace` | Fetch the full trace for one eval iteration: the complete message history plus expected-vs-actual tool-call analysis. | — |
 | `get_eval_run_steps` | Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). | — |
 | `cancel_eval_run` | Cancel an in-flight eval run. | — |
+| `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
+| `list_eval_check_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
+| `connect_eval_check_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
+| `list_sandbox_images` | List the custom Computer sandbox images (blueprints) in a project — the choices for a suite's `environment.computerEnvironment`. | — |
+| `get_sandbox_image` | Show one sandbox image's blueprint, sharing, and latest build status. | — |
 | `list_project_plugins` | List the live Agent Plugins installed in a project: name, display name, enabled state, and active version id. | — |
 | `get_plugin_version` | Show one imported plugin version: status, component counts, and per-component summaries (servers with placement and auth timing, skills with their namespaced refs). | — |
-| `list_chatboxes` | List the chatboxes published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
-| `get_chatbox` | Get one chatbox's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. | ✅ |
+| `list_scenarios` | List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
+| `get_scenario` | Get one scenario's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. | ✅ |
 | `list_chat_sessions` | List chat sessions visible to the caller, most recent activity first. | — |
+| `search_sessions` | Search a project's sessions across every surface (Playground, user testing, evals, swarms), ranked by relevance. `scope=titles` searches titles and opening messages; `scope=transcripts` searches what was said. Every result carries a link. | — |
+| `get_capabilities` | Your role, which betas this organization has, your plan's limits, and a `can` block of booleans. Ask this before planning work that authors, launches or publishes — the tool list is the same for every caller and cannot tell you a beta is off. | — |
+| `list_personas` | List the project's reusable synthetic characters — the cast Swarms journeys run as. | — |
+| `get_persona` | Get one persona in full, including its behavioural notes. | — |
+| `create_persona` | Create a reusable synthetic character for Swarms to run as. | — |
+| `update_persona` | Edit a persona's name, role or notes. Finished runs keep the persona they ran as. | — |
+| `delete_persona` | Remove a persona from the roster. Soft: history keeps resolving it. | — |
+| `generate_personas` | Draft candidate personas with a model, grounded in what the project's servers do. Saves nothing; spends. | — |
+| `list_journeys` | List the project's journeys — a persona, a goal, and the environments to pursue it against. | — |
+| `get_journey` | Get one journey in full, including the execution config that determines how many sessions a run produces. | — |
+| `create_journey` | Author a journey. Creating does not run it. | — |
+| `update_journey` | Edit a journey. A run already in flight keeps the config it launched with. | — |
+| `archive_journey` | Take a journey off the roster. Its runs, sessions and scorecards stay readable. | — |
+| `generate_journeys` | Draft candidate journeys for a persona with a model. Saves nothing; spends. | — |
+| `list_journey_runs` | List a journey's runs, newest first. | — |
+| `get_journey_run` | Get one journey run: status, per-target rollups, and per-session attempt records. This is what to poll after launching. | — |
+| `list_journey_run_sessions` | List the chat sessions a journey run produced, with readiness, goal scores and a first-message preview. | — |
+| `launch_journey_run` | Launch a journey run and return immediately with its id. Spends model credits across the whole fan-out; pass an idempotency key. | — |
+| `cancel_journey_run` | Stop a running journey run, settling its in-flight and pending sessions. | — |
+| `list_swarms` | List swarm containers — the groups journeys are authored under, holding their shared execution config. | — |
+| `get_swarm` | Get one swarm container: its name, defaults and fan-out. | — |
+| `create_swarm` | Create a container to author journeys under. Runs nothing. | — |
+| `update_swarm` | Edit a swarm container's name, description, fan-out or config. | — |
+| `archive_swarm` | Take a swarm container off the roster. Journeys authored under it keep working. | — |
+| `get_swarms_overview` | The project's recent runs with their rubric findings and goal-completion trend — the roll-up a human sees on the Swarms page. | — |
+| `get_journey_run_scorecard` | Per-criterion pass/fail counts for one run. Deterministic, so read this first when explaining a failure. | — |
+| `list_swarm_findings` | Criteria that keep failing across waves, with how long each has been failing. | — |
+| `dismiss_swarm_finding` | Mark a finding as not worth acting on. Its lifecycle keeps updating underneath. | — |
+| `undismiss_swarm_finding` | Bring a dismissed finding back into the active list. | — |
+| `get_wave_insights` | The model's analysis of a whole wave, if one has been requested. Poll after requesting. | — |
+| `request_wave_insights` | Ask a model to analyze a whole wave. Spends against the organization's shared daily insights budget. | — |
+| `cancel_wave_insights` | Stop an in-flight insights generation — the recovery path for a wave stuck pending. | — |
+| `publish_scenario` | Publish a project environment for user testing, returning its share link and access mode. | — |
+| `unpublish_scenario` | Take a live user-testing scenario down. Every guest session on it dies with it. | — |
+| `get_user_testing_scenario` | Scenario detail plus its actionable-insights envelope — aggregated findings with exemplar evidence over the latest analyzed window. | — |
+| `list_user_testing_sessions` | Sessions real visitors had with a published scenario: counts, feedback, device, segment and a first-message preview. Summaries only. | — |
+| `get_user_testing_session` | One session's conversation, paged and projected. Prefer the metrics or findings when you need the pattern rather than the words. | — |
+| `get_user_testing_metrics` | Aggregate metrics across a scenario's sessions. | — |
+| `get_user_testing_usage` | Usage rates by visitor and device. Read `scan.truncated` before quoting any rate. | — |
+| `list_user_testing_findings` | Problems detected across a scenario's sessions, tracked over time. | — |
+| `get_user_testing_signals` | The scenario's live analysis window, and the windowId its insights are keyed by. | — |
+| `get_user_testing_insights` | The model's analysis of one analysis window, if one has been requested. | — |
+| `update_user_testing_scenario` | Rename a scenario, or change who may open its share link. Send `mode` on its own — identity and exposure are separate operations. | — |
+| `request_user_testing_insights` | Ask a model to analyze the current window. Spends against the organization's shared daily insights budget. | — |
+| `cancel_user_testing_insights` | Stop an in-flight insights generation — the recovery path for a window stuck pending. | — |
+| `dismiss_user_testing_finding` | Mark a finding as not worth acting on. | — |
+| `undismiss_user_testing_finding` | Bring a dismissed finding back into the active list. | — |
+| `set_user_testing_guest_execution` | What anonymous visitors may run on the organization's account, and how much. A full replacement, not a patch. | — |
+| `rotate_user_testing_link` | Mint a new share link and invalidate the old one. Immediate and irreversible. | — |
+| `upsert_user_testing_member` | Grant one person access to a scenario by email. | — |
+| `remove_user_testing_member` | Revoke one person's access. | — |
+| `rebind_user_testing_scenario` | Swap the environment behind a scenario, keeping its link, members and history. | — |
 
 <!-- The rows above are the CATALOG, not a hand-written summary: they are
      checked against `PLATFORM_CATALOG_OPERATIONS` by
@@ -118,9 +188,21 @@ can run against instead of a loose server selection. Attach them to a suite
 with `set_eval_suite_environments`; from then on `run_eval_suite` /
 `run_eval_case` take an `environment` (name or ID) naming which one to use.
 A suite with exactly one attached environment uses it automatically; a suite
-with several requires the argument, and the error names the candidates.
+with several refuses with `TARGET_REQUIRED` and names every candidate, rather
+than guessing how much to spend. `run_eval_suite` also takes `environments`
+(several, one paid run each), `host`/`hosts` for a suite with attached hosts,
+and `allAttached` to fan out across every attached target on ONE axis —
+environments if the suite has any, otherwise hosts, never a cross product.
 `environment` and `servers` are mutually exclusive — an environment supplies a
-closed server set that an override cannot change.
+closed server set that an override cannot change — and so are the environment
+and host axes.
+
+Instead of NAMING a target, `compose` builds one: a host plus an optional
+model, sandbox image, server group and pinned skills becomes an unnamed,
+content-addressed environment (the same row `ensure_adhoc_environment`
+returns), which is then APPENDED to the suite so the run stays reproducible
+from the app. Promote such a row to a named environment in place with
+`name_environment`.
 
 An environment-backed run records the environment and the exact revision it
 executed against, and `get_eval_run` reports that triple — so an agent can

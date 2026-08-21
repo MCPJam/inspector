@@ -1,0 +1,1082 @@
+{
+  "__meta": {
+    "purpose": "Cross-repo wire pin for the eval run comparison. The mcpjam-backend copy is the source of truth; the inspector copy must be BYTE-IDENTICAL.",
+    "mirror": "mcpjam-inspector/server/routes/v1/__fixtures__/eval-run-compare-parity.json",
+    "byteIdentical": "Both repos pin the same EVAL_RUN_COMPARE_PARITY_SHA256 literal over these exact bytes. Edit one side and BOTH tests fail — which is the point: the backend produces this shape and the inspector projects it, and neither may drift without the other noticing.",
+    "producedBy": "convex/lib/evalRunDiff.ts buildEvalRunDiff, previewChars 2000",
+    "covers": [
+      "a deterministic GATING scorer flipping passed -> failed (ck_regressed)",
+      "the same scorerId graded under a changed definitionHash (definitionChanged)",
+      "a quarantined row excluded from every rate but counted (ck_quarantined)",
+      "a run-level evaluation config change (cfg_hash_base -> cfg_hash_compare)",
+      "a per-case config that did NOT change while the run-level one did (ck_stable)",
+      "not_applicable excluded from a pass-rate denominator (tone on ck_stable)",
+      "_storage blob ids present in the internal diff and dropped by the public DTO"
+    ]
+  },
+  "suite": {
+    "_id": "suite_parity",
+    "name": "Parity Suite",
+    "source": "sdk"
+  },
+  "previewChars": 2000,
+  "base": {
+    "run": {
+      "_creationTime": 1,
+      "suiteId": "suite_parity",
+      "createdBy": "user_parity",
+      "configRevision": "rev-1",
+      "status": "completed",
+      "isActive": true,
+      "source": "sdk",
+      "configSnapshot": {
+        "tests": [
+          {
+            "caseKey": "ck_regressed",
+            "title": "Regressed case",
+            "query": "alpha"
+          },
+          {
+            "caseKey": "ck_quarantined",
+            "title": "Quarantined case",
+            "query": "beta"
+          },
+          {
+            "caseKey": "ck_stable",
+            "title": "Stable case",
+            "query": "gamma"
+          }
+        ],
+        "environment": {
+          "servers": []
+        }
+      },
+      "_id": "run_parity_base",
+      "runNumber": 1,
+      "result": "passed",
+      "summary": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "passRate": 1
+      },
+      "createdAt": 1000,
+      "completedAt": 4000,
+      "evaluationConfigHash": "cfg_hash_base",
+      "scoreIntegrity": "valid"
+    },
+    "iterations": [
+      {
+        "_creationTime": 1,
+        "createdBy": "user_parity",
+        "createdAt": 1000,
+        "startedAt": 1000,
+        "updatedAt": 1500,
+        "iterationNumber": 1,
+        "status": "completed",
+        "actualToolCalls": [],
+        "tokensUsed": 100,
+        "_id": "iter_base_regressed",
+        "testCaseId": "case_regressed",
+        "suiteRunId": "run_parity_base",
+        "result": "passed",
+        "blob": "kg27hn0wzy4t9xq3bd6vfmr5c81storage",
+        "testCaseSnapshot": {
+          "caseKey": "ck_regressed",
+          "title": "Regressed case",
+          "query": "alpha",
+          "provider": "openai",
+          "model": "gpt-4o",
+          "expectedToolCalls": []
+        },
+        "metadata": {
+          "scores": [
+            {
+              "scorerVersion": "1",
+              "passThreshold": 1,
+              "deterministic": true,
+              "scorerId": "tool-match",
+              "definitionHash": "def_tool_match_v1",
+              "status": "scored",
+              "value": 1,
+              "passed": true
+            },
+            {
+              "scorerVersion": "1",
+              "passThreshold": 0.5,
+              "deterministic": false,
+              "scorerId": "tone",
+              "definitionHash": "def_tone_v1",
+              "status": "scored",
+              "value": 0.9,
+              "passed": true
+            }
+          ],
+          "evaluationConfig": {
+            "hash": "cfg_hash_base",
+            "definitions": [
+              {
+                "scorerId": "tool-match",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl_tool_match_v1",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              },
+              {
+                "scorerId": "tone",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl_tone_v1",
+                "deterministic": false,
+                "passThreshold": 0.5,
+                "role": "advisory",
+                "onError": "ignore",
+                "onSkipped": "ignore",
+                "model": "gpt-4o-mini"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "_creationTime": 1,
+        "createdBy": "user_parity",
+        "createdAt": 1000,
+        "startedAt": 1000,
+        "updatedAt": 1500,
+        "iterationNumber": 1,
+        "status": "completed",
+        "actualToolCalls": [],
+        "tokensUsed": 100,
+        "_id": "iter_base_quarantined",
+        "testCaseId": "case_quarantined",
+        "suiteRunId": "run_parity_base",
+        "result": "passed",
+        "testCaseSnapshot": {
+          "caseKey": "ck_quarantined",
+          "title": "Quarantined case",
+          "query": "beta",
+          "provider": "openai",
+          "model": "gpt-4o",
+          "expectedToolCalls": []
+        },
+        "metadata": {
+          "scores": [
+            {
+              "scorerVersion": "1",
+              "passThreshold": 1,
+              "deterministic": true,
+              "scorerId": "tool-match",
+              "definitionHash": "def_tool_match_v1",
+              "status": "scored",
+              "value": 1,
+              "passed": true
+            }
+          ],
+          "evaluationConfig": {
+            "hash": "cfg_hash_base",
+            "definitions": [
+              {
+                "scorerId": "tool-match",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl_tool_match_v1",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "_creationTime": 1,
+        "createdBy": "user_parity",
+        "createdAt": 1000,
+        "startedAt": 1000,
+        "updatedAt": 1500,
+        "iterationNumber": 1,
+        "status": "completed",
+        "actualToolCalls": [],
+        "tokensUsed": 100,
+        "_id": "iter_base_stable",
+        "testCaseId": "case_stable",
+        "suiteRunId": "run_parity_base",
+        "result": "passed",
+        "testCaseSnapshot": {
+          "caseKey": "ck_stable",
+          "title": "Stable case",
+          "query": "gamma",
+          "provider": "openai",
+          "model": "gpt-4o",
+          "expectedToolCalls": []
+        },
+        "metadata": {
+          "scores": [
+            {
+              "scorerVersion": "1",
+              "passThreshold": 0.5,
+              "deterministic": false,
+              "scorerId": "tone",
+              "definitionHash": "def_tone_v1",
+              "status": "not_applicable"
+            }
+          ],
+          "evaluationConfig": {
+            "hash": "cfg_hash_base",
+            "definitions": [
+              {
+                "scorerId": "tone",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl_tone_v1",
+                "deterministic": false,
+                "passThreshold": 0.5,
+                "role": "advisory",
+                "onError": "ignore",
+                "onSkipped": "ignore",
+                "model": "gpt-4o-mini"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "compare": {
+    "run": {
+      "_creationTime": 1,
+      "suiteId": "suite_parity",
+      "createdBy": "user_parity",
+      "configRevision": "rev-1",
+      "status": "completed",
+      "isActive": true,
+      "source": "sdk",
+      "configSnapshot": {
+        "tests": [
+          {
+            "caseKey": "ck_regressed",
+            "title": "Regressed case",
+            "query": "alpha"
+          },
+          {
+            "caseKey": "ck_quarantined",
+            "title": "Quarantined case",
+            "query": "beta"
+          },
+          {
+            "caseKey": "ck_stable",
+            "title": "Stable case",
+            "query": "gamma"
+          }
+        ],
+        "environment": {
+          "servers": []
+        }
+      },
+      "_id": "run_parity_compare",
+      "runNumber": 2,
+      "result": "failed",
+      "summary": {
+        "total": 3,
+        "passed": 2,
+        "failed": 1,
+        "passRate": 0.6666666666666666
+      },
+      "createdAt": 10000,
+      "completedAt": 16000,
+      "evaluationConfigHash": "cfg_hash_compare",
+      "scoreIntegrity": "valid"
+    },
+    "iterations": [
+      {
+        "_creationTime": 1,
+        "createdBy": "user_parity",
+        "createdAt": 1000,
+        "startedAt": 1000,
+        "updatedAt": 2200,
+        "iterationNumber": 1,
+        "status": "completed",
+        "actualToolCalls": [],
+        "tokensUsed": 100,
+        "_id": "iter_compare_regressed",
+        "testCaseId": "case_regressed",
+        "suiteRunId": "run_parity_compare",
+        "result": "failed",
+        "error": "expected tool \"search\" was never called",
+        "blob": "kg9042pxwq7mn3jrl6svbt85dz1storage",
+        "testCaseSnapshot": {
+          "caseKey": "ck_regressed",
+          "title": "Regressed case",
+          "query": "alpha",
+          "provider": "openai",
+          "model": "gpt-4o",
+          "expectedToolCalls": []
+        },
+        "metadata": {
+          "scores": [
+            {
+              "scorerVersion": "1",
+              "passThreshold": 1,
+              "deterministic": true,
+              "scorerId": "tool-match",
+              "definitionHash": "def_tool_match_v2",
+              "status": "scored",
+              "value": 0,
+              "passed": false
+            },
+            {
+              "scorerVersion": "1",
+              "passThreshold": 0.5,
+              "deterministic": false,
+              "scorerId": "tone",
+              "definitionHash": "def_tone_v1",
+              "status": "scored",
+              "value": 0.7,
+              "passed": true
+            }
+          ],
+          "evaluationConfig": {
+            "hash": "cfg_hash_compare",
+            "definitions": [
+              {
+                "scorerId": "tool-match",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl_tool_match_v2",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              },
+              {
+                "scorerId": "tone",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl_tone_v1",
+                "deterministic": false,
+                "passThreshold": 0.5,
+                "role": "advisory",
+                "onError": "ignore",
+                "onSkipped": "ignore",
+                "model": "gpt-4o-mini"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "_creationTime": 1,
+        "createdBy": "user_parity",
+        "createdAt": 1000,
+        "startedAt": 1000,
+        "updatedAt": 1500,
+        "iterationNumber": 1,
+        "status": "completed",
+        "actualToolCalls": [],
+        "tokensUsed": 100,
+        "_id": "iter_compare_quarantined",
+        "testCaseId": "case_quarantined",
+        "suiteRunId": "run_parity_compare",
+        "result": "passed",
+        "testCaseSnapshot": {
+          "caseKey": "ck_quarantined",
+          "title": "Quarantined case",
+          "query": "beta",
+          "provider": "openai",
+          "model": "gpt-4o",
+          "expectedToolCalls": []
+        },
+        "metadata": {
+          "scores": [
+            {
+              "scorerVersion": "1",
+              "passThreshold": 1,
+              "deterministic": true,
+              "scorerId": "tool-match",
+              "definitionHash": "def_tool_match_v2",
+              "status": "scored",
+              "value": 1,
+              "passed": true
+            }
+          ],
+          "scoresQuarantined": [
+            {
+              "reason": "value 4 is outside the unit interval",
+              "raw": {
+                "scorerId": "tone",
+                "value": 4
+              }
+            }
+          ],
+          "scoreIntegrity": "score_integrity_invalid",
+          "scoreIntegrityReason": "value 4 is outside the unit interval",
+          "evaluationConfig": {
+            "hash": "cfg_hash_compare",
+            "definitions": [
+              {
+                "scorerId": "tool-match",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl_tool_match_v2",
+                "deterministic": true,
+                "passThreshold": 1,
+                "role": "gating",
+                "onError": "fail",
+                "onSkipped": "fail"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "_creationTime": 1,
+        "createdBy": "user_parity",
+        "createdAt": 1000,
+        "startedAt": 1000,
+        "updatedAt": 1500,
+        "iterationNumber": 1,
+        "status": "completed",
+        "actualToolCalls": [],
+        "tokensUsed": 100,
+        "_id": "iter_compare_stable",
+        "testCaseId": "case_stable",
+        "suiteRunId": "run_parity_compare",
+        "result": "passed",
+        "testCaseSnapshot": {
+          "caseKey": "ck_stable",
+          "title": "Stable case",
+          "query": "gamma",
+          "provider": "openai",
+          "model": "gpt-4o",
+          "expectedToolCalls": []
+        },
+        "metadata": {
+          "scores": [
+            {
+              "scorerVersion": "1",
+              "passThreshold": 0.5,
+              "deterministic": false,
+              "scorerId": "tone",
+              "definitionHash": "def_tone_v1",
+              "status": "not_applicable"
+            }
+          ],
+          "evaluationConfig": {
+            "hash": "cfg_hash_base",
+            "definitions": [
+              {
+                "scorerId": "tone",
+                "idSource": "explicit",
+                "scorerVersion": "1",
+                "implementationHash": "impl_tone_v1",
+                "deterministic": false,
+                "passThreshold": 0.5,
+                "role": "advisory",
+                "onError": "ignore",
+                "onSkipped": "ignore",
+                "model": "gpt-4o-mini"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  },
+  "expectedDiff": {
+    "suite": {
+      "id": "suite_parity",
+      "name": "Parity Suite",
+      "source": "sdk"
+    },
+    "baseRun": {
+      "id": "run_parity_base",
+      "runNumber": 1,
+      "source": "sdk",
+      "framework": null,
+      "createdAt": 1000,
+      "completedAt": 4000,
+      "result": "passed",
+      "summary": {
+        "total": 3,
+        "passed": 3,
+        "failed": 0,
+        "passRate": 1
+      }
+    },
+    "compareRun": {
+      "id": "run_parity_compare",
+      "runNumber": 2,
+      "source": "sdk",
+      "framework": null,
+      "createdAt": 10000,
+      "completedAt": 16000,
+      "result": "failed",
+      "summary": {
+        "total": 3,
+        "passed": 2,
+        "failed": 1,
+        "passRate": 0.6666666666666666
+      }
+    },
+    "metrics": {
+      "startOffsetMs": {
+        "base": -9000,
+        "compare": 0,
+        "delta": 9000,
+        "percentDelta": -100
+      },
+      "wallDurationMs": {
+        "base": 3000,
+        "compare": 6000,
+        "delta": 3000,
+        "percentDelta": 100
+      },
+      "totalTokens": {
+        "base": 300,
+        "compare": 300,
+        "delta": 0,
+        "percentDelta": 0
+      },
+      "inputTokens": {
+        "base": null,
+        "compare": null,
+        "delta": null,
+        "percentDelta": null
+      },
+      "outputTokens": {
+        "base": null,
+        "compare": null,
+        "delta": null,
+        "percentDelta": null
+      },
+      "cachedInputTokens": {
+        "base": null,
+        "compare": null,
+        "delta": null,
+        "percentDelta": null
+      },
+      "reasoningTokens": {
+        "base": null,
+        "compare": null,
+        "delta": null,
+        "percentDelta": null
+      },
+      "estimatedCostUsd": {
+        "base": null,
+        "compare": null,
+        "delta": null,
+        "percentDelta": null
+      }
+    },
+    "scores": {
+      "passRatePercent": {
+        "base": 100,
+        "compare": 66.66666666666666,
+        "delta": -33.33333333333334,
+        "percentDelta": -33.33333333333334
+      },
+      "total": {
+        "base": 3,
+        "compare": 3,
+        "delta": 0,
+        "percentDelta": 0
+      },
+      "passed": {
+        "base": 3,
+        "compare": 2,
+        "delta": -1,
+        "percentDelta": -33.33333333333333
+      },
+      "failed": {
+        "base": 0,
+        "compare": 1,
+        "delta": 1,
+        "percentDelta": null
+      }
+    },
+    "scoreContract": {
+      "base": {
+        "evaluationConfigHash": "cfg_hash_base",
+        "scoreIntegrity": "valid",
+        "scoredIterations": 3,
+        "quarantinedIterations": 0
+      },
+      "compare": {
+        "evaluationConfigHash": "cfg_hash_compare",
+        "scoreIntegrity": "valid",
+        "scoredIterations": 3,
+        "quarantinedIterations": 1
+      },
+      "evaluationConfigChanged": true,
+      "scorers": [
+        {
+          "scorerId": "tone",
+          "gating": false,
+          "deterministic": false,
+          "definitionChanged": false,
+          "passRate": {
+            "base": 1,
+            "compare": 1,
+            "delta": 0,
+            "percentDelta": 0
+          },
+          "meanValue": {
+            "base": 0.9,
+            "compare": 0.7,
+            "delta": -0.20000000000000007,
+            "percentDelta": -22.22222222222223
+          },
+          "errorCount": {
+            "base": 0,
+            "compare": 0
+          }
+        },
+        {
+          "scorerId": "tool-match",
+          "gating": true,
+          "deterministic": true,
+          "definitionChanged": true,
+          "passRate": {
+            "base": 1,
+            "compare": 0.5,
+            "delta": -0.5,
+            "percentDelta": -50
+          },
+          "meanValue": {
+            "base": 1,
+            "compare": 0.5,
+            "delta": -0.5,
+            "percentDelta": -50
+          },
+          "errorCount": {
+            "base": 0,
+            "compare": 0
+          }
+        }
+      ]
+    },
+    "cases": [
+      {
+        "caseKey": "ck_regressed",
+        "title": "Regressed case",
+        "testCaseId": "case_regressed",
+        "status": "regressed",
+        "configChanged": false,
+        "evaluationConfigChanged": true,
+        "scoreDeltas": [
+          {
+            "scorerId": "tone",
+            "gating": false,
+            "deterministic": false,
+            "definitionChanged": false,
+            "base": {
+              "status": "scored",
+              "value": 0.9,
+              "passed": true
+            },
+            "compare": {
+              "status": "scored",
+              "value": 0.7,
+              "passed": true
+            },
+            "value": {
+              "base": 0.9,
+              "compare": 0.7,
+              "delta": -0.20000000000000007,
+              "percentDelta": -22.22222222222223
+            }
+          },
+          {
+            "scorerId": "tool-match",
+            "gating": true,
+            "deterministic": true,
+            "definitionChanged": true,
+            "base": {
+              "status": "scored",
+              "value": 1,
+              "passed": true
+            },
+            "compare": {
+              "status": "scored",
+              "value": 0,
+              "passed": false
+            },
+            "value": {
+              "base": 1,
+              "compare": 0,
+              "delta": -1,
+              "percentDelta": -100
+            }
+          }
+        ],
+        "base": {
+          "outcome": "passed",
+          "iterationIds": [
+            "iter_base_regressed"
+          ],
+          "representativeIterationId": "iter_base_regressed",
+          "traceBlobIds": [
+            "kg27hn0wzy4t9xq3bd6vfmr5c81storage"
+          ],
+          "input": {
+            "text": "alpha",
+            "truncated": false
+          },
+          "output": null,
+          "expectedToolCalls": [],
+          "actualToolCalls": [],
+          "error": null,
+          "metrics": {
+            "durationMs": 500,
+            "totalTokens": 100,
+            "inputTokens": null,
+            "outputTokens": null,
+            "cachedInputTokens": null,
+            "reasoningTokens": null,
+            "estimatedCostUsd": null
+          }
+        },
+        "compare": {
+          "outcome": "failed",
+          "iterationIds": [
+            "iter_compare_regressed"
+          ],
+          "representativeIterationId": "iter_compare_regressed",
+          "traceBlobIds": [
+            "kg9042pxwq7mn3jrl6svbt85dz1storage"
+          ],
+          "input": {
+            "text": "alpha",
+            "truncated": false
+          },
+          "output": {
+            "text": "expected tool \"search\" was never called",
+            "truncated": false
+          },
+          "expectedToolCalls": [],
+          "actualToolCalls": [],
+          "error": "expected tool \"search\" was never called",
+          "metrics": {
+            "durationMs": 1200,
+            "totalTokens": 100,
+            "inputTokens": null,
+            "outputTokens": null,
+            "cachedInputTokens": null,
+            "reasoningTokens": null,
+            "estimatedCostUsd": null
+          }
+        },
+        "metrics": {
+          "durationMs": {
+            "base": 500,
+            "compare": 1200,
+            "delta": 700,
+            "percentDelta": 140
+          },
+          "totalTokens": {
+            "base": 100,
+            "compare": 100,
+            "delta": 0,
+            "percentDelta": 0
+          },
+          "inputTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "outputTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "cachedInputTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "reasoningTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "estimatedCostUsd": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          }
+        }
+      },
+      {
+        "caseKey": "ck_quarantined",
+        "title": "Quarantined case",
+        "testCaseId": "case_quarantined",
+        "status": "changed",
+        "configChanged": false,
+        "evaluationConfigChanged": true,
+        "scoreDeltas": [
+          {
+            "scorerId": "tool-match",
+            "gating": true,
+            "deterministic": true,
+            "definitionChanged": true,
+            "base": {
+              "status": "scored",
+              "value": 1,
+              "passed": true
+            },
+            "compare": {
+              "status": "scored",
+              "value": 1,
+              "passed": true
+            },
+            "value": {
+              "base": 1,
+              "compare": 1,
+              "delta": 0,
+              "percentDelta": 0
+            }
+          }
+        ],
+        "base": {
+          "outcome": "passed",
+          "iterationIds": [
+            "iter_base_quarantined"
+          ],
+          "representativeIterationId": "iter_base_quarantined",
+          "traceBlobIds": [],
+          "input": {
+            "text": "beta",
+            "truncated": false
+          },
+          "output": null,
+          "expectedToolCalls": [],
+          "actualToolCalls": [],
+          "error": null,
+          "metrics": {
+            "durationMs": 500,
+            "totalTokens": 100,
+            "inputTokens": null,
+            "outputTokens": null,
+            "cachedInputTokens": null,
+            "reasoningTokens": null,
+            "estimatedCostUsd": null
+          }
+        },
+        "compare": {
+          "outcome": "passed",
+          "iterationIds": [
+            "iter_compare_quarantined"
+          ],
+          "representativeIterationId": "iter_compare_quarantined",
+          "traceBlobIds": [],
+          "input": {
+            "text": "beta",
+            "truncated": false
+          },
+          "output": null,
+          "expectedToolCalls": [],
+          "actualToolCalls": [],
+          "error": null,
+          "metrics": {
+            "durationMs": 500,
+            "totalTokens": 100,
+            "inputTokens": null,
+            "outputTokens": null,
+            "cachedInputTokens": null,
+            "reasoningTokens": null,
+            "estimatedCostUsd": null
+          }
+        },
+        "metrics": {
+          "durationMs": {
+            "base": 500,
+            "compare": 500,
+            "delta": 0,
+            "percentDelta": 0
+          },
+          "totalTokens": {
+            "base": 100,
+            "compare": 100,
+            "delta": 0,
+            "percentDelta": 0
+          },
+          "inputTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "outputTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "cachedInputTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "reasoningTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "estimatedCostUsd": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          }
+        }
+      },
+      {
+        "caseKey": "ck_stable",
+        "title": "Stable case",
+        "testCaseId": "case_stable",
+        "status": "unchanged_passed",
+        "configChanged": false,
+        "evaluationConfigChanged": false,
+        "scoreDeltas": [
+          {
+            "scorerId": "tone",
+            "gating": false,
+            "deterministic": false,
+            "definitionChanged": false,
+            "base": {
+              "status": "not_applicable",
+              "value": null,
+              "passed": null
+            },
+            "compare": {
+              "status": "not_applicable",
+              "value": null,
+              "passed": null
+            },
+            "value": {
+              "base": null,
+              "compare": null,
+              "delta": null,
+              "percentDelta": null
+            }
+          }
+        ],
+        "base": {
+          "outcome": "passed",
+          "iterationIds": [
+            "iter_base_stable"
+          ],
+          "representativeIterationId": "iter_base_stable",
+          "traceBlobIds": [],
+          "input": {
+            "text": "gamma",
+            "truncated": false
+          },
+          "output": null,
+          "expectedToolCalls": [],
+          "actualToolCalls": [],
+          "error": null,
+          "metrics": {
+            "durationMs": 500,
+            "totalTokens": 100,
+            "inputTokens": null,
+            "outputTokens": null,
+            "cachedInputTokens": null,
+            "reasoningTokens": null,
+            "estimatedCostUsd": null
+          }
+        },
+        "compare": {
+          "outcome": "passed",
+          "iterationIds": [
+            "iter_compare_stable"
+          ],
+          "representativeIterationId": "iter_compare_stable",
+          "traceBlobIds": [],
+          "input": {
+            "text": "gamma",
+            "truncated": false
+          },
+          "output": null,
+          "expectedToolCalls": [],
+          "actualToolCalls": [],
+          "error": null,
+          "metrics": {
+            "durationMs": 500,
+            "totalTokens": 100,
+            "inputTokens": null,
+            "outputTokens": null,
+            "cachedInputTokens": null,
+            "reasoningTokens": null,
+            "estimatedCostUsd": null
+          }
+        },
+        "metrics": {
+          "durationMs": {
+            "base": 500,
+            "compare": 500,
+            "delta": 0,
+            "percentDelta": 0
+          },
+          "totalTokens": {
+            "base": 100,
+            "compare": 100,
+            "delta": 0,
+            "percentDelta": 0
+          },
+          "inputTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "outputTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "cachedInputTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "reasoningTokens": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          },
+          "estimatedCostUsd": {
+            "base": null,
+            "compare": null,
+            "delta": null,
+            "percentDelta": null
+          }
+        }
+      }
+    ]
+  },
+  "expectedBaselineNotFound": {
+    "status": "baseline_not_found",
+    "policy": {
+      "kind": "previous_completed"
+    }
+  }
+}

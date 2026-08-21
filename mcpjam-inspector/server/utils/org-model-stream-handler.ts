@@ -41,9 +41,18 @@ import {
   isClientFulfilledToolName,
   type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
-import type { PersistedTurnTrace } from "./chat-ingestion";
+import {
+  writePersistReceipt,
+  type PersistChatOutcome,
+  type PersistedTurnTrace,
+} from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
 import { logger } from "./logger.js";
+import {
+  createSystemStreamFailureReporter,
+  oncePerTurn,
+  type StreamFailureReporter,
+} from "./stream-failure-reporter.js";
 import {
   runDirectChatTurn,
   withMcpToolOriginChunkMetadata,
@@ -97,10 +106,14 @@ export interface OrgModelHandlerOptions {
    * in a synthetic run). Direct chatters omit or pass `"prompt"`.
    */
   approvalMode?: "prompt" | "auto-deny";
+  /**
+   * Persist tap. May return the ingest's outcome so the rail can stream a
+   * `data-persist-receipt` before closing. See `PersistChatOutcome`.
+   */
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace
-  ) => Promise<void> | void;
+  ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
@@ -113,10 +126,10 @@ export interface OrgModelHandlerOptions {
    */
   authHeader?: string;
   /**
-   * Resolved chatbox identity (post-redeem). Forwarded to /stream/org so
-   * Convex can authorize the actor against the chatbox + project.
+   * Resolved scenario identity (post-redeem). Forwarded to /stream/org so
+   * Convex can authorize the actor against the scenario + project.
    */
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   clientIp?: string | null;
   /**
@@ -142,6 +155,11 @@ export interface OrgModelHandlerOptions {
    * on collision.
    */
   extraBodyFields?: Record<string, unknown>;
+  /**
+   * Typed-telemetry seam for mid-stream failures; forwarded verbatim into
+   * the wrapped MCPJam handler. See stream-failure-reporter.ts.
+   */
+  failureReporter?: StreamFailureReporter;
 }
 
 // ---------------------------------------------------------------------------
@@ -267,12 +285,16 @@ export interface OrgLocalModelHandlerOptions {
   requireToolApproval?: boolean;
   /** Forwarded to /stream/org/local-usage for identity resolution. */
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
+  /**
+   * Persist tap. May return the ingest's outcome so the rail can stream a
+   * `data-persist-receipt` before closing. See `PersistChatOutcome`.
+   */
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace
-  ) => Promise<void> | void;
+  ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
@@ -299,6 +321,12 @@ export interface OrgLocalModelHandlerOptions {
    */
   progressivePlan?: ProgressiveToolPlan;
   discoveryState?: ToolDiscoveryState;
+  /**
+   * Typed-telemetry seam for mid-stream failures (route.operation.failed);
+   * see stream-failure-reporter.ts. Constructed at the route layer where a
+   * Hono context exists.
+   */
+  failureReporter?: StreamFailureReporter;
 }
 
 /**
@@ -332,8 +360,9 @@ function hasUnsupportedLocalApprovalGate(
     // dispatches on registry membership rather than the `ui_` prefix: the
     // property that matters is "the browser fulfills this", and only the
     // missing `execute` actually proves it.
-    return typeof (tool as { execute?: unknown } | undefined)?.execute ===
-      "function";
+    return (
+      typeof (tool as { execute?: unknown } | undefined)?.execute === "function"
+    );
   });
 }
 
@@ -354,6 +383,15 @@ export function handleLocalOrgChatModel(
     onLiveTextDelta,
   } = options;
 
+  // One typed route.operation.failed per turn across this handler's failure
+  // sites; system fallback keeps the invariant if a future caller forgets it.
+  const failureReporter = oncePerTurn(
+    options.failureReporter ??
+      createSystemStreamFailureReporter("org-local-stream")
+  );
+
+  // Deliberately NOT reported as an operation failure: this is a declared
+  // product limitation surfaced to the user, not something that broke.
   if (hasUnsupportedLocalApprovalGate(tools, requireToolApproval)) {
     const stream = createUIMessageStream({
       onError: (error) => formatLocalStreamError(error),
@@ -383,6 +421,20 @@ export function handleLocalOrgChatModel(
     assertOrgModelAllowed(provider, modelId);
     llmModel = buildOrgModelFromResolvedConfig(provider, modelId);
   } catch (configErr) {
+    // The response is still a 200 stream whose first chunk is the error, so
+    // the HTTP failure events never see this — the typed event is the only
+    // machine-readable record. Silent-cancel invariant: skip the report when
+    // the request was already aborted before validation failed.
+    if (!options.abortSignal?.aborted) {
+      failureReporter({
+        message: "[org/local] model config/allowlist failure",
+        error: configErr,
+        source: "web.chat-v2.org-local-config",
+        hop: "user_server_hop",
+        transport: "http_stream",
+        context: { providerKey: provider.providerKey, modelId },
+      });
+    }
     const stream = createUIMessageStream({
       onError: (error) => formatLocalStreamError(error),
       onFinish: async () => {
@@ -420,7 +472,16 @@ export function handleLocalOrgChatModel(
       ) {
         return "";
       }
-      logger.error("[org/local] stream error", error);
+      // Reporter, not a bare logger.error: the old call captured to Sentry
+      // unconditionally and left no typed record (this is a 200 stream).
+      failureReporter({
+        message: "[org/local] stream error",
+        error,
+        source: "web.chat-v2.org-local-stream",
+        hop: "user_server_hop",
+        transport: "http_stream",
+        context: { providerKey: provider.providerKey, modelId },
+      });
       return formatLocalStreamError(error);
     },
     onFinish: async () => {
@@ -444,6 +505,9 @@ export function handleLocalOrgChatModel(
       // callback fires from its `streamText` `onError` branch — and
       // gate `onConversationComplete` below.
       let streamErrored = false;
+      let persistReceipt:
+        | { outcome: PersistChatOutcome; turnId: string }
+        | undefined;
 
       handle = runDirectChatTurn({
         // The org-resolved model is typed as the AI SDK `LanguageModel`
@@ -488,6 +552,9 @@ export function handleLocalOrgChatModel(
           options,
           isStreamErrored: () => streamErrored,
           onConversationComplete,
+          onOutcome: (outcome, turnId) => {
+            persistReceipt = { outcome, turnId };
+          },
         }),
         onPersistError: (err) => {
           logger.warn("[org/local] onFinish ingestion error", {
@@ -509,13 +576,24 @@ export function handleLocalOrgChatModel(
           },
           onError: (error) => {
             if (handle!.isAborted() || isAbortError(error)) return "";
+            // toUIMessageStream CONSUMES the error (no rethrow), so the
+            // top-level onError above never sees it — this is the only
+            // chance to record it. The two sites are exclusive per error.
+            failureReporter({
+              message: "[org/local] direct stream error",
+              error,
+              source: "web.chat-v2.org-local-direct-stream",
+              hop: "user_server_hop",
+              transport: "http_stream",
+              context: { providerKey: provider.providerKey, modelId },
+            });
             return formatLocalStreamError(error);
           },
         })) {
           if (
             isSuspendedScopeStepUpOutputChunk(
               chunk,
-              options.suspendedToolCallId?.(),
+              options.suspendedToolCallId?.()
             )
           ) {
             continue;
@@ -529,6 +607,17 @@ export function handleLocalOrgChatModel(
         throw error;
       } finally {
         handle.cleanup();
+      }
+
+      // Safe to read here: `streamText`'s own `onFinish` — which is what
+      // `onPersist` runs inside — resolves before the UI-message stream this
+      // loop drains can end, so the persist has settled by the time we exit it.
+      // The stream itself is still open until `execute` returns.
+      if (persistReceipt && options.chatSessionId) {
+        writePersistReceipt(writer, persistReceipt.outcome, {
+          chatSessionId: options.chatSessionId,
+          turnId: persistReceipt.turnId,
+        });
       }
     },
   });
@@ -566,8 +655,17 @@ function buildLocalOrgOnPersist(params: {
   options: OrgLocalModelHandlerOptions;
   isStreamErrored: () => boolean;
   onConversationComplete: OrgLocalModelHandlerOptions["onConversationComplete"];
+  /**
+   * Hands the persist result back to the caller's scope. `runDirectChatTurn`
+   * awaits `onPersist` but discards whatever it returns, so an outer closure is
+   * the only way for the streaming rail to learn the outcome and emit its
+   * receipt. Widening the engine's own signature would touch every headless
+   * caller for no benefit.
+   */
+  onOutcome?: (outcome: PersistChatOutcome, turnId: string) => void;
 }): (event: DirectChatTurnPersistEvent) => Promise<void> {
-  const { options, isStreamErrored, onConversationComplete } = params;
+  const { options, isStreamErrored, onConversationComplete, onOutcome } =
+    params;
   return async (event) => {
     // Post usage to Convex (best-effort, non-blocking on failure).
     // Preserves the legacy fire-and-forget behavior so an ingestion
@@ -583,7 +681,7 @@ function buildLocalOrgOnPersist(params: {
       turnId: event.turnTrace.turnId,
       promptIndex: event.turnTrace.promptIndex,
       authHeader: options.authHeader,
-      chatboxId: options.chatboxId,
+      scenarioId: options.scenarioId,
       accessVersion: options.accessVersion,
       selectedServers: options.selectedServers,
       serverIds: options.serverIds,
@@ -614,7 +712,10 @@ function buildLocalOrgOnPersist(params: {
     // the legacy defensive-dedup semantics.
     const fullHistory: ModelMessage[] = [...options.messages];
     appendDedupedModelMessages(fullHistory, event.responseMessages);
-    await onConversationComplete(fullHistory, event.turnTrace);
+    const outcome = await onConversationComplete(fullHistory, event.turnTrace);
+    if (outcome) {
+      onOutcome?.(outcome, event.turnTrace.turnId);
+    }
   };
 }
 
@@ -636,7 +737,7 @@ export async function postLocalUsage(params: {
   turnId?: string;
   promptIndex?: number;
   authHeader?: string;
-  chatboxId?: string;
+  scenarioId?: string;
   accessVersion?: number;
   selectedServers?: string[];
   serverIds?: string[];
@@ -674,16 +775,14 @@ export async function postLocalUsage(params: {
         ...(typeof params.promptIndex === "number"
           ? { promptIndex: params.promptIndex }
           : {}),
-        ...(params.chatboxId ? { chatboxId: params.chatboxId } : {}),
-        ...(params.chatboxId && Number.isFinite(params.accessVersion)
+        ...(params.scenarioId ? { scenarioId: params.scenarioId } : {}),
+        ...(params.scenarioId && Number.isFinite(params.accessVersion)
           ? { accessVersion: params.accessVersion }
           : {}),
         ...((params.serverIds ?? params.selectedServers)?.length
           ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
-        ...(params.journeyRunId
-          ? { journeyRunId: params.journeyRunId }
-          : {}),
+        ...(params.journeyRunId ? { journeyRunId: params.journeyRunId } : {}),
       }),
       signal: controller.signal,
     });
@@ -720,7 +819,7 @@ export async function handleHostedOrgChatModel(
     tools: options.tools,
     projectId: options.projectId,
     authHeader: options.authHeader,
-    chatboxId: options.chatboxId,
+    scenarioId: options.scenarioId,
     accessVersion: options.accessVersion,
     mcpClientManager: options.mcpClientManager,
     selectedServers: options.selectedServers,
@@ -741,6 +840,7 @@ export async function handleHostedOrgChatModel(
     scopeStepUpResume: options.scopeStepUpResume,
     progressivePlan: options.progressivePlan,
     discoveryState: options.discoveryState,
+    failureReporter: options.failureReporter,
     endpointPath: "/stream/org",
     extraBodyFields: {
       // Caller-provided fields first; sibling fields from this handler
@@ -748,7 +848,7 @@ export async function handleHostedOrgChatModel(
       // contract can't be silently broken by a downstream caller.
       ...(options.extraBodyFields ?? {}),
       providerKey: options.providerKey,
-      // chatboxId / accessVersion are set on the body by
+      // scenarioId / accessVersion are set on the body by
       // handleMCPJamFreeChatModel itself.
       ...((options.serverIds ?? options.selectedServers)?.length
         ? { serverIds: options.serverIds ?? options.selectedServers }
