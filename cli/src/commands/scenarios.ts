@@ -11,6 +11,7 @@ import {
   runPlatformOperation as runPlatformCommand,
   type PlatformOptions,
 } from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
@@ -59,9 +60,7 @@ export function registerScenariosCommands(program: Command): void {
       ({ client, signal }) =>
         listScenariosOperation.execute(
           {
-            ...(options.project === undefined
-              ? {}
-              : { project: options.project }),
+            project: resolveCloudProjectArgs(options).project,
           },
           { client, signal }
         )
@@ -91,9 +90,7 @@ export function registerScenariosCommands(program: Command): void {
           getScenarioOperation.execute(
             {
               scenario: options.scenario,
-              ...(options.project === undefined
-                ? {}
-                : { project: options.project }),
+              project: resolveCloudProjectArgs(options).project,
             },
             { client, signal }
           )
@@ -145,7 +142,7 @@ export function registerScenariosCommands(program: Command): void {
         ({ client, signal }) =>
           publishScenarioOperation.execute(
             {
-              project: options.project,
+              project: resolveCloudProjectArgs(options).project,
               environment: options.environment,
               ...(options.name !== undefined ? { name: options.name } : {}),
               ...(options.description !== undefined
@@ -177,7 +174,7 @@ export function registerScenariosCommands(program: Command): void {
         globalOptions.timeout,
         ({ client, signal }) =>
           unpublishScenarioOperation.execute(
-            { project: options.project, environment: options.environment },
+            { project: resolveCloudProjectArgs(options).project, environment: options.environment },
             { client, signal }
           )
       );

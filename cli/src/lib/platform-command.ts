@@ -14,12 +14,18 @@
 import type { Command } from "commander";
 import { PlatformApiError } from "@mcpjam/sdk/platform";
 import {
+  appendProjectLinkHint,
+  resolveCloudProjectArgs,
+  type ProjectCloudScope,
+  type ResolveProjectSelectorOptions,
+} from "./cloud-scope.js";
+import {
   buildPlatformClient,
   toCliError,
   webOriginForApiBaseUrl,
 } from "./platform-client.js";
 import { getGlobalOptions } from "./server-config.js";
-import { usageError, writeResult } from "./output.js";
+import { CliError, usageError, writeResult } from "./output.js";
 
 export type PlatformOptions = {
   apiKey?: string;
@@ -51,6 +57,11 @@ export type RunPlatformOperationExtras = {
    * the audience-line change lands.
    */
   announce?: boolean;
+  /**
+   * How the project selector for this operation was chosen. Used to append
+   * a re-link hint when a link-sourced selector fails online.
+   */
+  projectScope?: ProjectCloudScope;
 };
 
 /**
@@ -164,7 +175,13 @@ export async function runPlatformOperation<TOutput>(
     ) {
       throw toCliError(controller.signal.reason);
     }
-    throw toCliError(error);
+    const mapped = toCliError(error);
+    throw new CliError(
+      mapped.code,
+      appendProjectLinkHint(mapped.message, extras.projectScope),
+      mapped.exitCode,
+      mapped.details
+    );
   } finally {
     clearTimeout(timeoutHandle);
     externalSignal?.removeEventListener("abort", onExternalAbort);
@@ -212,6 +229,10 @@ function hasCloudAncestor(command: Command): boolean {
   return false;
 }
 
+function commandHasProjectOption(command: Command): boolean {
+  return command.options.some((option) => option.long === "--project");
+}
+
 export function bindOperation<TOptions extends PlatformOptions, TInput>(
   command: Command,
   operation: {
@@ -230,14 +251,58 @@ export function bindOperation<TOptions extends PlatformOptions, TInput>(
   }
   command.action(async (options: TOptions, invoked: Command) => {
     const globalOptions = getGlobalOptions(invoked);
+    const merged = platformOptionsOf<TOptions & { project?: string }>(invoked);
+    const applyAmbient =
+      hasCloudAncestor(invoked) && commandHasProjectOption(invoked);
+    const resolved = applyAmbient
+      ? resolveCloudProjectArgs({ project: merged.project })
+      : undefined;
+    const inputOptions = resolved
+      ? ({ ...options, project: resolved.project } as TOptions)
+      : options;
     const result = await runPlatformOperation(
       platformOptionsOf<TOptions>(invoked),
       globalOptions.timeout,
       ({ client, signal }) =>
-        operation.execute(buildInput(options), { client, signal })
+        operation.execute(buildInput(inputOptions), { client, signal }),
+      resolved ? { projectScope: resolved.projectScope } : {}
     );
     writeResult(result, globalOptions.format);
   });
+}
+
+/**
+ * Run a project-scoped Cloud operation, applying flag / input / env / link /
+ * automatic precedence to `--project` without writing the resolved selector
+ * back onto `options.project`.
+ */
+export async function runCloudOp<
+  TOptions extends PlatformOptions & { project?: string },
+  TOutput,
+>(
+  command: Command,
+  options: TOptions,
+  execute: (
+    context: PlatformOperationContext,
+    project: { project?: string }
+  ) => Promise<TOutput>,
+  extra: Omit<ResolveProjectSelectorOptions, "flagProject"> & {
+    extras?: RunPlatformOperationExtras;
+  } = {}
+): Promise<TOutput> {
+  const globalOptions = getGlobalOptions(command);
+  const { extras: nestedExtras, ...selectorExtra } = extra;
+  const resolved = resolveCloudProjectArgs(options, selectorExtra);
+  return runPlatformOperation(
+    platformOptionsOf(command),
+    globalOptions.timeout,
+    (context) =>
+      execute(
+        context,
+        resolved.project !== undefined ? { project: resolved.project } : {}
+      ),
+    { ...nestedExtras, projectScope: resolved.projectScope }
+  );
 }
 
 /** `--project` is optional everywhere: it defaults to the newest project. */
