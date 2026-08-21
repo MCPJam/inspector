@@ -135,7 +135,7 @@ export function toCliError(error: unknown): CliError {
   if (isPlatformApiError(error)) {
     const message =
       error.code === "UNAUTHORIZED"
-        ? `${error.message} Run \`mcpjam login\` or pass a valid sk_ API key.`
+        ? `${error.message} Run \`mcpjam cloud login\` or pass a valid sk_ API key.`
         : error.message;
     return cliError(error.code, message, 1, error.details);
   }

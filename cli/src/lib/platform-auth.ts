@@ -6,7 +6,7 @@
  *   2. `MCPJAM_API_KEY` env  (`mcpjam_...` warns and falls through — that
  *                             env var is shared with SDK eval reporting,
  *                             which still uses legacy keys)
- *   3. stored OAuth login    (`mcpjam login`, refreshed when near expiry)
+ *   3. stored OAuth login    (`mcpjam cloud login`, refreshed when near expiry)
  *
  * Login is Authorization Code + PKCE through the hosted bridge
  * (`/api/cli/auth/*`): the loopback listener and PKCE primitives come from
@@ -34,7 +34,7 @@ const TOKEN_REFRESH_SKEW_MS = 60_000;
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
 
 const LEGACY_KEY_REMEDY =
-  "Legacy mcpjam_ API keys are not supported by platform commands. Create an sk_ key at https://app.mcpjam.com/settings/api-keys or run `mcpjam login`.";
+  "Legacy mcpjam_ API keys are not supported by platform commands. Create an sk_ key at https://app.mcpjam.com/settings/api-keys or run `mcpjam cloud login`.";
 
 export interface PlatformCredential {
   kind: "api-key" | "oauth";
@@ -97,7 +97,7 @@ export async function getOAuthAccessToken(deps: {
   const stored = readStoredAuth(deps.authFilePath);
   if (!stored) {
     throw operationalError(
-      "Not logged in. Run `mcpjam login`, or pass an sk_ API key via --api-key / MCPJAM_API_KEY.",
+      "Not logged in. Run `mcpjam cloud login`, or pass an sk_ API key via --api-key / MCPJAM_API_KEY.",
     );
   }
 
@@ -110,7 +110,7 @@ export async function getOAuthAccessToken(deps: {
   }
 
   if (!stored.refreshToken) {
-    throw operationalError("Login expired. Run `mcpjam login` again.");
+    throw operationalError("Login expired. Run `mcpjam cloud login` again.");
   }
 
   const refreshed = await refreshStoredAuth(stored, deps);
@@ -129,7 +129,7 @@ async function refreshStoredAuth(
       refresh_token: stored.refreshToken!,
     },
     deps.fetchFn ?? fetch,
-    "Token refresh failed. Run `mcpjam login` again.",
+    "Token refresh failed. Run `mcpjam cloud login` again.",
     deps.now,
   );
 

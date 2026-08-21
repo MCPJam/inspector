@@ -32,7 +32,7 @@ export function parseTunnelTarget(tokens: string[]): ParsedTunnelTarget {
   const isUrl = (token: string) => /^https?:\/\//i.test(token);
   if (tokens.length === 0) {
     throw usageError(
-      "Specify a target: a local server URL (mcpjam tunnel http://localhost:9090/mcp --id my-server) or a stdio command (mcpjam tunnel --id my-server -- npx -y @modelcontextprotocol/server-everything).",
+      "Specify a target: a local server URL (mcpjam cloud tunnel http://localhost:9090/mcp --id my-server) or a stdio command (mcpjam cloud tunnel --id my-server -- npx -y @modelcontextprotocol/server-everything).",
     );
   }
   if (isUrl(tokens[0])) {
