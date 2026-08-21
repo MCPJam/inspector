@@ -1,4 +1,5 @@
 import { ConvexError } from "convex/values";
+import { convexErrMessage } from "@/lib/convex-error";
 import type {
   BillingFeatureName,
   BillingInterval,
@@ -467,7 +468,10 @@ export function getBillingErrorMessage(
 ): string {
   const payload = extractBillingErrorPayload(error);
   if (!payload) {
-    return error instanceof Error ? error.message : fallback;
+    // Not a billing rejection — a write-boundary validator, say. Its message
+    // lives on `err.data`; `err.message` is the redacted "Server Error"/Request
+    // ID string, which reads as a crash rather than "fix this field".
+    return convexErrMessage(error, fallback);
   }
 
   if (payload.code === "billing_feature_not_included") {
@@ -517,9 +521,9 @@ export function getBillingErrorMessage(
     );
   }
 
-  if (payload.message) {
-    return payload.message;
-  }
-
-  return error instanceof Error ? error.message : fallback;
+  // A payload carrying only a message is not a billing rejection at all —
+  // `extractBillingErrorPayload` wraps every thrown `Error` that way. Shape it
+  // like any other Convex failure so the redacted "[Request ID: …] Server
+  // Error" prefix never reaches the toast.
+  return convexErrMessage(error, payload.message || fallback);
 }
