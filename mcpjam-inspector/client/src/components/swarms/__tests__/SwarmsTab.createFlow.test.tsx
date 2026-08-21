@@ -1794,7 +1794,9 @@ describe("SwarmsTab — New swarm create flow", () => {
     environments = environmentsRef.current;
     openDescribe();
 
-    fireEvent.change(screen.getByLabelText("Describe swarm"), {
+    // The describe box is a plain Textarea since BB-121; its accessible name is
+    // the long visible label, so it is addressed by test id like the rest.
+    fireEvent.change(screen.getByTestId("new-swarm-describe-input"), {
       target: { value: "Support agents answering refunds" },
     });
     fireEvent.click(screen.getByTestId("new-swarm-clients-picker"));
