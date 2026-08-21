@@ -1063,7 +1063,7 @@ export function SwarmsTab({
             {/* Personas sidebar — Personas tab only */}
             <aside className="flex w-72 shrink-0 flex-col border-r">
               <div className="flex items-center justify-between border-b px-4 py-3">
-                <h2 className="text-sm font-semibold">Saved personas</h2>
+                <h2 className="text-sm font-semibold">Personas</h2>
                 <div className="flex items-center gap-1.5">
                   <Button
                     type="button"
