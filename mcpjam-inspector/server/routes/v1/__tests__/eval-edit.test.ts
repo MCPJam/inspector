@@ -269,9 +269,13 @@ describe("v1 eval-edit routes", () => {
     // internal "superset" surfaces as public "in-order".
     expect(body.settings.matchOptions.toolCallOrder).toBe("in-order");
     expect(body.settings.matchOptions.arguments).toBe("exact");
+    // Fully resolved: the suite's own `enabled`/`judgeModel` where set, the
+    // platform defaults (GOAL_COMPLETION_DEFAULTS) for the rest.
     expect(body.settings.judge).toEqual({
       enabled: true,
       model: "openai/gpt-5-mini",
+      autoRun: false,
+      threshold: 0.7,
     });
     expect(body.executionConfig).toEqual({
       model: "anthropic/claude-haiku-4.5",
@@ -324,6 +328,155 @@ describe("v1 eval-edit routes", () => {
     // Merge preserves the suite's existing judgeModel while flipping enabled.
     expect(args.judgeConfig).toEqual({
       goalCompletion: { enabled: false, judgeModel: "openai/gpt-5-mini" },
+    });
+  });
+
+  it("PATCH minimumIterations sets the floor, and null clears it", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { minimumIterations: 3 } }
+    );
+    expect(res.status).toBe(200);
+    expect(
+      convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestSuite"
+      )![1].minIterations
+    ).toBe(3);
+
+    vi.clearAllMocks();
+    convexQueryMock.mockImplementation((name: string) =>
+      defaultQueryImpl(name)
+    );
+    convexMutationMock.mockImplementation((name: string) =>
+      defaultMutationImpl(name)
+    );
+
+    // `null` must arrive as null, not collapse to undefined — the platform
+    // reads undefined as "leave alone", so a dropped null is a clear that
+    // reports success and changes nothing.
+    const cleared = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { minimumIterations: null } }
+    );
+    expect(cleared.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args).toHaveProperty("minIterations");
+    expect(args.minIterations).toBeNull();
+  });
+
+  it("PATCH rejects a minimumIterations outside 1–10", async () => {
+    for (const value of [0, 11, 2.5]) {
+      vi.clearAllMocks();
+      convexQueryMock.mockImplementation((name: string) =>
+        defaultQueryImpl(name)
+      );
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { minimumIterations: value } }
+      );
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    }
+  });
+
+  it("GET reports minimumIterations, null when the suite has no floor", async () => {
+    const unset = await request(
+      "GET",
+      "/api/v1/projects/p1/eval-suites/suite_1"
+    );
+    expect(((await unset.json()) as any).settings.minimumIterations).toBeNull();
+
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({ ...SUITE_DOC, minIterations: 4 })
+        : defaultQueryImpl(name)
+    );
+    const set = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    expect(((await set.json()) as any).settings.minimumIterations).toBe(4);
+  });
+
+  it("PATCH round-trips judge autoRun and threshold", async () => {
+    // `autoRun` is the flag the grader gates on — a suite can be `enabled`
+    // forever and never grade a run without it, which is exactly the gap the
+    // API had while it accepted only `enabled` + `model`.
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { judge: { autoRun: true, threshold: 0.85 } } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.judgeConfig).toEqual({
+      goalCompletion: {
+        enabled: true,
+        judgeModel: "openai/gpt-5-mini",
+        autoRun: true,
+        threshold: 0.85,
+      },
+    });
+  });
+
+  it("PATCH judge.model alone preserves an already-set autoRun", async () => {
+    // The merge reads the suite's CURRENT goalCompletion, so a caller editing
+    // one judge field cannot silently switch grading back off.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "openai/gpt-5-mini",
+                autoRun: true,
+                threshold: 0.9,
+              },
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { judge: { model: "openai/gpt-5" } } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.judgeConfig).toEqual({
+      goalCompletion: {
+        enabled: true,
+        judgeModel: "openai/gpt-5",
+        autoRun: true,
+        threshold: 0.9,
+      },
+    });
+  });
+
+  it("GET reports resolved judge defaults for a suite with no judgeConfig", async () => {
+    // A suite that never touched the judge reports what a run WOULD grade
+    // with, not a half-resolved `enabled: true` beside `model: null` — a
+    // combination that never exists at run time.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({ ...SUITE_DOC, judgeConfig: undefined })
+        : defaultQueryImpl(name)
+    );
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.settings.judge).toEqual({
+      enabled: true,
+      model: "openai/gpt-5.4-mini",
+      autoRun: false,
+      threshold: 0.7,
     });
   });
 
@@ -382,8 +535,175 @@ describe("v1 eval-edit routes", () => {
     const args = convexMutationMock.mock.calls.find(
       (c) => c[0] === "testSuites:updateTestSuite"
     )![1];
-    expect(args.environment).toEqual({ servers: ["Excalidraw (App)"] });
+    // The platform REPLACES the environment envelope wholesale, so a partial
+    // write must be layered onto the suite's current one. Sending `{ servers }`
+    // alone dropped the bindings the rest of this test is about.
+    expect(args.environment).toEqual({
+      servers: ["Excalidraw (App)"],
+      serverBindings: [
+        { serverName: "Excalidraw (App)", projectServerId: "srv_1" },
+      ],
+    });
     expect(args.refreshHostConfigFromEnvironment).toBe(true);
+  });
+
+  it("PATCH computerEnvironment resolves by name and preserves servers + bindings", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "computerEnvironments:listEnvironments") {
+        return Promise.resolve([
+          { environmentId: "img_1", projectId: "p1", name: "Playwright" },
+          { environmentId: "img_2", projectId: "p1", name: "Node 22" },
+        ]);
+      }
+      return defaultQueryImpl(name);
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { environment: { computerEnvironment: "playwright" } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.environment).toEqual({
+      servers: ["Excalidraw (App)"],
+      serverBindings: [
+        { serverName: "Excalidraw (App)", projectServerId: "srv_1" },
+      ],
+      computerEnvironmentId: "img_1",
+    });
+    // Pinning an image does not change which servers a host sees, so the host
+    // config does not need rebuilding.
+    expect(args.refreshHostConfigFromEnvironment).toBeUndefined();
+  });
+
+  it("PATCH computerEnvironment null clears the pin", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            environment: {
+              ...SUITE_DOC.environment,
+              computerEnvironmentId: "img_1",
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { environment: { computerEnvironment: null } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.environment.computerEnvironmentId).toBeUndefined();
+    expect(args.environment.servers).toEqual(["Excalidraw (App)"]);
+  });
+
+  it("PATCH servers alone carries an existing computer-image pin through", async () => {
+    // The regression this whole merge exists to prevent: editing the server
+    // list used to silently unpin the suite's image.
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            environment: {
+              ...SUITE_DOC.environment,
+              computerEnvironmentId: "img_1",
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { environment: { servers: ["Excalidraw (App)", "Other"] } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.environment.computerEnvironmentId).toBe("img_1");
+    expect(args.environment.servers).toEqual(["Excalidraw (App)", "Other"]);
+  });
+
+  it("PATCH an unknown computer image 404s and names the real choices", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "computerEnvironments:listEnvironments") {
+        return Promise.resolve([
+          { environmentId: "img_1", projectId: "p1", name: "Playwright" },
+        ]);
+      }
+      return defaultQueryImpl(name);
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { environment: { computerEnvironment: "ghost" } }
+    );
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as any;
+    expect(body.message).toContain("ghost");
+    expect(body.message).toContain("Playwright (id: img_1)");
+    // Resolution happens BEFORE the write, so nothing is persisted.
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("PATCH an ambiguous computer image name is a 400", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "computerEnvironments:listEnvironments") {
+        return Promise.resolve([
+          { environmentId: "img_1", projectId: "p1", name: "Playwright" },
+          { environmentId: "img_2", projectId: "p1", name: "playwright" },
+        ]);
+      }
+      return defaultQueryImpl(name);
+    });
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { environment: { computerEnvironment: "Playwright" } }
+    );
+    expect(res.status).toBe(400);
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("GET reports the pinned computer image with its resolved name", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getTestSuite") {
+        return Promise.resolve({
+          ...SUITE_DOC,
+          environment: {
+            ...SUITE_DOC.environment,
+            computerEnvironmentId: "img_1",
+          },
+        });
+      }
+      if (name === "computerEnvironments:getEnvironment") {
+        return Promise.resolve({
+          environmentId: "img_1",
+          projectId: "p1",
+          name: "Playwright",
+        });
+      }
+      return defaultQueryImpl(name);
+    });
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.environment.computerEnvironment).toEqual({
+      id: "img_1",
+      name: "Playwright",
+    });
+  });
+
+  it("GET reports an unpinned suite's computer image as null", async () => {
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    const body = (await res.json()) as any;
+    expect(body.environment.computerEnvironment).toBeNull();
   });
 
   it("PATCH env+hosts resolves host server picks against the patched environment", async () => {
@@ -1281,6 +1601,75 @@ describe("v1 eval-edit routes", () => {
     expect(createArgs.promptTurns).toBeUndefined();
   });
 
+  it("generate carries the backend's sanitized arguments through verbatim", async () => {
+    // Producer-side regression for the assertions that could never pass. The
+    // backend now drops every expected-argument entry the case's own prompt
+    // does not determine, so what arrives here is already narrow. This pins
+    // that the inspector neither re-inflates it nor drops what survived: the
+    // step's args are EXACTLY the backend's, and an empty object stays empty
+    // (under `partial` matching that reads as "this tool was called", which is
+    // the assertion a correct server can satisfy).
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({
+      success: true,
+      tests: [
+        {
+          title: "Draw a rectangle",
+          query: "Draw a rectangle on the canvas",
+          runs: 1,
+          expectedToolCalls: [
+            { toolName: "create_element", arguments: { type: "rectangle" } },
+          ],
+        },
+        {
+          title: "Draw a flowchart",
+          query: "Draw a flowchart of our deploy process",
+          runs: 1,
+          expectedToolCalls: [{ toolName: "create_element", arguments: {} }],
+        },
+      ],
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "normal" }
+    );
+    expect(res.status).toBe(200);
+
+    const assertions = allAuthoredCaseArgs()
+      .flatMap((item: any) => item.steps ?? [])
+      .filter((step: any) => step.kind === "assert")
+      .map((step: any) => step.assertion);
+    expect(assertions).toEqual([
+      {
+        type: "toolCalledWith",
+        toolName: "create_element",
+        args: { args: { type: "rectangle" } },
+      },
+      {
+        type: "toolCalledWith",
+        toolName: "create_element",
+        args: { args: {} },
+      },
+    ]);
+    // No unmatched free-form payload anywhere: every asserted argument value
+    // is a scalar. A nested object or array here is the shape that made the
+    // 2026-08-20 Excalidraw cases unpassable.
+    for (const assertion of assertions) {
+      for (const value of Object.values(assertion.args.args)) {
+        expect(typeof value).not.toBe("object");
+      }
+    }
+  });
+
   it("generate discovers tools from the suite's environment, not its saved selection", async () => {
     createAuthorizedManagerMock.mockResolvedValue({
       manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
@@ -1525,6 +1914,155 @@ describe("v1 eval-edit routes", () => {
         (c) => c[0] === "testSuites:recordCaseGeneration"
       )
     ).toBe(false);
+  });
+
+  /**
+   * The gap these close: before this, the generate route read ONLY the
+   * `x-mcpjam-idempotency-key` header, while `PlatformApiClient` sends
+   * `idempotency-key` and the operation had no body field at all. So the CLI,
+   * the MCP plugin, and direct SDK callers — exactly the surfaces that hit the
+   * 30s client timeout and retry — had no way to reach the ledger, and every
+   * retry re-spent. The failure was SILENT: a key went out on the wire and
+   * nothing read it.
+   *
+   * Each test therefore asserts against the ledger read (`getCaseGeneration`
+   * carries the key) and not merely that a key was sent.
+   */
+  function ledgerKeys(): unknown[] {
+    return convexQueryMock.mock.calls
+      .filter((c) => c[0] === "testSuites:getCaseGeneration")
+      .map((c) => (c[1] as any)?.idempotencyKey);
+  }
+
+  function withNoPriorLedger() {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      if (name === "testSuites:getCaseGeneration") return Promise.resolve(null);
+      return defaultQueryImpl(name);
+    });
+  }
+
+  async function generateWith(init: {
+    headers?: Record<string, string>;
+    body?: Record<string, unknown>;
+  }) {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    withNoPriorLedger();
+    return makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          ...(init.headers ?? {}),
+        },
+        body: JSON.stringify({ mode: "normal", ...(init.body ?? {}) }),
+      }
+    );
+  }
+
+  it("generate reaches the ledger with a BODY idempotency key", async () => {
+    const res = await generateWith({ body: { idempotencyKey: "cli-run-7" } });
+    expect(res.status).toBe(200);
+    expect(ledgerKeys()).toContain("cli-run-7");
+    expect(
+      convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:recordCaseGeneration"
+      )?.[1].idempotencyKey
+    ).toBe("cli-run-7");
+  });
+
+  it("generate reaches the ledger with the SDK client's transport header", async () => {
+    // `PlatformApiClient` puts `options.idempotencyKey` here, unprefixed.
+    // Reading only the prefixed spelling is what made a key sent this way
+    // degrade silently to no idempotency at all.
+    const res = await generateWith({
+      headers: { "idempotency-key": "sdk-transport-key" },
+    });
+    expect(res.status).toBe(200);
+    expect(ledgerKeys()).toContain("sdk-transport-key");
+  });
+
+  it("generate lets the prefixed HEADER win over both other channels", async () => {
+    // The agent adapter sets the prefixed header per operation; a body key
+    // could otherwise be shaped by model output, so it must never override it.
+    const res = await generateWith({
+      headers: {
+        "x-mcpjam-idempotency-key": "proposal:act_9:generate_eval_cases",
+        "idempotency-key": "sdk-transport-key",
+      },
+      body: { idempotencyKey: "body-key" },
+    });
+    expect(res.status).toBe(200);
+    expect(ledgerKeys()).toEqual(["proposal:act_9:generate_eval_cases"]);
+  });
+
+  it("generate prefers the transport header over a body key", async () => {
+    const res = await generateWith({
+      headers: { "idempotency-key": "sdk-transport-key" },
+      body: { idempotencyKey: "body-key" },
+    });
+    expect(res.status).toBe(200);
+    expect(ledgerKeys()).toEqual(["sdk-transport-key"]);
+  });
+
+  it("generate stays keyless — and reads no ledger — when no key is sent", async () => {
+    // The unkeyed path must keep working exactly as before: no ledger read,
+    // no ledger write, and certainly no fabricated key.
+    const res = await generateWith({});
+    expect(res.status).toBe(200);
+    expect(ledgerKeys()).toEqual([]);
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:recordCaseGeneration"
+      )
+    ).toBe(false);
+  });
+
+  it("generate replays the first attempt's drafts for a BODY key retry", async () => {
+    // The end-to-end property the plumbing exists for: retrying with the same
+    // key from a direct caller costs nothing and returns the same cases.
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      if (name === "testSuites:getCaseGeneration")
+        return Promise.resolve({
+          drafts: [
+            {
+              title: "Cached",
+              query: "from ledger",
+              runs: 1,
+              expectedToolCalls: [],
+            },
+          ],
+          createdCaseIds: null,
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+        },
+        body: JSON.stringify({ mode: "normal", idempotencyKey: "cli-run-7" }),
+      }
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).created).toHaveLength(1);
+    expect(generateEvalTestsMock).not.toHaveBeenCalled();
+    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
   });
 
   it("generate resolves a server NAME override to an ID before authorizing", async () => {

@@ -7,7 +7,15 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunInsightsRequested,
+  PlatformAdhocEnvironmentBody,
+  PlatformAdhocEnvironmentEnsured,
+  PlatformEnvironmentNameBody,
+  PlatformEvalSuiteEnvironmentAttached,
+  PlatformEvalRunJudgeRequested,
+  PlatformEvalCheckRepos,
+  PlatformEvalCheckRepoConnected,
   PlatformEvalRunCreated,
+  PlatformEvalRunGroupCreated,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
@@ -73,6 +81,11 @@ import type {
   PlatformSessionsPage,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
+  PlatformOpenAIReadinessStartBody,
+  PlatformReadinessKind,
+  PlatformReadinessRun,
+  PlatformReadinessRunReceipt,
+  PlatformReadinessStartBody,
 } from "./types.js";
 
 export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
@@ -124,6 +137,27 @@ type ServerScope = {
  * injected. Tolerant reader: unknown response fields pass through untouched,
  * and empty success bodies (204) resolve to `undefined`.
  */
+/**
+ * The two fields a readiness start body shares, and nothing else.
+ *
+ * Undefined entries are dropped rather than serialized as `null`: the
+ * endpoint's schema types both as optional, and an explicit `null` is a value
+ * it rejects rather than an absence it ignores.
+ */
+function pickReadinessStartBody(params: {
+  idempotencyKey?: string;
+  includeLlmObservations?: boolean;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (params.idempotencyKey !== undefined) {
+    body.idempotencyKey = params.idempotencyKey;
+  }
+  if (params.includeLlmObservations !== undefined) {
+    body.includeLlmObservations = params.includeLlmObservations;
+  }
+  return body;
+}
+
 export class PlatformApiClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
@@ -671,6 +705,61 @@ export class PlatformApiClient {
   }
 
   /**
+   * `POST /projects/{p}/environments/ensure-adhoc` — GET-OR-CREATE an UNNAMED,
+   * content-addressed environment for a composed stack.
+   *
+   * Distinct from `createEnvironment`, which mints a NAMED row that lands in
+   * the project's environment list forever. A composed stack is a throwaway:
+   * the caller wants to run this exact combination, not to add a permanent
+   * entry someone else has to reason about.
+   *
+   * Deduped server-side by a fingerprint of the stack, so the same stack
+   * always returns the same environment (`created: false` after the first
+   * call) and a retried launch converges instead of accumulating rows.
+   */
+  ensureAdhocEnvironment(
+    params: { projectId: string; body: PlatformAdhocEnvironmentBody },
+    options?: RequestOptions,
+  ): Promise<PlatformAdhocEnvironmentEnsured> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/environments/ensure-adhoc`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/environments/{id}/name` — PROMOTE an ad-hoc
+   * environment to a named one, in place.
+   *
+   * The ONLY promotion path: `updateEnvironment` cannot do it. The platform
+   * keeps the two apart because its rename is admin-gated and refuses a row
+   * that already has a name, while promotion is member-gated and refuses one
+   * that already has a name. Routing promotion through the rename would either
+   * open it to members or leave ad-hoc rows unnameable.
+   */
+  nameEnvironment(
+    params: {
+      projectId: string;
+      environmentId: string;
+      body: PlatformEnvironmentNameBody;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEnvironment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/environments/${encodeURIComponent(params.environmentId)}/name`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
    * Only the fields you pass change. Pass `null` for `serverAttachmentId`,
    * `modelId`, `skillSelection`, or `pluginVersionIds` to CLEAR them; omitting
    * a field leaves it alone.
@@ -952,6 +1041,57 @@ export class PlatformApiClient {
   }
 
   /**
+   * `POST /projects/{p}/eval-suites/{id}/environments` — APPEND one
+   * environment to the suite's attachments, atomically.
+   *
+   * Distinct from `updateEvalSuite({ environmentIds })`, which REPLACES the
+   * whole list: an append built on that is a read-modify-write across two
+   * round trips, and a concurrent attach landing in between is silently
+   * detached. Idempotent — attaching an already-attached environment reports
+   * `attached: false` and changes nothing.
+   */
+  attachEvalSuiteEnvironment(
+    params: { projectId: string; suiteId: string; environmentId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalSuiteEnvironmentAttached> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/environments`,
+      { body: { environmentId: params.environmentId } },
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/eval-run-groups` — launch ONE run per target (attached
+   * environments, or attached named hosts) under a single server-minted group
+   * id, and respond 202 with a per-target receipt.
+   *
+   * The ONLY endpoint with grouped-launch semantics: the server bounds the
+   * fan-out, validates every target before launching any of them, and holds
+   * ONE organization concurrency slot for the whole group. `createEvalRun`
+   * accepts a `runGroupId` too, but purely as a display label — it gives N
+   * separate launches no group treatment, which is why a fan-out has to come
+   * through here.
+   *
+   * A per-target failure does not abort its siblings, so read `outcome` rather
+   * than treating the 202 as "everything started".
+   */
+  createEvalRunGroup(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunGroupCreated> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/eval-run-groups`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
    * `POST /projects/{p}/eval-suites` — author a runnable suite from test-case
    * definitions and return the new suite id. Synchronous (does NOT run the
    * suite; execute it with `createEvalRun`). The same path serves `GET` for
@@ -1002,6 +1142,98 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * Request (or with `force`, re-request) LLM-as-judge grading of a finished
+   * run. SPENDS the org's model budget; poll `getEvalRun().judges` rather than
+   * re-requesting.
+   *
+   * `enable` grades a run whose config snapshot has the judge OFF. It is a
+   * per-run answer, not a suite edit — grading reads the snapshot pinned when
+   * the run was created, so turning the judge on for the suite does not reach
+   * an already-recorded run.
+   */
+  requestEvalRunJudge(
+    params: {
+      projectId: string;
+      runId: string;
+      force?: boolean;
+      enable?: boolean;
+      model?: string;
+      threshold?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalRunJudgeRequested> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/eval-runs/${encodeURIComponent(params.runId)}/judge`,
+      {
+        body: {
+          ...(params.force === true ? { force: true } : {}),
+          ...(params.enable !== undefined ? { enable: params.enable } : {}),
+          ...(params.model !== undefined ? { model: params.model } : {}),
+          ...(params.threshold !== undefined
+            ? { threshold: params.threshold }
+            : {}),
+        },
+      },
+      options,
+    );
+  }
+
+  /**
+   * The repositories in an organization whose pull requests run an eval suite,
+   * plus what the MCPJam GitHub App can reach.
+   */
+  listEvalCheckRepos(
+    params: { organizationId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalCheckRepos> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId,
+      )}/eval-check-repos`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Connect a repository so its pull requests run one eval suite.
+   *
+   * `outagePolicy` is required rather than defaulted: it decides what a check
+   * reports when MCPJam cannot conclude, and a surface that picks silently is
+   * the one that produces repositories nobody chose a policy for.
+   */
+  connectEvalCheckRepo(
+    params: {
+      organizationId: string;
+      projectId: string;
+      suiteId: string;
+      repo: string;
+      outagePolicy: "fail_open" | "fail_closed";
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformEvalCheckRepoConnected> {
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(
+        params.organizationId,
+      )}/eval-check-repos`,
+      {
+        body: {
+          projectId: params.projectId,
+          suiteId: params.suiteId,
+          repo: params.repo,
+          outagePolicy: params.outagePolicy,
+        },
+      },
+      options,
+    );
+  }
+
   listEvalRunIterations(
     params: {
       projectId: string;
@@ -1048,6 +1280,151 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options,
+    );
+  }
+
+  // ── Directory readiness ───────────────────────────────────────────────
+  //
+  // Asynchronous by design: a readiness run dials somebody else's server,
+  // walks its redirect chain, discovers its authorization metadata and lists
+  // its tools. A start answers `202` with a run id and everything after it is
+  // a separate call.
+  //
+  // The TARGET comes from the saved server the path names, never from a body.
+  // These methods have no URL parameter for the same reason the endpoint has
+  // no URL field: a caller cannot point a hosted run at an arbitrary host.
+
+  /**
+   * Start a Claude connector-directory readiness run.
+   *
+   * Deterministic grading is FREE. `includeLlmObservations` is the only field
+   * that can spend, and it defaults off.
+   */
+  startClaudeReadinessRun(
+    params: { projectId: string; serverId: string } & PlatformReadinessStartBody,
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRunReceipt> {
+    // Explicit picks, not a rest spread. The endpoint's body schema is
+    // `strictObject`, and TypeScript's structural typing lets a caller hand a
+    // WIDER object to this parameter — so a spread would forward whatever else
+    // that object carries and turn a valid start into a 400. Worse, the
+    // rejected request never reaches the idempotency key, so the caller's
+    // retry dedupes against nothing. `publishScenario` picks for the same
+    // reason.
+    const { projectId, serverId } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId,
+      )}/readiness-runs/claude`,
+      { body: pickReadinessStartBody(params) },
+      options,
+    );
+  }
+
+  /**
+   * Start an OpenAI plugin-directory readiness run.
+   *
+   * `submissionMode` is required by the TYPE as well as by the endpoint,
+   * because it is never inferred: a run with no declared shape reads as
+   * `mcp-only`, which reports the package lane not-applicable and turns a
+   * missing input into a clean bill of health.
+   */
+  startOpenAIReadinessRun(
+    params: {
+      projectId: string;
+      serverId: string;
+    } & PlatformOpenAIReadinessStartBody,
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRunReceipt> {
+    // Explicit picks — see `startClaudeReadinessRun`.
+    const { projectId, serverId, submissionMode } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId,
+      )}/readiness-runs/openai`,
+      { body: { ...pickReadinessStartBody(params), submissionMode } },
+      options,
+    );
+  }
+
+  /** Lane statuses, coverage and the observation axis. Poll this. */
+  getReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options,
+    );
+  }
+
+  listReadinessRuns(
+    params: {
+      projectId: string;
+      readinessKind?: PlatformReadinessKind;
+      serverId?: string;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformReadinessRun>> {
+    const { projectId, ...query } = params;
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(projectId)}/readiness-runs`,
+      { query },
+      options,
+    );
+  }
+
+  /**
+   * Cancel an in-flight run.
+   *
+   * The executing node learns about this on its next heartbeat and aborts the
+   * run in flight — which matters more than the row's status, because the
+   * thing being stopped is traffic to somebody else's server.
+   */
+  cancelReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<{ runId: string; projectId: string; status: string }> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * The full report: every finding, with its class, provenance, citation and
+   * remediation.
+   *
+   * Returned as `unknown` deliberately. The report's shape is the SDK's
+   * `ClaudeReadinessResult` / `OpenAIReadinessResult`, and importing either
+   * here would pull the whole readiness result model into the platform entry —
+   * which is loaded by surfaces that only ever render a lane status. A caller
+   * that wants the narrow type imports it from `@mcpjam/sdk/browser` and
+   * narrows on `readinessKind`.
+   */
+  getReadinessReport(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<unknown> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/report`,
       {},
       options,
     );
