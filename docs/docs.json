@@ -46,6 +46,7 @@
           "installation",
           "hosted/overview",
           "hosted/slack",
+          "hosted/sso",
           "troubleshooting/common-errors",
           "troubleshooting/error-codes",
           "changelog/overview"

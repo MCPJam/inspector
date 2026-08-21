@@ -35,6 +35,7 @@ import type { EvalToolChoice } from "@/shared/tool-choice";
 import type { ScriptedWidgetCheck } from "@/shared/scripted-steps";
 import { logger } from "../../utils/logger";
 import { runAssistantTurn } from "../../utils/assistant-turn.js";
+import type { RunAssistantTurnOptions } from "../../utils/assistant-turn.js";
 import { EVAL_WIDGET_MODEL_CONTEXT } from "../../config.js";
 import { withWidgetContextSystemPrompt } from "./widget-interaction-context.js";
 import type {
@@ -133,6 +134,53 @@ export interface DriveHostedEvalTurnParams {
    *  resolved billing target; absent for org-level evals (no project/computer,
    *  so a harness turn there fails fast with a clear projectId error). */
   projectId?: string;
+  /**
+   * THIS iteration's disposable box, handed to the harness.
+   *
+   * The SAME box the tool resolver already exposes as `bash` — one box per
+   * iteration, never two. It rides the handler options rather than the host
+   * config because the run's config snapshot is member-readable, and a binding
+   * that could be written there would be a binding a reader could forge.
+   *
+   * Absent ⇒ the harness would fall back to the acting member's personal
+   * computer, which admission refuses outright: an eval iteration is
+   * disposable, and a shared box would carry state between runs.
+   */
+  harnessSandboxBinding?: RunAssistantTurnOptions["harnessSandboxBinding"];
+  /**
+   * How the sandbox reaches this inspector's MCP proxy.
+   *
+   * NOT optional in practice for an eval: a suite always has servers, and
+   * `runHarnessTurn` throws when servers are selected without a strategy. The
+   * runner resolves the same one the hosted chat routes do — an eval run builds
+   * an ephemeral authorized manager exactly as they do, so the plane decision
+   * is identical and must not be re-derived here.
+   */
+  harnessMcpProxy?: RunAssistantTurnOptions["harnessMcpProxy"];
+  /**
+   * The run's PINNED skills, delivered to the harness verbatim.
+   *
+   * Present (even empty) ⇒ the harness turn delivers exactly these and skips
+   * the live project-wide fetch, which is what keeps a frozen run frozen. An
+   * empty set is how `skillsOverride: "exclude"` reaches the harness — the A/B
+   * arm has to be deliberately skill-free, not accidentally so.
+   *
+   * The FROZEN-RUN channel (`pinnedHarnessSkills`), not the live-environment
+   * one (`runtimeSkillsOverride`). `selectHarnessSkillSource` ranks
+   * pinned → environment → live, and only the top rank promises that nothing
+   * live is consulted; `runtimeSkillsOverride` is for a turn whose environment
+   * re-resolves each time, which is the opposite of what a pinned run wants.
+   */
+  pinnedHarnessSkills?: RunAssistantTurnOptions["pinnedHarnessSkills"];
+  /**
+   * MCPJam's SERVER-EXECUTED built-ins for the harness path.
+   *
+   * Passed EXPLICITLY because `runHarnessTurn` reads built-ins off this field
+   * and nowhere else: a caller that supplies only `tools` silently gives a
+   * harness turn none at all, which is the same silent-degradation shape this
+   * whole program exists to eliminate.
+   */
+  builtInTools?: RunAssistantTurnOptions["builtInTools"];
   mcpClientManager: MCPClientManager;
   evalAuthContext: { kind: "user_bearer"; token: string };
   endpointPath: string;
@@ -369,6 +417,29 @@ export async function driveHostedEvalTurn(
             // (authHeader already rides authContext.token). Harness-gated so
             // emulated evals stay byte-identical.
             ...(params.projectId ? { projectId: params.projectId } : {}),
+            // THIS iteration's box, so the harness runs on it instead of
+            // reserving the acting member's personal computer.
+            ...(params.harnessSandboxBinding
+              ? { harnessSandboxBinding: params.harnessSandboxBinding }
+              : {}),
+            // Required whenever servers are selected — and an eval suite always
+            // has servers, so its absence is a thrown turn, not a degraded one.
+            ...(params.harnessMcpProxy
+              ? { harnessMcpProxy: params.harnessMcpProxy }
+              : {}),
+            // Present-but-empty is meaningful (the "without skills" arm), so
+            // this checks for undefined rather than truthiness. Absent would
+            // fall through to the harness's LIVE project-wide fetch, which is
+            // what unfreezes a frozen run.
+            ...(params.pinnedHarnessSkills !== undefined
+              ? { pinnedHarnessSkills: params.pinnedHarnessSkills }
+              : {}),
+            // The harness reads built-ins ONLY off this field. Omitting it
+            // would hand the runtime a turn with no web_search and no way to
+            // tell that anything was missing.
+            ...(params.builtInTools
+              ? { builtInTools: params.builtInTools }
+              : {}),
           }
         : {}),
       endpointPath: params.endpointPath,
