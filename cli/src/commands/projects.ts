@@ -20,7 +20,12 @@ import {
   formatShowServersHuman,
 } from "../lib/projects-render.js";
 import { writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import {
+  buildPlatformClient,
+  toCliError,
+  webOriginForApiBaseUrl,
+} from "../lib/platform-client.js";
+import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 import { openUrlInBrowser } from "@mcpjam/sdk";
 
@@ -152,6 +157,57 @@ async function runPlatformCommand<TOutput>(
     clearTimeout(timeoutHandle);
     externalSignal?.removeEventListener("abort", onExternalAbort);
   }
+}
+
+/**
+ * Who a handoff link will belong to, and which deployment it lives on.
+ *
+ * WHY THIS EXISTS. A handoff link is bound to the account that created it, and
+ * the browser that opens it is refused unless it is signed in to that same
+ * account. Nothing in the old output said which account that was, so the two
+ * ends could disagree with no warning and no way to diagnose it — most sharply
+ * when an agent runs this command and relays the link to a person, because the
+ * agent cannot see either side of the mismatch.
+ *
+ * The deployment goes on the line too. This CLI can be pointed at prod,
+ * staging, or a local server, and a link only works on the one that minted it.
+ *
+ * BEST EFFORT, ALWAYS. The connection request already succeeded by the time
+ * this runs; failing the command because a decorative lookup failed would
+ * trade a working result for none. An unresolved account simply drops that
+ * half of the sentence.
+ */
+async function resolveHandoffAudience(
+  options: PlatformOptions,
+  timeoutMs: number
+): Promise<{ email: string | null; origin: string }> {
+  try {
+    const { client, baseUrl } = buildPlatformClient({ ...options, timeoutMs });
+    const origin = webOriginForApiBaseUrl(baseUrl);
+    try {
+      const me = await client.getMe();
+      return { email: me.email ?? null, origin };
+    } catch {
+      return { email: null, origin };
+    }
+  } catch {
+    // `buildPlatformClient` throws when there is no usable credential at all.
+    // The request that produced the link plainly had one, so this is close to
+    // unreachable — but it must not be the thing that breaks the output.
+    return { email: null, origin: DEFAULT_PLATFORM_ORIGIN };
+  }
+}
+
+/** The audience line, as printed. Pure, so its wording is testable without a
+ * network call. */
+function describeHandoffAudience(audience: {
+  email: string | null;
+  origin: string;
+}): string {
+  const host = new URL(audience.origin).host;
+  return audience.email
+    ? `This link belongs to ${audience.email} on ${host}. Open it in a browser signed in to that account.\n`
+    : `This link belongs to the account this CLI is logged into, on ${host}. Open it in a browser signed in to that account — \`mcpjam whoami\` names it.\n`;
 }
 
 export function registerProjectsCommands(program: Command): void {
@@ -505,6 +561,11 @@ export function registerProjectsCommands(program: Command): void {
         // with a request they cannot finish and no link to finish it with.
         process.stderr.write(
           `Open this link to finish connecting:\n  ${created.handoffUrl}\n`
+        );
+        process.stderr.write(
+          describeHandoffAudience(
+            await resolveHandoffAudience(platformOptions, globalOptions.timeout)
+          )
         );
         if (options.browser !== false) {
           await openUrlInBrowser(created.handoffUrl).catch(() => {
