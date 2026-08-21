@@ -247,6 +247,9 @@ describe("modelSupportsTemperature", () => {
 
   it("keeps temperature for models it knows nothing about", () => {
     expect(modelSupportsTemperature("newvendor/some-new-model")).toBe(true);
+    // A blank id matches no family either. It has to fall back to allowing the
+    // field rather than being read as a model that rejects it.
+    expect(modelSupportsTemperature("")).toBe(true);
   });
 
   it("strips temperature for Bedrock ids of an affected family", () => {
