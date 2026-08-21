@@ -16,6 +16,8 @@ import {
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
 } from "@/lib/hosted-oauth-resume";
+import { BootstrapNotReadyError } from "@/lib/app-ready";
+import { PROBE_TIMEOUT_MS } from "@/hooks/hosted/use-scenario-server-reachability";
 
 const {
   mockConvexAuthState,
@@ -2305,6 +2307,58 @@ describe("ScenarioChatPage", () => {
       view.unmount();
 
       expect(probeSignal?.aborted).toBe(true);
+    });
+
+    it("keeps a server reported connected when the probe never got to run", async () => {
+      // The request builder refuses to build until `useApiContext` has
+      // published this scenario's ids, and `/redeem` resolves before it does.
+      // Running out of attempts on that race means nothing ever reached the
+      // wire — branding the server unreachable there would show the tester a
+      // failure this session never observed and drop a healthy server from the
+      // turn, which is the same lie this probe exists to remove.
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.useFakeTimers();
+      mockValidateHostedServer.mockRejectedValue(
+        new BootstrapNotReadyError("provisioning-project")
+      );
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      // Long enough to burn every attempt the race is allowed.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+
+      expect(latestServerConfigs()?.excalidraw?.connectionStatus).toBe(
+        "connected"
+      );
+      expect(screen.queryByText(/couldn't be reached/)).not.toBeInTheDocument();
+      expect(latestHostedContext()?.selectedServerIds).toEqual([
+        "srv_excalidraw",
+      ]);
+    });
+
+    it("does not wait out a second deadline after the first response is lost", async () => {
+      // The deadline sits above the route's own connect timeout, so reaching it
+      // means the response was lost rather than that the server was slow. A
+      // second full wait buys the same answer while the composer stays shut for
+      // twice as long.
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.useFakeTimers();
+      mockValidateHostedServer.mockImplementation(() => new Promise(() => {}));
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS + 1_000);
+      });
+
+      expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByText("excalidraw couldn't be reached")
+      ).toBeInTheDocument();
     });
 
     it("re-probes a shared server when the tester opens another scenario", async () => {
