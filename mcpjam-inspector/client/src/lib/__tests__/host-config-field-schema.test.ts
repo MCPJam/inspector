@@ -6,6 +6,7 @@ import {
   hostConfigField,
   HOST_CONFIG_FIELDS,
   HOST_CONFIG_SECTIONS,
+  NOT_SUPPORTED,
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
 
@@ -301,5 +302,88 @@ describe("fieldDiverges", () => {
         explicitTrue,
       ])
     ).toBe(false);
+  });
+});
+
+describe("display-mode rows on a host that renders no MCP Apps", () => {
+  const DISPLAY_MODE_FIELDS = [
+    "appsCap.availableDisplayModes",
+    "appsCap.widgetDisplayModeRequests",
+  ] as const;
+
+  it("reads as not supported once the catalog says the host renders nothing", () => {
+    // The shared no-claims preset fills these two with `['inline']` and
+    // `'accept'` because neither has an off-value the way the booleans do,
+    // so without this a CLI client advertised display modes it cannot show.
+    const cfg = makeConfig({
+      hostStyle: "claude-code",
+      rendersMcpApps: false,
+    } as Partial<HostConfigDtoV2>);
+    for (const id of DISPLAY_MODE_FIELDS) {
+      expect(fieldById(id).read(cfg)).toBe(NOT_SUPPORTED);
+    }
+  });
+
+  it("leaves a rendering host's real values alone", () => {
+    const cfg = makeConfig({
+      hostStyle: "claude",
+      rendersMcpApps: true,
+    } as Partial<HostConfigDtoV2>);
+    for (const id of DISPLAY_MODE_FIELDS) {
+      expect(fieldById(id).read(cfg)).not.toBe(NOT_SUPPORTED);
+      expect(fieldById(id).read(cfg)).toBeDefined();
+    }
+  });
+
+  it("shows the effective value when no catalog fact is carried", () => {
+    // A host the user built: the resolver's answer is the only answer there
+    // is, and blanking it would hide a real setting.
+    const cfg = makeConfig({ hostStyle: "claude-code" });
+    for (const id of DISPLAY_MODE_FIELDS) {
+      expect(fieldById(id).read(cfg)).not.toBe(NOT_SUPPORTED);
+    }
+  });
+});
+
+describe("CSP subtype rows", () => {
+  it("reads the preset's answers when the row stores no override", () => {
+    // The sandbox proxy enforces the RESOLVED matrix, so a Goose row with no
+    // stored override is still having every connect subtype blocked. Reading
+    // the raw `mcpAppsOverrides` here reported "unknown" for exactly the
+    // hosts this emulation targets.
+    const cfg = makeConfig({ hostStyle: "goose" });
+    expect(fieldById("appsCap.cspConnectDomains.fetch").read(cfg)).toBe(false);
+    expect(fieldById("appsCap.cspConnectDomains.xhr").read(cfg)).toBe(false);
+    expect(fieldById("appsCap.cspConnectDomains.websocket").read(cfg)).toBe(
+      false
+    );
+    expect(fieldById("appsCap.cspResourceDomains.script").read(cfg)).toBe(
+      false
+    );
+    // Counter-host: ChatGPT honors the whole connect directive.
+    const chatgpt = makeConfig({ hostStyle: "chatgpt" });
+    expect(fieldById("appsCap.cspConnectDomains.fetch").read(chatgpt)).toBe(
+      true
+    );
+  });
+
+  it("lets a stored override win over the preset", () => {
+    const cfg = makeConfig({
+      hostStyle: "goose",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { mcpAppsOverrides: { cspConnectDomains: { fetch: true } } },
+      },
+    } as Partial<HostConfigDtoV2>);
+    expect(fieldById("appsCap.cspConnectDomains.fetch").read(cfg)).toBe(true);
+    // Untouched leaves keep the preset rather than collapsing to unknown.
+    expect(fieldById("appsCap.cspConnectDomains.xhr").read(cfg)).toBe(false);
+  });
+
+  it("stays unknown on a preset with no subtype evidence", () => {
+    const cfg = makeConfig({ hostStyle: "mcpjam" });
+    expect(
+      fieldById("appsCap.cspConnectDomains.fetch").read(cfg)
+    ).toBeUndefined();
   });
 });
