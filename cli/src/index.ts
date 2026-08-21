@@ -19,6 +19,7 @@ import { registerOrganizationsCommands } from "./commands/organizations.js";
 import { registerSessionsCommands } from "./commands/sessions.js";
 import { registerProjectsCommands } from "./commands/projects.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
+import { registerReadinessCommands } from "./commands/readiness.js";
 import { registerOAuthCommands } from "./commands/oauth.js";
 import { registerXaaCommands } from "./commands/xaa.js";
 import { registerPromptCommands } from "./commands/prompts.js";
@@ -101,6 +102,7 @@ export async function main(
   registerOAuthCommands(program);
   registerXaaCommands(program);
   registerProtocolCommands(program);
+  registerReadinessCommands(program);
   registerAuthCommands(program);
   registerOrganizationsCommands(program);
   registerProjectsCommands(program);
