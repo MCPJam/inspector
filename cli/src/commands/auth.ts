@@ -15,7 +15,7 @@ export function registerAuthCommands(program: Command): void {
   program
     .command("login")
     .description(
-      "Log in to MCPJam. Opens your browser for OAuth and stores the session locally."
+      "Log in to MCPJam Cloud. Opens your browser for OAuth and stores the session locally."
     )
     .option("--no-browser", "Print the login URL instead of opening a browser")
     .action(async (options, command) => {
@@ -63,7 +63,7 @@ export function registerAuthCommands(program: Command): void {
 
   program
     .command("logout")
-    .description("Remove the stored MCPJam login.")
+    .description("Remove the stored MCPJam Cloud login.")
     .action(async (_options, command) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformLogout();
@@ -91,7 +91,7 @@ export function registerAuthCommands(program: Command): void {
 
   program
     .command("whoami")
-    .description("Show the MCPJam account behind the current credentials.")
+    .description("Show the MCPJam Cloud account behind the current credentials.")
     .action(async (_options, command) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformOperation(

@@ -6,28 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { FROZEN_LOCAL_COMMANDS } from "./local-contract.test.js";
 import { runCli } from "./support/cli-run.js";
-
-function parseCommandNames(help: string): string[] {
-  const marker = "\nCommands:\n";
-  const start = help.indexOf(marker);
-  if (start === -1) {
-    return [];
-  }
-  const names: string[] = [];
-  for (const line of help.slice(start + marker.length).split("\n")) {
-    const match = line.match(
-      /^  ([a-z][\w|-]*)(?: \[options\])?(?: \[[^\]]+\])?\s{2,}/
-    );
-    if (!match) {
-      continue;
-    }
-    const name = match[1].split("|")[0];
-    if (name !== "help") {
-      names.push(name);
-    }
-  }
-  return names;
-}
+import { parseHelpCommandNames } from "./support/help.js";
 
 const MOVED_CLOUD_GROUPS = [
   "login",
@@ -58,7 +37,7 @@ test("root help names local and cloud modes", async () => {
   assert.match(run.stdout, /locally/);
   assert.match(run.stdout, /mcpjam cloud/);
 
-  const root = parseCommandNames(run.stdout);
+  const root = parseHelpCommandNames(run.stdout);
   for (const name of FROZEN_LOCAL_COMMANDS) {
     assert.ok(
       root.includes(name),
@@ -88,7 +67,7 @@ test("old account-bound root paths are unknown commands", async () => {
 test("cloud --help lists the moved account-bound groups", async () => {
   const run = await runCli(["cloud", "--help"]);
   assert.equal(run.exitCode, 0, run.stderr);
-  const names = parseCommandNames(run.stdout);
+  const names = parseHelpCommandNames(run.stdout);
   for (const name of MOVED_CLOUD_GROUPS) {
     assert.ok(names.includes(name), `cloud help missing ${name}`);
   }
@@ -100,9 +79,33 @@ test("cloud --help lists the moved account-bound groups", async () => {
   }
 });
 
+test("root help groups local testing, Cloud, and CLI commands", async () => {
+  const run = await runCli(["--help"]);
+  assert.equal(run.exitCode, 0, run.stderr);
+  assert.match(run.stdout, /Local MCP testing:/);
+  assert.match(run.stdout, /MCPJam Cloud:/);
+  assert.match(run.stdout, /CLI:/);
+});
+
+test("cloud help groups account, workspace, eval, and swarms commands", async () => {
+  const run = await runCli(["cloud", "--help"]);
+  assert.equal(run.exitCode, 0, run.stderr);
+  assert.match(run.stdout, /Account:/);
+  assert.match(run.stdout, /Workspace:/);
+  assert.match(run.stdout, /Eval and environments:/);
+  assert.match(run.stdout, /Swarms and user testing:/);
+});
+
+test("cloud images validate help names the Cloud image linter", async () => {
+  const run = await runCli(["cloud", "images", "validate", "--help"]);
+  assert.equal(run.exitCode, 0, run.stderr);
+  assert.match(run.stdout, /MCPJam Cloud image linter/);
+});
+
 test("mcpjam cloud login --help is the Cloud account login", async () => {
   const run = await runCli(["cloud", "login", "--help"]);
   assert.equal(run.exitCode, 0, run.stderr);
   assert.match(run.stdout, /Usage: mcpjam cloud login/);
-  assert.match(run.stdout, /Log in to MCPJam/);
+  assert.match(run.stdout, /Log in to MCPJam Cloud/);
 });
+

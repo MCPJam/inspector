@@ -19,7 +19,7 @@
   "dependencies": {
     "@mcpjam/sdk": "^6.3.0",
     "@modelcontextprotocol/server": "2.0.0",
-    "commander": "^12.1.0",
+    "commander": "^14.0.3",
     "posthog-node": "^5.24.10",
     "ws": "^8.18.0",
     "zod": "^4.2.0"

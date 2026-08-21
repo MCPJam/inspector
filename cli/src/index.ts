@@ -78,6 +78,7 @@ export async function main(
   );
   const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
 
+  program.commandsGroup("Local MCP testing:");
   registerServerCommands(program);
   registerToolsCommands(program);
   registerResourcesCommands(program);
@@ -90,7 +91,11 @@ export async function main(
   registerXaaCommands(program);
   registerProtocolCommands(program);
   registerReadinessCommands(program);
+
+  program.commandsGroup("MCPJam Cloud:");
   registerCloudCommands(program);
+
+  program.commandsGroup("CLI:");
   registerInspectorCommands(program);
   registerMcpCommands(program);
   registerTelemetryCommands(program, dependencies.telemetry);
