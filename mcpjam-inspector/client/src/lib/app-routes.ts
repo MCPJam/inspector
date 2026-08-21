@@ -123,6 +123,13 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "settings",
   },
   {
+    // Where GitHub sends the browser back — the App's setup URL and its OAuth
+    // callback both point here, told apart by which query parameters arrived.
+    path: "settings/integrations/github/callback",
+    kind: "screen",
+    surfaceId: "settings",
+  },
+  {
     path: "settings/github-checks",
     kind: "redirect",
     note: "Legacy: the page moved under Integrations; redirects to /settings/integrations/github.",
@@ -232,6 +239,14 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     path: "billing",
     kind: "special",
     note: "Post-checkout landing; renders Servers.",
+  },
+  {
+    // WorkOS Initiate Login URL for IdP-initiated SSO (the Okta app tile).
+    // Not a destination anyone navigates to: it starts a fresh, app-originated
+    // sign-in so authkit-js writes the PKCE verifier `/callback` needs.
+    path: "login",
+    kind: "special",
+    note: "WorkOS Initiate Login URL for IdP-initiated SSO; starts a fresh app-originated sign-in.",
   },
   {
     path: "callback",
