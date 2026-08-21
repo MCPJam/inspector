@@ -60,15 +60,19 @@ describe("MCPConformanceTest", () => {
         // verdict, but this profile version scores none of them yet — so they
         // are reported and excluded from the number.
         pendingCheckIds: [
+          "modern-cache-hint-coverage",
+          "modern-cache-hint-values-valid",
+          "modern-cache-scope-stable-across-pages",
           "modern-header-names-case-insensitive",
           "modern-missing-method-header-rejected",
+          "modern-resource-read-no-empty-contents",
           "wire-schema-valid",
         ],
       });
       // The digest is stamped only because the schema pass actually ran.
       expect(result.profile?.schemaDigest).toMatch(/^[0-9a-f]{64}$/);
       const score = scoreFromProtocolResult(result);
-      expect(score.pending).toBe(3);
+      expect(score.pending).toBe(7);
       // Every legacy-applicable check EXCEPT the pending one is in the
       // denominator; the modern-only checks era-skipped out of it, which is the
       // pre-existing behavior this must not disturb.

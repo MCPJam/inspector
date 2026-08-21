@@ -136,6 +136,21 @@ export const PROTOCOL_CHECK_CATALOG = {
     title: "Cacheable Result Hints",
     description: "Cacheable modern results carry ttlMs and cacheScope.",
   },
+  "modern-cache-hint-coverage": {
+    title: "Cache Hints On Every Cacheable Operation",
+    description:
+      "All six operations the caching utility names — server/discover, tools/list, prompts/list, resources/list, resources/templates/list, resources/read — carry ttlMs and cacheScope on a complete result.",
+  },
+  "modern-cache-hint-values-valid": {
+    title: "Cache Hint Values Valid",
+    description:
+      'ttlMs is an integer >= 0 and cacheScope is exactly "public" or "private".',
+  },
+  "modern-cache-scope-stable-across-pages": {
+    title: "Cache Scope Stable Across Pages",
+    description:
+      "Every page of a paginated list response carries the same cacheScope as the first.",
+  },
   "modern-protocol-version-header-mismatch": {
     title: "Protocol Version Header Mismatch",
     description:
@@ -184,6 +199,11 @@ export const PROTOCOL_CHECK_CATALOG = {
     title: "Resource Not Found",
     description:
       "Reading an unknown resource answers in-band JSON-RPC -32602 on HTTP 200.",
+  },
+  "modern-resource-read-no-empty-contents": {
+    title: "No Empty Contents For A Missing Resource",
+    description:
+      "Reading a non-existent resource never answers with an empty contents array, which cannot be told apart from an existing but empty resource.",
   },
   "modern-logs-require-log-level": {
     title: "Logs Require A Log Level",

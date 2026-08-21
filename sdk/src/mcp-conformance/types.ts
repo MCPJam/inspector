@@ -65,6 +65,15 @@ export const MCP_CHECK_IDS = [
   "modern-server-discover",
   "modern-result-type-present",
   "modern-cacheable-result-hints",
+  // The caching utility as SHIPPED in 2026-07-28, which is deeper than the
+  // original SEP-2549 reading `modern-cacheable-result-hints` encodes: six
+  // cacheable operations rather than four, a typed `ttlMs`/`cacheScope`
+  // contract, and page-to-page scope stability. New ids rather than a widened
+  // old one — widening a scored check silently re-grades every server that was
+  // green under the narrower reading.
+  "modern-cache-hint-coverage",
+  "modern-cache-hint-values-valid",
+  "modern-cache-scope-stable-across-pages",
   "modern-protocol-version-header-mismatch",
   "modern-method-header-mismatch",
   "modern-name-header-mismatch",
@@ -79,6 +88,9 @@ export const MCP_CHECK_IDS = [
   "modern-no-session-id",
   "modern-removed-methods-not-found",
   "modern-resource-not-found-invalid-params",
+  // SEP-2164's other half: the right error CODE and a non-ambiguous answer are
+  // separate obligations, and a server can satisfy one without the other.
+  "modern-resource-read-no-empty-contents",
   "modern-logs-require-log-level",
   "modern-subscription-ack-precedes-notifications",
   "modern-subscription-filter-and-tagging",
@@ -223,6 +235,9 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "modern-server-discover": ["modern"],
   "modern-result-type-present": ["modern"],
   "modern-cacheable-result-hints": ["modern"],
+  "modern-cache-hint-coverage": ["modern"],
+  "modern-cache-hint-values-valid": ["modern"],
+  "modern-cache-scope-stable-across-pages": ["modern"],
   "modern-protocol-version-header-mismatch": ["modern"],
   "modern-method-header-mismatch": ["modern"],
   "modern-name-header-mismatch": ["modern"],
@@ -233,6 +248,7 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "modern-no-session-id": ["modern"],
   "modern-removed-methods-not-found": ["modern"],
   "modern-resource-not-found-invalid-params": ["modern"],
+  "modern-resource-read-no-empty-contents": ["modern"],
   "modern-logs-require-log-level": ["modern"],
   "modern-subscription-ack-precedes-notifications": ["modern"],
   "modern-subscription-filter-and-tagging": ["modern"],
@@ -364,6 +380,10 @@ export const MCP_READINESS_IDS = [
   // the header as protocol version 2025-03-26". Tolerating the omission is
   // therefore spec-legal, so it can only be advice.
   "readiness-protocol-version-header-required",
+  // SEP-2164 shows `error.data.uri` echoing the requested resource in its
+  // example, but never states it as a MUST or a SHOULD. An example-only
+  // convention is MAY strength, and advice is the only honest home for it.
+  "readiness-resource-error-echoes-uri",
 ] as const;
 
 export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];

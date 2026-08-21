@@ -99,6 +99,46 @@ const REMOVED_MODERN_METHODS = [
 /** Result members every cacheable modern result must carry (SEP-2549). */
 const CACHE_HINT_FIELDS = ["ttlMs", "cacheScope"] as const;
 
+/**
+ * The SIX operations whose `resultType: "complete"` results MUST carry caching
+ * hints, per the 2026-07-28 caching utility. SEP-2549 originally named five;
+ * the shipped revision adds `server/discover`, and `resources/templates/list`
+ * and `resources/read` were never probed by the original check at all.
+ *
+ * `capability` is the advertisement that has to be present before the
+ * operation is probed — asking a server for a primitive family it never
+ * declared produces an error, not an uncached result.
+ */
+const CACHEABLE_OPERATIONS = [
+  { method: "server/discover", capability: undefined },
+  { method: "tools/list", capability: "tools" },
+  { method: "prompts/list", capability: "prompts" },
+  { method: "resources/list", capability: "resources" },
+  { method: "resources/templates/list", capability: "resources" },
+  { method: "resources/read", capability: "resources" },
+] as const satisfies ReadonlyArray<{
+  method: string;
+  capability: string | undefined;
+}>;
+
+/**
+ * Pages walked when checking cacheScope consistency. Small on purpose: this
+ * asserts that the scope does not CHANGE, which two pages already establish,
+ * and a run must not walk a large catalogue to say so.
+ */
+const MAX_CACHE_SCOPE_PAGES = 4;
+
+/** The only two values `cacheScope` may take. */
+const CACHE_SCOPES = ["public", "private"] as const;
+
+/**
+ * Hints are required on COMPLETE results only. An `input_required` interim
+ * result is explicitly "not cacheable and carries no caching hints", and a
+ * `task` result belongs to the tasks extension rather than this list — so
+ * grading either against the hint requirement would invent one.
+ */
+const COMPLETE_RESULT_TYPE = "complete";
+
 export type ModernCheckId = keyof typeof MODERN_CHECK_METADATA;
 
 type CheckMeta = Pick<
@@ -174,6 +214,34 @@ const MODERN_CHECK_METADATA = {
     title: "Undeclared Client Capability",
     description:
       "A server that needs an undeclared client capability for input_required answers JSON-RPC -32021.",
+  },
+  "modern-cache-hint-coverage": {
+    id: "modern-cache-hint-coverage",
+    category: "protocol",
+    title: "Cache Hints On Every Cacheable Operation",
+    description:
+      "All six operations the caching utility names — server/discover, tools/list, prompts/list, resources/list, resources/templates/list, resources/read — carry ttlMs and cacheScope on a complete result.",
+  },
+  "modern-cache-hint-values-valid": {
+    id: "modern-cache-hint-values-valid",
+    category: "protocol",
+    title: "Cache Hint Values Valid",
+    description:
+      'ttlMs is an integer >= 0 and cacheScope is exactly "public" or "private".',
+  },
+  "modern-cache-scope-stable-across-pages": {
+    id: "modern-cache-scope-stable-across-pages",
+    category: "protocol",
+    title: "Cache Scope Stable Across Pages",
+    description:
+      "Every page of a paginated list response carries the same cacheScope as the first.",
+  },
+  "modern-resource-read-no-empty-contents": {
+    id: "modern-resource-read-no-empty-contents",
+    category: "resources",
+    title: "No Empty Contents For A Missing Resource",
+    description:
+      "Reading a non-existent resource never answers with an empty contents array, which cannot be told apart from an existing but empty resource.",
   },
   "modern-removed-methods-not-found": {
     id: "modern-removed-methods-not-found",
@@ -371,6 +439,11 @@ interface ModernRunState {
    * the server did, since each stream is a fresh subscription.
    */
   subscription?: Promise<SubscriptionProbe>;
+  /**
+   * The single read of a non-existent resource the two SEP-2164 checks share.
+   * Two probes would use two uris and could disagree about the answer.
+   */
+  missingResource?: Promise<{ uri: string; result: RawHttpResult }>;
 }
 
 async function discoverOnce(
@@ -626,6 +699,318 @@ function runCacheHintsCheck(
         { cacheHints: observed }
       )
     : passedResult(meta, Date.now() - startedAt, { cacheHints: observed });
+}
+
+/**
+ * Probe every cacheable operation the server can actually serve, once, and
+ * share the frames with the three caching checks.
+ *
+ * SEPARATE from `collectCacheableResults`, which the two ALREADY-SCORED checks
+ * (`modern-result-type-present`, `modern-cacheable-result-hints`) read. Reusing
+ * that one would have widened those checks' coverage from four operations to
+ * six as a side effect — silently re-grading every server that was green under
+ * the narrower reading, which is exactly what the conformance profile exists to
+ * prevent. The old probe keeps its old shape; the new depth is new checks.
+ *
+ * `resources/read` needs a SUBJECT, and it must be a resource that exists: a
+ * missing one answers an error, and grading that against the hint requirement
+ * would report every server as defective. A run with no listed resource simply
+ * has no `resources/read` frame, which the checks report rather than assume.
+ */
+async function collectCacheableOperations(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<{
+  probes: Array<{ method: string; result: RawHttpResult }>;
+  unprobed: Array<{ method: string; reason: string }>;
+}> {
+  const discover = await discoverOnce(ctx, state);
+  const capabilities = advertisedCapabilities(discover);
+  const probes: Array<{ method: string; result: RawHttpResult }> = [
+    { method: "server/discover", result: discover },
+  ];
+  const unprobed: Array<{ method: string; reason: string }> = [];
+  // Seeded from the client phase when there was one, but PREFERRED from this
+  // walk's own `resources/list` frame below: a raw-only selection never opens a
+  // client session, and a check that could only run as part of a full suite
+  // would be untestable in isolation.
+  let resourceUri = ctx.surface?.resourceUris[0];
+
+  let id = 7150;
+  for (const operation of CACHEABLE_OPERATIONS) {
+    if (operation.method === "server/discover") continue;
+    if (
+      operation.capability !== undefined &&
+      capabilities[operation.capability] === undefined
+    ) {
+      unprobed.push({
+        method: operation.method,
+        reason: `server does not advertise the ${operation.capability} capability`,
+      });
+      continue;
+    }
+    if (operation.method === "resources/read") {
+      // Listed after `resources/list` in CACHEABLE_OPERATIONS precisely so the
+      // uri discovered there is available here.
+      if (!resourceUri) {
+        unprobed.push({
+          method: operation.method,
+          reason:
+            "server lists no resource to read, and probing a missing uri would grade an error response",
+        });
+        continue;
+      }
+      probes.push({
+        method: operation.method,
+        result: await track(
+          state,
+          modernProbe(ctx, {
+            id: id++,
+            method: "resources/read",
+            params: { uri: resourceUri },
+            name: resourceUri,
+          })
+        ),
+      });
+      continue;
+    }
+    const result = await track(
+      state,
+      modernProbe(ctx, { id: id++, method: operation.method })
+    );
+    probes.push({ method: operation.method, result });
+
+    if (operation.method === "resources/list") {
+      const listed = jsonRpcResult(result)?.resources;
+      const first = Array.isArray(listed) ? listed[0] : undefined;
+      const uri = (first as { uri?: unknown } | undefined)?.uri;
+      if (typeof uri === "string" && uri.length > 0) {
+        resourceUri = uri;
+      }
+    }
+  }
+
+  return { probes, unprobed };
+}
+
+/** A cacheable payload, or `undefined` when the frame carried none to grade. */
+function cacheablePayload(
+  result: RawHttpResult
+): Record<string, unknown> | undefined {
+  const payload = jsonRpcResult(result);
+  if (!payload) return undefined;
+  // Hints are required on COMPLETE results only. A server that answered
+  // `input_required` was explicitly told not to carry them.
+  const resultType = payload.resultType;
+  if (
+    typeof resultType === "string" &&
+    resultType !== COMPLETE_RESULT_TYPE &&
+    resultType !== "" &&
+    !resultType.includes("/")
+  ) {
+    return undefined;
+  }
+  return payload;
+}
+
+async function runCacheHintCoverageCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState,
+  operations: () => Promise<
+    Awaited<ReturnType<typeof collectCacheableOperations>>
+  >
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-cache-hint-coverage"];
+  const startedAt = Date.now();
+  void ctx;
+  void state;
+  const { probes, unprobed } = await operations();
+
+  const missing: Array<{ method: string; fields: string[] }> = [];
+  const observed: Record<string, unknown> = {};
+
+  for (const { method, result } of probes) {
+    const payload = cacheablePayload(result);
+    if (!payload) continue;
+    observed[method] = { ttlMs: payload.ttlMs, cacheScope: payload.cacheScope };
+    const absent = CACHE_HINT_FIELDS.filter(
+      (field) => payload[field] === undefined
+    );
+    if (absent.length > 0) {
+      missing.push({ method, fields: [...absent] });
+    }
+  }
+
+  const details = { cacheHints: observed, unprobed };
+
+  if (Object.keys(observed).length === 0) {
+    return couldNotRunResult(
+      meta,
+      "No cacheable result could be obtained to inspect",
+      details
+    );
+  }
+
+  if (missing.length > 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      `Cacheable results are missing required caching hints: ${missing
+        .map((entry) => `${entry.method} (${entry.fields.join(", ")})`)
+        .join("; ")}`,
+      details
+    );
+  }
+
+  // A pass over four of six operations is not a pass over six, and saying so is
+  // the difference between "this server is clean" and "this server did not
+  // expose the rest".
+  if (unprobed.length > 0) {
+    return couldNotRunResult(
+      meta,
+      `Hints are present on every cacheable operation this server exposes, but ${unprobed.length} of the six could not be probed: ${unprobed
+        .map((entry) => `${entry.method} (${entry.reason})`)
+        .join("; ")}`,
+      details
+    );
+  }
+
+  return passedResult(meta, Date.now() - startedAt, details);
+}
+
+async function runCacheHintValuesCheck(
+  operations: () => Promise<
+    Awaited<ReturnType<typeof collectCacheableOperations>>
+  >
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-cache-hint-values-valid"];
+  const startedAt = Date.now();
+  const { probes } = await operations();
+
+  const problems: string[] = [];
+  const observed: Record<string, unknown> = {};
+
+  for (const { method, result } of probes) {
+    const payload = cacheablePayload(result);
+    if (!payload) continue;
+    const { ttlMs, cacheScope } = payload;
+    observed[method] = { ttlMs, cacheScope };
+
+    if (ttlMs !== undefined) {
+      if (typeof ttlMs !== "number") {
+        problems.push(`${method} ttlMs is ${typeof ttlMs}, not a number`);
+      } else if (!Number.isInteger(ttlMs)) {
+        // "an integer value in milliseconds" — a fractional TTL has no
+        // meaning and a client rounding it would disagree with the server.
+        problems.push(`${method} ttlMs is ${ttlMs}, which is not an integer`);
+      } else if (ttlMs < 0) {
+        // "Servers MUST provide a ttlMs value that is >= 0." Clients are told
+        // to ignore a negative value, so a server sending one has silently
+        // published a different policy than it thinks.
+        problems.push(`${method} ttlMs is ${ttlMs}, which is negative`);
+      }
+    }
+
+    if (
+      cacheScope !== undefined &&
+      !CACHE_SCOPES.includes(cacheScope as (typeof CACHE_SCOPES)[number])
+    ) {
+      problems.push(
+        `${method} cacheScope is ${JSON.stringify(cacheScope)}, not one of ${CACHE_SCOPES.join(" | ")}`
+      );
+    }
+  }
+
+  if (Object.keys(observed).length === 0) {
+    return couldNotRunResult(
+      meta,
+      "No cacheable result could be obtained to inspect",
+      { cacheHints: observed }
+    );
+  }
+
+  return problems.length > 0
+    ? failedResult(
+        meta,
+        Date.now() - startedAt,
+        `Caching hints carry values the caching utility does not allow: ${problems.join("; ")}`,
+        { cacheHints: observed }
+      )
+    : passedResult(meta, Date.now() - startedAt, { cacheHints: observed });
+}
+
+/**
+ * "Servers **MUST** apply the same `cacheScope` to all response pages for a
+ * given list request." A list that flips from `public` to `private` mid-walk
+ * would have a client caching some pages of one result under sharing rules the
+ * server did not intend for the rest.
+ *
+ * Only observable where a server actually paginates, so the absence of a second
+ * page is a SKIP rather than a pass: certifying page consistency over one page
+ * would be certifying nothing.
+ */
+async function runCacheScopePaginationCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-cache-scope-stable-across-pages"];
+  const startedAt = Date.now();
+  const capabilities = advertisedCapabilities(await discoverOnce(ctx, state));
+
+  const paginated: Array<{ method: string; scopes: unknown[] }> = [];
+  const problems: string[] = [];
+  let id = 7180;
+
+  for (const method of cacheableListMethods(capabilities)) {
+    const scopes: unknown[] = [];
+    let cursor: string | undefined;
+
+    // Bounded to a handful of pages: this asserts consistency, not coverage,
+    // and a server handing out cursors forever must not hang the run.
+    for (let page = 0; page < MAX_CACHE_SCOPE_PAGES; page += 1) {
+      const result = await track(
+        state,
+        modernProbe(ctx, {
+          id: id++,
+          method,
+          ...(cursor !== undefined ? { params: { cursor } } : {}),
+        })
+      );
+      const payload = jsonRpcResult(result);
+      if (!payload) break;
+      scopes.push(payload.cacheScope);
+      const next = payload.nextCursor;
+      if (typeof next !== "string" || next === "" || next === cursor) break;
+      cursor = next;
+    }
+
+    if (scopes.length < 2) continue;
+    paginated.push({ method, scopes });
+    const distinct = new Set(scopes.map((scope) => JSON.stringify(scope)));
+    if (distinct.size > 1) {
+      problems.push(
+        `${method} returned pages with differing cacheScope values: ${scopes
+          .map((scope) => JSON.stringify(scope))
+          .join(" → ")}`
+      );
+    }
+  }
+
+  if (paginated.length === 0) {
+    return notApplicableResult(
+      meta,
+      "No listing returned a second page, so page-to-page cacheScope consistency has nothing to compare"
+    );
+  }
+
+  return problems.length > 0
+    ? failedResult(
+        meta,
+        Date.now() - startedAt,
+        `cacheScope changed between pages of the same list request: ${problems.join("; ")}`,
+        { paginated }
+      )
+    : passedResult(meta, Date.now() - startedAt, { paginated });
 }
 
 async function runProtocolVersionHeaderMismatchCheck(
@@ -1089,6 +1474,84 @@ async function runRemovedMethodsCheck(
     : passedResult(meta, Date.now() - startedAt, { removedMethods: observed });
 }
 
+/**
+ * One read of a resource that does not exist, shared by the two checks that
+ * grade the answer. Probing twice would ask the server the same question with
+ * two different uris and let the checks disagree about what it said.
+ */
+async function missingResourceProbe(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<{ uri: string; result: RawHttpResult } | undefined> {
+  if (!state.missingResource) {
+    const uri = `mcpjam-conformance://missing/${Date.now()}`;
+    state.missingResource = track(
+      state,
+      modernProbe(ctx, {
+        id: 7800,
+        method: "resources/read",
+        params: { uri },
+        name: uri,
+      })
+    ).then((result) => ({ uri, result }));
+  }
+  return await state.missingResource;
+}
+
+/**
+ * "Servers **MUST NOT** return an empty `contents` array for a non-existent
+ * resource. An empty array is ambiguous — it could mean the resource exists but
+ * has no content, or that it doesn't exist at all."
+ *
+ * Distinct from the -32602 check beside it, and not implied by it: a server can
+ * answer the right ERROR code on one path and still answer `{ contents: [] }`
+ * on another, and a client cannot tell that second answer from a legitimately
+ * empty resource. That ambiguity is the whole reason the sentence exists.
+ */
+async function runResourceEmptyContentsCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta =
+    MODERN_CHECK_METADATA["modern-resource-read-no-empty-contents"];
+  const startedAt = Date.now();
+  const capabilities = advertisedCapabilities(await discoverOnce(ctx, state));
+
+  if (capabilities.resources === undefined) {
+    return notApplicableResult(
+      meta,
+      "Server does not advertise the resources capability"
+    );
+  }
+
+  const probe = await missingResourceProbe(ctx, state);
+  if (!probe) {
+    return couldNotRunResult(
+      meta,
+      "The missing-resource read produced no response to inspect"
+    );
+  }
+
+  const payload = jsonRpcResult(probe.result);
+  const contents = payload?.contents;
+  const details = {
+    httpStatus: probe.result.status,
+    probedUri: probe.uri,
+    contents,
+  };
+
+  if (Array.isArray(contents) && contents.length === 0) {
+    return failedResult(
+      meta,
+      Date.now() - startedAt,
+      `Reading the non-existent resource ${probe.uri} returned an empty contents array; a client cannot tell that from a resource that exists and is empty, so the spec requires a JSON-RPC error instead`,
+      details
+    );
+  }
+
+  return passedResult(meta, Date.now() - startedAt, details);
+}
+
 async function runResourceNotFoundCheck(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -1105,16 +1568,14 @@ async function runResourceNotFoundCheck(
     );
   }
 
-  const missingUri = `mcpjam-conformance://missing/${Date.now()}`;
-  const result = await track(
-    state,
-    modernProbe(ctx, {
-      id: 7800,
-      method: "resources/read",
-      params: { uri: missingUri },
-      name: missingUri,
-    })
-  );
+  const probe = await missingResourceProbe(ctx, state);
+  if (!probe) {
+    return couldNotRunResult(
+      meta,
+      "The missing-resource read produced no response to inspect"
+    );
+  }
+  const { uri: missingUri, result } = probe;
 
   const error = jsonRpcError(result);
   const problems: string[] = [];
@@ -1608,6 +2069,9 @@ async function runModernCheck(
   state: ModernRunState,
   cacheableProbes: () => Promise<
     Array<{ method: string; result: RawHttpResult }>
+  >,
+  cacheableOperations: () => Promise<
+    Awaited<ReturnType<typeof collectCacheableOperations>>
   >
 ): Promise<MCPCheckResult> {
   const startedAt = Date.now();
@@ -1618,6 +2082,12 @@ async function runModernCheck(
       return runResultTypeCheck(await cacheableProbes(), startedAt);
     case "modern-cacheable-result-hints":
       return runCacheHintsCheck(await cacheableProbes(), startedAt);
+    case "modern-cache-hint-coverage":
+      return await runCacheHintCoverageCheck(ctx, state, cacheableOperations);
+    case "modern-cache-hint-values-valid":
+      return await runCacheHintValuesCheck(cacheableOperations);
+    case "modern-cache-scope-stable-across-pages":
+      return await runCacheScopePaginationCheck(ctx, state);
     case "modern-protocol-version-header-mismatch":
       return await runProtocolVersionHeaderMismatchCheck(ctx, state);
     case "modern-method-header-mismatch":
@@ -1636,6 +2106,8 @@ async function runModernCheck(
       return await runRemovedMethodsCheck(ctx, state);
     case "modern-resource-not-found-invalid-params":
       return await runResourceNotFoundCheck(ctx, state);
+    case "modern-resource-read-no-empty-contents":
+      return await runResourceEmptyContentsCheck(ctx, state);
     case "modern-logs-require-log-level":
       return await runLogLevelCheck(ctx, state);
     case "modern-no-session-id":
@@ -1810,6 +2282,13 @@ export async function runModernChecks(
     cacheable ??= await collectCacheableResults(ctx, state);
     return cacheable;
   };
+  let cacheableOps:
+    | Awaited<ReturnType<typeof collectCacheableOperations>>
+    | undefined;
+  const cacheableOperations = async () => {
+    cacheableOps ??= await collectCacheableOperations(ctx, state);
+    return cacheableOps;
+  };
 
   // `modern-no-session-id` inspects the responses every other modern check
   // already collected, so it runs last regardless of selection order.
@@ -1821,7 +2300,15 @@ export async function runModernChecks(
   for (const id of ordered) {
     const startedAt = Date.now();
     try {
-      results.push(await runModernCheck(id, ctx, state, cacheableProbes));
+      results.push(
+        await runModernCheck(
+          id,
+          ctx,
+          state,
+          cacheableProbes,
+          cacheableOperations
+        )
+      );
     } catch (error) {
       results.push(
         failedResult(

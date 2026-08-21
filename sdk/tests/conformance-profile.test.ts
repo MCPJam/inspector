@@ -43,8 +43,12 @@ describe("conformance profile manifest", () => {
     // reported a real verdict this profile version chose not to grade yet;
     // promoting one is a version bump, and this list is where that shows up.
     expect([...unscoredCheckIds(PROFILE)].sort()).toEqual([
+      "modern-cache-hint-coverage",
+      "modern-cache-hint-values-valid",
+      "modern-cache-scope-stable-across-pages",
       "modern-header-names-case-insensitive",
       "modern-missing-method-header-rejected",
+      "modern-resource-read-no-empty-contents",
       "wire-schema-valid",
     ]);
   });
