@@ -225,8 +225,22 @@ async function persistProposal(opts: {
   proposed: ProposedAction[];
   surface: ProposalSurface;
   turnIdempotencyKey?: string;
+  /** Used to FREEZE argument meanings at mint time. See `normalizeArgs`. */
+  client?: PlatformApiClient;
 }): Promise<string | undefined> {
-  const { operation, input, projectId, proposed, surface } = opts;
+  const { operation, projectId, proposed, surface } = opts;
+  const meta = proposalMetaFor(operation.name);
+  // FROZEN BEFORE ANYTHING ELSE, because everything downstream — the derived
+  // action id, the stored row, the description a human reads, the arguments
+  // approval executes — has to describe the same set. `allAttached: true`
+  // would otherwise be re-expanded at click time against whatever is attached
+  // THEN, silently widening an approved spend.
+  const input = opts.client
+    ? await meta.normalizeArgs(opts.input, {
+        projectId,
+        client: opts.client,
+      })
+    : opts.input;
   // Derived where possible: same turn + same operation + same arguments must
   // yield the SAME proposal, so a redelivery re-offers the existing control
   // rather than minting a second one. `randomUUID` only for callers with no
@@ -266,7 +280,6 @@ async function persistProposal(opts: {
     return undefined;
   }
 
-  const meta = proposalMetaFor(operation.name);
   // The derived id already collapses repeats in the BACKEND row; this collapses
   // them in the RESPONSE. A model that invokes the same gated tool twice with
   // the same arguments has proposed one action, and a caller rendering one
@@ -316,6 +329,8 @@ async function offerRunsForCreatedSuites(opts: {
   proposed: ProposedAction[];
   projectId: string;
   surface: ProposalSurface;
+  /** See `buildGatedProposalTools`. */
+  client?: PlatformApiClient;
   turnIdempotencyKey?: string;
   /** The org's disabled operations. See `buildGatedProposalTools`. */
   disabledOperations?: ReadonlySet<string>;
@@ -353,6 +368,7 @@ async function offerRunsForCreatedSuites(opts: {
       projectId: opts.projectId,
       proposed: opts.proposed,
       surface: opts.surface,
+      ...(opts.client ? { client: opts.client } : {}),
       ...(opts.turnIdempotencyKey
         ? { turnIdempotencyKey: opts.turnIdempotencyKey }
         : {}),
@@ -376,6 +392,13 @@ async function offerRunsForCreatedSuites(opts: {
 function buildGatedProposalTools(opts: {
   projectId: string;
   proposed: ProposedAction[];
+  /**
+   * The platform client a proposal normalizer uses to resolve selectors at
+   * mint time. Optional so a caller that cannot supply one still gets
+   * proposals — with the arguments unfrozen, which is the pre-existing
+   * behaviour and never worse than no proposal at all.
+   */
+  client?: PlatformApiClient;
   /**
    * The turn's stable identity. When present, the action id is DERIVED from it
    * rather than random, so a redelivered Slack event that re-proposes the same
@@ -464,6 +487,7 @@ function buildGatedProposalTools(opts: {
           projectId: opts.projectId,
           proposed: opts.proposed,
           surface: opts.surface,
+          ...(opts.client ? { client: opts.client } : {}),
           ...(opts.turnIdempotencyKey
             ? { turnIdempotencyKey: opts.turnIdempotencyKey }
             : {}),
@@ -964,6 +988,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         ? buildGatedProposalTools({
             projectId,
             proposed,
+            client,
             ...(body.idempotencyKey
               ? { turnIdempotencyKey: body.idempotencyKey }
               : {}),
@@ -1106,6 +1131,7 @@ agent.post("/projects/:projectId/agent", async (c) => {
         proposed,
         projectId,
         surface: proposalSurface,
+        client,
         ...(body.idempotencyKey
           ? { turnIdempotencyKey: body.idempotencyKey }
           : {}),

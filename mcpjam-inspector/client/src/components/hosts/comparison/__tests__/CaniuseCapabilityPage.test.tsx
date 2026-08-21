@@ -34,7 +34,7 @@ describe("CaniuseCapabilityPage", () => {
     expect(screen.getByText("/capabilities/sampling")).toBeInTheDocument();
     expect(screen.getByText("ChatGPT")).toBeInTheDocument();
     expect(screen.getByText("Claude")).toBeInTheDocument();
-    expect(screen.getAllByText("2026-07-07").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("2026-08-14").length).toBeGreaterThan(0);
     expect(
       screen.getAllByText(/Supported|Partial|Not supported/).length,
     ).toBeGreaterThan(0);
