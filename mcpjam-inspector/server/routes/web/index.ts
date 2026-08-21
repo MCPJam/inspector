@@ -34,6 +34,7 @@ import skills from "./skills.js";
 import serverSkills from "./server-skills.js";
 import caniuse from "./caniuse.js";
 import mrtrContinuation from "./mrtr-continuation.js";
+import registryWeb from "./registry.js";
 import { fetchRemoteGuestJwks } from "../../utils/guest-session-source.js";
 
 const web = new Hono();
@@ -79,6 +80,10 @@ for (const startsWork of [
   web.use(startsWork, conformanceRunRateLimitMiddleware);
 }
 web.use("/checks/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Org-registry derivation carries a per-IP ceiling on top of the per-guest
+// one. The route consumes that bucket only after it asks the backend whether
+// this caller may add to the project's organization and before any egress.
+web.use("/registry/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Hosted MRTR continuation resume/cancel (MCP 2026-07-28 §12.5). Bearer +
 // guest rate limit like every MCP-operation route; the resume path re-drives a
 // tool/prompt/resource leg against a freshly-authorized manager.
@@ -136,6 +141,7 @@ web.route("/chat-history", chatHistory);
 web.route("/conformance", conformanceWeb);
 web.route("/checks", checks);
 web.route("/mrtr", mrtrContinuation);
+web.route("/registry", registryWeb);
 // `/computers/terminal` (the WS) is registered on the root app in
 // server/index.ts — only /config and /exec live on this sub-router.
 web.route("/computers", computers);
