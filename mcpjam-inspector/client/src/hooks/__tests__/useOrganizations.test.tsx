@@ -68,6 +68,22 @@ describe("useOrganizationQueries", () => {
     ]);
   });
 
+  // Selecting a pending-invite org made the server refuse every org-scoped call.
+  it("excludes pending invites the caller has not claimed", () => {
+    mockUseQuery.mockReturnValue([
+      { _id: "joined", updatedAt: 2, isPendingInvite: false },
+      { _id: "invited", updatedAt: 3, isPendingInvite: true },
+    ]);
+
+    const { result } = renderHook(
+      () => useOrganizationQueries({ isAuthenticated: true }),
+      { wrapper: readyWrapper(true) }
+    );
+
+    expect(result.current.sortedOrganizations.map((o) => o._id)).toEqual([
+      "joined",
+    ]);
+  });
   it("does not report loading for unauthenticated actors", () => {
     const { result } = renderHook(() =>
       useOrganizationQueries({ isAuthenticated: false }), {
