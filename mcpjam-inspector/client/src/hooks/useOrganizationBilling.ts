@@ -217,16 +217,33 @@ export interface StartOrganizationPlanChangeOptions {
   confirmPaidPlanChange?: boolean;
 }
 
+/**
+ * One org-scoped billing query. The backend returns null for a denied org
+ * read, so the value folds to `undefined` (what consumers already render
+ * nothing for) while `isLoading` reads the RAW result — deriving it from the
+ * fold would leave a denied surface stuck on its skeleton forever.
+ */
+function useBillingQuery<T>(
+  name: string,
+  args: Record<string, unknown> | "skip"
+): { value: T | undefined; isLoading: boolean } {
+  const raw = useQuery(name as any, args as any) as T | null | undefined;
+  return {
+    value: raw ?? undefined,
+    isLoading: args !== "skip" && raw === undefined,
+  };
+}
+
 export function useOrganizationBillingStatus(
   organizationId: string | null,
   options?: UseOrganizationBillingStatusOptions
 ): OrganizationBillingStatus | undefined {
   const enabled = options?.enabled ?? true;
 
-  return useQuery(
-    "billing:getOrganizationBillingStatus" as any,
-    enabled && organizationId ? ({ organizationId } as any) : "skip"
-  ) as OrganizationBillingStatus | undefined;
+  return useBillingQuery<OrganizationBillingStatus>(
+    "billing:getOrganizationBillingStatus",
+    enabled && organizationId ? { organizationId } : "skip"
+  ).value;
 }
 
 export function useOrganizationBilling(
@@ -240,30 +257,40 @@ export function useOrganizationBilling(
   const shouldQuerySeatPaymentIntent =
     shouldQueryOrganization && options?.includeSeatPaymentIntent === true;
 
-  const billingStatus = useOrganizationBillingStatus(organizationId, {
-    enabled,
-  });
+  const { value: billingStatus, isLoading: isLoadingBilling } =
+    useBillingQuery<OrganizationBillingStatus>(
+      "billing:getOrganizationBillingStatus",
+      shouldQueryOrganization ? { organizationId } : "skip"
+    );
 
-  const entitlements = useQuery(
-    "billing:getOrganizationEntitlements" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
-  ) as OrganizationEntitlements | undefined;
+  const { value: entitlements, isLoading: isLoadingEntitlements } =
+    useBillingQuery<OrganizationEntitlements>(
+      "billing:getOrganizationEntitlements",
+      shouldQueryOrganization ? { organizationId } : "skip"
+    );
 
-  const organizationPremiumness = useQuery(
-    "billing:getOrganizationPremiumness" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
-  ) as PremiumnessState | undefined;
+  const {
+    value: organizationPremiumness,
+    isLoading: isLoadingOrganizationPremiumness,
+  } = useBillingQuery<PremiumnessState>(
+    "billing:getOrganizationPremiumness",
+    shouldQueryOrganization ? { organizationId } : "skip"
+  );
 
-  const projectPremiumness = useQuery(
-    "billing:getProjectPremiumness" as any,
-    shouldQueryProject ? ({ organizationId, projectId } as any) : "skip"
-  ) as PremiumnessState | undefined;
+  const { value: projectPremiumness, isLoading: isLoadingProjectPremiumness } =
+    useBillingQuery<PremiumnessState>(
+      "billing:getProjectPremiumness",
+      shouldQueryProject ? { organizationId, projectId } : "skip"
+    );
 
-  const planCatalog = useQuery(
-    "billing:getPlanCatalog" as any,
-    shouldQueryOrganization ? ({ organizationId } as any) : "skip"
-  ) as PlanCatalog | undefined;
+  const { value: planCatalog, isLoading: isLoadingPlanCatalog } =
+    useBillingQuery<PlanCatalog>(
+      "billing:getPlanCatalog",
+      shouldQueryOrganization ? { organizationId } : "skip"
+    );
 
+  // Not folded: null is already this query's "no active intent" answer, and a
+  // denial lands on the same null to the same effect.
   const activeSeatPaymentIntent = useQuery(
     "billing:getActiveOrganizationSeatPaymentIntent" as any,
     shouldQuerySeatPaymentIntent ? ({ organizationId } as any) : "skip"
@@ -594,11 +621,6 @@ export function useOrganizationBilling(
     ]
   );
 
-  const isLoadingOrganizationPremiumness =
-    shouldQueryOrganization && organizationPremiumness === undefined;
-  const isLoadingProjectPremiumness =
-    shouldQueryProject && projectPremiumness === undefined;
-
   return {
     billingStatus,
     organizationPremiumness,
@@ -606,12 +628,11 @@ export function useOrganizationBilling(
     entitlements,
     activeSeatPaymentIntent,
     planCatalog,
-    isLoadingBilling: shouldQueryOrganization && billingStatus === undefined,
-    isLoadingEntitlements:
-      shouldQueryOrganization && entitlements === undefined,
+    isLoadingBilling,
+    isLoadingEntitlements,
     isLoadingOrganizationPremiumness,
     isLoadingProjectPremiumness,
-    isLoadingPlanCatalog: shouldQueryOrganization && planCatalog === undefined,
+    isLoadingPlanCatalog,
     isStartingPlanChange,
     pendingPlanChangeTarget,
     isOpeningPortal,
