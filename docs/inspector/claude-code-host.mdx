@@ -85,6 +85,14 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 | Org spending limit reached | Clean rejection before any model call. |
 | Sandbox dies mid-run | Turn errors; the next turn starts a fresh session. |
 
+**Eval-specific pre-flight refusals** (harness eval runs only):
+
+| Condition | What you see |
+|---|---|
+| Host grants `bash` but no computer environment is pinned on the suite | Pre-flight error — pin a computer environment in suite settings, or remove the computer-backed built-in from the host config. |
+| Suite is scoped to the organization (no project) | Pre-flight error — the harness provisions and bills the computer against a project; move the suite into a project and retry. |
+| A case pins a short model id (e.g. `claude-sonnet-4-6` instead of `anthropic/claude-sonnet-4-6`) | Pre-flight error naming both spellings — re-save the case with the full canonical id. |
+
 ## Related
 
 - [Computer](/inspector/computer) — Manage your project's Computer, sandbox images, and lifecycle.
