@@ -834,6 +834,11 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Generate eval cases for ${named(input, "suite") ?? "(unnamed)"}`,
       buttonLabel: "Generate them",
       kind: "generate",
+      // Generation calls the authoring model, so it spends credits exactly
+      // like the two run operations above. Without this the Slack and Discord
+      // approval cards omit the spend warning for the one operation whose
+      // cost is least obvious from its name.
+      confirmSeverity: "spend",
     },
   },
   {
