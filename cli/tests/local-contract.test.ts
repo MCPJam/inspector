@@ -356,6 +356,10 @@ test("local MCP serverInfo.name remains mcpjam", async () => {
     await client.connect(clientTransport as never);
     const serverInfo = client.getServerVersion();
     assert.equal(serverInfo?.name, "mcpjam");
+    assert.equal(serverInfo?.title, "MCPJam CLI");
+    const instructions = client.getInstructions() ?? "";
+    assert.match(instructions, /MCPJam CLI running locally/);
+    assert.match(instructions, /not the hosted MCPJam Cloud MCP/);
   } finally {
     await client.close().catch(() => undefined);
     await handle.close();
