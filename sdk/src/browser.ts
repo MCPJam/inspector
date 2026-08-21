@@ -752,6 +752,18 @@ export {
 } from "./conformance-catalog.js";
 export type { ConformanceCheckInfo } from "./conformance-catalog.js";
 
+export {
+  buildConformanceRunReport,
+  CONFORMANCE_RUN_SCHEMA_VERSION,
+  CONFORMANCE_SUITE_KINDS,
+  DEFAULT_CONFORMANCE_SUITES,
+  normalizeConformanceSuites,
+} from "./conformance-run-types.js";
+export type {
+  ConformanceRunReportV1,
+  ConformanceSuiteKind,
+} from "./conformance-run-types.js";
+
 // Host-side sandbox policy resolver (SEP-1865 + ChatGPT Apps). Pure
 // resolver — DOM-free, React-free, Convex-free. Browser-safe by
 // construction. Re-exported here so client renderers can import it

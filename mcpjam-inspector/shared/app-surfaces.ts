@@ -466,7 +466,7 @@ export const APP_SURFACES = [
   {
     id: "conformance",
     canonicalPath: "/conformance",
-    routePatterns: ["conformance"],
+    routePatterns: ["conformance", "conformance/runs/:runId"],
     navSegments: ["conformance"],
     title: "Conformance",
     purpose:

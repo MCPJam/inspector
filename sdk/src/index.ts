@@ -591,6 +591,43 @@ export type {
   ConformanceScore,
   ScoredAdvisory,
 } from "./conformance-score.js";
+export {
+  buildConformanceRunReport,
+  CONFORMANCE_RUN_SCHEMA_VERSION,
+  CONFORMANCE_SUITE_KINDS,
+  DEFAULT_CONFORMANCE_SUITES,
+  normalizeConformanceSuites,
+} from "./conformance-run-types.js";
+export type {
+  ConformanceRunReportV1,
+  ConformanceSuiteKind,
+} from "./conformance-run-types.js";
+export { runConformance } from "./conformance-run.js";
+export type {
+  ConformanceRunProgress,
+  RunConformanceConfig,
+} from "./conformance-run.js";
+export {
+  detectConformanceCiMetadata,
+  githubActionExternalRunId,
+} from "./conformance-ci.js";
+export type { ConformanceCiMetadata } from "./conformance-ci.js";
+export {
+  finalizeConformanceRun,
+  isConformanceReportingConfigured,
+  reportConformanceRun,
+  reportConformanceRunSafely,
+  startConformanceRun,
+  uploadConformanceSuiteReport,
+} from "./report-conformance-run.js";
+export type {
+  ConformanceRunSource,
+  ConformanceTargetInput,
+  ReportConformanceRunOptions,
+  ReportConformanceRunOutput,
+} from "./report-conformance-run.js";
+export { createConformanceRunReporter } from "./conformance-run-reporter.js";
+export type { ConformanceRunReporter } from "./conformance-run-reporter.js";
 // Redaction for reports that leave the machine that produced them (a stored,
 // shareable run). Structural drop of raw HTTP evidence plus a credential-shaped
 // key sweep — see the module header for why both layers exist.
