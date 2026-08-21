@@ -88,6 +88,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/servers/{serverId}/resources/read":
     "readServerResource",
 
+  // Directory readiness
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
+    "startClaudeReadinessRun",
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
+    "startOpenAIReadinessRun",
+  "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
+  "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
+  "get /projects/{projectId}/readiness-runs/{runId}/report":
+    "getReadinessReport",
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel":
+    "cancelReadinessRun",
+
   // Hosts
   "get /projects/{projectId}/hosts": "listHosts",
   "post /projects/{projectId}/hosts": "createHost",
@@ -102,6 +114,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/environments/capabilities":
     "getEnvironmentCapabilities",
   "post /projects/{projectId}/environments": "createEnvironment",
+  "post /projects/{projectId}/environments/ensure-adhoc":
+    "ensureAdhocEnvironment",
+  "post /projects/{projectId}/environments/{environmentId}/name":
+    "nameEnvironment",
   "get /projects/{projectId}/environments/{environmentId}": "getEnvironment",
   "patch /projects/{projectId}/environments/{environmentId}":
     "updateEnvironment",
@@ -154,6 +170,9 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
 
   // Eval runs
   "post /projects/{projectId}/eval-runs": "createEvalRun",
+  "post /projects/{projectId}/eval-run-groups": "createEvalRunGroup",
+  "post /projects/{projectId}/eval-suites/{suiteId}/environments":
+    "attachEvalSuiteEnvironment",
   "get /projects/{projectId}/eval-runs/{runId}": "getEvalRun",
   "get /projects/{projectId}/eval-runs/{runId}/compare": "compareEvalRun",
   "post /projects/{projectId}/eval-runs/{runId}/cancel": "cancelEvalRun",
@@ -204,6 +223,10 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "undismissSwarmFinding",
   "post /projects/{projectId}/eval-runs/{runId}/insights":
     "requestEvalRunInsights",
+  "post /projects/{projectId}/eval-runs/{runId}/judge": "requestEvalRunJudge",
+  "get /organizations/{organizationId}/eval-check-repos": "listEvalCheckRepos",
+  "post /organizations/{organizationId}/eval-check-repos":
+    "connectEvalCheckRepo",
   "get /projects/{projectId}/waves/{waveId}/insights": "getWaveInsights",
   "post /projects/{projectId}/waves/{waveId}/insights": "requestWaveInsights",
   "delete /projects/{projectId}/waves/{waveId}/insights": "cancelWaveInsights",
@@ -256,6 +279,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Tunnels
   "post /projects/{projectId}/tunnels": "createTunnel",
   "post /projects/{projectId}/tunnels/{serverId}/close": "closeTunnel",
+
+  // Directory readiness
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
+    "startClaudeReadinessRun",
+  "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
+    "startOpenAIReadinessRun",
+  "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
+  "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
+  "get /projects/{projectId}/readiness-runs/{runId}/report":
+    "getReadinessReport",
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel":
+    "cancelReadinessRun",
 };
 
 /**
