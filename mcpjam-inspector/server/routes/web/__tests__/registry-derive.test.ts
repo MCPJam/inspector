@@ -24,10 +24,9 @@ const { deriveRegistryEntry, query } = vi.hoisted(() => ({
 }));
 
 vi.mock("../../../services/registry-derive.js", async (importOriginal) => {
-  const actual =
-    await importOriginal<
-      typeof import("../../../services/registry-derive.js")
-    >();
+  const actual = await importOriginal<
+    typeof import("../../../services/registry-derive.js")
+  >();
   return { ...actual, deriveRegistryEntry };
 });
 
@@ -133,6 +132,43 @@ describe("POST /api/web/registry/derive", () => {
 
     expect(response.status).toBe(502);
     expect(deriveRegistryEntry).not.toHaveBeenCalled();
+  });
+
+  it("does not dial anything when Convex is not configured", async () => {
+    // `convexUrl` is derived from CONVEX_HTTP_URL and falls back to
+    // VITE_CONVEX_URL, so "not configured" means neither is set. The point is
+    // that the failure lands BEFORE any egress.
+    const previousViteConvexUrl = process.env.VITE_CONVEX_URL;
+    delete process.env.CONVEX_HTTP_URL;
+    delete process.env.VITE_CONVEX_URL;
+    try {
+      const response = await postDerive(BODY);
+
+      expect(response.status).toBe(500);
+      expect(deriveRegistryEntry).not.toHaveBeenCalled();
+    } finally {
+      if (previousViteConvexUrl === undefined) {
+        delete process.env.VITE_CONVEX_URL;
+      } else {
+        process.env.VITE_CONVEX_URL = previousViteConvexUrl;
+      }
+    }
+  });
+
+  it("does not leak the Convex error text to the caller", async () => {
+    query.mockRejectedValue(
+      new Error("connect ECONNREFUSED 10.1.2.3:443 backend-abc.convex.cloud")
+    );
+
+    const response = await postDerive(BODY);
+    const body = await response.json();
+
+    // An internal hop's failure names deployment hosts and addresses. It
+    // belongs in the logs, not in a reply to whoever pasted a URL.
+    expect(response.status).toBe(502);
+    expect(JSON.stringify(body)).not.toMatch(
+      /ECONNREFUSED|convex\.cloud|10\.1\.2\.3/
+    );
   });
 
   it("rejects a malformed body before authorizing or dialing", async () => {

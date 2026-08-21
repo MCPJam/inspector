@@ -51,12 +51,14 @@ const ORG_ROW = {
   editedFields: [],
 };
 
-function render(overrides: {
-  connections?: unknown[];
-  liveServers?: Record<string, { connectionStatus: string }>;
-  onConnect?: (formData: unknown) => void;
-  onDisconnect?: (name: string) => void;
-} = {}) {
+function render(
+  overrides: {
+    connections?: unknown[];
+    liveServers?: Record<string, { connectionStatus: string }>;
+    onConnect?: (formData: unknown) => void;
+    onDisconnect?: (name: string) => void;
+  } = {}
+) {
   queries["registryServers:listOrgRegistryServers"] = [ORG_ROW];
   queries["registryServers:getOrgRegistryContext"] = {
     organizationId: "org_1",
@@ -132,6 +134,30 @@ describe("useOrgRegistryServers — status join", () => {
     });
 
     expect(result.current.servers[0].connectionStatus).toBe("added");
+  });
+
+  it("stays loading until provenance resolves, rather than guessing", () => {
+    queries["registryServers:listOrgRegistryServers"] = [ORG_ROW];
+    queries["registryServers:getOrgRegistryContext"] = {
+      organizationId: "org_1",
+      canAdd: true,
+    };
+    // The two queries land independently. Rows first, provenance still in
+    // flight: an empty map here would read as "nothing is installed", so every
+    // installed card would flash "Connect" and a click in that window would
+    // try to install it twice.
+    queries["registryServers:getProjectRegistryConnections"] = undefined;
+
+    const { result } = renderHook(() =>
+      useOrgRegistryServers({
+        projectId: "proj_1",
+        isAuthenticated: true,
+        onConnect: () => {},
+      })
+    );
+
+    expect(result.current.servers).toEqual([]);
+    expect(result.current.isLoading).toBe(true);
   });
 });
 

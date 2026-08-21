@@ -74,6 +74,7 @@ import {
   OrgRegistryServerDialog,
   type OrgRegistryDialogSeed,
 } from "./registry/OrgRegistryServerDialog";
+import { OrgRegistryRemoveDialog } from "./registry/OrgRegistryRemoveDialog";
 import { ErrorBoundary } from "./ui/error-boundary";
 import { toast } from "@/lib/toast";
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
@@ -371,21 +372,31 @@ export function RegistryTab({
     [orgRegistry]
   );
 
-  const handleOrgRemove = useCallback(
-    async (server: EnrichedOrgRegistryServer) => {
-      try {
-        await orgRegistry.remove(server._id);
-        toast.success("Removed from your organization's registry");
-      } catch (error) {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : "Could not remove this entry."
-        );
-      }
-    },
-    [orgRegistry]
-  );
+  /**
+   * Which entry the remove confirmation is about. Removal reaches every
+   * project in the organization, not just this one, so it asks first — see
+   * `OrgRegistryRemoveDialog`.
+   */
+  const [orgRemoveTarget, setOrgRemoveTarget] =
+    useState<EnrichedOrgRegistryServer | null>(null);
+  const [orgRemoving, setOrgRemoving] = useState(false);
+
+  const handleOrgRemoveConfirmed = useCallback(async () => {
+    const server = orgRemoveTarget;
+    if (!server) return;
+    setOrgRemoving(true);
+    try {
+      await orgRegistry.remove(server._id);
+      toast.success("Removed from your organization's registry");
+      setOrgRemoveTarget(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not remove this entry."
+      );
+    } finally {
+      setOrgRemoving(false);
+    }
+  }, [orgRegistry, orgRemoveTarget]);
 
   // Which directory row the endpoint dialog is asking about, and the choices
   // to offer. `options`/`pattern` are seeded from the card and REPLACED by
@@ -945,20 +956,33 @@ export function RegistryTab({
     }),
   });
 
-  // Per-SECTION emptiness, not per-screen. The two halves have independent
+  // Per-SECTION emptiness, not per-screen. The three shelves have independent
   // backends: an empty curated catalog must not blank a directory that loaded
-  // fine, and vice versa. Only when BOTH are empty and neither is still
-  // loading is there genuinely nothing to show.
+  // fine, and neither may blank an organization's own entries. Only when ALL
+  // of them are empty and none is still loading is there genuinely nothing to
+  // show.
+  //
+  // The org shelf earns its place in this test rather than just rendering
+  // below it: this branch returns EARLY, so an org with servers on its shelf
+  // would be told "the registry is empty" and never see them whenever the
+  // curated catalog happened to be unseeded — a fresh deployment, or a
+  // preview environment.
   const curatedEmpty = !isLoading && catalogCards.length === 0;
   const directoryEmpty =
     !directory.isLoadingFirstPage && directory.items.length === 0;
   const directoryFiltered = isDirectoryFiltered(directory);
+  const orgShelfEmpty =
+    !orgRegistry.isLoading &&
+    orgRegistry.servers.length === 0 &&
+    // A member who can add has something to do here even with an empty shelf,
+    // so the invitation counts as content.
+    !orgRegistry.canAdd;
 
   if (isLoading && directory.isLoadingFirstPage) {
     return <LoadingSkeleton />;
   }
 
-  if (curatedEmpty && directoryEmpty && !directoryFiltered) {
+  if (curatedEmpty && directoryEmpty && orgShelfEmpty && !directoryFiltered) {
     return (
       <EmptyState
         icon={Package}
@@ -1006,7 +1030,7 @@ export function RegistryTab({
                 },
               })
             }
-            onRemove={handleOrgRemove}
+            onRemove={(server) => setOrgRemoveTarget(server)}
             onConnect={handleOrgConnect}
             onDisconnect={handleOrgDisconnect}
           />
@@ -1068,6 +1092,17 @@ export function RegistryTab({
               }}
             />
           }
+        />
+      )}
+      {orgRemoveTarget && (
+        <OrgRegistryRemoveDialog
+          open
+          onOpenChange={(open) => {
+            if (!open && !orgRemoving) setOrgRemoveTarget(null);
+          }}
+          displayName={orgRemoveTarget.displayName}
+          isRemoving={orgRemoving}
+          onConfirm={() => void handleOrgRemoveConfirmed()}
         />
       )}
       {orgDialog && (

@@ -68,7 +68,8 @@ export interface OrgRegistryDialogSubmission {
   url: string;
   useOAuth?: boolean;
   oauthScopes?: string[];
-  derived: OrgRegistryDerivedSnapshot;
+  /** Absent when no probe has run — see the note at the submit site. */
+  derived: OrgRegistryDerivedSnapshot | null;
   sourceServerId?: string;
 }
 
@@ -191,11 +192,14 @@ export function OrgRegistryServerDialog({
         // able to correct it.
         useOAuth: authRequired,
         oauthScopes: seed?.oauthScopes,
-        derived: derived ?? {
-          probedAt: Date.now(),
-          endpointUrl: url.trim(),
-          authRequired,
-        },
+        // NEVER synthesize a snapshot. Readers treat the presence of
+        // `derived` as proof a probe returned a verdict — the card asserts
+        // "Requires pre-registered client" whenever it exists and names no
+        // registration strategy — so a minted one would make an unprobed
+        // entry accuse its server of something nothing established. The paste
+        // flow always probes and promote always seeds, so this is guarding
+        // the field's meaning rather than a live path.
+        derived,
         sourceServerId: seed?.sourceServerId,
       });
       onOpenChange(false);

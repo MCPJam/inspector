@@ -67,7 +67,8 @@ export interface OrgRegistrySubmission {
   url: string;
   useOAuth?: boolean;
   oauthScopes?: string[];
-  derived: OrgRegistryDerivedSnapshot;
+  /** Absent when no probe produced a verdict; never synthesized. */
+  derived: OrgRegistryDerivedSnapshot | null;
   sourceServerId?: string;
 }
 
@@ -142,7 +143,12 @@ export function useOrgRegistryServers({
   }, [connections]);
 
   const servers = useMemo<EnrichedOrgRegistryServer[]>(() => {
-    if (!enabled || !rows) return [];
+    // `connections` must be RESOLVED, not merely absent. The two queries land
+    // independently, and if rows arrive first, an empty provenance map reads
+    // as "nothing is installed" — every already-installed card would flash
+    // "Connect", and a click in that window would try to install it twice.
+    // An unresolved provenance query is a loading state, not an answer.
+    if (!enabled || !rows || connections === undefined) return [];
     return rows.map((row) => {
       const connection = provenance.get(row._id);
       const connectedServerName = connection?.serverName ?? null;
@@ -166,12 +172,20 @@ export function useOrgRegistryServers({
 
       return { ...row, connectionStatus, connectedServerName };
     });
-  }, [enabled, rows, provenance, liveServers, connectingIds]);
+  }, [enabled, rows, connections, provenance, liveServers, connectingIds]);
 
   const add = useCallback(
     async (submission: OrgRegistrySubmission) => {
       if (!context?.organizationId) {
         throw new Error("This project is not part of an organization.");
+      }
+      if (!submission.derived) {
+        // `addOrgRegistryServer` requires the snapshot, and the two doors that
+        // reach here both produce one (the paste flow probes, promote reads
+        // `initializationInfo`). Refusing beats minting a fake.
+        throw new Error(
+          "We could not read this server's details. Try the address again."
+        );
       }
       await addMutation({
         organizationId: context.organizationId,
@@ -288,7 +302,7 @@ export function useOrgRegistryServers({
   return {
     servers,
     /** Absent answer ⇒ empty shelf, never an endless spinner. */
-    isLoading: enabled && rows === undefined,
+    isLoading: enabled && (rows === undefined || connections === undefined),
     organizationId: context?.organizationId ?? null,
     canAdd: context?.canAdd ?? false,
     add,

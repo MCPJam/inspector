@@ -203,7 +203,7 @@ describe("ServerConnectionCard", () => {
         expect(onShareToOrgRegistry).toHaveBeenCalledWith(server);
       });
 
-      it("hides the action for a stdio server — there is no address to share", () => {
+      it("hides the action for a stdio server — there is no address to share", async () => {
         render(
           <ServerConnectionCard
             server={createServer()}
@@ -219,6 +219,11 @@ describe("ServerConnectionCard", () => {
           { button: 0, ctrlKey: false }
         );
 
+        // The menu mounts asynchronously, so wait for an item that ALWAYS
+        // renders first. A synchronous `queryByText` here returns null before
+        // the menu exists at all and would pass whether or not the action
+        // eventually appeared — proving nothing.
+        await screen.findByText("Configure");
         expect(screen.queryByText("Add to org registry")).toBeNull();
       });
 
@@ -256,7 +261,7 @@ describe("ServerConnectionCard", () => {
         }
       );
 
-      it("hides the action entirely when the caller cannot add", () => {
+      it("hides the action entirely when the caller cannot add", async () => {
         render(
           <ServerConnectionCard server={remoteServer()} {...defaultProps} />
         );
@@ -268,6 +273,7 @@ describe("ServerConnectionCard", () => {
           { button: 0, ctrlKey: false }
         );
 
+        await screen.findByText("Configure");
         expect(screen.queryByText("Add to org registry")).toBeNull();
       });
     });

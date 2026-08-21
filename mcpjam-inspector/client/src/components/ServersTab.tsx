@@ -1214,8 +1214,13 @@ export function ServersTab({
    * it happens to share.
    */
   const orgRegistry = useOrgRegistryServers({
-    projectId: activeProjectId ?? null,
-    isAuthenticated: true,
+    // The SYNCED project id, not `activeProjectId`. The latter is this app's
+    // own project key, which for an unsynced or local-mode project is not a
+    // Convex document id at all — sending it to a Convex query (or to the
+    // derive route, which forwards it to one) is not a lookup that can
+    // succeed.
+    projectId: sharedProjectIdForHostScope,
+    isAuthenticated,
     onConnect: () => {
       /* promote never connects — the server is already here */
     },
@@ -1226,6 +1231,17 @@ export function ServersTab({
   const handleShareToOrgRegistry = useCallback(
     (server: ServerWithName) => {
       const remote = sharedProjectServersRecord[server.name];
+      // No Convex row means no `sourceServerId`, and the dialog reads that
+      // field to decide it is a PROMOTE at all — without it the user asked to
+      // share the server in front of them and would instead get a blank-slate
+      // add with an unlocked URL and no provenance, so the source project
+      // would never show the entry as connected. Say why instead.
+      if (!remote?._id) {
+        toast.error(
+          `"${server.name}" hasn't finished syncing yet. Try again in a moment.`
+        );
+        return;
+      }
       const info = server.initializationInfo as
         | { serverInfo?: { name?: string; version?: string; title?: string } }
         | undefined;
@@ -1241,7 +1257,7 @@ export function ServersTab({
           serverVersion: info?.serverInfo?.version,
           authRequired: server.useOAuth === true,
         },
-        sourceServerId: remote?._id,
+        sourceServerId: remote._id,
       });
     },
     [sharedProjectServersRecord]
@@ -2243,7 +2259,7 @@ export function ServersTab({
             onOpenChange={(open) => {
               if (!open) setOrgRegistrySeed(null);
             }}
-            projectId={activeProjectId ?? null}
+            projectId={sharedProjectIdForHostScope}
             seed={orgRegistrySeed}
             onSubmit={handleOrgRegistrySubmit}
           />

@@ -29,6 +29,7 @@ import {
 } from "./errors.js";
 import { handleRoute } from "./auth.js";
 import { getInspectorClientRuntimeConfig } from "../../env.js";
+import { logger } from "../../utils/logger.js";
 import {
   deriveRegistryEntry,
   EGRESS_REFUSAL_MESSAGE,
@@ -72,12 +73,17 @@ async function assertCanAddToOrgRegistry(
       { projectId } as never
     )) as { organizationId: string | null; canAdd: boolean };
   } catch (error) {
+    // The Convex error text is an INTERNAL hop's failure — a deployment URL, a
+    // function name, a stack fragment. It belongs in the logs, not in a
+    // response to whoever pasted a URL. Fixed copy out, detail recorded here.
+    logger.error("Org registry authorization check failed", {
+      projectId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     throw new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
-      `Failed to reach the authorization service: ${
-        error instanceof Error ? error.message : String(error)
-      }`
+      "Couldn't check your organization permissions right now. Try again in a moment."
     );
   }
 
