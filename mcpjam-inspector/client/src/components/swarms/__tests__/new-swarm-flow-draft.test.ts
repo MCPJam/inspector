@@ -92,6 +92,33 @@ describe("new swarm flow draft", () => {
     expect(restored?.step).toBe("confirm");
   });
 
+  it.each([
+    ["absent", undefined, false],
+    ["null", null, false],
+    ["the string \"true\"", "true", false],
+    ["the number 1", 1, false],
+    ["a real true", true, true],
+  ])(
+    "normalizes nameEdited given %s",
+    (_label, stored, expected) => {
+      // `=== true`, deliberately. Loosening this to `Boolean(...)` or `?? false`
+      // would make a stringified draft claim the name was edited, which is what
+      // keeps an untouched form's draft alive.
+      const { nameEdited: _drop, ...rest } = draft({ step: "confirm" });
+      sessionStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          version: 1,
+          savedAt: Date.now(),
+          projectId: "proj-1",
+          draft: stored === undefined ? rest : { ...rest, nameEdited: stored },
+        })
+      );
+
+      expect(readNewSwarmFlowDraft("proj-1")?.nameEdited).toBe(expected);
+    }
+  );
+
   it("round-trips the resumable flow for the same project", () => {
     saveNewSwarmFlowDraft("proj-1", draft());
 
