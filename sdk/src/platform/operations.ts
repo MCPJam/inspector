@@ -3829,6 +3829,15 @@ const generateEvalCasesInput = z.object({
     .describe(
       "Condition generated cases on a realistic range of user styles so the queries read like different users wrote them.",
     ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Retry-safety key: pass one, because generating spends model credits and a retry must not pay for a second generation. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created.",
+    ),
 });
 export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
 
@@ -3837,9 +3846,10 @@ export const generateEvalCasesOperation: PlatformOperation<
   PlatformEvalCasesGenerated
 > = {
   name: "generate_eval_cases",
+  risk: "spend",
   title: "Generate MCPJam eval cases",
   description:
-    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models.",
+    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. IDEMPOTENT on idempotencyKey: pass one, because generating spends model credits and a retry must not pay for a second generation.",
   readOnly: false,
   inputSchema: generateEvalCasesInput,
   async execute(input, { client, signal }) {
@@ -3877,9 +3887,23 @@ export const generateEvalCasesOperation: PlatformOperation<
           ...(input.caseModels ? { caseModels: input.caseModels } : {}),
           ...(input.caseMix ? { caseMix: input.caseMix } : {}),
           ...(input.varyUserStyles ? { varyUserStyles: true } : {}),
+          // In the BODY, like run_eval_suite and run_eval_case — the two
+          // closest siblings, which also spend. The route merges a header key
+          // over this one, so the agent surfaces keep their precedence.
+          ...(input.idempotencyKey
+            ? { idempotencyKey: input.idempotencyKey }
+            : {}),
         },
       },
-      { signal },
+      {
+        signal,
+        // Also on the transport header the client already speaks, so a caller
+        // reading the wire sees one key rather than two channels that could
+        // disagree. The route accepts either spelling.
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
     );
   },
 };

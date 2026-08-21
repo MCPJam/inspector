@@ -1016,7 +1016,6 @@ describe("tier derives from operation.risk", () => {
     "delete_project_server",
     "delete_sandbox_image",
     "duplicate_host",
-    "generate_eval_cases",
     "promote_sandbox_image",
     "reset_computer",
     "restore_project_environment",
@@ -1034,11 +1033,11 @@ describe("tier derives from operation.risk", () => {
   ]);
 
   /**
-   * The 36 writes above predate `risk`. This number may only go DOWN — if
+   * The 35 writes above predate `risk`. This number may only go DOWN — if
    * you are raising it to admit a new unclassified write, classify the write
    * instead; that is one field in the SDK catalog.
    */
-  const UNCLASSIFIED_WRITES_CEILING = 36;
+  const UNCLASSIFIED_WRITES_CEILING = 35;
 
   it("pins the unclassified legacy writes — the list only shrinks", () => {
     const unclassified = ALL_OPERATIONS.filter(
