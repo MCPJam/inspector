@@ -185,7 +185,7 @@ import {
   readProjectDeepLinkParam,
   resolveProjectDeepLinkAction,
 } from "./lib/project-deep-link";
-import { isHostedHashTabAllowed } from "./lib/hosted-tab-policy";
+import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
@@ -3412,7 +3412,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!HOSTED_MODE || isHostedHashTabAllowed(activeTab)) {
+    if (!HOSTED_MODE || !isHostedTabBlocked(activeTab)) {
       return;
     }
     toast.error(`${activeTab} is not available in hosted mode.`);

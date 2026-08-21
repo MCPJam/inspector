@@ -59,7 +59,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { HOSTED_MODE } from "@/lib/config";
 import {
-  isHostedSidebarTabAllowed,
+  isHostedTabBlocked,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
 import { useAppNavigate } from "@/lib/app-navigation";
@@ -379,6 +379,13 @@ function SidebarNavSkeleton() {
   );
 }
 
+/**
+ * Drop the nav items a hosted deployment cannot serve. Only `hostedBlocked`
+ * surfaces are dropped: this filter runs BEFORE `filterByFeatureFlags`, so
+ * anything it removes is gone with no flag able to bring it back — which is
+ * how the Sessions item stayed invisible on app.mcpjam.com (#4210) while it
+ * was an allow-list.
+ */
 export function getHostedNavigationSections(
   sections: NavSection[]
 ): NavSection[] {
@@ -390,11 +397,11 @@ export function getHostedNavigationSections(
           item.url.replace(/^[#/]+/, "")
         );
 
-        if (isHostedSidebarTabAllowed(normalizedTab)) {
-          return [item];
+        if (isHostedTabBlocked(normalizedTab)) {
+          return [];
         }
 
-        return [];
+        return [item];
       }),
     }))
     .filter((section) => section.items.length > 0);
