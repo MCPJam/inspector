@@ -115,7 +115,9 @@ export const MCP_APPS_CURSOR: McpAppsCapabilities = frozen({
     font: true,
     media: true,
   },
-  downloadFile: false,
+  // downloadFile stays inherited-true and requestTeardown is an explicit
+  // false, both per the catalog row this matrix is supposed to mirror.
+  requestTeardown: false,
 });
 
 /** Goose Desktop 1.38.0 capture — only openLinks (+ toolInfo) advertised. */

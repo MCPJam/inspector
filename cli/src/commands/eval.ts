@@ -3071,6 +3071,10 @@ export function registerEvalCommands(program: Command): void {
         "--vary-user-styles",
         "Vary query phrasing across a realistic range of user styles"
       )
+      .option(
+        "--idempotency-key <key>",
+        "Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again"
+      )
   ).action(
     async (
       options: PlatformOptions & {
@@ -3086,6 +3090,7 @@ export function registerEvalCommands(program: Command): void {
         complex?: string;
         negative?: string;
         varyUserStyles?: boolean;
+        idempotencyKey?: string;
       },
       command
     ) => {
@@ -3122,6 +3127,9 @@ export function registerEvalCommands(program: Command): void {
           : {}),
         ...(Object.keys(caseMix).length > 0 ? { caseMix } : {}),
         ...(options.varyUserStyles ? { varyUserStyles: true } : {}),
+        ...(options.idempotencyKey
+          ? { idempotencyKey: options.idempotencyKey }
+          : {}),
       });
       await executeOp(generateEvalCasesOperation, input, options, command);
     }

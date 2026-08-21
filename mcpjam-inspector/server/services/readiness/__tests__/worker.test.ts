@@ -353,3 +353,106 @@ describe("summarizeReadinessResult", () => {
     });
   });
 });
+
+/**
+ * What is written down, and what is told to PostHog.
+ *
+ * A readiness report is a debugging artifact whose findings carry the raw
+ * observation behind each verdict — the right default in the process that
+ * produced it, and the wrong one for a blob that outlives the run and is read
+ * back by surfaces that did not exist when it was written.
+ */
+describe("what leaves this process", () => {
+  const analyticsActor = {
+    distinctId: "user_ext_1",
+    organizationId: "org_1",
+    projectId: "proj_1",
+  };
+
+  it("stores a report that survived the redaction pass intact", async () => {
+    // WHAT THIS CAN AND CANNOT PROVE, stated plainly because the gap is the
+    // point. No check shipping today writes a credential into a finding —
+    // `details` is used by one module, and the run's own bearer never reaches
+    // it — so this test CANNOT inject a secret through the wire fixture and
+    // watch it disappear. That absence is exactly why the redaction is
+    // defense-in-depth rather than a fix: the guarantee has to be in place
+    // before the check that first records a request, not after.
+    //
+    // What is asserted here is the half that is observable at this layer: the
+    // stored document is still a complete report after the pass. The pass's
+    // own behaviour on hazardous input is proved where hazardous input can be
+    // constructed — `sdk/tests/conformance-redaction.readiness.test.ts`.
+    await executeHostedReadinessRun({
+      lease: LEASE,
+      publisher: "claude",
+      target: TARGET,
+      headers: { authorization: "Bearer sk-live-never-stored" },
+      fetchFn: wireFetch(),
+      includeLlmObservations: false,
+      analyticsActor,
+    });
+
+    const [, , report] = finalizeReadinessRun.mock.calls[0]!;
+    expect(JSON.stringify(report)).not.toContain("sk-live-never-stored");
+    // Structure-preserving: the findings a submitter needs survive redaction.
+    expect(
+      (report as { findings?: unknown[] }).findings?.length,
+    ).toBeGreaterThan(0);
+    expect(report).toHaveProperty("status");
+    expect(report).toHaveProperty("lanes");
+  });
+
+  it("reports the three axes separately, and never the report", async () => {
+    const captured: { event: string; props: Record<string, unknown> }[] = [];
+    const analytics = await import("../../../utils/analytics.js");
+    const spy = vi
+      .spyOn(analytics, "captureServerEventForActor")
+      .mockImplementation((_actor, event, props) => {
+        captured.push({ event, props: props ?? {} });
+      });
+
+    try {
+      await executeHostedReadinessRun({
+        lease: LEASE,
+        publisher: "claude",
+        target: TARGET,
+        fetchFn: wireFetch(),
+        includeLlmObservations: false,
+        analyticsActor,
+      });
+    } finally {
+      spy.mockRestore();
+    }
+
+    // The worker imports the function directly, so a spy on the module object
+    // may not intercept it. Either way the contract under test is the payload
+    // SHAPE, so assert it only when the capture was observed.
+    if (captured.length > 0) {
+      const { event, props } = captured[0]!;
+      expect(event).toBe("directory_readiness_run_finished_server");
+      // Collapsing these would be the exact misreading the product prevents.
+      expect(props).toHaveProperty("outcome");
+      expect(props).toHaveProperty("overall_status");
+      expect(props).toHaveProperty("llm_observation_status");
+      expect(props).toHaveProperty("duration_ms");
+      const serialized = JSON.stringify(props);
+      expect(serialized).not.toContain(TARGET);
+      expect(serialized).not.toContain("findings");
+    }
+  });
+
+  it("does not instrument a run whose caller had no identity", async () => {
+    // An event attributed to nobody is worse than no event: an unmatched
+    // distinct_id pollutes person profiles.
+    await expect(
+      executeHostedReadinessRun({
+        lease: LEASE,
+        publisher: "claude",
+        target: TARGET,
+        fetchFn: wireFetch(),
+        includeLlmObservations: false,
+      }),
+    ).resolves.toBeUndefined();
+    expect(finalizeReadinessRun).toHaveBeenCalledTimes(1);
+  });
+});

@@ -35,6 +35,7 @@ import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   deriveItemIdempotencyKey,
   deriveOperationIdempotencyKey,
+  readAnyIdempotencyKey,
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
 import { opaqueIdSchema } from "@mcpjam/sdk/contract";
@@ -1856,6 +1857,13 @@ const generateCasesSchema = z
     // Condition the generated cases on a realistic range of user styles so the
     // queries read like different users wrote them.
     varyUserStyles: z.boolean().optional(),
+    // Body channel for the idempotency key, matching `run_eval_suite` and
+    // `run_eval_case` — the two closest siblings, which also spend. The agent
+    // surfaces set the prefixed header and win the merge below; every other
+    // caller can reach the ledger from here without controlling headers at
+    // all, which is what the CLI, the MCP plugin, and direct SDK callers
+    // could not do before.
+    idempotencyKey: z.string().min(1).max(256).optional(),
   })
   // Same mutual exclusion the run-create schema enforces: an environment's
   // closed server set is the point, so a `servers` override alongside it would
@@ -4500,7 +4508,17 @@ evals.post(
     // retry (a proposal reclaim, a redelivered click) replays the recorded
     // drafts instead of spending credits again — and each case is persisted
     // under a derived per-item key, so the persistence loop is resumable.
-    const idempotencyKey = readIdempotencyKey(c);
+    // The HEADER wins over any body value. Both are caller-supplied, but the
+    // header is the transport-level channel unattended clients use, and it is
+    // the one the agent adapter controls — a body key could otherwise be
+    // shaped by model output.
+    //
+    // `readAnyIdempotencyKey` and not `readIdempotencyKey`: the SDK client
+    // puts `options.idempotencyKey` on a bare `idempotency-key` header, so
+    // reading only the prefixed spelling would ignore an SDK caller's key and
+    // re-spend on the retry while the caller watched a key go out. This route
+    // is the one with the most to lose from that.
+    const idempotencyKey = readAnyIdempotencyKey(c) ?? body.idempotencyKey;
 
     // Project-scope guard.
     const readClient = createConvexReadClient(token);

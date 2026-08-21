@@ -38,6 +38,11 @@ import type {
   PlatformScenarioDetail,
   PlatformChatSession,
   PlatformDoctorReport,
+  PlatformReadinessLaneCoverage,
+  PlatformReadinessObservationState,
+  PlatformReadinessRun,
+  PlatformReadinessRunReceipt,
+  PlatformReadinessStageResult,
   PlatformEvalCase,
   PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
@@ -1058,6 +1063,424 @@ export const checkHostCompatibilityOperation: PlatformOperation<
   },
 };
 
+// ── Directory readiness operations ───────────────────────────────────
+
+/**
+ * Grading a server against a publisher's app directory, as an operation.
+ *
+ * ## Why a start returns a receipt rather than a grade
+ *
+ * A readiness run dials somebody else's server, follows its redirects, walks
+ * its listings and sometimes asks a model to read the result. That does not
+ * fit in a request, so the platform runs it durably: the start answers `202`
+ * with a run id and the caller polls. Every surface that offers these
+ * operations has to say so — a model told "start a run" and handed a receipt
+ * will otherwise report the receipt as the answer.
+ *
+ * ## Why the starts declare `risk: "spend"` when the default is free
+ *
+ * `includeLlmObservations` is the only field that costs anything and it
+ * defaults off, so most runs are free. But `risk` is a static declaration read
+ * by five surfaces to decide how much ceremony a call needs, and a field that
+ * described the cheap case would be describing the case that does not need
+ * describing. The worst case is what a spend guard has to be told; the
+ * agent's `confirmSeverity` is a function precisely so the approval copy can
+ * still say "this one is free" when the flag is off.
+ */
+
+const readinessRunScopedInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  run: z.string().trim().min(1).describe("The readiness run's id."),
+});
+
+export type ReadinessRunScopedInput = z.infer<typeof readinessRunScopedInput>;
+
+const startReadinessInput = serverScopedInput.extend({
+  includeLlmObservations: z
+    .boolean()
+    .optional()
+    .describe(
+      "Ask a model for optional experience observations. COSTS the organization's MCPJam credits. Defaults false; the deterministic grade is complete without it.",
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Replay guard. A retry carrying the same key returns the run it already started rather than dialling the target twice.",
+    ),
+});
+
+const startOpenAIReadinessInput = startReadinessInput.extend({
+  submissionMode: z
+    .enum(["mcp-only", "mcp-imported-skills"])
+    .describe(
+      "REQUIRED, and never inferred: which submission shape is being graded. The two package shapes need an upload this API cannot receive — grade those with `mcpjam readiness check` locally.",
+    ),
+});
+
+export type StartClaudeReadinessInput = z.infer<typeof startReadinessInput>;
+export type StartOpenAIReadinessInput = z.infer<
+  typeof startOpenAIReadinessInput
+>;
+
+export type StartReadinessResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  run: PlatformReadinessRunReceipt;
+};
+
+export const startClaudeReadinessRunOperation: PlatformOperation<
+  StartClaudeReadinessInput,
+  StartReadinessResult
+> = {
+  name: "start_claude_readiness_run",
+  title: "Start a Claude directory readiness run",
+  description:
+    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. Deterministic grading is free; `includeLlmObservations` adds an optional model pass that consumes MCPJam credits.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: startReadinessInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    // Rejects stdio and URL-less servers with a named reason, which is the
+    // same refusal the route makes — better here, before a row exists.
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal,
+    );
+    const run = await client.startClaudeReadinessRun(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        ...(input.includeLlmObservations !== undefined
+          ? { includeLlmObservations: input.includeLlmObservations }
+          : {}),
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      run,
+    };
+  },
+};
+
+export const startOpenAIReadinessRunOperation: PlatformOperation<
+  StartOpenAIReadinessInput,
+  StartReadinessResult
+> = {
+  name: "start_openai_readiness_run",
+  title: "Start an OpenAI directory readiness run",
+  description:
+    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; poll `get_readiness_run` for the verdict. Deterministic grading is free; `includeLlmObservations` consumes MCPJam credits.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: startOpenAIReadinessInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal,
+    );
+    const run = await client.startOpenAIReadinessRun(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        submissionMode: input.submissionMode,
+        ...(input.includeLlmObservations !== undefined
+          ? { includeLlmObservations: input.includeLlmObservations }
+          : {}),
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      run,
+    };
+  },
+};
+
+export type GetReadinessRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformReadinessRun;
+};
+
+export const getReadinessRunOperation: PlatformOperation<
+  ReadinessRunScopedInput,
+  GetReadinessRunResult
+> = {
+  name: "get_readiness_run",
+  title: "Get a directory readiness run",
+  description:
+    "Read one readiness run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `overallStatus` is the grade (a completed run can be `not-ready`), and `llmObservations` says whether the optional model pass ran — a `billing-blocked` observation leaves the grade complete and valid. `lanes` carries per-lane coverage and the inputs that would close each gap.",
+  readOnly: true,
+  inputSchema: readinessRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const run = await client.getReadinessRun(
+      { projectId: project.id, runId: input.run },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const listReadinessRunsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  readinessKind: z
+    .enum(["claude", "openai"])
+    .optional()
+    .describe("Narrow to one publisher. Omitted lists both, newest first."),
+  server: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Narrow to one saved server."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Rows to return, 1-100. Defaults to the API's own page size."),
+});
+
+export type ListReadinessRunsInput = z.infer<typeof listReadinessRunsInput>;
+
+export type ListReadinessRunsResult = {
+  project: SelectedProjectInfo;
+  runs: PlatformReadinessRun[];
+};
+
+export const listReadinessRunsOperation: PlatformOperation<
+  ListReadinessRunsInput,
+  ListReadinessRunsResult
+> = {
+  name: "list_readiness_runs",
+  title: "List directory readiness runs",
+  description:
+    "List a project's readiness runs, newest first, optionally narrowed to one publisher or one server. Use it to find a run id when you have a server but not a run.",
+  readOnly: true,
+  inputSchema: listReadinessRunsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const serverId = input.server
+      ? (await resolveLiveServer(client, project, input.server, signal)).id
+      : undefined;
+    const page = await client.listReadinessRuns(
+      {
+        projectId: project.id,
+        ...(input.readinessKind ? { readinessKind: input.readinessKind } : {}),
+        ...(serverId ? { serverId } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), runs: page.items };
+  },
+};
+
+export const cancelReadinessRunOperation: PlatformOperation<
+  ReadinessRunScopedInput,
+  { project: SelectedProjectInfo; runId: string; status: string }
+> = {
+  name: "cancel_readiness_run",
+  title: "Cancel a directory readiness run",
+  description:
+    "Stop a readiness run that is still going. The executing node learns within about half a minute, so the run's real terminal state arrives on a later `get_readiness_run` — this response reports the request, not the outcome.",
+  // A write, and it declares its risk as every write must — but cancelling
+  // STOPS work rather than starting it: it spends nothing, destroys no record,
+  // and the run it interrupts is one somebody is paying to keep running.
+  readOnly: false,
+  risk: "none",
+  inputSchema: readinessRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.cancelReadinessRun(
+      { projectId: project.id, runId: input.run },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: result.runId,
+      status: result.status,
+    };
+  },
+};
+
+/**
+ * The findings, PROJECTED rather than handed over whole.
+ *
+ * The stored report is the full graded document and can be megabytes; a model
+ * surface would truncate it mid-structure, which is worse than not having it —
+ * a JSON object cut in half reads as an object, just a wrong one. So this
+ * operation returns a bounded projection and SAYS what it left out.
+ *
+ * `details` is dropped entirely. It is the raw observation behind a verdict,
+ * which is what a human debugging their server wants and what a model
+ * summarizing a grade has no use for.
+ */
+const READINESS_REPORT_FINDING_CAP = 50;
+
+/** Most consequential first, so a truncated list keeps what matters. */
+const READINESS_FINDING_CLASS_ORDER = [
+  "runtime-blocker",
+  "required",
+  "recommended",
+  "manual-review",
+  "heuristic",
+] as const;
+
+export type ReadinessReportFinding = {
+  id: string;
+  title: string;
+  lane: string;
+  class: string;
+  status: string;
+  provenance?: string;
+  remediation?: string;
+  notEvaluatedReason?: string;
+};
+
+export type GetReadinessReportResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  status: string;
+  summary?: string;
+  lanes: PlatformReadinessLaneCoverage[];
+  stages: PlatformReadinessStageResult[];
+  observations: PlatformReadinessObservationState;
+  findings: ReadinessReportFinding[];
+  /** How many findings the run produced, before this projection capped them. */
+  totalFindings: number;
+  returnedFindings: number;
+  /** True when `findings` is a subset. Never left for a reader to infer. */
+  truncated: boolean;
+};
+
+export const getReadinessReportOperation: PlatformOperation<
+  ReadinessRunScopedInput,
+  GetReadinessReportResult
+> = {
+  name: "get_readiness_report",
+  title: "Get a directory readiness report",
+  description:
+    "Read a finished readiness run's findings: what each one requires, whether it was satisfied, violated or never evaluated, and how to fix it. Findings are capped and ordered most-consequential-first; `truncated` and `totalFindings` say when you are seeing a subset. Raw per-finding evidence is not included — read it in the app.",
+  readOnly: true,
+  inputSchema: readinessRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const scope = { projectId: project.id, runId: input.run };
+    const [run, report] = await Promise.all([
+      client.getReadinessRun(scope, { signal }),
+      client.getReadinessReport(scope, { signal }),
+    ]);
+
+    const raw = (report ?? {}) as {
+      status?: string;
+      summary?: string;
+      findings?: Array<Record<string, unknown>>;
+    };
+    const all = Array.isArray(raw.findings) ? raw.findings : [];
+    const ranked = [...all].sort((left, right) => {
+      const leftRank = READINESS_FINDING_CLASS_ORDER.indexOf(
+        String(left.class) as (typeof READINESS_FINDING_CLASS_ORDER)[number],
+      );
+      const rightRank = READINESS_FINDING_CLASS_ORDER.indexOf(
+        String(right.class) as (typeof READINESS_FINDING_CLASS_ORDER)[number],
+      );
+      // An unknown class sorts last rather than first: a class this build does
+      // not know is the one thing that must not displace a known blocker.
+      return (
+        (leftRank === -1 ? Number.MAX_SAFE_INTEGER : leftRank) -
+        (rightRank === -1 ? Number.MAX_SAFE_INTEGER : rightRank)
+      );
+    });
+    const findings: ReadinessReportFinding[] = ranked
+      .slice(0, READINESS_REPORT_FINDING_CAP)
+      .map((finding) => ({
+        id: String(finding.id ?? ""),
+        title: String(finding.title ?? ""),
+        lane: String(finding.lane ?? ""),
+        class: String(finding.class ?? ""),
+        status: String(finding.status ?? ""),
+        ...(typeof finding.provenance === "string"
+          ? { provenance: finding.provenance }
+          : {}),
+        ...(typeof finding.remediation === "string"
+          ? { remediation: finding.remediation }
+          : {}),
+        ...(typeof finding.notEvaluatedReason === "string"
+          ? { notEvaluatedReason: finding.notEvaluatedReason }
+          : {}),
+      }));
+
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: input.run,
+      status: raw.status ?? run.overallStatus ?? "unknown",
+      ...(raw.summary ? { summary: raw.summary } : {}),
+      lanes: run.lanes,
+      stages: run.stages,
+      observations: run.llmObservations,
+      findings,
+      totalFindings: all.length,
+      returnedFindings: findings.length,
+      truncated: all.length > findings.length,
+    };
+  },
+};
+
 // ── Eval operations ──────────────────────────────────────────────────
 
 // Declared HERE, above the run operations that reference it, rather than beside
@@ -1082,7 +1505,6 @@ const publicMatchOptionsSchema = z
       .describe("Argument comparison strictness."),
   })
   .describe("Tool-call match options.");
-
 
 const SUITE_SELECTOR_DESCRIPTION = "Eval suite name or ID.";
 // Declared here rather than beside the environment operations further down
@@ -1129,7 +1551,6 @@ function assertNoServerOverrideWithEnvironment(input: {
     );
   }
 }
-
 
 /**
  * Reject every ambiguous COMBINATION of target selectors before anything
@@ -1232,7 +1653,9 @@ function targetRequiredMessage(plan: {
   if (plan.attachedEnvironments.length > 0) {
     parts.push(
       `environments: ${plan.attachedEnvironments
-        .map((target) => (target.name ? `"${target.name}" (${target.id})` : target.id))
+        .map((target) =>
+          target.name ? `"${target.name}" (${target.id})` : target.id,
+        )
         .join(", ")}`,
     );
   }
@@ -1279,8 +1702,12 @@ async function resolveSuiteEnvironmentTargets(
     if (!attached.includes(environment.id)) {
       throw operationInputError(
         attached.length === 0
-          ? `Environment "${selector}" is not attached to suite "${suite.name ?? suite.id}", which has no environments at all. Attach it with set_eval_suite_environments first.`
-          : `Environment "${selector}" is not attached to suite "${suite.name ?? suite.id}". Attached environment IDs: ${attached.join(", ")}.`,
+          ? `Environment "${selector}" is not attached to suite "${
+              suite.name ?? suite.id
+            }", which has no environments at all. Attach it with set_eval_suite_environments first.`
+          : `Environment "${selector}" is not attached to suite "${
+              suite.name ?? suite.id
+            }". Attached environment IDs: ${attached.join(", ")}.`,
       );
     }
     resolved.push({
@@ -1333,7 +1760,9 @@ function resolveSuiteHostTargets(
   const hosts = detail?.hosts ?? [];
   if (hosts.length === 0) {
     throw operationInputError(
-      `Suite "${suite.name ?? suite.id}" has no attached hosts, so there is no host to run. Attach one to the suite first, or omit the host selector.`,
+      `Suite "${
+        suite.name ?? suite.id
+      }" has no attached hosts, so there is no host to run. Attach one to the suite first, or omit the host selector.`,
     );
   }
   return selectors.map((selector) =>
@@ -1455,9 +1884,9 @@ async function createEvalRunOrReportCompose<T>(
   try {
     return await launch();
   } catch (error) {
-    const note = `(The composed environment ${composed.report.environment.id} was ${
-      composed.report.environment.created ? "created" : "reused"
-    } and ${
+    const note = `(The composed environment ${
+      composed.report.environment.id
+    } was ${composed.report.environment.created ? "created" : "reused"} and ${
       composed.report.attachment.attached
         ? "attached to the suite"
         : "was already attached"
@@ -1707,9 +2136,11 @@ const RUN_KNOB_FIELDS = {
     .describe(
       "Pass threshold for this run as a percentage (0-100), overriding the suite's own criterion.",
     ),
-  matchOptions: publicMatchOptionsSchema.optional().describe(
-    "Tool-call match options for this run only, layered over suite defaults and per-case overrides. Does NOT edit the suite or its cases.",
-  ),
+  matchOptions: publicMatchOptionsSchema
+    .optional()
+    .describe(
+      "Tool-call match options for this run only, layered over suite defaults and per-case overrides. Does NOT edit the suite or its cases.",
+    ),
   excludeSkills: z
     .boolean()
     .optional()
@@ -1938,13 +2369,13 @@ export const runEvalSuiteOperation: PlatformOperation<
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : (input.environments ?? []),
+      input.environment ? [input.environment] : input.environments ?? [],
       signal,
     );
     const selectedHosts = resolveSuiteHostTargets(
       suite,
       detail,
-      input.host ? [input.host] : (input.hosts ?? []),
+      input.host ? [input.host] : input.hosts ?? [],
     );
 
     // Attached environments arrive as bare IDS — the suite detail carries no
@@ -2001,27 +2432,25 @@ export const runEvalSuiteOperation: PlatformOperation<
     const suiteInfo = { id: suite.id, name: suite.name };
 
     if (plan.kind === "single") {
-      const created = await createEvalRunOrReportCompose(
-        composed,
-        () =>
-          client.createEvalRun(
-        {
-          projectId: project.id,
-          body: {
-            suiteId: suite.id,
-            ...(plan.serverIds ? { serverIds: plan.serverIds } : {}),
-            ...(plan.target?.kind === "environment"
-              ? { environmentId: plan.target.id }
-              : {}),
-            ...(plan.target?.kind === "host"
-              ? { namedHostId: plan.target.id }
-              : {}),
-            ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
-            ...knobs,
+      const created = await createEvalRunOrReportCompose(composed, () =>
+        client.createEvalRun(
+          {
+            projectId: project.id,
+            body: {
+              suiteId: suite.id,
+              ...(plan.serverIds ? { serverIds: plan.serverIds } : {}),
+              ...(plan.target?.kind === "environment"
+                ? { environmentId: plan.target.id }
+                : {}),
+              ...(plan.target?.kind === "host"
+                ? { namedHostId: plan.target.id }
+                : {}),
+              ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
+              ...knobs,
+            },
           },
-        },
-        { signal },
-      ),
+          { signal },
+        ),
       );
       const servers =
         overrideServers?.map((server) => ({
@@ -2271,30 +2700,30 @@ export const runEvalCaseOperation: PlatformOperation<
       : undefined;
     const created = await createEvalRunOrReportCompose(composed, () =>
       client.createEvalRun(
-      {
-        projectId: project.id,
-        body: {
-          suiteId: suite.id,
-          caseIds: [testCase.id],
-          ...(overrideServers
-            ? { serverIds: overrideServers.map((server) => server.id) }
-            : {}),
-          // MUTUALLY EXCLUSIVE, and enforced above by
-          // `assertRunTargetSelectorsCoherent`: `compose` with `environment`
-          // is refused before this point, so the repeated key can never
-          // resolve silently to whichever spread came last.
-          ...(composed ? { environmentId: composed.environment.id } : {}),
-          ...(environment ? { environmentId: environment.id } : {}),
-          ...(host ? { namedHostId: host.id } : {}),
-          ...(input.iterations !== undefined
-            ? { iterationOverride: input.iterations }
-            : {}),
-          ...(input.idempotencyKey
-            ? { idempotencyKey: input.idempotencyKey }
-            : {}),
+        {
+          projectId: project.id,
+          body: {
+            suiteId: suite.id,
+            caseIds: [testCase.id],
+            ...(overrideServers
+              ? { serverIds: overrideServers.map((server) => server.id) }
+              : {}),
+            // MUTUALLY EXCLUSIVE, and enforced above by
+            // `assertRunTargetSelectorsCoherent`: `compose` with `environment`
+            // is refused before this point, so the repeated key can never
+            // resolve silently to whichever spread came last.
+            ...(composed ? { environmentId: composed.environment.id } : {}),
+            ...(environment ? { environmentId: environment.id } : {}),
+            ...(host ? { namedHostId: host.id } : {}),
+            ...(input.iterations !== undefined
+              ? { iterationOverride: input.iterations }
+              : {}),
+            ...(input.idempotencyKey
+              ? { idempotencyKey: input.idempotencyKey }
+              : {}),
+          },
         },
-      },
-      { signal },
+        { signal },
       ),
     );
     const servers =
@@ -2765,7 +3194,9 @@ const updateEvalSuiteInput = z.object({
             .min(0)
             .max(1)
             .optional()
-            .describe("Advisory pass threshold, 0–1 (passed = score >= threshold)."),
+            .describe(
+              "Advisory pass threshold, 0–1 (passed = score >= threshold).",
+            ),
         })
         .optional(),
     })
@@ -3398,6 +3829,15 @@ const generateEvalCasesInput = z.object({
     .describe(
       "Condition generated cases on a realistic range of user styles so the queries read like different users wrote them.",
     ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Retry-safety key: pass one, because generating spends model credits and a retry must not pay for a second generation. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created.",
+    ),
 });
 export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
 
@@ -3406,9 +3846,10 @@ export const generateEvalCasesOperation: PlatformOperation<
   PlatformEvalCasesGenerated
 > = {
   name: "generate_eval_cases",
+  risk: "spend",
   title: "Generate MCPJam eval cases",
   description:
-    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models.",
+    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. IDEMPOTENT on idempotencyKey: pass one, because generating spends model credits and a retry must not pay for a second generation.",
   readOnly: false,
   inputSchema: generateEvalCasesInput,
   async execute(input, { client, signal }) {
@@ -3446,9 +3887,23 @@ export const generateEvalCasesOperation: PlatformOperation<
           ...(input.caseModels ? { caseModels: input.caseModels } : {}),
           ...(input.caseMix ? { caseMix: input.caseMix } : {}),
           ...(input.varyUserStyles ? { varyUserStyles: true } : {}),
+          // In the BODY, like run_eval_suite and run_eval_case — the two
+          // closest siblings, which also spend. The route merges a header key
+          // over this one, so the agent surfaces keep their precedence.
+          ...(input.idempotencyKey
+            ? { idempotencyKey: input.idempotencyKey }
+            : {}),
         },
       },
-      { signal },
+      {
+        signal,
+        // Also on the transport header the client already speaks, so a caller
+        // reading the wire sees one key rather than two channels that could
+        // disagree. The route accepts either spelling.
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
     );
   },
 };
@@ -4320,12 +4775,7 @@ export const listChatSessionsOperation: PlatformOperation<
   },
 };
 
-const SESSION_SOURCE_TYPES = [
-  "direct",
-  "scenario",
-  "eval",
-  "swarm",
-] as const;
+const SESSION_SOURCE_TYPES = ["direct", "scenario", "eval", "swarm"] as const;
 
 const searchSessionsInput = z.object({
   query: z
@@ -5151,7 +5601,6 @@ export const createEnvironmentOperation: PlatformOperation<
     );
   },
 };
-
 
 // ── Composed (ad-hoc) environments ───────────────────────────────────────────
 //
@@ -8734,6 +9183,12 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getServerPromptOperation,
   readServerResourceOperation,
   checkHostCompatibilityOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalSuiteOperation,
