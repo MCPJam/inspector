@@ -5,8 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 let sseConstructedCount = 0;
 
 vi.mock("@modelcontextprotocol/client", async (importOriginal) => {
-  const actual =
-    await importOriginal<typeof import("@modelcontextprotocol/client")>();
+  const actual = await importOriginal<
+    typeof import("@modelcontextprotocol/client")
+  >();
   class SpySSEClientTransport extends actual.SSEClientTransport {
     constructor(url: URL, opts?: Record<string, unknown>) {
       super(url, opts as never);
@@ -19,9 +20,7 @@ vi.mock("@modelcontextprotocol/client", async (importOriginal) => {
   };
 });
 
-const { MCPClientManager } = await import(
-  "../src/mcp-client-manager/index.js"
-);
+const { MCPClientManager } = await import("../src/mcp-client-manager/index.js");
 
 const NEGOTIATED_VERSION = "2025-06-18";
 const STALE_ACCEPT_LIST = ["2025-11-25"];
@@ -244,7 +243,7 @@ describe("MCPClientManager Automatic legacy fallback", () => {
   it("leaves a pin that the accept-list does not contain alone", async () => {
     // Hoisting an unlisted pin would put a version on the wire this client
     // never claimed to speak. `canonicalizeMcpProfile` rejects that pairing
-    // for stateful pins, so this only guards hand-built configs.
+    // for stateful host pins, so this only guards hand-built configs.
     await manager.connectToServer("bart", {
       url: fixture.url,
       timeout: 5_000,

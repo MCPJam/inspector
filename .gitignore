@@ -3,6 +3,7 @@ worktrees/
 .worktrees/
 .cursor/
 node_modules/
+node_modules
 .mcpjam/skills/
 **/.mcpjam/skills/
 .claude/

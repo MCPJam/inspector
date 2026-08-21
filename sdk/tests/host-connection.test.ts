@@ -7,7 +7,7 @@ import {
 
 const profileFor = (id: HostTemplateId) =>
   hostConnectionProfile(
-    seedHostTemplate(id) as unknown as Record<string, unknown>,
+    seedHostTemplate(id) as unknown as Record<string, unknown>
   );
 
 const extensions = (caps: Record<string, unknown> | undefined) =>
@@ -17,14 +17,16 @@ describe("hostConnectionProfile", () => {
   it("derives Claude's identity + the MCP Apps UI capability", () => {
     const p = profileFor("claude");
     expect(p.clientInfo?.name).toBe("claude-ai");
-    expect(extensions(p.clientCapabilities)["io.modelcontextprotocol/ui"]).toBeDefined();
+    expect(
+      extensions(p.clientCapabilities)["io.modelcontextprotocol/ui"]
+    ).toBeDefined();
     // Claude's model filters app-only tools (default visibility policy).
     expect(p.respectToolVisibility).not.toBe(false);
   });
 
   it("pins Goose's advertised protocol version", () => {
     expect(profileFor("goose").supportedProtocolVersions).toContain(
-      "2025-03-26",
+      "2025-03-26"
     );
   });
 
@@ -54,8 +56,27 @@ describe("hostConnectionProfile", () => {
     expect(
       hostConnectionProfile({
         mcpProfile: { initialize: { mcpProtocolVersion: "2026-07-28" } },
-      }).mcpProtocolVersion,
+      }).mcpProtocolVersion
     ).toBeUndefined();
+  });
+
+  it("reduces auto to no wire pin while preserving the nested connection profile", () => {
+    const p = hostConnectionProfile({
+      mcpProfile: {
+        profileVersion: 1,
+        mcpProtocolVersion: "auto",
+        initialize: {
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          clientInfo: { name: "openai-mcp", version: "1.0.0" },
+        },
+      },
+    });
+    expect(p.mcpProtocolVersion).toBeUndefined();
+    expect(p.supportedProtocolVersions).toEqual(["2025-11-25", "2026-07-28"]);
+    expect(p.clientInfo).toMatchObject({
+      name: "openai-mcp",
+      version: "1.0.0",
+    });
   });
 
   describe("toolParamHeaderMirroring → mirrorToolParamHeaders", () => {
