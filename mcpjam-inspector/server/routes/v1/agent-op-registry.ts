@@ -790,6 +790,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
       "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
       "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
+      "- When a readiness run reports `authMode: \"headless\"` and a lane's `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.",
     ],
   },
   {
