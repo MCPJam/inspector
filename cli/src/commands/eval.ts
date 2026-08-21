@@ -1871,7 +1871,7 @@ export function registerEvalCommands(program: Command): void {
           webOrigin = context.webOrigin;
           return runEvalSuiteOperation.execute(
             {
-              project: resolved.project,
+              project: resolved.project ?? options.project,
               suite: options.suite,
               ...(options.server ? { servers: options.server } : {}),
               // ONE value maps to the singular field, several to the plural:
@@ -1933,7 +1933,7 @@ export function registerEvalCommands(program: Command): void {
         (context) => {
           webOrigin = context.webOrigin;
           return getEvalRunOperation.execute(
-            { project: resolved.project, runId: options.run },
+            { project: resolved.project ?? options.project, runId: options.run },
             { client: context.client, signal: context.signal }
           );
         }
@@ -2405,7 +2405,7 @@ export function registerEvalCommands(program: Command): void {
         ({ client, signal }) =>
           getEvalIterationTraceOperation.execute(
             {
-              project: resolved.project,
+              project: resolved.project ?? options.project,
               runId: options.run,
               iterationId: options.iteration,
             },
@@ -2532,7 +2532,7 @@ export function registerEvalCommands(program: Command): void {
         ({ client, signal }) =>
           getEvalIterationTraceOperation.execute(
             {
-              project: resolved.project,
+              project: resolved.project ?? options.project,
               runId: options.run,
               iterationId: options.iteration,
             },

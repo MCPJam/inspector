@@ -14,7 +14,6 @@
  * fall-through to automatic.
  */
 import {
-  inspectProjectLink,
   readRequiredProjectLink,
   type ProjectLinkIo,
 } from "./project-link.js";
@@ -163,12 +162,4 @@ export function appendProjectLinkHint(
     return message;
   }
   return `${message}\nSelector came from ${scope.linkPath} — re-run \`mcpjam cloud link\`.`;
-}
-
-/**
- * Inspect the nearest link without throwing. `cloud status` reports invalid
- * files instead of aborting before it can print diagnostics.
- */
-export function inspectLinkedProject(io: ProjectLinkIo = {}) {
-  return inspectProjectLink(io);
 }
