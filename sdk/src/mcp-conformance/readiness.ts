@@ -509,6 +509,67 @@ async function oauthIssWarning(
  * endpoints) can show. Each probe is independently guarded: readiness is
  * advisory, so a probe that throws contributes nothing and never fails a run.
  */
+/**
+ * SEP-2243 makes `MCP-Protocol-Version` REQUIRED on every POST and lists a
+ * missing standard header among the conditions a server "**MUST** reject …
+ * with `400 Bad Request`". It is nonetheless ADVICE and not a check, because
+ * the same section grants an explicit escape hatch:
+ *
+ *   "A server that supports clients implementing protocol versions earlier
+ *    than 2025-06-18 … MAY treat a request that omits the header as protocol
+ *    version 2025-03-26. A server that does not support such clients MUST
+ *    reject a request without the header."
+ *
+ * Nothing on the wire says which kind of server this is, so a check that
+ * demanded rejection would fail conforming legacy-tolerant servers — including
+ * the official server SDK, which answers such a request normally. That is
+ * exactly the over-strict false positive this program exists to remove, so the
+ * observation is reported and never scored.
+ *
+ * The sibling `modern-missing-method-header-rejected` IS a check: `Mcp-Method`
+ * has no carve-out, and the reference implementation rejects without it.
+ */
+async function protocolVersionHeaderWarning(
+  ctx: RawHttpCheckContext
+): Promise<MCPReadinessWarning | undefined> {
+  if (ctx.config.era !== "modern") {
+    // The header does not exist before 2026-07-28; advising about its absence
+    // on a 2025 wire would invent a requirement.
+    return undefined;
+  }
+
+  const version = ctx.config.protocolVersion ?? "2026-07-28";
+  const result = await rawRequest(ctx, {
+    // Deliberately NO `MCP-Protocol-Version`, everything else well-formed —
+    // `server/discover` is read-only, so a server that processes it anyway has
+    // executed nothing.
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "Mcp-Method": "server/discover",
+    },
+    body: modernRequestBody({
+      id: 9401,
+      method: "server/discover",
+      protocolVersion: version,
+    }),
+    timeoutMs: Math.min(ctx.config.checkTimeout, 5_000),
+  });
+
+  if (result.status >= 400 || jsonRpcError(result)) {
+    // Rejected: the strict reading, and unobjectionable.
+    return undefined;
+  }
+
+  return warning(
+    "readiness-protocol-version-header-required",
+    "Protocol Version Header Required",
+    "SHOULD",
+    `The server answered a POST carrying no MCP-Protocol-Version header with HTTP ${result.status} and no error. SEP-2243 makes the header REQUIRED on every POST; tolerating its absence is permitted only for servers that still support pre-2025-06-18 clients, and it denies intermediaries the routing signal the header exists to provide`,
+    { status: result.status }
+  );
+}
+
 export async function collectRawReadiness(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessWarning[]> {
@@ -518,6 +579,7 @@ export async function collectRawReadiness(
     xMcpHeaderDeclarationsWarning(ctx),
     parseErrorHandlingWarning(ctx),
     sessionTerminationWarning(ctx),
+    protocolVersionHeaderWarning(ctx),
   ];
   const settled = await Promise.allSettled(probes);
   return settled.flatMap((outcome) =>

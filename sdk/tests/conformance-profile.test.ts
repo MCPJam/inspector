@@ -42,7 +42,11 @@ describe("conformance profile manifest", () => {
     // The reviewable record. Every id here ran against real servers and
     // reported a real verdict this profile version chose not to grade yet;
     // promoting one is a version bump, and this list is where that shows up.
-    expect(unscoredCheckIds(PROFILE)).toEqual(["wire-schema-valid"]);
+    expect([...unscoredCheckIds(PROFILE)].sort()).toEqual([
+      "modern-header-names-case-insensitive",
+      "modern-missing-method-header-rejected",
+      "wire-schema-valid",
+    ]);
   });
 
   it("has no duplicate entries", () => {

@@ -56,20 +56,28 @@ describe("MCPConformanceTest", () => {
         profileId: "mcp-protocol",
         profileVersion: profile.version,
         checkerVersion: CONFORMANCE_CHECKER_VERSION,
-        // `wire-schema-valid` ran and passed, but this profile version does
-        // not score it yet — so it is reported and excluded from the number.
-        pendingCheckIds: ["wire-schema-valid"],
+        // Every gap-program check ran (or era-skipped) and reported a real
+        // verdict, but this profile version scores none of them yet — so they
+        // are reported and excluded from the number.
+        pendingCheckIds: [
+          "modern-header-names-case-insensitive",
+          "modern-missing-method-header-rejected",
+          "wire-schema-valid",
+        ],
       });
       // The digest is stamped only because the schema pass actually ran.
       expect(result.profile?.schemaDigest).toMatch(/^[0-9a-f]{64}$/);
       const score = scoreFromProtocolResult(result);
-      expect(score.pending).toBe(1);
+      expect(score.pending).toBe(3);
       // Every legacy-applicable check EXCEPT the pending one is in the
       // denominator; the modern-only checks era-skipped out of it, which is the
       // pre-existing behavior this must not disturb.
       const legacyApplicable = result.checks.filter(
         (check) => CHECK_ERAS[check.id].includes("legacy"),
       ).length;
+      // The three modern-only pending checks era-skipped out of the legacy
+      // denominator already; only `wire-schema-valid` is both legacy-applicable
+      // and unscored.
       expect(score.applicable).toBe(legacyApplicable - 1);
     } finally {
       await mockServer.stop();

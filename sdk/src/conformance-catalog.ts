@@ -156,6 +156,16 @@ export const PROTOCOL_CHECK_CATALOG = {
     description:
       "An unsupported envelope protocol version is rejected with JSON-RPC -32022 naming the supported versions.",
   },
+  "modern-missing-method-header-rejected": {
+    title: "Missing Mcp-Method Header Rejected",
+    description:
+      "A request that omits the required Mcp-Method header is rejected with HTTP 400 and JSON-RPC -32020.",
+  },
+  "modern-header-names-case-insensitive": {
+    title: "Header Names Are Case-Insensitive",
+    description:
+      "The SEP-2243 standard headers are accepted under any case, as RFC 9110 field names require.",
+  },
   "modern-undeclared-capability-error": {
     title: "Undeclared Client Capability",
     description:

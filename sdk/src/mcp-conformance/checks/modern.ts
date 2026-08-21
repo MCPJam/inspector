@@ -147,6 +147,20 @@ const MODERN_CHECK_METADATA = {
     description:
       "An Mcp-Name header disagreeing with the body target is rejected with HTTP 400 and JSON-RPC -32020.",
   },
+  "modern-missing-method-header-rejected": {
+    id: "modern-missing-method-header-rejected",
+    category: "protocol",
+    title: "Missing Mcp-Method Header Rejected",
+    description:
+      "A request that omits the required Mcp-Method header is rejected with HTTP 400 and JSON-RPC -32020.",
+  },
+  "modern-header-names-case-insensitive": {
+    id: "modern-header-names-case-insensitive",
+    category: "protocol",
+    title: "Header Names Are Case-Insensitive",
+    description:
+      "The SEP-2243 standard headers are accepted under any case, as RFC 9110 field names require.",
+  },
   "modern-unsupported-version-error": {
     id: "modern-unsupported-version-error",
     category: "protocol",
@@ -259,17 +273,40 @@ async function modernProbe(
     clientCapabilities?: Record<string, unknown>;
     logLevel?: string;
     headerOverrides?: Record<string, string>;
+    /**
+     * SEP-2243 standard headers to leave OFF the request entirely. A header
+     * cannot be omitted through `headerOverrides` — there is no value that
+     * means absent — and "missing" is a distinct validation-failure condition
+     * from "present and wrong".
+     */
+    omitHeaders?: readonly string[];
+    /**
+     * Rewrite the standard header NAMES before sending. Node's fetch preserves
+     * the casing it is handed on the wire (only `Headers` iteration lowercases
+     * it), so this genuinely changes the bytes — which is what makes the
+     * case-insensitivity MUST testable through the one guarded transport.
+     */
+    headerNameTransform?: (name: string) => string;
     envelopeVersion?: string;
   }
 ): Promise<RawHttpResult> {
   const version = protocolVersion(ctx);
+  const standard = modernHeaders({
+    protocolVersion: version,
+    method: options.method,
+    name: options.name,
+  });
+  const omitted = new Set(
+    (options.omitHeaders ?? []).map((name) => name.toLowerCase())
+  );
+  const framed: Record<string, string> = {};
+  for (const [name, value] of Object.entries(standard)) {
+    if (omitted.has(name.toLowerCase())) continue;
+    framed[options.headerNameTransform?.(name) ?? name] = value;
+  }
   return await rawRequest(ctx, {
     headers: {
-      ...modernHeaders({
-        protocolVersion: version,
-        method: options.method,
-        name: options.name,
-      }),
+      ...framed,
       ...(options.headerOverrides ?? {}),
     },
     body: modernRequestBody({
@@ -877,6 +914,144 @@ async function runUndeclaredCapabilityCheck(
     : passedResult(meta, Date.now() - startedAt, details);
 }
 
+/**
+ * SEP-2243 lists a MISSING required standard header as a validation-failure
+ * condition alongside a mismatched one, and states the same remedy for both:
+ * "servers **MUST** return HTTP status `400 Bad Request` and **MUST** include a
+ * JSON-RPC error response" with code `-32020`. So this asserts both halves at
+ * MUST strength, exactly like its `*-header-mismatch` siblings.
+ *
+ * `Mcp-Method` and NOT `MCP-Protocol-Version`, deliberately. The
+ * protocol-version header carries a documented escape hatch — a server "**MAY**
+ * treat a request that omits the header as protocol version `2025-03-26`" for
+ * pre-2025-06-18 clients — so tolerating its absence is spec-LEGAL and cannot
+ * be a failing check. That case is reported on the readiness channel instead
+ * (`readiness-protocol-version-header-required`). `Mcp-Method` has no such
+ * carve-out: the spec calls the standard headers "REQUIRED for compliance"
+ * flatly, and the reference server rejects a request without it.
+ *
+ * The probe targets `server/discover`, which is read-only: a NON-conforming
+ * server processes whatever it was sent, and a conformance run must never fire
+ * a side-effecting tool to find that out.
+ */
+async function runMissingMethodHeaderCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-missing-method-header-rejected"];
+  const startedAt = Date.now();
+  const result = await track(
+    state,
+    modernProbe(ctx, {
+      id: 7250,
+      method: "server/discover",
+      omitHeaders: ["Mcp-Method"],
+    })
+  );
+
+  const { problems, error } = checkRejection(result, {
+    status: 400,
+    code: HEADER_MISMATCH,
+  });
+
+  return problems.length > 0
+    ? failedResult(
+        meta,
+        Date.now() - startedAt,
+        `A request omitting the required Mcp-Method header was not rejected as required: ${problems.join(
+          "; "
+        )}`,
+        rejectionDetails(result, error)
+      )
+    : passedResult(
+        meta,
+        Date.now() - startedAt,
+        rejectionDetails(result, error)
+      );
+}
+
+/**
+ * RFC 9110 field names are case-insensitive, and SEP-2243 restates it as a MUST
+ * for both sides. This is an ACCEPTANCE check: the server has to answer the
+ * same request normally when the header names arrive in a different case.
+ *
+ * It is testable through the ordinary guarded transport because Node's fetch
+ * preserves the header-name casing it is handed on the wire — only `Headers`
+ * ITERATION lowercases, which is a red herring. The probe sends deliberately
+ * mixed case, so a server doing exact-string matching on `MCP-Protocol-Version`
+ * fails while a conforming one is unaffected.
+ *
+ * NOT TESTED HERE: optional whitespace around header VALUES (RFC 9110
+ * `field-line = field-name ":" OWS field-value OWS`), which servers must also
+ * accept. `Headers.set` normalizes the value before it reaches the socket, so
+ * sending OWS would require a raw-socket transport — and that would bypass
+ * `config.fetchFn`, the SSRF guard every probe in this suite deliberately dials
+ * through. Trading a hosted-mode network guard for one acceptance assertion is
+ * the wrong trade; the gap is recorded here rather than closed unsafely.
+ */
+async function runHeaderCaseInsensitivityCheck(
+  ctx: RawHttpCheckContext,
+  state: ModernRunState
+): Promise<MCPCheckResult> {
+  const meta = MODERN_CHECK_METADATA["modern-header-names-case-insensitive"];
+  const startedAt = Date.now();
+
+  const result = await track(
+    state,
+    modernProbe(ctx, {
+      id: 7270,
+      method: "server/discover",
+      headerNameTransform: alternatingCase,
+    })
+  );
+
+  const payload = jsonRpcResult(result);
+  const error = jsonRpcError(result);
+  const sentHeaderNames = Object.keys(
+    modernHeaders({
+      protocolVersion: protocolVersion(ctx),
+      method: "server/discover",
+    })
+  ).map(alternatingCase);
+
+  const details = {
+    httpStatus: result.status,
+    jsonRpcCode: error?.code,
+    jsonRpcMessage: error?.message,
+    sentHeaderNames,
+  };
+
+  if (result.status === 200 && payload) {
+    return passedResult(meta, Date.now() - startedAt, details);
+  }
+
+  return failedResult(
+    meta,
+    Date.now() - startedAt,
+    `Server rejected a well-formed request whose standard header names differ only in case (HTTP ${result.status}${
+      error ? `, JSON-RPC ${error.code}` : ""
+    }); RFC 9110 field names are case-insensitive and SEP-2243 requires case-insensitive comparison`,
+    details
+  );
+}
+
+/**
+ * `mCp-PrOtOcOl-VeRsIoN` — neither the canonical spelling nor all-lower, so a
+ * server matching either exact string is caught. Deterministic, so a failure
+ * report names the exact bytes that were sent.
+ */
+function alternatingCase(name: string): string {
+  let letterIndex = 0;
+  return [...name]
+    .map((character) => {
+      if (!/[a-z]/i.test(character)) return character;
+      const upper = letterIndex % 2 === 1;
+      letterIndex += 1;
+      return upper ? character.toUpperCase() : character.toLowerCase();
+    })
+    .join("");
+}
+
 async function runRemovedMethodsCheck(
   ctx: RawHttpCheckContext,
   state: ModernRunState
@@ -1449,6 +1624,10 @@ async function runModernCheck(
       return await runMethodHeaderMismatchCheck(ctx, state);
     case "modern-name-header-mismatch":
       return await runNameHeaderMismatchCheck(ctx, state);
+    case "modern-missing-method-header-rejected":
+      return await runMissingMethodHeaderCheck(ctx, state);
+    case "modern-header-names-case-insensitive":
+      return await runHeaderCaseInsensitivityCheck(ctx, state);
     case "modern-unsupported-version-error":
       return await runUnsupportedVersionCheck(ctx, state);
     case "modern-undeclared-capability-error":

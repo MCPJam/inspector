@@ -69,6 +69,12 @@ export const MCP_CHECK_IDS = [
   "modern-method-header-mismatch",
   "modern-name-header-mismatch",
   "modern-unsupported-version-error",
+  // SEP-2243 header cases the mismatch checks above do not reach: a MISSING
+  // required standard header is a distinct validation-failure condition from a
+  // present-but-wrong one, and the case-insensitivity rule is an ACCEPTANCE
+  // MUST rather than a rejection MUST.
+  "modern-missing-method-header-rejected",
+  "modern-header-names-case-insensitive",
   "modern-undeclared-capability-error",
   "modern-no-session-id",
   "modern-removed-methods-not-found",
@@ -221,6 +227,8 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "modern-method-header-mismatch": ["modern"],
   "modern-name-header-mismatch": ["modern"],
   "modern-unsupported-version-error": ["modern"],
+  "modern-missing-method-header-rejected": ["modern"],
+  "modern-header-names-case-insensitive": ["modern"],
   "modern-undeclared-capability-error": ["modern"],
   "modern-no-session-id": ["modern"],
   "modern-removed-methods-not-found": ["modern"],
@@ -350,6 +358,12 @@ export const MCP_READINESS_IDS = [
   // on the 2025 revisions, and 405-on-GET/DELETE is the 2026 revision's
   // backward-compat SHOULD; neither can fail a run.
   "readiness-session-termination",
+  // SEP-2243 makes `MCP-Protocol-Version` REQUIRED on every POST and lists its
+  // absence as a validation-failure condition — but the same section says a
+  // server supporting pre-2025-06-18 clients "MAY treat a request that omits
+  // the header as protocol version 2025-03-26". Tolerating the omission is
+  // therefore spec-legal, so it can only be advice.
+  "readiness-protocol-version-header-required",
 ] as const;
 
 export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];
