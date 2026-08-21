@@ -1,9 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQueries } from "convex/react";
+import type { RequestForQueries } from "convex/react";
 import type { ServerFormData } from "@/shared/types.js";
 import type { RegistryServer } from "@/lib/registry-server-types";
 import type { OrgRegistryDerivedSnapshot } from "@/lib/apis/web/org-registry-api";
 import { REGISTRY_FEATURE_ENABLED } from "./useRegistryServers";
+import { reportCaught } from "@/lib/error-reporting";
 
 /**
  * The organization's own registry shelf.
@@ -75,14 +77,36 @@ export interface OrgRegistrySubmission {
 }
 
 /**
- * A Convex query for a function the deployed backend does not have yet reads
- * as a thrown "Could not find public function". The Registry tab must survive
- * that: the org section is new, and a browser can outlive a rollback.
+ * One `useQueries` slot, read as data.
  *
- * `useQuery` throws during render, so this cannot be caught here — the caller
- * wraps the section in an error boundary. What this hook guarantees is the
- * quieter half: an ABSENT answer (still loading, or skipped) is an empty
- * shelf, never a crash and never a spinner that lasts forever.
+ * An `Error` here is an ANSWER WE DO NOT HAVE — not data, and deliberately not
+ * folded into the pending case either: the callers below already treat
+ * `undefined` as "still loading", and a failure that never resolves would sit
+ * in that state forever.
+ */
+function asAnswer<T>(value: unknown): T | undefined {
+  return value instanceof Error ? undefined : (value as T | undefined);
+}
+
+/** Subscribe to nothing. Hoisted so the skipped case is a stable reference. */
+const NO_QUERIES: RequestForQueries = {};
+
+/**
+ * A Convex query for a function the deployed backend does not have yet reads
+ * as a thrown "Could not find public function", and this hook must survive
+ * that on its own: the org shelf is new, a browser can outlive a rollback, and
+ * BOTH tabs mount this — the Registry tab inside a boundary, the Servers tab
+ * in the body of the page component itself.
+ *
+ * Hence `useQueries` rather than three `useQuery` calls. It is the one Convex
+ * hook that returns a failure as a VALUE instead of throwing it during render,
+ * which turns "the backend is older than this build" from a lost page into a
+ * missing shelf. A caller's boundary is then defense in depth, not the only
+ * thing standing between a rollback and a blank screen.
+ *
+ * Two answers, kept distinct: an ABSENT one (still loading, or skipped) is an
+ * empty shelf, and a FAILED one is an empty shelf that has stopped waiting —
+ * never a crash, never a spinner that lasts forever.
  */
 export function useOrgRegistryServers({
   enabled: callerEnabled = true,
@@ -102,20 +126,49 @@ export function useOrgRegistryServers({
   const enabled =
     REGISTRY_FEATURE_ENABLED && callerEnabled && isAuthenticated && !!projectId;
 
-  const rows = useQuery(
-    "registryServers:listOrgRegistryServers" as any,
-    enabled ? ({ projectId } as any) : "skip"
-  ) as OrgRegistryServer[] | undefined;
+  // An empty request set is how `useQueries` says "skip" — there is no
+  // per-entry sentinel the way `useQuery` takes `"skip"`.
+  const requests = useMemo<RequestForQueries>(() => {
+    if (!enabled) return NO_QUERIES;
+    const args = { projectId } as any;
+    return {
+      rows: { query: "registryServers:listOrgRegistryServers" as any, args },
+      context: { query: "registryServers:getOrgRegistryContext" as any, args },
+      connections: {
+        query: "registryServers:getProjectRegistryConnections" as any,
+        args,
+      },
+    };
+  }, [enabled, projectId]);
 
-  const context = useQuery(
-    "registryServers:getOrgRegistryContext" as any,
-    enabled ? ({ projectId } as any) : "skip"
-  ) as OrgRegistryContext | undefined;
+  const results = useQueries(requests);
 
-  const connections = useQuery(
-    "registryServers:getProjectRegistryConnections" as any,
-    enabled ? ({ projectId } as any) : "skip"
-  ) as RegistryConnectionRow[] | undefined;
+  const failure = useMemo(
+    () =>
+      [results.rows, results.context, results.connections].find(
+        (value): value is Error => value instanceof Error
+      ) ?? null,
+    [results.rows, results.context, results.connections]
+  );
+
+  const rows = asAnswer<OrgRegistryServer[]>(results.rows);
+  const context = asAnswer<OrgRegistryContext>(results.context);
+  const connections = asAnswer<RegistryConnectionRow[]>(results.connections);
+
+  // Silent to the user is a UI choice, never a telemetry one — the rule the
+  // error boundary already follows, and the reason this hook reports rather
+  // than merely swallowing. Keyed on the message so a re-rendering tab sends
+  // once instead of on every commit.
+  const reportedMessage = useRef<string | null>(null);
+  useEffect(() => {
+    if (!failure) {
+      reportedMessage.current = null;
+      return;
+    }
+    if (reportedMessage.current === failure.message) return;
+    reportedMessage.current = failure.message;
+    reportCaught(failure, { source: "org_registry_query" });
+  }, [failure]);
 
   const addMutation = useMutation(
     "registryServers:addOrgRegistryServer" as any
@@ -311,8 +364,13 @@ export function useOrgRegistryServers({
 
   return {
     servers,
-    /** Absent answer ⇒ empty shelf, never an endless spinner. */
-    isLoading: enabled && (rows === undefined || connections === undefined),
+    /**
+     * Absent answer ⇒ empty shelf, never an endless spinner. A FAILED answer
+     * settles: it is never going to arrive, so waiting on it is a spinner with
+     * no end — the very thing this hook promises not to show.
+     */
+    isLoading:
+      enabled && !failure && (rows === undefined || connections === undefined),
     organizationId: context?.organizationId ?? null,
     canAdd: context?.canAdd ?? false,
     add,

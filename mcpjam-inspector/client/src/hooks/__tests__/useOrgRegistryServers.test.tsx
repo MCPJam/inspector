@@ -16,16 +16,41 @@
 import { renderHook, act } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { queries, mutations } = vi.hoisted(() => ({
+const { queries, mutations, reported } = vi.hoisted(() => ({
   queries: {} as Record<string, unknown>,
   mutations: { calls: [] as Array<{ name: string; args: unknown }> },
+  reported: { calls: [] as Array<{ error: unknown; source: string }> },
 }));
 
+/**
+ * A FAITHFUL double of both hooks, because the difference between them is the
+ * thing under test: Convex's `useQuery` THROWS a failed query out of the hook
+ * during render, while `useQueries` hands the same failure back as a VALUE.
+ * A stored `Error` here means "this query failed", and each hook reacts to it
+ * the way the real one does.
+ */
 vi.mock("convex/react", () => ({
-  useQuery: (name: string, args: unknown) =>
-    args === "skip" ? undefined : queries[name],
+  useQuery: (name: string, args: unknown) => {
+    if (args === "skip") return undefined;
+    const value = queries[name];
+    if (value instanceof Error) throw value;
+    return value;
+  },
+  useQueries: (requests: Record<string, { query: string }>) =>
+    Object.fromEntries(
+      Object.entries(requests).map(([key, request]) => [
+        key,
+        queries[request.query],
+      ])
+    ),
   useMutation: (name: string) => async (args: unknown) => {
     mutations.calls.push({ name, args });
+  },
+}));
+
+vi.mock("@/lib/error-reporting", () => ({
+  reportCaught: (error: unknown, options: { source: string }) => {
+    reported.calls.push({ error, source: options.source });
   },
 }));
 
@@ -80,6 +105,7 @@ function render(
 
 beforeEach(() => {
   mutations.calls = [];
+  reported.calls = [];
   for (const key of Object.keys(queries)) delete queries[key];
 });
 
@@ -312,5 +338,88 @@ describe("useOrgRegistryServers — adding", () => {
         derived: { probedAt: 2, endpointUrl: "https://b.example/mcp" },
       })
     ).rejects.toThrow(/not part of an organization/);
+  });
+});
+
+/**
+ * The org shelf shipped to a deployment whose backend does not have its
+ * functions yet — a frontend ahead of the backend, or a browser still open
+ * across a rollback. Convex answers that with a thrown "Could not find public
+ * function", and this hook is mounted by BOTH tabs: whichever one renders it
+ * without a boundary of its own loses its entire page to a missing shelf.
+ *
+ * So the guarantee is the hook's, not the caller's.
+ */
+describe("useOrgRegistryServers — a backend without these functions", () => {
+  const MISSING = new Error(
+    "[CONVEX Q(registryServers:listOrgRegistryServers)] Server Error " +
+      "Could not find public function for " +
+      "'registryServers:listOrgRegistryServers'."
+  );
+
+  function renderWithFailure() {
+    queries["registryServers:listOrgRegistryServers"] = MISSING;
+    queries["registryServers:getOrgRegistryContext"] = {
+      organizationId: "org_1",
+      canAdd: true,
+    };
+    queries["registryServers:getProjectRegistryConnections"] = [];
+
+    return renderHook(() =>
+      useOrgRegistryServers({
+        projectId: "proj_1",
+        isAuthenticated: true,
+        onConnect: () => {},
+      })
+    );
+  }
+
+  it("renders an empty shelf instead of throwing out of the hook", () => {
+    const { result } = renderWithFailure();
+
+    expect(result.current.servers).toEqual([]);
+  });
+
+  it("settles rather than spinning forever", () => {
+    // The failure is an answer we do not have, NOT a load still in flight.
+    // Reading it as loading would trade the crash for a permanent spinner.
+    const { result } = renderWithFailure();
+
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("offers no Add button when the backend cannot be asked", () => {
+    queries["registryServers:listOrgRegistryServers"] = [ORG_ROW];
+    queries["registryServers:getOrgRegistryContext"] = MISSING;
+    queries["registryServers:getProjectRegistryConnections"] = [];
+
+    const { result } = renderHook(() =>
+      useOrgRegistryServers({
+        projectId: "proj_1",
+        isAuthenticated: true,
+        onConnect: () => {},
+      })
+    );
+
+    expect(result.current.canAdd).toBe(false);
+    expect(result.current.organizationId).toBeNull();
+  });
+
+  it("still reports the failure — silence is a UI choice, not a telemetry one", () => {
+    renderWithFailure();
+
+    expect(reported.calls).toHaveLength(1);
+    expect(reported.calls[0]).toMatchObject({
+      error: MISSING,
+      source: "org_registry_query",
+    });
+  });
+
+  it("reports once, not on every render", () => {
+    const { rerender } = renderWithFailure();
+    rerender();
+    rerender();
+
+    expect(reported.calls).toHaveLength(1);
   });
 });

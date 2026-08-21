@@ -175,6 +175,10 @@ vi.mock("convex/react", () => ({
     isAuthenticated: mockIsAuthenticated,
   }),
   useQuery: () => undefined,
+  // Every slot unresolved, which is what `undefined` means to `useQueries` —
+  // the org shelf this tab mounts reads as still loading, not as a failure.
+  useQueries: (requests: Record<string, unknown>) =>
+    Object.fromEntries(Object.keys(requests).map((key) => [key, undefined])),
   useMutation: () => vi.fn(),
   useAction: () => vi.fn(),
 }));
