@@ -12,6 +12,13 @@ import {
 import { useAppNavigate } from "@/lib/app-navigation";
 import { githubChecksWriteErrorMessage } from "@/lib/github-checks-errors";
 import {
+  findRepoByPickerValue,
+  pickerLabelFor,
+  pickerValueFor,
+  shouldShowAccountLabels,
+  verifiedConnectArgs,
+} from "@/lib/github-repo-picker";
+import {
   useGithubChecksSettings,
   type GithubCheckOutagePolicy,
   type InstallationRepo,
@@ -127,19 +134,26 @@ export function SuiteGithubChecksSection({
           (repo) => !alreadyConnected.has(repo.fullName.toLowerCase())
         );
 
+  // Selection, labelling and the connect payload are shared with the settings
+  // page through `@/lib/github-repo-picker` — the same contract, stated once.
+  const pickedRepo = findRepoByPickerValue(connectableRepos, pickerRepo);
+  const showAccountLabels = shouldShowAccountLabels(connectableRepos);
+
   const handleConnect = async () => {
-    if (!pickerRepo || !projectId || !pickerPolicy) return;
+    if (!pickedRepo || !projectId || !pickerPolicy) return;
     setConnecting(true);
     try {
-      // The server-VERIFIED connect: it proves the pinned installation can
-      // actually reach this repository before any row is written. The
-      // unverified mutation is still deployed and must not be called.
-      await connectVerifiedRepo({
-        repoFullName: pickerRepo,
-        projectId,
-        suiteId,
-        outagePolicy: pickerPolicy,
-      });
+      // The server-VERIFIED connect: it proves the selected installation can
+      // actually reach this repository before any row is written, and the
+      // reference and repository id say WHICH installation and WHICH repository
+      // — both re-verified server-side.
+      await connectVerifiedRepo(
+        verifiedConnectArgs(pickedRepo, {
+          projectId,
+          suiteId,
+          outagePolicy: pickerPolicy,
+        })
+      );
       if (!mountedRef.current) return;
       setPickerRepo("");
       setPickerPolicy("");
@@ -179,14 +193,16 @@ export function SuiteGithubChecksSection({
       )}
 
       <div className="flex flex-wrap items-center gap-2">
+        {/* Valued by REPOSITORY ID, not name: two connected accounts can each
+            have a `widgets`, and the id is what the connect is keyed on. */}
         <Select value={pickerRepo} onValueChange={setPickerRepo}>
-          <SelectTrigger className="w-64" aria-label="Repository">
+          <SelectTrigger className="w-72" aria-label="Repository">
             <SelectValue placeholder="Select a repository" />
           </SelectTrigger>
           <SelectContent>
             {connectableRepos.map((repo) => (
-              <SelectItem key={repo.fullName} value={repo.fullName}>
-                {repo.fullName}
+              <SelectItem key={repo.repositoryId} value={pickerValueFor(repo)}>
+                {pickerLabelFor(repo, showAccountLabels)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -207,7 +223,7 @@ export function SuiteGithubChecksSection({
         <Button
           size="sm"
           onClick={() => void handleConnect()}
-          disabled={connecting || !pickerRepo || !projectId || !pickerPolicy}
+          disabled={connecting || !pickedRepo || !projectId || !pickerPolicy}
         >
           <Plus className="mr-2 size-3.5" aria-hidden /> Connect
         </Button>
