@@ -4,16 +4,6 @@ vi.mock("../skill-tools.js", () => ({
   getSkillToolsAndPrompt: vi.fn(),
 }));
 
-vi.mock("@/shared/types", async () => {
-  const actual = await vi.importActual<typeof import("@/shared/types")>(
-    "@/shared/types"
-  );
-  return {
-    ...actual,
-    modelSupportsTemperature: vi.fn().mockReturnValue(true),
-  };
-});
-
 import {
   buildUiTools,
   buildUiToolsSystemPrompt,
@@ -56,6 +46,40 @@ beforeEach(() => {
 });
 
 describe("prepareChatV2", () => {
+  it("drops temperature for Claude families that reject the field", async () => {
+    const manager = mockManager({});
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: [],
+      modelDefinition: {
+        id: "us.anthropic.claude-opus-4-7-20260205-v1:0",
+        provider: "bedrock",
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBeUndefined();
+  });
+
+  it("keeps temperature for Claude families that still accept it", async () => {
+    const manager = mockManager({});
+
+    const result = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: [],
+      modelDefinition: {
+        id: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        provider: "bedrock",
+      } as any,
+      systemPrompt: "Base prompt.",
+      temperature: 0.5,
+    });
+
+    expect(result.resolvedTemperature).toBe(0.5);
+  });
+
   it("does not add MCP tool inventory to the system prompt", async () => {
     const manager = mockManager({
       fetch_tasks: {
