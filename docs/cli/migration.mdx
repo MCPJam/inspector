@@ -4,7 +4,7 @@ description: "Command-path and flag changes when account-bound mcpjam commands m
 icon: "arrow-right-arrow-left"
 ---
 
-`@mcpjam/cli` 4.0 splits the CLI into two invocations. Local MCP testing stays at the top level. Account-bound commands live under `mcpjam cloud`. There are no compatibility aliases for the old Cloud command paths.
+`@mcpjam/cli` 4.0 separates local MCP operations from account-bound Cloud operations. Most account-bound commands live under `mcpjam cloud`; hosted readiness is the intentional root-level exception because it targets publisher directory checks and does not use Cloud project links. There are no compatibility aliases for the old Cloud command paths.
 
 ```bash
 mcpjam server probe --url https://example.com/mcp       # local
@@ -15,13 +15,11 @@ mcpjam cloud eval run --suite smoke                     # MCPJam Cloud
 mcpjam cloud tunnel --server dev -- npm start           # local target, Cloud registration
 ```
 
-Hold the Version Packages PR until this page ships. Do not publish 4.0.0 before the migration record lands.
-
 ## What did not change
 
-- Frozen local commands: `server`, `tools`, `resources`, `prompts`, `subscriptions`, `tasks`, `apps`, `oauth`, `protocol`, `readiness`, `xaa`, `compat`, `inspector`, `mcp`, `telemetry`
+- Frozen local commands: `server`, `tools`, `resources`, `prompts`, `subscriptions`, `tasks`, `apps`, `oauth`, `protocol`, `xaa`, `compat`, `inspector`, `mcp`, `telemetry`
 - Local commands still reject `--api-key` / `--api-url` / `--project`
-- Hosted `readiness start|status|list|cancel|report` stays under `readiness` (leaf `--api-key`; no Cloud project link)
+- Hosted `readiness start|status|list|cancel|report` stays under the root `readiness` command (leaf `--api-key`; no Cloud project link)
 - Local `mcpjam mcp` protocol `serverInfo.name` is still `mcpjam` (title is now `MCPJam CLI`)
 
 ## Command paths
@@ -54,7 +52,7 @@ Hold the Version Packages PR until this page ships. Do not publish 4.0.0 before 
 
 Project-selection precedence: `--project` > explicit `project` in `--file`/`--json` > `MCPJAM_PROJECT` > nearest `.mcpjam/project.json` > automatic (most recently updated). `MCPJAM_PROJECT_ID` does not select a Cloud CLI project.
 
-`mcpjam cloud link` writes `.mcpjam/project.json`. `mcpjam cloud status` is zero-network.
+`mcpjam cloud link` writes `.mcpjam/project.json`; use `mcpjam cloud link --remove` to remove the nearest link. `mcpjam cloud status` is zero-network.
 
 ## Local MCP identity
 

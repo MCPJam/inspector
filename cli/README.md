@@ -16,7 +16,7 @@ npx -y @mcpjam/cli@latest --help
 
 ## Commands
 
-Local MCP testing stays at the top level. Account-bound commands live under `mcpjam cloud`. See the [4.0 migration guide](../docs/cli/migration.mdx).
+Local MCP testing stays at the top level. Most account-bound commands live under `mcpjam cloud`; hosted readiness is the root-level exception. See the [4.0 migration guide](https://docs.mcpjam.com/cli/migration).
 
 ```
 $ mcpjam --help

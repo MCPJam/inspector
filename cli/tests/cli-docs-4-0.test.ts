@@ -2,7 +2,8 @@
  * Keep user-facing CLI docs on the 4.0 command paths.
  *
  * `docs/cli/migration.mdx` is the only page allowed to mention 3.x paths.
- * Design notes and the HTTP public API are out of scope.
+ * Design notes remain out of scope; public API docs are included because they
+ * contain user-facing CLI examples.
  */
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -17,8 +18,32 @@ const REPO_ROOT = path.resolve(
 const CLI_DOCS_DIR = path.join(REPO_ROOT, "docs/cli");
 const DOCS_JSON_PATH = path.join(REPO_ROOT, "docs/docs.json");
 
+const MOVED_CLOUD_GROUPS = [
+  "login",
+  "logout",
+  "whoami",
+  "organizations",
+  "projects",
+  "eval",
+  "chat-sessions",
+  "sessions",
+  "hosts",
+  "environments",
+  "capabilities",
+  "personas",
+  "journeys",
+  "scenarios",
+  "swarms",
+  "user-testing",
+  "images",
+  "tunnel",
+] as const;
+
+const movedCloudGroupPattern = MOVED_CLOUD_GROUPS.join("|");
+
 const EXTRA_DOC_PATHS = [
   "cli/README.md",
+  "docs/reference/openapi.json",
   "docs/inspector/evals.mdx",
   "docs/inspector/computer.mdx",
   "docs/getting-started.mdx",
@@ -28,20 +53,19 @@ const EXTRA_DOC_PATHS = [
 ] as const;
 
 const STALE_PATTERNS: ReadonlyArray<{ name: string; re: RegExp }> = [
-  { name: "mcpjam eval (not under cloud)", re: /mcpjam eval(?:\s|…|`|$)/g },
-  { name: "mcpjam tunnel (not under cloud)", re: /mcpjam tunnel(?:\s|`|$)/g },
-  { name: "mcpjam images (not under cloud)", re: /mcpjam images(?:\s|`|$)/g },
-  { name: "mcpjam hosts (not under cloud)", re: /mcpjam hosts(?:\s|`|$)/g },
   {
-    name: "mcpjam environments (not under cloud)",
-    re: /mcpjam environments(?:\s|`|$)/g,
+    name: "root Cloud command path",
+    re: new RegExp(
+      "mcpjam (?:" + movedCloudGroupPattern + ")(?:\\s|…|\\x60|$)",
+      "g"
+    ),
   },
-  { name: "mcpjam login (not oauth/cloud)", re: /mcpjam login\b/g },
-  { name: "mcpjam chat-sessions", re: /mcpjam(?: cloud)? chat-sessions\b/g },
-  { name: "--organization-id", re: /--organization-id\b/g },
   {
     name: "npx @mcpjam/cli without cloud for moved groups",
-    re: /@mcpjam\/cli(?:@\S+)?\s+(eval|tunnel|images|hosts|environments|login)\b/g,
+    re: new RegExp(
+      "@mcpjam/cli(?:@\\S+)?\\s+(?:" + movedCloudGroupPattern + ")\\b",
+      "g"
+    ),
   },
   {
     name: "old local MCP stderr listening line",
@@ -81,6 +105,23 @@ test("CLI 4.0 docs do not advertise 3.x Cloud command paths", () => {
     findingsIn(filePath, readFileSync(filePath, "utf8"))
   );
   assert.deepEqual(findings, [], findings.join("\n"));
+});
+
+test("CLI reference has one canonical cloud eval section", () => {
+  const reference = readFileSync(
+    path.join(CLI_DOCS_DIR, "reference.mdx"),
+    "utf8"
+  );
+  const headings = reference.match(/^## `cloud eval` commands$/gm) ?? [];
+  assert.equal(headings.length, 1);
+});
+
+test("CLI reference documents removing a Cloud project link", () => {
+  const reference = readFileSync(
+    path.join(CLI_DOCS_DIR, "reference.mdx"),
+    "utf8"
+  );
+  assert.match(reference, /\| `--remove` \| Remove the nearest project link/);
 });
 
 test("docs nav includes the CLI 4.0 migration page after overview", () => {
