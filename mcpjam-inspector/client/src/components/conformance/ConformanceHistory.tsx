@@ -315,7 +315,6 @@ export function ConformanceHistory({
 
 export function ConformanceRunDetailPage({
   runId,
-  projectId,
 }: {
   runId: string;
   projectId?: string | null;
