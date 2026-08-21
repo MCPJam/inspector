@@ -556,7 +556,10 @@ async function executeOp<TInput, TOutput>(
     platformOptionsOf(command),
     globalOptions.timeout,
     ({ client, signal }) => op.execute(filled, { client, signal }),
-    { projectScope: resolved.projectScope }
+    {
+      projectScope: resolved.projectScope,
+      quiet: globalOptions.quiet,
+    }
   );
   writeResult(result, globalOptions.format);
 }

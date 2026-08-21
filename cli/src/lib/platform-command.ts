@@ -16,9 +16,15 @@ import { PlatformApiError } from "@mcpjam/sdk/platform";
 import {
   appendProjectLinkHint,
   resolveCloudProjectArgs,
+  resolveProjectSelector,
+  type CloudScope,
   type ProjectCloudScope,
   type ResolveProjectSelectorOptions,
 } from "./cloud-scope.js";
+import {
+  announceCloudContext,
+  preflightCloudCredentials,
+} from "./cloud-context.js";
 import {
   buildPlatformClient,
   toCliError,
@@ -52,14 +58,27 @@ export type RunPlatformOperationExtras = {
    */
   externalSignal?: AbortSignal;
   /**
-   * When true (default), announce Cloud context before the operation.
-   * Inner polls set `false` so a user command announces once. No-op until
-   * the audience-line change lands.
+   * When true (default), print the Cloud audience line to stderr before the
+   * operation. Inner polls, `cloud whoami`, `cloud link`, and hosted
+   * `readiness` set `false` so a user command announces at most once.
    */
   announce?: boolean;
   /**
+   * Suppress the audience line. Wrappers pass the global `--quiet` flag;
+   * `process.argv` is the fallback when a call site has not been updated.
+   */
+  quiet?: boolean;
+  /**
+   * Typed Cloud resource scope for the audience line. When omitted, a
+   * project-scoped selector is inferred from `--project` / env / link /
+   * automatic. Account-scoped callers pass `{ kind: "account" }` (or
+   * `all-projects` / `organization`) so they do not pick up a project link.
+   */
+  cloudScope?: CloudScope;
+  /**
    * How the project selector for this operation was chosen. Used to append
-   * a re-link hint when a link-sourced selector fails online.
+   * a re-link hint when a link-sourced selector fails online, and as the
+   * audience scope when `cloudScope` is omitted.
    */
   projectScope?: ProjectCloudScope;
 };
@@ -129,6 +148,17 @@ export function buildCloudClientContext(
   };
 }
 
+function cloudAnnounceScope(
+  options: PlatformOptions,
+  extras: RunPlatformOperationExtras
+): CloudScope {
+  if (extras.cloudScope) return extras.cloudScope;
+  if (extras.projectScope) return extras.projectScope;
+  return resolveProjectSelector({
+    flagProject: (options as { project?: string }).project,
+  });
+}
+
 /**
  * Run one bounded Cloud operation under the global timeout, translating every
  * failure into a CLI error.
@@ -144,7 +174,7 @@ export async function runPlatformOperation<TOutput>(
   execute: (context: PlatformOperationContext) => Promise<TOutput>,
   extras: RunPlatformOperationExtras = {}
 ): Promise<TOutput> {
-  void extras.announce;
+  preflightCloudCredentials(options);
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => {
     controller.abort(
@@ -167,6 +197,13 @@ export async function runPlatformOperation<TOutput>(
 
   try {
     const context = buildCloudClientContext(options, timeoutMs);
+    const quiet = extras.quiet ?? process.argv.includes("--quiet");
+    if (extras.announce !== false && quiet !== true) {
+      announceCloudContext({
+        scope: cloudAnnounceScope(options, extras),
+        options,
+      });
+    }
     return await execute({ ...context, signal: controller.signal });
   } catch (error) {
     if (
@@ -252,8 +289,8 @@ export function bindOperation<TOptions extends PlatformOptions, TInput>(
   command.action(async (options: TOptions, invoked: Command) => {
     const globalOptions = getGlobalOptions(invoked);
     const merged = platformOptionsOf<TOptions & { project?: string }>(invoked);
-    const applyAmbient =
-      hasCloudAncestor(invoked) && commandHasProjectOption(invoked);
+    const underCloud = hasCloudAncestor(invoked);
+    const applyAmbient = underCloud && commandHasProjectOption(invoked);
     const resolved = applyAmbient
       ? resolveCloudProjectArgs({ project: merged.project })
       : undefined;
@@ -265,7 +302,16 @@ export function bindOperation<TOptions extends PlatformOptions, TInput>(
       globalOptions.timeout,
       ({ client, signal }) =>
         operation.execute(buildInput(inputOptions), { client, signal }),
-      resolved ? { projectScope: resolved.projectScope } : {}
+      {
+        announce: underCloud,
+        quiet: globalOptions.quiet,
+        ...(resolved
+          ? {
+              projectScope: resolved.projectScope,
+              cloudScope: resolved.projectScope,
+            }
+          : {}),
+      }
     );
     writeResult(result, globalOptions.format);
   });
@@ -301,7 +347,12 @@ export async function runCloudOp<
         context,
         resolved.project !== undefined ? { project: resolved.project } : {}
       ),
-    { ...nestedExtras, projectScope: resolved.projectScope }
+    {
+      ...nestedExtras,
+      projectScope: resolved.projectScope,
+      cloudScope: nestedExtras?.cloudScope ?? resolved.projectScope,
+      quiet: nestedExtras?.quiet ?? globalOptions.quiet,
+    }
   );
 }
 
