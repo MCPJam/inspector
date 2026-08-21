@@ -178,6 +178,10 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
       expect(JSON.parse(init?.body)).toEqual({
         projectId: "project-1",
         serverId: "server-1",
+        // The local resolver runs on the user's own machine, so it declares
+        // that — which is what lets the backend hand back the material to
+        // refresh an authorization server it cannot reach itself.
+        localRuntime: true,
       });
       return new Response(JSON.stringify({ accessToken: "new-token" }), {
         status: 200,

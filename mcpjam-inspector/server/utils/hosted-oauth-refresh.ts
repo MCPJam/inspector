@@ -5,6 +5,7 @@ import {
   WebRouteError,
   parseErrorMessage,
 } from "../routes/web/errors.js";
+import { HOSTED_MODE } from "../config.js";
 import {
   refreshTokensAgainstPrivateAuthorizationServer,
   type PrivateAuthorizationServerRefreshMaterial,
@@ -67,6 +68,32 @@ function parseRefreshMaterial(
   };
 }
 
+/**
+ * What each private-authorization-server credential needs to refresh itself,
+ * keyed by `projectId:serverId` and kept current with the token in effect.
+ *
+ * Exists so the local fallback does not depend on the backend answering. The
+ * force-refresh budget is 10/min per subject and server, every fallback spends
+ * one on a call that structurally cannot succeed, and once it is empty the
+ * backend returns a plain 429 — locking the user out of a refresh that needs
+ * nothing from the backend.
+ *
+ * In-memory and process-local, never persisted. This is the LOCAL binary (the
+ * `HOSTED_MODE` assertion in `local-oauth-refresh` refuses the whole path
+ * otherwise), so it is the user's own machine holding the user's own token,
+ * for as long as their inspector runs — the same lifetime as every other
+ * credential this process keeps to talk to their servers.
+ */
+const privateAuthorizationServerMaterialCache = new Map<
+  string,
+  PrivateAuthorizationServerRefreshMaterial
+>();
+
+/** Test seam: nothing outside tests should need to reach into the cache. */
+export function __resetPrivateAuthorizationServerMaterialCacheForTests(): void {
+  privateAuthorizationServerMaterialCache.clear();
+}
+
 export type HostedOAuthRefreshOptions = {
   accessScope?: "project_member" | "chat_v2";
   shareToken?: string;
@@ -78,6 +105,16 @@ export type HostedOAuthRefreshOptions = {
   chatboxId?: string;
   accessVersion?: number;
   serverName?: string;
+  /**
+   * Tell the backend this process runs on the user's own machine, so it may
+   * hand back the material to refresh an authorization server it cannot reach
+   * itself. Without it the 409 arrives with no `refresh` and the local
+   * fallback has nothing to work with.
+   *
+   * Set only by `refreshHostedOAuthAccessTokenWithLocalFallback`, and only
+   * when this really is the local binary.
+   */
+  declareLocalRuntime?: boolean;
 };
 
 /**
@@ -122,6 +159,7 @@ export async function forceRefreshHostedOAuthAccessToken(
         ...(options?.chatboxId && Number.isFinite(options?.accessVersion)
           ? { accessVersion: options.accessVersion }
           : {}),
+        ...(options?.declareLocalRuntime ? { localRuntime: true } : {}),
       }),
     });
   } catch (error) {
@@ -265,82 +303,129 @@ export async function refreshHostedOAuthAccessTokenWithLocalFallback(
   serverId: string,
   options?: HostedOAuthRefreshOptions
 ): Promise<string> {
+  const cacheKey = `${projectId}:${serverId}`;
+  let material: PrivateAuthorizationServerRefreshMaterial | null = null;
+
   try {
     return await forceRefreshHostedOAuthAccessToken(
       bearerToken,
       projectId,
       serverId,
-      options
+      // The declaration is what makes the backend willing to hand back the
+      // refresh material at all. Gated on the process, not just the call site:
+      // a hosted deployment reaching this function by mistake must not ask for
+      // a secret it could never use.
+      { ...options, declareLocalRuntime: !HOSTED_MODE }
     );
   } catch (error) {
-    if (!(error instanceof PrivateAuthorizationServerRefreshError)) {
-      throw error;
-    }
-    if (!error.refreshMaterial) {
-      // Backend withheld it — a shared credential, or a browser-shaped caller.
-      // Nothing to do here; the message explains the fix.
-      throw error;
-    }
-
-    let tokens: OAuthTokens;
-    try {
-      tokens = await refreshTokensAgainstPrivateAuthorizationServer(
-        error.refreshMaterial
-      );
-    } catch (refreshError) {
-      throw translateLocalRefreshFailure(
-        refreshError,
-        error.refreshMaterial,
-        serverId,
-        options?.serverName ?? null
-      );
-    }
-
-    const accessToken = tokens.access_token?.trim();
-    if (!accessToken) {
-      throw new WebRouteError(
-        502,
-        ErrorCode.SERVER_UNREACHABLE,
-        "The authorization server returned no access token"
+    if (error instanceof PrivateAuthorizationServerRefreshError) {
+      if (!error.refreshMaterial) {
+        // Backend withheld it — a shared credential, a browser-shaped caller,
+        // or no authorization server URL was ever stored. Nothing to do here;
+        // the message explains the fix.
+        throw error;
+      }
+      material = error.refreshMaterial;
+    } else {
+      // Anything else is a real failure of the backend call — EXCEPT that this
+      // server may already be known to need a local refresh, in which case the
+      // backend has nothing to contribute and its verdict should not block us.
+      //
+      // The concrete case is the force-refresh rate limit (10/min per
+      // subject:serverId). Every local fallback first spends a token from that
+      // budget on a call that structurally cannot succeed, so a chatty session
+      // against a flapping localhost server empties it, the backend starts
+      // answering 429 before it ever reaches the private-address resolution,
+      // and the user is locked out of a refresh that needs nothing from the
+      // backend at all.
+      material = privateAuthorizationServerMaterialCache.get(cacheKey) ?? null;
+      if (!material) {
+        throw error;
+      }
+      logger.debug(
+        "[local oauth refresh] backend refresh unavailable; using cached private-AS material",
+        { serverId, error: parseErrorMessage(error) }
       );
     }
-
-    // RFC 6749 §6 lets the authorization server omit refresh_token on a
-    // refresh, meaning "keep using the one you have" — and many do. Importing
-    // the raw response would then store a credential with NO refresh token, so
-    // the very next expiry fails with "missing refresh_token" and forces a
-    // reconnect: a fix that breaks the thing it just fixed, one cycle later.
-    // Mirrors mergeRefreshedTokens on the backend's own refresh path.
-    const tokensToStore: OAuthTokens = tokens.refresh_token?.trim()
-      ? tokens
-      : { ...tokens, refresh_token: error.refreshMaterial.refreshToken };
-
-    try {
-      await importRefreshedTokens(
-        bearerToken,
-        projectId,
-        serverId,
-        error.refreshMaterial,
-        tokensToStore
-      );
-    } catch (importError) {
-      // THIS connect succeeds — the token in hand is good. But if the
-      // authorization server rotated the refresh token, the stored one is now
-      // dead and the next connect will see invalid_grant, clear, and prompt a
-      // reconnect. Recoverable and signposted, and strictly better than also
-      // failing the connect that already has a working token.
-      logger.warn(
-        "[local oauth refresh] refreshed locally but could not store the result",
-        {
-          serverId,
-          rotatedRefreshToken: Boolean(tokens.refresh_token),
-          error: parseErrorMessage(importError),
-        }
-      );
-    }
-
-    return accessToken;
   }
+
+  let tokens: OAuthTokens;
+  try {
+    tokens = await refreshTokensAgainstPrivateAuthorizationServer(material);
+  } catch (refreshError) {
+    // A rejected grant means the cached refresh token is dead; never replay it.
+    if (isRejectedGrant(refreshError)) {
+      privateAuthorizationServerMaterialCache.delete(cacheKey);
+    }
+    throw translateLocalRefreshFailure(
+      refreshError,
+      material,
+      serverId,
+      options?.serverName ?? null
+    );
+  }
+
+  const accessToken = tokens.access_token?.trim();
+  if (!accessToken) {
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "The authorization server returned no access token"
+    );
+  }
+
+  // The SDK's `refreshAuthorization` already spreads the response over the
+  // refresh token it was given, so an authorization server that omits one
+  // (RFC 6749 §6, meaning "keep using the one you have" — and many do) keeps
+  // working. It does NOT cover an explicit `refresh_token: null`, which the
+  // spread would write straight through and leave a credential that fails its
+  // very next expiry with "missing refresh_token".
+  const tokensToStore: OAuthTokens = tokens.refresh_token?.trim()
+    ? tokens
+    : { ...tokens, refresh_token: material.refreshToken };
+
+  // Remember what this server needs, keyed to the token now in effect, so the
+  // next expiry can refresh without spending backend budget on a call that
+  // cannot succeed.
+  privateAuthorizationServerMaterialCache.set(cacheKey, {
+    ...material,
+    refreshToken: tokensToStore.refresh_token ?? material.refreshToken,
+  });
+
+  try {
+    await importRefreshedTokens(
+      bearerToken,
+      projectId,
+      serverId,
+      material,
+      tokensToStore
+    );
+  } catch (importError) {
+    // THIS connect succeeds — the token in hand is good. But if the
+    // authorization server rotated the refresh token, the stored one is now
+    // dead and the next connect will see invalid_grant, clear, and prompt a
+    // reconnect. Recoverable and signposted, and strictly better than also
+    // failing the connect that already has a working token.
+    logger.warn(
+      "[local oauth refresh] refreshed locally but could not store the result",
+      {
+        serverId,
+        rotatedRefreshToken: Boolean(tokens.refresh_token),
+        error: parseErrorMessage(importError),
+      }
+    );
+  }
+
+  return accessToken;
+}
+
+/** Did the authorization server itself reject the grant? */
+function isRejectedGrant(error: unknown): boolean {
+  const code =
+    error && typeof error === "object" && "code" in error
+      ? String((error as { code?: unknown }).code ?? "")
+      : "";
+  return /^(invalid_grant|invalid_client)$/i.test(code);
 }
 
 /**
@@ -366,9 +451,21 @@ function translateLocalRefreshFailure(
 
   // The authorization server rejected the grant. Same shape the backend sends
   // for refresh_token_invalid, so the existing reconnect prompt just works.
+  //
+  // The message arm covers a server that puts the code only in its
+  // error_description, but it must never read text the SERVER did not author
+  // as OAuth. When the response was not JSON at all, the SDK embeds the raw
+  // body verbatim (`Invalid OAuth error response: ${body}`) — so a dev proxy's
+  // HTML error page that merely mentions `invalid_grant` turned a transport
+  // problem into "your refresh token was rejected, please reconnect", on a
+  // credential that was fine. Cut the message at that marker before matching.
+  //
+  // Word-bounded for a second false positive: `invalid_client` is a substring
+  // of the unrelated `invalid_client_metadata`.
+  const authoredMessage = message.split("Invalid OAuth error response:")[0];
   if (
     /^(invalid_grant|invalid_client)$/i.test(oauthCode) ||
-    /invalid_grant|invalid_client/i.test(message)
+    /\b(invalid_grant|invalid_client)\b/i.test(authoredMessage)
   ) {
     return new WebRouteError(
       401,

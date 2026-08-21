@@ -112,12 +112,14 @@ export {
   registerClient,
   selectResourceURL,
   startAuthorization,
+  // The `refresh_token` grant, already used internally by `auth()`. Exported so
+  // a caller doing a non-interactive refresh reuses it — same client-
+  // authentication selection, same resource handling, and it already preserves
+  // the caller's refresh token when the authorization server omits one — rather
+  // than hand-rolling a provider and a second `fetchToken` call that have to
+  // re-derive all of it.
+  refreshAuthorization,
 } from "./oauth/browser-auth.js";
-// A ready-made `refresh_token` grant provider for `fetchToken`. Was reachable
-// only from inside MCPClientManager; exported so callers doing a non-interactive
-// refresh reuse this one rather than hand-rolling a second provider that has to
-// re-derive the same client-authentication selection.
-export { RefreshTokenOAuthProvider } from "./mcp-client-manager/refresh-token-auth-provider.js";
 export {
   canonicalizeResourceUrl,
   evaluateResourceIndicator,

@@ -10,6 +10,7 @@ vi.mock("../local-oauth-refresh.js", () => ({
 
 import {
   PrivateAuthorizationServerRefreshError,
+  __resetPrivateAuthorizationServerMaterialCacheForTests,
   buildHostedOAuthUnauthorizedHandler,
   forceRefreshHostedOAuthAccessToken,
   refreshHostedOAuthAccessTokenWithLocalFallback,
@@ -348,6 +349,7 @@ describe("private authorization server fallback", () => {
   beforeEach(() => {
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
     localRefreshMock.mockReset();
+    __resetPrivateAuthorizationServerMaterialCacheForTests();
   });
 
   afterEach(() => {
@@ -610,6 +612,150 @@ describe("private authorization server fallback", () => {
       )
     ).rejects.toBeInstanceOf(PrivateAuthorizationServerRefreshError);
     expect(localRefreshMock).not.toHaveBeenCalled();
+  });
+
+  it("declares a local runtime, which is what makes the backend hand the material over", async () => {
+    // Without this the backend answers 409 with no `refresh` and the fallback
+    // has nothing to work with — the feature silently does nothing.
+    const fetchMock = vi.fn(async () =>
+      privateAuthServer409({ refresh: REFRESH_MATERIAL })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    localRefreshMock.mockResolvedValue({ access_token: "locally-refreshed" });
+
+    await refreshHostedOAuthAccessTokenWithLocalFallback(
+      "bearer-token",
+      "project-1",
+      "server-1"
+    );
+
+    const body = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(body.localRuntime).toBe(true);
+  });
+
+  it("still refreshes locally when the backend refresh budget is exhausted", async () => {
+    // Every fallback spends one of 10/min per subject and server on a call
+    // that structurally cannot succeed. Once the bucket empties the backend
+    // answers 429 BEFORE it ever resolves the private address — locking the
+    // user out of a refresh that needs nothing from the backend at all.
+    let call = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: any) => {
+        if (String(input).includes("/import-tokens")) {
+          return new Response("{}", { status: 200 });
+        }
+        call += 1;
+        return call === 1
+          ? privateAuthServer409({ refresh: REFRESH_MATERIAL })
+          : new Response(
+              JSON.stringify({
+                success: false,
+                code: "RATE_LIMITED",
+                message: "Too many OAuth refresh attempts.",
+              }),
+              { status: 429, headers: { "Content-Type": "application/json" } }
+            );
+      })
+    );
+    localRefreshMock.mockResolvedValue({
+      access_token: "locally-refreshed",
+      refresh_token: "rotated-refresh-token",
+    });
+
+    // First refresh learns what this server needs.
+    await expect(
+      refreshHostedOAuthAccessTokenWithLocalFallback(
+        "bearer-token",
+        "project-1",
+        "server-1"
+      )
+    ).resolves.toBe("locally-refreshed");
+
+    // Second one is rate limited by the backend and must not be blocked by it.
+    await expect(
+      refreshHostedOAuthAccessTokenWithLocalFallback(
+        "bearer-token",
+        "project-1",
+        "server-1"
+      )
+    ).resolves.toBe("locally-refreshed");
+
+    // ...and it replayed the token in effect, not the one the backend first
+    // handed over, which the authorization server has since rotated away.
+    expect(localRefreshMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({ refreshToken: "rotated-refresh-token" })
+    );
+  });
+
+  it("does not use the cache for an unrelated backend failure on an unknown server", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              success: false,
+              code: "RATE_LIMITED",
+              message: "Too many OAuth refresh attempts.",
+            }),
+            { status: 429, headers: { "Content-Type": "application/json" } }
+          )
+      )
+    );
+
+    await expect(
+      refreshHostedOAuthAccessTokenWithLocalFallback(
+        "bearer-token",
+        "project-1",
+        "server-never-seen"
+      )
+    ).rejects.toMatchObject({ status: 429 });
+    expect(localRefreshMock).not.toHaveBeenCalled();
+  });
+
+  it("does not read a rejected-grant code out of a raw response body", async () => {
+    // The SDK embeds a non-JSON error response verbatim
+    // (`Invalid OAuth error response: ${body}`). A dev proxy's HTML error page
+    // that merely mentions invalid_grant used to become "your refresh token
+    // was rejected, please reconnect" — on a credential that was fine.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => privateAuthServer409({ refresh: REFRESH_MATERIAL }))
+    );
+    localRefreshMock.mockRejectedValue(
+      new Error(
+        "HTTP 502: Invalid OAuth error response: " +
+          "<html><body>Bad gateway. See docs on invalid_grant.</body></html>"
+      )
+    );
+
+    const error = await refreshHostedOAuthAccessTokenWithLocalFallback(
+      "bearer-token",
+      "project-1",
+      "server-1"
+    ).catch((e) => e);
+
+    expect(error.status).toBe(502);
+    expect(error.details?.refreshTokenInvalid).toBeUndefined();
+  });
+
+  it("does not mistake invalid_client_metadata for a rejected grant", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => privateAuthServer409({ refresh: REFRESH_MATERIAL }))
+    );
+    localRefreshMock.mockRejectedValue(
+      new Error("Registration failed: invalid_client_metadata")
+    );
+
+    const error = await refreshHostedOAuthAccessTokenWithLocalFallback(
+      "bearer-token",
+      "project-1",
+      "server-1"
+    ).catch((e) => e);
+
+    expect(error.status).toBe(502);
   });
 
   it("only the local call site opts into the fallback", async () => {

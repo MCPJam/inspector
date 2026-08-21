@@ -51,9 +51,31 @@ export function isPrivateNetworkUrl(url: string): boolean {
     return false;
   }
   // WHATWG URL keeps brackets around IPv6 hostnames.
-  const host = hostname.replace(/^\[|\]$/g, "");
+  let host = hostname.replace(/^\[|\]$/g, "");
+  // A terminal dot is the same NAME to a resolver ("localhost." resolves to
+  // loopback) but a different STRING to every comparison below, so `http://
+  // localhost./` was classified public and the refresh refused to run.
+  host = host.replace(/\.+$/, "");
+  if (!host) return false;
   if (LOCAL_HOSTNAMES.has(host)) return true;
   if (LOCAL_SUFFIXES.some((suffix) => host.endsWith(suffix))) return true;
-  if (host.includes(":")) return isPrivateIpv6(host);
+  if (host.includes(":")) {
+    // IPv4-mapped IPv6. `new URL()` rewrites the dotted spelling into hex
+    // (`[::ffff:127.0.0.1]` → `[::ffff:7f00:1]`), so judging only the dotted
+    // form classified a parsed loopback URL as public.
+    const mappedDotted = /(?:^|:)((?:\d{1,3}\.){3}\d{1,3})$/.exec(host);
+    if (mappedDotted) return isPrivateIpv4(mappedDotted[1]);
+    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+    if (mappedHex) {
+      const high = parseInt(mappedHex[1], 16);
+      const low = parseInt(mappedHex[2], 16);
+      return isPrivateIpv4(
+        `${(high >> 8) & 0xff}.${high & 0xff}.${(low >> 8) & 0xff}.${
+          low & 0xff
+        }`
+      );
+    }
+    return isPrivateIpv6(host);
+  }
   return isPrivateIpv4(host);
 }
