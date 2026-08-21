@@ -6,10 +6,12 @@ import {
   runPlatformLogout,
 } from "../lib/platform-auth.js";
 import {
-  buildPlatformClient,
+  platformOptionsOf,
+  runPlatformOperation,
+} from "../lib/platform-command.js";
+import {
   resolvePlatformBaseUrl,
   resolvePlatformOrigin,
-  toCliError,
 } from "../lib/platform-client.js";
 
 export function registerAuthCommands(program: Command): void {
@@ -80,25 +82,23 @@ export function registerAuthCommands(program: Command): void {
       "--api-url <url>",
       "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)",
     )
-    .action(async (options, command) => {
+    .action(async (_options, command) => {
       const globalOptions = getGlobalOptions(command);
-
-      try {
-        const { client, credentialKind } = buildPlatformClient(options);
-        const me = await client.getMe();
-
-        writeResult(
-          {
+      const result = await runPlatformOperation(
+        platformOptionsOf(command),
+        globalOptions.timeout,
+        async ({ client, credentialKind }) => {
+          const me = await client.getMe();
+          return {
             id: me.id,
             email: me.email,
             name: me.name,
             ...(me.plan ? { plan: me.plan } : {}),
             credential: credentialKind,
-          },
-          globalOptions.format,
-        );
-      } catch (error) {
-        throw toCliError(error);
-      }
+          };
+        },
+      );
+
+      writeResult(result, globalOptions.format);
     });
 }

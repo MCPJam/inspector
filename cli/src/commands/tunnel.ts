@@ -4,7 +4,8 @@ import {
   type CreateTunnelResult,
 } from "@mcpjam/sdk/platform";
 import { cliError, usageError, writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import { buildCloudClientContext } from "../lib/platform-command.js";
+import { toCliError } from "../lib/platform-client.js";
 import { getGlobalOptions, parseServerConfig } from "../lib/server-config.js";
 import { startLocalBridge, type TunnelTarget } from "../lib/tunnel/local-bridge.js";
 import { RelayConnection } from "../lib/tunnel/relay-client.js";
@@ -134,13 +135,18 @@ export function registerTunnelCommands(program: Command): void {
                 }),
               };
 
+        // Client request timeouts still use `--timeout`. The tunnel itself
+        // is not wrapped in `runPlatformOperation`: a session is meant to
+        // outlive the default 30-second whole-command deadline.
         let client;
         try {
-          ({ client } = buildPlatformClient({
-            apiKey: options.apiKey,
-            apiUrl: options.apiUrl,
-            timeoutMs: globalOptions.timeout,
-          }));
+          ({ client } = buildCloudClientContext(
+            {
+              apiKey: options.apiKey,
+              apiUrl: options.apiUrl,
+            },
+            globalOptions.timeout,
+          ));
         } catch (error) {
           throw toCliError(error);
         }

@@ -1,18 +1,23 @@
 /**
- * Shared plumbing for CLI commands that are thin wrappers over one platform
- * operation.
+ * Shared plumbing for CLI commands that talk to MCPJam Cloud.
  *
- * `commands/journeys.ts` and `commands/scenarios.ts` each carry their own copy
- * of `addPlatformOptions` + `runPlatformCommand`. Two copies was tolerable;
- * the swarms authoring surface would have made it four, across files that must
- * agree on how `--api-key`, `--api-url` and the global timeout behave. This
- * module is the one copy for everything added from here on. The existing files
- * are deliberately left alone — moving them is churn in a diff that is already
- * about something else, and their copies still behave identically.
+ * `buildCloudClientContext` constructs the client without a whole-command
+ * deadline. `runPlatformOperation` adds that deadline, external abort,
+ * and error translation. Long-lived commands (`tunnel`) use the former;
+ * bounded operations use the latter.
+ *
+ * Credential flags still live on each leaf in this revision so unmigrated
+ * commands cannot accept-and-ignore a parent option. `platformOptionsOf`
+ * walks the Commander tree nearest-first so a later hoist onto `cloud`
+ * keeps working.
  */
 import type { Command } from "commander";
 import { PlatformApiError } from "@mcpjam/sdk/platform";
-import { buildPlatformClient, toCliError } from "./platform-client.js";
+import {
+  buildPlatformClient,
+  toCliError,
+  webOriginForApiBaseUrl,
+} from "./platform-client.js";
 import { getGlobalOptions } from "./server-config.js";
 import { usageError, writeResult } from "./output.js";
 
@@ -20,6 +25,70 @@ export type PlatformOptions = {
   apiKey?: string;
   apiUrl?: string;
 };
+
+export type CloudClientContext = {
+  client: ReturnType<typeof buildPlatformClient>["client"];
+  credentialKind: "api-key" | "oauth";
+  baseUrl: string;
+  webOrigin: string;
+};
+
+export type PlatformOperationContext = CloudClientContext & {
+  signal: AbortSignal;
+};
+
+export type RunPlatformOperationExtras = {
+  /**
+   * Cancels the request from outside its own deadline — today that is Ctrl-C
+   * during a poll. Without it the only way out of an in-flight request is the
+   * timeout, so a user who interrupted a watch still waits the better part of
+   * `timeoutMs` for the terminal to come back.
+   */
+  externalSignal?: AbortSignal;
+  /**
+   * When true (default), announce Cloud context before the operation.
+   * Inner polls set `false` so a user command announces once. No-op until
+   * the audience-line change lands.
+   */
+  announce?: boolean;
+};
+
+/**
+ * Merge `--api-key` / `--api-url` (and any other flags) from this command and
+ * its ancestors. Nearest declaration wins.
+ *
+ * READ THIS BEFORE USING `options.x` FOR CREDENTIAL OR PROJECT FLAGS. Each
+ * may be declared on a group AND on its subcommands, and Commander does not
+ * give the subcommand a copy: whichever command declares a flag NEAREST THE
+ * TOP consumes it, wherever it appears on the line. `projects server connect
+ * --project alpha` stores `alpha` on `servers`, and `connect`'s own
+ * `options.project` is `undefined`. Merging here is what makes the typed
+ * value reachable.
+ *
+ * Commander's `optsWithGlobals()` reduces the other way — globals overwrite
+ * locals — which is wrong while leaves still declare the same flags. Ancestors
+ * are merged first and the action command last. Undefined values are skipped
+ * so a future Commander that materializes an unset flag as `undefined` cannot
+ * erase a real value.
+ */
+export function platformOptionsOf<T = PlatformOptions>(command: Command): T {
+  const nearestFirst: Command[] = [];
+  for (
+    let current: Command | null = command;
+    current !== null;
+    current = current.parent
+  ) {
+    nearestFirst.push(current);
+  }
+
+  const merged: Record<string, unknown> = {};
+  for (const cmd of nearestFirst.reverse()) {
+    for (const [key, value] of Object.entries(cmd.opts())) {
+      if (value !== undefined) merged[key] = value;
+    }
+  }
+  return merged as T;
+}
 
 /** The credential flags every platform command accepts. */
 export function addPlatformOptions(command: Command): Command {
@@ -32,22 +101,39 @@ export function addPlatformOptions(command: Command): Command {
 }
 
 /**
- * Run one operation under the global timeout, translating every failure into a
- * CLI error.
+ * Resolve credential, deployment, client, and web origin. Does not install a
+ * whole-command timer — individual HTTP calls still use the client request
+ * timeout. `tunnel` uses this directly so a session may outlive `--timeout`.
+ */
+export function buildCloudClientContext(
+  options: PlatformOptions,
+  timeoutMs?: number
+): CloudClientContext {
+  const built = buildPlatformClient({ ...options, timeoutMs });
+  return {
+    client: built.client,
+    credentialKind: built.credentialKind,
+    baseUrl: built.baseUrl,
+    webOrigin: webOriginForApiBaseUrl(built.baseUrl),
+  };
+}
+
+/**
+ * Run one bounded Cloud operation under the global timeout, translating every
+ * failure into a CLI error.
  *
  * The abort reason is checked explicitly because a timeout surfaces as a bare
  * `AbortError` from fetch otherwise — "The operation was aborted" tells a user
  * nothing about what to change, where "Request timed out after 30000ms" tells
  * them to raise `--timeout`.
  */
-export async function runPlatformCommand<TOutput>(
+export async function runPlatformOperation<TOutput>(
   options: PlatformOptions,
   timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>
+  execute: (context: PlatformOperationContext) => Promise<TOutput>,
+  extras: RunPlatformOperationExtras = {}
 ): Promise<TOutput> {
+  void extras.announce;
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => {
     controller.abort(
@@ -62,9 +148,15 @@ export async function runPlatformCommand<TOutput>(
   }, timeoutMs);
   timeoutHandle.unref?.();
 
+  const externalSignal = extras.externalSignal;
+  const onExternalAbort = () => controller.abort(externalSignal?.reason);
+  if (externalSignal?.aborted) onExternalAbort();
+  else
+    externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
+
   try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
+    const context = buildCloudClientContext(options, timeoutMs);
+    return await execute({ ...context, signal: controller.signal });
   } catch (error) {
     if (
       controller.signal.aborted &&
@@ -75,7 +167,26 @@ export async function runPlatformCommand<TOutput>(
     throw toCliError(error);
   } finally {
     clearTimeout(timeoutHandle);
+    externalSignal?.removeEventListener("abort", onExternalAbort);
   }
+}
+
+/** @deprecated Use {@link runPlatformOperation}. Kept for unmigrated call sites. */
+export async function runPlatformCommand<TOutput>(
+  options: PlatformOptions,
+  timeoutMs: number,
+  execute: (context: {
+    client: ReturnType<typeof buildPlatformClient>["client"];
+    signal: AbortSignal;
+    webOrigin: string;
+  }) => Promise<TOutput>,
+  extras?: AbortSignal | RunPlatformOperationExtras
+): Promise<TOutput> {
+  const normalized =
+    extras instanceof AbortSignal || extras === undefined
+      ? { externalSignal: extras }
+      : extras;
+  return runPlatformOperation(options, timeoutMs, execute, normalized);
 }
 
 /**
@@ -103,8 +214,8 @@ export function bindOperation<TOptions extends PlatformOptions, TInput>(
   addPlatformOptions(command).action(
     async (options: TOptions, invoked: Command) => {
       const globalOptions = getGlobalOptions(invoked);
-      const result = await runPlatformCommand(
-        options,
+      const result = await runPlatformOperation(
+        platformOptionsOf<TOptions>(invoked),
         globalOptions.timeout,
         ({ client, signal }) =>
           operation.execute(buildInput(options), { client, signal })
