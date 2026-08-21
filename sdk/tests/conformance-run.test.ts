@@ -81,6 +81,12 @@ describe("conformance run bundle", () => {
       runId: "99.2",
     });
     expect(githubActionExternalRunId(env)).toBe("gha:99:check:2");
+    expect(
+      detectConformanceCiMetadata({
+        ...env,
+        GITHUB_SERVER_URL: "https://github.com/",
+      })?.runUrl,
+    ).toBe("https://github.com/acme/widgets/actions/runs/99");
     expect(detectConformanceCiMetadata({})).toBeUndefined();
   });
 

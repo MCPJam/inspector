@@ -24,10 +24,10 @@ export function detectConformanceCiMetadata(
     return undefined;
   }
   const repository = env.GITHUB_REPOSITORY;
-  const serverUrl = (env.GITHUB_SERVER_URL ?? "https://github.com").replace(
-    /\/+$/,
-    "",
-  );
+  const rawServerUrl = env.GITHUB_SERVER_URL ?? "https://github.com";
+  const serverUrl = rawServerUrl.endsWith("/")
+    ? rawServerUrl.slice(0, -1)
+    : rawServerUrl;
   const runId = env.GITHUB_RUN_ID;
   const runAttempt = env.GITHUB_RUN_ATTEMPT;
   const prMatch = env.GITHUB_REF?.match(/^refs\/pull\/(\d+)\//);
