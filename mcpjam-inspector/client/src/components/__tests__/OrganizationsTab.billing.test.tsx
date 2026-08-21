@@ -429,6 +429,21 @@ describe("OrganizationsTab billing", () => {
     );
   });
 
+  const failedSeatPaymentIntentFixture = () => ({
+    _id: "seat-payment-failed",
+    organizationId: "org-1",
+    userId: "user-new",
+    email: "stranded@example.com",
+    role: "member" as const,
+    source: "pending_invite_signup",
+    status: "failed" as const,
+    needsRetry: true,
+    targetSeatQuantity: null,
+    stripeInvoiceId: null,
+    createdAt: 1,
+    updatedAt: 2,
+  });
+
   // A charge raised automatically when an invitee signs up fails with nobody
   // watching. Before this, terminal charges were invisible to the owner and
   // the invitee stayed stranded — the original bug with a nicer tooltip.
@@ -478,6 +493,93 @@ describe("OrganizationsTab billing", () => {
     // Retry reopens the charge as a new attempt first; going straight to
     // finish would be refused, since terminal charges are not revivable there.
     expect(finishSeatPayment).not.toHaveBeenCalled();
+  });
+
+  it("shows an error and no success toast when a retry is rejected", async () => {
+    const retrySeatPayment = vi
+      .fn()
+      .mockRejectedValue(new Error("Payment failed. The member was not added."));
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+        retrySeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry payment" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        errorToastMessage("Payment failed. The member was not added."),
+        { duration: 8000 },
+      ),
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("shows an error when the charge can no longer be retried", async () => {
+    // retrySeatPayment resolves undefined when the cancel-version guard trips
+    // or the backend has nothing retryable left. Silence here would leave the
+    // owner thinking it worked.
+    const retrySeatPayment = vi.fn().mockResolvedValue(undefined);
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+        retrySeatPayment,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Retry payment" }));
+
+    await waitFor(() => expect(retrySeatPayment).toHaveBeenCalled());
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("keeps Remove invite available while a retry is in flight", () => {
+    // Cancelling mid-retry stays possible on purpose — the owner may be stuck
+    // in a 3DS modal that never resolves and needs a way out. Safety comes
+    // from retrySeatPayment's cancel-version guard, which refuses to reopen
+    // payment on a charge that was cancelled underneath it, not from taking
+    // the escape hatch away.
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
+        isFinishingSeatPayment: true,
+      }),
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.getByRole("button", { name: "Remove invite" })).toBeEnabled();
   });
 
   it("billing view hides Manage plan for non-owners and shows owner-only copy", () => {

@@ -578,6 +578,12 @@ export function useOrganizationBilling(
     if (!organizationId) return;
     setError(null);
     setIsFinishingSeatPayment(true);
+    // Captured BEFORE the mutation, not inside finishSeatPayment: reopening
+    // the charge and starting payment are two round trips, and the owner can
+    // hit "Remove invite" in between. finishSeatPayment's own guard reads the
+    // version at its own start, which is already after such a cancel, so it
+    // would happily reopen a charge the owner just cancelled.
+    const cancelVersionAtStart = seatPaymentCancelVersionRef.current;
     try {
       const result = (await retrySeatPaymentMutation({
         organizationId,
@@ -589,6 +595,10 @@ export function useOrganizationBilling(
         throw new Error(
           "This seat payment can no longer be retried. Try adding the member again.",
         );
+      }
+      if (seatPaymentCancelVersionRef.current !== cancelVersionAtStart) {
+        // Cancelled while we were reopening it. Leave it cancelled.
+        return;
       }
       return await finishSeatPayment(result.seatPaymentIntentId);
     } catch (err) {

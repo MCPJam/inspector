@@ -421,7 +421,15 @@ describe("SidebarContextSwitcher", () => {
     openMainDropdown();
     openOrgSwitchList();
 
-    fireEvent.click(screen.getByTestId("org-row-org_b"));
+    const row = screen.getByTestId("org-row-org_b");
+    // Removed from the tab order too — reachable by keyboard would imply
+    // activatable, and it is not.
+    expect(row).toHaveAttribute("tabindex", "-1");
+
+    fireEvent.click(row);
+    fireEvent.keyDown(row, { key: "Enter" });
+    fireEvent.keyDown(row, { key: " " });
+
     expect(onSwitchActiveOrganization).not.toHaveBeenCalled();
     // The menu stays open — nothing happened.
     expect(screen.getByTestId("org-switch-list")).toBeInTheDocument();

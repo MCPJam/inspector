@@ -3917,7 +3917,7 @@ export default function App() {
 
     const projectOrgId = activeProject?.organizationId;
     const orgId = resolveCheckoutOrganizationId(
-      effectiveOrganizations,
+      selectableOrganizations,
       activeOrganizationId,
       projectOrgId
     );
@@ -3955,7 +3955,7 @@ export default function App() {
     routeOrganizationId,
     routeOrganizationSection,
     signIn,
-    effectiveOrganizations,
+    selectableOrganizations,
     workOsUser?.id,
   ]);
 
@@ -4106,7 +4106,7 @@ export default function App() {
           : [...currentIds, deletedOrganizationId]
       );
 
-      const remainingOrganizations = effectiveOrganizations.filter(
+      const remainingOrganizations = selectableOrganizations.filter(
         (organization) => organization._id !== deletedOrganizationId
       );
       const fallbackOrganizationId = resolveDeletedOrganizationFallbackId(
@@ -4142,7 +4142,7 @@ export default function App() {
       activeProject?.organizationId,
       clearLocalFallbackProjectSelection,
       clearConvexActiveProjectSelection,
-      effectiveOrganizations,
+      selectableOrganizations,
       navigateToServers,
       routeOrganizationId,
       setActiveOrganizationId,
