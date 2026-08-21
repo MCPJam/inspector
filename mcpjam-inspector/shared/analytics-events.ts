@@ -262,6 +262,13 @@ export const ANALYTICS_EVENTS = {
   mcpjam_agent_tour_launched: { source: "client" },
   move_server_to_project_clicked: { source: "client" },
   /**
+   * A connected server was offered to the organization's registry from the
+   * server card's menu. Fires on the CLICK, before the eligibility refusal —
+   * how often people reach for it and are told a header-authed server cannot
+   * be shared is the thing worth knowing.
+   */
+  share_server_to_org_registry_clicked: { source: "client" },
+  /**
    * A callback arrived with a pending server name but no stored flow session,
    * so it could not be completed and the user was asked to reauthorize.
    *
