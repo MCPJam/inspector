@@ -1097,11 +1097,12 @@ export async function prepareChatV2(
     modelDefinition.contextLength !== undefined
       ? { modelContextTokens: modelDefinition.contextLength }
       : {};
-  const {
-    tools: skillTools,
-    systemPromptSection: skillsPromptSection,
-    skillsFetchFailed,
-  } = skillsSource
+  type SkillPrep = {
+    tools: Record<string, unknown>;
+    systemPromptSection: string;
+    skillsFetchFailed?: SkillsFetchFailure;
+  };
+  const skillPrep: SkillPrep = skillsSource
     ? skillsSource.kind === "pinned"
       ? getPinnedSkillToolsAndPrompt(skillsSource.skills, modelContextTokens)
       : skillsSource.kind === "resolved" ||
@@ -1127,6 +1128,11 @@ export async function prepareChatV2(
     : HOSTED_MODE
     ? { tools: {}, systemPromptSection: "" }
     : await getSkillToolsAndPrompt();
+  const {
+    tools: skillTools,
+    systemPromptSection: skillsPromptSection,
+    skillsFetchFailed,
+  } = skillPrep;
 
   // Pinned skill tools NEVER require approval (pure reads of frozen content; the
   // eval run is auto-deny). Otherwise the normal approval wrap applies.
