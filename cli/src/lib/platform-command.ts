@@ -6,10 +6,10 @@
  * and error translation. Long-lived commands (`tunnel`) use the former;
  * bounded operations use the latter.
  *
- * Credential flags still live on each leaf in this revision so unmigrated
- * commands cannot accept-and-ignore a parent option. `platformOptionsOf`
- * walks the Commander tree nearest-first so a later hoist onto `cloud`
- * keeps working.
+ * Credential flags live on the `cloud` parent. `platformOptionsOf` walks the
+ * Commander tree nearest-first so a value typed before or after a descendant
+ * is visible to the action. Local commands, including hosted `readiness`,
+ * still declare leaf flags where they need them.
  */
 import type { Command } from "commander";
 import { PlatformApiError } from "@mcpjam/sdk/platform";
@@ -197,7 +197,21 @@ export async function runPlatformCommand<TOutput>(
  * per-command code most of these need, which is the point — a command that is
  * "call this operation with these flags" should not also be 30 lines of
  * identical error handling.
+ *
+ * Cloud commands inherit `--api-key` / `--api-url` from the `cloud` parent.
+ * Hosted `readiness` stays at the program root and still gets leaf flags.
  */
+function hasCloudAncestor(command: Command): boolean {
+  for (
+    let current: Command | null = command.parent;
+    current !== null;
+    current = current.parent
+  ) {
+    if (current.name() === "cloud") return true;
+  }
+  return false;
+}
+
 export function bindOperation<TOptions extends PlatformOptions, TInput>(
   command: Command,
   operation: {
@@ -211,18 +225,19 @@ export function bindOperation<TOptions extends PlatformOptions, TInput>(
   },
   buildInput: (options: TOptions) => TInput
 ): void {
-  addPlatformOptions(command).action(
-    async (options: TOptions, invoked: Command) => {
-      const globalOptions = getGlobalOptions(invoked);
-      const result = await runPlatformOperation(
-        platformOptionsOf<TOptions>(invoked),
-        globalOptions.timeout,
-        ({ client, signal }) =>
-          operation.execute(buildInput(options), { client, signal })
-      );
-      writeResult(result, globalOptions.format);
-    }
-  );
+  if (!hasCloudAncestor(command)) {
+    addPlatformOptions(command);
+  }
+  command.action(async (options: TOptions, invoked: Command) => {
+    const globalOptions = getGlobalOptions(invoked);
+    const result = await runPlatformOperation(
+      platformOptionsOf<TOptions>(invoked),
+      globalOptions.timeout,
+      ({ client, signal }) =>
+        operation.execute(buildInput(options), { client, signal })
+    );
+    writeResult(result, globalOptions.format);
+  });
 }
 
 /** `--project` is optional everywhere: it defaults to the newest project. */
