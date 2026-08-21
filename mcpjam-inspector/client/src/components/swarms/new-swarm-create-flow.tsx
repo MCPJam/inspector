@@ -422,14 +422,6 @@ export function NewSwarmCreateFlow({
   const [previewedHostId] = usePreviewedHostId(projectId);
   const [previewedEnvironmentId] = usePreviewedEnvironmentId(projectId);
   /**
-   * On a deployment with Project Environments off the user cannot even reach
-   * `/environments`, so minting rows there would create data they can never see
-   * or clean up. Such a deployment keeps the legacy naming path. Whether the
-   * BACKEND can mint is not a flag question — `isAdhocUnavailable` answers it
-   * per call, from the deployment actually being talked to.
-   */
-  const canMintAdhoc = environmentsEnabled;
-  /**
    * The draft this mount is resuming, read ONCE so every initializer below sees
    * the same snapshot. Null on a genuine cold start.
    *
@@ -829,37 +821,55 @@ export function NewSwarmCreateFlow({
         },
       });
 
+    /**
+     * Ad-hoc rows are minted UNCONDITIONALLY — `project-environments-enabled`
+     * is not consulted here, and reading it was the bug.
+     *
+     * The backend draws the line between substrate and product, not between
+     * flagged and unflagged orgs: `ensureAdhocEnvironments` carries no
+     * environments gate ("launch-path substrate"), while `createEnvironment`,
+     * which mints a NAMED row, does. Gating this branch on the flag therefore
+     * inverted the protection — an org with Swarms but not Environments
+     * skipped the ungated path and fell back to the legacy naming
+     * materializer, the one mutation its backend refuses ("Environments is not
+     * currently available for your organization"). With no saved environments
+     * to pick either, that org could not launch a swarm at all.
+     *
+     * Rows such an org cannot see in `/environments` are the intended shape of
+     * an ad-hoc row, not a leak: unnamed, fingerprint-deduped so relaunching a
+     * setup reuses one row instead of accumulating them, and already minted
+     * for these same orgs by User Testing, which never gated this call.
+     *
+     * Whether the BACKEND can mint stays a per-call question, answered by
+     * `isAdhocUnavailable` from the deployment actually being talked to.
+     */
     let resolved: Awaited<ReturnType<typeof legacyResolve>> = null;
-    if (canMintAdhoc) {
-      try {
-        const composed = await resolveComposerTargets({
-          state: targetState,
-          liveEnvironments: liveWithOverlay,
-          max: MAX_ENVIRONMENTS_PER_JOURNEY,
-        });
-        const payload = buildEnvJourneyPayload(
-          composed.environmentIds,
-          composed.environments
-        );
-        resolved = payload
-          ? {
-              ...payload,
+    try {
+      const composed = await resolveComposerTargets({
+        state: targetState,
+        liveEnvironments: liveWithOverlay,
+        max: MAX_ENVIRONMENTS_PER_JOURNEY,
+      });
+      const payload = buildEnvJourneyPayload(
+        composed.environmentIds,
+        composed.environments
+      );
+      resolved = payload
+        ? {
+            ...payload,
+            environments: composed.environments,
+            materialized: {
+              environmentIds: composed.environmentIds,
               environments: composed.environments,
-              materialized: {
-                environmentIds: composed.environmentIds,
-                environments: composed.environments,
-                createdIds: composed.createdIds,
-                reusedIds: composed.reusedIds,
-              },
-            }
-          : null;
-      } catch (err) {
-        // An old backend is the one failure worth retrying differently; every
-        // other rejection is the user's to read.
-        if (!isAdhocUnavailable(err)) throw err;
-        resolved = await legacyResolve();
-      }
-    } else {
+              createdIds: composed.createdIds,
+              reusedIds: composed.reusedIds,
+            },
+          }
+        : null;
+    } catch (err) {
+      // An old backend is the one failure worth retrying differently; every
+      // other rejection is the user's to read.
+      if (!isAdhocUnavailable(err)) throw err;
       resolved = await legacyResolve();
     }
 
@@ -878,7 +888,6 @@ export function NewSwarmCreateFlow({
     }
     return resolved;
   }, [
-    canMintAdhoc,
     composeMode,
     createdEnvOverlay,
     envList,
