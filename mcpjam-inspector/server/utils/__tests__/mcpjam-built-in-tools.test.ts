@@ -144,6 +144,12 @@ describe("workspace tool catalog", () => {
       "get_server_prompt",
       "list_server_resources",
       "read_server_resource",
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "get_readiness_run",
+      "list_readiness_runs",
+      "cancel_readiness_run",
+      "get_readiness_report",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_case",
@@ -154,6 +160,10 @@ describe("workspace tool catalog", () => {
       "get_eval_iteration_trace",
       "get_eval_run_steps",
       "cancel_eval_run",
+      "request_eval_run_judge",
+      // The GitHub Checks READ. Its connect sibling is in
+      // EXCLUDED_FROM_WORKSPACE: it reaches a shared repository.
+      "list_eval_check_repos",
       "list_scenarios",
       "get_scenario",
       "list_chat_sessions",
