@@ -31,6 +31,7 @@ vi.mock("../internal-backend.js", async () => {
 
 const {
   acquireLease,
+  fetchValidationContext,
   reportValidation,
   ServerConnectionBackendError,
 } = await import("../server-connections-backend.js");
@@ -199,4 +200,39 @@ describe("a body read that never finishes", () => {
 
     expect((error as Error).message).toContain("timed out");
   });
+});
+
+describe("credentialRetryable on a validation context", () => {
+  // The flag decides whether the worker retries an unreachable authorization
+  // server or sends the user back through consent. A truthy-but-not-true value
+  // from a backend of any vintage must not be read as "retry".
+  const cases: Array<[string, unknown, boolean]> = [
+    ["true", true, true],
+    ["false", false, false],
+    ["omitted", undefined, false],
+    ["null", null, false],
+    ["an empty string", "", false],
+    ['the string "true"', "true", false],
+    ["1", 1, false],
+    ["0", 0, false],
+  ];
+
+  for (const [label, value, expected] of cases) {
+    it(`reads ${label} as ${expected}`, async () => {
+      const payload: Record<string, unknown> = {
+        ok: true,
+        serverUrl: "https://mcp.test/sse",
+        accessToken: "token",
+        authMethod: "oauth",
+      };
+      if (value !== undefined) {
+        payload.credentialRetryable = value;
+      }
+      fetchMock.mockResolvedValue(jsonResponse(200, payload));
+
+      await expect(
+        fetchValidationContext("scr_1", "lease_1")
+      ).resolves.toMatchObject({ credentialRetryable: expected });
+    });
+  }
 });
