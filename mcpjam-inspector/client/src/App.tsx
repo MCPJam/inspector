@@ -14,6 +14,7 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { AlertTriangle, Loader2, MessageSquare, Users } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { MCPJamLimitDialog } from "./components/mcpjam-limit-dialog";
+import { PlanLimitDialog } from "./components/billing/PlanLimitDialog";
 import { HomeTab } from "./components/HomeTab";
 import { ServersTab } from "./components/ServersTab";
 import { ToolsTab } from "./components/ToolsTab";
@@ -40,6 +41,7 @@ import { SessionsPanel } from "./components/sessions/SessionsPanel";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
+import { GithubInstallCallbackRoute } from "./components/settings/GithubInstallCallbackRoute";
 import { IntegrationsRoute } from "./components/settings/IntegrationsRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
@@ -2104,6 +2106,37 @@ export function GithubChecksSettingsRoute() {
   );
 }
 
+/**
+ * `/settings/integrations/github/callback` — GitHub's return path, both legs.
+ *
+ * Same `ErrorBoundary` doctrine as the settings page: this page's actions THROW
+ * when the backend cannot answer (not deployed yet, or the caller is not a
+ * member), and without a boundary that unmounts the whole app. It redirects to
+ * `/settings` for the same reason too — a gated surface that cannot confirm it
+ * is available is not available.
+ *
+ * No `activeOrganizationId` is passed, and none is needed: the browser arrives
+ * back from GitHub carrying only query parameters, and which organization the
+ * binding belongs to is recovered server-side from the link session. A page
+ * that read it from app state could disagree with the session and would then be
+ * asserting an organization nobody proved anything about.
+ */
+export function GithubInstallCallbackSettingsRoute() {
+  return (
+    <ErrorBoundary
+      onError={(error) =>
+        console.error(
+          "[settings/integrations/github/callback] unavailable:",
+          error
+        )
+      }
+      fallback={<Navigate to="/settings" replace />}
+    >
+      <GithubInstallCallbackRoute />
+    </ErrorBoundary>
+  );
+}
+
 export function SupportRoute() {
   return <SupportTab />;
 }
@@ -2280,6 +2313,15 @@ export default function App() {
     barePathname === routePaths.embedScore ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
+  // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
+  // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
+  // fresh sign-in. `/login` is not a known tab segment, so it resolves to the
+  // `servers` fallback — which is a first-run-eligible route, and a hosted
+  // guest session is Convex-authenticated. Without this the onboarding redirect
+  // below can fire on the very commit that mounts the route and navigate the
+  // visitor to Playground mid-sign-in, stranding exactly the enterprise entry
+  // point this route exists to fix.
+  const isLoginInitiationRoute = barePathname === routePaths.login;
 
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
@@ -2887,6 +2929,7 @@ export default function App() {
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
+    !isLoginInitiationRoute &&
     !hasHostTemplateVerifyParam &&
     !hasProjectSwitchDeepLinkParam &&
     !isWorkOsLoading &&
@@ -4696,6 +4739,7 @@ export default function App() {
           >
             <Toaster />
             <MCPJamLimitDialog />
+            <PlanLimitDialog />
             <div
               data-testid="app-shell"
               aria-hidden={shouldShowBillingHandoffOverlay || undefined}

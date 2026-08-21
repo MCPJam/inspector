@@ -202,6 +202,44 @@ describe("a body read that never finishes", () => {
   });
 });
 
+describe("what a refusal carries", () => {
+  it("keeps the envelope's extra fields as details", async () => {
+    // A refused claim carries `ownerHint` — the masked email of the account
+    // the link belongs to — and that is the one fact that makes the refusal
+    // actionable. Dropping it here left the page able to say "wrong account"
+    // and not which one.
+    fetchMock.mockResolvedValue({
+      status: 403,
+      ok: false,
+      json: async () => ({
+        ok: false,
+        code: "ACCOUNT_MISMATCH",
+        error: "Different account.",
+        ownerHint: "m•••@mcpjam.com",
+      }),
+    } as unknown as Response);
+
+    await expect(acquireLease("scr_1", "lease_1")).rejects.toMatchObject({
+      status: 403,
+      code: "ACCOUNT_MISMATCH",
+      message: "Different account.",
+      details: { ownerHint: "m•••@mcpjam.com" },
+    });
+  });
+
+  it("leaves details undefined when the envelope carried nothing extra", async () => {
+    fetchMock.mockResolvedValue({
+      status: 409,
+      ok: false,
+      json: async () => ({ ok: false, code: "LEASE_MISMATCH", error: "Held." }),
+    } as unknown as Response);
+
+    const error = await acquireLease("scr_1", "lease_1").catch((cause) => cause);
+    expect(error).toBeInstanceOf(ServerConnectionBackendError);
+    expect(error.details).toBeUndefined();
+  });
+});
+
 describe("credentialRetryable on a validation context", () => {
   // The flag decides whether the worker retries an unreachable authorization
   // server or sends the user back through consent. A truthy-but-not-true value

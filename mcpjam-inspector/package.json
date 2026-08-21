@@ -1,7 +1,7 @@
 {
   "name": "@mcpjam/inspector",
   "productName": "MCPJam Inspector",
-  "version": "2.39.0",
+  "version": "2.44.0",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -132,7 +132,7 @@
     "@hookform/resolvers": "^3.10.0",
     "@lezer/highlight": "^1.2.3",
     "@mcp-ui/client": "^5.9.0",
-    "@mcpjam/sdk": "^4.3.0",
+    "@mcpjam/sdk": "^6.3.0",
     "@modelcontextprotocol/client": "2.0.0",
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@openrouter/ai-sdk-provider": "^2.0.2",
@@ -237,11 +237,11 @@
     "@types/ws": "^8.5.13",
     "@typescript-eslint/parser": "^8.53.1",
     "@vitejs/plugin-react": "^4.3.4",
-    "@vitest/coverage-v8": "^3.2.4",
+    "@vitest/coverage-v8": "^3.2.7",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.1.0",
     "cross-env": "^10.1.0",
-    "electron": "^37.2.5",
+    "electron": "^43.4.0",
     "eslint": "^9",
     "jsdom": "^27.4.0",
     "png-to-ico": "^2.1.8",
@@ -254,14 +254,13 @@
     "typescript": "^5",
     "vite": "^7.1.4",
     "vite-tsconfig-paths": "^6.0.4",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
   },
   "overrides": {
     "tmp": "0.2.5",
     "jsondiffpatch": "0.7.2",
     "zod": "^4.2.0",
     "qs": "6.14.2",
-    "ajv": "^8.18.0",
-    "tar": ">=7.5.7"
+    "ajv": "^8.18.0"
   }
 }
