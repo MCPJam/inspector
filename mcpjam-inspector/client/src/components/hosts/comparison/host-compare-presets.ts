@@ -1,4 +1,4 @@
-import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
+import type { HostConfigDtoWithCatalogFacts } from "@/lib/host-config-field-schema";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import {
@@ -52,11 +52,23 @@ export function buildPresetCompareEntries(
     const hostId = `${PRESET_HOST_ID_PREFIX}${host.id}`;
     const input = getCatalogTemplate(catalog, host.id);
     if (!input) continue;
-    const config: HostConfigDtoV2 = {
+    const config: HostConfigDtoWithCatalogFacts = {
       ...input,
       id: hostId,
       schemaVersion: 2,
-    } as HostConfigDtoV2;
+      // The catalog row knows every era the client speaks; the template's
+      // `initialize` list only carries the legacy ones. Carry the catalog
+      // fact so the comparison shows real support, not the handshake list.
+      supportedProtocolVersions: host.supportedProtocolVersions,
+      // Lets a row distinguish "probed and absent" from "never probed".
+      provenance: host.provenance,
+      // Lets the display-mode rows stay blank for a host that shows no
+      // widgets at all, instead of printing the no-claims filler.
+      rendersMcpApps: host.rendersMcpApps,
+      // Both style themes for hosts that resolve their tokens per theme;
+      // hostContext.styles can only carry the one the host announces.
+      styleVariablesByTheme: host.styleVariablesByTheme,
+    } as HostConfigDtoWithCatalogFacts;
 
     hosts.push({
       hostId,
