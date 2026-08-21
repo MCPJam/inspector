@@ -284,25 +284,6 @@ vi.mock("@/components/swarms/journey-rubric-editor", () => ({
   ),
 }));
 
-vi.mock("@/components/mcpjam-agent/McpjamAgentComposer", () => ({
-  McpjamAgentComposer: ({
-    value,
-    onChange,
-    placeholder,
-  }: {
-    value: string;
-    onChange: (next: string) => void;
-    placeholder?: string;
-  }) => (
-    <textarea
-      aria-label="Describe swarm"
-      placeholder={placeholder}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
-    />
-  ),
-}));
-
 vi.mock("@/components/project-environments/environment-picker", () => ({
   EnvironmentPicker: ({
     value,
@@ -350,7 +331,7 @@ function submitLaunchEnabled() {
 }
 
 function fillDescribe(text = "Support agents answering refunds") {
-  fireEvent.change(screen.getByLabelText("Describe swarm"), {
+  fireEvent.change(screen.getByLabelText(/describe/i), {
     target: { value: text },
   });
   // Auto-seed usually already picked the first named environment; only click
@@ -489,12 +470,37 @@ describe("SwarmsTab — New swarm create flow", () => {
     expect(screen.getByText(/describe your users to continue/i)).toBeVisible();
 
     // Targets are auto-seeded; a description is the remaining gate for generate.
-    fireEvent.change(screen.getByLabelText("Describe swarm"), {
+    fireEvent.change(screen.getByLabelText(/describe/i), {
       target: { value: "Support agents answering refunds" },
     });
     expect(submit).not.toBeDisabled();
     expect(submit).toHaveTextContent("Continue");
     expect(screen.getByText(/3 new personas on next step/i)).toBeVisible();
+  });
+
+  /**
+   * Describe is a form field, not a chat. It used to mount the Agent chat
+   * composer, which brought a Send button wired to Continue but gated on its
+   * own `canSubmit` — so it rendered enabled while Continue was blocked and did
+   * nothing when clicked. Worse, the composer bound Enter to submit, so Enter
+   * could not open a new line and instead jumped the step mid-sentence.
+   */
+  it("offers no send affordance on Describe, and leaves Enter to the text", async () => {
+    const user = userEvent.setup();
+    openDescribe();
+    const field = screen.getByLabelText(/describe/i);
+
+    expect(screen.queryByRole("button", { name: /send/i })).toBeNull();
+    expect(screen.queryByText(/enter to send/i)).toBeNull();
+
+    // Typed rather than `fireEvent`ed: only a real key sequence tells a newline
+    // apart from a swallowed Enter. The first word already enables Continue, so
+    // a submit-on-Enter binding fires here instead of opening a line.
+    await user.type(field, "Refund agents{enter}and billing devs");
+
+    expect(screen.getByTestId("new-swarm-continue")).not.toBeDisabled();
+    expect(field).toHaveValue("Refund agents\nand billing devs");
+    expect(generateSwarmPersonaBatchMock).not.toHaveBeenCalled();
   });
 
   it("auto-seeds the first named environment on open", () => {
@@ -1655,7 +1661,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     environments = environmentsRef.current;
     openDescribe();
 
-    fireEvent.change(screen.getByLabelText("Describe swarm"), {
+    fireEvent.change(screen.getByLabelText(/describe/i), {
       target: { value: "Support agents answering refunds" },
     });
     // No named envs → auto-seed picks Claude; add Cursor for a two-client fan-out.
@@ -1736,7 +1742,7 @@ describe("SwarmsTab — New swarm create flow", () => {
     environments = environmentsRef.current;
     openDescribe();
 
-    fireEvent.change(screen.getByLabelText("Describe swarm"), {
+    fireEvent.change(screen.getByLabelText(/describe/i), {
       target: { value: "Support agents answering refunds" },
     });
     // Auto-seed already has Claude; add Cursor.
@@ -1916,7 +1922,7 @@ describe("SwarmsTab create flow — survives a remount", () => {
     expect(
       await screen.findByText(/persona generation was interrupted/i)
     ).toBeVisible();
-    expect(screen.getByLabelText("Describe swarm")).toHaveValue(
+    expect(screen.getByLabelText(/describe/i)).toHaveValue(
       "Support agents answering refunds"
     );
   });
@@ -1936,7 +1942,7 @@ describe("SwarmsTab create flow — survives a remount", () => {
     expect(
       screen.queryByTestId("new-swarm-proposed-personas")
     ).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Describe swarm")).toHaveValue("");
+    expect(screen.getByLabelText(/describe/i)).toHaveValue("");
   });
 
   it("says what stage it is in while generation runs", async () => {
