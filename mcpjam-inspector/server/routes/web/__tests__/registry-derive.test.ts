@@ -131,6 +131,9 @@ describe("POST /api/web/registry/derive", () => {
     const response = await postDerive(BODY);
 
     expect(response.status).toBe(502);
+    const body = await response.json();
+    expect(body.message).toBe("Failed to reach the authorization service.");
+    expect(JSON.stringify(body)).not.toContain("connection reset");
     expect(deriveRegistryEntry).not.toHaveBeenCalled();
   });
 

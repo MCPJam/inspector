@@ -1220,6 +1220,7 @@ export function ServersTab({
     // derive route, which forwards it to one) is not a lookup that can
     // succeed.
     projectId: sharedProjectIdForHostScope,
+    enabled: isRegistryEnabled,
     isAuthenticated,
     onConnect: () => {
       /* promote never connects — the server is already here */

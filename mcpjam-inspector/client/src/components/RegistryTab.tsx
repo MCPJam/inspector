@@ -307,97 +307,6 @@ export function RegistryTab({
     onConnect,
   });
 
-  const orgRegistry = useOrgRegistryServers({
-    projectId,
-    isAuthenticated,
-    liveServers: servers,
-    onConnect,
-    onDisconnect,
-  });
-
-  /**
-   * What the add/edit dialog is currently about. `null` ⇒ closed; a seed with
-   * no `registryServerId` ⇒ the paste flow; a seed with one ⇒ editing.
-   */
-  const [orgDialog, setOrgDialog] = useState<{
-    seed: OrgRegistryDialogSeed | null;
-  } | null>(null);
-
-  const handleOrgSubmit = useCallback(
-    async (submission: OrgRegistrySubmission) => {
-      if (submission.registryServerId) {
-        await orgRegistry.update(submission);
-        toast.success("Registry entry updated");
-        return;
-      }
-      await orgRegistry.add(submission);
-      toast.success("Added to your organization's registry");
-    },
-    [orgRegistry]
-  );
-
-  const handleOrgConnect = useCallback(
-    async (server: EnrichedOrgRegistryServer) => {
-      try {
-        await orgRegistry.connect(server);
-      } catch (error) {
-        // The backend refuses a live-name collision by throwing. The project
-        // is the unit the person is looking at, so say "project" even though
-        // the invariant is enforced on the workspace mirror.
-        const message =
-          error instanceof Error &&
-          /already exists in this workspace/i.test(error.message)
-            ? `A server named "${server.displayName}" already exists in this project. Rename it, or rename the registry entry.`
-            : error instanceof Error
-            ? error.message
-            : "Could not connect this server.";
-        toast.error(message);
-      }
-    },
-    [orgRegistry]
-  );
-
-  const handleOrgDisconnect = useCallback(
-    async (server: EnrichedOrgRegistryServer) => {
-      try {
-        await orgRegistry.disconnect(server);
-      } catch (error) {
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : "Could not disconnect this server."
-        );
-      }
-    },
-    [orgRegistry]
-  );
-
-  /**
-   * Which entry the remove confirmation is about. Removal reaches every
-   * project in the organization, not just this one, so it asks first — see
-   * `OrgRegistryRemoveDialog`.
-   */
-  const [orgRemoveTarget, setOrgRemoveTarget] =
-    useState<EnrichedOrgRegistryServer | null>(null);
-  const [orgRemoving, setOrgRemoving] = useState(false);
-
-  const handleOrgRemoveConfirmed = useCallback(async () => {
-    const server = orgRemoveTarget;
-    if (!server) return;
-    setOrgRemoving(true);
-    try {
-      await orgRegistry.remove(server._id);
-      toast.success("Removed from your organization's registry");
-      setOrgRemoveTarget(null);
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Could not remove this entry."
-      );
-    } finally {
-      setOrgRemoving(false);
-    }
-  }, [orgRegistry, orgRemoveTarget]);
-
   // Which directory row the endpoint dialog is asking about, and the choices
   // to offer. `options`/`pattern` are seeded from the card and REPLACED by
   // whatever `endpoint_url_required` carried — the error is authoritative,
@@ -420,6 +329,21 @@ export function RegistryTab({
   );
   const detailServerDetail = useDirectoryServerDetail(
     detailServer?._id ?? null
+  );
+  const [orgShelfState, setOrgShelfState] = useState<{
+    hasContent: boolean;
+    isLoading: boolean;
+  } | null>(null);
+  const handleOrgShelfState = useCallback(
+    (next: { hasContent: boolean; isLoading: boolean }) => {
+      setOrgShelfState((previous) =>
+        previous?.hasContent === next.hasContent &&
+        previous?.isLoading === next.isLoading
+          ? previous
+          : next
+      );
+    },
+    []
   );
 
   // Auto-redirect to App Builder when a pending server becomes connected.
@@ -956,27 +880,20 @@ export function RegistryTab({
     }),
   });
 
-  // Per-SECTION emptiness, not per-screen. The three shelves have independent
+  // Per-SECTION emptiness, not per-screen. The two public shelves have independent
   // backends: an empty curated catalog must not blank a directory that loaded
   // fine, and neither may blank an organization's own entries. Only when ALL
   // of them are empty and none is still loading is there genuinely nothing to
   // show.
   //
-  // The org shelf earns its place in this test rather than just rendering
-  // below it: this branch returns EARLY, so an org with servers on its shelf
-  // would be told "the registry is empty" and never see them whenever the
-  // curated catalog happened to be unseeded — a fresh deployment, or a
-  // preview environment.
   const curatedEmpty = !isLoading && catalogCards.length === 0;
   const directoryEmpty =
     !directory.isLoadingFirstPage && directory.items.length === 0;
   const directoryFiltered = isDirectoryFiltered(directory);
   const orgShelfEmpty =
-    !orgRegistry.isLoading &&
-    orgRegistry.servers.length === 0 &&
-    // A member who can add has something to do here even with an empty shelf,
-    // so the invitation counts as content.
-    !orgRegistry.canAdd;
+    orgShelfState !== null &&
+    !orgShelfState.isLoading &&
+    !orgShelfState.hasContent;
 
   if (isLoading && directory.isLoadingFirstPage) {
     return <LoadingSkeleton />;
@@ -1014,25 +931,13 @@ export function RegistryTab({
           Registry tab, curated catalog and directory included, down with it.
         */}
         <ErrorBoundary name="org-registry-section" fallback={null}>
-          <OrgRegistrySection
-            registry={orgRegistry}
-            onAdd={() => setOrgDialog({ seed: null })}
-            onEdit={(server) =>
-              setOrgDialog({
-                seed: {
-                  registryServerId: server._id,
-                  displayName: server.displayName,
-                  description: server.description,
-                  url: server.transport.url ?? "",
-                  useOAuth: server.transport.useOAuth,
-                  oauthScopes: server.transport.oauthScopes,
-                  derived: server.derived,
-                },
-              })
-            }
-            onRemove={(server) => setOrgRemoveTarget(server)}
-            onConnect={handleOrgConnect}
-            onDisconnect={handleOrgDisconnect}
+          <OrgRegistrySectionContainer
+            projectId={projectId}
+            isAuthenticated={isAuthenticated}
+            liveServers={servers}
+            onConnect={onConnect}
+            onDisconnect={onDisconnect}
+            onState={handleOrgShelfState}
           />
         </ErrorBoundary>
 
@@ -1094,6 +999,159 @@ export function RegistryTab({
           }
         />
       )}
+      {endpointPrompt && (
+        <DirectoryEndpointDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setEndpointPrompt(null);
+          }}
+          displayName={endpointPrompt.server.displayName}
+          options={endpointPrompt.options}
+          pattern={endpointPrompt.pattern}
+          error={endpointPrompt.error ?? null}
+          submitting={connectingDirectoryIds.has(endpointPrompt.server._id)}
+          onSubmit={(endpointUrl) => {
+            void runDirectoryConnect(endpointPrompt.server, endpointUrl);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Keeps every Convex-backed org-registry query and mutation below the section
+ * boundary. A missing function or provider throws during render, so the hook
+ * itself must be a descendant of the ErrorBoundary rather than a sibling.
+ */
+function OrgRegistrySectionContainer({
+  projectId,
+  isAuthenticated,
+  liveServers,
+  onConnect,
+  onDisconnect,
+  onState,
+}: {
+  projectId: string | null;
+  isAuthenticated: boolean;
+  liveServers?: Record<string, ServerWithName>;
+  onConnect: (formData: ServerFormData) => void;
+  onDisconnect?: (serverName: string) => void;
+  onState: (state: { hasContent: boolean; isLoading: boolean }) => void;
+}) {
+  const orgRegistry = useOrgRegistryServers({
+    projectId,
+    isAuthenticated,
+    liveServers,
+    onConnect,
+    onDisconnect,
+  });
+  const [orgDialog, setOrgDialog] = useState<{
+    seed: OrgRegistryDialogSeed | null;
+  } | null>(null);
+  const [orgRemoveTarget, setOrgRemoveTarget] =
+    useState<EnrichedOrgRegistryServer | null>(null);
+  const [orgRemoving, setOrgRemoving] = useState(false);
+
+  useEffect(() => {
+    onState({
+      hasContent:
+        Boolean(orgRegistry.organizationId) &&
+        (orgRegistry.servers.length > 0 || orgRegistry.canAdd),
+      isLoading: orgRegistry.isLoading,
+    });
+  }, [
+    onState,
+    orgRegistry.canAdd,
+    orgRegistry.isLoading,
+    orgRegistry.organizationId,
+    orgRegistry.servers.length,
+  ]);
+
+  const handleOrgSubmit = useCallback(
+    async (submission: OrgRegistrySubmission) => {
+      if (submission.registryServerId) {
+        await orgRegistry.update(submission);
+        toast.success("Registry entry updated");
+        return;
+      }
+      await orgRegistry.add(submission);
+      toast.success("Added to your organization's registry");
+    },
+    [orgRegistry]
+  );
+
+  const handleOrgConnect = useCallback(
+    async (server: EnrichedOrgRegistryServer) => {
+      try {
+        await orgRegistry.connect(server);
+      } catch (error) {
+        const message =
+          error instanceof Error &&
+          /already exists in this workspace/i.test(error.message)
+            ? `A server named "${server.displayName}" already exists in this project. Rename it, or rename the registry entry.`
+            : error instanceof Error
+            ? error.message
+            : "Could not connect this server.";
+        toast.error(message);
+      }
+    },
+    [orgRegistry]
+  );
+
+  const handleOrgDisconnect = useCallback(
+    async (server: EnrichedOrgRegistryServer) => {
+      try {
+        await orgRegistry.disconnect(server);
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Could not disconnect this server."
+        );
+      }
+    },
+    [orgRegistry]
+  );
+
+  const handleOrgRemoveConfirmed = useCallback(async () => {
+    if (!orgRemoveTarget) return;
+    setOrgRemoving(true);
+    try {
+      await orgRegistry.remove(orgRemoveTarget._id);
+      toast.success("Removed from your organization's registry");
+      setOrgRemoveTarget(null);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not remove this entry."
+      );
+    } finally {
+      setOrgRemoving(false);
+    }
+  }, [orgRegistry, orgRemoveTarget]);
+
+  return (
+    <>
+      <OrgRegistrySection
+        registry={orgRegistry}
+        onAdd={() => setOrgDialog({ seed: null })}
+        onEdit={(server) =>
+          setOrgDialog({
+            seed: {
+              registryServerId: server._id,
+              displayName: server.displayName,
+              description: server.description,
+              url: server.transport.url ?? "",
+              useOAuth: server.transport.useOAuth,
+              oauthScopes: server.transport.oauthScopes,
+              derived: server.derived,
+            },
+          })
+        }
+        onRemove={setOrgRemoveTarget}
+        onConnect={handleOrgConnect}
+        onDisconnect={handleOrgDisconnect}
+      />
       {orgRemoveTarget && (
         <OrgRegistryRemoveDialog
           open
@@ -1116,23 +1174,7 @@ export function RegistryTab({
           onSubmit={handleOrgSubmit}
         />
       )}
-      {endpointPrompt && (
-        <DirectoryEndpointDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setEndpointPrompt(null);
-          }}
-          displayName={endpointPrompt.server.displayName}
-          options={endpointPrompt.options}
-          pattern={endpointPrompt.pattern}
-          error={endpointPrompt.error ?? null}
-          submitting={connectingDirectoryIds.has(endpointPrompt.server._id)}
-          onSubmit={(endpointUrl) => {
-            void runDirectoryConnect(endpointPrompt.server, endpointUrl);
-          }}
-        />
-      )}
-    </div>
+    </>
   );
 }
 

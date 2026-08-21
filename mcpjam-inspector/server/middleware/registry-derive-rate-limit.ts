@@ -57,23 +57,12 @@ export function resetRegistryDeriveRateLimitForTests(): void {
   ipWindows.clear();
 }
 
-export async function registryDeriveRateLimitMiddleware(
-  c: Context,
-  next: Next
-): Promise<Response | void> {
-  if (!HOSTED_MODE) return next();
-
-  // Mounted on a path, so without this a request that was never going to
-  // reach the handler could spend somebody's whole budget — turning a limiter
-  // meant to protect the flow into a way to deny it.
-  if (c.req.method !== "POST") return next();
+export function consumeRegistryDeriveRateLimit(c: Context): Response | null {
+  if (!HOSTED_MODE) return null;
+  if (c.req.method !== "POST") return null;
 
   const ip = getClientIp(c);
-  // No attributable IP means no bucket to charge. Falling through matches the
-  // other limiters' posture rather than collapsing every such caller into one
-  // shared bucket, where a single header-stripped request would starve the
-  // rest.
-  if (!ip) return next();
+  if (!ip) return null;
 
   const now = Date.now();
   const entry = ipWindows.get(ip);
@@ -105,5 +94,12 @@ export async function registryDeriveRateLimitMiddleware(
     ipWindows.set(ip, { count: 1, windowStart: now });
   }
 
-  return next();
+  return null;
+}
+
+export async function registryDeriveRateLimitMiddleware(
+  c: Context,
+  next: Next
+): Promise<Response | void> {
+  return consumeRegistryDeriveRateLimit(c) ?? next();
 }

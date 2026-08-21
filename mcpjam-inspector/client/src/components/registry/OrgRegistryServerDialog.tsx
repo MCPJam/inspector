@@ -37,10 +37,9 @@ import { WebApiError } from "@/lib/apis/web/base";
  *             server's `initializationInfo`. No probe: the browser is already
  *             talking to it, so asking the server again would be slower and no
  *             more true.
- *   edit    — opens at "confirm" with the stored row. Re-probing an existing
- *             entry is deliberately NOT here; it is a separate action so a
- *             refresh can never be something a person did by accident while
- *             fixing a typo.
+ *   edit    — opens at "confirm" with the stored row. If its URL changes,
+ *             saving re-probes before persisting so the facts stay paired with
+ *             the address they describe.
  *
  * A REFUSAL IS NOT AN ERROR TO RETRY. The route answers a blocked address with
  * one generic sentence and a 400, and this dialog shows exactly that sentence
@@ -69,7 +68,7 @@ export interface OrgRegistryDialogSubmission {
   useOAuth?: boolean;
   oauthScopes?: string[];
   /** Absent when no probe has run — see the note at the submit site. */
-  derived: OrgRegistryDerivedSnapshot | null;
+  derived?: OrgRegistryDerivedSnapshot;
   sourceServerId?: string;
 }
 
@@ -151,7 +150,10 @@ export function OrgRegistryServerDialog({
 
   const canProbe = url.trim().length > 0 && !probing && Boolean(projectId);
   const canSave =
-    displayName.trim().length > 0 && url.trim().length > 0 && !saving;
+    displayName.trim().length > 0 &&
+    url.trim().length > 0 &&
+    (isEdit || derived !== null) &&
+    !saving;
 
   async function handleProbe() {
     if (!projectId) return;
@@ -178,19 +180,43 @@ export function OrgRegistryServerDialog({
   }
 
   async function handleSave() {
+    if (!isEdit && !derived) {
+      setError("Check the server before adding it to the registry.");
+      return;
+    }
     setSaving(true);
     setError(null);
+    let submissionDerived = derived;
+    let submissionUrl = url.trim();
+    let submissionAuthRequired = authRequired;
     try {
+      // A URL edit changes what the read-only facts describe. Re-probe before
+      // saving so the stored snapshot cannot silently belong to the old URL.
+      if (isEdit && submissionUrl !== seed?.url.trim()) {
+        if (!projectId) {
+          throw new Error("Select a project before changing the server URL.");
+        }
+        setProbing(true);
+        const facts = await deriveOrgRegistryServer({
+          url: submissionUrl,
+          projectId,
+        });
+        submissionDerived = snapshotFromDerivedFacts(facts);
+        submissionUrl = facts.endpointUrl;
+        submissionAuthRequired = submissionDerived.authRequired ?? false;
+        setDerived(submissionDerived);
+        setUrl(submissionUrl);
+      }
       await onSubmit({
         registryServerId: seed?.registryServerId,
         displayName: displayName.trim(),
         description: description.trim() || undefined,
-        url: url.trim(),
+        url: submissionUrl,
         // `authRequired` is what the server said; `useOAuth` is what we will
         // do about it. They are the same decision here, and keeping the
         // stored value derived from the probe is what makes a later re-probe
         // able to correct it.
-        useOAuth: authRequired,
+        useOAuth: submissionAuthRequired,
         oauthScopes: seed?.oauthScopes,
         // NEVER synthesize a snapshot. Readers treat the presence of
         // `derived` as proof a probe returned a verdict — the card asserts
@@ -199,13 +225,14 @@ export function OrgRegistryServerDialog({
         // entry accuse its server of something nothing established. The paste
         // flow always probes and promote always seeds, so this is guarding
         // the field's meaning rather than a live path.
-        derived,
+        derived: submissionDerived ?? undefined,
         sourceServerId: seed?.sourceServerId,
       });
       onOpenChange(false);
     } catch (saveError) {
       setError(messageFor(saveError));
     } finally {
+      setProbing(false);
       setSaving(false);
     }
   }
@@ -239,6 +266,9 @@ export function OrgRegistryServerDialog({
               <Label htmlFor="org-registry-url">Server URL</Label>
               <Input
                 id="org-registry-url"
+                name="url"
+                type="url"
+                autoComplete="url"
                 value={url}
                 placeholder="https://mcp.example.com/mcp"
                 autoFocus
@@ -259,6 +289,7 @@ export function OrgRegistryServerDialog({
               <Label htmlFor="org-registry-name">Name</Label>
               <Input
                 id="org-registry-name"
+                name="displayName"
                 value={displayName}
                 autoFocus
                 onChange={(event) => setDisplayName(event.target.value)}
@@ -271,6 +302,7 @@ export function OrgRegistryServerDialog({
               </Label>
               <Textarea
                 id="org-registry-description"
+                name="description"
                 value={description}
                 rows={2}
                 placeholder="What your team uses this server for."
@@ -281,6 +313,9 @@ export function OrgRegistryServerDialog({
               <Label htmlFor="org-registry-confirm-url">Server URL</Label>
               <Input
                 id="org-registry-confirm-url"
+                name="url"
+                type="url"
+                autoComplete="url"
                 value={url}
                 readOnly={isPromote}
                 aria-readonly={isPromote}

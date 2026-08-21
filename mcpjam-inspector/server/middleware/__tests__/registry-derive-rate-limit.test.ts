@@ -9,7 +9,7 @@
  *
  * `HOSTED_MODE` is read at module load, so it is stubbed before the import.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../../config.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../config.js")>()),
@@ -46,6 +46,10 @@ beforeEach(() => {
   resetRegistryDeriveRateLimitForTests();
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("registryDeriveRateLimitMiddleware", () => {
   it("passes the last request inside the window and refuses the next", async () => {
     for (let i = 0; i < REGISTRY_DERIVE_RATE_LIMIT; i++) {
@@ -64,6 +68,27 @@ describe("registryDeriveRateLimitMiddleware", () => {
     }
 
     expect(await call("203.0.113.9")).toBeUndefined();
+  });
+
+  it("starts a fresh window after ten minutes", async () => {
+    vi.useFakeTimers();
+    for (let i = 0; i < REGISTRY_DERIVE_RATE_LIMIT; i++) {
+      await call("198.51.100.7");
+    }
+    expect((await call("198.51.100.7")) as Response).toBeInstanceOf(Response);
+
+    vi.advanceTimersByTime(10 * 60_000 + 1);
+    expect(await call("198.51.100.7")).toBeUndefined();
+  });
+
+  it("fails closed when the bounded address map is full", async () => {
+    for (let i = 0; i < 10_000; i++) {
+      await call(`198.51.${Math.floor(i / 256)}.${i % 256}`);
+    }
+
+    const refused = (await call("203.0.113.9")) as Response;
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("Retry-After")).toBeTruthy();
   });
 
   it("does not charge a request that was never going to reach the handler", async () => {

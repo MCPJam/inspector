@@ -243,6 +243,32 @@ describe("useOrgRegistryServers — connect and disconnect", () => {
     );
     expect(onDisconnect).toHaveBeenCalledWith("Internal Docs");
   });
+
+  it("preserves the promoted source server on disconnect", async () => {
+    const onDisconnect = vi.fn();
+    const { result } = render({
+      connections: [
+        {
+          _id: "conn_1",
+          registryServerId: "reg_1",
+          serverId: "srv_1",
+          serverName: "Internal Docs",
+          connectionKind: "promoted_source",
+        },
+      ],
+      onDisconnect,
+    });
+    mutations.calls = [];
+
+    await act(async () => {
+      await result.current.disconnect(result.current.servers[0]);
+    });
+
+    expect(mutations.calls[0].name).toBe(
+      "registryServers:disconnectRegistryServer"
+    );
+    expect(onDisconnect).not.toHaveBeenCalled();
+  });
 });
 
 describe("useOrgRegistryServers — adding", () => {

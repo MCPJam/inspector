@@ -28,8 +28,9 @@ import {
   WebRouteError,
 } from "./errors.js";
 import { handleRoute } from "./auth.js";
+import { consumeRegistryDeriveRateLimit } from "../../middleware/registry-derive-rate-limit.js";
 import { getInspectorClientRuntimeConfig } from "../../env.js";
-import { logger } from "../../utils/logger.js";
+import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   deriveRegistryEntry,
   EGRESS_REFUSAL_MESSAGE,
@@ -73,17 +74,14 @@ async function assertCanAddToOrgRegistry(
       { projectId } as never
     )) as { organizationId: string | null; canAdd: boolean };
   } catch (error) {
-    // The Convex error text is an INTERNAL hop's failure — a deployment URL, a
-    // function name, a stack fragment. It belongs in the logs, not in a
-    // response to whoever pasted a URL. Fixed copy out, detail recorded here.
-    logger.error("Org registry authorization check failed", {
-      projectId,
-      error: error instanceof Error ? error.message : String(error),
+    reportRouteFailure("Org registry authorization lookup failed", error, {
+      source: "web.registry.authorization",
+      hop: "mcpjam_internal",
     });
     throw new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
-      "Couldn't check your organization permissions right now. Try again in a moment."
+      "Failed to reach the authorization service."
     );
   }
 
@@ -104,6 +102,8 @@ registry.post("/derive", async (c) =>
     const bearerToken = assertBearerToken(c);
     const body = parseWithSchema(deriveSchema, await readJsonBody(c));
     await assertCanAddToOrgRegistry(bearerToken, body.projectId);
+    const rateLimitResponse = consumeRegistryDeriveRateLimit(c);
+    if (rateLimitResponse) return rateLimitResponse;
 
     // Loopback is never allowed here, whatever the deployment is: an org entry
     // is shared with everyone in the org, and an address that only resolves on

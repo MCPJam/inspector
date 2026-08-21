@@ -195,6 +195,37 @@ describe("OrgRegistryServerDialog — promote and edit", () => {
     expect(screen.getByLabelText("Server URL")).not.toHaveAttribute("readonly");
   });
 
+  it("re-probes when an edited URL changes the facts being saved", async () => {
+    const user = userEvent.setup();
+    const { onSubmit } = renderDialog({
+      seed: {
+        registryServerId: "reg_1",
+        displayName: "Internal Docs",
+        url: "https://old.example/mcp",
+        derived: {
+          probedAt: 1,
+          endpointUrl: "https://old.example/mcp",
+          serverVersion: "1.0.0",
+        },
+      },
+    });
+
+    const urlInput = screen.getByLabelText("Server URL");
+    await user.clear(urlInput);
+    await user.type(urlInput, "https://new.example/mcp");
+    await user.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled());
+    expect(deriveOrgRegistryServer).toHaveBeenCalledWith({
+      url: "https://new.example/mcp",
+      projectId: "proj_1",
+    });
+    expect(onSubmit.mock.calls[0][0]).toMatchObject({
+      registryServerId: "reg_1",
+      derived: { endpointUrl: "https://mcp.example.com/mcp" },
+    });
+  });
+
   it("carries sourceServerId through so the promote writes provenance", async () => {
     const user = userEvent.setup();
     const { onSubmit } = renderDialog({

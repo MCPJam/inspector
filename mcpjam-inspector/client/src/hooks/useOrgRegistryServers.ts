@@ -44,6 +44,7 @@ export interface EnrichedOrgRegistryServer extends OrgRegistryServer {
   connectionStatus: OrgRegistryConnectionStatus;
   /** The live server this entry's provenance points at, when there is one. */
   connectedServerName: string | null;
+  connectionKind?: "installed" | "promoted_source";
 }
 
 /** One row of `registryServers:getProjectRegistryConnections`. */
@@ -53,6 +54,7 @@ interface RegistryConnectionRow {
   serverId: string;
   /** The `servers` row's name, or null if it was deleted underneath. */
   serverName: string | null;
+  connectionKind?: "installed" | "promoted_source";
 }
 
 export interface OrgRegistryContext {
@@ -68,7 +70,7 @@ export interface OrgRegistrySubmission {
   useOAuth?: boolean;
   oauthScopes?: string[];
   /** Absent when no probe produced a verdict; never synthesized. */
-  derived: OrgRegistryDerivedSnapshot | null;
+  derived?: OrgRegistryDerivedSnapshot;
   sourceServerId?: string;
 }
 
@@ -170,7 +172,12 @@ export function useOrgRegistryServers({
         connectionStatus = "added";
       }
 
-      return { ...row, connectionStatus, connectedServerName };
+      return {
+        ...row,
+        connectionStatus,
+        connectedServerName,
+        connectionKind: connection?.connectionKind,
+      };
     });
   }, [enabled, rows, connections, provenance, liveServers, connectingIds]);
 
@@ -213,6 +220,7 @@ export function useOrgRegistryServers({
         url: submission.url,
         useOAuth: submission.useOAuth,
         oauthScopes: submission.oauthScopes,
+        derived: submission.derived,
       } as any);
     },
     [updateMutation]
@@ -294,7 +302,9 @@ export function useOrgRegistryServers({
         registryServerId: server._id,
         projectId,
       } as any);
-      onDisconnect?.(server.connectedServerName);
+      if (server.connectionKind !== "promoted_source") {
+        onDisconnect?.(server.connectedServerName);
+      }
     },
     [disconnectMutation, onDisconnect, projectId]
   );
