@@ -35,9 +35,14 @@ import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   deriveItemIdempotencyKey,
   deriveOperationIdempotencyKey,
+  readAnyIdempotencyKey,
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
 import { opaqueIdSchema } from "@mcpjam/sdk/contract";
+import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
+import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
+import { TERMINAL_RUN_STATUSES } from "../../services/evals/run-status.js";
+import { shouldSkipExecution } from "../shared/evals.js";
 import {
   createEvalCasesInBatches,
   partialResultOf,
@@ -91,13 +96,14 @@ import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { loadInsightsEnvelope } from "./insights-envelope-load.js";
-import { synthesizeServerBody } from "./adapter.js";
+import { readJsonObjectBody, synthesizeServerBody } from "./adapter.js";
 import {
   getCanonicalModelId,
   hostedModelDefinitionsFromSnapshot,
   SUPPORTED_MODELS,
 } from "@/shared/types";
 import { classifyModelIdProvider } from "@/shared/model-provider";
+import { GOAL_COMPLETION_DEFAULTS } from "@/shared/judge-defaults";
 import { isHostedCatalogModel } from "../../services/hosted-model-catalog.js";
 
 // BYOK statics + the hosted snapshot — hosted display rows were removed from
@@ -229,6 +235,69 @@ function withImplicitRenderAssertForSingleToolCall(
   ];
 }
 
+// ── Public match-option vocabulary ───────────────────────────────────
+//
+// DECLARED HERE, above every schema that references it, rather than beside the
+// other public-model translators further down: the run schemas below are built
+// at module-init time, so a later `const` would be in its temporal dead zone
+// and importing this module would throw.
+
+const PUBLIC_TOOL_CALL_ORDER = ["any", "in-order", "exact"] as const;
+// Public → internal tool-call-order vocabulary (and the inverse for DTOs).
+const ORDER_TO_INTERNAL = {
+  any: "ignore",
+  "in-order": "superset",
+  exact: "strict",
+} as const;
+const ORDER_TO_PUBLIC: Record<string, (typeof PUBLIC_TOOL_CALL_ORDER)[number]> =
+  { ignore: "any", superset: "in-order", strict: "exact" };
+
+const publicMatchOptionsSchema = z
+  .object({
+    toolCallOrder: z.enum(PUBLIC_TOOL_CALL_ORDER).optional(),
+    extraToolCalls: z
+      .union([z.literal("unlimited"), z.number().int().min(0)])
+      .optional(),
+    arguments: z.enum(["ignore", "partial", "exact"]).optional(),
+  })
+  .strict();
+type PublicMatchOptions = z.infer<typeof publicMatchOptionsSchema>;
+
+function toInternalMatchOptions(
+  mo: PublicMatchOptions,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (mo.toolCallOrder !== undefined)
+    out.toolCallOrder = ORDER_TO_INTERNAL[mo.toolCallOrder];
+  if (mo.extraToolCalls !== undefined)
+    out.maxExtraToolCalls =
+      mo.extraToolCalls === "unlimited" ? null : mo.extraToolCalls;
+  if (mo.arguments !== undefined) out.argumentMatching = mo.arguments;
+  return out;
+}
+
+
+/**
+ * Fold a run's `matchOptionsOverride` — sent in EITHER the public or the
+ * internal vocabulary — down to the internal shape the pipeline consumes.
+ *
+ * The two schemas are `.strict()` and their vocabularies are disjoint (public
+ * `any|in-order|exact` / `extraToolCalls` / `arguments` versus internal
+ * `ignore|superset|strict` / `maxExtraToolCalls` / `argumentMatching`), so a
+ * body can only satisfy one of them and a re-parse is a reliable discriminant.
+ * An EMPTY object parses as public and normalizes to an empty override, which
+ * is the same no-op either way.
+ */
+function normalizeRunMatchOptionsOverride(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  if (value === undefined) return undefined;
+  const asPublic = publicMatchOptionsSchema.safeParse(value);
+  return asPublic.success
+    ? toInternalMatchOptions(asPublic.data)
+    : (value as Record<string, unknown>);
+}
+
 // ── Request schema ───────────────────────────────────────────────────
 
 const MAX_V1_TESTS = 100;
@@ -309,6 +378,15 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
     // reference) via `testSuites:getSuiteRunServerSelection`, so the
     // manager connects exactly what the run needs.
     serverIds: RunEvalsRequestSchema.shape.serverIds.optional(),
+    // The PUBLIC match-option vocabulary (`any|in-order|exact`,
+    // `extraToolCalls`, `arguments`) alongside the internal one this route
+    // already accepted. A union rather than a replacement, because the
+    // internal shape is what existing callers send and the two enums are
+    // disjoint — a body can only satisfy one. Normalized to the internal shape
+    // before `prepareEvalRun`, so nothing downstream learns there were two.
+    matchOptionsOverride: z
+      .union([publicMatchOptionsSchema, matchOptionsSchema])
+      .optional(),
   })
   .refine((body) => body.suiteId || (body.tests?.length ?? 0) > 0, {
     message: "Provide suiteId (rerun) and/or inline tests",
@@ -556,6 +634,53 @@ function releaseRunSlot(key: string): void {
     activeRunsByOrg.set(key, active - 1);
   }
 }
+
+/**
+ * ONE slot for a whole fan-out, refcounted across its sibling runs.
+ *
+ * A grouped launch is one intent, so it costs one slot. Charging N would make
+ * a 3-target fan-out unlaunchable under the default cap of 2; charging ZERO
+ * would let a caller run unbounded work by wrapping it in a group. The slot is
+ * held until the LAST sibling settles, so a group can never release it while it
+ * still has runs in flight.
+ *
+ * `remaining` starts at the target count and every target decrements it EXACTLY
+ * ONCE, through one of two paths: a target that reaches background execution
+ * decrements in its `.finally`; a target whose launch throws before that never
+ * gets a `.finally`, so the launch loop's catch decrements for it. Missing the
+ * second path is how an all-failed group leaks its slot and bricks the
+ * organization's quota until the process restarts.
+ */
+interface RunGroupSlot {
+  key: string;
+  remaining: number;
+  released: boolean;
+}
+
+function tryAcquireRunGroupSlot(
+  key: string,
+  targetCount: number,
+): RunGroupSlot | null {
+  if (!tryAcquireRunSlot(key)) return null;
+  return { key, remaining: targetCount, released: false };
+}
+
+/** Drop one reference; release the org slot when the last one goes. */
+function releaseRunGroupSlotRef(slot: RunGroupSlot): void {
+  if (slot.released) return;
+  slot.remaining -= 1;
+  if (slot.remaining > 0) return;
+  slot.released = true;
+  releaseRunSlot(slot.key);
+}
+
+/**
+ * Upper bound on a single fan-out. Deliberately the same number as a suite's
+ * environment cap: the attachments ARE the targets, so a larger bound could
+ * never be reached by the axis it exists to bound, and a smaller one would
+ * refuse a fan-out over a legal set of attachments.
+ */
+export const MAX_RUN_GROUP_TARGETS = 10;
 
 // ── Convex read client ───────────────────────────────────────────────
 
@@ -902,16 +1027,6 @@ export async function fetchSuiteRunServerSelection(
   return { serverIds, serverNames };
 }
 
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  // The runner finalizes run/iteration timeouts as `timed_out` before
-  // rethrowing into the detached catch. Treat it as terminal so the defensive
-  // re-finalize can't overwrite a timeout result with `failed`.
-  "timed_out",
-]);
-
 /**
  * Whether the run record already reached a terminal status. Used by the
  * detached-execution catch: `runEvalSuiteWithAiSdk` finalizes a failed run
@@ -959,6 +1074,84 @@ function toRunEnvironmentDto(run: RunDoc) {
   };
 }
 
+/**
+ * One advisory judge's persisted result, projected onto the public model.
+ *
+ * `goalCompletion` is one of SEVERAL judges on the run row — `groundedness`
+ * sits beside it under the same four-fields-per-judge pattern — so the DTO
+ * carries a `judges` envelope rather than a bare `judge` field, and a third
+ * judge is a key here rather than a reshaped response.
+ *
+ * `status: null` means the judge was NEVER requested for this run, which is a
+ * different answer from "requested and produced nothing". A `pending` or
+ * `failed` judge carries no cases: `cases` is `[]` and `status` carries the
+ * meaning, so a caller never has to distinguish "graded nothing" from "has not
+ * graded yet" by the emptiness of a list.
+ *
+ * `caseKey` keeps its persisted name. It is the stable AUTHORED-case identity,
+ * not a Convex row id; calling it `caseId` at this boundary would invite
+ * callers to join it against the case ids the case routes take.
+ */
+function toRunJudgeDto(
+  status: unknown,
+  errorCode: unknown,
+  result: Record<string, any> | undefined,
+  toCase: (row: Record<string, any>) => Record<string, unknown>,
+) {
+  const terminal = status === "completed";
+  return {
+    status:
+      status === "pending" || status === "completed" || status === "failed"
+        ? status
+        : null,
+    errorCode: typeof errorCode === "string" ? errorCode : null,
+    summary: typeof result?.summary === "string" ? result.summary : null,
+    generatedAt:
+      typeof result?.generatedAt === "number" ? result.generatedAt : null,
+    modelUsed: typeof result?.modelUsed === "string" ? result.modelUsed : null,
+    threshold: typeof result?.threshold === "number" ? result.threshold : null,
+    cases:
+      terminal && Array.isArray(result?.cases) ? result.cases.map(toCase) : [],
+  };
+}
+
+/** Advisory graders on a run, keyed by judge. See `toRunJudgeDto`. */
+function toRunJudgesDto(run: RunDoc) {
+  return {
+    goalCompletion: toRunJudgeDto(
+      run.goalCompletionStatus,
+      run.goalCompletionErrorCode,
+      run.goalCompletion,
+      (row) => ({
+        caseKey: String(row.caseKey ?? ""),
+        score: typeof row.score === "number" ? row.score : null,
+        passed: row.passed === true,
+        reason: typeof row.reason === "string" ? row.reason : null,
+        rubricHits: Array.isArray(row.rubricHits)
+          ? row.rubricHits.map(String)
+          : [],
+      }),
+    ),
+    groundedness: toRunJudgeDto(
+      run.groundednessStatus,
+      run.groundednessErrorCode,
+      run.groundedness,
+      // Groundedness grades whether an answer is SUPPORTED by its trajectory,
+      // so its per-case evidence is `unsupportedClaims`, not `rubricHits`.
+      // Projected off the persisted fields rather than forced into one shape.
+      (row) => ({
+        caseKey: String(row.caseKey ?? ""),
+        score: typeof row.score === "number" ? row.score : null,
+        passed: row.passed === true,
+        reason: typeof row.reason === "string" ? row.reason : null,
+        unsupportedClaims: Array.isArray(row.unsupportedClaims)
+          ? row.unsupportedClaims.map(String)
+          : [],
+      }),
+    ),
+  };
+}
+
 function toRunDto(run: RunDoc) {
   return {
     id: String(run._id),
@@ -970,6 +1163,18 @@ function toRunDto(run: RunDoc) {
     source: run.source ?? "ui",
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
+    // Which engine the run actually executed on: `"emulated"` (the inspector's
+    // own turn loop) or `"harness:<id>"` (a real agent runtime). Read from the
+    // run's IMMUTABLE snapshot, where the platform derives it from the run's
+    // own host config.
+    //
+    // OMITTED, never defaulted, when the snapshot has none: a run predating
+    // the field recorded nothing, and rendering that as "emulated" would put a
+    // claim on exactly the runs whose engine was never verified — the same
+    // false-green this attribution exists to make impossible.
+    ...(typeof run.configSnapshot?.executionEngine === "string"
+      ? { executionEngine: run.configSnapshot.executionEngine }
+      : {}),
     // Whether the run's score evidence verified at ingest. ABSENT means no
     // verdict was produced — a deployment that does not yet check integrity —
     // and a score gate must treat that exactly like `"invalid"`: absent
@@ -1048,40 +1253,6 @@ function toStepResultDto(step: EvalStepReplay) {
 // options, environment, hosts, execution config). These helpers translate it
 // to/from the internal Convex suite/case model. No internal field name (Convex
 // mutation names, defaultPredicates, namedHostId, …) crosses this boundary.
-
-const PUBLIC_TOOL_CALL_ORDER = ["any", "in-order", "exact"] as const;
-// Public → internal tool-call-order vocabulary (and the inverse for DTOs).
-const ORDER_TO_INTERNAL = {
-  any: "ignore",
-  "in-order": "superset",
-  exact: "strict",
-} as const;
-const ORDER_TO_PUBLIC: Record<string, (typeof PUBLIC_TOOL_CALL_ORDER)[number]> =
-  { ignore: "any", superset: "in-order", strict: "exact" };
-
-const publicMatchOptionsSchema = z
-  .object({
-    toolCallOrder: z.enum(PUBLIC_TOOL_CALL_ORDER).optional(),
-    extraToolCalls: z
-      .union([z.literal("unlimited"), z.number().int().min(0)])
-      .optional(),
-    arguments: z.enum(["ignore", "partial", "exact"]).optional(),
-  })
-  .strict();
-type PublicMatchOptions = z.infer<typeof publicMatchOptionsSchema>;
-
-function toInternalMatchOptions(
-  mo: PublicMatchOptions,
-): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (mo.toolCallOrder !== undefined)
-    out.toolCallOrder = ORDER_TO_INTERNAL[mo.toolCallOrder];
-  if (mo.extraToolCalls !== undefined)
-    out.maxExtraToolCalls =
-      mo.extraToolCalls === "unlimited" ? null : mo.extraToolCalls;
-  if (mo.arguments !== undefined) out.argumentMatching = mo.arguments;
-  return out;
-}
 
 /**
  * Merge a partial public match-options patch onto the stored (internal) object.
@@ -1243,7 +1414,11 @@ function toCaseDto(testCase: CaseDoc) {
 
 type SuiteDoc = Record<string, any>;
 
-function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
+function toSuiteDetailDto(
+  suite: SuiteDoc,
+  execConfig: any,
+  resolved: { computerEnvironmentName?: string | null } = {},
+) {
   const goal = suite.judgeConfig?.goalCompletion;
   return {
     id: String(suite._id),
@@ -1254,6 +1429,16 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
       servers: Array.isArray(suite.environment?.servers)
         ? suite.environment.servers.map(String)
         : [],
+      // The sandbox image this suite's eval runs boot from. `null` = the
+      // provider's default base image. The NAME rides along beside the id so a
+      // caller can echo back what it set without a second lookup — it is what
+      // the picker shows and what a person recognizes.
+      computerEnvironment: suite.environment?.computerEnvironmentId
+        ? {
+            id: String(suite.environment.computerEnvironmentId),
+            name: resolved.computerEnvironmentName ?? null,
+          }
+        : null,
     },
     executionConfig: execConfig
       ? {
@@ -1281,14 +1466,31 @@ function toSuiteDetailDto(suite: SuiteDoc, execConfig: any) {
         typeof suite.defaultPassCriteria?.minimumPassRate === "number"
           ? suite.defaultPassCriteria.minimumPassRate
           : null,
+      // `null` = no floor, which is the suite's real state rather than a
+      // stand-in for 1: a floor of 1 and no floor at all produce the same
+      // runs today, but only one of them is something the user chose.
+      minimumIterations:
+        typeof suite.minIterations === "number" ? suite.minIterations : null,
       matchOptions: toPublicMatchOptions(suite.defaultMatchOptions),
       checks: Array.isArray(suite.defaultPredicates)
         ? suite.defaultPredicates
         : [],
-      // GOAL_COMPLETION_DEFAULTS.enabled is true; readers treat absent as on.
+      // FULLY RESOLVED, every field layered over GOAL_COMPLETION_DEFAULTS —
+      // the same resolution the backend's `resolveGoalCompletionConfig`
+      // performs before grading. Reporting a raw field next to a resolved one
+      // (the old `enabled: true` beside `model: null`) described a suite state
+      // that never exists at run time, and left a caller unable to echo back
+      // what its own PATCH will grade with.
       judge: {
-        enabled: goal?.enabled !== false,
-        model: goal?.judgeModel ?? null,
+        enabled: goal?.enabled ?? GOAL_COMPLETION_DEFAULTS.enabled,
+        model: goal?.judgeModel ?? GOAL_COMPLETION_DEFAULTS.judgeModel,
+        // `autoRun` is the flag that makes grading HAPPEN; `enabled` alone only
+        // makes the judge available to a manual request.
+        autoRun: goal?.autoRun ?? GOAL_COMPLETION_DEFAULTS.autoRun,
+        threshold:
+          typeof goal?.threshold === "number"
+            ? goal.threshold
+            : GOAL_COMPLETION_DEFAULTS.threshold,
       },
     },
     schedule: {
@@ -1511,12 +1713,29 @@ const createCasesBatchSchema = z.object({
   overrideReason: z.string().optional(),
 });
 
-const updateSuiteSchema = z.object({
+/**
+ * Exported for the settings-parity test
+ * (`__tests__/eval-suite-settings-parity.test.ts`), which asserts that every
+ * settings-sheet row the shared manifest marks `api:` is genuinely accepted
+ * here. Nothing else should import it — the route is the only writer.
+ */
+export const updateSuiteSchema = z.object({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
   // The LEGACY server bag (kept as rollback/compat data). Unrelated to
   // `environmentIds` below, which is the project-environment attachment list.
-  environment: z.object({ servers: z.array(z.string().min(1)) }).optional(),
+  environment: z
+    .object({
+      // Optional so a caller can set the computer image WITHOUT restating the
+      // server list. Omitting it preserves the suite's current servers (and
+      // their bindings) rather than clearing them.
+      servers: z.array(z.string().min(1)).optional(),
+      // Sandbox-image name or id; `null` clears the pin (runs fall back to the
+      // provider's default base image). Enumerate the choices with
+      // `list_sandbox_images`.
+      computerEnvironment: z.union([z.string().min(1), z.null()]).optional(),
+    })
+    .optional(),
   // Project-environment attachments, in attach order: a non-empty array
   // sets/replaces, `null` clears (reverts the suite to legacy config), and `[]`
   // is rejected rather than silently treated as a clear — mirroring the
@@ -1551,17 +1770,52 @@ const updateSuiteSchema = z.object({
   settings: z
     .object({
       minimumAccuracy: z.number().min(0).max(100).optional(),
+      // Suite-level FLOOR on per-case iterations: every case runs at least
+      // this many times (`max(case.iterations, minimumIterations)`). `null`
+      // clears it — the platform's `minIterations` has exactly that contract,
+      // so the public field does not invent a second way to say "no floor".
+      minimumIterations: z
+        .union([z.number().int().min(1).max(10), z.null()])
+        .optional(),
       matchOptions: publicMatchOptionsSchema.nullable().optional(),
       checks: z.array(publicCheckSchema).nullable().optional(),
       judge: z
         .object({
           enabled: z.boolean().optional(),
           model: z.string().min(1).optional(),
+          // The flag the grader actually gates on. Without it a suite can be
+          // `enabled` forever and never grade a run.
+          autoRun: z.boolean().optional(),
+          threshold: z.number().min(0).max(1).optional(),
         })
         .optional(),
     })
     .optional(),
 });
+
+/**
+ * Body for `POST …/eval-runs/:runId/judge`. STRICT: this endpoint spends, so an
+ * unknown or mistyped key is a 400 rather than a silently-ignored field that
+ * bills anyway.
+ *
+ * `enable` is the per-RUN answer to "grade this?", not a suite edit. Grading
+ * resolves from the run's config snapshot, pinned when the run was created, so
+ * a run recorded while the judge was off cannot be rescued by turning the judge
+ * on for the suite — `enable: true` is what grades it, and it touches nothing
+ * beyond this run. Requires a platform new enough to accept the field; older
+ * deployments refuse the override rather than grading with the judge off.
+ */
+const requestRunJudgeSchema = z
+  .object({
+    /** Re-grade a run that already has a result. */
+    force: z.boolean().optional(),
+    enable: z.boolean().optional(),
+    /** Judge model for THIS run only. */
+    model: z.string().min(1).optional(),
+    /** Pass threshold for THIS run only, 0–1. */
+    threshold: z.number().min(0).max(1).optional(),
+  })
+  .strict();
 
 const scheduleSchema = z.object({
   enabled: z.boolean(),
@@ -1603,6 +1857,13 @@ const generateCasesSchema = z
     // Condition the generated cases on a realistic range of user styles so the
     // queries read like different users wrote them.
     varyUserStyles: z.boolean().optional(),
+    // Body channel for the idempotency key, matching `run_eval_suite` and
+    // `run_eval_case` — the two closest siblings, which also spend. The agent
+    // surfaces set the prefixed header and win the merge below; every other
+    // caller can reach the ledger from here without controlling headers at
+    // all, which is what the CLI, the MCP plugin, and direct SDK callers
+    // could not do before.
+    idempotencyKey: z.string().min(1).max(256).optional(),
   })
   // Same mutual exclusion the run-create schema enforces: an environment's
   // closed server set is the point, so a `servers` override alongside it would
@@ -1801,6 +2062,71 @@ function translateConvexWriteError(error: unknown): WebRouteError {
  * project's host catalog; per-host server names resolve against the suite's
  * own environment bindings (no live connection, no extra catalog query).
  */
+/**
+ * Resolve a sandbox-image selector (name or id) to the `computerEnvironments`
+ * row a suite's eval runs boot from.
+ *
+ * Name-or-id, matching every other selector on this surface — an agent that
+ * just read `list_sandbox_images` has the name in hand, and making it round
+ * trip for an id would be the only place we ask that. Ambiguous names are a
+ * 400 rather than a silent first-match: two images called "playwright" is a
+ * situation only the caller can resolve.
+ *
+ * Returns the row so callers can report the resolved NAME back — a caller must
+ * be able to echo what it just set without a second read.
+ */
+async function resolveComputerEnvironment(
+  readClient: ReturnType<typeof createConvexReadClient>,
+  projectId: string,
+  selector: string,
+): Promise<{ id: string; name: string }> {
+  const trimmed = selector.trim();
+  let rows: any[] | null | undefined;
+  try {
+    rows = await readClient.query(
+      "computerEnvironments:listEnvironments" as any,
+      { projectId },
+    );
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  const list = rows ?? [];
+  const byId = list.find((row: any) => String(row.environmentId) === trimmed);
+  if (byId) {
+    return { id: String(byId.environmentId), name: String(byId.name ?? "") };
+  }
+  const matches = list.filter(
+    (row: any) =>
+      String(row.name ?? "").toLocaleLowerCase() === trimmed.toLocaleLowerCase(),
+  );
+  if (matches.length > 1) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Computer image name "${trimmed}" is ambiguous; use the image id.`,
+    );
+  }
+  if (matches.length === 0) {
+    // Enumerate the real choices: a typo is then one round trip to fix rather
+    // than a bare not-found, and the picker's contents are not otherwise
+    // visible from a shell.
+    const available = list
+      .map((row: any) => `${row.name} (id: ${row.environmentId})`)
+      .join(", ");
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      `Computer image "${trimmed}" was not found in this project.${
+        available ? ` Available: ${available}.` : ""
+      }`,
+    );
+  }
+  return {
+    id: String(matches[0].environmentId),
+    name: String(matches[0].name ?? ""),
+  };
+}
+
 async function resolveHostAttachments(
   convexClient: ReturnType<typeof createConvexClients>["convexClient"],
   projectId: string,
@@ -1874,6 +2200,351 @@ async function resolveHostAttachments(
   });
 }
 
+// ── Run launch: the core both run routes share ───────────────────────
+
+/** What a successful launch produced, in the shape both 202 receipts echo. */
+interface LaunchedEvalRun {
+  runId: string;
+  suiteId: string;
+  /**
+   * What the run IS, not what a launch would make it. `running` for a fresh
+   * start; on an idempotent replay, the existing run's own status — which may
+   * already be terminal.
+   */
+  status: string;
+  /** This request replayed an existing run instead of starting one. */
+  deduped: boolean;
+  caseUpsert: unknown;
+  servers: Array<{ id: string; name?: string }>;
+  environment: {
+    id: string;
+    name: string | undefined;
+    revision: number | undefined;
+  } | null;
+}
+
+/**
+ * Connect the servers, prepare the run, and DETACH its execution.
+ *
+ * EXTRACTED rather than forked: the batch route launches N of these, and a
+ * second copy of manager lifecycle + prepare + detach + finalize-on-failure is
+ * exactly the kind of duplicate that drifts silently — one route gains a
+ * cleanup path the other never learns about, and the symptom is a stranded
+ * `running` row nobody can explain.
+ *
+ * `onSettled` fires EXACTLY ONCE, when the detached execution finishes. It does
+ * NOT fire when this function throws: a synchronous launch failure never
+ * reaches background execution, so its caller owns that accounting. That split
+ * is the whole reason release is a callback here rather than done inline — a
+ * group holds one slot across N siblings and must release it only after the
+ * last of them settles, however each of them ended.
+ */
+async function launchEvalRun(params: {
+  callerContext: ReturnType<typeof callerContextFromHono>;
+  xaaIssuer: ReturnType<typeof resolveXaaIssuer>;
+  projectId: string;
+  convexAuthToken: string;
+  body: Record<string, unknown> & {
+    tests: PublicInlineTest[];
+    suiteId?: string;
+    matchOptionsOverride?: unknown;
+  };
+  suiteRerun: boolean;
+  environmentId: string | undefined;
+  environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
+  serverIds: string[];
+  serverNames: string[] | undefined;
+  onSettled: () => void;
+}): Promise<LaunchedEvalRun> {
+  const {
+    projectId,
+    convexAuthToken,
+    body,
+    suiteRerun,
+    environmentId,
+    environmentLaunch,
+    serverIds,
+    serverNames,
+    onSettled,
+  } = params;
+
+  // Manual connection lifecycle (mirrors the web stream-test-case route):
+  // the manager must outlive this request — it is the background task's MCP
+  // transport — so `withManager`'s request-scoped teardown can't be used.
+  const { manager } = await createAuthorizedManager(
+    params.callerContext,
+    convexAuthToken,
+    projectId,
+    serverIds,
+    WEB_CALL_TIMEOUT_MS,
+    undefined,
+    undefined,
+    {
+      serverNames,
+      // v1 eval API has no host-persona input — no enterprise policy to
+      // enforce; the issuer makes per-server XAA servers mint instead of
+      // failing with 'Missing XAA issuer'.
+      xaaIssuer: params.xaaIssuer,
+    },
+  );
+
+  let prepared: PreparedEvalRun;
+  try {
+    prepared = await prepareEvalRun(manager, {
+      ...(body as any),
+      // Public → internal match-option vocabulary, resolved at the boundary so
+      // nothing downstream learns there were ever two.
+      ...(body.matchOptionsOverride !== undefined
+        ? {
+            matchOptionsOverride: normalizeRunMatchOptionsOverride(
+              body.matchOptionsOverride,
+            ),
+          }
+        : {}),
+      // Project the public `steps`-based inline tests onto the internal
+      // run-schema test shape the pipeline still consumes.
+      tests: body.tests.map(publicInlineTestToRunTest),
+      serverIds,
+      serverNames,
+      // The SELECTED id, which may have been auto-derived from a
+      // single-environment suite — not `body.environmentId`. Passing it makes
+      // the shared path pin the run to the revision resolved above
+      // (`expectedEnvironmentRevision`), instead of letting the backend
+      // re-select the same environment unpinned.
+      environmentId,
+      projectId,
+      suiteRerun,
+      convexAuthToken,
+      source: "api",
+      // Reuse this exact resolution (and its revision) rather than letting
+      // the shared path resolve again — the run must be pinned to the
+      // revision whose servers the manager just connected.
+      ...(environmentLaunch ? { resolvedEnvironment: environmentLaunch } : {}),
+    });
+  } catch (error) {
+    await manager.disconnectAllServers().catch(() => {});
+    throw error;
+  }
+
+  // Detach: the runner owns terminal run status (it finalizes a failed
+  // run itself, then rethrows). The catch is defense for errors thrown
+  // outside the runner's own try (provider construction, etc.) — it only
+  // finalizes when the run record is still non-terminal, so the runner's
+  // completedAt/notes are never restamped by a second terminal write.
+  // A REPLAY of a finished run executes nothing. `prepared.execute()` would
+  // re-run every case and bill for it, writing over results that are already
+  // final — the exact double-spend the caller sent an idempotency key to
+  // prevent. The slot and the manager still have to be settled here, because
+  // the `.finally` that normally does it belongs to an execution that is not
+  // going to happen.
+  if (shouldSkipExecution(prepared)) {
+    logger.info("[v1 evals] idempotent replay — not re-executing", {
+      runId: prepared.runId,
+      suiteId: prepared.suiteId,
+      status: prepared.status,
+      projectId,
+    });
+    onSettled();
+    void manager.disconnectAllServers().catch(() => {});
+    return {
+      runId: prepared.runId,
+      suiteId: prepared.suiteId,
+      status: prepared.status ?? "running",
+      deduped: true,
+      caseUpsert: prepared.caseUpsert,
+      servers: serverIds.map((serverId, index) => ({
+        id: serverId,
+        ...(serverNames?.[index] ? { name: serverNames[index] } : {}),
+      })),
+      environment: environmentLaunch
+        ? {
+            id: environmentLaunch.environmentRef.environmentId,
+            name: environmentLaunch.environmentRef.name,
+            revision: environmentLaunch.environmentRef.revision,
+          }
+        : null,
+    };
+  }
+
+  void prepared
+    .execute()
+    .catch(async (error) => {
+      logger.error("[v1 evals] background eval run failed", error, {
+        runId: prepared.runId,
+        suiteId: prepared.suiteId,
+        projectId,
+      });
+      if (await isRunAlreadyTerminal(convexAuthToken, prepared.runId)) {
+        return;
+      }
+      await prepared.recorder
+        .finalize({
+          status: "failed",
+          notes:
+            error instanceof Error
+              ? error.message.slice(0, 500)
+              : String(error).slice(0, 500),
+        })
+        .catch(() => {});
+    })
+    .finally(() => {
+      onSettled();
+      void manager.disconnectAllServers().catch(() => {});
+    });
+
+  return {
+    runId: prepared.runId,
+    suiteId: prepared.suiteId,
+    // Executing now. A replay of a run still IN FLIGHT lands here too and is
+    // reported as running, which is what it is.
+    status: prepared.status ?? "running",
+    deduped: prepared.deduped === true,
+    caseUpsert: prepared.caseUpsert,
+    // The servers the run connects to — explicit or derived from the
+    // suite's saved selection — so callers that omitted serverIds can
+    // see what the run targets. Names are present when known (always,
+    // on the derived path).
+    servers: serverIds.map((serverId, index) => ({
+      id: serverId,
+      ...(serverNames?.[index] ? { name: serverNames[index] } : {}),
+    })),
+    // The environment this run is pinned to, at the revision whose servers
+    // were just connected. Echoed even when the caller omitted it, because
+    // a single-environment suite auto-selects — the caller would otherwise
+    // have no way to know an environment was applied. `null` on a legacy run.
+    environment: environmentLaunch
+      ? {
+          id: environmentLaunch.environmentRef.environmentId,
+          name: environmentLaunch.environmentRef.name,
+          revision: environmentLaunch.environmentRef.revision,
+        }
+      : null,
+  };
+}
+
+/**
+ * Resolve the server set — and, when applicable, the environment — that one
+ * launch connects. The decision that must happen BEFORE a manager is built and
+ * before anything spends.
+ *
+ * Shared by both routes for the reason the launcher is: the environment rules
+ * here (attachment, override exclusivity, ambiguity) are the ones a caller
+ * hits, and they have to be the same rules on both surfaces.
+ */
+async function resolveLaunchServers(params: {
+  convexAuthToken: string;
+  projectId: string;
+  suiteId: string | undefined;
+  requestedEnvironmentId: string | undefined;
+  namedHostId: string | undefined;
+  requestedServerIds: string[];
+  requestedServerNames: string[] | undefined;
+}): Promise<{
+  environmentId: string | undefined;
+  environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
+  serverIds: string[];
+  serverNames: string[] | undefined;
+}> {
+  const { convexAuthToken, projectId, suiteId, namedHostId } = params;
+
+  // WHICH environment this run uses is decided from the suite's attachments,
+  // not from the caller's word — and decided HERE, before `prepareEvalRun`
+  // authors a suite or a case and before the manager opens a connection, so an
+  // unattached environment, an ambiguous multi-environment suite, or a server
+  // override on an environment-based suite all fail with nothing written. See
+  // `selectSuiteEnvironmentId` for the full rule. Inline-only runs (no suiteId)
+  // have no attachments to consult, and the schema already forbids
+  // `environmentId` without a `suiteId`.
+  const environmentId = suiteId
+    ? await selectSuiteEnvironmentId({
+        convexAuthToken,
+        projectId,
+        suite: await readSuiteInProject(convexAuthToken, projectId, suiteId),
+        requestedEnvironmentId: params.requestedEnvironmentId,
+        hasServerOverride: params.requestedServerIds.length > 0,
+        serverField: "serverIds",
+      })
+    : undefined;
+
+  // The environment owns its server set, so resolve it before the manager is
+  // built: the manager must connect the environment's closed set (including the
+  // servers its pinned plugin versions contribute), not the suite's saved
+  // selection — connecting the wrong set would make the tool snapshot disagree
+  // with what the run executes. The resolved value is handed to
+  // `prepareEvalRun` as `resolvedEnvironment` so it doesn't resolve a second
+  // time and risk a different revision.
+  let environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
+  let serverIds = params.requestedServerIds;
+  let serverNames = params.requestedServerNames;
+  if (environmentId) {
+    const convex = createConvexReadClient(convexAuthToken);
+    try {
+      environmentLaunch = await resolveEnvironmentForLaunch(convex, {
+        projectId,
+        environmentId,
+      });
+    } catch (error) {
+      throw translateEnvironmentResolveError(error);
+    }
+    serverIds = environmentServerIds(environmentLaunch);
+    serverNames = environmentServerNames(environmentLaunch);
+  } else if (serverIds.length === 0) {
+    // Omitted serverIds on a rerun (the schema guarantees suiteId here):
+    // connect the suite's saved server selection — the exact set the run
+    // snapshot will reference — instead of making the caller guess it.
+    const selection = await fetchSuiteRunServerSelection(
+      convexAuthToken,
+      suiteId!,
+      namedHostId,
+    );
+    serverIds = selection.serverIds;
+    serverNames = selection.serverNames;
+  }
+
+  return { environmentId, environmentLaunch, serverIds, serverNames };
+}
+
+/** A target in the caller's own words, for a per-target error message. */
+function describeRunGroupTarget(target: {
+  environmentId?: string;
+  namedHostId?: string;
+  name?: string;
+}): string {
+  if (target.namedHostId) {
+    return target.name
+      ? `Host "${target.name}" (${target.namedHostId})`
+      : `Host ${target.namedHostId}`;
+  }
+  return `Environment ${target.environmentId}`;
+}
+
+/**
+ * Flatten one target's launch failure into the receipt's `{code, message}`.
+ *
+ * The CODE is preserved when the error carries one, because a per-target entry
+ * is the only place a caller learns why THAT target failed — collapsing an
+ * `ENVIRONMENT_REVISION_CONFLICT` (retry this target) and a genuine internal
+ * error (do not) into one opaque string would make the receipt unactionable.
+ */
+function describeLaunchFailure(error: unknown): {
+  code: string;
+  message: string;
+} {
+  if (error instanceof WebRouteError) {
+    return {
+      code: String(error.code ?? ErrorCode.INTERNAL_ERROR),
+      message: error.message.slice(0, 500),
+    };
+  }
+  return {
+    code: ErrorCode.INTERNAL_ERROR,
+    message: (error instanceof Error ? error.message : String(error)).slice(
+      0,
+      500,
+    ),
+  };
+}
+
 // ── Routes ───────────────────────────────────────────────────────────
 
 // POST /v1/projects/:projectId/eval-runs
@@ -1915,63 +2586,16 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   // same swap `runEphemeralConnection` does for the synchronous routes.
   const convexAuthToken = await getConvexBearerForRequest(c);
 
-  // WHICH environment this run uses is decided from the suite's attachments,
-  // not from the caller's word — and decided HERE, before `prepareEvalRun`
-  // authors a suite or a case and before the manager opens a connection, so an
-  // unattached environment, an ambiguous multi-environment suite, or a server
-  // override on an environment-based suite all fail with nothing written. See
-  // `selectSuiteEnvironmentId` for the full rule. Inline-only runs (no suiteId)
-  // have no attachments to consult, and the schema already forbids
-  // `environmentId` without a `suiteId`.
-  const environmentId = body.suiteId
-    ? await selectSuiteEnvironmentId({
-        convexAuthToken,
-        projectId,
-        suite: await readSuiteInProject(
-          convexAuthToken,
-          projectId,
-          body.suiteId,
-        ),
-        requestedEnvironmentId: body.environmentId,
-        hasServerOverride: (body.serverIds?.length ?? 0) > 0,
-        serverField: "serverIds",
-      })
-    : undefined;
-
-  // The environment owns its server set, so resolve it before the manager is
-  // built: the manager must connect the environment's closed set (including the
-  // servers its pinned plugin versions contribute), not the suite's saved
-  // selection — connecting the wrong set would make the tool snapshot disagree
-  // with what the run executes. The resolved value is handed to
-  // `prepareEvalRun` as `resolvedEnvironment` so it doesn't resolve a second
-  // time and risk a different revision.
-  let environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
-  let serverIds = body.serverIds ?? [];
-  let serverNames = body.serverNames;
-  if (environmentId) {
-    const convex = createConvexReadClient(convexAuthToken);
-    try {
-      environmentLaunch = await resolveEnvironmentForLaunch(convex, {
-        projectId,
-        environmentId,
-      });
-    } catch (error) {
-      throw translateEnvironmentResolveError(error);
-    }
-    serverIds = environmentServerIds(environmentLaunch);
-    serverNames = environmentServerNames(environmentLaunch);
-  } else if (serverIds.length === 0) {
-    // Omitted serverIds on a rerun (the schema guarantees suiteId here):
-    // connect the suite's saved server selection — the exact set the run
-    // snapshot will reference — instead of making the caller guess it.
-    const selection = await fetchSuiteRunServerSelection(
+  const { environmentId, environmentLaunch, serverIds, serverNames } =
+    await resolveLaunchServers({
       convexAuthToken,
-      body.suiteId!,
-      body.namedHostId,
-    );
-    serverIds = selection.serverIds;
-    serverNames = selection.serverNames;
-  }
+      projectId,
+      suiteId: body.suiteId,
+      requestedEnvironmentId: body.environmentId,
+      namedHostId: body.namedHostId,
+      requestedServerIds: body.serverIds ?? [],
+      requestedServerNames: body.serverNames,
+    });
 
   const slotKey = orgConcurrencyKey(c);
   if (!tryAcquireRunSlot(slotKey)) {
@@ -1998,111 +2622,41 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
   };
 
   try {
-    const { manager } = await createAuthorizedManager(
-      callerContextFromHono(c),
-      convexAuthToken,
+    const launched = await launchEvalRun({
+      callerContext: callerContextFromHono(c),
+      xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
       projectId,
+      convexAuthToken,
+      body,
+      suiteRerun,
+      environmentId,
+      environmentLaunch,
       serverIds,
-      WEB_CALL_TIMEOUT_MS,
-      undefined,
-      undefined,
-      {
-        serverNames,
-        // v1 eval API has no host-persona input — no enterprise policy to
-        // enforce; the issuer makes per-server XAA servers mint instead of
-        // failing with 'Missing XAA issuer'.
-        xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
-      },
-    );
-
-    let prepared: PreparedEvalRun;
-    try {
-      prepared = await prepareEvalRun(manager, {
-        ...body,
-        // Project the public `steps`-based inline tests onto the internal
-        // run-schema test shape the pipeline still consumes.
-        tests: body.tests.map(publicInlineTestToRunTest),
-        serverIds,
-        serverNames,
-        // The SELECTED id, which may have been auto-derived from a
-        // single-environment suite — not `body.environmentId`. Passing it makes
-        // the shared path pin the run to the revision resolved above
-        // (`expectedEnvironmentRevision`), instead of letting the backend
-        // re-select the same environment unpinned.
-        environmentId,
-        projectId,
-        suiteRerun,
-        convexAuthToken,
-        source: "api",
-        // Reuse this exact resolution (and its revision) rather than letting
-        // the shared path resolve again — the run must be pinned to the
-        // revision whose servers the manager just connected.
-        ...(environmentLaunch
-          ? { resolvedEnvironment: environmentLaunch }
-          : {}),
-      });
-    } catch (error) {
-      await manager.disconnectAllServers().catch(() => {});
-      throw error;
-    }
-
-    // Detach: the runner owns terminal run status (it finalizes a failed
-    // run itself, then rethrows). The catch is defense for errors thrown
-    // outside the runner's own try (provider construction, etc.) — it only
-    // finalizes when the run record is still non-terminal, so the runner's
-    // completedAt/notes are never restamped by a second terminal write.
-    void prepared
-      .execute()
-      .catch(async (error) => {
-        logger.error("[v1 evals] background eval run failed", error, {
-          runId: prepared.runId,
-          suiteId: prepared.suiteId,
-          projectId,
-        });
-        if (await isRunAlreadyTerminal(convexAuthToken, prepared.runId)) {
-          return;
-        }
-        await prepared.recorder
-          .finalize({
-            status: "failed",
-            notes:
-              error instanceof Error
-                ? error.message.slice(0, 500)
-                : String(error).slice(0, 500),
-          })
-          .catch(() => {});
-      })
-      .finally(() => {
-        releaseSlotOnce();
-        void manager.disconnectAllServers().catch(() => {});
-      });
+      serverNames,
+      onSettled: releaseSlotOnce,
+    });
 
     return v1Resource(
       c,
       {
-        runId: prepared.runId,
-        suiteId: prepared.suiteId,
-        status: "running",
-        caseUpsert: prepared.caseUpsert,
-        // The servers the run connects to — explicit or derived from the
-        // suite's saved selection — so callers that omitted serverIds can
-        // see what the run targets. Names are present when known (always,
-        // on the derived path).
-        servers: serverIds.map((serverId, index) => ({
-          id: serverId,
-          ...(serverNames?.[index] ? { name: serverNames[index] } : {}),
-        })),
-        // The environment this run is pinned to, at the revision whose servers
-        // were just connected. Echoed even when the caller omitted it, because
-        // a single-environment suite auto-selects — the caller would otherwise
-        // have no way to know an environment was applied. `null` on a legacy run.
-        environment: environmentLaunch
-          ? {
-              id: environmentLaunch.environmentRef.environmentId,
-              name: environmentLaunch.environmentRef.name,
-              revision: environmentLaunch.environmentRef.revision,
-            }
-          : null,
+        runId: launched.runId,
+        suiteId: launched.suiteId,
+        // The run's REAL status. A replay of a finished run reports what it
+        // finished as; only a launch reports `running`.
+        status: launched.status,
+        // Present so a caller can tell "I started this" from "this already
+        // existed and I got it back" without diffing run ids across retries.
+        ...(launched.deduped ? { deduped: true } : {}),
+        caseUpsert: launched.caseUpsert,
+        servers: launched.servers,
+        environment: launched.environment,
+        // Echoed as a LABEL, never as quota: a caller-supplied group id groups
+        // rows for display and does nothing else. Grouped-launch semantics —
+        // one org slot for a whole fan-out, validate-all-then-launch — live
+        // exclusively on POST /eval-run-groups, where the server mints the id
+        // itself. Honouring a client id here would let a caller claim group
+        // treatment for N independent single launches.
+        ...(body.runGroupId ? { runGroupId: body.runGroupId } : {}),
       },
       202,
     );
@@ -2110,6 +2664,388 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
     releaseSlotOnce();
     throw error;
   }
+});
+
+// ── POST /v1/projects/:projectId/eval-run-groups ─────────────────────
+//
+// Launch ONE run per target (attached environments, or attached named hosts)
+// under a single server-minted group id.
+//
+// THE ONLY SURFACE WITH GROUPED-LAUNCH QUOTA SEMANTICS. `POST /eval-runs`
+// accepts a `runGroupId` as a display label and gives it no quota treatment
+// whatsoever, because a caller-supplied id is a claim about intent and this
+// route is the only place the server can verify one: it mints the id, bounds
+// the fan-out, validates every target before launching any of them, and holds
+// exactly one concurrency slot for the whole group.
+const evalRunGroupTargetSchema = z.union([
+  z.object({ environmentId: z.string().min(1) }).strict(),
+  z.object({ namedHostId: z.string().min(1) }).strict(),
+]);
+
+// STRICT, and the body is read without the path params merged in so it can be.
+// The published spec says `additionalProperties: false` here; a non-strict
+// schema would make that a lie in the one direction that costs a caller
+// something — `refreshSnapshot` (valid on the single-run route, and a PERSISTED
+// suite mutation there) would be accepted, dropped, and reported as success,
+// leaving the caller believing a snapshot refreshed that never did.
+const createEvalRunGroupSchema = z.object({
+  suiteId: z.string().min(1),
+  targets: z
+    .array(evalRunGroupTargetSchema)
+    .min(1)
+    .max(MAX_RUN_GROUP_TARGETS),
+  iterationOverride: z.number().int().min(1).max(10).optional(),
+  caseIds: z.array(z.string().min(1)).min(1).optional(),
+  // Both vocabularies, same union and same normalization as the single-run
+  // route — a knob that works on one launch shape and not the other is a knob
+  // callers have to remember two rules for.
+  matchOptionsOverride: z
+    .union([publicMatchOptionsSchema, matchOptionsSchema])
+    .optional(),
+  skillsOverride: z.literal("exclude").optional(),
+  notes: z.string().optional(),
+  passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
+  idempotencyKey: z.string().min(1).max(256).optional(),
+})
+  // STRICT, like every other v1 write body: the published contract says an
+  // unknown key is invalid, and the two knobs this route deliberately omits
+  // (`serverIds`, `refreshSnapshot`) are exactly the ones a caller is most
+  // likely to try. Stripping them would answer 202 while silently discarding
+  // the knob the caller asked for.
+  .strict();
+
+/**
+ * Deterministic group id for a keyed launch.
+ *
+ * DERIVED from the caller's key rather than minted and then recorded: a
+ * recorded mapping has to survive the crash it exists to protect against, and
+ * a derivation cannot be lost. A replay after a crash mid-launch re-enters the
+ * loop with the SAME group id and the same per-target run keys, so every
+ * target that already started dedupes at the run level instead of launching a
+ * second paid run — and the rebuilt receipt names the original run ids.
+ *
+ * An UNKEYED launch gets a random id, which is the honest answer: a request
+ * with no replay identity has no replay semantics to offer.
+ */
+function deriveRunGroupId(
+  suiteId: string,
+  idempotencyKey: string | undefined,
+): string {
+  if (!idempotencyKey) return randomUUID();
+  return createHash("sha256")
+    .update(`eval-run-group:${suiteId}:${idempotencyKey}`)
+    .digest("hex")
+    .slice(0, 32);
+}
+
+evals.post("/projects/:projectId/eval-run-groups", async (c) => {
+  const projectId = c.req.param("projectId");
+  const headerIdempotencyKey = readIdempotencyKey(c);
+  // Read WITHOUT the path params merged in, so the strict schema above sees
+  // only the caller's fields and an unsupported knob is refused rather than
+  // silently dropped. `projectId` comes from the path either way — merging it
+  // in and destructuring it back out would only give `.strict()` two keys the
+  // caller never sent.
+  const body = parseWithSchema(createEvalRunGroupSchema, {
+    ...(await readJsonObjectBody(c)),
+    // Same precedence as the single-run route: the header is the
+    // transport-level channel unattended clients control, and a body key could
+    // be shaped by model output.
+    ...(headerIdempotencyKey ? { idempotencyKey: headerIdempotencyKey } : {}),
+  });
+
+  // ONE AXIS PER GROUP, mirroring the rule the web fan-out already follows.
+  // A mixed group would have to answer "does this host run inside that
+  // environment, or beside it?", and every answer to that is a cross product
+  // nobody asked for.
+  const environmentTargets = body.targets.filter(
+    (target): target is { environmentId: string } => "environmentId" in target,
+  );
+  const hostTargets = body.targets.filter(
+    (target): target is { namedHostId: string } => "namedHostId" in target,
+  );
+  if (environmentTargets.length > 0 && hostTargets.length > 0) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Targets must be all environments or all hosts, not a mix — a group fans out along ONE axis.",
+      { reason: "HETEROGENEOUS_TARGETS" },
+    );
+  }
+
+  const convexAuthToken = await getConvexBearerForRequest(c);
+  const suite = await readSuiteInProject(
+    convexAuthToken,
+    projectId,
+    body.suiteId,
+  );
+
+  // Deduplicate by resolved id, preserving the caller's order. Two entries for
+  // the same target are one target, not two paid runs.
+  const attachedEnvironmentIds = suiteEnvironmentIds(suite);
+  const attachedHosts: Array<{ id: string; name: string }> = Array.isArray(
+    suite.hostAttachments,
+  )
+    ? suite.hostAttachments.map((host: any) => ({
+        id: String(host.namedHostId),
+        name: String(host.hostName ?? ""),
+      }))
+    : [];
+
+  const seen = new Set<string>();
+  const targets: Array<{
+    environmentId?: string;
+    namedHostId?: string;
+    name?: string;
+  }> = [];
+  for (const target of body.targets) {
+    const id =
+      "environmentId" in target ? target.environmentId : target.namedHostId;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if ("environmentId" in target) {
+      // VALIDATE EVERY TARGET BEFORE LAUNCHING ANY: a group that starts target
+      // 1 and then rejects target 2 has already spent on a request that was
+      // never satisfiable, and there is no refund for a started run.
+      if (!attachedEnvironmentIds.includes(target.environmentId)) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `Environment ${target.environmentId} is not attached to this suite. Attached environments: ${await describeAttachedEnvironments(
+            convexAuthToken,
+            projectId,
+            attachedEnvironmentIds,
+          )}.`,
+          {
+            reason: "ENVIRONMENT_NOT_ATTACHED",
+            environmentId: target.environmentId,
+            environmentIds: attachedEnvironmentIds,
+          },
+        );
+      }
+      targets.push({ environmentId: target.environmentId });
+    } else {
+      const host = attachedHosts.find(
+        (candidate) => candidate.id === target.namedHostId,
+      );
+      if (!host) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          attachedHosts.length === 0
+            ? `Host ${target.namedHostId} is not attached to this suite, which has no hosts at all. Attach it first (PATCH the suite with hosts), then retry.`
+            : `Host ${target.namedHostId} is not attached to this suite. Attached hosts: ${attachedHosts
+                .map((candidate) => `"${candidate.name}" (${candidate.id})`)
+                .join(", ")}.`,
+          {
+            reason: "HOST_NOT_ATTACHED",
+            namedHostId: target.namedHostId,
+            hostIds: attachedHosts.map((candidate) => candidate.id),
+          },
+        );
+      }
+      targets.push({ namedHostId: host.id, name: host.name });
+    }
+  }
+
+  // DRY RUN, still before anything spends: resolve each target's servers and
+  // run the static admission checks that need no run row — most importantly
+  // the harness gate, so a suite pinned to a runtime this server cannot drive
+  // is refused as a whole instead of after its first sibling has started.
+  const resolved: Array<{
+    target: (typeof targets)[number];
+    servers: Awaited<ReturnType<typeof resolveLaunchServers>>;
+  }> = [];
+  for (const target of targets) {
+    const servers = await resolveLaunchServers({
+      convexAuthToken,
+      projectId,
+      suiteId: body.suiteId,
+      requestedEnvironmentId: target.environmentId,
+      namedHostId: target.namedHostId,
+      requestedServerIds: [],
+      requestedServerNames: undefined,
+    });
+    // The host config THIS target executes under. An environment pins its own
+    // host, so an environment target must be judged on that host's config —
+    // reading the suite's instead would gate the wrong thing in both
+    // directions: a harness-hosted environment would slip the dry run (and
+    // fail at prepare, after its siblings had already started, which is the
+    // exact sequencing this dry run exists to prevent), and a legacy suite
+    // config carrying a harness would refuse a group of environments that
+    // never referenced it.
+    const hostConfig = await loadSuiteHostConfig(
+      createConvexReadClient(convexAuthToken),
+      body.suiteId,
+      // `ResolvedEnvironmentForLaunch.hostId` is the same host the run row will
+      // freeze, so the dry run and the launch judge one configuration.
+      target.namedHostId ?? servers.environmentLaunch?.hostId,
+    );
+    const admission = checkEvalHarnessStaticAdmission({
+      hostConfig,
+      serverIds: servers.serverIds,
+    });
+    if (!admission.ok) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        `${describeRunGroupTarget(target)}: ${admission.reason}`,
+        { reason: "HARNESS_UNAVAILABLE", harness: admission.harness },
+      );
+    }
+    resolved.push({ target, servers });
+  }
+
+  const slotKey = orgConcurrencyKey(c);
+  const slot = tryAcquireRunGroupSlot(slotKey, resolved.length);
+  if (!slot) {
+    return v1Error(
+      c,
+      "RATE_LIMITED",
+      `Too many concurrent eval runs (max ${MAX_CONCURRENT_RUNS}). Wait for an active run to finish.`,
+      {
+        reason: "CONCURRENT_RUN_LIMIT",
+        maxConcurrentRuns: MAX_CONCURRENT_RUNS,
+      },
+    );
+  }
+
+  const runGroupId = deriveRunGroupId(body.suiteId, body.idempotencyKey);
+  const callerContext = callerContextFromHono(c);
+  const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
+  const matchOptionsOverride = normalizeRunMatchOptionsOverride(
+    body.matchOptionsOverride,
+  );
+
+  const entries: Array<Record<string, unknown>> = [];
+  let startedCount = 0;
+  let failedCount = 0;
+
+  for (const { target, servers } of resolved) {
+    const targetDto = {
+      ...(target.environmentId ? { environmentId: target.environmentId } : {}),
+      ...(target.namedHostId ? { namedHostId: target.namedHostId } : {}),
+      ...(target.name ? { name: target.name } : {}),
+    };
+    try {
+      const launched = await launchEvalRun({
+        callerContext,
+        xaaIssuer,
+        projectId,
+        convexAuthToken,
+        body: {
+          suiteId: body.suiteId,
+          tests: [],
+          runGroupId,
+          ...(body.iterationOverride !== undefined
+            ? { iterationOverride: body.iterationOverride }
+            : {}),
+          ...(body.caseIds ? { caseIds: body.caseIds } : {}),
+          ...(matchOptionsOverride ? { matchOptionsOverride } : {}),
+          ...(body.skillsOverride
+            ? { skillsOverride: body.skillsOverride }
+            : {}),
+          ...(body.notes !== undefined ? { notes: body.notes } : {}),
+          ...(body.passCriteria ? { passCriteria: body.passCriteria } : {}),
+          ...(target.namedHostId
+            ? { namedHostId: target.namedHostId }
+            : {}),
+          // PER-TARGET run key derived from the group key. This is what makes a
+          // replay after a crash mid-launch safe: each target dedupes at the
+          // RUN level against the run the first attempt created, instead of
+          // every sibling colliding on one key (which would return target 1's
+          // run for every target) or sharing none (which would double-launch).
+          ...(body.idempotencyKey
+            ? {
+                idempotencyKey: deriveItemIdempotencyKey(
+                  `eval-run-group:${runGroupId}`,
+                  target.environmentId ?? target.namedHostId ?? "",
+                ),
+              }
+            : {}),
+        },
+        // A group launches persisted suites only — there are no inline tests to
+        // upsert, so every target is a rerun.
+        suiteRerun: true,
+        environmentId: servers.environmentId,
+        environmentLaunch: servers.environmentLaunch,
+        serverIds: servers.serverIds,
+        serverNames: servers.serverNames,
+        onSettled: () => releaseRunGroupSlotRef(slot),
+      });
+      startedCount += 1;
+      entries.push({
+        target: targetDto,
+        status: "started",
+        runId: launched.runId,
+        // `runStatus`, not a second `status`: the entry's own `status` is the
+        // started/failed discriminant, and two fields with one name is how a
+        // reader ends up branching on the wrong one.
+        //
+        // The run's REAL status, so a target that replayed a finished run says
+        // so instead of claiming to be running.
+        runStatus: launched.status,
+        ...(launched.deduped ? { deduped: true } : {}),
+        servers: launched.servers,
+        environment: launched.environment,
+        caseUpsert: launched.caseUpsert,
+      });
+    } catch (error) {
+      // This target never reached background execution, so its `.finally`
+      // will never run — decrement HERE or the group's slot outlives it.
+      releaseRunGroupSlotRef(slot);
+      failedCount += 1;
+      const failure = describeLaunchFailure(error);
+      logger.warn("[v1 evals] eval run group target failed to launch", {
+        projectId,
+        suiteId: body.suiteId,
+        runGroupId,
+        target: targetDto,
+        error: failure.message,
+      });
+      entries.push({
+        target: targetDto,
+        status: "failed",
+        error: failure,
+      });
+    }
+  }
+
+  return v1Resource(
+    c,
+    {
+      runGroupId,
+      suiteId: body.suiteId,
+      // DISCRIMINATED, not an optional-field soup: a caller decides severity
+      // from one field instead of comparing counts and guessing.
+      outcome:
+        startedCount === 0
+          ? "failed"
+          : failedCount > 0
+            ? "partial"
+            : "started",
+      startedCount,
+      failedCount,
+      targets: entries,
+      // Deprecated mirrors of the FIRST started run, so scripts and readers
+      // written against the single-run receipt keep working. Absent when
+      // nothing started — there is no first run to mirror, and inventing one
+      // would be worse than the field being missing.
+      ...(entries.find((entry) => entry.status === "started")
+        ? (() => {
+            const first = entries.find((entry) => entry.status === "started")!;
+            return {
+              runId: first.runId,
+              status: first.runStatus,
+              servers: first.servers,
+              environment: first.environment,
+              caseUpsert: first.caseUpsert,
+            };
+          })()
+        : {}),
+    },
+    202,
+  );
 });
 
 // POST /v1/projects/:projectId/eval-suites
@@ -2233,6 +3169,10 @@ evals.get("/projects/:projectId/eval-runs/:runId", async (c) => {
   return v1Resource(c, {
     ...toRunDto(run!),
     ...(insights ? { insights } : {}),
+    // DETAIL only, like `insights` — a suite's run list stays compact. Always
+    // present, so a caller can read `judges.goalCompletion.status` without
+    // first proving the field exists; `null` there means never requested.
+    judges: toRunJudgesDto(run!),
   });
 });
 
@@ -2384,6 +3324,67 @@ evals.post("/projects/:projectId/eval-runs/:runId/insights", async (c) => {
     });
   } catch (error) {
     throw translateConvexError(error, { resource: "Eval run insights" });
+  }
+  return v1Resource(c, { runId, projectId, status: "pending" }, 202);
+});
+
+// POST /v1/projects/:projectId/eval-runs/:runId/judge
+// Request (or with force, re-request) LLM-as-judge grading of a finished run.
+// SPENDS the org's model budget; 202 receipt, then poll the run detail's
+// `judges.goalCompletion` rather than re-requesting. Same Convex mutation the
+// in-app "Run judge" button uses, so role/limit/billing checks are identical.
+evals.post("/projects/:projectId/eval-runs/:runId/judge", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let run: RunDoc | null;
+  try {
+    run = await convex.query("testSuites:getTestSuiteRun" as any, { runId });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+    }
+    throw error;
+  }
+  requireProjectMatch(run, projectId, "Eval run");
+
+  // Like the insights endpoint: this SPENDS, so the body is VALIDATED rather
+  // than coerced. A bodyless POST is the common case and stays valid; anything
+  // else must parse and typecheck, because `{"force":"false"}` is a truthy
+  // string and charging for a regeneration nobody asked for is the failure.
+  const raw = await c.req.text();
+  let body: unknown = {};
+  if (raw.length > 0) {
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Request body must be valid JSON.",
+      );
+    }
+  }
+  const parsed = parseWithSchema(requestRunJudgeSchema, body);
+
+  // The per-run override envelope. Sent ONLY when the caller asked for one:
+  // `requestGoalCompletion` clears any previously persisted override when the
+  // arg is absent, which is the semantic we want — re-grading without
+  // re-stating an override returns to suite-config grading on its own.
+  const override: Record<string, unknown> = {};
+  if (parsed.enable !== undefined) override.enabled = parsed.enable;
+  if (parsed.model !== undefined) override.judgeModel = parsed.model;
+  if (parsed.threshold !== undefined) override.threshold = parsed.threshold;
+
+  try {
+    await convex.mutation("goalCompletion:requestGoalCompletion" as any, {
+      suiteRunId: runId,
+      ...(parsed.force === true ? { force: true } : {}),
+      ...(Object.keys(override).length > 0 ? { runOverride: override } : {}),
+    });
+  } catch (error) {
+    throw translateConvexError(error, { resource: "Eval run judge" });
   }
   return v1Resource(c, { runId, projectId, status: "pending" }, 202);
 });
@@ -2659,7 +3660,25 @@ async function readSuiteDetail(
   } catch {
     execConfig = null;
   }
-  return toSuiteDetailDto(suite!, execConfig);
+  // The suite row stores the computer-image PIN as an id only. Resolve the
+  // name beside it so a caller can echo back what it set — that is what the
+  // picker shows and what a person recognizes. Best-effort: a failed lookup
+  // (a deleted image, a caller who can read the suite but not the image list)
+  // reports the id with a null name rather than failing the whole read.
+  let computerEnvironmentName: string | null = null;
+  const pinnedImageId = suite!.environment?.computerEnvironmentId;
+  if (pinnedImageId) {
+    try {
+      const image: any = await convex.query(
+        "computerEnvironments:getEnvironment" as any,
+        { environmentId: String(pinnedImageId) },
+      );
+      if (typeof image?.name === "string") computerEnvironmentName = image.name;
+    } catch {
+      computerEnvironmentName = null;
+    }
+  }
+  return toSuiteDetailDto(suite!, execConfig, { computerEnvironmentName });
 }
 
 /** Default execution models for a new case: the suite's configured model. */
@@ -2800,13 +3819,51 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   if (body.name !== undefined) updateArgs.name = body.name;
   if (body.description !== undefined) updateArgs.description = body.description;
   if (body.environment !== undefined) {
-    updateArgs.environment = { servers: body.environment.servers };
-    updateArgs.refreshHostConfigFromEnvironment = true;
+    // `updateTestSuite` REPLACES the environment envelope wholesale, so this
+    // has to be a merge over the suite's current one. Sending `{ servers }`
+    // alone — which is what this did — silently dropped the server bindings
+    // and the computer-image pin on any edit that touched servers. The suite
+    // settings sheet spreads the current environment for exactly this reason.
+    const current = suite!.environment ?? {};
+    const environment: Record<string, unknown> = {
+      servers: body.environment.servers ?? current.servers ?? [],
+      ...(current.serverBindings
+        ? { serverBindings: current.serverBindings }
+        : {}),
+    };
+    if (body.environment.computerEnvironment === undefined) {
+      // Untouched: carry the existing pin through the rebuild.
+      if (current.computerEnvironmentId) {
+        environment.computerEnvironmentId = current.computerEnvironmentId;
+      }
+    } else if (body.environment.computerEnvironment !== null) {
+      // Resolved BEFORE the write so an unknown image is a clean 404 rather
+      // than a rejected mutation with the rest of the PATCH already applied.
+      const image = await resolveComputerEnvironment(
+        readClient,
+        projectId,
+        body.environment.computerEnvironment,
+      );
+      environment.computerEnvironmentId = image.id;
+    }
+    // `null` falls through with the key absent, which is how the platform
+    // spells "no pin" — the environment validator has no null for it.
+    updateArgs.environment = environment;
+    // Only a server-list change needs the host config refreshed; a pin edit
+    // does not touch which servers a host sees.
+    if (body.environment.servers !== undefined) {
+      updateArgs.refreshHostConfigFromEnvironment = true;
+    }
   }
   if (body.settings) {
     const s = body.settings;
     if (s.minimumAccuracy !== undefined)
       updateArgs.defaultPassCriteria = { minimumPassRate: s.minimumAccuracy };
+    // Forwarded verbatim, `null` INCLUDED: the platform reads null as "clear"
+    // and `undefined` as "leave alone", so collapsing null to undefined here
+    // would turn every attempt to remove the floor into a silent no-op.
+    if (s.minimumIterations !== undefined)
+      updateArgs.minIterations = s.minimumIterations;
     // PATCH is merge semantics: updateTestSuite replaces these objects
     // wholesale, so a partial public field (e.g. only matchOptions.arguments,
     // or only judge.model) must be layered onto the suite's CURRENT values —
@@ -2826,6 +3883,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         goalCompletion.enabled = s.judge.enabled;
       if (s.judge.model !== undefined)
         goalCompletion.judgeModel = s.judge.model;
+      if (s.judge.autoRun !== undefined)
+        goalCompletion.autoRun = s.judge.autoRun;
+      if (s.judge.threshold !== undefined)
+        goalCompletion.threshold = s.judge.threshold;
       updateArgs.judgeConfig = { goalCompletion };
     }
   }
@@ -2918,6 +3979,70 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
 
   return v1Resource(c, await readSuiteDetail(token, projectId, suiteId));
 });
+
+// POST /v1/projects/:projectId/eval-suites/:suiteId/environments
+//
+// APPEND one environment to the suite's attachments, if it is not already
+// there.
+//
+// Distinct from `PATCH /eval-suites/{id}` with `environmentIds`, which REPLACES
+// the whole list. An append built on the replace door is a read-modify-write
+// across two round trips, and a concurrent attach landing in between is
+// silently DETACHED. The compose-and-run path attaches on every launch, which
+// makes that race ordinary rather than theoretical, so the append happens
+// inside one backend transaction instead.
+//
+// Idempotent: attaching an already-attached environment reports
+// `attached: false` and changes nothing, which is what lets a retried launch
+// converge instead of erroring.
+evals.post(
+  "/projects/:projectId/eval-suites/:suiteId/environments",
+  async (c) => {
+    const projectId = c.req.param("projectId");
+    const suiteId = c.req.param("suiteId");
+    // Strict over the caller's own body (no synthesized path params), matching
+    // the `additionalProperties: false` the spec publishes for it.
+    const body = parseWithSchema(
+      z.object({ environmentId: z.string().min(1) }).strict(),
+      await readJsonObjectBody(c)
+    );
+    const token = await getConvexBearerForRequest(c);
+    // Scope check first: Convex enforces membership, and this makes a valid id
+    // from another of the caller's projects read as NOT_FOUND rather than
+    // leaking across the scope the path declares.
+    await readSuiteInProject(token, projectId, suiteId);
+
+    const { convexClient } = createConvexClients(token);
+    let result: { attached?: boolean; environmentIds?: unknown };
+    try {
+      result = (await convexClient.mutation(
+        "testSuites:attachEnvironment" as any,
+        { suiteId, environmentId: body.environmentId }
+      )) as { attached?: boolean; environmentIds?: unknown };
+    } catch (error) {
+      // Deploy skew: a backend without the atomic append. Named explicitly
+      // rather than surfaced as a 500, because the caller has a real (if
+      // racier) alternative in the replace door.
+      const message = error instanceof Error ? error.message : String(error);
+      if (/could not find public function/i.test(message)) {
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          "This deployment cannot append a suite environment atomically yet. Set the full environment list instead (PATCH the suite with environmentIds).",
+          { reason: "ATTACH_UNAVAILABLE" }
+        );
+      }
+      throw translateConvexError(error, { resource: "Eval suite" });
+    }
+    return v1Resource(c, {
+      suiteId,
+      attached: result.attached === true,
+      environmentIds: Array.isArray(result.environmentIds)
+        ? result.environmentIds.map(String)
+        : [],
+    });
+  }
+);
 
 // DELETE /v1/projects/:projectId/eval-suites/:suiteId
 evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
@@ -3383,7 +4508,17 @@ evals.post(
     // retry (a proposal reclaim, a redelivered click) replays the recorded
     // drafts instead of spending credits again — and each case is persisted
     // under a derived per-item key, so the persistence loop is resumable.
-    const idempotencyKey = readIdempotencyKey(c);
+    // The HEADER wins over any body value. Both are caller-supplied, but the
+    // header is the transport-level channel unattended clients use, and it is
+    // the one the agent adapter controls — a body key could otherwise be
+    // shaped by model output.
+    //
+    // `readAnyIdempotencyKey` and not `readIdempotencyKey`: the SDK client
+    // puts `options.idempotencyKey` on a bare `idempotency-key` header, so
+    // reading only the prefixed spelling would ignore an SDK caller's key and
+    // re-spend on the retry while the caller watched a key go out. This route
+    // is the one with the most to lose from that.
+    const idempotencyKey = readAnyIdempotencyKey(c) ?? body.idempotencyKey;
 
     // Project-scope guard.
     const readClient = createConvexReadClient(token);
