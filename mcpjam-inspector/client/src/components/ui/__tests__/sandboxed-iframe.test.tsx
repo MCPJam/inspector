@@ -320,6 +320,46 @@ describe("SandboxedIframe — resource-ready delivery", () => {
       expect(postMessageSpy).toHaveBeenCalledTimes(2);
     });
   });
+
+  it("forwards subtype policy and resends when its semantic value changes", async () => {
+    const renderIframe = (fetch: boolean) => (
+      <SandboxedIframe
+        html="<html><body>widget</body></html>"
+        cspSubtypePolicy={{
+          cspConnectDomains: { fetch, xhr: false },
+        }}
+        onMessage={() => {}}
+      />
+    );
+    const { container, rerender } = render(renderIframe(false));
+    const iframe = container.querySelector("iframe") as HTMLIFrameElement;
+    const postMessageSpy = vi.spyOn(iframe.contentWindow!, "postMessage");
+
+    act(() => {
+      dispatchFromIframe(iframe, {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-proxy-ready",
+      });
+    });
+    await vi.waitFor(() => expect(postMessageSpy).toHaveBeenCalledTimes(1));
+    expect(postMessageSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          cspSubtypePolicy: {
+            cspConnectDomains: { fetch: false, xhr: false },
+          },
+        }),
+      }),
+      expect.any(String)
+    );
+
+    rerender(renderIframe(false));
+    await act(async () => Promise.resolve());
+    expect(postMessageSpy).toHaveBeenCalledTimes(1);
+
+    rerender(renderIframe(true));
+    await vi.waitFor(() => expect(postMessageSpy).toHaveBeenCalledTimes(2));
+  });
 });
 
 describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
