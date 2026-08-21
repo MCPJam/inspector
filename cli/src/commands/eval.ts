@@ -121,6 +121,7 @@ import {
 } from "../lib/reporting.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
+  addProjectOption,
   platformOptionsOf,
   runPlatformOperation as runPlatformCommand,
   runCloudOp,
@@ -1918,13 +1919,14 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+      addProjectOption(
       evals
       .command("status")
       .description("Get the status and summary of an eval run")
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption("--project <id-or-name>", "Project name or ID").action(
+      ).action(
     async (
-      options: PlatformOptions & { project: string; run: string },
+      options: PlatformOptions & { project?: string; run: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
@@ -1936,9 +1938,18 @@ export function registerEvalCommands(program: Command): void {
         (context) => {
           webOrigin = context.webOrigin;
           return getEvalRunOperation.execute(
-            { project: resolved.project ?? options.project, runId: options.run },
+            {
+              runId: options.run,
+              ...(resolved.project === undefined
+                ? {}
+                : { project: resolved.project }),
+            } as { project: string; runId: string },
             { client: context.client, signal: context.signal }
           );
+        },
+        {
+          projectScope: resolved.projectScope,
+          quiet: globalOptions.quiet,
         }
       );
       writeResult(result, globalOptions.format);
@@ -1951,33 +1962,38 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+      addProjectOption(
       evals
       .command("cancel")
       .description(
         "Cancel an in-flight eval run (no-op if already cancelled; errors if it already finished)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption("--project <id-or-name>", "Project name or ID").action(
+      ).action(
     async (
-      options: PlatformOptions & { project: string; run: string },
+      options: PlatformOptions & { project?: string; run: string },
       command
     ) => {
       await executeOp(
         cancelEvalRunOperation,
-        { project: options.project, runId: options.run },
+        {
+          runId: options.run,
+          ...(options.project === undefined ? {} : { project: options.project }),
+        } as { project: string; runId: string },
         options,
         command
       );
     }
   );
 
+      addProjectOption(
       evals
       .command("judge")
       .description(
         "Grade a finished eval run with LLM as Judge (SPENDS your model budget)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
+      )
       .option("--force", "Re-grade a run that already has a judge result")
       .option(
         "--enable",
@@ -1987,7 +2003,7 @@ export function registerEvalCommands(program: Command): void {
       .option("--judge-threshold <0-1>", "Pass threshold for this run only").action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         force?: boolean;
         enable?: boolean;
@@ -2000,17 +2016,21 @@ export function registerEvalCommands(program: Command): void {
         options.judgeThreshold !== undefined
           ? parseJudgeThreshold(options.judgeThreshold)
           : undefined;
-      const input = validateOpInput(requestEvalRunJudgeOperation, {
-        project: options.project,
-        runId: options.run,
-        ...(options.force ? { force: true } : {}),
-        ...(options.enable ? { enable: true } : {}),
-        ...(options.judgeModel !== undefined
-          ? { model: options.judgeModel }
-          : {}),
-        ...(threshold !== undefined ? { threshold } : {}),
-      });
-      await executeOp(requestEvalRunJudgeOperation, input, options, command);
+      await executeOp(
+        requestEvalRunJudgeOperation,
+        {
+          runId: options.run,
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(options.force ? { force: true } : {}),
+          ...(options.enable ? { enable: true } : {}),
+          ...(options.judgeModel !== undefined
+            ? { model: options.judgeModel }
+            : {}),
+          ...(threshold !== undefined ? { threshold } : {}),
+        } as Parameters<typeof requestEvalRunJudgeOperation.execute>[0],
+        options,
+        command
+      );
     }
   );
 
