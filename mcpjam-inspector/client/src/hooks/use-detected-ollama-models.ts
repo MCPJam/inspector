@@ -46,7 +46,7 @@ export function useDetectedOllamaModels(getOllamaBaseUrl: () => string): {
     let timeoutId: number | undefined;
     let inFlight = false;
     let consecutiveFailures = 0;
-    let nextDueAt = performance.now();
+    let nextDueAt = Date.now();
 
     const nextDelayMs = () =>
       consecutiveFailures === 0
@@ -68,7 +68,7 @@ export function useDetectedOllamaModels(getOllamaBaseUrl: () => string): {
       timeoutId = window.setTimeout(() => {
         timeoutId = undefined;
         void checkOllama();
-      }, Math.max(0, nextDueAt - performance.now()));
+      }, Math.max(0, nextDueAt - Date.now()));
     };
 
     const disarm = () => {
@@ -80,11 +80,13 @@ export function useDetectedOllamaModels(getOllamaBaseUrl: () => string): {
     const checkOllama = async () => {
       if (inFlight) return;
       inFlight = true;
+      let daemonAnswered = false;
       try {
         const { isRunning, availableModels } = await detectOllamaModels(
           getOllamaBaseUrl()
         );
         if (cancelled) return;
+        daemonAnswered = isRunning;
         setIsOllamaRunning(isRunning);
 
         consecutiveFailures = isRunning ? 0 : consecutiveFailures + 1;
@@ -108,14 +110,14 @@ export function useDetectedOllamaModels(getOllamaBaseUrl: () => string): {
       } catch (error) {
         if (!cancelled) {
           console.error("Ollama detection probe threw", error);
-          setIsOllamaRunning(false);
+          setIsOllamaRunning(daemonAnswered);
           setOllamaModels([]);
           consecutiveFailures += 1;
         }
       } finally {
         inFlight = false;
         if (!cancelled) {
-          nextDueAt = performance.now() + nextDelayMs();
+          nextDueAt = Date.now() + nextDelayMs();
           arm();
         }
       }

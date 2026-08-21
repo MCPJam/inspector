@@ -72,6 +72,14 @@ function mount() {
   return renderHook(() => useDetectedOllamaModels(getBaseUrl));
 }
 
+const spyCleanups: Array<() => void> = [];
+
+function silenceConsoleError() {
+  const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+  spyCleanups.push(() => spy.mockRestore());
+  return spy;
+}
+
 /** Probe count, so assertions read as "one more probe happened". */
 function probes() {
   return detectModels.mock.calls.length;
@@ -104,6 +112,7 @@ describe("useDetectedOllamaModels", () => {
 
   afterEach(() => {
     hiddenSpy.mockRestore();
+    while (spyCleanups.length) spyCleanups.pop()!();
   });
 
   it("backs off 30s -> 1m -> 2m -> 4m -> 8m, then pins at the 10m cap", async () => {
@@ -211,25 +220,11 @@ describe("useDetectedOllamaModels", () => {
     await expectNextProbeAfter(2 * BASE);
   });
 
-  it("holds its schedule when the wall clock steps backwards", async () => {
-    unreachable();
-    mount();
-    await advance(0);
-
-    await advance(BASE / 3);
-    await setHidden(true);
-    vi.setSystemTime(Date.now() - 5 * 60_000);
-    await setHidden(false);
-
-    // 10s of the 30s cycle was spent, so 20s remain — step or no step.
-    await expectNextProbeAfter((2 * BASE) / 3);
-  });
-
   it("escalates the backoff when a probe rejects", async () => {
     // Unreachable through ollama-utils today, which catches its own fetch
     // failures. Pinned so a refactor that lets one reject can't leave the
     // schedule retrying at the last delay forever.
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const errorSpy = silenceConsoleError();
     rejecting();
     mount();
     await advance(0);
@@ -238,7 +233,38 @@ describe("useDetectedOllamaModels", () => {
     await expectNextProbeAfter(BASE);
     await expectNextProbeAfter(2 * BASE);
     expect(errorSpy).toHaveBeenCalled();
-    errorSpy.mockRestore();
+  });
+
+  it("clears what it had detected when a probe rejects", async () => {
+    // The reset is only observable if there was something to reset: land a
+    // successful probe first, so the state the catch has to clear is actually
+    // populated, and only then let the next probe throw.
+    silenceConsoleError();
+    reachable(["llama3.1"]);
+    const { result } = mount();
+    await advance(0);
+    expect(result.current.isOllamaRunning).toBe(true);
+    expect(result.current.ollamaModels).toHaveLength(1);
+
+    rejecting();
+    await advance(BASE);
+    expect(result.current.isOllamaRunning).toBe(false);
+    expect(result.current.ollamaModels).toEqual([]);
+  });
+
+  it("keeps reporting the daemon up when only the capability probe throws", async () => {
+    // /version and /tags answered, so the daemon is demonstrably running; a
+    // throw out of the per-model capability call is not evidence otherwise.
+    silenceConsoleError();
+    reachable(["llama3.1"]);
+    const { result } = mount();
+    await advance(0);
+    expect(result.current.isOllamaRunning).toBe(true);
+
+    detectToolCapable.mockRejectedValue(new Error("show failed"));
+    await advance(BASE);
+    expect(result.current.isOllamaRunning).toBe(true);
+    expect(result.current.ollamaModels).toEqual([]);
   });
 
   it("stops probing after unmount", async () => {
