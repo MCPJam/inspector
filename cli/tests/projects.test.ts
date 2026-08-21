@@ -610,6 +610,11 @@ test("projects status renders a human summary", async () => {
 async function startConnectionFixture(options: {
   created: Record<string, unknown>;
   statuses?: Array<Record<string, unknown>>;
+  /** The account `/me` reports, or `null` to make the lookup fail. The connect
+   * command names it beside the handoff link, because a link is bound to the
+   * account that made it and the browser opening it may be signed into another
+   * one. */
+  me?: { email: string } | null;
 }): Promise<{
   baseUrl: string;
   createBodies: unknown[];
@@ -630,6 +635,19 @@ async function startConnectionFixture(options: {
     // anything, so the connection fixture has to be able to answer that too.
     if (url.pathname === "/api/v1/projects") {
       res.end(JSON.stringify({ items: PROJECTS }));
+      return;
+    }
+    if (url.pathname === "/api/v1/me") {
+      if (options.me === null) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ code: "INTERNAL_ERROR", message: "nope" }));
+        return;
+      }
+      res.end(
+        JSON.stringify(
+          options.me ?? { id: "u_1", email: "cli@mcpjam.test", name: "CLI" },
+        ),
+      );
       return;
     }
     if (url.pathname === "/api/v1/server-connections" && req.method === "POST") {
@@ -733,6 +751,87 @@ test("server connect prints the authorization link even with --no-browser", asyn
     assert.match(run.stderr, /connect\/server\/tok/);
     // `--no-wait` hands back a request id, so it must also say how to follow it.
     assert.match(run.stderr, /connect-status --request scr_1/);
+    assert.equal(run.result.exitCode, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("server connect names the account and deployment the link belongs to", async () => {
+  const fixture = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "awaiting_authorization",
+      handoffUrl: "https://app.mcpjam.test/connect/server/tok",
+    },
+    me: { email: "marcelo@mcpjam.test" },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "server",
+            "connect",
+            "--url",
+            "https://example.com/mcp",
+          ),
+          "--no-browser",
+          "--no-wait",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    // The link is refused unless the BROWSER is signed into this same account,
+    // and nothing used to say which one that was. An agent relaying the link to
+    // a person could not see either side of the mismatch.
+    assert.match(run.stderr, /marcelo@mcpjam\.test/);
+    // And which deployment: this CLI can be pointed at prod, staging, or a
+    // local server, and a link only works on the one that minted it.
+    assert.match(run.stderr, /127\.0\.0\.1:/);
+    assert.equal(run.result.exitCode, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("server connect still prints the link when the account lookup fails", async () => {
+  const fixture = await startConnectionFixture({
+    created: {
+      connectionRequestId: "scr_1",
+      status: "awaiting_authorization",
+      handoffUrl: "https://app.mcpjam.test/connect/server/tok",
+    },
+    me: null,
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...projectsArgv(
+            fixture.baseUrl,
+            "server",
+            "connect",
+            "--url",
+            "https://example.com/mcp",
+          ),
+          "--no-browser",
+          "--no-wait",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    // The connection request already succeeded. Failing the command because a
+    // decorative lookup failed would trade a working result for none.
+    assert.match(run.stderr, /connect\/server\/tok/);
+    assert.match(run.stderr, /mcpjam whoami/);
     assert.equal(run.result.exitCode, 0);
   } finally {
     await fixture.close();

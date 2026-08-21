@@ -12,7 +12,7 @@ import {
 // helpers in the SDK.
 import { extractMethod, LoggingTransport } from "@mcpjam/sdk/widget-runtime";
 // The `CspMode` type comes from the package's `WidgetHost` contract.
-import { type CspMode } from "./widget-host";
+import { type CspMode, type CspSubtypePolicy } from "./widget-host";
 // The package owns lifecycle + bridge; the inspector injects modal CHROME
 // (its design-system <Dialog>) + the widget-content fetch via the WidgetHost.
 import { useWidgetHost } from "./widget-host-context";
@@ -53,6 +53,7 @@ export interface McpAppsModalProps {
   widgetSandboxAttrs: string[] | undefined;
   widgetAllowFeatures: Record<string, string> | undefined;
   widgetCspDirectives: Record<string, string[]> | undefined;
+  widgetCspSubtypePolicy: CspSubtypePolicy | undefined;
   hostContextRef: React.RefObject<McpUiHostContext | null>;
   serverId: string;
   resourceUri: string;
@@ -124,6 +125,7 @@ export function McpAppsModal({
   widgetSandboxAttrs,
   widgetAllowFeatures,
   widgetCspDirectives,
+  widgetCspSubtypePolicy,
   hostContextRef,
   serverId,
   resourceUri,
@@ -156,8 +158,8 @@ export function McpAppsModal({
     hostContextRef.current?.theme === "dark"
       ? hostContextRef.current.theme
       : themeModeRef.current === "light" || themeModeRef.current === "dark"
-        ? themeModeRef.current
-        : undefined;
+      ? themeModeRef.current
+      : undefined;
 
   // Fetch modal HTML when modal opens
   useEffect(() => {
@@ -242,7 +244,7 @@ export function McpAppsModal({
           permissions: widgetPermissions,
         },
       },
-      { hostContext: hostContextRef.current ?? {} },
+      { hostContext: hostContextRef.current ?? {} }
     );
 
     // Reuse the same handlers as the inline bridge
@@ -289,7 +291,7 @@ export function McpAppsModal({
         // identical but nominally distinct CallToolResult; cast to exactly what
         // the bridge accepts at this Apps-compat seam (§1D).
         bridge.sendToolResult(
-          toolOutputRef.current as Parameters<typeof bridge.sendToolResult>[0],
+          toolOutputRef.current as Parameters<typeof bridge.sendToolResult>[0]
         );
       }
 
@@ -344,8 +346,7 @@ export function McpAppsModal({
           if (correlatedMethod && response.id !== undefined) {
             pendingRpcMethods.delete(response.id);
           }
-          const method =
-            correlatedMethod ?? extractMethod(message, "mcp-apps");
+          const method = correlatedMethod ?? extractMethod(message, "mcp-apps");
           // SEP-1865 App-Provided Tools: re-list when the modal app
           // signals a tools-list change. Mirrors the inline renderer's
           // `onReceive` hook so a `tool.update()` / `enable()` /
@@ -372,7 +373,7 @@ export function McpAppsModal({
             message,
           });
         },
-      },
+      }
     );
 
     let isActive = true;
@@ -441,6 +442,7 @@ export function McpAppsModal({
             sandboxAttrs={widgetSandboxAttrs}
             allowFeatures={widgetAllowFeatures}
             cspDirectives={widgetCspDirectives}
+            cspSubtypePolicy={widgetCspSubtypePolicy}
             colorScheme={modalColorScheme}
             onMessage={handleModalMessage}
             title={`MCP App Modal: ${title}`}
