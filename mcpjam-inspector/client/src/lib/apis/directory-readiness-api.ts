@@ -1,35 +1,44 @@
 /**
  * The /conformance page's two ways to grade a server against a directory.
  *
- * ## Why this is not in `mcp-conformance-api.ts`
+ * ## The hosted half is the SDK's client, not a copy of it
  *
- * Every suite beside it is one request that returns a verdict. Readiness is
- * two different shapes wearing one name:
+ * `PlatformApiClient` already speaks every one of these endpoints, with typed
+ * parameters, URL encoding, a timeout, and — for the starts — a field-by-field
+ * body build that exists because the routes are `strictObject` and an unknown
+ * key is a 400 rather than an ignored extra. This module previously
+ * hand-rolled all of that, including a second copy of that last rule, written
+ * from the same reasoning without knowing the first existed. Two
+ * implementations of one wire contract drift; the one nobody is looking at
+ * drifts first.
  *
- *   LOCAL   — a synchronous call that grades and answers inline. Free, no run
- *             row, no persistence, and structurally unable to spend: the route
- *             has no observations flag at all.
- *   HOSTED  — `202` with a receipt, then polling, then a separate report
- *             fetch, with a cancel that stops traffic to somebody else's
- *             server. It runs on `/api/v1` rather than `/api/web`, because
- *             that is where the durable run lifecycle lives.
+ * It is safe to use here: `sdk/src/platform` is CI-guarded against `node:`
+ * imports and `process.env` on both source and dist, precisely so it can run
+ * in a browser and a Worker as well as in Node.
  *
- * `runByMode` cannot express that: its two branches are supposed to be the
- * same operation against different backends, and here one returns a result
- * while the other returns a receipt. So the mode fork is explicit, and the
- * hook above normalizes the two into one state machine.
+ * ## Why the transport is wrapped
  *
- * ## Why `authFetch` and not `webPost`
+ * The client sets its own `authorization` header from `getAuth`. `authFetch`
+ * treats a caller-provided Authorization as "this caller owns its auth" and
+ * skips BOTH its own header and its refresh-and-retry on 401 — so passing the
+ * client straight through would quietly cost the session self-healing that
+ * every other hosted call in this app has. Stripping the header on the way
+ * out hands ownership back to `authFetch`, which is the component that knows
+ * how to renew it.
  *
- * `webPost` speaks the `/api/web` envelope and ingests hosted RPC logs into
- * the traffic-log store. The v1 envelope is a different contract, so the
- * calls here go through `authFetch` directly. The visible cost is that
- * readiness traffic does NOT appear in the traffic log where the other suites'
- * does — a real gap, accepted rather than papered over, because faking the web
- * envelope to get log ingestion would make readiness lie about which API it
- * used.
+ * ## The local half is a different shape and stays hand-written
+ *
+ * Local runs are synchronous, free, unpersisted, and structurally unable to
+ * spend — the route has no observations flag at all. That is one `localPost`,
+ * not a lifecycle, and there is no platform client for `/api/mcp`.
  */
 
+import { PlatformApiClient } from "@mcpjam/sdk/platform";
+import type {
+  PlatformReadinessRun,
+  PlatformReadinessRunReceipt,
+  PlatformReadinessSubmissionMode,
+} from "@mcpjam/sdk/platform";
 import type {
   ClaudeReadinessResult,
   OpenAIReadinessResult,
@@ -49,85 +58,25 @@ export type DirectoryReadinessResult =
   | ClaudeReadinessResult
   | OpenAIReadinessResult;
 
+/** The run row and receipt, named by the contract that produces them. */
+export type ReadinessRun = PlatformReadinessRun;
+export type ReadinessRunReceipt = PlatformReadinessRunReceipt;
+export type ReadinessRunStatus = PlatformReadinessRun["status"];
+export type HostedSubmissionMode = PlatformReadinessSubmissionMode;
+
 /**
  * The submission shapes a HOSTED run can grade.
  *
- * Two of OpenAI's four carry a package, and there is no upload for it — those
+ * Two of OpenAI's four carry a package and there is no upload for it, so those
  * only ever run on the CLI. Offering them here and failing at the API would
  * teach a submitter that readiness is broken rather than that they are on the
- * wrong surface.
+ * wrong surface. Typed against the platform union so a fifth mode cannot
+ * appear here without this list being reconsidered.
  */
 export const HOSTED_SUBMISSION_MODES = [
   "mcp-only",
   "mcp-imported-skills",
-] as const satisfies readonly OpenAISubmissionMode[];
-
-export type HostedSubmissionMode = (typeof HOSTED_SUBMISSION_MODES)[number];
-
-export type ReadinessRunStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled";
-
-/** The three axes, exactly as the row carries them. */
-export interface ReadinessRun {
-  id: string;
-  readinessKind: DirectoryReadinessPublisher;
-  serverId: string | null;
-  serverUrl: string;
-  submissionMode: OpenAISubmissionMode | null;
-  /** Whether the RUN finished. Not whether it graded well. */
-  status: ReadinessRunStatus;
-  /** The GRADE. `completed` + `not-ready` is a finished run that failed. */
-  overallStatus: "ready" | "not-ready" | "incomplete" | null;
-  lanes: Array<{
-    lane: string;
-    status: "ready" | "not-ready" | "incomplete";
-    evaluated: number;
-    notEvaluated: number;
-    notApplicable: number;
-    missingInputs: string[];
-  }>;
-  stages: Array<{
-    stage: string;
-    status: "ready" | "not-ready" | "incomplete";
-    lanes: string[];
-  }>;
-  attemptCount: number;
-  terminalReason: string | null;
-  errorMessage: string | null;
-  policySnapshotDate: string | null;
-  engineVersion: string | null;
-  includeLlmObservations: boolean;
-  /** Independent of `status`: a refused observation still completes the run. */
-  llmObservations: {
-    status:
-      | "not-requested"
-      | "pending"
-      | "completed"
-      | "billing-blocked"
-      | "provider-failed"
-      | "invalid-output";
-    reason?: string;
-    detail?: string;
-  };
-  hasReport: boolean;
-  createdAt: number;
-  updatedAt: number;
-}
-
-export interface ReadinessRunReceipt {
-  runId: string;
-  projectId: string;
-  serverId: string;
-  readinessKind: DirectoryReadinessPublisher;
-  status: ReadinessRunStatus;
-  /** True when an idempotency replay returned a run that already existed. */
-  deduped: boolean;
-  includeLlmObservations: boolean;
-}
+] as const satisfies readonly HostedSubmissionMode[];
 
 /** Terminal states: nothing about this run will change again. */
 export function isTerminalRunStatus(status: ReadinessRunStatus): boolean {
@@ -141,25 +90,30 @@ export function canRunHostedReadiness(serverNameOrId: string): boolean {
   return tryResolveProjectServer(serverNameOrId) !== null;
 }
 
-async function v1Json<T>(
-  path: string,
-  init?: RequestInit & { signal?: AbortSignal },
-): Promise<T> {
-  const response = await authFetch(path, {
+/**
+ * `authFetch`, with the client's own Authorization removed.
+ *
+ * See the module header: leaving it in place makes `authFetch` treat this as a
+ * caller that owns its credentials, and the 401 refresh-and-retry is exactly
+ * what a long poll against a session that expires mid-run needs.
+ */
+const readinessFetch: typeof fetch = (input, init) => {
+  const headers = new Headers(init?.headers);
+  headers.delete("authorization");
+  return authFetch(input as Parameters<typeof authFetch>[0], {
     ...init,
-    headers: { "content-type": "application/json", ...(init?.headers ?? {}) },
+    headers,
   });
-  const text = await response.text();
-  const parsed = text ? (JSON.parse(text) as unknown) : null;
-  if (!response.ok) {
-    // The v1 envelope reports `{error: {code, message}}`; anything else is a
-    // proxy or a network edge, and the status is the only honest thing to say.
-    const message =
-      (parsed as { error?: { message?: string } } | null)?.error?.message ??
-      `Request failed (${response.status})`;
-    throw new Error(message);
-  }
-  return parsed as T;
+};
+
+function client(): PlatformApiClient {
+  return new PlatformApiClient({
+    baseUrl: "/api/v1",
+    // Empty on purpose — `readinessFetch` strips it and `authFetch` supplies
+    // the real one, so the bearer has exactly one owner.
+    getAuth: () => "",
+    fetch: readinessFetch,
+  });
 }
 
 // ── Local: synchronous, free, no run row ────────────────────────────────
@@ -190,43 +144,40 @@ export async function startHostedReadiness(
 ): Promise<ReadinessRunReceipt> {
   const projectId = getHostedProjectId();
   const serverId = resolveHostedServerId(serverNameOrId);
+  const shared = {
+    projectId,
+    serverId,
+    ...(options.idempotencyKey
+      ? { idempotencyKey: options.idempotencyKey }
+      : {}),
+    ...(options.includeLlmObservations === true
+      ? { includeLlmObservations: true }
+      : {}),
+  };
 
-  // FIELDS PICKED, NEVER SPREAD. The start schema is a `strictObject`, so an
-  // unknown key is a 400 rather than an ignored extra — and a rejected start
-  // never reaches its idempotency key, so the retry would dedupe against
-  // nothing and start a second run against somebody's server.
-  const body: Record<string, unknown> = {};
-  if (options.idempotencyKey) body.idempotencyKey = options.idempotencyKey;
-  if (options.includeLlmObservations === true) {
-    body.includeLlmObservations = true;
-  }
   if (publisher === "openai") {
     if (!options.submissionMode) {
+      // Never inferred: a guessed mode reports the package lane
+      // `not-applicable`, which turns a missing input into a clean bill.
       throw new Error(
         "An OpenAI readiness run needs a declared submission mode.",
       );
     }
-    body.submissionMode = options.submissionMode;
+    return client().startOpenAIReadinessRun({
+      ...shared,
+      submissionMode: options.submissionMode,
+    });
   }
-
-  return v1Json<ReadinessRunReceipt>(
-    `/api/v1/projects/${encodeURIComponent(
-      projectId,
-    )}/servers/${encodeURIComponent(serverId)}/readiness-runs/${publisher}`,
-    { method: "POST", body: JSON.stringify(body) },
-  );
+  return client().startClaudeReadinessRun(shared);
 }
 
 export async function getHostedReadinessRun(
   runId: string,
   signal?: AbortSignal,
 ): Promise<ReadinessRun> {
-  const projectId = getHostedProjectId();
-  return v1Json<ReadinessRun>(
-    `/api/v1/projects/${encodeURIComponent(
-      projectId,
-    )}/readiness-runs/${encodeURIComponent(runId)}`,
-    { method: "GET", signal },
+  return client().getReadinessRun(
+    { projectId: getHostedProjectId(), runId },
+    { signal },
   );
 }
 
@@ -235,7 +186,7 @@ export async function getHostedReadinessRun(
  *
  * Only ever a FALLBACK for a mount with no run id in hand: two runs started
  * close together make "the newest" the wrong answer for whoever was watching
- * the older one, so a caller that knows its run id must ask for that one.
+ * the older one.
  */
 export async function findLatestHostedReadinessRun(
   publisher: DirectoryReadinessPublisher,
@@ -244,18 +195,16 @@ export async function findLatestHostedReadinessRun(
 ): Promise<ReadinessRun | null> {
   const scope = tryResolveProjectServer(serverNameOrId);
   if (!scope) return null;
-  const params = new URLSearchParams({
-    readinessKind: publisher,
-    serverId: scope.serverId,
-    limit: "1",
-  });
-  const page = await v1Json<{ items?: ReadinessRun[] }>(
-    `/api/v1/projects/${encodeURIComponent(
-      scope.projectId,
-    )}/readiness-runs?${params}`,
-    { method: "GET", signal },
+  const page = await client().listReadinessRuns(
+    {
+      projectId: scope.projectId,
+      readinessKind: publisher,
+      serverId: scope.serverId,
+      limit: 1,
+    },
+    { signal },
   );
-  return page.items?.[0] ?? null;
+  return page.items[0] ?? null;
 }
 
 /**
@@ -266,31 +215,28 @@ export async function findLatestHostedReadinessRun(
  * on a later poll. Callers keep polling after this returns.
  */
 export async function cancelHostedReadinessRun(runId: string): Promise<void> {
-  const projectId = getHostedProjectId();
-  await v1Json<unknown>(
-    `/api/v1/projects/${encodeURIComponent(
-      projectId,
-    )}/readiness-runs/${encodeURIComponent(runId)}/cancel`,
-    { method: "POST" },
-  );
+  await client().cancelReadinessRun({
+    projectId: getHostedProjectId(),
+    runId,
+  });
 }
 
 /**
  * The full graded report, fetched lazily.
  *
- * Megabytes are possible, and the run row already carries everything the
- * collapsed section renders — so this is called when a reader opens the
- * findings, not alongside every poll.
+ * Megabytes are possible and the run row already carries everything the
+ * collapsed section renders, so this is called when a reader opens the
+ * findings rather than alongside every poll.
  */
 export async function getHostedReadinessReport(
   runId: string,
   signal?: AbortSignal,
 ): Promise<DirectoryReadinessResult> {
-  const projectId = getHostedProjectId();
-  return v1Json<DirectoryReadinessResult>(
-    `/api/v1/projects/${encodeURIComponent(
-      projectId,
-    )}/readiness-runs/${encodeURIComponent(runId)}/report`,
-    { method: "GET", signal },
+  const report = await client().getReadinessReport(
+    { projectId: getHostedProjectId(), runId },
+    { signal },
   );
+  // `unknown` by design at the client boundary — the narrow type lives in the
+  // browser entry, and the caller narrows with `isOpenAIReadinessResult`.
+  return report as DirectoryReadinessResult;
 }

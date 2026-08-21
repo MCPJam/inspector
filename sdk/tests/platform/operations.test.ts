@@ -1834,6 +1834,12 @@ describe("operation catalog consistency", () => {
     get_server_prompt: { server: "s", promptName: "p" },
     read_server_resource: { server: "s", uri: "u" },
     check_host_compatibility: { server: "s" },
+    start_claude_readiness_run: { server: "s" },
+    start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
+    get_readiness_run: { run: "r" },
+    list_readiness_runs: {},
+    cancel_readiness_run: { run: "r" },
+    get_readiness_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
     run_eval_suite: { suite: "s" },
@@ -2021,6 +2027,12 @@ describe("operation catalog consistency", () => {
 
   it("marks every operation read-only except the run/call/tunnel writes", () => {
     const writes = new Set([
+      // Creates a durable run that dials a third party's server, and — with
+      // the opt-in — spends the organization's credits.
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      // Stops one. A write because it changes the row, spending nothing.
+      "cancel_readiness_run",
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
