@@ -54,7 +54,7 @@ export type DiscoveredAuthMethod = "none" | "oauth" | "unsupported";
  * happened to construct it first.
  */
 function createDefaultDiscoveryFetch(
-  input: RunDiscoveryPreflightInput
+  input: RunDiscoveryPreflightInput,
 ): typeof fetch {
   return createPinnedFetch({
     allowLoopback: input.allowLoopback === true,
@@ -277,6 +277,59 @@ export interface RunDiscoveryPreflightDependencies {
 /**
  * Run one bounded, unauthenticated preflight and classify it.
  *
+ * The dialing — and every SSRF decision in it — belongs to
+ * `probeThroughEgressGuard` below. All that is left here is the mapping from
+ * "what the target did" to "who owns the request next", which
+ * `classifyDiscoveryResult` owns in turn. A `refused` guard verdict is
+ * TERMINAL rather than retryable, because the address a URL names does not
+ * become public on the next attempt.
+ */
+export async function runDiscoveryPreflight(
+  input: RunDiscoveryPreflightInput,
+  dependencies: RunDiscoveryPreflightDependencies = {},
+): Promise<DiscoveryOutcome> {
+  const guarded = await probeThroughEgressGuard(input, dependencies);
+  switch (guarded.kind) {
+    case "refused":
+      return {
+        kind: "terminal",
+        errorCode: guarded.errorCode,
+        detail: guarded.detail,
+      };
+    case "unreachable":
+      return { kind: "retryable", detail: guarded.detail };
+    case "probed":
+      return classifyDiscoveryResult(guarded.probe);
+  }
+}
+
+/**
+ * What one guarded probe attempt produced, BEFORE anyone decides what it
+ * means.
+ *
+ * Split out from `runDiscoveryPreflight` because a second caller needs the
+ * probe itself, not the discovery verdict: the org-registry derive route reads
+ * the server's name, version and registration strategies off it. The
+ * alternative — a second module that dials a user-supplied URL — is the one
+ * thing this file's header rules out, because the SSRF ordering below is
+ * subtle enough that two copies would drift and only one of them would be
+ * fixed.
+ *
+ * The three arms carry the security decision, and only the naming is new:
+ *
+ *   `refused`     — the egress guard said no. TERMINAL everywhere: the address
+ *                   a URL names does not become public on the next attempt.
+ *   `unreachable` — nobody learned anything (DNS blip, stall, deadline).
+ *   `probed`      — the target answered; what it said is the caller's to read.
+ */
+export type GuardedProbeResult =
+  | { kind: "probed"; probe: ProbeMcpServerResult }
+  | { kind: "refused"; errorCode: string; detail: string }
+  | { kind: "unreachable"; detail: string };
+
+/**
+ * Run one bounded, unauthenticated probe through the egress guard.
+ *
  * SSRF DEFENCE IS TWO LAYERS, AND ONE ALONE IS NOT ENOUGH.
  *
  * `assertOutboundOAuthUrlAllowed` is a pure RFC 6890 classifier over the URL's
@@ -311,10 +364,10 @@ export interface RunDiscoveryPreflightDependencies {
  *
  * No credential is ever attached. Discovery asks what a stranger sees.
  */
-export async function runDiscoveryPreflight(
+export async function probeThroughEgressGuard(
   input: RunDiscoveryPreflightInput,
   dependencies: RunDiscoveryPreflightDependencies = {},
-): Promise<DiscoveryOutcome> {
+): Promise<GuardedProbeResult> {
   const probeServer = dependencies.probeServer ?? probeMcpServer;
 
   try {
@@ -331,7 +384,7 @@ export async function runDiscoveryPreflight(
     // in: `http://127.0.0.1:3000/mcp` IS the local-development product.
     if (url.protocol !== "https:" && !isLoopbackOAuthUrl(input.serverUrl)) {
       return {
-        kind: "terminal",
+        kind: "refused",
         errorCode: "URL_NOT_ALLOWED",
         detail: `Refusing a plaintext discovery probe to public host "${url.hostname}"; MCP servers must be reachable over HTTPS.`,
       };
@@ -339,7 +392,7 @@ export async function runDiscoveryPreflight(
   } catch (error) {
     if (error instanceof OAuthOutboundUrlBlockedError) {
       return {
-        kind: "terminal",
+        kind: "refused",
         errorCode: "URL_NOT_ALLOWED",
         // The guard's own message names the reason (invalid-url,
         // invalid-scheme, private-host) without echoing anything the caller
@@ -382,11 +435,11 @@ export async function runDiscoveryPreflight(
    * after the race, so the deadline and the generic catch could both mask a
    * refusal.
    */
-  const refusalOutcome = (): DiscoveryOutcome | null =>
+  const refusalOutcome = (): GuardedProbeResult | null =>
     refusal.blocked === null
       ? null
       : {
-          kind: "terminal",
+          kind: "refused",
           errorCode: "URL_NOT_ALLOWED",
           detail: refusal.blocked.message,
         };
@@ -425,7 +478,7 @@ export async function runDiscoveryPreflight(
       // again.
       return (
         refusalOutcome() ?? {
-          kind: "retryable",
+          kind: "unreachable",
           detail: `Discovery did not finish within ${deadlineMs}ms`,
         }
       );
@@ -434,20 +487,20 @@ export async function runDiscoveryPreflight(
   } catch (error) {
     if (error instanceof BlockedEgressTargetError) {
       return {
-        kind: "terminal",
+        kind: "refused",
         errorCode: "URL_NOT_ALLOWED",
         detail: error.message,
       };
     }
     if (error instanceof EgressResolutionError) {
-      return refusalOutcome() ?? { kind: "retryable", detail: error.message };
+      return refusalOutcome() ?? { kind: "unreachable", detail: error.message };
     }
     // An unexpected throw means we learned nothing about the target, which is
     // the definition of retryable here — never a discovery result. A refusal
     // already on record still outranks it.
     return (
       refusalOutcome() ?? {
-        kind: "retryable",
+        kind: "unreachable",
         detail: error instanceof Error ? error.message : String(error),
       }
     );
@@ -462,5 +515,5 @@ export async function runDiscoveryPreflight(
     return recorded;
   }
 
-  return classifyDiscoveryResult(probe);
+  return { kind: "probed", probe };
 }
