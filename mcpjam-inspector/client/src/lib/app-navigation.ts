@@ -528,9 +528,10 @@ export function useActiveTab(): string {
  * unreachable by `ui_navigate` while `pathnameToActiveTab` quietly resolves
  * it to Servers. Now the manifest is the single place to add.
  *
- * The hosted policy lists (`hosted-tab-policy.ts`) stay as a FILTER over
- * these segments — availability is a separate question from existence — and
- * a test asserts every policy entry still names a real segment.
+ * The hosted policy (`hosted-tab-policy.ts`) stays as a FILTER over these
+ * segments — availability is a separate question from existence — and it is
+ * derived from the same manifests, so it cannot name a segment that no
+ * longer exists.
  */
 const KNOWN_APP_TAB_SEGMENTS = new Set<string>(listAppSurfaceNavSegments());
 
