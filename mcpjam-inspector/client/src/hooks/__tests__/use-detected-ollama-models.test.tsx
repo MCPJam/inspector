@@ -12,7 +12,8 @@
  * at once", neither of which changes what the hook returns.
  */
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MockInstance } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import {
   detectOllamaModels,
@@ -49,6 +50,10 @@ function reachable(models: string[] = ["llama3.1"]) {
   detectToolCapable.mockResolvedValue(models);
 }
 
+function rejecting() {
+  detectModels.mockRejectedValue(new Error("probe blew up"));
+}
+
 async function advance(ms: number) {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(ms);
@@ -82,11 +87,23 @@ async function expectNextProbeAfter(gap: number) {
 }
 
 describe("useDetectedOllamaModels", () => {
+  // Restored narrowly rather than through a blanket vi.restoreAllMocks(): the
+  // global setup installs several vi.fn() stubs (fetch, matchMedia,
+  // scrollIntoView) whose implementations a suite-level restore would strip —
+  // see the warning on the ResizeObserver stub in src/test/setup.ts.
+  let hiddenSpy: MockInstance<() => boolean>;
+
   beforeEach(() => {
     hidden = false;
-    vi.spyOn(document, "hidden", "get").mockImplementation(() => hidden);
+    hiddenSpy = vi
+      .spyOn(document, "hidden", "get")
+      .mockImplementation(() => hidden);
     vi.useFakeTimers();
     detectToolCapable.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    hiddenSpy.mockRestore();
   });
 
   it("backs off 30s -> 1m -> 2m -> 4m -> 8m, then pins at the 10m cap", async () => {
@@ -206,6 +223,22 @@ describe("useDetectedOllamaModels", () => {
 
     // 10s of the 30s cycle was spent, so 20s remain — step or no step.
     await expectNextProbeAfter((2 * BASE) / 3);
+  });
+
+  it("escalates the backoff when a probe rejects", async () => {
+    // Unreachable through ollama-utils today, which catches its own fetch
+    // failures. Pinned so a refactor that lets one reject can't leave the
+    // schedule retrying at the last delay forever.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    rejecting();
+    mount();
+    await advance(0);
+    expect(probes()).toBe(1);
+
+    await expectNextProbeAfter(BASE);
+    await expectNextProbeAfter(2 * BASE);
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 
   it("stops probing after unmount", async () => {
