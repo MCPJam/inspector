@@ -49,8 +49,13 @@ export function useModelMatrixCapability(
       .query("projectEnvironments:getCapabilities" as never, {
         projectId: normalized,
       } as never)
-      .then((caps: { modelMatrix?: boolean } | null) => {
-        if (!cancelled) setState(caps?.modelMatrix === true);
+      .then((caps: unknown) => {
+        const modelMatrix =
+          caps !== null &&
+          typeof caps === "object" &&
+          "modelMatrix" in caps &&
+          (caps as { modelMatrix?: unknown }).modelMatrix === true;
+        if (!cancelled) setState(modelMatrix);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
