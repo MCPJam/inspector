@@ -53,12 +53,35 @@ import {
 declare const __MCPJAM_SDK_VERSION__: string;
 
 /**
+ * Read the injected version WITHOUT assuming the injection happened.
+ *
+ * This module is reachable from the browser entry, and the inspector's Vite
+ * build aliases `@mcpjam/sdk/browser` straight to `src/browser.ts` — so it
+ * compiles this file from SOURCE, with no `define` of its own. A bare
+ * `__MCPJAM_SDK_VERSION__` reference then survives into the client bundle as an
+ * undeclared global and throws `ReferenceError` at module init, which takes the
+ * whole app down before React mounts. (It did: every Playwright smoke test
+ * failed on a missing app shell.)
+ *
+ * `typeof` on an undeclared identifier is the one read that cannot throw, so a
+ * consumer that bundles this from source degrades to `"unknown"` instead of
+ * crashing. `"unknown"` is deliberate rather than a plausible-looking version:
+ * a stamp claiming a version nobody injected would be worse than one admitting
+ * it does not know.
+ */
+function readSdkVersion(): string {
+  return typeof __MCPJAM_SDK_VERSION__ === "string"
+    ? __MCPJAM_SDK_VERSION__
+    : "unknown";
+}
+
+/**
  * The build that produced a result. Distinct from the profile version on
  * purpose: a patch that fixes a check's ASSERTION moves this and not the
  * profile, and that difference is exactly what a reader needs to tell "the
  * server changed" from "we fixed a false positive".
  */
-export const CONFORMANCE_CHECKER_VERSION = __MCPJAM_SDK_VERSION__;
+export const CONFORMANCE_CHECKER_VERSION = readSdkVersion();
 
 /**
  * Profiles are per-SUITE, because the suites have independent inventories and
