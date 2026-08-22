@@ -25,7 +25,6 @@ vi.mock("@ai-sdk/harness/agent", () => ({
   },
   // WS3: no trailing tool-approval-response parts in these prompts.
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
-  prewarmHarness: vi.fn(async () => {}),
 }));
 
 vi.mock("../registry.js", () => ({

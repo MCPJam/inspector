@@ -152,6 +152,15 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-env.sh new "${{ steps.meta.outputs.environment }}" \
             --duplicate "$RAILWAY_PREVIEW_SOURCE_ENVIRONMENT"
 
+      # `getInspectorClientRuntimeConfig` (server/env.ts) reads the
+      # unprefixed WORKOS_* names first and only falls back to the VITE_
+      # ones, and that runtime config overrides whatever Vite inlined at
+      # build time. Preview envs are duplicated from staging, which carries
+      # a production WORKOS_CLIENT_ID -- so setting only the VITE_ names
+      # left every preview authenticating against production AuthKit while
+      # the WorkOS step below registered its callback on the staging app.
+      # Both halves succeeded, the job stayed green, and sign-in returned
+      # redirect_uri_invalid. Write both spellings.
       - name: Configure non-prod preview defaults
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
@@ -165,6 +174,8 @@ jobs:
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
+            WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
+            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
@@ -420,6 +431,15 @@ jobs:
           .github/scripts/railway-retry.sh .github/scripts/railway-env.sh new "${{ steps.meta.outputs.environment }}" \
             --duplicate "$RAILWAY_PREVIEW_SOURCE_ENVIRONMENT"
 
+      # `getInspectorClientRuntimeConfig` (server/env.ts) reads the
+      # unprefixed WORKOS_* names first and only falls back to the VITE_
+      # ones, and that runtime config overrides whatever Vite inlined at
+      # build time. Preview envs are duplicated from staging, which carries
+      # a production WORKOS_CLIENT_ID -- so setting only the VITE_ names
+      # left every preview authenticating against production AuthKit while
+      # the WorkOS step below registered its callback on the staging app.
+      # Both halves succeeded, the job stayed green, and sign-in returned
+      # redirect_uri_invalid. Write both spellings.
       - name: Configure non-prod preview defaults
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
@@ -433,6 +453,8 @@ jobs:
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
+            WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
+            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             WEB_ALLOWED_ORIGINS="https://*.up.railway.app,$STAGING_APP_URL" \
             VITE_CONVEX_URL="$DEFAULT_BACKEND_VITE_CONVEX_URL" \
@@ -806,6 +828,15 @@ jobs:
             fi
           fi
 
+      # `getInspectorClientRuntimeConfig` (server/env.ts) reads the
+      # unprefixed WORKOS_* names first and only falls back to the VITE_
+      # ones, and that runtime config overrides whatever Vite inlined at
+      # build time. Preview envs are duplicated from staging, which carries
+      # a production WORKOS_CLIENT_ID -- so setting only the VITE_ names
+      # left every preview authenticating against production AuthKit while
+      # the WorkOS step below registered its callback on the staging app.
+      # Both halves succeeded, the job stayed green, and sign-in returned
+      # redirect_uri_invalid. Write both spellings.
       - name: Update preview environment variables
         run: |
           .github/scripts/railway-retry.sh .github/scripts/railway-set-vars.sh \
@@ -819,6 +850,8 @@ jobs:
             VITE_MCPJAM_HOSTED_MODE=true \
             VITE_WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
             VITE_WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
+            WORKOS_CLIENT_ID="$STAGING_WORKOS_CLIENT_ID" \
+            WORKOS_API_HOSTNAME="$STAGING_WORKOS_API_HOSTNAME" \
             VITE_CONVEX_URL="${{ steps.backend_target.outputs.vite_convex_url }}" \
             CONVEX_HTTP_URL="${{ steps.backend_target.outputs.convex_http_url }}"
 

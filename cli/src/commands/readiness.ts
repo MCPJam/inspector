@@ -293,12 +293,12 @@ async function runOpenAICheck(
 /**
  * Register the `readiness` group and its local `check` command.
  *
- * Returns the group so the hosted run commands can be attached to the same
- * noun — `readiness check` and `readiness start` are two ways to grade one
+ * Hosted run commands attach to the same noun in this function —
+ * `readiness check` and `readiness start` are two ways to grade one
  * thing, and splitting them across two top-level commands would make that a
  * detail the user has to know.
  */
-export function registerReadinessCommands(program: Command): Command {
+export function registerReadinessCommands(program: Command): void {
   const readiness = program
     .command("readiness")
     .description("Grade a server or plugin against a publisher's directory");
@@ -378,8 +378,6 @@ export function registerReadinessCommands(program: Command): Command {
     );
 
   registerHostedReadinessCommands(readiness);
-
-  return readiness;
 }
 
 /**
