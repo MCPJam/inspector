@@ -304,6 +304,19 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
 | `GET .../scenarios` | List the project's published scenarios: name, access mode, attached servers, share link |
 | `GET .../scenarios/{scenarioId}` | One scenario's settings: model, system prompt, tool-approval policy, resolved servers |
 
+**Registry** — search the scraped MCP directories and install servers into a project. A bearer is always required; directory reads accept minted guest tokens. Installing writes a `servers` row and provenance — it does **not** open a live session. Follow an install with `POST .../validate` or `POST .../doctor` to connect. There is no catalog-uninstall route: delete the project server instead (`DELETE /projects/{projectId}/servers/{serverId}`).
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /registry/directory-servers` | Cross-source directory search. `q` for text search; omit for browse. `source` filters to one directory (discover ids via `GET /registry/directory-sources`). `connectableOnly=true` limits to installable rows. Cursor-paginated |
+| `GET /registry/directory-servers/{idOrName}` | One directory server by Convex id or `serverName`. Pass `source` to disambiguate a name that appears in more than one directory. The response includes `latestContentHash` — pass it as `expectedContentHash` on install to reject a row that changed (TOCTOU) |
+| `GET /registry/directory-sources` | All known directory sources. Use this to discover valid `source` filter values — do not hardcode source names |
+| `GET /projects/{projectId}/registry/servers` | Curated and org registry cards merged for the project. `scope` is `global`, `organization`, or `all` (default). Guest-denied |
+| `GET /projects/{projectId}/registry/connections` | The project's registry installs with provenance. Guest-denied |
+| `POST /projects/{projectId}/registry/directory-installs` | Install a directory server. Requires `catalogServerId`; `endpointUrl` is required for `options`/`tenant` endpoint kinds. Pass `expectedContentHash` to pin the row (returns `409 CONFLICT` with `details.code: "catalog_server_changed"` if it moved). Responds `201` with `{ serverId, serverName, outcome }` where `outcome` is `created` or `reconnected` |
+| `POST /projects/{projectId}/registry/installs` | Install a curated or org registry card. Requires `registryServerId`. Pass `expectedUpdatedAt` from `listRegistryServers` to pin the card. Same `201` response shape |
+| `DELETE /projects/{projectId}/registry/installs/{registryServerId}` | Uninstall a registry card. Responds `{ deleted: true }` |
+
 <Note>
   **Swarms and User Testing are enabled per organization.** Everything in the
   four sections below is behind that gate, enforced server-side. If it is not
