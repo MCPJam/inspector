@@ -5,6 +5,7 @@ import { ALL_OPERATIONS } from "@mcpjam/sdk/platform";
 import { CLI_BINDINGS } from "../src/lib/op-bindings.js";
 import { registerCloudCommands } from "../src/commands/cloud.js";
 import { registerReadinessCommands } from "../src/commands/readiness.js";
+import { registerRegistryCommands } from "../src/commands/registry.js";
 
 /**
  * The CLI's half of the operation-exposure ratchet.
@@ -20,21 +21,53 @@ function buildPlatformProgram(): Command {
   const program = new Command().name("mcpjam").exitOverride();
   registerCloudCommands(program);
   registerReadinessCommands(program);
+  registerRegistryCommands(program);
   return program;
 }
 
+/**
+ * Split a binding into the Commander path and any flag qualifiers.
+ *
+ * `registry install` is one visible command bound to TWO ops: directory by
+ * default, card when `--card` is set. The flag stays on the binding string
+ * so the test can prove both shelves exist without weakening the tree check
+ * to "the parent command is registered".
+ */
+function parseBindingCommand(command: string): {
+  path: string;
+  flags: string[];
+} {
+  const tokens = command.split(" ").filter(Boolean);
+  const path: string[] = [];
+  const flags: string[] = [];
+  for (const token of tokens) {
+    if (token.startsWith("-")) flags.push(token);
+    else path.push(token);
+  }
+  return { path: path.join(" "), flags };
+}
+
 /** Walk a command path like "eval cases run" through the Commander tree. */
-function resolveCommandPath(program: Command, path: string): boolean {
+function resolveCommandPath(
+  program: Command,
+  path: string,
+): Command | undefined {
   let node: Command = program;
   for (const segment of path.split(" ")) {
     const next: Command | undefined = node.commands.find(
       (candidate) =>
-        candidate.name() === segment || candidate.aliases().includes(segment)
+        candidate.name() === segment || candidate.aliases().includes(segment),
     );
-    if (!next) return false;
+    if (!next) return undefined;
     node = next;
   }
-  return true;
+  return node;
+}
+
+function commandDeclaresFlag(command: Command, flag: string): boolean {
+  return command.options.some(
+    (option) => option.long === flag || option.short === flag,
+  );
 }
 
 describe("CLI operation bindings", () => {
@@ -71,8 +104,17 @@ describe("CLI operation bindings", () => {
     const missing: string[] = [];
     for (const [name, binding] of Object.entries(CLI_BINDINGS)) {
       if (!("command" in binding)) continue;
-      if (!resolveCommandPath(program, binding.command)) {
+      const { path, flags } = parseBindingCommand(binding.command);
+      const node = resolveCommandPath(program, path);
+      if (!node) {
         missing.push(`${name} -> "${binding.command}"`);
+        continue;
+      }
+      const undeclared = flags.filter((flag) => !commandDeclaresFlag(node, flag));
+      if (undeclared.length > 0) {
+        missing.push(
+          `${name} -> "${binding.command}" (missing flags: ${undeclared.join(", ")})`,
+        );
       }
     }
     assert.deepEqual(
