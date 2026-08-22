@@ -415,18 +415,18 @@ describe("OrganizationsTab billing", () => {
           updatedAt: 2,
         },
         finishSeatPayment,
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.getByTestId("pending-seat-payment-notice")).toHaveTextContent(
-      "Finish payment to add new@example.com",
+      "Finish payment to add new@example.com"
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Finish payment" }));
     await waitFor(() =>
-      expect(finishSeatPayment).toHaveBeenCalledWith(undefined),
+      expect(finishSeatPayment).toHaveBeenCalledWith(undefined)
     );
   });
 
@@ -443,6 +443,55 @@ describe("OrganizationsTab billing", () => {
     stripeInvoiceId: null,
     createdAt: 1,
     updatedAt: 2,
+  });
+
+  const pendingSeatPaymentIntentFixture = () => ({
+    _id: "seat-payment-pending",
+    organizationId: "org-1",
+    userId: "user-new",
+    email: "new@example.com",
+    role: "member" as const,
+    source: "pending_invite_signup",
+    status: "requires_action" as const,
+    targetSeatQuantity: 4,
+    stripeInvoiceId: "in_123",
+    createdAt: 1,
+    updatedAt: 2,
+  });
+
+  it("does not claim success when Stripe defers seat cancellation", async () => {
+    const cancelSeatPayment = vi.fn().mockResolvedValue({
+      voided: false,
+      outcome: "deferred",
+    });
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: pendingSeatPaymentIntentFixture(),
+        cancelSeatPayment,
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        errorToastMessage(
+          "Stripe could not confirm cancellation yet. The payment is still pending; try again."
+        ),
+        { duration: 8000 }
+      )
+    );
+    expect(toast.success).not.toHaveBeenCalled();
   });
 
   // A charge raised automatically when an invitee signs up fails with nobody
@@ -480,13 +529,13 @@ describe("OrganizationsTab billing", () => {
         },
         finishSeatPayment,
         retrySeatPayment,
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
 
     expect(screen.getByTestId("failed-seat-payment-notice")).toHaveTextContent(
-      "stranded@example.com",
+      "stranded@example.com"
     );
 
     fireEvent.click(screen.getByRole("button", { name: "Retry payment" }));
@@ -496,10 +545,44 @@ describe("OrganizationsTab billing", () => {
     expect(finishSeatPayment).not.toHaveBeenCalled();
   });
 
+  it("disables Retry until declined-invoice cleanup is confirmed", () => {
+    const retrySeatPayment = vi.fn();
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture({
+          plan: "team",
+          effectivePlan: "team",
+          source: "subscription",
+          billingInterval: "monthly",
+          subscriptionStatus: "active",
+          hasCustomer: true,
+          stripePriceId: "price_team_monthly",
+        }),
+        activeSeatPaymentIntent: {
+          ...failedSeatPaymentIntentFixture(),
+          status: "cleanup_pending",
+          stripeInvoiceId: "in_declined",
+        },
+        retrySeatPayment,
+      })
+    );
+
+    render(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(screen.getByText(/Retry will unlock/)).toBeInTheDocument();
+    const retryButton = screen.getByRole("button", { name: "Retry payment" });
+    expect(retryButton).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Remove invite" })).toBeEnabled();
+    fireEvent.click(retryButton);
+    expect(retrySeatPayment).not.toHaveBeenCalled();
+  });
+
   it("shows an error and no success toast when a retry is rejected", async () => {
     const retrySeatPayment = vi
       .fn()
-      .mockRejectedValue(new Error("Payment failed. The member was not added."));
+      .mockRejectedValue(
+        new Error("Payment failed. The member was not added.")
+      );
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
         billingStatus: billingStatusFixture({
@@ -513,7 +596,7 @@ describe("OrganizationsTab billing", () => {
         }),
         activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
         retrySeatPayment,
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -522,8 +605,8 @@ describe("OrganizationsTab billing", () => {
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
         errorToastMessage("Payment failed. The member was not added."),
-        { duration: 8000 },
-      ),
+        { duration: 8000 }
+      )
     );
     expect(toast.success).not.toHaveBeenCalled();
   });
@@ -546,7 +629,7 @@ describe("OrganizationsTab billing", () => {
         }),
         activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
         retrySeatPayment,
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -575,7 +658,7 @@ describe("OrganizationsTab billing", () => {
         }),
         activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
         isFinishingSeatPayment: true,
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -601,7 +684,7 @@ describe("OrganizationsTab billing", () => {
         }),
         activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
         cancelSeatPayment,
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -611,7 +694,7 @@ describe("OrganizationsTab billing", () => {
       expect(removeMemberMock).toHaveBeenCalledWith({
         organizationId: "org-1",
         email: "stranded@example.com",
-      }),
+      })
     );
     expect(cancelSeatPayment).not.toHaveBeenCalled();
   });
@@ -626,7 +709,7 @@ describe("OrganizationsTab billing", () => {
       () =>
         new Promise<void>((resolve) => {
           resolveRemoval = () => resolve();
-        }),
+        })
     );
     mockUseOrganizationBilling.mockReturnValue(
       createBillingHookState({
@@ -640,7 +723,7 @@ describe("OrganizationsTab billing", () => {
           stripePriceId: "price_team_monthly",
         }),
         activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -669,7 +752,7 @@ describe("OrganizationsTab billing", () => {
           stripePriceId: "price_team_monthly",
         }),
         activeSeatPaymentIntent: failedSeatPaymentIntentFixture(),
-      }),
+      })
     );
 
     render(<OrganizationsTab organizationId="org-1" section="billing" />);
@@ -1159,7 +1242,7 @@ describe("OrganizationsTab billing", () => {
     });
     expect(toast.error).toHaveBeenCalledWith(
       errorToastMessage(
-        "This organization has reached its member limit (3). Ask an organization owner to upgrade.",
+        "This organization has reached its member limit (3). Ask an organization owner to upgrade."
       ),
       { duration: 8000 }
     );
