@@ -13,6 +13,7 @@ import { TOOL_CHECKS } from "../src/mcp-conformance/checks/tools.js";
 import { PROMPT_CHECKS } from "../src/mcp-conformance/checks/prompts.js";
 import { RESOURCE_CHECKS } from "../src/mcp-conformance/checks/resources.js";
 import { MODERN_CHECK_METADATA } from "../src/mcp-conformance/checks/modern.js";
+import { WIRE_CHECK_METADATA } from "../src/mcp-conformance/checks/wire.js";
 import { PROTOCOL_CHECK_METADATA } from "../src/mcp-conformance/checks/protocol.js";
 import { SECURITY_CHECK_METADATA } from "../src/mcp-conformance/checks/security.js";
 import { TRANSPORT_CHECK_METADATA } from "../src/mcp-conformance/checks/transport.js";
@@ -50,6 +51,7 @@ function canonicalProtocolInfo(): Record<string, CanonicalInfo> {
     PROTOCOL_CHECK_METADATA,
     SECURITY_CHECK_METADATA,
     TRANSPORT_CHECK_METADATA,
+    WIRE_CHECK_METADATA,
   ]) {
     for (const entry of Object.values(
       source as Record<string, CanonicalInfo & { id: string }>,
