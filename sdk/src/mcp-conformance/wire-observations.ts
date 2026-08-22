@@ -91,7 +91,12 @@ function responseMessages(exchange: RawExchange): unknown[] {
  */
 function sameId(a: ObservedRequestId, b: ObservedRequestId): boolean {
   if (a === undefined || b === undefined) return false;
-  if (a === null || b === null) return a === b;
+  // `null` means the id could not be DETECTED, not that it equals anything.
+  // Two undeterminable ids are not evidence of one exchange, so treating
+  // `null === null` as a match would attach a request's method to a response
+  // that may answer something else entirely — and this correlation is the
+  // load-bearing half of the wire check.
+  if (a === null || b === null) return false;
   return String(a) === String(b);
 }
 

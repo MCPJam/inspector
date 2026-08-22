@@ -415,6 +415,42 @@ export class WireSchemaValidator {
     };
   }
 
+  /**
+   * The envelope MEMBERS of a response whose result is being graded against a
+   * method-specific definition. Without this, correlation traded envelope
+   * coverage for payload coverage instead of adding to it.
+   *
+   * Deliberately NOT the whole frame against `JSONRPCMessage`: that union's
+   * response branch re-validates `result`, so a bad payload also came back as
+   * "must match a schema in anyOf" plus a duplicate of every payload error —
+   * noise that buries the envelope fact the reader needs. This grades exactly
+   * the two members the payload schema does not cover, and takes `id`'s shape
+   * from the document's own `RequestId` rather than restating it.
+   */
+  private validateEnvelope(observation: ObservedWireMessage): string[] {
+    const validate = this.compileEnvelope();
+    if (validate(observation.message)) return [];
+    return (validate.errors ?? []).map(
+      (error) => `envelope: ${describeError(error)}`,
+    );
+  }
+
+  private compileEnvelope(): ValidateFn {
+    const cacheKey = "envelope-members";
+    const cached = this.compiled.get(cacheKey);
+    if (cached) return cached;
+    const validate = this.engine.compile({
+      type: "object",
+      properties: {
+        jsonrpc: { const: "2.0" },
+        id: { $ref: `${CORE_SCHEMA_ID}#/${this.defsKey}/RequestId` },
+      },
+      required: ["jsonrpc", "id"],
+    });
+    this.compiled.set(cacheKey, validate);
+    return validate;
+  }
+
   validate(
     observations: readonly ObservedWireMessage[],
   ): WireSchemaValidationReport {
@@ -440,13 +476,28 @@ export class WireSchemaValidator {
         target.refs,
         `${target.definition}:${target.refs.join("+")}`,
       );
-      if (validate(subject)) continue;
+      const errors = validate(subject)
+        ? []
+        : (validate.errors ?? []).map(describeError);
+
+      // Correlation must not make the check WEAKER. Grading only `result` left
+      // the envelope of every correlated response ungraded — so a `tools/list`
+      // answer carrying `jsonrpc: "1.0"`, or the `id: null` this suite exists to
+      // catch, passed silently. It is caught today only because the canva
+      // defect happens to ride an ERROR response, which takes the envelope
+      // path. The envelope is graded too, and the two error sets are reported
+      // together so the reader sees both halves of one frame.
+      const envelopeErrors = isMethodSpecific
+        ? this.validateEnvelope(observation)
+        : [];
+
+      if (errors.length === 0 && envelopeErrors.length === 0) continue;
 
       violations.push({
         origin: observation.origin,
         definition: target.definition,
         ...(observation.id !== undefined ? { id: observation.id } : {}),
-        errors: (validate.errors ?? []).map(describeError),
+        errors: [...errors, ...envelopeErrors],
       });
     }
 

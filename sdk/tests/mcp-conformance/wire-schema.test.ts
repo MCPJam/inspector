@@ -329,3 +329,65 @@ describe("extension request methods correlate", () => {
     expect(report.violations[0].definition).toBe("GetTaskResult");
   });
 });
+
+describe("correlation adds coverage, never trades it away", () => {
+  const validator = () =>
+    new WireSchemaValidator({ protocolVersion: "2026-07-28" });
+
+  it("catches id: null on a correlated RESULT response", () => {
+    // The canva defect on a result rather than an error. Grading only
+    // `message.result` left this envelope ungraded: the payload is a perfectly
+    // good ListToolsResult, so the frame passed with a null id — the exact
+    // defect this check was built for.
+    const report = validator().validate([
+      {
+        origin: "server",
+        requestMethod: "tools/list",
+        id: null,
+        requestIdDeterminable: true,
+        message: { jsonrpc: "2.0", id: null, result: { tools: [] } },
+      },
+    ]);
+    expect(report.correlated).toBe(1);
+    expect(report.violations).toHaveLength(1);
+    expect(report.violations[0].errors.join(" ")).toContain("envelope");
+  });
+
+  it("catches a bad jsonrpc version on a correlated response", () => {
+    const report = validator().validate([
+      {
+        origin: "server",
+        requestMethod: "tools/list",
+        id: 1,
+        requestIdDeterminable: true,
+        message: { jsonrpc: "1.0", id: 1, result: { tools: [] } },
+      },
+    ]);
+    expect(report.violations).toHaveLength(1);
+  });
+
+  it("still passes a frame whose envelope AND payload are both good", () => {
+    const report = validator().validate([
+      {
+        origin: "server",
+        requestMethod: "tools/list",
+        id: 1,
+        requestIdDeterminable: true,
+        message: {
+          jsonrpc: "2.0",
+          id: 1,
+          // A complete 2026-07-28 ListToolsResult: the revision added
+          // `resultType`, `ttlMs` and `cacheScope` as required members.
+          result: {
+            tools: [],
+            resultType: "complete",
+            ttlMs: 60000,
+            cacheScope: "public",
+          },
+        },
+      },
+    ]);
+    expect(report.correlated).toBe(1);
+    expect(report.violations).toEqual([]);
+  });
+});

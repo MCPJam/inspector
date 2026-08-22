@@ -833,9 +833,18 @@ async function runCacheHintCoverageCheck(
   const missing: Array<{ method: string; fields: string[] }> = [];
   const observed: Record<string, unknown> = {};
 
+  const unreadable: string[] = [];
   for (const { method, result } of probes) {
     const payload = cacheablePayload(result);
-    if (!payload) continue;
+    if (!payload) {
+      // An operation the server answered with an ERROR (or a non-object) has
+      // no hints to read. Skipping it silently shrank the denominator without
+      // saying so — and the denominator IS this check's product: "5 of 6
+      // cacheable operations carry hints" and "5 of 5, one unreadable" are
+      // different claims about the same server.
+      unreadable.push(method);
+      continue;
+    }
     observed[method] = { ttlMs: payload.ttlMs, cacheScope: payload.cacheScope };
     const absent = CACHE_HINT_FIELDS.filter(
       (field) => payload[field] === undefined
@@ -845,7 +854,11 @@ async function runCacheHintCoverageCheck(
     }
   }
 
-  const details = { cacheHints: observed, unprobed };
+  const details = {
+    cacheHints: observed,
+    unprobed,
+    ...(unreadable.length > 0 ? { unreadable } : {}),
+  };
 
   if (Object.keys(observed).length === 0) {
     return couldNotRunResult(
@@ -869,12 +882,16 @@ async function runCacheHintCoverageCheck(
   // A pass over four of six operations is not a pass over six, and saying so is
   // the difference between "this server is clean" and "this server did not
   // expose the rest".
-  if (unprobed.length > 0) {
+  if (unprobed.length > 0 || unreadable.length > 0) {
+    const gaps = [
+      ...unprobed.map((entry) => `${entry.method} (${entry.reason})`),
+      ...unreadable.map(
+        (method) => `${method} (answered with no readable result)`
+      ),
+    ];
     return couldNotRunResult(
       meta,
-      `Hints are present on every cacheable operation this server exposes, but ${unprobed.length} of the six could not be probed: ${unprobed
-        .map((entry) => `${entry.method} (${entry.reason})`)
-        .join("; ")}`,
+      `Hints are present on every cacheable operation this run could read, but ${gaps.length} of the six went ungraded: ${gaps.join("; ")}`,
       details
     );
   }
