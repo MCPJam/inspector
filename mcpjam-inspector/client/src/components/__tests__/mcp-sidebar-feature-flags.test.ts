@@ -328,9 +328,9 @@ describe("getHostedNavigationSections", () => {
       {
         id: "others",
         items: [
-          // Skills is deliberately NOT sidebar-allowed in hosted mode — it is
-          // reached through the Servers tab switcher — so it is dropped here.
-          { title: "Skills", url: "#skills", icon: FakeIcon },
+          // Tracing is the one surface hosted cannot serve (it needs the
+          // local OTLP collector), so it is the one item dropped here.
+          { title: "Tracing", url: "#tracing", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
             title: "Testing",
@@ -352,7 +352,8 @@ describe("getHostedNavigationSections", () => {
 
     expect(result).toHaveLength(1);
     expect(result[0].items).toEqual([
-      // Tasks are hosted-capable (reconnect-per-poll routes), so the item stays.
+      // Everything else survives: the filter is a block list now, so a tab
+      // nobody thought to list is reachable rather than silently missing.
       { title: "Tasks", url: "#tasks", icon: FakeIcon },
       {
         title: "Testing",
