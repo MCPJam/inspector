@@ -154,6 +154,12 @@ export interface PlatformRegistryInstall {
 export interface PlatformRegistryInstallNextSteps {
   connectionStatusOp: "get_project_server_connection_status";
   connectLinkUrl?: string;
+  /**
+   * Present when an OAuth install could not mint its browser connect-link.
+   * The install itself succeeded; the caller starts connect_project_server
+   * themselves instead of waiting for a link that is not coming.
+   */
+  connectLinkError?: string;
 }
 
 export interface PlatformRegistryInstallResult extends PlatformRegistryInstall {
