@@ -337,6 +337,16 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Keeps a long-running uploaded conformance run from looking stale.",
   "post /projects/{projectId}/conformance-ingest/runs/finalize":
     "Closes the incremental conformance ingest the reporter opened.",
+  "get /projects/{projectId}/shares/{resourceType}/{resourceId}":
+    "Unified share settings. REST-first in I2; SDK wrappers ship in I5.",
+  "patch /projects/{projectId}/shares/{resourceType}/{resourceId}":
+    "Unified set-share-mode. REST-first in I2; SDK wrappers ship in I5.",
+  "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link":
+    "Unified rotate-share-link. REST-first in I2; SDK wrappers ship in I5.",
+  "put /projects/{projectId}/shares/{resourceType}/{resourceId}/members":
+    "Share member upsert stays REST-only for now.",
+  "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}":
+    "Share member removal stays REST-only for now.",
 };
 
 describe("/api/v1 -> SDK coverage", () => {
