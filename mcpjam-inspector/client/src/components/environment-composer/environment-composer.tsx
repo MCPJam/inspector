@@ -24,21 +24,49 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
+import { ModelsPill } from "@/components/environment-composer/models-pill";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
 import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
   composerStateFromEnvironments,
+  composerTargetCount,
   emptyEnvironmentStack,
+  environmentsCarryModels,
   environmentsCarryPluginPins,
   environmentsExceedOneStack,
+  modelChoiceCount,
   type EnvironmentComposerState,
   type EnvironmentStack,
+  type TargetBudgetContext,
 } from "@/components/environment-composer/environment-stack";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
+
+export type ComposerSlot =
+  | "environments"
+  | "clients"
+  | "servers"
+  | "skills"
+  | "computers"
+  | "models";
+
+/** Default strip: no models slot. Evals opt in via `slots`. */
+export const DEFAULT_COMPOSER_SLOTS: ComposerSlot[] = [
+  "environments",
+  "clients",
+  "servers",
+  "skills",
+  "computers",
+];
+
+export const EVALS_COMPOSER_SLOTS: ComposerSlot[] = [
+  ...DEFAULT_COMPOSER_SLOTS,
+  "models",
+];
 
 export function EnvironmentComposer({
   projectId,
@@ -51,6 +79,8 @@ export function EnvironmentComposer({
   inModal = false,
   environmentPickerFooter,
   className,
+  slots = DEFAULT_COMPOSER_SLOTS,
+  clientDefaultLabel,
 }: {
   projectId: string;
   /** Selectable saved environments. Archived rows are filtered out here. */
@@ -60,6 +90,14 @@ export function EnvironmentComposer({
   /** Fan-out cap. `1` makes both rows single-select. */
   maxTargets?: number;
   disabled?: boolean;
+  /**
+   * Which pills to offer. `models` stays out of the default and is opted
+   * into by evals. Swarm / User Testing omit it so a model-bearing env
+   * cannot silently shed its override.
+   */
+  slots?: readonly ComposerSlot[];
+  /** Secondary text on the Client-defaults row (previewed host's model). */
+  clientDefaultLabel?: string | null;
   /**
    * Prefix for this surface's test ids. The suffixes are historical (Swarms was
    * the first surface, hence "target"/"lego") — they are not composer concepts.
@@ -80,6 +118,11 @@ export function EnvironmentComposer({
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
+  const modelsOptedIn = slots.includes("models");
+  const modelMatrix = useModelMatrixCapability(
+    modelsOptedIn ? projectId : null
+  );
+  const modelsEnabled = modelsOptedIn && modelMatrix === true;
 
   const liveEnvironments = useMemo(
     () => environments.filter((e) => !e.archivedAt),
@@ -100,22 +143,25 @@ export function EnvironmentComposer({
    * Only while `customized` is false: once the stack is authoritative there is
    * no saved selection left to lose.
    */
-  const stackEditBlock = useMemo<"pins" | "collapse" | null>(() => {
+  const stackEditBlock = useMemo<"pins" | "collapse" | "models" | null>(() => {
     if (value.customized || value.environmentIds.length === 0) return null;
     const selected = value.environmentIds
       .map((id) => liveEnvironments.find((e) => e.environmentId === id))
       .filter((e): e is NonNullable<typeof e> => Boolean(e));
     if (selected.length !== value.environmentIds.length) return null;
     if (environmentsCarryPluginPins(selected)) return "pins";
+    if (!modelsEnabled && environmentsCarryModels(selected)) return "models";
     return environmentsExceedOneStack(selected, {
       skillsEnabled,
       computersEnabled,
+      modelsEnabled,
     })
       ? "collapse"
       : null;
   }, [
     computersEnabled,
     liveEnvironments,
+    modelsEnabled,
     skillsEnabled,
     value.customized,
     value.environmentIds,
@@ -123,6 +169,13 @@ export function EnvironmentComposer({
   const slotsDisabled = disabled || stackEditBlock !== null;
   const testId = (suffix: string) =>
     testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
+  const choiceCount = modelChoiceCount(value.stack.modelSelection);
+  const budget: TargetBudgetContext = {
+    hostCount: value.stack.hostIds.length,
+    choiceCount,
+    maxTargets,
+  };
+  const targetCount = composerTargetCount(value);
 
   const patchStack = useCallback(
     (patch: Partial<EnvironmentStack>) => {
@@ -164,7 +217,11 @@ export function EnvironmentComposer({
           // would drop an already-attached ad-hoc id the picker can only detach.
           stack:
             selected.length > 0
-              ? composerStateFromEnvironments(selected).stack
+              ? composerStateFromEnvironments(selected, {
+                  skillsEnabled,
+                  computersEnabled,
+                  modelsEnabled,
+                }).stack
               : value.stack,
           customized: false,
         });
@@ -179,7 +236,11 @@ export function EnvironmentComposer({
           environmentIds: ids,
           stack:
             remaining.length > 0
-              ? composerStateFromEnvironments(remaining).stack
+              ? composerStateFromEnvironments(remaining, {
+                  skillsEnabled,
+                  computersEnabled,
+                  modelsEnabled,
+                }).stack
               : emptyEnvironmentStack(),
           customized: false,
         });
@@ -208,9 +269,12 @@ export function EnvironmentComposer({
       });
     },
     [
+      computersEnabled,
       liveEnvironments,
       maxTargets,
+      modelsEnabled,
       onChange,
+      skillsEnabled,
       value.environmentIds,
       value.customized,
       value.stack,
@@ -258,7 +322,21 @@ export function EnvironmentComposer({
           disabled={slotsDisabled}
           testId={testId("clients-picker")}
           inModal={inModal}
+          budget={budget}
         />
+        {modelsEnabled ? (
+          <ModelsPill
+            projectId={projectId}
+            value={value.stack.modelSelection}
+            onChange={(modelSelection) => patchStack({ modelSelection })}
+            mode="multiple"
+            disabled={slotsDisabled}
+            testId={testId("models-picker")}
+            inModal={inModal}
+            budget={budget}
+            clientDefaultLabel={clientDefaultLabel}
+          />
+        ) : null}
         <ServerGroupPicker
           projectId={projectId}
           value={value.stack.serverAttachmentId}
@@ -303,7 +381,17 @@ export function EnvironmentComposer({
         >
           {stackEditBlock === "pins"
             ? "This selection pins plugin versions, which this strip can't carry — editing the stack would run without them. Change the environment selection instead."
+            : stackEditBlock === "models"
+              ? "This selection pins a model override, which this strip can't carry — editing the stack would run the client default instead. Change the environment selection instead."
             : "These environments don't share one setup — they differ by client or by their server group, skills or image — so editing the stack would change what some of them run. Change the environment selection instead."}
+        </p>
+      ) : null}
+      {modelsEnabled && !disabled ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid={testId("target-count")}
+        >
+          {targetCount} of {maxTargets} targets
         </p>
       ) : null}
     </div>

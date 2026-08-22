@@ -23,7 +23,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import { Globe, Server } from "lucide-react";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
-import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import {
+  EnvironmentComposer,
+  EVALS_COMPOSER_SLOTS,
+} from "@/components/environment-composer/environment-composer";
 import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
   composerHasTarget,
@@ -36,7 +39,10 @@ import { useComposerResolver } from "@/components/environment-composer/use-compo
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
-import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import {
+  useModelMatrixCapability,
+  useProjectEnvironments,
+} from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -188,9 +194,17 @@ function EnvironmentModeBar({
   const unresolvedCount = environmentsLoading
     ? 0
     : attachedIds.length - attachedEnvironments.length;
+  const skillsEnabled = useSkillsEnabled();
+  const computersEnabled = useComputersEnabled();
+  const modelMatrix = useModelMatrixCapability(projectId);
+  const modelsEnabled = modelMatrix === true;
   const seeded = useMemo<EnvironmentComposerState>(() => {
     if (attachedIds.length > 0) {
-      return composerStateFromEnvironments(attachedEnvironments);
+      return composerStateFromEnvironments(attachedEnvironments, {
+        skillsEnabled,
+        computersEnabled,
+        modelsEnabled,
+      });
     }
     // Not an environment suite yet: show what it runs today, so converting
     // preserves it rather than starting from blank.
@@ -202,19 +216,20 @@ function EnvironmentModeBar({
         skillSelection: null,
         computerEnvironmentId:
           suite.environment?.computerEnvironmentId ?? null,
+        modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
       },
       customized: false,
     };
   }, [
     attachedEnvironments,
     attachedIds.length,
+    computersEnabled,
+    modelsEnabled,
+    skillsEnabled,
     suite.environment?.computerEnvironmentId,
     suite.hostAttachments,
     suite.serverAttachmentId,
   ]);
-
-  const skillsEnabled = useSkillsEnabled();
-  const computersEnabled = useComputersEnabled();
   /**
    * The ATTACHMENTS cannot be represented as one stack — two on a single client,
    * disagreeing on an enabled shared slot, or (for a seed the composer treats as
@@ -233,6 +248,7 @@ function EnvironmentModeBar({
     environmentsExceedOneStack(attachedEnvironments, {
       skillsEnabled,
       computersEnabled,
+      modelsEnabled,
     }) ||
     (seeded.customized && environmentsCarryPluginPins(attachedEnvironments));
 
@@ -305,6 +321,7 @@ function EnvironmentModeBar({
           value={state}
           onChange={(next) => void commit(next)}
           maxTargets={MAX_SUITE_ENVIRONMENTS}
+          slots={EVALS_COMPOSER_SLOTS}
           // Also disabled while the environment list is still loading: resolving
           // against an empty live list would miss a matching NAMED environment
           // and mint an unnamed twin of it.
