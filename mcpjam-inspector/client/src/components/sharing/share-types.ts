@@ -26,7 +26,7 @@ export type ShareSettingsEnvelope = {
   workspaceId?: string;
   projectId?: string;
   mode: ShareMode;
-  policyVersion?: number;
+  policyVersion: number;
   inviteEpoch?: number;
   linkGrantEpoch?: number;
   allowGuestAccess?: boolean;
