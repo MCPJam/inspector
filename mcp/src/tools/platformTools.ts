@@ -372,6 +372,17 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Computer lifecycle writes are not offered on the unattended catalog surface.",
   delete_sandbox_image:
     "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  // Unified share (scenarios, conformance runs, eval runs). Scenario-specific
+  // rotate is already `rotate_user_testing_link`. The I5 operations span three
+  // resource types and belong with the Share dialog / agent-op registry until
+  // this catalog grows a dedicated share group — same decision as CLI
+  // `op-bindings.ts`.
+  get_share_settings:
+    "Scenario share already appears on get_user_testing_scenario. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
+  set_share_mode:
+    "Scenario exposure is already update_user_testing_scenario. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
+  rotate_share_link:
+    "Scenario rotation is already rotate_user_testing_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
 };
 
 const catalogOperationNames = new Set(
