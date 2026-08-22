@@ -617,7 +617,7 @@ Archiving is reversible and frees the name for a new environment; the row is kep
 | `--expected-revision <n>` | Yes | The revision you last read |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `environments restore`
+### `cloud environments restore`
 
 Fails with `CONFLICT` if another live environment took the name while this one was archived. Plugin pins whose version no longer exists at all are dropped on restore — compare the returned `pluginVersionIds` against what you archived.
 
@@ -627,7 +627,7 @@ Fails with `CONFLICT` if another live environment took the name while this one w
 | `--expected-revision <n>` | Yes | The revision you last read (use `environments list --include-archived`) |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `environments ensure-adhoc`
+### `cloud environments ensure-adhoc`
 
 Get or create an **unnamed** environment for a composed stack. Deduplicated by content: the same stack always returns the same environment, with `created: false` on the second call. Ad-hoc environments do not appear in `environments list` — they exist so a one-off combination can be run and reproduced without adding a name to the project's list.
 
