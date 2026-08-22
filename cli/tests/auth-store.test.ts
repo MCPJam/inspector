@@ -12,7 +12,7 @@ import {
 } from "../src/lib/auth-store.js";
 
 function storedAuth(
-  overrides: Partial<StoredPlatformAuth> = {},
+  overrides: Partial<StoredPlatformAuth> = {}
 ): StoredPlatformAuth {
   return {
     version: 1,
@@ -33,14 +33,14 @@ test("getAuthFilePath respects XDG_CONFIG_HOME on posix", () => {
       platform: "linux",
       homeDirectory: "/home/user",
     }),
-    path.join("/custom/config", "mcpjam", "auth.json"),
+    path.join("/custom/config", "mcpjam", "auth.json")
   );
 });
 
 test("getAuthFilePath defaults to ~/.config on posix", () => {
   assert.equal(
     getAuthFilePath({ env: {}, platform: "darwin", homeDirectory: "/Users/u" }),
-    path.join("/Users/u", ".config", "mcpjam", "auth.json"),
+    path.join("/Users/u", ".config", "mcpjam", "auth.json")
   );
 });
 
@@ -51,7 +51,7 @@ test("getAuthFilePath uses APPDATA on windows", () => {
       platform: "win32",
       homeDirectory: "C:\\Users\\u",
     }),
-    path.join("C:\\Users\\u\\AppData\\Roaming", "mcpjam", "auth.json"),
+    path.join("C:\\Users\\u\\AppData\\Roaming", "mcpjam", "auth.json")
   );
 });
 
@@ -92,7 +92,7 @@ test("readStoredAuth returns null for missing, malformed, or wrong-shape files",
   await writeFile(
     filePath,
     JSON.stringify({ ...storedAuth(), accessToken: 42 }),
-    "utf8",
+    "utf8"
   );
   assert.equal(readStoredAuth(filePath), null);
 });
@@ -125,8 +125,36 @@ test("readStoredAuth round-trips apiUrl and drops a non-URL value", async () => 
   await writeFile(
     filePath,
     JSON.stringify({ ...storedAuth(), apiUrl: "not a url" }),
-    "utf8",
+    "utf8"
   );
   assert.equal(readStoredAuth(filePath)?.apiUrl, undefined);
   assert.equal(readStoredAuth(filePath)?.accessToken, "access-token");
+});
+
+test("readStoredAuth round-trips optional email and plan and drops invalid values", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-auth-"));
+  const filePath = path.join(directory, "auth.json");
+  const withAccount = storedAuth({
+    email: "dev@example.com",
+    plan: "pro",
+  });
+
+  await writeStoredAuth(withAccount, filePath);
+  assert.deepEqual(readStoredAuth(filePath), withAccount);
+
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(
+    filePath,
+    JSON.stringify({
+      ...storedAuth(),
+      email: 42,
+      plan: "",
+      extra: "ignored",
+    }),
+    "utf8"
+  );
+  const parsed = readStoredAuth(filePath);
+  assert.equal(parsed?.email, undefined);
+  assert.equal(parsed?.plan, undefined);
+  assert.equal(parsed?.accessToken, "access-token");
 });
