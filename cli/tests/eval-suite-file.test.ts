@@ -280,6 +280,7 @@ function exportArgv(baseUrl: string, ...args: string[]): string[] {
   return [
     "node",
     "mcpjam",
+    "cloud",
     "eval",
     "export",
     ...args,
@@ -398,6 +399,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -427,6 +429,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -457,6 +460,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -493,6 +497,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -529,6 +534,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -555,6 +561,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -582,6 +589,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -617,7 +625,7 @@ describe("eval validate", () => {
       (resolve, reject) => {
         const child = spawn(
           tsx,
-          [cli, "eval", "validate", "--file", "-", "--format", "json"],
+          [cli, "cloud", "eval", "validate", "--file", "-", "--format", "json"],
           {
             env: { ...process.env, MCPJAM_TELEMETRY_DISABLED: "1" },
             stdio: ["pipe", "pipe", "pipe"],
@@ -651,6 +659,7 @@ describe("eval validate", () => {
           [
             "node",
             "mcpjam",
+            "cloud",
             "eval",
             "validate",
             "--file",
@@ -678,6 +687,7 @@ describe("eval validate", () => {
       const argv = [
         "node",
         "mcpjam",
+        "cloud",
         "eval",
         "validate",
         "--file",
@@ -1036,6 +1046,7 @@ describe("eval export", () => {
             [
               "node",
               "mcpjam",
+              "cloud",
               "eval",
               "export",
               "--suite",

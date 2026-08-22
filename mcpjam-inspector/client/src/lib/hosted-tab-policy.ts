@@ -1,3 +1,5 @@
+import { listHostedBlockedNavSegments } from "@/shared/app-surfaces";
+
 const HASH_TAB_ALIASES = {
   chat: "playground",
   /** Public hash slug; in-app tab id is `clients`. */
@@ -14,73 +16,36 @@ const HASH_TAB_ALIASES = {
   "ci-evals": "evals",
 } as const;
 
-export const HOSTED_SIDEBAR_ALLOWED_TABS = [
-  "home",
-  "clients",
-  "servers",
-  "host-compare",
-  "registry",
-  "scenarios",
-  "swarms",
-  "playground",
-  "client-config",
-  "evals",
-  // Project Environments are Convex-backed and hosted-first; the sidebar item
-  // and route are additionally gated behind `project-environments-enabled`
-  // (PostHog), so this entry only makes the tab REACHABLE — visibility still
-  // comes from the flag.
-  "environments",
-  "tools",
-  "resources",
-  "prompts",
-  // Hosted tasks poll through ephemeral per-request connections
-  // (`/api/web/tasks/*`), so the tab no longer needs a persistent session.
-  "tasks",
-  "support",
-  "settings",
-  "conformance",
-  "compatibility",
-  "oauth-flow",
-  "xaa-flow",
-  "learning",
-] as const;
+/**
+ * Hosted deployments block a tab only when it cannot work there — today that
+ * is Tracing alone, which needs the local OTLP collector.
+ *
+ * This was an ALLOW-list until the Sessions bug (#4210): every new tab had to
+ * be added by hand, the sidebar filter ran before the feature-flag filter, and
+ * a tab that nobody remembered to list was invisible on app.mcpjam.com with no
+ * error to explain it. Default-deny bought nothing — of ~30 nav segments, one
+ * is genuinely hosted-blocked — while costing 37 commits of catch-up edits.
+ *
+ * DERIVED from `hostedBlocked` in the surface manifests, so a screen declares
+ * its own availability next to the rest of its metadata and there is no second
+ * list to keep in sync. Same move `KNOWN_APP_TAB_SEGMENTS` already made in
+ * `app-navigation.ts`.
+ */
+export const HOSTED_HASH_BLOCKED_TABS: readonly string[] =
+  listHostedBlockedNavSegments();
 
-export const HOSTED_HASH_ALLOWED_TABS = [
-  ...HOSTED_SIDEBAR_ALLOWED_TABS,
-  "profile",
-  "organizations",
-  "project-settings",
-  // Project Computers are supported in hosted mode (access is enforced
-  // server-side, not by this list). Reached via the Servers tab switcher, not
-  // a standalone sidebar item, so it needs the hash allow-list only — see PR.
-  "computer",
-  // Cloud Skills are a project-membership resource (Convex-backed, usable in
-  // the Playground without a Computer) but gated behind the `skills-enabled`
-  // PostHog flag until QA completes. Reached via the Servers tab switcher, not
-  // a standalone sidebar item, so it needs the hash allow-list only — the tab
-  // itself is hidden while the flag is off (`useSkillsEnabled`) and the route
-  // guard (`SkillsRoute`) redirects direct navigation.
-  "skills",
-] as const;
-
-export const HOSTED_HASH_BLOCKED_TABS = ["tracing"] as const;
-
-const hostedSidebarAllowedSet = new Set<string>(HOSTED_SIDEBAR_ALLOWED_TABS);
-const hostedHashAllowedSet = new Set<string>(HOSTED_HASH_ALLOWED_TABS);
-const hostedHashBlockedSet = new Set<string>(HOSTED_HASH_BLOCKED_TABS);
+const hostedBlockedSet = new Set<string>(HOSTED_HASH_BLOCKED_TABS);
 
 export function normalizeHostedHashTab(tab: string): string {
   return HASH_TAB_ALIASES[tab as keyof typeof HASH_TAB_ALIASES] ?? tab;
 }
 
-export function isHostedSidebarTabAllowed(tab: string): boolean {
-  return hostedSidebarAllowedSet.has(normalizeHostedHashTab(tab));
-}
-
-export function isHostedHashTabAllowed(tab: string): boolean {
-  return hostedHashAllowedSet.has(normalizeHostedHashTab(tab));
-}
-
-export function isHostedHashTabBlocked(tab: string): boolean {
-  return hostedHashBlockedSet.has(normalizeHostedHashTab(tab));
+/**
+ * The single hosted-availability check, shared by the sidebar, hash/route
+ * resolution, and the agent's `ui_navigate` targets. There is deliberately no
+ * sidebar-specific variant: the two lists differed only in `computer` and
+ * `skills`, neither of which is a sidebar item to begin with.
+ */
+export function isHostedTabBlocked(tab: string): boolean {
+  return hostedBlockedSet.has(normalizeHostedHashTab(tab));
 }
