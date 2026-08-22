@@ -686,20 +686,20 @@ knowledge:
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
 
-### `images list`
+### `cloud images list`
 
 | Flag | Description |
 |------|-------------|
 | `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
 
-### `images get`
+### `cloud images get`
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `images validate`
+### `cloud images validate`
 
 Lint a blueprint without saving it. Prints `ok` plus the resolved base digest, or structured errors with the YAML path of each violation.
 
@@ -708,7 +708,7 @@ Lint a blueprint without saving it. Prints `ok` plus the resolved base digest, o
 | `--file <path>` | Yes | Blueprint YAML path, or `-` to read from stdin |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `images create`
+### `cloud images create`
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -716,7 +716,7 @@ Lint a blueprint without saving it. Prints `ok` plus the resolved base digest, o
 | `--file <path>` | Yes | Blueprint YAML path, or `-` to read from stdin |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `images edit`
+### `cloud images edit`
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -725,16 +725,16 @@ Lint a blueprint without saving it. Prints `ok` plus the resolved base digest, o
 | `--name <name>` | No | New display name |
 | `--file <path>` | No | Replacement blueprint YAML path (or `-` for stdin) |
 
-### `images build`
+### `cloud images build`
 
-Trigger an image build for the sandbox image (async). Poll `images logs` to check build status.
+Trigger an image build for the sandbox image (async). Poll `cloud images logs` to check build status.
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `images logs`
+### `cloud images logs`
 
 Show a sandbox image's builds (newest first) with their log preview.
 
@@ -743,7 +743,7 @@ Show a sandbox image's builds (newest first) with their log preview.
 | `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `images use`
+### `cloud images use`
 
 Boot your computer from this sandbox image. This rebuilds the computer — installed files are wiped.
 
@@ -752,7 +752,7 @@ Boot your computer from this sandbox image. This rebuilds the computer — insta
 | `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `images reset`
+### `cloud images reset`
 
 Reset your computer to its current image, wiping mutable state.
 
@@ -760,7 +760,7 @@ Reset your computer to its current image, wiping mutable state.
 |------|----------|-------------|
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `images promote`
+### `cloud images promote`
 
 Share a personal-draft sandbox image with the whole project. Requires project admin permissions.
 
@@ -769,7 +769,7 @@ Share a personal-draft sandbox image with the whole project. Requires project ad
 | `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `images delete`
+### `cloud images delete`
 
 Permanently delete a sandbox image from a project.
 
