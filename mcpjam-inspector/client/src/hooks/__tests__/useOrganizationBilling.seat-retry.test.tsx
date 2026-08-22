@@ -82,7 +82,12 @@ describe("useOrganizationBilling seat payment retry", () => {
       retryPromise = result.current.retrySeatPayment();
     });
 
-    // Owner hits "Remove invite" while the charge is being reopened.
+    // Owner hits Cancel while the charge is being reopened. Note this is the
+    // cancelSeatPayment path, which the button uses once a retry has made the
+    // charge active again. The separate "Remove invite" action on a terminal
+    // charge calls removeMember instead, and is fenced server-side by
+    // removeMember terminalizing the intent in its own transaction — a client
+    // ref could not cover that anyway, since the owner may have two tabs open.
     await act(async () => {
       await result.current.cancelSeatPayment();
     });
