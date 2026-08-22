@@ -78,7 +78,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   {
     path: "conformance/shared/:token",
     kind: "special",
-    note: "Read-only shared conformance run. Public by HMAC token — no session required to read it.",
+    note: "Read-only shared conformance run. Redeem-based (guest session or WorkOS). Legacy HMAC tokens read as invalid on this page; /api/web/conformance-shared still serves them until I6.",
   },
   { path: "compatibility", kind: "screen", surfaceId: "compatibility" },
   { path: "oauth-flow", kind: "screen", surfaceId: "oauth-flow" },
