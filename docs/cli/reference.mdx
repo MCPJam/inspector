@@ -1232,6 +1232,8 @@ write leaves the previous file exactly as it was.
 
 Edit an eval suite's settings (only the flags you pass change).
 
+Unknown top-level keys in the `--json` / `--file` body are rejected as a usage error (exit code `2`) and the offending key is named. Remove or correct any undeclared keys before retrying.
+
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
