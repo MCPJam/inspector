@@ -299,4 +299,36 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "Model choice belongs to whatever runs an eval; the CLI never picks one on the user's behalf.",
   },
+  search_registry_directory: {
+    excluded:
+      "CLI `mcpjam registry search` is wired in follow-up PR I3 so the Commander tree and this catalog land together.",
+  },
+  get_registry_directory_server: {
+    excluded:
+      "CLI `mcpjam registry show` is wired in follow-up PR I3; adding the op without the command would fail the bindings tree test.",
+  },
+  list_registry_directory_sources: {
+    excluded:
+      "CLI `mcpjam registry sources` is wired in follow-up PR I3 with the rest of the registry group.",
+  },
+  list_registry_servers: {
+    excluded:
+      "CLI `mcpjam registry servers` is wired in follow-up PR I3; card listing stays out of the tree until then.",
+  },
+  list_registry_connections: {
+    excluded:
+      "CLI `mcpjam registry connections` is wired in follow-up PR I3 with the rest of the registry group.",
+  },
+  install_registry_directory_server: {
+    excluded:
+      "CLI `mcpjam registry install` (directory default) is wired in follow-up PR I3, including the flag-qualified dual-op binding.",
+  },
+  install_registry_server: {
+    excluded:
+      "CLI `mcpjam registry install --card` is wired in follow-up PR I3; one Commander path binds two ops.",
+  },
+  uninstall_registry_server: {
+    excluded:
+      "CLI `mcpjam registry uninstall` is wired in follow-up PR I3; card-only, no directory uninstall verb.",
+  },
 };
