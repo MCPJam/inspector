@@ -206,14 +206,18 @@ export async function startHostedConformanceRun(
   });
 }
 
+function isStoredReportUrl(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
 export function toConformanceRunDto(
   run: Record<string, any>,
   options: { projectId: string; reportUrl?: (runId: string) => string },
 ) {
   const id = String(run.id ?? run._id ?? "");
   const reports = Array.isArray(run.reports) ? run.reports : [];
-  const hasReport = reports.some(
-    (report: { reportUrl?: unknown }) => typeof report.reportUrl === "string",
+  const hasReport = reports.some((report: { reportUrl?: unknown }) =>
+    isStoredReportUrl(report.reportUrl),
   );
   // A STORED REPORT, not a terminal status. A run can reach `timed_out` or
   // `cancelled` having stored nothing, and `/report` answers those 404 — so
@@ -253,7 +257,7 @@ export function toConformanceRunDto(
       pending: report.pending ?? 0,
       profileId: report.profileId ?? null,
       profileVersion: report.profileVersion ?? null,
-      hasReport: typeof report.reportUrl === "string",
+      hasReport: isStoredReportUrl(report.reportUrl),
     })),
     reportUrl,
   };
@@ -371,7 +375,7 @@ export async function fetchSuiteReports(
 ): Promise<{ suiteKind: string; report: unknown }[]> {
   const withUrl = reports.filter(
     (report): report is { suiteKind: string; reportUrl: string } =>
-      typeof report.reportUrl === "string" && report.reportUrl.length > 0,
+      isStoredReportUrl(report.reportUrl),
   );
   const out: { suiteKind: string; report: unknown }[] = [];
   for (const report of withUrl) {
