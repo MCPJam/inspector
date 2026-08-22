@@ -74,9 +74,11 @@ npx skills update
 
 ## Using Skills
 
-### Progressive Disclosure
+### Progressive disclosure
 
-When you have skills available, MCPJam injects a lightweight list of all skill names and descriptions into the LLM's system prompt. The LLM decides which skills are relevant to your prompt and calls `loadSkill` to load only the instructions it needs. Once a skill is loaded, the LLM can also browse and read its supporting files using `listSkillFiles` and `readSkillFile`.
+When you have skills available, MCPJam inlines the skill catalog — each skill's name and a one-line description — directly into the LLM's system prompt. The LLM decides which skills are relevant to your prompt and calls `loadSkill` to load only the full instructions it needs. Once a skill is loaded, the LLM can also browse and read its supporting files using `listSkillFiles` and `readSkillFile`.
+
+Projects with no skills receive no skill tools and no catalog stanza, so the model's tool-selection observations are not distorted by phantom tools.
 
 ### Deterministic Injection
 
