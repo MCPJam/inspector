@@ -1319,7 +1319,7 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--judge-model <id>` | No | Judge model ID |
 | `--judge-threshold <0-1>` | No | Judge pass threshold, 0–1 (a case passes when its score is at or above it) |
 
-### `eval checks list`
+### `cloud eval checks list`
 
 List the repositories whose pull requests run an eval suite, plus the
 repositories the MCPJam GitHub App can reach.
@@ -1333,7 +1333,7 @@ all, so connecting a repository will not help. `connectable: null` means the
 App could not be asked (GitHub unavailable, or no installation) — different
 from an empty list, which would mean it reaches nothing.
 
-### `eval checks connect`
+### `cloud eval checks connect`
 
 Run this suite on every pull request to a repository. **Affects everyone who
 opens a pull request on that repository**, and with `fail-closed` it can block
@@ -1342,7 +1342,7 @@ their merges.
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
-| `--repo <owner/repo>` | Yes | Repository to connect. Must be one `eval checks list` reports as connectable |
+| `--repo <owner/repo>` | Yes | Repository to connect. Must be one `cloud eval checks list` reports as connectable |
 | `--outage-policy <fail-open\|fail-closed>` | Yes | What the check reports when MCPJam cannot conclude |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
@@ -1352,7 +1352,7 @@ this command afterwards. Retargeting a repository at a different suite, pausing
 it, and disconnecting all live in the app's Settings → Integrations, where every
 connected repository is visible at once.
 
-### `eval delete`
+### `cloud eval delete`
 
 Permanently delete an eval suite (and its cases and runs).
 
@@ -1361,7 +1361,7 @@ Permanently delete an eval suite (and its cases and runs).
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
-### `eval schedule`
+### `cloud eval schedule`
 
 Enable or disable scheduled runs for a suite.
 
@@ -1381,12 +1381,12 @@ must pin one with `--environment`; a suite with exactly one defaults to it. `--e
 is rejected with `--disable`: disabling preserves the existing pin, so accepting one there
 would silently do nothing.
 
-### `eval environments` subcommands
+### `cloud eval environments` subcommands
 
 Attach or detach the project environments an eval suite runs against. Attaching is what
-makes `eval run --environment` available for the suite.
+makes `cloud eval run --environment` available for the suite.
 
-#### `eval environments set`
+#### `cloud eval environments set`
 
 Replace the suite's attached environments (this sets the whole list, in order).
 
@@ -1397,13 +1397,13 @@ Replace the suite's attached environments (this sets the whole list, in order).
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
 ```bash
-mcpjam eval environments set --suite "Checkout smoke" --environment Staging Prod
+mcpjam cloud eval environments set --suite "Checkout smoke" --environment Staging Prod
 ```
 
 Rejected if it would strand an enabled schedule pinned to an environment being removed —
-repoint the schedule (`eval schedule --enable --environment ...`) or disable it first.
+repoint the schedule (`cloud eval schedule --enable --environment ...`) or disable it first.
 
-#### `eval environments clear`
+#### `cloud eval environments clear`
 
 Detach every environment, reverting the suite to its saved server selection.
 
@@ -1416,9 +1416,9 @@ Subject to the same schedule guard as `set`: rejected if the suite has an
 enabled schedule pinned to one of the environments being removed. Repoint the
 schedule or disable it first.
 
-### `eval cases` subcommands
+### `cloud eval cases` subcommands
 
-#### `eval cases list`
+#### `cloud eval cases list`
 
 List a suite's test cases.
 
@@ -1427,7 +1427,7 @@ List a suite's test cases.
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
-#### `eval cases get`
+#### `cloud eval cases get`
 
 Show one test case.
 
@@ -1437,10 +1437,10 @@ Show one test case.
 | `--case <id-or-title>` | Yes | Eval case title or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
-#### `eval cases run`
+#### `cloud eval cases run`
 
-Run a single case as a persisted, fully-queryable run — inspect it with `eval iterations` /
-`eval steps` like any other run.
+Run a single case as a persisted, fully-queryable run — inspect it with `cloud eval iterations` /
+`cloud eval steps` like any other run.
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -1458,12 +1458,12 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--iterations <n>` | No | Run the case this many times (1-10) |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 
-Every `--compose-*` flag behaves exactly as it does for `eval run` — see
+Every `--compose-*` flag behaves exactly as it does for `cloud eval run` — see
 [Composing a target instead of naming one](#composing-a-target-instead-of-naming-one).
 Target selection follows the same rules ([Which target runs](#which-target-runs)),
 except that a single case run targets ONE thing — there is no `--all-targets` here.
 
-#### `eval cases create`
+#### `cloud eval cases create`
 
 Add a test case to a suite (definition via `--file`/`--json`).
 
@@ -1475,7 +1475,7 @@ Add a test case to a suite (definition via `--file`/`--json`).
 | `--json <json>` | No | Inline case JSON (or `@file`, or `-`) |
 | `--title <title>` | No | Case title (overrides the body) |
 
-#### `eval cases update`
+#### `cloud eval cases update`
 
 Edit a test case (definition via `--file`/`--json`).
 
@@ -1488,7 +1488,7 @@ Edit a test case (definition via `--file`/`--json`).
 | `--json <json>` | No | Inline case JSON (or `@file`, or `-`) |
 | `--title <title>` | No | Rename the case |
 
-#### `eval cases delete`
+#### `cloud eval cases delete`
 
 Permanently delete a test case.
 
@@ -1498,7 +1498,7 @@ Permanently delete a test case.
 | `--case <id-or-title>` | Yes | Eval case title or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
-#### `eval cases generate`
+#### `cloud eval cases generate`
 
 AI-generate test cases from the suite's tools (spends credits).
 
