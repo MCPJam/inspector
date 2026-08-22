@@ -9,6 +9,20 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-08-22
+
+#### Added
+
+- **Conformance run sharing** — completed conformance runs now have a **Share** button on the run detail page. Clicking it opens a Share dialog where you can:
+  - Choose an access preset: **Project members**, **Invited users only**, or **Anyone with the link**.
+  - Copy the share link without toggling sharing on or off.
+  - Rotate the link (mints a new URL; the old one stops working immediately).
+  - Revoke all access in one action.
+
+  Guests who open a share link are auditable browser sessions, not verified individuals. The shared view is a frozen, redacted snapshot — credentials, raw HTTP evidence, and rerun controls are not included.
+
+  Share links use the path `/conformance/shared/<token>`. Any share links created before this change (HMAC-based) will show "This share link is invalid or has been revoked." on the new viewer page.
+
 ### 2026-06-26
 
 #### Added
