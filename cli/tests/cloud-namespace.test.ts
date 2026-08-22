@@ -33,6 +33,8 @@ const MOVED_CLOUD_GROUPS = [
   "login",
   "logout",
   "whoami",
+  "status",
+  "link",
   "organizations",
   "projects",
   "eval",

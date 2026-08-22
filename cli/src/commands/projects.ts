@@ -26,6 +26,7 @@ import {
   runPlatformCommand,
   type PlatformOptions as SharedPlatformOptions,
 } from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 import { openUrlInBrowser } from "@mcpjam/sdk";
 
@@ -47,11 +48,11 @@ type PlatformOptions = SharedPlatformOptions & {
  * merged nearest-first.
  */
 function requireProject(command: Command, options: PlatformOptions): string {
-  const project = options.project?.trim();
-  if (!project) {
+  const resolved = resolveCloudProjectArgs({ project: options.project });
+  if (resolved.projectScope.source === "automatic" || !resolved.project) {
     command.error("error: required option '--project <id-or-name>' not specified");
   }
-  return project;
+  return resolved.project;
 }
 
 /**
@@ -265,7 +266,7 @@ export function registerProjectsCommands(program: Command): void {
       globalOptions.timeout,
       ({ client, signal }) =>
         listProjectServersOperation.execute(
-          { project: platformOptions.project },
+          { project: resolveCloudProjectArgs(platformOptions).project },
           { client, signal }
         )
     );
@@ -416,7 +417,7 @@ export function registerProjectsCommands(program: Command): void {
         // and therefore consumes it, so the subcommand's own copy is always
         // undefined and this command quietly connected to the default project
         // instead of the one that was named.
-        project: platformOptions.project,
+        project: resolveCloudProjectArgs(platformOptions).project,
         serverId: options.server,
         name: options.name,
         reauthorize: options.reauthorize,
@@ -520,7 +521,7 @@ export function registerProjectsCommands(program: Command): void {
       globalOptions.timeout,
       ({ client, signal }) =>
         showServersOperation.execute(
-          { project: platformOptions.project },
+          { project: resolveCloudProjectArgs(platformOptions).project },
           { client, signal }
         )
     );
