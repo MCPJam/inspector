@@ -80,6 +80,13 @@
             ]
           },
           {
+            "group": "Conformance",
+            "icon": "shield-check",
+            "pages": [
+              "inspector/conformance"
+            ]
+          },
+          {
             "group": "Authentication",
             "icon": "shield-check",
             "pages": ["inspector/guided-oauth", "inspector/xaa-debugger"]

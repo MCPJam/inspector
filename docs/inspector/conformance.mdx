@@ -1,0 +1,135 @@
+---
+title: "Conformance"
+description: "Run Protocol, Apps, Tasks, OAuth, and directory-readiness checks against a connected MCP server from the inspector UI."
+icon: "shield-check"
+---
+
+The Conformance page runs the same checks available from the CLI and SDK — Protocol, Apps, Tasks, and OAuth — directly against a connected server, without leaving the inspector. It also surfaces **directory readiness** sections that grade your server against Anthropic's and OpenAI's published directory requirements.
+
+## How to open it
+
+Connect an HTTP server, then select **Conformance** from the left sidebar. The page is available to users with the `mcpjam-conformance` feature flag enabled on their account.
+
+## Protocol version
+
+A **Protocol version** selector at the top of the page pins the conformance run to a specific MCP revision. The suites run against whichever version you select. See [MCP protocol versions](/inspector/protocol-versions) for the available options.
+
+## Running the suites
+
+Click **Run available checks** to run all four suites — Protocol, Apps, Tasks, and OAuth — in parallel. Each suite section shows its own progress and result. A pooled conformance score appears at the top once all suites complete.
+
+Individual suite sections can be collapsed. A collapsed suite is still included in the next **Run available checks** invocation.
+
+### Suite sections
+
+| Suite | What it checks |
+|-------|---------------|
+| **Protocol** | MCP wire behavior: initialize, ping, tools, prompts, resources, transport, and security checks. |
+| **Apps** | Server-side MCP Apps surface: tool metadata, input schemas, and resource validity. |
+| **Tasks** | MCP Tasks wire behavior: dispatch, creation, lifecycle, and routing. |
+| **OAuth** | OAuth 2.0 authorization flow: discovery, registration, token exchange, and negative checks. |
+
+Each suite reports **passed**, **failed**, or **incomplete**. An incomplete result means nothing failed but at least one check could not run — the run does not establish conformance.
+
+## Directory readiness
+
+<Note>
+Directory readiness sections are available to users with the `mcpjam-directory-readiness` feature flag enabled. The `/conformance` route must already be accessible (requires `mcpjam-conformance`).
+</Note>
+
+Two additional sections appear below the suites: **Claude Directory Readiness** and **OpenAI Directory Readiness**. These grade your server against Anthropic's and OpenAI's published connector-directory requirements.
+
+Directory readiness is deliberately separate from the suite checks and the pooled score:
+
+- A hosted readiness run takes minutes. Joining the shared **Run available checks** button would hold that button and the protocol-version selector for its duration.
+- Readiness produces lanes and coverage rather than passed/failed checks. There is no number to pool.
+
+Each section owns its own run control and opens by default. Unlike the suite sections, a collapsed readiness section would hide the only way to start a run and the submission mode it needs declared first.
+
+### Execution modes
+
+Each section runs in one of two modes depending on whether you are in hosted or local mode:
+
+| | Local | Hosted |
+|---|---|---|
+| How it runs | Synchronous, result inline | Starts a durable run, then polls for the result |
+| Cost | Free — cannot spend | Opt-in AI observations use MCPJam credits |
+| Survives reload | No — result is lost | Yes — the section rediscovers a run still in progress |
+
+### Running a check
+
+1. Open the section for the publisher you want to grade against.
+2. For OpenAI, select a **Submission** mode from the dropdown (see [Submission modes](#submission-modes)).
+3. Optionally enable **Add AI observations** (hosted only — uses MCPJam credits).
+4. Click **Run readiness**.
+
+While a hosted run is in progress, a **Cancel** button appears. Cancelling sends a stop signal to the platform; the section keeps polling until the run's real terminal state arrives.
+
+After a run completes, click **Run again** to start a new one.
+
+### Submission modes (OpenAI)
+
+The OpenAI section offers four submission shapes. Two require a package on your machine and are listed but disabled in the inspector — use `mcpjam readiness check` from the CLI for those.
+
+| Mode | Available in inspector |
+|------|----------------------|
+| MCP server only | Yes |
+| MCP + imported skills | Yes |
+| Skills package only | No — run `mcpjam readiness check` |
+| MCP + uploaded skills | No — run `mcpjam readiness check` |
+
+### AI observations
+
+When **Add AI observations** is checked, the hosted run includes an optional model-authored pass over the findings. This pass uses MCPJam credits and is independent of the deterministic grade:
+
+- A run whose observations were refused for billing reasons still produces a complete, valid grade. The section shows a notice explaining that the model limit was reached — it does not demote the grade.
+- A run that completed without observations is not the same as one that completed with them. The section labels model-authored findings so you can weigh them separately.
+
+### Reading the results
+
+#### Grade badge
+
+The section header shows the grade once a run completes:
+
+| Badge | Meaning |
+|-------|---------|
+| **Ready** | The server meets the publisher's requirements. |
+| **Not ready** | One or more requirements were violated. |
+| **Incomplete** | Nothing was violated, but at least one lane could not be fully evaluated. |
+| **Run failed** | The readiness runner encountered an error. This is not a finding about your server. |
+| **Cancelled** | The run was cancelled before it completed. |
+
+A run that **failed** never produced a grade. The badge says "Run failed" rather than "Not ready" — the runner falling over is not a statement about your server.
+
+#### Lanes
+
+Each lane shows:
+
+- Its verdict (ready, not ready, or incomplete).
+- How many requirements were evaluated out of how many were selected.
+- How many were not applicable (stated separately from not evaluated).
+- Which inputs, if any, would close the gap — for example, supplying a tool listing.
+
+#### Findings
+
+Findings are grouped by class in the order you would fix them:
+
+| Class | What it means |
+|-------|--------------|
+| **Runtime blockers** | The host cannot use this server until these are fixed. |
+| **Directory requirements** | The publisher's rules require these before a submission is listed. |
+| **Recommended** | Not disqualifying, but expected of a good submission. |
+| **Needs a human** | A reviewer decides these; no automated check can. |
+| **Observations** | Judgement calls, never part of the verdict. Model-authored findings are labelled **AI**. |
+
+Expand a finding to see its remediation hint and the source document section it came from.
+
+### Reload recovery (hosted)
+
+If you reload the page while a hosted run is in progress, the section rediscovers the run automatically. This is a fallback for a page that lost its run state — if you were watching a specific run, the section asks for that run directly rather than picking the newest one.
+
+## Relationship to the CLI and SDK
+
+The inspector's conformance suites run the same checks as the CLI commands and SDK suites. Results are equivalent; the inspector is a convenient surface for interactive testing. For CI pipelines, scheduled runs, or JUnit XML output, use the [CLI conformance commands](/cli/apps-conformance) or the [SDK conformance suites](/sdk/reference/protocol-conformance).
+
+Directory readiness is also available from the [public API](/reference/public-api) for programmatic access.
