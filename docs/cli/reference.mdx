@@ -1112,14 +1112,14 @@ Every run records the environment and the exact revision it used, so `eval
 status` can answer "which configuration did this run actually execute against?"
 long after the environment has been edited.
 
-### `eval status`
+### `cloud eval status`
 
 Get the status and summary of an eval run.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--run <id>` | Yes | Eval run ID (from `eval run`) |
-| `--project <id-or-name>` | Yes | Project name or ID |
+| `--run <id>` | Yes | Eval run ID (from `cloud eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
 The response carries a `judges` block with each advisory grader's state and
 per-case grades. `status: null` means that judge was never requested for the
