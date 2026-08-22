@@ -943,6 +943,8 @@ Create a runnable eval suite from authored test cases (does not run it).
 | `--provider <provider>` | No | Suite-level default provider (overrides the file) |
 | `--server <id-or-name...>` | No | Project HTTP server names or IDs (overrides the file) |
 
+Unknown top-level keys in the `--json` / `--file` body are rejected as a usage error (exit code `2`) and the offending key is named. Remove or correct any undeclared keys (for example `hostz`, `hostIds`, or a top-level `servers` field) before retrying.
+
 ### `cloud eval list`
 
 List the eval suites saved in a project.
