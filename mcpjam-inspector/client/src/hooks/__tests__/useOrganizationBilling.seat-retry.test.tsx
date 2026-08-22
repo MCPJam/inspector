@@ -10,6 +10,9 @@ const convexFns = vi.hoisted(() => ({
   cancelSeatPayment: vi.fn(),
   completeSeatPayment: vi.fn(),
 }));
+const stripeFns = vi.hoisted(() => ({
+  confirmSeatPaymentWithStripe: vi.fn(),
+}));
 
 const activeSeatPaymentIntent = {
   _id: "seat-payment-1",
@@ -45,20 +48,22 @@ vi.mock("convex/react", () => ({
   },
 }));
 
-vi.mock("@/lib/stripe-elements", () => ({
-  confirmSeatPaymentWithStripe: vi.fn(),
-}));
+vi.mock("@/lib/seat-payment-stripe", () => stripeFns);
 
 import { useOrganizationBilling } from "../useOrganizationBilling";
 
 describe("useOrganizationBilling seat payment retry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    convexFns.cancelSeatPayment.mockResolvedValue(undefined);
+    convexFns.cancelSeatPayment.mockResolvedValue({
+      voided: true,
+      outcome: "canceled",
+    });
     convexFns.startSeatPayment.mockResolvedValue({
       status: "paid",
       seatQuantity: 4,
     });
+    stripeFns.confirmSeatPaymentWithStripe.mockResolvedValue(undefined);
   });
 
   it("does not start payment when the charge is cancelled mid-retry", async () => {
@@ -73,9 +78,7 @@ describe("useOrganizationBilling seat payment retry", () => {
         })
     );
 
-    const { result } = renderHook(() =>
-      useOrganizationBilling({ organizationId: "org-1" })
-    );
+    const { result } = renderHook(() => useOrganizationBilling("org-1"));
 
     let retryPromise: Promise<unknown> | undefined;
     act(() => {
@@ -108,9 +111,7 @@ describe("useOrganizationBilling seat payment retry", () => {
       seatPaymentIntentId: "seat-payment-1",
     });
 
-    const { result } = renderHook(() =>
-      useOrganizationBilling({ organizationId: "org-1" })
-    );
+    const { result } = renderHook(() => useOrganizationBilling("org-1"));
 
     await act(async () => {
       await result.current.retrySeatPayment();
@@ -121,15 +122,54 @@ describe("useOrganizationBilling seat payment retry", () => {
     );
   });
 
+  it("returns the backend cancellation outcome", async () => {
+    convexFns.cancelSeatPayment.mockResolvedValue({
+      voided: false,
+      outcome: "deferred",
+    });
+
+    const { result } = renderHook(() => useOrganizationBilling("org-1"));
+
+    await expect(result.current.cancelSeatPayment()).resolves.toEqual({
+      voided: false,
+      outcome: "deferred",
+    });
+  });
+
+  it("marks browser confirmation failures for cleanup before retry", async () => {
+    convexFns.startSeatPayment.mockResolvedValue({
+      status: "requires_action",
+      clientSecret: "cs_declined",
+      publishableKey: "pk_test",
+      stripeInvoiceId: "in_declined",
+      seatQuantity: 4,
+    });
+    stripeFns.confirmSeatPaymentWithStripe.mockRejectedValue(
+      new Error("Your card was declined")
+    );
+
+    const { result } = renderHook(() => useOrganizationBilling("org-1"));
+
+    await act(async () => {
+      await expect(result.current.finishSeatPayment()).rejects.toThrow(
+        "Your card was declined"
+      );
+    });
+    expect(convexFns.cancelSeatPayment).toHaveBeenCalledWith({
+      organizationId: "org-1",
+      seatPaymentIntentId: "seat-payment-1",
+      stripeInvoiceId: "in_declined",
+      terminalStatus: "failed",
+    });
+  });
+
   it("surfaces an error when there is nothing left to retry", async () => {
     convexFns.retrySeatPayment.mockResolvedValue({
       restarted: false,
       seatPaymentIntentId: null,
     });
 
-    const { result } = renderHook(() =>
-      useOrganizationBilling({ organizationId: "org-1" })
-    );
+    const { result } = renderHook(() => useOrganizationBilling("org-1"));
 
     await act(async () => {
       await expect(result.current.retrySeatPayment()).rejects.toThrow(

@@ -210,6 +210,9 @@ const PLAIN_TOOLS = [
   "upsert_user_testing_member",
   "remove_user_testing_member",
   "rebind_user_testing_scenario",
+  "get_share_settings",
+  "set_share_mode",
+  "rotate_share_link",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -428,6 +431,9 @@ describe("platform tool registration", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "get_share_settings",
+      "set_share_mode",
+      "rotate_share_link",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {
@@ -537,6 +543,7 @@ describe("platform tool registration", () => {
       "set_user_testing_guest_execution",
       "upsert_user_testing_member",
       "rebind_user_testing_scenario",
+      "set_share_mode",
     ]);
     // Destructive AND not safe to repeat — for opposite reasons: the soft
     // deletes 404 on a retry, the rotation mints another link.
@@ -546,6 +553,7 @@ describe("platform tool registration", () => {
       "archive_swarm",
       "remove_user_testing_member",
       "rotate_user_testing_link",
+      "rotate_share_link",
     ]);
     const DESTRUCTIVE_OPS = new Set([
       "delete_eval_suite",
@@ -565,6 +573,7 @@ describe("platform tool registration", () => {
       // Rotating invalidates every copy of the share link that anyone holds.
       "rotate_user_testing_link",
       "remove_user_testing_member",
+      "rotate_share_link",
     ]);
 
     for (const registration of registrations) {
