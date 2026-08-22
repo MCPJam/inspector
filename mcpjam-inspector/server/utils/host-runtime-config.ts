@@ -111,16 +111,16 @@ export async function fetchHostRuntimeConfig(args: {
   // is a MALFORMED header, and Convex's `getUserIdentity()` throws on it
   // instead of returning null — so the backend route's catch-all answers 500,
   // both chat-v2 routes collapse a >=500 to 502, and the client attributes any
-  // 5xx from our own route to MCPJam. An unauthenticated local Playground turn
-  // on a host-bound conversation (`/api/mcp/chat-v2` reads the header as `""`)
-  // therefore paged us with "Invalid authentication header" instead of telling
-  // the user to sign in. Fail closed as 401, the way the scenario branch of
-  // `mcp/chat-v2.ts` already does before it fetches.
+  // 5xx from our own route to MCPJam. A local Playground turn on a host-bound
+  // conversation whose guest/member token hadn't resolved (`/api/mcp/chat-v2`
+  // reads the header as `""`) therefore paged us with "Invalid authentication
+  // header" instead of asking the user to retry. Fail closed as 401, the way
+  // the scenario branch of `mcp/chat-v2.ts` already does before it fetches.
   if (!bearerToken) {
     return {
       ok: false,
       status: 401,
-      error: "Not signed in — sign in (or retry) to run this host.",
+      error: "Couldn't authenticate this turn — retry, or sign in if you're not a guest.",
     };
   }
   const authorization = `Bearer ${bearerToken}`;
