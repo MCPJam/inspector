@@ -984,9 +984,9 @@ Read a finished run's findings, ordered most-consequential-first and capped. `tr
 
 ---
 
-## `eval` commands
+## `cloud eval` commands (full reference)
 
-All `eval` commands accept the shared platform flags below.
+All `cloud eval` commands accept the shared platform flags below.
 
 ### Shared platform flags
 
@@ -995,7 +995,7 @@ All `eval` commands accept the shared platform flags below.
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
 
-### `eval create`
+### `cloud eval create`
 
 Create a runnable eval suite from authored test cases (does not run it).
 
@@ -1009,7 +1009,7 @@ Create a runnable eval suite from authored test cases (does not run it).
 | `--provider <provider>` | No | Suite-level default provider (overrides the file) |
 | `--server <name...>` | No | Project HTTP server names or IDs (overrides the file) |
 
-### `eval list`
+### `cloud eval list`
 
 List the eval suites saved in a project.
 
@@ -1017,7 +1017,7 @@ List the eval suites saved in a project.
 |------|----------|-------------|
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
-### `eval run`
+### `cloud eval run`
 
 Start an eval run of an existing suite (asynchronous).
 
