@@ -36,6 +36,19 @@ const DEFAULT_SUITES: HostedConformanceSuite[] = [
 
 export const CONFORMANCE_REPORT_CASE_CAP = 50;
 const REPORT_FETCH_TIMEOUT_MS = 30_000;
+const STORED_REPORT_UNREADABLE =
+  "The conformance report could not be read from storage.";
+
+function storedReportUnreadable(): never {
+  // v1 derives HTTP status from the public code (`INTERNAL_ERROR` → 500).
+  // Storage is an upstream hop, so `SERVER_UNREACHABLE` is what keeps the
+  // documented 502.
+  throw new WebRouteError(
+    502,
+    ErrorCode.SERVER_UNREACHABLE,
+    STORED_REPORT_UNREADABLE,
+  );
+}
 
 /** The shape `authorizeServer` hands back, narrowed to what a start needs. */
 export interface AuthorizedConformanceServer {
@@ -369,31 +382,24 @@ export async function fetchSuiteReports(
         signal: AbortSignal.timeout(REPORT_FETCH_TIMEOUT_MS),
       });
     } catch {
-      throw new WebRouteError(
-        502,
-        ErrorCode.INTERNAL_ERROR,
-        "The conformance report could not be read from storage.",
-      );
+      storedReportUnreadable();
     }
     if (!response.ok) {
       await response.body?.cancel().catch(() => undefined);
-      throw new WebRouteError(
-        response.status === 404 ? 404 : 502,
-        response.status === 404 ? ErrorCode.NOT_FOUND : ErrorCode.INTERNAL_ERROR,
-        response.status === 404
-          ? "This conformance run's report is no longer stored."
-          : "The conformance report could not be read from storage.",
-      );
+      if (response.status === 404) {
+        throw new WebRouteError(
+          404,
+          ErrorCode.NOT_FOUND,
+          "This conformance run's report is no longer stored.",
+        );
+      }
+      storedReportUnreadable();
     }
     let body: unknown;
     try {
       body = await response.json();
     } catch {
-      throw new WebRouteError(
-        502,
-        ErrorCode.INTERNAL_ERROR,
-        "The conformance report could not be read from storage.",
-      );
+      storedReportUnreadable();
     }
     out.push({ suiteKind: report.suiteKind, report: body });
   }
