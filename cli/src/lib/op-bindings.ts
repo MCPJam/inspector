@@ -130,6 +130,22 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   upsert_user_testing_member: { command: "cloud user-testing invite" },
   remove_user_testing_member: { command: "cloud user-testing remove-member" },
   rebind_user_testing_scenario: { command: "cloud user-testing rebind" },
+  // Unified share envelope (scenario / conformance / eval-run). The SDK and
+  // MCP catalog shipped first; a `share` command group that can address all
+  // three resource kinds is the CLI half, and these bind together when it
+  // lands. Scenario-only rotate/invite stay on `user-testing` above.
+  get_share_settings: {
+    excluded:
+      "No `share` command group yet — reading the unified envelope shipped on the API, MCP catalog, and in-app agent first. Bind the three share verbs together when the CLI can address scenario, conformance, and eval-run resources.",
+  },
+  set_share_mode: {
+    excluded:
+      "No `share` command group yet — changing who can open a shared resource is an exposure write that should land with get/rotate, not as a one-off under user-testing.",
+  },
+  rotate_share_link: {
+    excluded:
+      "No `share` command group yet — rotating the unified URL is irreversible across three resource kinds, and the scenario-only path stays on `user-testing rotate-link`.",
+  },
 
   // ── Evals ───────────────────────────────────────────────────────────────
   list_eval_suites: { command: "cloud eval list" },
