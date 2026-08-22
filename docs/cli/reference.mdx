@@ -1160,9 +1160,32 @@ List per-iteration results for an eval run (pass/fail, tool calls, tokens, laten
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
-| `--project <id-or-name>` | Yes | Project the run belongs to (name or ID) |
+| `--project <id-or-name>` | No | Project the run belongs to (name or ID; defaults to the most recently updated project) |
 | `--cursor <cursor>` | No | Pagination cursor from a previous response |
 | `--limit <n>` | No | Max iterations per page (1–200) |
+
+### `eval gate`
+
+Apply a pass/fail policy to a finished eval run and set an exit code (0 pass, 1 eval failure, 2 usage, 3 incomplete).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project the run belongs to (name or ID; defaults to the most recently updated project) |
+| `--min-pass-rate-percent <0-100>` | No | Minimum pass rate to consider the run passing |
+| `--wait` | No | Poll until the run reaches a terminal status before gating |
+| `--wait-timeout <ms>` | No | Maximum time to wait when `--wait` is set |
+
+### `eval compare`
+
+Compare a finished eval run against a baseline and set an exit code (0 pass, 1 regression, 2 usage, 3 incomplete).
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID to compare |
+| `--project <id-or-name>` | No | Project the run belongs to (name or ID; defaults to the most recently updated project) |
+| `--base-run <id>` | No | Baseline run ID to compare against |
+| `--reporter <reporter>` | No | `json-summary` or `junit-xml` CI report output |
 
 ### `eval trace`
 
@@ -1172,7 +1195,40 @@ Fetch the full trace for one eval iteration (complete message history and spans)
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
-| `--project <id-or-name>` | Yes | Project the run belongs to (name or ID) |
+| `--project <id-or-name>` | No | Project the run belongs to (name or ID; defaults to the most recently updated project) |
+
+### `eval steps`
+
+Fetch the steps for one eval iteration.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--project <id-or-name>` | No | Project the run belongs to (name or ID; defaults to the most recently updated project) |
+
+### `eval screenshot`
+
+Fetch a screenshot from one eval iteration.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--project <id-or-name>` | No | Project the run belongs to (name or ID; defaults to the most recently updated project) |
+| `--out <path>` | No | Write the screenshot to a file |
+| `--index <n>` | No | Show only the Nth screenshot (1-based) |
+
+### `eval video`
+
+Fetch a video from one eval iteration.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--project <id-or-name>` | No | Project the run belongs to (name or ID; defaults to the most recently updated project) |
+| `--out <path>` | No | Write the video to a file |
 
 ### `eval get`
 
