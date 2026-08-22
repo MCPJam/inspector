@@ -210,6 +210,29 @@ test("missing Cloud credentials fail with the login string before a network call
   assert.doesNotMatch(run.stderr, /ECONNREFUSED|fetch failed|timed out/i);
 });
 
+test("missing Cloud credentials name a leftover legacy MCPJAM_API_KEY", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-audience-legacy-"));
+  const run = await withEnv(isolatedEnv({ MCPJAM_API_KEY: "mcpjam_legacy" }), () =>
+    withCwd(cwd, () =>
+      runCli([
+        "cloud",
+        "eval",
+        "list",
+        "--api-url",
+        "http://127.0.0.1:1/api/v1",
+        "--format",
+        "json",
+      ])
+    )
+  );
+  assert.equal(run.exitCode, 1, run.stderr);
+  const payload = JSON.parse(run.stderr) as { error: { message: string } };
+  assert.ok(payload.error.message.includes(MISSING_CLOUD_CREDENTIAL_MESSAGE));
+  assert.match(payload.error.message, /Ignoring legacy mcpjam_ key in MCPJAM_API_KEY/);
+  assert.match(payload.error.message, /Legacy mcpjam_ API keys/);
+  assert.doesNotMatch(run.stderr, /ECONNREFUSED|fetch failed|timed out/i);
+});
+
 test("cloud whoami does not print the audience line", async () => {
   const fixture = await startEvalListFixture();
   try {

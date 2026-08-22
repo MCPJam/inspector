@@ -15,7 +15,10 @@ import {
   describeProjectScope,
   type CloudScope,
 } from "./cloud-scope.js";
-import { MISSING_CLOUD_CREDENTIAL_MESSAGE } from "./platform-auth.js";
+import {
+  LEGACY_KEY_REMEDY,
+  MISSING_CLOUD_CREDENTIAL_MESSAGE,
+} from "./platform-auth.js";
 import { operationalError } from "./output.js";
 
 export { MISSING_CLOUD_CREDENTIAL_MESSAGE };
@@ -95,6 +98,12 @@ export function preflightCloudCredentials(
 ): void {
   const { credential } = describeCloudCredential(options, deps);
   if (credential.source === "missing") {
+    const envKey = (deps.env ?? process.env).MCPJAM_API_KEY?.trim();
+    if (envKey?.startsWith("mcpjam_")) {
+      throw operationalError(
+        `${MISSING_CLOUD_CREDENTIAL_MESSAGE} Ignoring legacy mcpjam_ key in MCPJAM_API_KEY for this command. ${LEGACY_KEY_REMEDY}`
+      );
+    }
     throw operationalError(MISSING_CLOUD_CREDENTIAL_MESSAGE);
   }
 }
