@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>terminal capture</title>
+    <style>
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+      }
+
+      body {
+        display: inline-block;
+        padding: 24px;
+      }
+
+      .window {
+        width: 800px;
+        border-radius: 10px;
+        overflow: hidden;
+        background: #1e1e2e;
+        font-family:
+          ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+          "Liberation Mono", monospace;
+      }
+
+      .title-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        background: #181825;
+        border-bottom: 1px solid #313244;
+      }
+
+      .dots {
+        display: flex;
+        gap: 6px;
+        flex-shrink: 0;
+      }
+
+      .dot {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+      }
+
+      .dot.red {
+        background: #f38ba8;
+      }
+
+      .dot.yellow {
+        background: #f9e2af;
+      }
+
+      .dot.green {
+        background: #a6e3a1;
+      }
+
+      .title {
+        flex: 1;
+        text-align: center;
+        color: #a6adc8;
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        padding-right: 60px;
+      }
+
+      .body {
+        padding: 16px 18px 20px;
+        font-size: 13px;
+        line-height: 1.55;
+      }
+
+      .prompt {
+        margin: 0 0 10px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #cdd6f4;
+      }
+
+      .prompt .sigil {
+        color: #a6e3a1;
+      }
+
+      .output {
+        margin: 0;
+        white-space: pre-wrap;
+        word-break: break-word;
+        color: #cdd6f4;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="window">
+      <div class="title-bar">
+        <div class="dots">
+          <span class="dot red"></span>
+          <span class="dot yellow"></span>
+          <span class="dot green"></span>
+        </div>
+        <div class="title"><!-- COMMAND --></div>
+      </div>
+      <div class="body">
+        <p class="prompt"><span class="sigil">$</span> <!-- COMMAND --></p>
+        <pre class="output"><!-- OUTPUT --></pre>
+      </div>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,239 @@
+{
+  "$schema": "https://mcpjam.com/docs/screenshots/manifest.schema.json",
+  "viewport": { "width": 1440, "height": 900, "deviceScaleFactor": 2 },
+  "entries": [
+    {
+      "id": "oauth-configure-modal",
+      "kind": "ui",
+      "page": "inspector/guided-oauth.mdx",
+      "tier": "A",
+      "route": "/oauth-flow",
+      "setup": ["open-configure-modal"],
+      "output": "docs/images/oauth/oauth-configure-modal.png",
+      "alt": "The OAuth Flow tab with the Configure Server modal open, showing the server URL, protocol version, and registration fields."
+    },
+    {
+      "id": "compat-strip",
+      "kind": "ui",
+      "page": "inspector/host-compat.mdx",
+      "tier": "A",
+      "route": "/servers",
+      "setup": ["connect-demo-server"],
+      "output": "docs/images/compat/compat-strip.png",
+      "alt": "The Servers view showing a server card with the host-compat strip, including host logos and status dots."
+    },
+    {
+      "id": "compatibility-report",
+      "kind": "ui",
+      "page": "inspector/compatibility.mdx",
+      "tier": "A",
+      "route": "/compatibility",
+      "setup": ["run-compat"],
+      "output": "docs/images/compat/compatibility-report.png",
+      "alt": "The Compatibility page listing host rows with verdict badges and a conformance gate."
+    },
+    {
+      "id": "client-focus-panel",
+      "kind": "ui",
+      "page": "inspector/clients.mdx",
+      "tier": "A",
+      "route": "/hosts?template=claude",
+      "setup": ["wait-host-template-panel"],
+      "output": "docs/images/clients/client-focus-panel.png",
+      "alt": "The Hosts focus panel opened from a template deep link, showing the canvas diagram and settings."
+    },
+    {
+      "id": "host-compare-view",
+      "kind": "ui",
+      "page": "inspector/clients.mdx",
+      "tier": "A",
+      "route": "/host-compare",
+      "setup": ["wait-host-compare-columns"],
+      "output": "docs/images/clients/host-compare-view.png",
+      "alt": "The Compare view with two host columns shown side by side."
+    },
+    {
+      "id": "widget-debug-panel",
+      "kind": "ui",
+      "page": "inspector/debugging.mdx",
+      "tier": "A",
+      "route": "/playground",
+      "setup": ["open-widget-debug"],
+      "output": "docs/images/debugging/widget-debug-panel.png",
+      "alt": "The Playground tool-call debug panel showing the Data tab for the reservation fixture widget."
+    },
+    {
+      "id": "getting-started-first-diagram",
+      "kind": "ui",
+      "page": "getting-started.mdx",
+      "tier": "B",
+      "route": "/playground",
+      "setup": ["send-excalidraw-prompt"],
+      "output": "docs/images/getting-started/getting-started-first-diagram.png",
+      "alt": "The Playground showing the Excalidraw sample, with the create_view tool call and the rendered diagram."
+    },
+    {
+      "id": "first-mcp-app-playground",
+      "kind": "ui",
+      "page": "guides/first-mcp-app.mdx",
+      "tier": "B",
+      "route": "/playground",
+      "setup": ["invoke-reservation-tool"],
+      "output": "docs/images/guides/first-mcp-app-playground.png",
+      "alt": "The Playground rendering the tutorial's reservation widget with a Reservation Confirmed message."
+    },
+    {
+      "id": "home-dashboard",
+      "kind": "ui",
+      "page": "inspector/home.mdx",
+      "tier": "C",
+      "route": "/home",
+      "setup": [],
+      "output": "docs/images/home/home-dashboard.png",
+      "alt": "The Home page with a greeting, the org stats strip, and recommended servers and clients."
+    },
+    {
+      "id": "evals-suite-dashboard",
+      "kind": "ui",
+      "page": "inspector/evals.mdx",
+      "tier": "B",
+      "route": "/evals",
+      "setup": ["seed-eval-suite"],
+      "output": "docs/images/evals/evals-suite-dashboard.png",
+      "alt": "The Evals suite view showing accuracy, runs, and cases."
+    },
+    {
+      "id": "evals-run-detail",
+      "kind": "ui",
+      "page": "inspector/evals.mdx",
+      "tier": "B",
+      "route": "/evals",
+      "setup": ["seed-eval-suite", "open-run-detail"],
+      "output": "docs/images/evals/evals-run-detail.png",
+      "alt": "An Evals run detail view displaying the run header with a PASSED badge, pass-rate statistics, AI-generated run insights, per-case results, and previous runs in a side rail."
+    },
+    {
+      "id": "project-switcher",
+      "kind": "ui",
+      "page": "inspector/projects.mdx",
+      "tier": "C",
+      "route": "/home",
+      "setup": ["open-project-switcher"],
+      "output": "docs/images/projects/project-switcher.png",
+      "alt": "The org and project switcher menu open over the sidebar."
+    },
+    {
+      "id": "hosted-reveal-tokens",
+      "kind": "ui",
+      "page": "hosted/overview.mdx",
+      "tier": "C",
+      "route": "/servers",
+      "setup": ["open-reveal-tokens"],
+      "output": "docs/images/hosted/hosted-reveal-tokens.png",
+      "alt": "The Server Overview tab with masked OAuth Tokens and a Reveal control."
+    },
+    {
+      "id": "cli-help",
+      "kind": "terminal",
+      "page": "cli/overview.mdx",
+      "command": "mcpjam",
+      "args": ["--help"],
+      "output": "docs/images/cli/cli-help.png",
+      "alt": "Terminal output of mcpjam --help."
+    },
+    {
+      "id": "cli-server-help",
+      "kind": "terminal",
+      "page": "cli/reference.mdx",
+      "command": "mcpjam",
+      "args": ["server", "--help"],
+      "output": "docs/images/cli/cli-server-help.png",
+      "alt": "Terminal output of mcpjam server --help."
+    },
+    {
+      "id": "cli-server-doctor",
+      "kind": "terminal",
+      "page": "cli/server-inspection.mdx",
+      "command": "mcpjam",
+      "args": ["server", "doctor", "--command", "npx", "--args", "-y", "@modelcontextprotocol/server-everything"],
+      "timeoutMs": 120000,
+      "output": "docs/images/cli/cli-server-doctor.png",
+      "alt": "Terminal output of mcpjam server doctor running against the everything server."
+    },
+    {
+      "id": "cli-tools-list",
+      "kind": "terminal",
+      "page": "cli/tools-resources-prompts.mdx",
+      "command": "mcpjam",
+      "args": ["tools", "list", "--command", "npx", "--args", "-y", "@modelcontextprotocol/server-everything"],
+      "timeoutMs": 120000,
+      "output": "docs/images/cli/cli-tools-list.png",
+      "alt": "Terminal output of mcpjam tools list running against the everything server."
+    },
+    {
+      "id": "cli-apps-conformance",
+      "kind": "terminal",
+      "page": "cli/apps-conformance.mdx",
+      "command": "mcpjam",
+      "args": ["apps", "conformance", "--url", "http://localhost:4801/mcp"],
+      "timeoutMs": 120000,
+      "output": "docs/images/cli/cli-apps-conformance.png",
+      "alt": "Terminal output of mcpjam apps conformance running against the reservation fixture server."
+    },
+    {
+      "id": "cli-doctor-help",
+      "kind": "terminal",
+      "page": "cli/ci.mdx",
+      "command": "mcpjam",
+      "args": ["server", "doctor", "--help"],
+      "output": "docs/images/cli/cli-doctor-help.png",
+      "alt": "Terminal output of mcpjam server doctor --help."
+    },
+    {
+      "id": "cli-telemetry-status",
+      "kind": "terminal",
+      "page": "cli/telemetry.mdx",
+      "command": "mcpjam",
+      "args": ["telemetry", "status"],
+      "output": "docs/images/cli/cli-telemetry-status.png",
+      "alt": "Terminal output of mcpjam telemetry status."
+    },
+    {
+      "id": "cli-mcp-stdio",
+      "kind": "terminal",
+      "page": "cli/mcp-server.mdx",
+      "command": "mcpjam",
+      "args": ["mcp"],
+      "timeoutMs": 3000,
+      "output": "docs/images/cli/cli-mcp-stdio.png",
+      "alt": "Terminal output of the mcpjam mcp startup line."
+    },
+    {
+      "id": "cli-oauth-conformance-help",
+      "kind": "terminal",
+      "page": "cli/oauth-conformance.mdx",
+      "command": "mcpjam",
+      "args": ["oauth", "conformance", "--help"],
+      "output": "docs/images/cli/cli-oauth-conformance-help.png",
+      "alt": "Terminal output of mcpjam oauth conformance --help."
+    },
+    {
+      "id": "cli-oauth-login-help",
+      "kind": "terminal",
+      "page": "cli/oauth-login.mdx",
+      "command": "mcpjam",
+      "args": ["oauth", "login", "--help"],
+      "output": "docs/images/cli/cli-oauth-login-help.png",
+      "alt": "Terminal output of mcpjam oauth login --help."
+    },
+    {
+      "id": "cli-xaa-run-help",
+      "kind": "terminal",
+      "page": "cli/xaa.mdx",
+      "command": "mcpjam",
+      "args": ["xaa", "run", "--help"],
+      "output": "docs/images/cli/cli-xaa-run-help.png",
+      "alt": "Terminal output of mcpjam xaa run --help."
+    }
+  ]
+}
