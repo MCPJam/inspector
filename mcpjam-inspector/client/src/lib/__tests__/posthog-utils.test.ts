@@ -210,6 +210,7 @@ describe("PosthogUtils", () => {
         await import("../PosthogUtils");
 
       expect(isCredentialBearingPath("/results/abc")).toBe(true);
+      expect(isCredentialBearingPath("/conformance/shared/secret")).toBe(true);
       expect(isCredentialBearingPath("/servers")).toBe(false);
       expect(shouldRecordSession()).toBe(false);
       expect(opts.disable_session_recording).toBe(true);

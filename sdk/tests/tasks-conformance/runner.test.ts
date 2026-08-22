@@ -116,7 +116,7 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
       });
       return task;
     },
-    // A conformant server refuses EVERY undeclared task request with -32003
+    // A conformant server refuses EVERY undeclared task request with -32021
     // (ext-tasks tasks.md:797-799), including a task-filtered
     // subscriptions/listen.
     //
@@ -128,7 +128,7 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
     getManagedClient: () => ({
       requestWithSchema: async () => {
         throw Object.assign(new Error("missing capability"), {
-          code: -32003,
+          code: -32021,
         });
       },
     }),
@@ -138,14 +138,14 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
 
 /**
  * A raw request seam whose behavior is set per JSON-RPC method. Anything not
- * listed gets the conformant answer: rejected with -32003.
+ * listed gets the conformant answer: rejected with -32021.
  */
 function undeclaredSeam(perMethod: Record<string, () => unknown>) {
   return () => ({
     requestWithSchema: async (payload: { method: string }) => {
       const behavior = perMethod[payload.method];
       if (behavior) return behavior();
-      throw Object.assign(new Error("missing capability"), { code: -32003 });
+      throw Object.assign(new Error("missing capability"), { code: -32021 });
     },
   });
 }
@@ -521,7 +521,7 @@ describe("MCPTasksConformanceTest", () => {
     expect(result.passed).toBe(false);
   });
 
-  it("passes an undeclared creation the server refused, warning when the code is not -32003", async () => {
+  it("passes an undeclared creation the server refused, warning when the code is not -32021", async () => {
     const manager = extensionManager({
       executeTool: async (
         _serverId: string,
@@ -547,6 +547,34 @@ describe("MCPTasksConformanceTest", () => {
     expect(check?.status).toBe("passed");
     expect(check?.warnings?.[0]).toContain("-32602");
     expect(check?.details).toMatchObject({ undeclaredCreationCode: -32602 });
+  });
+
+  it("warns that a -32003 refusal is the pre-final draft code", async () => {
+    const manager = extensionManager({
+      executeTool: async (
+        _serverId: string,
+        _toolName: string,
+        _args: unknown,
+        options?: { allowTaskResult?: boolean }
+      ) => {
+        if (options?.allowTaskResult)
+          return { resultType: "task", taskId: "task-1" };
+        throw Object.assign(new Error("nope"), { code: -32003 });
+      },
+    });
+
+    const result = await runAgainst(manager, {
+      config: { toolName: "long_job", pollTimeoutMs: 500 },
+    });
+
+    const check = result.checks.find(
+      (c) => c.id === "tasks-undeclared-creation-refused"
+    );
+    // Still a pass — no task reached a non-declaring client — but the warning
+    // has to say the code is stale rather than merely unexpected.
+    expect(check?.status).toBe("passed");
+    expect(check?.warnings?.[0]).toContain("corrected to -32021");
+    expect(check?.warnings?.[0]).toContain("pre-final draft");
   });
 
   it("flags a server advertising the extension on 2025-11-25 without failing", async () => {
@@ -744,11 +772,11 @@ describe("MCPTasksConformanceTest", () => {
 });
 
 /**
- * ext-tasks tasks.md:797-799 — servers MUST answer -32003 for a non-declaring
+ * ext-tasks tasks.md:797-799 — servers MUST answer -32021 for a non-declaring
  * client on tasks/get, tasks/update, tasks/cancel, and on task notifications
  * requested through subscriptions/listen. Unconditional: anything else fails.
  */
-describe("undeclared task requests (-32003)", () => {
+describe("undeclared task requests (-32021)", () => {
   const runProbe = (perMethod: Record<string, () => unknown>) =>
     runAgainst(
       extensionManager({ getManagedClient: undeclaredSeam(perMethod) }),
@@ -757,7 +785,7 @@ describe("undeclared task requests (-32003)", () => {
       }
     );
 
-  it("passes when every undeclared request is rejected with -32003", async () => {
+  it("passes when every undeclared request is rejected with -32021", async () => {
     const result = await runProbe({});
 
     expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
@@ -769,25 +797,25 @@ describe("undeclared task requests (-32003)", () => {
       {
         method: "tasks/get",
         outcome: "rejected",
-        code: -32003,
+        code: -32021,
         reachedWire: true,
       },
       {
         method: "tasks/update",
         outcome: "rejected",
-        code: -32003,
+        code: -32021,
         reachedWire: true,
       },
       {
         method: "subscriptions/listen",
         outcome: "rejected",
-        code: -32003,
+        code: -32021,
         reachedWire: true,
       },
       {
         method: "tasks/cancel",
         outcome: "rejected",
-        code: -32003,
+        code: -32021,
         reachedWire: true,
       },
     ]);
@@ -828,6 +856,20 @@ describe("undeclared task requests (-32003)", () => {
     });
   }
 
+  it("tells a server still emitting -32003 which draft it is running", async () => {
+    // -32003 is not just any wrong code: it is what the extension carried
+    // before ext-tasks corrected it (c523f2c). Reporting it anonymously would
+    // leave the operator to work out that their server predates the renumber.
+    const result = await runProbe({ "tasks/get": rpcError(-32003) });
+
+    expect(statusMap(result)["tasks-undeclared-capability-rejected"]).toBe(
+      "failed"
+    );
+    const check = undeclaredCheck(result);
+    expect(check?.error?.message).toContain("corrected to -32021");
+    expect(check?.error?.message).toContain("pre-final draft");
+  });
+
   it("names every offending method when several misbehave", async () => {
     const result = await runProbe({
       "tasks/update": () => ({}),
@@ -843,7 +885,7 @@ describe("undeclared task requests (-32003)", () => {
 
   it("skips the subscriptions/listen sub-probe when the server lacks the method", async () => {
     // -32601 on a core method the extension only borrows: not probeable, so
-    // it must not be judged. tasks/* still has to answer -32003.
+    // it must not be judged. tasks/* still has to answer -32021.
     const result = await runProbe({
       "subscriptions/listen": rpcError(-32601, "Method not found"),
     });
@@ -888,7 +930,7 @@ describe("undeclared task requests (-32003)", () => {
   it("fails — and says so — when a probe never reaches the server at all", async () => {
     // The shape of the bug this seam was rewritten to kill: the request dies
     // locally (a missing result schema, upstream's outbound era gate), so the
-    // -32003 requirement is never put to the server. It must never read as
+    // -32021 requirement is never put to the server. It must never read as
     // conformance, and the failure must say the probe did not run.
     const result = await runProbe({
       "tasks/get": () => {
@@ -930,7 +972,7 @@ describe("undeclared task requests (-32003)", () => {
     );
 
     const check = undeclaredCheck(result);
-    // Skipped, but as a GAP: the -32003 requirement was never put to the
+    // Skipped, but as a GAP: the -32021 requirement was never put to the
     // server, so the run cannot report conformance.
     expect(check?.status).toBe("skipped");
     expect(check?.skipReason).toBe("could-not-run");
@@ -955,7 +997,7 @@ describe("undeclared task requests (-32003)", () => {
         requestWithSchema: async (payload: { method: string }) => {
           order.push(`undeclared:${payload.method}`);
           throw Object.assign(new Error("missing capability"), {
-            code: -32003,
+            code: -32021,
           });
         },
       }),
