@@ -36,26 +36,45 @@ npx -y @mcpjam/cli@latest --help
 
 ## Command groups
 
+### Local commands (no account required)
+
 | Group | Purpose | Key commands |
 |-------|---------|-------------|
 | [`server`](/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
 | [`xaa`](/cli/xaa) | Run the Cross-App Access (ID-JAG) debugger against an MCP server | `run` |
-| [`oauth`](/cli/oauth-conformance) | Test OAuth flows and conformance | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
+| [`oauth`](/cli/oauth-conformance) | Test MCP OAuth flows and conformance | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
 | [`apps`](/cli/apps-conformance) | Validate MCP Apps metadata and resource wiring | `conformance`, `conformance-suite` |
 | [`compat`](/cli/reference#compat-command) | Check whether a server's tools and widgets work on each AI host | `compat` |
 | [`readiness`](/cli/reference#readiness-hosted-commands) | Start, poll, list, cancel, and read hosted directory-readiness runs against a saved server | `start claude`, `start openai`, `status`, `list`, `cancel`, `report` |
 | [`inspector`](/cli/reference#inspector-commands) | Start, open, or stop the local Inspector from the CLI | `open`, `start`, `stop` |
-| [`eval`](/cli/reference#eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
-| [`tunnel`](/cli/reference#tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel <url>`, `tunnel -- <command>` |
 | [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
 | [`prompts`](/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
 | [`protocol`](/cli/reference) | MCP protocol conformance checks | `conformance`, `conformance-suite` |
-| [`hosts`](/cli/reference#hosts-commands) | Manage hosts in your hosted MCPJam projects | `list`, `get`, `create`, `update`, `delete`, `templates` |
-| [`environments`](/cli/reference#environments-commands) | Manage project environments — the host + servers + pinned skills/plugins bundles eval suites and journeys run against | `list`, `get`, `resolve`, `create`, `update`, `archive`, `restore` |
-| [`images`](/cli/reference#images-commands) | Manage custom Computer sandbox images (blueprints) | `list`, `get`, `create`, `validate`, `edit`, `build`, `logs`, `use`, `reset`, `promote`, `delete` |
 | [`mcp`](/cli/mcp-server) | Run MCPJam as a stdio MCP server for agents (Claude Desktop, Claude Code, Cursor, ...) | `mcp` |
 | [`telemetry`](/cli/telemetry) | Inspect and configure anonymous CLI telemetry | `status`, `disable`, `enable` |
+
+### `mcpjam cloud` commands (MCPJam account required)
+
+All account-bound commands live under the `mcpjam cloud` namespace. Run `mcpjam cloud --help` to see the full list.
+
+<Note>
+  `mcpjam oauth login` is MCP OAuth (authenticates you to an MCP server). `mcpjam cloud login` is your MCPJam account login. They are separate commands.
+</Note>
+
+| Subcommand | Purpose | Key commands |
+|------------|---------|-------------|
+| `cloud login` / `cloud logout` / `cloud whoami` | Manage your MCPJam account session | — |
+| `cloud organizations` | List organizations | `list` |
+| [`cloud projects`](/cli/reference#projects-commands) | Manage projects and their servers | `list`, `create`, `update`, `delete`, `servers`, `server add`, `server connect` |
+| [`cloud eval`](/cli/reference#eval-commands) | Author and run eval suites | `create`, `list`, `run`, `status`, `validate`, `export` |
+| [`cloud tunnel`](/cli/reference#tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel <url>`, `tunnel -- <command>` |
+| [`cloud hosts`](/cli/reference#hosts-commands) | Manage hosts in your hosted MCPJam projects | `list`, `get`, `create`, `update`, `delete`, `templates` |
+| [`cloud environments`](/cli/reference#environments-commands) | Manage project environments — the host + servers + pinned skills/plugins bundles eval suites and journeys run against | `list`, `get`, `resolve`, `create`, `update`, `archive`, `restore` |
+| [`cloud images`](/cli/reference#images-commands) | Manage custom Computer sandbox images (blueprints) | `list`, `get`, `create`, `validate`, `edit`, `build`, `logs`, `use`, `reset`, `promote`, `delete` |
+| `cloud scenarios` | Publish and manage user-testing scenarios | `publish`, `unpublish`, `list`, `get` |
+| `cloud journeys` | Manage and run Swarms journeys | `list`, `run`, `status`, `create`, `update` |
+| `cloud sessions` / `cloud chat-sessions` | Search and list chat sessions | `search`, `list` |
 
 ## Global flags
 
