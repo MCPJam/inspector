@@ -768,9 +768,12 @@ function FieldCell({
           title={v.raw}
         >
           {(["light", "dark"] as const).map((theme) => (
+            // `items-center` centers the theme label over the swatch+value row
+            // it names; the row itself keeps its own left edge, so the two
+            // themes still line up with each other for reading down the cell.
             <span
               key={theme}
-              className="flex max-w-full flex-col items-start gap-0.5"
+              className="flex max-w-full flex-col items-center gap-0.5"
             >
               <span className="text-[10px] uppercase leading-none tracking-wide text-muted-foreground/60">
                 {theme}
