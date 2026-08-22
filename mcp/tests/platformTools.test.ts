@@ -210,6 +210,14 @@ const PLAIN_TOOLS = [
   "upsert_user_testing_member",
   "remove_user_testing_member",
   "rebind_user_testing_scenario",
+  "search_registry_directory",
+  "get_registry_directory_server",
+  "list_registry_directory_sources",
+  "list_registry_servers",
+  "list_registry_connections",
+  "install_registry_directory_server",
+  "install_registry_server",
+  "uninstall_registry_server",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -428,6 +436,14 @@ describe("platform tool registration", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "search_registry_directory",
+      "get_registry_directory_server",
+      "list_registry_directory_sources",
+      "list_registry_servers",
+      "list_registry_connections",
+      "install_registry_directory_server",
+      "install_registry_server",
+      "uninstall_registry_server",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {
@@ -503,6 +519,10 @@ describe("platform tool registration", () => {
       // Nothing is destroyed and nothing is enabled without a person
       // completing the flow, so it is a write rather than a destructive one.
       "connect_project_server",
+      // Install writes a servers row + provenance. Not a live connection and
+      // not a removal — exposure is the risk, announced as a plain write.
+      "install_registry_directory_server",
+      "install_registry_server",
       // Swarms authoring. Persists and is editable; nothing here removes
       // anything, and creating a journey starts nothing.
       "create_persona",
@@ -565,6 +585,7 @@ describe("platform tool registration", () => {
       // Rotating invalidates every copy of the share link that anyone holds.
       "rotate_user_testing_link",
       "remove_user_testing_member",
+      "uninstall_registry_server",
     ]);
 
     for (const registration of registrations) {
