@@ -563,7 +563,7 @@ function validateOpInput<TInput>(
       .join("; ");
     throw usageError(`Invalid input: ${detail}`);
   }
-  return parsed.data;
+  return parsed.data as TInput;
 }
 
 /** Run an operation with a pre-validated input and print the result. */
