@@ -362,7 +362,7 @@ There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval
 
 ### Trigger a hosted eval suite
 
-`mcpjam eval run` starts an asynchronous run of a suite that lives in your MCPJam project. It prints a `runId` and returns immediately — the iterations execute on the MCPJam platform, not in your CI job. Check on the run with `mcpjam eval status`.
+`mcpjam cloud eval run` starts an asynchronous run of a suite that lives in your MCPJam project. It prints a `runId` and returns immediately — the iterations execute on the MCPJam platform, not in your CI job. Check on the run with `mcpjam cloud eval status`.
 
 **Secrets needed:**
 
@@ -375,14 +375,14 @@ There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval
         env:
           MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
         run: |
-          npx -y @mcpjam/cli@latest eval run \
+          npx -y @mcpjam/cli@latest cloud eval run \
             --suite "Nightly regression" \
             --project "My project" \
             --format json > eval-run.json
           echo "Started run $(jq -r '.runId' eval-run.json)"
 ```
 
-In human format, `eval run` prints a `View:` line after the payload so you can open the run directly from the terminal:
+In human format, `cloud eval run` prints a `View:` line after the payload so you can open the run directly from the terminal:
 
 ```text
 View: https://app.mcpjam.com/evals/suite/<suiteId>/runs/<runId>?project=<projectId>
@@ -390,7 +390,7 @@ View: https://app.mcpjam.com/evals/suite/<suiteId>/runs/<runId>?project=<project
 
 This line is only emitted in human format — `--format json` output is unchanged, so scripts that parse the JSON stream are unaffected.
 
-Poll `eval status` until `run.status` is terminal (`completed`, `failed`, or `cancelled`), then gate the job on `run.result`:
+Poll `cloud eval status` until `run.status` is terminal (`completed`, `failed`, or `cancelled`), then gate the job on `run.result`:
 
 ```yaml
       - name: Wait for eval result
@@ -401,7 +401,7 @@ Poll `eval status` until `run.status` is terminal (`completed`, `failed`, or `ca
           ATTEMPTS=0
           MAX_ATTEMPTS=60   # ~30 minutes at one poll per 30 s
           while :; do
-            npx -y @mcpjam/cli@latest eval status \
+            npx -y @mcpjam/cli@latest cloud eval status \
               --run "$RUN_ID" \
               --project "My project" \
               --format json > eval-status.json
@@ -419,10 +419,10 @@ Poll `eval status` until `run.status` is terminal (`completed`, `failed`, or `ca
 ```
 
 <Note>
-The eval verdict does not control the exit code — `eval run` and `eval status` exit non-zero on API, transport, and usage errors instead. The pass/fail verdict lives in the JSON payload (`run.result`), so the final assertion above is what fails the job. `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
+The eval verdict does not control the exit code — `cloud eval run` and `cloud eval status` exit non-zero on API, transport, and usage errors instead. The pass/fail verdict lives in the JSON payload (`run.result`), so the final assertion above is what fails the job. `cloud eval status` also prints a `View:` line in human format, identical to the one `cloud eval run` prints.
 </Note>
 
-Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`eval` command reference](/cli/reference#eval-commands) for the full surface, including `eval judge` (request LLM-as-judge grading on a finished run), `eval validate` (offline suite-file validation), `eval export` (write a hosted suite to a local file), `eval checks list/connect` (GitHub Checks integration), and more.
+Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands-full-reference) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval checks list/connect` (GitHub Checks integration), and more.
 
 ### Upload SDK eval results
 
