@@ -892,6 +892,7 @@ export function SuiteIterationsView({
           );
         }}
         hostNamesById={hostNamesById}
+        environments={attachedEnvironments}
       />
     ) : undefined;
 
@@ -947,6 +948,7 @@ export function SuiteIterationsView({
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
       hostNamesById={hostNamesById}
+      environments={attachedEnvironments}
       {...extra}
     />
   );
@@ -1340,6 +1342,7 @@ export function SuiteIterationsView({
                       isGeneratingTestCases={isGeneratingTestCases}
                       onCreateTestCase={onCreateTestCase}
                       hostNamesById={hostNamesById}
+                      environments={attachedEnvironments}
                     />
                   )}
                 </motion.div>

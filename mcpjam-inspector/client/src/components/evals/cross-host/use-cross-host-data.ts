@@ -291,36 +291,61 @@ function slotFingerprint(env: CrossHostEnvironment): string {
   ].join("|");
 }
 
-function differingSlotLabel(
-  envs: CrossHostEnvironment[]
-): string | null {
+/** Which shared slot separates these environments, or null if none does. */
+type DifferingSlot = "servers" | "skills" | "sandbox" | "plugins";
+
+function differingSlot(envs: CrossHostEnvironment[]): DifferingSlot | null {
   if (envs.length < 2) return null;
   const first = envs[0]!;
-  const serversDiffer = envs.some(
-    (env) => (env.serverAttachmentId ?? "") !== (first.serverAttachmentId ?? "")
-  );
-  if (serversDiffer) return "servers";
-  const skillsDiffer = envs.some(
-    (env) =>
-      [...(env.skillSelection?.skillIds ?? [])].sort().join(",") !==
-      [...(first.skillSelection?.skillIds ?? [])].sort().join(",")
-  );
-  if (skillsDiffer) return "skills";
-  const computersDiffer = envs.some(
-    (env) =>
-      (env.computerEnvironmentId ?? "") !== (first.computerEnvironmentId ?? "")
-  );
-  if (computersDiffer) {
-    const id = first.computerEnvironmentId;
-    return id ? `sandbox-${id.slice(-4)}` : "sandbox";
+  const differsOn = (read: (env: CrossHostEnvironment) => string) =>
+    envs.some((env) => read(env) !== read(first));
+
+  if (differsOn((env) => env.serverAttachmentId ?? "")) return "servers";
+  if (differsOn((env) => sortedIds(env.skillSelection?.skillIds))) {
+    return "skills";
   }
-  const pluginsDiffer = envs.some(
-    (env) =>
-      [...(env.pluginVersionIds ?? [])].sort().join(",") !==
-      [...(first.pluginVersionIds ?? [])].sort().join(",")
-  );
-  if (pluginsDiffer) return "plugins";
+  if (differsOn((env) => env.computerEnvironmentId ?? "")) return "sandbox";
+  if (differsOn((env) => sortedIds(env.pluginVersionIds))) return "plugins";
   return null;
+}
+
+function sortedIds(ids: readonly string[] | undefined): string {
+  return [...(ids ?? [])].sort().join(",");
+}
+
+/**
+ * How ONE environment reads along the slot that split its cell.
+ *
+ * The label has to differ per environment, because telling the split columns
+ * apart is the entire reason the cell split. Naming the slot alone would print
+ * the same annotation on every column — and reading the sandbox pin regardless
+ * of which slot actually differs would do it too, while also naming the wrong
+ * dimension.
+ */
+function splitLabelFor(
+  env: CrossHostEnvironment,
+  slot: DifferingSlot | null
+): string | null {
+  switch (slot) {
+    case "servers":
+      return env.serverAttachmentId
+        ? `servers-${env.serverAttachmentId.slice(-4)}`
+        : "no servers";
+    case "skills": {
+      const count = env.skillSelection?.skillIds.length ?? 0;
+      return count === 0 ? "no skills" : `${count} skill${count === 1 ? "" : "s"}`;
+    }
+    case "sandbox":
+      return env.computerEnvironmentId
+        ? `sandbox-${env.computerEnvironmentId.slice(-4)}`
+        : "no sandbox";
+    case "plugins": {
+      const count = env.pluginVersionIds?.length ?? 0;
+      return count === 0 ? "no plugins" : `${count} plugin${count === 1 ? "" : "s"}`;
+    }
+    default:
+      return null;
+  }
 }
 
 export function modelKeyForRun(
@@ -425,7 +450,7 @@ export function useCrossHostData(
       const fps = new Set(groupEnvs.map(slotFingerprint));
       const collide = fps.size > 1;
       if (collide) {
-        const slot = differingSlotLabel(groupEnvs);
+        const slot = differingSlot(groupEnvs);
         for (const env of groupEnvs) {
           hostColumns.push({
             hostId: group.hostId,
@@ -436,9 +461,7 @@ export function useCrossHostData(
               attachments.find((a) => a.namedHostId === group.hostId)?.hostName ??
               null,
             isHistorical: group.isHistorical,
-            splitLabel: env.computerEnvironmentId
-              ? `sandbox-${env.computerEnvironmentId.slice(-4)}`
-              : slot,
+            splitLabel: splitLabelFor(env, slot),
           });
         }
         continue;
