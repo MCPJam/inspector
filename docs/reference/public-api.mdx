@@ -303,6 +303,18 @@ building conversational surfaces (the MCPJam Slack app is the first consumer):
 | `GET .../scenarios` | List the project's published scenarios: name, access mode, attached servers, share link |
 | `GET .../scenarios/{scenarioId}` | One scenario's settings: model, system prompt, tool-approval policy, resolved servers |
 
+**Unified share settings** (`/projects/{projectId}/shares/{resourceType}/{resourceId}`) — read and control who can open a shared scenario, conformance run, or eval run. `{resourceType}` is one of `scenario`, `conformanceRun`, or `evalRun`:
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET .../shares/{resourceType}/{resourceId}` | Read the full share envelope: mode, policy version, link token, and invited members |
+| `PATCH .../shares/{resourceType}/{resourceId}` | Change the share mode (`project_members` / `invited_only` / `anyone_with_link`). `anyone_with_link` grants access to anyone holding the URL, including guests as browser sessions — not verified individuals |
+| `POST .../shares/{resourceType}/{resourceId}/rotate-link` | Mint a new share URL and invalidate the old one. **Immediate and irreversible**: everyone holding the old URL loses the ability to redeem it. Invited members keep their access. Use this when a link has leaked, not as routine hygiene |
+
+<Note>
+  Share member upsert and delete (`PUT`/`DELETE .../shares/{resourceType}/{resourceId}/members/...`) remain REST-only and are not available through the SDK or agent.
+</Note>
+
 <Note>
   **Swarms and User Testing are enabled per organization.** Everything in the
   four sections below is behind that gate, enforced server-side. If it is not
