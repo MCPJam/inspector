@@ -2004,12 +2004,24 @@ function composeLaunchPolicy(input: {
 }
 
 /**
- * Id-shaped: a compact opaque token (Convex document ids, minted cells).
- * Display names like `Staging` stay on the named-list path — a GET for every
- * name would extra-roundtrip the common case.
+ * Id-shaped: a Convex document id — lowercase base32-ish, no separators.
+ *
+ * Deliberately narrow. A looser shape (anything 16+ of `[A-Za-z0-9_-]`) also
+ * matches ordinary display names like `staging-environment`, which then reach
+ * `v.id()` on the server and fail validation BEFORE the handler — an error
+ * class the route reports as a 500, not a 404. The list path is the correct
+ * home for names, so keep them off this branch. Anything that slips through
+ * still falls back (see {@link resolveEnvironmentSelector}).
  */
 function looksLikeEnvironmentId(selector: string): boolean {
-  return /^[A-Za-z0-9_-]{16,128}$/.test(selector);
+  return /^[a-z0-9]{25,40}$/.test(selector);
+}
+
+/** A caller-requested cancellation, however the transport spelled it. */
+function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { name, code } = error as { name?: unknown; code?: unknown };
+  return name === "AbortError" || code === "ABORT_ERR";
 }
 
 /**
@@ -5570,10 +5582,12 @@ async function resolveEnvironmentSelector(
             : byId.id,
       };
     } catch (error) {
-      if (
-        !(error instanceof PlatformApiError) ||
-        (error.status !== 404 && error.code !== "NOT_FOUND")
-      ) {
+      // The fast path is an OPTIMIZATION, so its failure must never be worse
+      // than not having taken it: fall through to the list, which resolves
+      // names, still finds live ids, and produces the enumerated not-found
+      // message. Only a caller-requested abort propagates — retrying that as
+      // a second request would ignore the cancellation.
+      if (signal?.aborted || isAbortError(error)) {
         throw error;
       }
     }
