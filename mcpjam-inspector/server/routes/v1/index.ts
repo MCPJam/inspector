@@ -35,6 +35,7 @@ import swarmInsights from "./swarm-insights.js";
 import swarmGenerateV1 from "./swarm-generate.js";
 import scenarios from "./scenarios.js";
 import userTesting from "./user-testing.js";
+import shares from "./shares.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
 import conformanceIngest from "./conformance-ingest.js";
@@ -152,6 +153,9 @@ v1.route("/", scenarios);
 // publishing (keyed by environment, because the scenario does not exist yet);
 // this is keyed by the scenario. Guest-DENIED by default, same as publishing.
 v1.route("/", userTesting);
+// Unified share control plane. Guest-DENIED (no GUEST_ALLOWED_V1_RULES
+// entry). Existing user-testing share endpoints stay as wrappers.
+v1.route("/", shares);
 // Computer sandbox images stay OFF the guest allowlist (no
 // GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
 // project-scoped caller.
