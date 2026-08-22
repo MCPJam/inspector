@@ -34,8 +34,11 @@ const LEGACY_API_KEY_PREFIX = "mcpjam_";
 const TOKEN_REFRESH_SKEW_MS = 60_000;
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
 
-const LEGACY_KEY_REMEDY =
+export const LEGACY_KEY_REMEDY =
   "Legacy mcpjam_ API keys are not supported by platform commands. Create an sk_ key at https://app.mcpjam.com/settings/api-keys or run `mcpjam cloud login`.";
+
+export const MISSING_CLOUD_CREDENTIAL_MESSAGE =
+  "Not logged in. Run `mcpjam cloud login`, or pass an sk_ API key via --api-key / MCPJAM_API_KEY.";
 
 export interface PlatformCredential {
   kind: "api-key" | "oauth";
@@ -97,9 +100,7 @@ export async function getOAuthAccessToken(deps: {
 }): Promise<string> {
   const stored = readStoredAuth(deps.authFilePath);
   if (!stored) {
-    throw operationalError(
-      "Not logged in. Run `mcpjam cloud login`, or pass an sk_ API key via --api-key / MCPJAM_API_KEY."
-    );
+    throw operationalError(MISSING_CLOUD_CREDENTIAL_MESSAGE);
   }
 
   const now = deps.now ?? Date.now;

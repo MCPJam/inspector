@@ -4,6 +4,7 @@ import {
   getProjectServerConnectionStatusOperation,
   createProjectOperation,
   deleteProjectOperation,
+  getCapabilitiesOperation,
   listProjectsOperation,
   listProjectServersOperation,
   createProjectServerOperation,
@@ -21,11 +22,15 @@ import {
 import { writeResult } from "../lib/output.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
+  addOrgOption,
+  addProjectOption,
+  bindOperation,
   buildCloudClientContext,
   platformOptionsOf,
   runPlatformCommand,
   type PlatformOptions as SharedPlatformOptions,
 } from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 import { openUrlInBrowser } from "@mcpjam/sdk";
 
@@ -47,11 +52,11 @@ type PlatformOptions = SharedPlatformOptions & {
  * merged nearest-first.
  */
 function requireProject(command: Command, options: PlatformOptions): string {
-  const project = options.project?.trim();
-  if (!project) {
+  const resolved = resolveCloudProjectArgs({ project: options.project });
+  if (resolved.projectScope.source === "automatic" || !resolved.project) {
     command.error("error: required option '--project <id-or-name>' not specified");
   }
-  return project;
+  return resolved.project;
 }
 
 /**
@@ -111,6 +116,7 @@ export function registerProjectsCommands(program: Command): void {
       "Operate the MCP servers saved in your hosted MCPJam projects"
     );
 
+      addOrgOption(
       projects
       .command("list")
       .description("List the projects you can access")
@@ -118,22 +124,17 @@ export function registerProjectsCommands(program: Command): void {
       // it, and no way to learn an id to pass either. `organizations list`
       // supplies the id, so the flag is finally usable end to end.
       //
-      // Named `--organization-id`, matching `projects create`, because both
-      // take an ID and only an ID. (`--project` elsewhere is a name-OR-id
-      // selector, which is why that one has no `-id` suffix.)
-      .option(
-        "--organization-id <id>",
-        "Restrict the listing to one organization (see `mcpjam cloud organizations list`)"
+      // Named `--org`, matching `projects create`. Both take an ID and only
+      // an ID. (`--project` elsewhere is a name-OR-id selector.)
       ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const rawOrganization = (command.opts() as { organizationId?: string })
-      .organizationId;
+    const rawOrganization = (command.opts() as { org?: string }).org;
     // A supplied-but-blank value is a typo, not "no filter". Silently widening
     // it to every accessible project is the wrong answer to a request that
     // asked to narrow — same reasoning as `requireProject` above.
     if (rawOrganization !== undefined && rawOrganization.trim() === "") {
       command.error(
-        "error: option '--organization-id <id>' cannot be empty"
+        "error: option '--org <id>' cannot be empty"
       );
     }
     const organizationId = rawOrganization?.trim();
@@ -144,7 +145,13 @@ export function registerProjectsCommands(program: Command): void {
         listProjectsOperation.execute(
           organizationId ? { organizationId } : {},
           { client, signal }
-        )
+        ),
+      {
+        quiet: globalOptions.quiet,
+        cloudScope: organizationId
+          ? { kind: "organization", organization: organizationId }
+          : { kind: "all-projects" },
+      }
     );
 
     if (globalOptions.format === "human") {
@@ -156,18 +163,19 @@ export function registerProjectsCommands(program: Command): void {
     }
   });
 
+      addOrgOption(
       projects
       .command("create")
       .description("Create a hosted MCPJam project")
       .requiredOption("--name <name>", "Project name")
       .option("--description <text>", "Project description")
-      .option("--organization-id <id>", "Organization ID")
+      )
       .option("--visibility <visibility>", "public or private").action(
     async (
       options: PlatformOptions & {
         name: string;
         description?: string;
-        organizationId?: string;
+        org?: string;
         visibility?: string;
       },
       command
@@ -178,9 +186,9 @@ export function registerProjectsCommands(program: Command): void {
         ...(options.description === undefined
           ? {}
           : { description: options.description }),
-        ...(options.organizationId === undefined
+        ...(options.org === undefined
           ? {}
-          : { organizationId: options.organizationId }),
+          : { organizationId: options.org }),
         ...(options.visibility === undefined
           ? {}
           : { visibility: options.visibility }),
@@ -189,7 +197,8 @@ export function registerProjectsCommands(program: Command): void {
         platformOptionsOf<PlatformOptions>(command),
         globalOptions.timeout,
         ({ client, signal }) =>
-          createProjectOperation.execute(input, { client, signal })
+          createProjectOperation.execute(input, { client, signal }),
+        { cloudScope: { kind: "account" }, quiet: globalOptions.quiet }
       );
       writeResult(result, globalOptions.format);
     }
@@ -250,9 +259,20 @@ export function registerProjectsCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
+  bindOperation(
+    addProjectOption(
+      projects
+        .command("capabilities")
+        .description(
+          "Show what you may do in a project: your role, which betas the organization has, your plan's limits, and a can-block of booleans. Ask this before scripting anything that authors, launches or publishes."
+        )
+    ),
+    getCapabilitiesOperation,
+    (options: PlatformOptions) => ({ project: options.project })
+  );
+
   const servers =     projects
       .command("servers")
-      .alias("server")
       .description("List and manage the servers saved in a project").option(
     "--project <id-or-name>",
     "Project name or ID (defaults to the most recently updated project)"
@@ -265,7 +285,7 @@ export function registerProjectsCommands(program: Command): void {
       globalOptions.timeout,
       ({ client, signal }) =>
         listProjectServersOperation.execute(
-          { project: platformOptions.project },
+          { project: resolveCloudProjectArgs(platformOptions).project },
           { client, signal }
         )
     );
@@ -416,7 +436,7 @@ export function registerProjectsCommands(program: Command): void {
         // and therefore consumes it, so the subcommand's own copy is always
         // undefined and this command quietly connected to the default project
         // instead of the one that was named.
-        project: platformOptions.project,
+        project: resolveCloudProjectArgs(platformOptions).project,
         serverId: options.server,
         name: options.name,
         reauthorize: options.reauthorize,
@@ -453,7 +473,7 @@ export function registerProjectsCommands(program: Command): void {
       if (options.wait === false || isTerminalConnectionStatus(created.status)) {
         if (options.wait === false && !isTerminalConnectionStatus(created.status)) {
           process.stderr.write(
-            `Not waiting. Follow it with:\n  mcpjam cloud projects server connect-status --request ${created.connectionRequestId}\n`
+            `Not waiting. Follow it with:\n  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n`
           );
         }
         writeResult(created, globalOptions.format);
@@ -475,7 +495,7 @@ export function registerProjectsCommands(program: Command): void {
         // watching". Returning the last poll silently made those identical.
         process.stderr.write(
           `Stopped waiting; the request is still ${latest.status} and continues in the cloud.\n` +
-            `  mcpjam cloud projects server connect-status --request ${created.connectionRequestId}\n`
+            `  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n`
         );
         process.exitCode = 1;
       }
@@ -498,7 +518,8 @@ export function registerProjectsCommands(program: Command): void {
           getProjectServerConnectionStatusOperation.execute(input, {
             client,
             signal,
-          })
+          }),
+        { cloudScope: { kind: "account" }, quiet: globalOptions.quiet }
       );
       writeResult(payload, globalOptions.format);
     }
@@ -520,7 +541,7 @@ export function registerProjectsCommands(program: Command): void {
       globalOptions.timeout,
       ({ client, signal }) =>
         showServersOperation.execute(
-          { project: platformOptions.project },
+          { project: resolveCloudProjectArgs(platformOptions).project },
           { client, signal }
         )
     );

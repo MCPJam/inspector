@@ -227,6 +227,7 @@ function PendingSeatPaymentNotice({
   onCancel: () => void;
 }) {
   const needsRetry = intent.needsRetry === true;
+  const cleanupPending = intent.status === "cleanup_pending";
 
   return (
     <Alert
@@ -247,7 +248,12 @@ function PendingSeatPaymentNotice({
       </AlertTitle>
       <AlertDescription className="space-y-3">
         <p>
-          {needsRetry ? (
+          {cleanupPending ? (
+            <>
+              Stripe is closing {intent.email}'s declined invoice. Retry will
+              unlock as soon as cleanup is confirmed.
+            </>
+          ) : needsRetry ? (
             <>
               We couldn't charge for {intent.email}'s seat. They won't get
               access or credits until it's paid.
@@ -264,9 +270,13 @@ function PendingSeatPaymentNotice({
             type="button"
             size="sm"
             onClick={onFinish}
-            disabled={isFinishingSeatPayment || isCancelingSeatPayment}
+            disabled={
+              cleanupPending ||
+              isFinishingSeatPayment ||
+              isCancelingSeatPayment
+            }
           >
-            {isFinishingSeatPayment ? (
+            {cleanupPending || isFinishingSeatPayment ? (
               <Loader2 className="mr-2 size-4 animate-spin" />
             ) : (
               <CreditCard className="mr-2 size-4" />
@@ -868,6 +878,7 @@ function OrganizationPage({
   const [isRemovingSeatInvite, setIsRemovingSeatInvite] = useState(false);
 
   const handleRetrySeatPayment = async () => {
+    if (activeSeatPaymentIntent?.status === "cleanup_pending") return;
     try {
       const result = await retrySeatPayment();
       if (result?.status === "paid") {
@@ -910,8 +921,20 @@ function OrganizationPage({
         toast.success(`Invite for ${activeSeatPaymentIntent.email} removed.`);
         return;
       }
-      await cancelSeatPayment();
-      toast.success("Pending seat payment canceled.");
+      const result = await cancelSeatPayment();
+      if (result.outcome === "canceled") {
+        toast.success("Pending seat payment canceled.");
+      } else if (result.outcome === "deferred") {
+        toast.error(
+          "Stripe could not confirm cancellation yet. The payment is still pending; try again."
+        );
+      } else if (result.outcome === "paid") {
+        toast.success(
+          "Payment completed before cancellation; the member was added."
+        );
+      } else {
+        toast.error("This seat payment is no longer active.");
+      }
     } catch (error) {
       toast.error(
         error instanceof Error

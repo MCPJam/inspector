@@ -2,8 +2,8 @@
  * `mcpjam organizations` — the read half, which is the whole group.
  *
  * It exists because an `organizationId` had nowhere to come from. `projects
- * list --organization` and `projects create --organization-id` both take one,
- * and until now the only way to learn one was to read it out of a browser URL.
+ * list --org` and `projects create --org` both take one, and until now the
+ * only way to learn one was to read it out of a browser URL.
  *
  * Deliberately list-only. Creating an organization, inviting or removing
  * members, changing roles, transferring ownership and everything billing stay
@@ -44,6 +44,7 @@ export function registerOrganizationsCommands(program: Command): void {
       globalOptions.timeout,
       ({ client, signal }) =>
         listOrganizationsOperation.execute({}, { client, signal }),
+      { cloudScope: { kind: "account" }, quiet: globalOptions.quiet },
     );
 
     if (globalOptions.format === "human") {

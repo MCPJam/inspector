@@ -14,12 +14,24 @@
 import type { Command } from "commander";
 import { PlatformApiError } from "@mcpjam/sdk/platform";
 import {
+  appendProjectLinkHint,
+  resolveCloudProjectArgs,
+  resolveProjectSelector,
+  type CloudScope,
+  type ProjectCloudScope,
+  type ResolveProjectSelectorOptions,
+} from "./cloud-scope.js";
+import {
+  announceCloudContext,
+  preflightCloudCredentials,
+} from "./cloud-context.js";
+import {
   buildPlatformClient,
   toCliError,
   webOriginForApiBaseUrl,
 } from "./platform-client.js";
 import { getGlobalOptions } from "./server-config.js";
-import { usageError, writeResult } from "./output.js";
+import { CliError, usageError, writeResult } from "./output.js";
 
 export type PlatformOptions = {
   apiKey?: string;
@@ -46,11 +58,29 @@ export type RunPlatformOperationExtras = {
    */
   externalSignal?: AbortSignal;
   /**
-   * When true (default), announce Cloud context before the operation.
-   * Inner polls set `false` so a user command announces once. No-op until
-   * the audience-line change lands.
+   * When true (default), print the Cloud audience line to stderr before the
+   * operation. Inner polls, `cloud whoami`, `cloud link`, and hosted
+   * `readiness` set `false` so a user command announces at most once.
    */
   announce?: boolean;
+  /**
+   * Suppress the audience line. Wrappers pass the global `--quiet` flag;
+   * `process.argv` is the fallback when a call site has not been updated.
+   */
+  quiet?: boolean;
+  /**
+   * Typed Cloud resource scope for the audience line. When omitted, a
+   * project-scoped selector is inferred from `--project` / env / link /
+   * automatic. Account-scoped callers pass `{ kind: "account" }` (or
+   * `all-projects` / `organization`) so they do not pick up a project link.
+   */
+  cloudScope?: CloudScope;
+  /**
+   * How the project selector for this operation was chosen. Used to append
+   * a re-link hint when a link-sourced selector fails online, and as the
+   * audience scope when `cloudScope` is omitted.
+   */
+  projectScope?: ProjectCloudScope;
 };
 
 /**
@@ -60,7 +90,7 @@ export type RunPlatformOperationExtras = {
  * READ THIS BEFORE USING `options.x` FOR CREDENTIAL OR PROJECT FLAGS. Each
  * may be declared on a group AND on its subcommands, and Commander does not
  * give the subcommand a copy: whichever command declares a flag NEAREST THE
- * TOP consumes it, wherever it appears on the line. `projects server connect
+ * TOP consumes it, wherever it appears on the line. `projects servers connect
  * --project alpha` stores `alpha` on `servers`, and `connect`'s own
  * `options.project` is `undefined`. Merging here is what makes the typed
  * value reachable.
@@ -118,6 +148,17 @@ export function buildCloudClientContext(
   };
 }
 
+function cloudAnnounceScope(
+  options: PlatformOptions,
+  extras: RunPlatformOperationExtras
+): CloudScope {
+  if (extras.cloudScope) return extras.cloudScope;
+  if (extras.projectScope) return extras.projectScope;
+  return resolveProjectSelector({
+    flagProject: (options as { project?: string }).project,
+  });
+}
+
 /**
  * Run one bounded Cloud operation under the global timeout, translating every
  * failure into a CLI error.
@@ -133,7 +174,7 @@ export async function runPlatformOperation<TOutput>(
   execute: (context: PlatformOperationContext) => Promise<TOutput>,
   extras: RunPlatformOperationExtras = {}
 ): Promise<TOutput> {
-  void extras.announce;
+  preflightCloudCredentials(options);
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => {
     controller.abort(
@@ -156,6 +197,13 @@ export async function runPlatformOperation<TOutput>(
 
   try {
     const context = buildCloudClientContext(options, timeoutMs);
+    const quiet = extras.quiet ?? process.argv.includes("--quiet");
+    if (extras.announce !== false && quiet !== true) {
+      announceCloudContext({
+        scope: cloudAnnounceScope(options, extras),
+        options,
+      });
+    }
     return await execute({ ...context, signal: controller.signal });
   } catch (error) {
     if (
@@ -164,7 +212,13 @@ export async function runPlatformOperation<TOutput>(
     ) {
       throw toCliError(controller.signal.reason);
     }
-    throw toCliError(error);
+    const mapped = toCliError(error);
+    throw new CliError(
+      mapped.code,
+      appendProjectLinkHint(mapped.message, extras.projectScope),
+      mapped.exitCode,
+      mapped.details
+    );
   } finally {
     clearTimeout(timeoutHandle);
     externalSignal?.removeEventListener("abort", onExternalAbort);
@@ -212,6 +266,10 @@ function hasCloudAncestor(command: Command): boolean {
   return false;
 }
 
+function commandHasProjectOption(command: Command): boolean {
+  return command.options.some((option) => option.long === "--project");
+}
+
 export function bindOperation<TOptions extends PlatformOptions, TInput>(
   command: Command,
   operation: {
@@ -230,14 +288,72 @@ export function bindOperation<TOptions extends PlatformOptions, TInput>(
   }
   command.action(async (options: TOptions, invoked: Command) => {
     const globalOptions = getGlobalOptions(invoked);
+    const merged = platformOptionsOf<TOptions & { project?: string }>(invoked);
+    const underCloud = hasCloudAncestor(invoked);
+    const applyAmbient = underCloud && commandHasProjectOption(invoked);
+    const resolved = applyAmbient
+      ? resolveCloudProjectArgs({ project: merged.project })
+      : undefined;
+    const inputOptions = resolved
+      ? ({ ...options, project: resolved.project } as TOptions)
+      : options;
     const result = await runPlatformOperation(
       platformOptionsOf<TOptions>(invoked),
       globalOptions.timeout,
       ({ client, signal }) =>
-        operation.execute(buildInput(options), { client, signal })
+        operation.execute(buildInput(inputOptions), { client, signal }),
+      {
+        announce: underCloud,
+        quiet: globalOptions.quiet,
+        ...(resolved
+          ? {
+              projectScope: resolved.projectScope,
+              cloudScope: resolved.projectScope,
+            }
+          : {}),
+      }
     );
     writeResult(result, globalOptions.format);
   });
+}
+
+/**
+ * Run a project-scoped Cloud operation, applying flag / input / env / link /
+ * automatic precedence to `--project` without writing the resolved selector
+ * back onto `options.project`.
+ */
+export async function runCloudOp<
+  TOptions extends PlatformOptions & { project?: string },
+  TOutput,
+>(
+  command: Command,
+  options: TOptions,
+  execute: (
+    context: PlatformOperationContext,
+    project: { project?: string }
+  ) => Promise<TOutput>,
+  extra: Omit<ResolveProjectSelectorOptions, "flagProject"> & {
+    extras?: RunPlatformOperationExtras;
+  } = {}
+): Promise<TOutput> {
+  const globalOptions = getGlobalOptions(command);
+  const { extras: nestedExtras, ...selectorExtra } = extra;
+  const resolved = resolveCloudProjectArgs(options, selectorExtra);
+  return runPlatformOperation(
+    platformOptionsOf(command),
+    globalOptions.timeout,
+    (context) =>
+      execute(
+        context,
+        resolved.project !== undefined ? { project: resolved.project } : {}
+      ),
+    {
+      ...nestedExtras,
+      projectScope: resolved.projectScope,
+      cloudScope: nestedExtras?.cloudScope ?? resolved.projectScope,
+      quiet: nestedExtras?.quiet ?? globalOptions.quiet,
+    }
+  );
 }
 
 /** `--project` is optional everywhere: it defaults to the newest project. */
@@ -245,6 +361,17 @@ export function addProjectOption(command: Command): Command {
   return command.option(
     "--project <id-or-name>",
     "Project name or ID (defaults to the most recently updated project)"
+  );
+}
+
+/**
+ * Organization filter. ID-only — unlike `--project`, which is a name-or-id
+ * selector. `mcpjam cloud organizations list` is how you learn the id.
+ */
+export function addOrgOption(command: Command): Command {
+  return command.option(
+    "--org <id>",
+    "Organization ID (see `mcpjam cloud organizations list`)"
   );
 }
 
