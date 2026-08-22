@@ -23,6 +23,7 @@ type ShareEnvelope = {
   resourceId: string;
   projectId?: string;
   mode?: string;
+  maxShareMode?: string | null;
   policyVersion?: number;
   link?: { token?: string } | null;
   members?: Array<{ id: string; email: string }>;
@@ -89,6 +90,7 @@ function projectEnvelope(
   resourceId: string;
   projectId: string;
   mode: string | null;
+  maxShareMode: string | null;
   policyVersion: number | null;
   link: { token?: string } | null;
   members: Array<{ id: string; email: string }>;
@@ -98,6 +100,7 @@ function projectEnvelope(
     resourceId: envelope.resourceId,
     projectId,
     mode: envelope.mode ?? null,
+    maxShareMode: envelope.maxShareMode ?? null,
     policyVersion: envelope.policyVersion ?? null,
     link: envelope.link ?? null,
     members: envelope.members ?? [],
