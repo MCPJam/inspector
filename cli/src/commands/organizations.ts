@@ -44,6 +44,7 @@ export function registerOrganizationsCommands(program: Command): void {
       globalOptions.timeout,
       ({ client, signal }) =>
         listOrganizationsOperation.execute({}, { client, signal }),
+      { cloudScope: { kind: "account" }, quiet: globalOptions.quiet },
     );
 
     if (globalOptions.format === "human") {

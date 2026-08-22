@@ -556,7 +556,10 @@ async function executeOp<TInput, TOutput>(
     platformOptionsOf(command),
     globalOptions.timeout,
     ({ client, signal }) => op.execute(filled, { client, signal }),
-    { projectScope: resolved.projectScope }
+    {
+      projectScope: resolved.projectScope,
+      quiet: globalOptions.quiet,
+    }
   );
   writeResult(result, globalOptions.format);
 }
@@ -1191,7 +1194,8 @@ async function runEvalPull(
             ? { suiteMatchOptions: detail.settings.matchOptions }
             : {}),
         };
-      }
+      },
+      { projectScope: resolved.projectScope }
     );
   } catch (error) {
     throw corpusFetchFailure(error);
@@ -1564,7 +1568,8 @@ async function runEvalExport(
       }
 
       return { detail, cases: page.items };
-    }
+    },
+    { projectScope: resolved.projectScope }
   );
 
   const built = buildSuiteFileFromPlatform(fetched);
@@ -1900,7 +1905,8 @@ export function registerEvalCommands(program: Command): void {
             },
             { client: context.client, signal: context.signal }
           );
-        }
+        },
+        { projectScope: resolved.projectScope }
       );
       // EXACTLY ONE JSON document on `--format json`: the receipt already
       // carries every run, so appending human lines to it would make the
@@ -1936,7 +1942,8 @@ export function registerEvalCommands(program: Command): void {
             { project: resolved.project ?? options.project, runId: options.run },
             { client: context.client, signal: context.signal }
           );
-        }
+        },
+        { projectScope: resolved.projectScope }
       );
       writeResult(result, globalOptions.format);
       writeJudgeSummary(globalOptions.format, result.run.judges);
@@ -2410,7 +2417,8 @@ export function registerEvalCommands(program: Command): void {
               iterationId: options.iteration,
             },
             { client, signal }
-          )
+          ),
+        { projectScope: resolved.projectScope }
       );
 
       let shots = extractRenderedScreenshots(result);
@@ -2537,7 +2545,8 @@ export function registerEvalCommands(program: Command): void {
               iterationId: options.iteration,
             },
             { client, signal }
-          )
+          ),
+        { projectScope: resolved.projectScope }
       );
 
       const videoUrl = extractIterationVideoUrl(result);

@@ -85,7 +85,8 @@ async function assertModelOverridesSupported(
       getEnvironmentCapabilitiesOperation.execute(
         { project: args.project },
         { client, signal }
-      )
+      ),
+    { announce: false }
   );
   const supported = result.capabilities.modelOverrides;
   if (!supported) {
@@ -100,13 +101,16 @@ async function assertModelOverridesSupported(
  * write itself uses: `--project`, then the JSON body's `project`, then
  * `MCPJAM_PROJECT`, a project link, then automatic selection.
  */
-function projectSelector(
+function resolveEnvironmentProject(
   options: { project?: string },
   body: Record<string, unknown> = {}
-): { project?: string } {
-  const resolved = resolveCloudProjectArgs(options, {
+) {
+  return resolveCloudProjectArgs(options, {
     inputProject: typeof body.project === "string" ? body.project : undefined,
   });
+}
+
+function projectFields(resolved: { project?: string }): { project?: string } {
   return resolved.project !== undefined ? { project: resolved.project } : {};
 }
 
@@ -300,16 +304,18 @@ export function registerEnvironmentsCommands(program: Command): void {
       // unknown `modelId` with an opaque validator error. Ask first, and only
       // when the caller actually supplied model input — an ordinary create has
       // no reason to pay for a round-trip.
+      const resolved = resolveEnvironmentProject(options, body);
+      const project = projectFields(resolved);
       await assertModelOverridesSupported(
         platformOptionsOf(command),
         globalOptions.timeout,
         {
         supplied: options.model !== undefined || "modelId" in body,
-        ...projectSelector(options, body),
+        ...project,
       });
       const input = validateInput(createEnvironmentOperation, {
         ...body,
-        ...projectSelector(options, body),
+        ...project,
         ...(options.name !== undefined ? { name: options.name } : {}),
         ...(options.hostId !== undefined ? { hostId: options.hostId } : {}),
         ...(options.description !== undefined
@@ -324,7 +330,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
-          createEnvironmentOperation.execute(input, { client, signal })
+          createEnvironmentOperation.execute(input, { client, signal }),
+        { projectScope: resolved.projectScope, cloudScope: resolved.projectScope }
       );
       writeResult(result, globalOptions.format);
     }
@@ -368,8 +375,9 @@ export function registerEnvironmentsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
+      const resolved = resolveEnvironmentProject(options);
       const input = validateInput(ensureAdhocEnvironmentOperation, {
-        ...projectSelector(options),
+        ...projectFields(resolved),
         host: options.host,
         ...(options.serverGroup !== undefined
           ? { serverGroup: options.serverGroup }
@@ -386,7 +394,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
-          ensureAdhocEnvironmentOperation.execute(input, { client, signal })
+          ensureAdhocEnvironmentOperation.execute(input, { client, signal }),
+        { projectScope: resolved.projectScope, cloudScope: resolved.projectScope }
       );
       writeResult(result, globalOptions.format);
     }
@@ -419,8 +428,9 @@ export function registerEnvironmentsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
+      const resolved = resolveEnvironmentProject(options);
       const input = validateInput(nameEnvironmentOperation, {
-        ...projectSelector(options),
+        ...projectFields(resolved),
         environment: options.environment,
         name: options.name,
         expectedRevision: parseRevision(options.expectedRevision),
@@ -432,7 +442,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
-          nameEnvironmentOperation.execute(input, { client, signal })
+          nameEnvironmentOperation.execute(input, { client, signal }),
+        { projectScope: resolved.projectScope, cloudScope: resolved.projectScope }
       );
       writeResult(result, globalOptions.format);
     }
@@ -495,6 +506,8 @@ export function registerEnvironmentsCommands(program: Command): void {
       if (options.model !== undefined && options.clearModel) {
         throw usageError("Provide either --model or --clear-model, not both.");
       }
+      const resolved = resolveEnvironmentProject(options, body);
+      const project = projectFields(resolved);
       await assertModelOverridesSupported(
         platformOptionsOf(command),
         globalOptions.timeout,
@@ -503,11 +516,11 @@ export function registerEnvironmentsCommands(program: Command): void {
           options.model !== undefined ||
           options.clearModel === true ||
           "modelId" in body,
-        ...projectSelector(options, body),
+        ...project,
       });
       const input = validateInput(updateEnvironmentOperation, {
         ...body,
-        ...projectSelector(options, body),
+        ...project,
         environment: options.environment,
         expectedRevision: parseRevision(options.expectedRevision),
         ...(options.name !== undefined ? { name: options.name } : {}),
@@ -527,7 +540,8 @@ export function registerEnvironmentsCommands(program: Command): void {
         platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
-          updateEnvironmentOperation.execute(input, { client, signal })
+          updateEnvironmentOperation.execute(input, { client, signal }),
+        { projectScope: resolved.projectScope, cloudScope: resolved.projectScope }
       );
       writeResult(result, globalOptions.format);
     }

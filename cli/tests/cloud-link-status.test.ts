@@ -374,6 +374,47 @@ test("cloud link empty project argument is a usage error", async () => {
   assert.doesNotMatch(run.stderr, /--project cannot be empty/);
 });
 
+test("cloud link --remove rejects an empty project argument", async () => {
+  const run = await runCli([
+    "cloud",
+    "link",
+    "",
+    "--remove",
+    "--format",
+    "json",
+  ]);
+  assert.equal(run.exitCode, 2);
+  assert.match(run.stderr, /Do not pass a project argument with --remove/);
+});
+
+test("cloud status reports empty MCPJAM_PROJECT as unresolved, not automatic", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-status-empty-"));
+  const run = await withEnv(isolatedEnv({ MCPJAM_PROJECT: "   " }), () =>
+    withCwd(cwd, () => runCli(["cloud", "status", "--format", "json"]))
+  );
+  assert.equal(run.exitCode, 1, run.stderr);
+  const payload = JSON.parse(run.stdout) as {
+    ok: boolean;
+    project: { source: string; description: string };
+    warnings: string[];
+  };
+  assert.equal(payload.ok, false);
+  assert.equal(payload.project.source, "unresolved");
+  assert.equal(payload.project.description, "unresolved");
+  assert.match(payload.warnings.join("\n"), /MCPJAM_PROJECT cannot be empty/);
+});
+
+test("cloud link --here --remove without a link is a usage error", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-link-here-missing-"));
+  const run = await withEnv(isolatedEnv(), () =>
+    withCwd(cwd, () =>
+      runCli(["cloud", "link", "--here", "--remove", "--format", "json"])
+    )
+  );
+  assert.equal(run.exitCode, 2);
+  assert.match(run.stderr, /No project link found/);
+});
+
 test("cloud link --remove rejects a project argument", async () => {
   const run = await runCli([
     "cloud",

@@ -106,7 +106,8 @@ export function registerAuthCommands(program: Command): void {
             ...(me.plan ? { plan: me.plan } : {}),
             credential: credentialKind,
           };
-        }
+        },
+        { announce: false, quiet: globalOptions.quiet }
       );
 
       writeResult(result, globalOptions.format);

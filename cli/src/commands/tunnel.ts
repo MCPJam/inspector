@@ -4,6 +4,10 @@ import {
   type CreateTunnelResult,
 } from "@mcpjam/sdk/platform";
 import { cliError, usageError, writeResult } from "../lib/output.js";
+import {
+  announceCloudContext,
+  preflightCloudCredentials,
+} from "../lib/cloud-context.js";
 import { buildCloudClientContext, platformOptionsOf } from "../lib/platform-command.js";
 import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { toCliError } from "../lib/platform-client.js";
@@ -134,10 +138,18 @@ export function registerTunnelCommands(program: Command): void {
         // Client request timeouts still use `--timeout`. The tunnel itself
         // is not wrapped in `runPlatformOperation`: a session is meant to
         // outlive the default 30-second whole-command deadline.
+        const platform = platformOptionsOf(command);
+        preflightCloudCredentials(platform);
+        const resolved = resolveCloudProjectArgs(options);
+        announceCloudContext({
+          scope: resolved.projectScope,
+          options: platform,
+          quiet: globalOptions.quiet,
+        });
         let client;
         try {
           ({ client } = buildCloudClientContext(
-            platformOptionsOf(command),
+            platform,
             globalOptions.timeout,
           ));
         } catch (error) {
@@ -188,7 +200,7 @@ export function registerTunnelCommands(program: Command): void {
         const session = new TunnelSession({
           createGrant: (signal) =>
             createTunnelOperation.execute(
-              { project: resolveCloudProjectArgs(options).project, name: options.id },
+              { project: resolved.project, name: options.id },
               { client, signal },
             ),
           closeGrant: async (result, signal) => {

@@ -10,6 +10,21 @@ const telemetryDisabled = {
   },
 };
 
+/** Cloud audience lines share stderr with structured errors. Parse the JSON object. */
+function parseStderrJson(stderr: string): {
+  error: { code: string; message: string };
+} {
+  const line = stderr
+    .trim()
+    .split("\n")
+    .reverse()
+    .find((entry) => entry.startsWith("{"));
+  if (!line) {
+    throw new Error(`no JSON object in stderr:\n${stderr}`);
+  }
+  return JSON.parse(line);
+}
+
 async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
   result: T;
   stdout: string;
@@ -318,7 +333,7 @@ test("projects commands honor the global timeout option", async () => {
     );
 
     assert.equal(run.result.exitCode, 1);
-    const payload = JSON.parse(run.stderr);
+    const payload = parseStderrJson(run.stderr);
     assert.equal(payload.error.code, "TIMEOUT");
     assert.match(payload.error.message, /20ms/);
   } finally {
@@ -369,7 +384,7 @@ test("command-level deadline spanning multiple requests still reports TIMEOUT", 
     );
 
     assert.equal(run.result.exitCode, 1);
-    const payload = JSON.parse(run.stderr);
+    const payload = parseStderrJson(run.stderr);
     assert.equal(payload.error.code, "TIMEOUT");
   } finally {
     server.closeAllConnections?.();
@@ -515,7 +530,7 @@ test("projects servers surfaces unknown projects as NOT_FOUND", async () => {
     );
 
     assert.equal(run.result.exitCode, 1);
-    const payload = JSON.parse(run.stderr);
+    const payload = parseStderrJson(run.stderr);
     assert.equal(payload.error.code, "NOT_FOUND");
     assert.match(payload.error.message, /Available projects/);
   } finally {
