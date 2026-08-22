@@ -80,9 +80,10 @@ describe("eval suite settings manifest — API parity", () => {
         unreachable.push(`${row.key} → ${row.api}: ${parsed.error.message}`);
         continue;
       }
-      // Parsing is not enough: an unknown key would be STRIPPED rather than
-      // rejected by a non-strict object, and a stripped field is exactly the
-      // silent gap this manifest exists to catch.
+      // The schema is strict at the top level, so an unknown key is a
+      // rejection rather than a silent strip. Still assert the declared
+      // head survived parse — a future non-strict regression would otherwise
+      // pass this test while dropping the field.
       const [head] = row.api.split(".");
       expect(
         parsed.data,

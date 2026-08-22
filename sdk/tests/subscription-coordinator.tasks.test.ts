@@ -9,7 +9,7 @@
  *     cannot establish the stream must degrade to polling *visibly* — the
  *     handle is never lost and the reason is always recorded.
  *  2. A task-filtered listen MUST carry the per-request eligibility
- *     declaration, or the server answers `-32003` (`tasks.md:797-799`). A
+ *     declaration, or the server answers `-32021` (`tasks.md:797-799`). A
  *     connection that cannot declare must therefore not send one at all.
  */
 
@@ -274,7 +274,7 @@ describe("opening the stream", () => {
     });
 
     // The listen still goes out for the other interests, WITHOUT taskIds: an
-    // undeclared task-filtered listen would be a guaranteed -32003.
+    // undeclared task-filtered listen would be a guaranteed -32021.
     expect(h.client.listens).toHaveLength(1);
     expect(h.client.listens[0].filter.taskIds).toBeUndefined();
 
@@ -423,7 +423,7 @@ describe("filter churn", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(h.client.listens).toHaveLength(2);
-    // The re-listen must go back out DECLARED, or it earns -32003 on reconnect.
+    // The re-listen must go back out DECLARED, or it earns -32021 on reconnect.
     expect(h.client.listens[1].declared).toBe(true);
     expect(h.client.listens[1].filter.taskIds).toEqual(["t1"]);
   });
