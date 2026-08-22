@@ -141,6 +141,7 @@ const PLAIN_TOOLS = [
   "list_project_environments",
   "get_project_environment",
   "resolve_project_environment",
+  "ensure_adhoc_environment",
   // Sandbox image reads: the picker behind a suite's computer image.
   "list_sandbox_images",
   "get_sandbox_image",
@@ -369,6 +370,7 @@ describe("platform tool registration", () => {
       "list_project_environments",
       "get_project_environment",
       "resolve_project_environment",
+      "ensure_adhoc_environment",
       "list_sandbox_images",
       "get_sandbox_image",
       "list_project_plugins",
@@ -492,6 +494,9 @@ describe("platform tool registration", () => {
       // shared repository, everyone's pull requests), not destruction — the
       // annotation says write, and the gated tier is what warns.
       "connect_eval_check_repo",
+      // Content-addressed mint: repeating the same stack reuses one row.
+      // Nothing is destroyed and nothing is named.
+      "ensure_adhoc_environment",
       "create_project_server",
       "update_project_server",
       // Project create/update: both are cheap, both are metadata-only (the
