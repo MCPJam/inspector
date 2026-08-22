@@ -809,9 +809,9 @@ Stop the local Inspector if it is running.
 
 ---
 
-## `eval` commands
+## `cloud eval` commands
 
-Author and run eval suites in your hosted MCPJam projects. All `eval` subcommands require an MCPJam API key (`--api-key` or `MCPJAM_API_KEY`).
+Author and run eval suites in your hosted MCPJam projects. All `cloud eval` subcommands require an MCPJam API key (`--api-key` or `MCPJAM_API_KEY`).
 
 ### Shared platform flags
 
@@ -820,9 +820,9 @@ Author and run eval suites in your hosted MCPJam projects. All `eval` subcommand
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
 
-### `eval create`
+### `cloud eval create`
 
-Create a runnable eval suite from authored test cases. The suite is persisted and returned with a `suiteId`; it is **not** run. Execute it afterward with `eval run`.
+Create a runnable eval suite from authored test cases. The suite is persisted and returned with a `suiteId`; it is **not** run. Execute it afterward with `cloud eval run`.
 
 | Flag | Description |
 |------|-------------|
@@ -837,12 +837,12 @@ Create a runnable eval suite from authored test cases. The suite is persisted an
 Provide the suite definition via `--file` or `--json` (not both). The definition is a JSON object with at minimum `name`, `model`, `servers`, and `cases`. Servers must be HTTP; stdio servers are rejected before any write.
 
 ```bash
-mcpjam eval create \
+mcpjam cloud eval create \
   --json '{"name":"smoke","model":"anthropic/claude-haiku-4.5","servers":["My Server"],"cases":[{"title":"echo works","query":"Use the echo tool to say hi","expectedToolCalls":["echo"]}]}' \
   --api-key $MCPJAM_API_KEY
 ```
 
-### `eval list`
+### `cloud eval list`
 
 List the eval suites saved in a project.
 
@@ -850,9 +850,9 @@ List the eval suites saved in a project.
 |------|-------------|
 | `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
 
-### `eval run`
+### `cloud eval run`
 
-Start an asynchronous eval run of an existing suite. Responds immediately with a `runId`; poll status with `eval status`.
+Start an asynchronous eval run of an existing suite. Responds immediately with a `runId`; poll status with `cloud eval status`.
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -866,13 +866,13 @@ Start an asynchronous eval run of an existing suite. Responds immediately with a
 Every remaining flag, the target-selection rules, and the exit codes are
 documented once under [Which target runs](#which-target-runs).
 
-### `eval status`
+### `cloud eval status`
 
 Get the status and summary of an eval run.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--run <id>` | Yes | Eval run ID (from `cloud eval run`) |
 | `--project <id-or-name>` | Yes | Project name or ID |
 
 ---
