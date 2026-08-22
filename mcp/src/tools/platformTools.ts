@@ -129,6 +129,14 @@ import {
   getShareSettingsOperation,
   setShareModeOperation,
   rotateShareLinkOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
   ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -300,11 +308,17 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
-  // Unified share envelope — the same three verbs as the in-app agent
-  // registry, covering scenario / conformance / eval-run resources.
   getShareSettingsOperation,
   setShareModeOperation,
   rotateShareLinkOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
