@@ -177,6 +177,7 @@ export type {
   PlatformCatalogOauthProbe,
   PlatformCatalogServer,
   PlatformCatalogSourceStatus,
+  PlatformDirectorySearchPage,
   PlatformRegistryServerTransport,
   PlatformRegistryServer,
   PlatformRegistryConnection,

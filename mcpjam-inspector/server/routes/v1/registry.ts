@@ -2,18 +2,17 @@
  * Public v1 registry surface — directory reads (proxied to Convex `/v1`)
  * plus project-scoped card/connection reads and install/uninstall writes.
  *
- * Reads use the same `proxyConvexV1Read` pattern as `catalog.ts`: path-param
- * style on this host, query-param style on Convex, bearer swapped via
- * `getConvexBearerForRequest`. Writes go through userMutation adapters
- * (`connectCatalogServer`, `installRegistryServer`, `disconnectRegistryServer`)
- * with `readJsonObjectBody` + `z.strictObject`.
+ * Reads use the shared `proxyConvexV1Read` plumbing (`convex-v1-proxy.ts`,
+ * same as `catalog.ts`): path-param style on this host, query-param style on
+ * Convex, bearer swapped via `getConvexBearerForRequest`. Writes go through
+ * userMutation adapters (`connectCatalogServer`, `installRegistryServer`,
+ * `disconnectRegistryServer`) with `readJsonObjectBody` + `z.strictObject`.
  *
  * There is no catalog-uninstall route. After the backend catalog-connection
  * cleanup, `DELETE /projects/:projectId/servers/:serverId` removes the
  * `servers` row and its `catalogServerConnections` provenance together.
  */
 import { Hono } from "hono";
-import type { Context } from "hono";
 import { z } from "zod";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
@@ -21,6 +20,13 @@ import { createConvexClient } from "./convex-client.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { readJsonObjectBody } from "./adapter.js";
 import { v1Resource } from "./envelope.js";
+import { logger } from "../../utils/logger.js";
+import { redactForLog } from "./redact-log-message.js";
+import {
+  fetchConvexV1Read,
+  forwardQueryParams,
+  proxyConvexV1Read,
+} from "./convex-v1-proxy.js";
 import {
   INTERNAL_TO_V1_CODE,
   V1_ERROR_STATUS,
@@ -28,8 +34,6 @@ import {
 } from "./contract.js";
 
 const registry = new Hono();
-
-const PROXY_TIMEOUT_MS = 15_000;
 
 const DIRECTORY_SEARCH_PARAMS = [
   "q",
@@ -53,114 +57,15 @@ const installRegistrySchema = z.strictObject({
   expectedUpdatedAt: z.number().finite().optional(),
 });
 
-function forwardQueryParams(
-  c: Context,
-  target: URL,
-  names: readonly string[]
-): void {
-  for (const name of names) {
-    const value = c.req.query(name);
-    if (typeof value === "string" && value.length > 0) {
-      target.searchParams.set(name, value);
-    }
-  }
-}
-
-function isAbortError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    (error.name === "AbortError" ||
-      (error as { code?: string }).code === "ABORT_ERR")
-  );
-}
-
-async function fetchConvexV1Read(
-  c: Context,
-  convexPath: string,
-  configure?: (target: URL) => void
-): Promise<{ status: number; body: unknown; headers: Record<string, string> }> {
-  const convexUrl = process.env.CONVEX_HTTP_URL;
-  if (!convexUrl) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_HTTP_URL configuration"
-    );
-  }
-  const bearer = await getConvexBearerForRequest(c);
-  const target = new URL(convexPath, convexUrl);
-  configure?.(target);
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), PROXY_TIMEOUT_MS);
-  let response: Response;
-  let body: unknown;
-  try {
-    response = await fetch(target, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${bearer}` },
-      signal: controller.signal,
-    });
-    try {
-      body = await response.json();
-    } catch (parseError) {
-      if (isAbortError(parseError)) throw parseError;
-      throw new WebRouteError(
-        502,
-        ErrorCode.SERVER_UNREACHABLE,
-        `Catalog service returned a non-JSON response (${response.status})`
-      );
-    }
-  } catch (error) {
-    if (error instanceof WebRouteError) throw error;
-    const isAbort = isAbortError(error);
-    throw new WebRouteError(
-      isAbort ? 504 : 502,
-      isAbort ? ErrorCode.TIMEOUT : ErrorCode.SERVER_UNREACHABLE,
-      isAbort
-        ? `Catalog read timed out after ${PROXY_TIMEOUT_MS}ms`
-        : "Failed to reach the catalog service"
-    );
-  } finally {
-    clearTimeout(timeoutId);
-  }
-
-  const headers: Record<string, string> = {};
-  for (const name of [
-    "content-type",
-    "x-next-cursor",
-    "x-mcpjam-next-cursor",
-    "x-mcpjam-export-complete",
-    "access-control-expose-headers",
-    "link",
-  ] as const) {
-    const value = response.headers.get(name);
-    if (value) headers[name] = value;
-  }
-  return { status: response.status, body, headers };
-}
-
-async function proxyConvexV1Read(
-  c: Context,
-  convexPath: string,
-  configure?: (target: URL) => void
-): Promise<Response> {
-  const { status, body, headers } = await fetchConvexV1Read(
-    c,
-    convexPath,
-    configure
-  );
-  for (const [name, value] of Object.entries(headers)) c.header(name, value);
-  return c.json(body as Record<string, unknown>, status as 200);
-}
-
 /**
- * Convex document ids are long unhyphenated tokens. Directory `serverName`
- * values are short slugs (`linear`, `github`). A path segment that looks like
- * an id is forwarded as `catalogServerId`; anything else is `name`.
+ * Convex document ids are lowercase unhyphenated base32-ish tokens of ~32
+ * characters. Directory `serverName` values are usually short slugs
+ * (`linear`, `github`). A path segment that looks like an id is tried as
+ * `catalogServerId` FIRST, with a name-lookup fallback below for the scraped
+ * `serverName` that happens to be id-shaped; anything else is `name`.
  */
 function looksLikeConvexId(value: string): boolean {
-  return /^[a-z0-9]{20,}$/i.test(value);
+  return /^[a-z0-9]{30,36}$/.test(value);
 }
 
 function convexErrorData(
@@ -210,6 +115,27 @@ function translateRegistryWriteError(error: unknown): WebRouteError {
       details
     );
   }
+  // Convex rejected the ARGUMENTS before the mutation ran — a caller-shaped
+  // id that does not match `v.id(...)` (a malformed path segment, a
+  // directory id passed to the card shelf). That surfaces as a plain Error
+  // (no `data.code`), which the shared translator would report as OUR
+  // unrecognized 500 — a caller-mintable Sentry warn. It is the caller's bad
+  // input: 400, with a stable message rather than Convex's prose, which
+  // names functions and echoes the arguments back. Same recognition as
+  // `convex-read-errors.ts::ARGUMENT_VALIDATION_FAILURE`; the warn keeps
+  // deploy skew (a validator that gained a required argument) visible in
+  // Axiom without paging.
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/\bArgumentValidationError\b/i.test(raw)) {
+    logger.warn("[v1.registry] convex rejected write arguments", {
+      detail: redactForLog(error),
+    });
+    return new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "Invalid identifier in request"
+    );
+  }
   return translateConvexWriteError(error, { resource: "Registry" });
 }
 
@@ -221,22 +147,34 @@ registry.get("/registry/directory-servers", (c) =>
 );
 
 // GET /registry/directory-servers/:idOrName
-registry.get("/registry/directory-servers/:idOrName", (c) =>
-  proxyConvexV1Read(c, "/v1/registry/directory-server", (target) => {
-    const idOrName = c.req.param("idOrName");
-    const source = c.req.query("source");
-    if (source && source.length > 0) {
-      target.searchParams.set("name", idOrName);
-      target.searchParams.set("source", source);
-      return;
-    }
-    if (looksLikeConvexId(idOrName)) {
-      target.searchParams.set("catalogServerId", idOrName);
-      return;
-    }
+registry.get("/registry/directory-servers/:idOrName", async (c) => {
+  const idOrName = c.req.param("idOrName");
+  const source = c.req.query("source");
+  const byName = (target: URL) => {
     target.searchParams.set("name", idOrName);
-  })
-);
+    if (source && source.length > 0) target.searchParams.set("source", source);
+  };
+  if ((source && source.length > 0) || !looksLikeConvexId(idOrName)) {
+    return proxyConvexV1Read(c, "/v1/registry/directory-server", byName);
+  }
+  // Id-shaped: try `catalogServerId` first, but fall back to a name lookup
+  // when the id read misses. A scraped `serverName` can be id-shaped, and
+  // the upstream answers a wrong-shaped or unknown id with 400
+  // (`v.id` cast rejection) or 404 (`catalog_server_not_found`) — both mean
+  // "no row by that id", never "the name would also miss".
+  const byId = await fetchConvexV1Read(
+    c,
+    "/v1/registry/directory-server",
+    (t) => t.searchParams.set("catalogServerId", idOrName)
+  );
+  if (byId.status !== 400 && byId.status !== 404) {
+    for (const [name, value] of Object.entries(byId.headers)) {
+      c.header(name, value);
+    }
+    return c.json(byId.body as Record<string, unknown>, byId.status as 200);
+  }
+  return proxyConvexV1Read(c, "/v1/registry/directory-server", byName);
+});
 
 // GET /registry/directory-sources
 registry.get("/registry/directory-sources", (c) =>
