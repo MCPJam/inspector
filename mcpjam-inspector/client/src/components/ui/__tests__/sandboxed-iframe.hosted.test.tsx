@@ -11,6 +11,10 @@
  *     and MUST log a clear security warning. The fallback exists only as
  *     a soft-fail for misconfigured deploys; the warning is the signal that
  *     prevents silent regression.
+ *   - An origin EQUAL to the app's own counts as unset. It produces the same
+ *     same-origin iframe, and the renderer used to walk straight through it
+ *     while the client boot guard called the same condition a fault
+ *     (INSPECTOR-CLIENT-247) — two definitions of one invariant, disagreeing.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
@@ -57,7 +61,7 @@ describe("SandboxedIframe — hosted-mode sandbox origin", () => {
         onMessage={() => {}}
         hostedMode
         sandboxOrigin="https://sandbox.mcpjam.test"
-      />,
+      />
     );
     const iframe = container.querySelector("iframe");
     expect(iframe).not.toBeNull();
@@ -66,6 +70,27 @@ describe("SandboxedIframe — hosted-mode sandbox origin", () => {
     expect(srcUrl.origin).toBe("https://sandbox.mcpjam.test");
     expect(srcUrl.origin).not.toBe(window.location.origin);
     expect(srcUrl.pathname).toBe("/api/web/apps/mcp-apps/sandbox-proxy");
+  });
+
+  it("treats an origin equal to the app's own as unset: warns and falls back", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const { container } = render(
+      <SandboxedIframe
+        html={null}
+        onMessage={() => {}}
+        hostedMode
+        sandboxOrigin="https://app.mcpjam.test"
+      />
+    );
+    const srcOrigin = new URL(
+      container.querySelector("iframe")!.getAttribute("src")!
+    ).origin;
+    expect(srcOrigin).toBe(window.location.origin);
+    const warnings = warn.mock.calls.map((args) => args.join(" "));
+    expect(
+      warnings.some((line) => line.includes("VITE_MCPJAM_SANDBOX_ORIGIN"))
+    ).toBe(true);
   });
 
   it("falls back to same-origin and logs a security warning when sandboxOrigin is unset", async () => {
@@ -77,7 +102,7 @@ describe("SandboxedIframe — hosted-mode sandbox origin", () => {
         onMessage={() => {}}
         hostedMode
         sandboxOrigin=""
-      />,
+      />
     );
     const iframe = container.querySelector("iframe");
     expect(iframe).not.toBeNull();
@@ -86,7 +111,35 @@ describe("SandboxedIframe — hosted-mode sandbox origin", () => {
     expect(warn).toHaveBeenCalled();
     const warnings = warn.mock.calls.map((args) => args.join(" "));
     expect(
-      warnings.some((line) => line.includes("VITE_MCPJAM_SANDBOX_ORIGIN")),
+      warnings.some((line) => line.includes("VITE_MCPJAM_SANDBOX_ORIGIN"))
     ).toBe(true);
+  });
+});
+
+describe("SandboxedIframe — local dev origin separation", () => {
+  it("keeps the localhost -> 127.0.0.1 swap, port and all", () => {
+    setLocation("http://localhost:5173");
+
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={() => {}} />
+    );
+    const src = new URL(
+      container.querySelector("iframe")!.getAttribute("src")!
+    );
+    expect(src.host).toBe("127.0.0.1:5173");
+    expect(src.pathname).toBe("/api/apps/mcp-apps/sandbox-proxy");
+    expect(src.searchParams.get("v")).toBeTruthy();
+  });
+
+  it("swaps back the other way from 127.0.0.1", () => {
+    setLocation("http://127.0.0.1:5173");
+
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={() => {}} />
+    );
+    const src = new URL(
+      container.querySelector("iframe")!.getAttribute("src")!
+    );
+    expect(src.host).toBe("localhost:5173");
   });
 });
