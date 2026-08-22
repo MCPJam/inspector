@@ -102,6 +102,24 @@ describe("ModelsPill", () => {
     ).toBeDisabled();
   });
 
+  it("replaces the sole model choice at the cap instead of disabling alternatives", async () => {
+    const user = userEvent.setup();
+    const onChange = renderPill(
+      { includeClientDefaults: true, explicitModelIds: [] },
+      {
+        budget: { hostCount: 6, choiceCount: 1, maxTargets: 10 },
+      }
+    );
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    const gemini = screen.getByRole("checkbox", { name: "Gemini 2.5 Flash" });
+    expect(gemini).not.toBeDisabled();
+    await user.click(gemini);
+    expect(onChange).toHaveBeenCalledWith({
+      includeClientDefaults: false,
+      explicitModelIds: ["google/gemini-2.5-flash"],
+    });
+  });
+
   it("keeps a catalog-disabled model disabled", async () => {
     const user = userEvent.setup();
     renderPill({ includeClientDefaults: true, explicitModelIds: [] });
