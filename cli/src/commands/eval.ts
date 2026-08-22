@@ -580,11 +580,16 @@ async function executeOp<TInput, TOutput>(
       ? (input as { project: string }).project
       : undefined;
   const resolved = resolveCloudProjectArgs(options, { inputProject });
-  const filled = { ...input, project: resolved.project } as TInput;
+  const filled = { ...(input as TInput & { project?: string }) };
+  delete filled.project;
+  if (resolved.project !== undefined) {
+    filled.project = resolved.project;
+  }
   const result = await runPlatformCommand(
     platformOptionsOf(command),
     globalOptions.timeout,
-    ({ client, signal }) => op.execute(filled, { client, signal }),
+    ({ client, signal }) =>
+      op.execute(filled as TInput, { client, signal }),
     {
       projectScope: resolved.projectScope,
       quiet: globalOptions.quiet,
