@@ -206,8 +206,6 @@ export async function startHostedConformanceRun(
   });
 }
 
-const TERMINAL_STATUSES = new Set(["completed", "timed_out", "cancelled"]);
-
 export function toConformanceRunDto(
   run: Record<string, any>,
   options: { projectId: string; reportUrl?: (runId: string) => string },
@@ -217,12 +215,13 @@ export function toConformanceRunDto(
   const hasReport = reports.some(
     (report: { reportUrl?: unknown }) => typeof report.reportUrl === "string",
   );
+  // A STORED REPORT, not a terminal status. A run can reach `timed_out` or
+  // `cancelled` having stored nothing, and `/report` answers those 404 — so
+  // offering the link on status alone advertises an address that is known in
+  // advance to fail. Absent is the honest rendering of "there is nothing to
+  // fetch".
   const reportUrl =
-    (hasReport || TERMINAL_STATUSES.has(String(run.status))) &&
-    options.reportUrl &&
-    id
-      ? options.reportUrl(id)
-      : null;
+    hasReport && options.reportUrl && id ? options.reportUrl(id) : null;
   return {
     id,
     projectId: run.projectId ?? options.projectId,

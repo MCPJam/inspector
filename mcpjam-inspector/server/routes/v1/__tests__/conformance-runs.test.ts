@@ -431,6 +431,24 @@ describe("v1 persisted conformance runs", () => {
         }),
       );
     });
+
+    it("offers no report link when a terminal run stored nothing", async () => {
+      // A `timed_out` run can reach a terminal status having stored no
+      // report at all. Linking on status alone hands the caller an address
+      // whose only possible answer is the 404 below.
+      convexQueryMock.mockResolvedValue({
+        ...RUN_ROW,
+        status: "timed_out",
+        reports: [{ suiteKind: "protocol", status: "failed", reportUrl: null }],
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/conformance-runs/run_1",
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { reportUrl: string | null };
+      expect(body.reportUrl).toBeNull();
+    });
   });
 
   describe("the report", () => {
