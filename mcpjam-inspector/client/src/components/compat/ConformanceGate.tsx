@@ -294,7 +294,12 @@ function SuiteRow({
         <Row label={label}>
           <CheckCircle2 className="h-3 w-3 text-emerald-500" />
           <span className="text-muted-foreground">
-            {outcome.total} check{outcome.total === 1 ? "" : "s"} passed
+            {/* `total` is the whole check list, so counting it as "passed"
+                while also reporting a pending failure said "1 check passed ·
+                1 unscored check failed" about a single check. The failures
+                come out of the passed count; only the note carries them. */}
+            {outcome.total - pendingFailedCount} check
+            {outcome.total - pendingFailedCount === 1 ? "" : "s"} passed
             {pendingFailedCount > 0
               ? ` · ${pendingFailedCount} unscored check${
                   pendingFailedCount === 1 ? "" : "s"

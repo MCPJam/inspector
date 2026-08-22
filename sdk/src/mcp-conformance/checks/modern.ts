@@ -802,6 +802,25 @@ async function collectCacheableOperations(
 }
 
 /** A cacheable payload, or `undefined` when the frame carried none to grade. */
+/**
+ * Why a cacheable operation produced no hints to grade.
+ *
+ * `cacheablePayload` returns `undefined` for two unrelated reasons, and
+ * collapsing them cost a conforming server its pass: a result the server never
+ * sent is a GAP in coverage, while a non-complete result is the extension
+ * explicitly saying hints do not apply. Callers that report coverage have to
+ * tell them apart.
+ */
+type UngradedReason = "no-result" | "not-complete";
+
+function whyNotCacheable(
+  result: RawHttpResult
+): UngradedReason | undefined {
+  const payload = jsonRpcResult(result);
+  if (!payload) return "no-result";
+  return cacheablePayload(result) ? undefined : "not-complete";
+}
+
 function cacheablePayload(
   result: RawHttpResult
 ): Record<string, unknown> | undefined {
@@ -834,15 +853,23 @@ async function runCacheHintCoverageCheck(
   const observed: Record<string, unknown> = {};
 
   const unreadable: string[] = [];
+  const notComplete: string[] = [];
   for (const { method, result } of probes) {
     const payload = cacheablePayload(result);
     if (!payload) {
-      // An operation the server answered with an ERROR (or a non-object) has
-      // no hints to read. Skipping it silently shrank the denominator without
-      // saying so — and the denominator IS this check's product: "5 of 6
-      // cacheable operations carry hints" and "5 of 5, one unreadable" are
-      // different claims about the same server.
-      unreadable.push(method);
+      // An operation the server never answered with a result has no hints to
+      // read, and skipping it silently shrank the denominator without saying
+      // so — the denominator IS this check's product: "5 of 6 cacheable
+      // operations carry hints" and "5 of 5, one unreadable" are different
+      // claims about the same server.
+      //
+      // A NON-COMPLETE result is a different fact entirely: the extension says
+      // hints do not apply to it, so an `input_required` answer is the server
+      // behaving correctly. Counting it as a gap would hold a conforming
+      // server at could-not-run for an answer this check already knew not to
+      // grade. Recorded, never counted against.
+      if (whyNotCacheable(result) === "not-complete") notComplete.push(method);
+      else unreadable.push(method);
       continue;
     }
     observed[method] = { ttlMs: payload.ttlMs, cacheScope: payload.cacheScope };
@@ -858,6 +885,7 @@ async function runCacheHintCoverageCheck(
     cacheHints: observed,
     unprobed,
     ...(unreadable.length > 0 ? { unreadable } : {}),
+    ...(notComplete.length > 0 ? { notCacheable: notComplete } : {}),
   };
 
   if (Object.keys(observed).length === 0) {

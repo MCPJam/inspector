@@ -24,6 +24,11 @@ interface CacheFixtureOptions {
   emptyContentsForMissing?: boolean;
   /** Include `error.data.uri` on a resource error. */
   echoUriOnResourceError?: boolean;
+  /**
+   * Answer these methods with a non-complete `resultType` and NO hints — the
+   * shape the extension explicitly excuses from carrying them.
+   */
+  nonCompleteFor?: string[];
 }
 
 const LISTED_RESOURCE = "test://greeting";
@@ -61,11 +66,23 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
           .writeHead(status, { "Content-Type": "application/json" })
           .end(JSON.stringify(payload));
       const ok = (result: Record<string, unknown>) =>
-        send({
-          jsonrpc: "2.0",
-          id,
-          result: { resultType: "complete", ...hintFor(method), ...result },
-        });
+        options.nonCompleteFor?.includes(method)
+          ? send({
+              jsonrpc: "2.0",
+              id,
+              // No hints, on purpose: hints are required on COMPLETE results
+              // only, so this is a conforming answer.
+              result: { resultType: "input_required", ...result },
+            })
+          : send({
+              jsonrpc: "2.0",
+              id,
+              result: {
+                resultType: "complete",
+                ...hintFor(method),
+                ...result,
+              },
+            });
 
       switch (method) {
         case "server/discover":
@@ -188,6 +205,20 @@ describe("modern-cache-hint-coverage", () => {
     expect(check.status).toBe("failed");
     expect(check.error?.message).toContain("resources/read");
     expect(check.error?.message).toContain("ttlMs");
+  });
+
+  it("does not hold a pass hostage to a conforming non-complete answer", async () => {
+    // `cacheablePayload` declines a non-complete result because hints do not
+    // apply to it — the server is behaving correctly. Counting that alongside
+    // "the server sent no result at all" forced could-not-run on an answer the
+    // check already knew not to grade.
+    const check = byId(
+      (await run({ nonCompleteFor: ["resources/read"] }, [ID])).checks,
+      ID,
+    );
+    expect(check.status).toBe("passed");
+    expect(check.details?.notCacheable).toEqual(["resources/read"]);
+    expect(check.details?.unreadable).toBeUndefined();
   });
 
   it("catches a miss on resources/templates/list", async () => {

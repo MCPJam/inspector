@@ -140,6 +140,13 @@ describe("ConformanceGate", () => {
       screen.getByText(/unscored check failed \(not counted\)/),
     ).toBeInTheDocument();
     expect(screen.getByText(/Wire schema valid/)).toBeInTheDocument();
+    // The count must not claim the failure as a pass. With one check, one of
+    // them pending-failed, "1 check passed · 1 unscored check failed" would be
+    // the same check counted twice.
+    expect(screen.getAllByText(/0 checks passed/).length).toBeGreaterThan(0);
+    // The load-bearing half: the failed pending check must not ALSO be counted
+    // as a pass. "1 check passed · 1 unscored check failed" is one check twice.
+    expect(screen.queryByText(/1 check passed/)).toBeNull();
   });
 
   it("resets when the active server switches — no stale results bleed across", async () => {
