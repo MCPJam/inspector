@@ -449,6 +449,24 @@ describe("v1 persisted conformance runs", () => {
       const body = (await res.json()) as { reportUrl: string | null };
       expect(body.reportUrl).toBeNull();
     });
+
+    it("offers no report link when the stored report URL is empty", async () => {
+      convexQueryMock.mockResolvedValue({
+        ...RUN_ROW,
+        reports: [{ suiteKind: "protocol", status: "completed", reportUrl: "" }],
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/conformance-runs/run_1",
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as {
+        reportUrl: string | null;
+        reports: { hasReport: boolean }[];
+      };
+      expect(body.reportUrl).toBeNull();
+      expect(body.reports[0]?.hasReport).toBe(false);
+    });
   });
 
   describe("the report", () => {
