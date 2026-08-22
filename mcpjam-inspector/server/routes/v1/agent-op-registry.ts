@@ -70,6 +70,13 @@ import {
   listHostsOperation,
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,
@@ -444,6 +451,78 @@ function readStringList(input: Record<string, unknown>, key: string): string[] {
     : [];
 }
 
+function readOptionalString(
+  input: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = input[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readOptionalNumber(
+  input: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = input[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Freeze a directory install at proposal time.
+ *
+ * The mutation-side pin (`expectedContentHash` + resolved `endpointUrl`) is
+ * what makes a later click TOCTOU-safe. If we stored only the catalog id, a
+ * row that changed between propose and click would install a different
+ * endpoint than the one the approver saw.
+ */
+export async function freezeDirectoryInstallArgs(
+  input: Record<string, unknown>,
+  context: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const catalogServerId = named(input, "catalogServerId");
+  if (!catalogServerId) return input;
+  const row = await context.client.getRegistryDirectoryServer({
+    catalogServerId,
+  });
+  const endpointUrl =
+    readOptionalString(input, "endpointUrl") ?? row.remoteUrl;
+  const expectedContentHash =
+    readOptionalString(input, "expectedContentHash") ?? row.latestContentHash;
+  return {
+    ...input,
+    ...(endpointUrl ? { endpointUrl } : {}),
+    ...(expectedContentHash ? { expectedContentHash } : {}),
+  };
+}
+
+/**
+ * Freeze a card install at proposal time (`expectedUpdatedAt` vs
+ * `registryServers.updatedAt`). Same TOCTOU reason as the directory pin.
+ */
+export async function freezeCardInstallArgs(
+  input: Record<string, unknown>,
+  context: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const registryServerId = named(input, "registryServerId");
+  if (!registryServerId) return input;
+  const page = await context.client.listRegistryServers({
+    projectId: context.projectId,
+    scope: "all",
+  });
+  const card = page.items.find((item) => item.id === registryServerId);
+  if (!card) return input;
+  const endpointUrl =
+    readOptionalString(input, "endpointUrl") ?? card.transport?.url;
+  return {
+    ...input,
+    ...(readOptionalNumber(input, "expectedUpdatedAt") === undefined &&
+    card.updatedAt !== undefined
+      ? { expectedUpdatedAt: card.updatedAt }
+      : {}),
+    ...(endpointUrl ? { endpointUrl } : {}),
+  };
+}
+
 /**
  * The run a launch produces, as a linkable resource.
  *
@@ -755,6 +834,67 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getProjectServerConnectionStatusOperation, tier: "direct" },
+  // Registry directory + cards. Agent ops self-dispatch with the delegated
+  // user JWT, not the slk_/dsc_ service token, so there is no
+  // surface-allowed-paths.ts delta — the base /agent + proposal-execute
+  // entries already cover the flow.
+  {
+    operation: searchRegistryDirectoryOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  {
+    operation: getRegistryDirectoryServerOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  { operation: listRegistryDirectorySourcesOperation, tier: "direct" },
+  {
+    operation: listRegistryServersOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  { operation: listRegistryConnectionsOperation, tier: "direct" },
+  {
+    operation: installRegistryDirectoryServerOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const id = named(input, "catalogServerId") ?? "(unnamed)";
+        const endpoint = named(input, "endpointUrl");
+        return `Install directory server ${id}${
+          endpoint ? ` at ${endpoint}` : ""
+        }`;
+      },
+      buttonLabel: "Install it",
+      kind: "external",
+      confirmSeverity: "external",
+      normalizeProposalArgs: freezeDirectoryInstallArgs,
+    },
+    promptNotes: [
+      "- `install_registry_directory_server` writes a project servers row and stops — it is NOT a live connection. Calling it PROPOSES the install; a person approves it. After approval, follow with `get_project_server_connection_status`. OAuth servers need the browser connect-link; never write that URL into a shared channel.",
+    ],
+  },
+  {
+    operation: installRegistryServerOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const id = named(input, "registryServerId") ?? "(unnamed)";
+        const endpoint = named(input, "endpointUrl");
+        return `Install registry card ${id}${endpoint ? ` at ${endpoint}` : ""}`;
+      },
+      buttonLabel: "Install it",
+      kind: "external",
+      // Same severity as connect_project_server: both add a live external
+      // endpoint. Org cards are not a softer hazard.
+      confirmSeverity: "external",
+      normalizeProposalArgs: freezeCardInstallArgs,
+    },
+    promptNotes: [
+      "- `install_registry_server` writes a project servers row and stops — it is NOT a live connection. Calling it PROPOSES the install; a person approves it. After approval, follow with `get_project_server_connection_status`. OAuth servers need the browser connect-link; never write that URL into a shared channel.",
+    ],
+  },
   {
     operation: diagnoseServerOperation,
     tier: "direct",
@@ -1510,22 +1650,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // honest options here are all-or-nothing.
   search_sessions:
     "Other people's conversations are not the agent's to read. Available on REST/CLI/MCP.",
-  search_registry_directory:
-    "Slack/Discord directory search lands in I4 with the untrusted-content prompt note; wired in follow-up PR.",
-  get_registry_directory_server:
-    "Slack/Discord directory detail lands in I4 with the untrusted-content prompt note; wired in follow-up PR.",
-  list_registry_directory_sources:
-    "Slack/Discord source discovery lands in I4 with the rest of the registry agent partition; wired in follow-up PR.",
-  list_registry_servers:
-    "Slack/Discord card listing lands in I4 with the untrusted-content prompt note on author-written cards; wired in follow-up PR.",
-  list_registry_connections:
-    "Slack/Discord connection listing lands in I4 as a direct read; wired in follow-up PR.",
-  install_registry_directory_server:
-    "Slack/Discord directory install is gated in I4 with a frozen expectedContentHash/endpointUrl proposal; wired in follow-up PR.",
-  install_registry_server:
-    "Slack/Discord card install is gated in I4 with a frozen expectedUpdatedAt proposal; wired in follow-up PR.",
   uninstall_registry_server:
-    "Agent proposes authoring, never destruction — same rule as delete_project_server. Confirmed in I4; excluded here so I2 can land.",
+    "Agent proposes authoring, never destruction — same rule as delete_project_server.",
 };
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(
