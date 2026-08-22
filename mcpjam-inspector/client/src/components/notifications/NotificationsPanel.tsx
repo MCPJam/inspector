@@ -1,4 +1,10 @@
-import { ActivitySquare, Building2, FolderKanban, Inbox } from "lucide-react";
+import {
+  ActivitySquare,
+  Building2,
+  CreditCard,
+  FolderKanban,
+  Inbox,
+} from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { PopoverContent } from "@mcpjam/design-system/popover";
@@ -27,6 +33,9 @@ function formatTimeAgo(timestamp: number): string {
 }
 
 function getNotificationIcon(type: NotificationType) {
+  if (type === "organization_seat_payment_required") {
+    return <CreditCard className="h-4 w-4" />;
+  }
   if (type.startsWith("project")) {
     return <FolderKanban className="h-4 w-4" />;
   }
@@ -49,6 +58,12 @@ function getNotificationMessage(notification: Notification): string {
       return `${actor} added you to organization "${entityName}"`;
     case "organization_removed":
       return `${actor} removed you from organization "${entityName}"`;
+    case "workspace_added":
+      return `${actor} added you to workspace "${entityName}"`;
+    case "workspace_removed":
+      return `${actor} removed you from workspace "${entityName}"`;
+    case "organization_seat_payment_required":
+      return `${actor} signed up and needs a paid seat in "${entityName}"`;
     case "scheduled_eval_failed":
       return `Scheduled run failed for suite "${entityName}"`;
     case "scheduled_eval_paused":
@@ -82,9 +97,11 @@ function NotificationItem({
       <div
         className={cn(
           "flex items-center justify-center h-8 w-8 rounded-full shrink-0",
-          notification.type.includes("added")
-            ? "bg-success/10 text-success"
-            : "bg-destructive/10 text-destructive"
+          notification.type === "organization_seat_payment_required"
+            ? "bg-primary/10 text-primary"
+            : notification.type.includes("added")
+              ? "bg-success/10 text-success"
+              : "bg-destructive/10 text-destructive"
         )}
       >
         {getNotificationIcon(notification.type)}

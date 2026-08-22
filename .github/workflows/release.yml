@@ -382,7 +382,7 @@ jobs:
             });
 
             const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-            for (let attempt = 0; attempt < 40; attempt += 1) {
+            for (let attempt = 0; attempt < 120; attempt += 1) {
               await sleep(15000);
               const { data } = await github.rest.actions.listWorkflowRuns({
                 owner,
@@ -397,7 +397,7 @@ jobs:
               );
 
               if (!matchingRun) {
-                core.info(`No backend production workflow run found yet (attempt ${attempt + 1}/40).`);
+                core.info(`No backend production workflow run found yet (attempt ${attempt + 1}/120).`);
                 continue;
               }
 
