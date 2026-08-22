@@ -98,7 +98,7 @@ test("preflightCloudCredentials names a leftover legacy MCPJAM_API_KEY", () => {
     (error: unknown) => {
       assert.ok(error instanceof CliError);
       assert.equal(error.exitCode, 1);
-      assert.match(error.message, new RegExp(MISSING_CLOUD_CREDENTIAL_MESSAGE));
+      assert.ok(error.message.includes(MISSING_CLOUD_CREDENTIAL_MESSAGE));
       assert.match(error.message, /Ignoring legacy mcpjam_ key in MCPJAM_API_KEY/);
       assert.match(error.message, /Legacy mcpjam_ API keys/);
       return true;
