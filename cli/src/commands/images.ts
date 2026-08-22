@@ -146,7 +146,7 @@ export function registerImagesCommands(program: Command): void {
       env
       .command("validate")
       .description(
-        "Lint a blueprint YAML file without saving it (--file, or - for stdin)"
+        "Lint a blueprint YAML file with the MCPJam Cloud image linter without saving it (--file, or - for stdin)"
       )
       .requiredOption(
         "--file <path>",
