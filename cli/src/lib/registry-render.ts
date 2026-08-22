@@ -44,19 +44,24 @@ export function formatRegistryDirectoryServerHuman(
 }
 
 /**
- * Human install success: the follow-ups, not just the outcome. JSON callers
- * already get the same facts as `nextSteps` on the structured result.
+ * Human install success: the follow-ups, not just the outcome — and as
+ * runnable CLI commands, not operation names a CLI user cannot type. JSON
+ * callers already get the same facts as `nextSteps` on the structured result.
  */
 export function formatRegistryInstallHuman(
   result: PlatformRegistryInstallResult,
+  context: { project?: string; endpointUrl?: string } = {},
 ): string {
+  const projectFlag = context.project ? ` --project ${context.project}` : "";
   const lines = [
     `Installed ${result.serverName} (${result.outcome}).`,
     `serverId: ${result.serverId}`,
     "This wrote a project servers row — it is not a live connection.",
     "Next steps:",
-    `  Check connection status via ${result.nextSteps.connectionStatusOp}`,
-    `  mcpjam cloud projects servers connect --server ${result.serverId} --url <endpoint-url>`,
+    `  mcpjam cloud projects status${projectFlag}`,
+    `  mcpjam cloud projects servers connect --server ${result.serverId} --url ${
+      context.endpointUrl ?? "<endpoint-url>"
+    }${projectFlag}`,
   ];
   if (result.nextSteps.connectLinkUrl) {
     lines.push("  Finish OAuth in the browser:");

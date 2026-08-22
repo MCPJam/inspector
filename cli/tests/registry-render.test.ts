@@ -57,31 +57,48 @@ describe("registry human formatters", () => {
     assert.match(options, /remoteUrlOptions: https:\/\/a\.example\/mcp, https:\/\/b\.example\/mcp/);
   });
 
-  test("install prints nextSteps as follow-up commands, and the OAuth link when present", () => {
-    const created = formatRegistryInstallHuman({
-      serverId: "srv_1",
-      serverName: "linear",
-      outcome: "created",
-      nextSteps: {
-        connectionStatusOp: "get_project_server_connection_status",
-        connectLinkUrl: "https://app.mcpjam.test/connect/server/tok",
+  test("install prints runnable follow-up commands, and the OAuth link when present", () => {
+    const created = formatRegistryInstallHuman(
+      {
+        serverId: "srv_1",
+        serverName: "linear",
+        outcome: "created",
+        nextSteps: {
+          connectionStatusOp: "get_project_server_connection_status",
+          connectLinkUrl: "https://app.mcpjam.test/connect/server/tok",
+        },
       },
-    });
+      { project: "proj-alpha", endpointUrl: "https://mcp.linear.app/mcp" },
+    );
     assert.match(created, /Installed linear \(created\)/);
     assert.match(created, /not a live connection/);
-    assert.match(created, /get_project_server_connection_status/);
-    assert.match(created, /mcpjam cloud projects servers connect --server srv_1/);
+    // Follow-ups are commands a CLI user can type, not SDK operation names.
+    assert.doesNotMatch(created, /get_project_server_connection_status/);
+    assert.match(created, /mcpjam cloud projects status --project proj-alpha/);
+    assert.match(
+      created,
+      /mcpjam cloud projects servers connect --server srv_1 --url https:\/\/mcp\.linear\.app\/mcp --project proj-alpha/,
+    );
+    assert.doesNotMatch(created, /<endpoint-url>/);
     assert.match(created, /https:\/\/app\.mcpjam\.test\/connect\/server\/tok/);
+  });
 
-    const jsonShape = {
-      serverId: "srv_1",
-      serverName: "linear",
+  test("install falls back to a placeholder URL and omits --project under automatic selection", () => {
+    const reconnected = formatRegistryInstallHuman({
+      serverId: "srv_2",
+      serverName: "acme",
       outcome: "reconnected",
       nextSteps: {
-        connectionStatusOp: "get_project_server_connection_status" as const,
+        connectionStatusOp: "get_project_server_connection_status",
       },
-    };
-    assert.equal(jsonShape.nextSteps.connectionStatusOp, "get_project_server_connection_status");
-    assert.equal("connectLinkUrl" in jsonShape.nextSteps, false);
+    });
+    assert.match(reconnected, /Installed acme \(reconnected\)/);
+    assert.match(reconnected, /mcpjam cloud projects status\n/);
+    assert.match(
+      reconnected,
+      /mcpjam cloud projects servers connect --server srv_2 --url <endpoint-url>\n?/,
+    );
+    assert.doesNotMatch(reconnected, /--project/);
+    assert.doesNotMatch(reconnected, /Finish OAuth/);
   });
 });

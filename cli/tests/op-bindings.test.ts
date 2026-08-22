@@ -19,14 +19,6 @@ import { registerRegistryCommands } from "../src/commands/registry.js";
 /** A program carrying every command group that binds platform operations. */
 function buildPlatformProgram(): Command {
   const program = new Command().name("mcpjam").exitOverride();
-  // Help grouping (`commandsGroup`) is Commander 14. A hoisted Commander 12
-  // still builds the same command tree; the groups are display-only.
-  if (typeof program.commandsGroup !== "function") {
-    (Command.prototype as { commandsGroup?: () => Command }).commandsGroup =
-      function commandsGroupShim(this: Command) {
-        return this;
-      };
-  }
   registerCloudCommands(program);
   registerReadinessCommands(program);
   registerRegistryCommands(program);
