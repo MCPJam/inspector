@@ -468,7 +468,7 @@ export function useCrossHostData(
           col.modelKey === modelKey &&
           col.splitLabel &&
           ref &&
-          col.columnKey.endsWith(`::${ref.environmentId}`)
+          col.columnKey?.endsWith(`::${ref.environmentId}`)
       );
       runHostMap.set(
         run._id,
