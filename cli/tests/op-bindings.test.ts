@@ -19,6 +19,14 @@ import { registerRegistryCommands } from "../src/commands/registry.js";
 /** A program carrying every command group that binds platform operations. */
 function buildPlatformProgram(): Command {
   const program = new Command().name("mcpjam").exitOverride();
+  // Help grouping (`commandsGroup`) is Commander 14. A hoisted Commander 12
+  // still builds the same command tree; the groups are display-only.
+  if (typeof program.commandsGroup !== "function") {
+    (Command.prototype as { commandsGroup?: () => Command }).commandsGroup =
+      function commandsGroupShim(this: Command) {
+        return this;
+      };
+  }
   registerCloudCommands(program);
   registerReadinessCommands(program);
   registerRegistryCommands(program);
@@ -96,6 +104,27 @@ describe("CLI operation bindings", () => {
         "\n  "
       )}`
     );
+  });
+
+  test("registry install flag-qualifies the two shelves on one Commander path", () => {
+    // Isolated from `registerCloudCommands` so this assertion does not depend
+    // on Commander.commandsGroup (Cloud help grouping). The dual-op binding
+    // is the I3-specific contract this file was extended to prove.
+    const program = new Command().name("mcpjam").exitOverride();
+    registerRegistryCommands(program);
+    const { path, flags } = parseBindingCommand("registry install --card");
+    const node = resolveCommandPath(program, path);
+    assert.ok(node, "registry install must exist");
+    assert.ok(
+      flags.every((flag) => commandDeclaresFlag(node!, flag)),
+      "registry install --card must declare --card",
+    );
+    assert.ok(resolveCommandPath(program, "registry uninstall"));
+    assert.ok(resolveCommandPath(program, "registry search"));
+    assert.ok(resolveCommandPath(program, "registry show"));
+    assert.ok(resolveCommandPath(program, "registry sources"));
+    assert.ok(resolveCommandPath(program, "registry servers"));
+    assert.ok(resolveCommandPath(program, "registry connections"));
   });
 
   test("every advertised command actually resolves in the CLI", () => {
