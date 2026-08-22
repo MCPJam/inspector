@@ -554,13 +554,19 @@ describe("run_eval_case compose", () => {
 });
 
 describe("resolveEnvironmentSelector id passthrough", () => {
+  // A real Convex document id: 32 lowercase base32 characters, no separators.
+  // The shape is load-bearing — the fast path deliberately ignores anything
+  // that could be a display name, so a readable stand-in like
+  // `env-adhoc-hidden-01` would take the list path and never reach the GET.
+  const HIDDEN_ADHOC_ID = "x173p8g5kd3xvrk2btsp8bq3rs8c7yny";
+
   it("resolves a list-hidden ad-hoc row by id via GET", async () => {
     const { client } = makeClient();
     const result = await getEnvironmentOperation.execute(
-      { environment: "env-adhoc-hidden-01" },
+      { environment: HIDDEN_ADHOC_ID },
       { client },
     );
-    expect(result.id).toBe("env-adhoc-hidden-01");
+    expect(result.id).toBe(HIDDEN_ADHOC_ID);
   });
 });
 
