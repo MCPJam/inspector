@@ -156,6 +156,8 @@ export type {
   StageToolErrorLike,
 } from "./stage-derivation.js";
 export {
+  MAX_EVIDENCE_REASONS,
+  MAX_EVIDENCE_REASON_CHARS,
   STAGE_ANALYZER_VERSION,
   STAGE_METADATA_KEYS,
   STAGE_REASONS,

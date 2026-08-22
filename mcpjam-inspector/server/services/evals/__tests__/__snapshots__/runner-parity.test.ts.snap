@@ -2044,9 +2044,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
             "state": "passed",
           },
           {
-            "reason": "executorEmitsNoSpans",
+            "evidence": {
+              "promptIndexes": [
+                0,
+              ],
+            },
+            "reason": "observed",
             "stage": "call",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "executorEmitsNoSpans",

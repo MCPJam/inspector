@@ -20,7 +20,10 @@
  *      `notMeasured`. This is the whole point: a chain derived from missing
  *      spans that quietly reads as green is worse than no chain at all.
  *   2. **`notReached` is derived from POSITION**, per `USER_VALUE_STAGES`
- *      order. The array is normative; this module never sorts it.
+ *      order — but only over a stage that measured NOTHING. A stage after the
+ *      first failure that has its own evidence keeps its own row: a run
+ *      disproves "never ran" the moment it produces a verdict for that stage.
+ *      The array is normative; this module never sorts it.
  *   3. **`evaluator` is never folded into another category.** A broken grader
  *      is not a server defect, and counting it as one poisons every rate
  *      derived from it.
@@ -73,6 +76,14 @@ export const STAGE_REASONS = [
   "noSpanChannel",
   /** A sink existed and captured nothing eligible for this stage. */
   "noEvidenceCaptured",
+  /**
+   * Extra tool calls were captured, but the turn did not report whether its
+   * own match options tolerate them — so whether they are a failure is
+   * unknowable here. Never `failed`: `maxExtraToolCalls` defaults to `null`
+   * (extras reported, non-fatal), so guessing "failed" would report a
+   * PASSING run as broken at `selection`.
+   */
+  "matchVerdictUnavailable",
   /** The iteration row carries no trace whatsoever. */
   "traceAbsent",
   /** A trace exists with messages but no span channel — a custom executor. */
@@ -130,6 +141,18 @@ export type StageDerivation = {
   stageResults: StageResultRow[];
   /** The FIRST failed stage, in chain order. Absent when nothing failed. */
   firstFailedStage?: UserValueStage;
+  /**
+   * The bucket this iteration is grouped under.
+   *
+   * CONTRACT, and it matters to anyone aggregating these: this field is
+   * "why there is no good outcome", NOT "which stage failed". It can be
+   * present with `firstFailedStage` ABSENT — a setup abort is
+   * `failureCategory: "setup"` with all six rows `notMeasured`, and an
+   * evaluator error is `failureCategory: "evaluator"` the same way. Both are
+   * real answers and both would be lost by omitting the category. A rate that
+   * wants only measured server failures must therefore filter on
+   * `firstFailedStage`, not on the presence of this field. Pinned by test.
+   */
   failureCategory?: FailureCategory;
   stageAnalyzerVersion: number;
 };
@@ -157,6 +180,18 @@ export type StagePromptSummaryLike = {
   missing?: readonly unknown[];
   unexpected?: readonly unknown[];
   argumentMismatches?: readonly unknown[];
+  /**
+   * The turn's OWN verdict, under the match options the case authored.
+   *
+   * Load-bearing, and the reason this field exists: `unexpected` is populated
+   * whenever an actual call went unmatched, but `maxExtraToolCalls` defaults to
+   * `null` — extras are REPORTED and non-fatal (`evaluateToolCalls`). Deciding
+   * `selection` from the raw field therefore reports `failed` for a run whose
+   * verdict is `passed`, which is the common shape of an agentic multi-turn
+   * case (a search call before the expected one). The turn already knows the
+   * answer; this analyzer must not re-derive it.
+   */
+  passed?: boolean;
 };
 
 export type StagePredicateResultLike = {
@@ -237,6 +272,18 @@ export type StageDerivationInput = {
  */
 const TRANSPORT_LOCAL_MCP_CODES = new Set([-32000, -32001]);
 
+/**
+ * Evidence bounds.
+ *
+ * A predicate `reason` is a judge rationale — graded CONTENT, of no fixed
+ * length, already stored once under `metadata.predicates`. Copying it whole
+ * into a second key doubles what the row retains and hands the redaction
+ * contract a second place to reach. Bounded here, at the producer, so the
+ * bound holds on every path rather than only where a validator happens to run.
+ */
+export const MAX_EVIDENCE_REASONS = 5;
+export const MAX_EVIDENCE_REASON_CHARS = 500;
+
 const isToolSpan = (s: StageSpanLike) => s.category === "tool";
 const spanFailed = (s: StageSpanLike) =>
   s.status === "error" || typeof s.mcpErrorCode === "number";
@@ -258,7 +305,17 @@ const row = (
   ...(evidence && Object.keys(evidence).length > 0 ? { evidence } : {}),
 });
 
-/** Iteration statuses that mean "no verdict was ever produced". */
+/**
+ * Iteration statuses that mean "no verdict was ever produced".
+ *
+ * NOTE on reachability: both wired callers finalize with `completed` or
+ * `failed` only (`buildIterationFinishParams`; the SDK mapper derives its
+ * status from the verdict), and a cancelled inspector iteration finalizes on a
+ * path that builds no stage metadata at all. So today only `setup_failed`
+ * arrives here in production, via `persistSetupFailedIteration`. The other
+ * three are kept because they are the contract's own vocabulary and a caller
+ * that CAN spell them must not be silently mis-attributed to a server failure.
+ */
 const LIFECYCLE_STOPPED: ReadonlySet<IterationStatus> =
   new Set<IterationStatus>([
     "cancelled",
@@ -340,23 +397,53 @@ function deriveDiscovery(e: StageEvidence): StageResultRow {
   return row("discovery", "notMeasured", "noSpanChannel");
 }
 
+const promptIndexes = (prompts: readonly StagePromptSummaryLike[]): number[] =>
+  prompts
+    .map((p) => p.promptIndex)
+    .filter((i): i is number => typeof i === "number");
+
 function deriveSelection(e: StageEvidence): StageResultRow {
   const prompts = e.prompts ?? [];
   if (prompts.length > 0) {
+    // A missing expected call is fatal in EVERY match mode, so it needs no
+    // adjudication: `evaluateToolCalls` cannot return `passed` with a
+    // non-empty `missing`.
     const missing = prompts.filter((p) => nonEmpty(p.missing));
     if (missing.length > 0) {
       return row("selection", "failed", "missingToolCall", {
-        promptIndexes: missing
-          .map((p) => p.promptIndex)
-          .filter((i): i is number => typeof i === "number"),
+        promptIndexes: promptIndexes(missing),
       });
     }
     const unexpected = prompts.filter((p) => nonEmpty(p.unexpected));
     if (unexpected.length > 0) {
-      return row("selection", "failed", "unexpectedToolCall", {
-        promptIndexes: unexpected
-          .map((p) => p.promptIndex)
-          .filter((i): i is number => typeof i === "number"),
+      // Extras are a failure ONLY when the turn's own verdict says so.
+      // `maxExtraToolCalls` defaults to `null` — extras are reported and
+      // tolerated — so a raw read of `unexpected` reports a PASSING agentic
+      // run as failing at `selection`, then blanks every later stage behind
+      // an `earlierStageFailed` that never happened.
+      //
+      // A turn that also carries argument mismatches is left to `call`: its
+      // verdict cannot tell us WHICH of the two sank it, and blaming the
+      // earlier stage on a guess is exactly the mis-attribution this whole
+      // module exists to avoid.
+      const adjudicatedFailures = unexpected.filter(
+        (p) => p.passed === false && !nonEmpty(p.argumentMismatches)
+      );
+      if (adjudicatedFailures.length > 0) {
+        return row("selection", "failed", "unexpectedToolCall", {
+          promptIndexes: promptIndexes(adjudicatedFailures),
+        });
+      }
+      const unadjudicated = unexpected.filter((p) => p.passed === undefined);
+      if (unadjudicated.length > 0) {
+        return row("selection", "notMeasured", "matchVerdictUnavailable", {
+          promptIndexes: promptIndexes(unadjudicated),
+        });
+      }
+      // Every turn carrying extras still passed its own gate: this case
+      // tolerates them, and tolerated extras are not a selection defect.
+      return row("selection", "passed", "observed", {
+        promptIndexes: promptIndexes(prompts),
       });
     }
     return row("selection", "passed", "observed");
@@ -368,15 +455,16 @@ function deriveSelection(e: StageEvidence): StageResultRow {
   return row("selection", "notMeasured", "noEvidenceCaptured");
 }
 
-function deriveCall(e: StageEvidence): StageResultRow {
+function deriveCall(
+  e: StageEvidence,
+  authored: StageAuthoredCase
+): StageResultRow {
   const mismatched = (e.prompts ?? []).filter((p) =>
     nonEmpty(p.argumentMismatches)
   );
   if (mismatched.length > 0) {
     return row("call", "failed", "argumentMismatch", {
-      promptIndexes: mismatched
-        .map((p) => p.promptIndex)
-        .filter((i): i is number => typeof i === "number"),
+      promptIndexes: promptIndexes(mismatched),
     });
   }
   const tools = (e.spans ?? []).filter(isToolSpan);
@@ -397,6 +485,17 @@ function deriveCall(e: StageEvidence): StageResultRow {
   if (tools.length > 0) {
     return row("call", "passed", "observed", {
       spanIds: spanIds(tools).slice(0, 5),
+    });
+  }
+  // A negative case asserts that NO call happens, and `applicability` turns
+  // `call` on for exactly that reason. The turn summaries ARE the evidence
+  // that the assertion held (they recorded zero unmatched actual calls), so
+  // reporting `notMeasured` here would call the case's central assertion
+  // unmeasured on every run where it holds.
+  const negativePrompts = e.prompts ?? [];
+  if (authored.isNegativeTest === true && negativePrompts.length > 0) {
+    return row("call", "passed", "observed", {
+      promptIndexes: promptIndexes(negativePrompts),
     });
   }
   if (e.traceAbsent) return row("call", "notMeasured", "traceAbsent");
@@ -465,7 +564,12 @@ function deriveUserValue(e: StageEvidence): StageResultRow {
         predicateReasons: failed
           .map((r) => r.reason)
           .filter((r): r is string => typeof r === "string")
-          .slice(0, 5),
+          .slice(0, MAX_EVIDENCE_REASONS)
+          .map((r) =>
+            r.length > MAX_EVIDENCE_REASON_CHARS
+              ? `${r.slice(0, MAX_EVIDENCE_REASON_CHARS - 1)}\u2026`
+              : r
+          ),
       });
     }
     return row("userValue", "passed", "observed");
@@ -590,7 +694,7 @@ export function deriveStageResults(
       case "selection":
         return deriveSelection(evidence);
       case "call":
-        return deriveCall(evidence);
+        return deriveCall(evidence, authored);
       case "response":
         return deriveResponse(evidence, authored);
       case "userValue":
@@ -598,14 +702,22 @@ export function deriveStageResults(
     }
   });
 
-  // Precedence 3: position. Every stage after the FIRST failure never ran, so
-  // whatever it computed for itself is overwritten — the chain broke upstream.
+  // Precedence 3: position — but only over stages that decided NOTHING of
+  // their own.
+  //
+  // `notReached` after the first failure is right for a stage with no evidence:
+  // the chain broke upstream and that is why we know nothing. It is FALSE for a
+  // stage that was measured. A case whose `selection` failed on a stray call
+  // still made the expected call and still ran its predicates; overwriting
+  // those measured rows with "never ran" destroys the evidence an operator
+  // needs and states something the run disproves. `firstFailedStage` already
+  // carries "where the chain broke" — the rows do not have to lie to say it.
   const firstFailedIndex = derived.findIndex((r) => r.state === "failed");
   const rows =
     firstFailedIndex < 0
       ? derived
       : derived.map((r, i) =>
-          i > firstFailedIndex && r.state !== "notApplicable"
+          i > firstFailedIndex && r.state === "notMeasured"
             ? row(r.stage, "notReached", "earlierStageFailed")
             : r
         );

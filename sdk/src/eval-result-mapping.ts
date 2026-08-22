@@ -825,6 +825,11 @@ function buildSdkStageEvidence(
               missing: match.missing,
               unexpected: match.extra,
               argumentMismatches: match.argumentMismatches,
+              // The matcher's OWN verdict, under this case's match options.
+              // Without it the analyzer cannot tell a tolerated extra call
+              // (`maxExtraToolCalls: null`, the default) from a failing one,
+              // and would report a passing run as broken at `selection`.
+              passed: match.passed,
             },
           ],
         }

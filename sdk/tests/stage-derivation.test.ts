@@ -13,6 +13,8 @@
 
 import { describe, expect, test } from "vitest";
 import {
+  MAX_EVIDENCE_REASONS,
+  MAX_EVIDENCE_REASON_CHARS,
   STAGE_ANALYZER_VERSION,
   USER_VALUE_STAGES,
   deriveStageResults,
@@ -46,6 +48,7 @@ const cleanTurn = {
   missing: [],
   unexpected: [],
   argumentMismatches: [],
+  passed: true,
 };
 
 function derive(over: Partial<StageDerivationInput> = {}) {
@@ -260,18 +263,97 @@ describe("selection", () => {
     expect(failureCategory).toBe("selection");
   });
 
-  test("an unexpected call fails it (the negative-case gate)", () => {
+  test("an unexpected call the turn ADJUDICATED as failing fails it", () => {
     const { stageResults } = derive({
       authored: { ...modelDrivenCase, isNegativeTest: true },
       evidence: {
         spans: [toolSpan()],
-        prompts: [{ promptIndex: 0, unexpected: [{ toolName: "delete_all" }] }],
+        prompts: [
+          {
+            promptIndex: 0,
+            unexpected: [{ toolName: "delete_all" }],
+            passed: false,
+          },
+        ],
       },
     });
     expect(stateOf(stageResults, "selection")).toMatchObject({
       state: "failed",
       reason: "unexpectedToolCall",
     });
+  });
+
+  /**
+   * The regression this gate exists for.
+   *
+   * `unexpected` is populated whenever an actual call went unmatched, but
+   * `maxExtraToolCalls` DEFAULTS to `null` — extras are reported and tolerated.
+   * Reading the raw field reported a PASSING agentic run (a search call before
+   * the expected one) as `failed` at `selection`, and then blanked `call`,
+   * `response` and `userValue` behind an `earlierStageFailed` that never
+   * happened. That is the common shape of a multi-turn case, not an edge one.
+   */
+  test("an unexpected call the turn TOLERATED does not fail it", () => {
+    const { stageResults, firstFailedStage, failureCategory } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          {
+            promptIndex: 0,
+            missing: [],
+            unexpected: [{ toolName: "search" }],
+            argumentMismatches: [],
+            passed: true,
+          },
+        ],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(stateOf(stageResults, "selection")).toMatchObject({
+      state: "passed",
+      reason: "observed",
+    });
+    expect(firstFailedStage).toBeUndefined();
+    expect(failureCategory).toBeUndefined();
+    // …and the stages behind it keep their measured verdicts.
+    expect(stateOf(stageResults, "call").state).toBe("passed");
+    expect(stateOf(stageResults, "userValue").state).toBe("passed");
+  });
+
+  test("extras with NO reported verdict are notMeasured, never failed", () => {
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [{ promptIndex: 0, unexpected: [{ toolName: "search" }] }],
+      },
+    });
+    expect(stateOf(stageResults, "selection")).toMatchObject({
+      state: "notMeasured",
+      reason: "matchVerdictUnavailable",
+      evidence: { promptIndexes: [0] },
+    });
+    expect(firstFailedStage).toBeUndefined();
+  });
+
+  test("a failing turn carrying BOTH extras and argument mismatches is left to `call`", () => {
+    const { stageResults, firstFailedStage, failureCategory } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          {
+            promptIndex: 0,
+            unexpected: [{ toolName: "search" }],
+            argumentMismatches: [{ toolName: "list_files" }],
+            passed: false,
+          },
+        ],
+      },
+    });
+    // The verdict cannot say WHICH of the two sank the turn, so the earlier
+    // stage is not blamed on a guess.
+    expect(stateOf(stageResults, "selection").state).not.toBe("failed");
+    expect(firstFailedStage).toBe("call");
+    expect(failureCategory).toBe("arguments");
   });
 
   test("a model-free case does not have a selection stage", () => {
@@ -488,18 +570,19 @@ describe("precedence when signals conflict", () => {
     expect(failureCategory).toBeUndefined();
   });
 
-  test("POSITION: every stage after the first failure is notReached", () => {
+  test("POSITION: a stage after the failure that measured NOTHING is notReached", () => {
     const { stageResults, firstFailedStage } = derive({
       evidence: {
-        spans: [toolSpan()],
-        prompts: [{ promptIndex: 0, missing: [{ toolName: "search" }] }],
-        predicateResults: [{ passed: true, reason: "ok" }],
+        spans: [],
+        traceLacksSpanChannel: true,
+        prompts: [
+          { promptIndex: 0, missing: [{ toolName: "search" }], passed: false },
+        ],
       },
     });
     expect(firstFailedStage).toBe("selection");
-    // `call` and `response` had spans that would otherwise have passed, and
-    // `userValue` had a passing predicate — the chain broke upstream of all of
-    // them, so none of them ran in the sense the chain means.
+    // Nothing downstream produced a verdict of its own, so the chain breaking
+    // upstream IS why we know nothing about them.
     expect(stateOf(stageResults, "call")).toMatchObject({
       state: "notReached",
       reason: "earlierStageFailed",
@@ -507,7 +590,35 @@ describe("precedence when signals conflict", () => {
     expect(stateOf(stageResults, "response").state).toBe("notReached");
     expect(stateOf(stageResults, "userValue").state).toBe("notReached");
     // Stages BEFORE the failure keep their own verdicts.
-    expect(stateOf(stageResults, "connection").state).toBe("passed");
+    expect(stateOf(stageResults, "connection").state).toBe("notMeasured");
+  });
+
+  /**
+   * The other half of the same rule, and the reason it is narrow.
+   *
+   * A case whose `selection` failed on a stray call still made the expected
+   * call and still ran its predicates. Overwriting those MEASURED rows with
+   * "never ran" states something the run itself disproves, and throws away the
+   * evidence an operator needs to see that the server was fine.
+   * `firstFailedStage` already carries where the chain broke.
+   */
+  test("POSITION: a stage after the failure that WAS measured keeps its verdict", () => {
+    const { stageResults, firstFailedStage } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [
+          { promptIndex: 0, missing: [{ toolName: "search" }], passed: false },
+        ],
+        predicateResults: [{ passed: true, reason: "ok" }],
+      },
+    });
+    expect(firstFailedStage).toBe("selection");
+    expect(stateOf(stageResults, "call")).toMatchObject({
+      state: "passed",
+      reason: "observed",
+    });
+    expect(stateOf(stageResults, "response").state).toBe("passed");
+    expect(stateOf(stageResults, "userValue").state).toBe("passed");
   });
 
   test("notApplicable survives notReached propagation", () => {
@@ -591,5 +702,102 @@ describe("stageDerivationToMetadata", () => {
     );
     expect(meta.firstFailedStage).toBe("selection");
     expect(meta.failureCategory).toBe("selection");
+  });
+});
+
+// ── contracts a downstream aggregator has to know about ──────────────────────
+
+describe("failureCategory without a failed stage", () => {
+  /**
+   * PINNED, because it decides how every rate built on this field must be
+   * written. `failureCategory` answers "why is there no good outcome", NOT
+   * "which stage failed" — a setup abort and an evaluator error are both real
+   * answers with no failed row, and omitting the category would lose them. A
+   * rate that wants only MEASURED server failures filters on
+   * `firstFailedStage`, not on the presence of a category.
+   */
+  test("a setup abort carries `setup` with no firstFailedStage", () => {
+    const { firstFailedStage, failureCategory } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: { traceAbsent: true },
+      iteration: { status: "setup_failed" },
+    });
+    expect(firstFailedStage).toBeUndefined();
+    expect(failureCategory).toBe("setup");
+  });
+
+  test("a broken grader carries `evaluator` with no firstFailedStage", () => {
+    const { stageResults, firstFailedStage, failureCategory } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        evaluatorErrored: true,
+      },
+    });
+    expect(stateOf(stageResults, "userValue")).toMatchObject({
+      state: "notMeasured",
+      reason: "evaluatorError",
+    });
+    expect(firstFailedStage).toBeUndefined();
+    expect(failureCategory).toBe("evaluator");
+  });
+});
+
+describe("negative cases", () => {
+  /**
+   * `applicability` turns `call` on for a negative case because proving no
+   * call happened IS the assertion. Reporting `notMeasured` when it holds
+   * would call the case's central assertion unmeasured on every passing run —
+   * the applicability rule and the derivation have to agree.
+   */
+  test("a negative case whose assertion HELD passes `call`", () => {
+    const { stageResults, firstFailedStage } = deriveStageResults({
+      authored: {
+        mode: "model_driven",
+        isNegativeTest: true,
+        expectsToolCall: false,
+        assertionCount: 1,
+      },
+      evidence: {
+        spans: [],
+        traceLacksSpanChannel: true,
+        prompts: [cleanTurn],
+        predicateResults: [{ passed: true, reason: "no call made" }],
+      },
+      iteration: { status: "completed" },
+    });
+    expect(stateOf(stageResults, "call")).toMatchObject({
+      state: "passed",
+      reason: "observed",
+      evidence: { promptIndexes: [0] },
+    });
+    expect(firstFailedStage).toBeUndefined();
+  });
+});
+
+describe("evidence is bounded at the producer", () => {
+  /**
+   * A predicate `reason` is a judge rationale — graded CONTENT of no fixed
+   * length, already stored once under `metadata.predicates`. Copying it whole
+   * into a second key doubles what the row retains and gives the redaction
+   * contract a second place to reach.
+   */
+  test("predicate reasons are capped in count and in length", () => {
+    const { stageResults } = derive({
+      evidence: {
+        spans: [toolSpan()],
+        prompts: [cleanTurn],
+        predicateResults: Array.from({ length: 9 }, (_, i) => ({
+          passed: false,
+          reason: `${i}`.repeat(4000),
+        })),
+      },
+    });
+    const reasons =
+      stateOf(stageResults, "userValue").evidence?.predicateReasons ?? [];
+    expect(reasons).toHaveLength(MAX_EVIDENCE_REASONS);
+    for (const reason of reasons) {
+      expect(reason.length).toBeLessThanOrEqual(MAX_EVIDENCE_REASON_CHARS);
+    }
   });
 });
