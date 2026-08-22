@@ -983,17 +983,26 @@ Start an eval run of an existing suite (asynchronous).
 
 `--compose-host <id-or-name>` builds an execution stack for this run instead of
 naming a saved environment, refined by `--compose-computer`, `--compose-model`,
-`--compose-server-group` and `--compose-skill`. The stack becomes an unnamed,
-content-addressed environment (the same one `environments ensure-adhoc`
-produces), so composing the same stack twice reuses one environment.
+`--with-client-default`, `--save-targets`, `--compose-server-group` and
+`--compose-skill`. The stack becomes an unnamed, content-addressed environment
+(the same one `environments ensure-adhoc` produces), so composing the same
+stack twice reuses one environment.
 
-<Warning>
-  **This edits the suite.** The composed environment is appended to the suite's
-  environment list — deliberately, because an environment the suite does not
-  list is one nobody can re-run from the app afterwards. The result reports both
-  writes (`composed.environment.created`, `composed.attachment.attached`) even
-  when the launch itself fails, so you always know what changed.
-</Warning>
+**Default is ephemeral.** Composed environments are minted and launched without
+being attached to the suite. Pass `--save-targets` to append them instead
+(capped at 10 total environments on the suite).
+
+**Multi-model compose.** Pass `--compose-model` more than once (or as a
+space-separated list) to mint one cell per model and launch them as a single
+run group under one `runGroupId`. Add `--with-client-default` to also include
+an inherit cell that uses the host's pinned model alongside the explicit ones.
+Multi-model compose requires a backend that supports `ephemeralEnvironmentLaunch`
+(probe `GET /environments/capabilities`); on older backends a single-cell
+compose falls back to attach, and multi-model is refused with an upgrade message.
+
+The result always reports what was minted (`composed.environment.created`,
+`composed.environments`, `composed.attachment.attached`) even when the launch
+itself fails, so you always know what changed.
 
 Any `--compose-*` flag alongside `--environment`, `--host`, `--server` or
 `--all-targets` is a usage error: compose builds the stack the run uses, so
