@@ -174,7 +174,7 @@ export function ShareSection<TEnvelope>({
   };
 
   const handleCopyLink = async () => {
-    if (!shareUrl) return;
+    if (disabledReason || !shareUrl) return;
     const ok = await copyToClipboard(shareUrl);
     if (ok) toast.success("Link copied");
     else toast.error("Failed to copy share link");
@@ -241,23 +241,23 @@ export function ShareSection<TEnvelope>({
             title={shareUrl ?? undefined}
           >
             <span className="truncate text-sm text-muted-foreground">
-              {displayLink ??
-                (disabledReason
-                  ? (copy.withheldLabel ?? "Withheld — this can't be shared.")
-                  : (copy.emptyLinkLabel ?? "No share link yet."))}
+              {disabledReason
+                ? (copy.withheldLabel ?? "Withheld — this can't be shared.")
+                : (displayLink ??
+                  (copy.emptyLinkLabel ?? "No share link yet."))}
             </span>
           </output>
           <Button
             type="button"
             variant="outline"
-            disabled={!shareUrl}
+            disabled={!shareUrl || Boolean(disabledReason)}
             onClick={() => void handleCopyLink()}
             data-testid={testIds.copy}
           >
             <Link2 className="mr-1.5 size-4" />
             Copy link
           </Button>
-          {onRotateLink ? (
+          {onRotateLink || onRevokeAll ? (
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button
@@ -271,12 +271,14 @@ export function ShareSection<TEnvelope>({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem
-                  onClick={() => setRotateOpen(true)}
-                  data-testid="share-rotate-link"
-                >
-                  {copy.rotateLabel ?? "Rotate link"}
-                </DropdownMenuItem>
+                {onRotateLink ? (
+                  <DropdownMenuItem
+                    onClick={() => setRotateOpen(true)}
+                    data-testid="share-rotate-link"
+                  >
+                    {copy.rotateLabel ?? "Rotate link"}
+                  </DropdownMenuItem>
+                ) : null}
                 {onRevokeAll ? (
                   <DropdownMenuItem
                     className="text-destructive focus:text-destructive"
