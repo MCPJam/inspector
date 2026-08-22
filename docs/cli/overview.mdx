@@ -33,6 +33,10 @@ npx -y @mcpjam/cli@latest --help
 
 ## Command groups
 
+Running `mcpjam --help` shows commands in three groups: **Local MCP testing**, **MCPJam Cloud**, and **CLI**. Running `mcpjam cloud --help` shows Cloud subcommands grouped as **Account**, **Workspace**, **Eval and environments**, and **Swarms and user testing**.
+
+### Local MCP testing
+
 | Group | Purpose | Key commands |
 |-------|---------|-------------|
 | [`server`](/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
@@ -40,17 +44,33 @@ npx -y @mcpjam/cli@latest --help
 | [`oauth`](/cli/oauth-conformance) | Test OAuth flows and conformance | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
 | [`apps`](/cli/apps-conformance) | Validate MCP Apps metadata and resource wiring | `conformance`, `conformance-suite` |
 | [`compat`](/cli/reference#compat-command) | Check whether a server's tools and widgets work on each AI host | `compat` |
-| [`readiness`](/cli/reference#readiness-hosted-commands) | Start, poll, list, cancel, and read hosted directory-readiness runs against a saved server | `start claude`, `start openai`, `status`, `list`, `cancel`, `report` |
-| [`inspector`](/cli/reference#inspector-commands) | Start, open, or stop the local Inspector from the CLI | `open`, `start`, `stop` |
-| [`eval`](/cli/reference#eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
-| [`tunnel`](/cli/reference#tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel <url>`, `tunnel -- <command>` |
+| [`readiness`](/cli/reference#readiness-hosted-commands) | Grade a server against a publisher's directory (local check + hosted runs) | `check`, `start claude`, `start openai`, `status`, `list`, `cancel`, `report` |
 | [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
 | [`prompts`](/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
 | [`protocol`](/cli/reference) | MCP protocol conformance checks | `conformance`, `conformance-suite` |
+
+### MCPJam Cloud
+
+All Cloud commands require an `sk_` API key or a prior `mcpjam cloud login`. See [MCPJam Cloud commands](/cli/reference#mcpjam-cloud-commands) for credential requirements and the Cloud audience line.
+
+| Group | Purpose | Key commands |
+|-------|---------|-------------|
+| [`cloud login` / `logout` / `whoami`](/cli/reference#login--logout--whoami-commands) | Manage your MCPJam Cloud session | `login`, `logout`, `whoami` |
+| [`cloud link`](/cli/reference#mcpjam-cloud-commands) | Link a local directory to a project | `link`, `status` |
+| [`cloud organizations`](/cli/reference#mcpjam-cloud-commands) | List organizations | `list` |
+| [`cloud projects`](/cli/reference#mcpjam-cloud-commands) | Manage projects | `list`, `create`, `servers` |
+| [`eval`](/cli/reference#eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
+| [`tunnel`](/cli/reference#tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel <url>`, `tunnel -- <command>` |
 | [`hosts`](/cli/reference#hosts-commands) | Manage hosts in your hosted MCPJam projects | `list`, `get`, `create`, `update`, `delete`, `templates` |
 | [`environments`](/cli/reference#environments-commands) | Manage project environments — the host + servers + pinned skills/plugins bundles eval suites and journeys run against | `list`, `get`, `resolve`, `create`, `update`, `archive`, `restore` |
 | [`images`](/cli/reference#images-commands) | Manage custom Computer sandbox images (blueprints) | `list`, `get`, `create`, `validate`, `edit`, `build`, `logs`, `use`, `reset`, `promote`, `delete` |
+
+### CLI
+
+| Group | Purpose | Key commands |
+|-------|---------|-------------|
+| [`inspector`](/cli/reference#inspector-commands) | Start, open, or stop the local Inspector from the CLI | `open`, `start`, `stop` |
 | [`mcp`](/cli/mcp-server) | Run MCPJam as a stdio MCP server for agents (Claude Desktop, Claude Code, Cursor, ...) | `mcp` |
 | [`telemetry`](/cli/telemetry) | Inspect and configure anonymous CLI telemetry | `status`, `disable`, `enable` |
 
