@@ -186,6 +186,11 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     kind: "screen",
     surfaceId: "organizations",
   },
+  {
+    path: "evals/shared/:token",
+    kind: "special",
+    note: "Read-only shared eval run. Redeem-based (guest session or WorkOS). Chrome-less.",
+  },
   { path: "evals", kind: "screen", surfaceId: "evals" },
   { path: "evals/create", kind: "screen", surfaceId: "evals" },
   { path: "evals/suite/:suiteId", kind: "screen", surfaceId: "evals" },
