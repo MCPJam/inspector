@@ -64,6 +64,13 @@ async function startFixture(): Promise<{
       );
       return;
     }
+    if (
+      url.pathname ===
+      "/api/v1/projects/proj-alpha/eval-runs/run-1/iterations"
+    ) {
+      res.end(JSON.stringify({ items: [] }));
+      return;
+    }
     res.statusCode = 404;
     res.end(JSON.stringify({ code: "NOT_FOUND", message: url.pathname }));
   });
@@ -149,12 +156,46 @@ function cloudArgv(baseUrl: string, ...args: string[]): string[] {
   ];
 }
 
-test("eval status/cancel/judge help treat --project as optional", async () => {
-  for (const sub of ["status", "cancel", "judge"]) {
+test("eval run-inspection commands treat --project as optional", async () => {
+  for (const sub of [
+    "status",
+    "cancel",
+    "judge",
+    "iterations",
+    "gate",
+    "compare",
+    "trace",
+    "steps",
+    "screenshot",
+    "video",
+  ]) {
     const run = await runCli(["cloud", "eval", sub, "--help"]);
     assert.equal(run.exitCode, 0, run.stderr);
     assert.match(run.stdout, /--project <id-or-name>/);
     assert.doesNotMatch(run.stdout, /required option '--project/);
+  }
+});
+
+test("eval iterations without --project uses automatic project selection", async () => {
+  const fixture = await startFixture();
+  const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-eval-iterations-"));
+  try {
+    const run = await withEnv(isolatedEnv(), () =>
+      withCwd(cwd, () =>
+        runCli(
+          cloudArgv(fixture.baseUrl, "eval", "iterations", "--run", "run-1")
+        )
+      )
+    );
+    assert.equal(run.exitCode, 0, run.stderr);
+    assert.ok(
+      fixture.requestUrls.some((url) =>
+        url.includes("/projects/proj-alpha/eval-runs/run-1/iterations")
+      ),
+      `expected automatic proj-alpha iterations fetch, saw: ${fixture.requestUrls.join(", ")}`
+    );
+  } finally {
+    await fixture.close();
   }
 });
 
