@@ -90,6 +90,12 @@ import type {
   PlatformConformanceRun,
   PlatformConformanceRunReceipt,
   PlatformConformanceSuiteKind,
+  PlatformCatalogServer,
+  PlatformCatalogSourceStatus,
+  PlatformDirectorySearchPage,
+  PlatformRegistryServer,
+  PlatformRegistryConnection,
+  PlatformRegistryInstall,
 } from "./types.js";
 
 export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
@@ -256,6 +262,153 @@ export class PlatformApiClient {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(params.projectId)}`,
+      {},
+      options,
+    );
+  }
+
+  // ── Registry (directory + curated cards) ─────────────────────────────────
+
+  searchRegistryDirectory(
+    params: {
+      q?: string;
+      source?: string;
+      rowType?: string;
+      endpointKind?: string;
+      verifiedTier?: string;
+      connectableOnly?: boolean;
+      cursor?: string;
+      limit?: number;
+    } = {},
+    options?: RequestOptions,
+  ): Promise<PlatformDirectorySearchPage> {
+    return this.request(
+      "GET",
+      "/registry/directory-servers",
+      {
+        query: {
+          q: params.q,
+          source: params.source,
+          rowType: params.rowType,
+          endpointKind: params.endpointKind,
+          verifiedTier: params.verifiedTier,
+          connectableOnly:
+            params.connectableOnly === undefined
+              ? undefined
+              : params.connectableOnly
+                ? "true"
+                : "false",
+          ...pageQuery({ cursor: params.cursor, limit: params.limit }),
+        },
+      },
+      options,
+    );
+  }
+
+  getRegistryDirectoryServer(
+    params: { catalogServerId: string } | { name: string; source?: string },
+    options?: RequestOptions,
+  ): Promise<PlatformCatalogServer> {
+    if ("catalogServerId" in params) {
+      return this.request(
+        "GET",
+        `/registry/directory-servers/${encodeURIComponent(params.catalogServerId)}`,
+        {},
+        options,
+      );
+    }
+    return this.request(
+      "GET",
+      `/registry/directory-servers/${encodeURIComponent(params.name)}`,
+      { query: { source: params.source } },
+      options,
+    );
+  }
+
+  listRegistryDirectorySources(
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformCatalogSourceStatus>> {
+    return this.request("GET", "/registry/directory-sources", {}, options);
+  }
+
+  listRegistryServers(
+    params: { projectId: string; scope?: "global" | "organization" | "all" },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformRegistryServer>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/servers`,
+      { query: { scope: params.scope } },
+      options,
+    );
+  }
+
+  listRegistryConnections(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformRegistryConnection>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/connections`,
+      {},
+      options,
+    );
+  }
+
+  installRegistryDirectoryServer(
+    params: {
+      projectId: string;
+      catalogServerId: string;
+      endpointUrl?: string;
+      expectedContentHash?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformRegistryInstall> {
+    // Explicit picks, not a rest spread — see `startClaudeReadinessRun`. The
+    // route's body schema forbids additional properties.
+    const { projectId, catalogServerId, endpointUrl, expectedContentHash } =
+      params;
+    const body: Record<string, unknown> = { catalogServerId };
+    if (endpointUrl !== undefined) body.endpointUrl = endpointUrl;
+    if (expectedContentHash !== undefined) {
+      body.expectedContentHash = expectedContentHash;
+    }
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/registry/directory-installs`,
+      { body },
+      options,
+    );
+  }
+
+  installRegistryServer(
+    params: {
+      projectId: string;
+      registryServerId: string;
+      expectedUpdatedAt?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformRegistryInstall> {
+    const { projectId, registryServerId, expectedUpdatedAt } = params;
+    const body: Record<string, unknown> = { registryServerId };
+    if (expectedUpdatedAt !== undefined) {
+      body.expectedUpdatedAt = expectedUpdatedAt;
+    }
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/registry/installs`,
+      { body },
+      options,
+    );
+  }
+
+  uninstallRegistryServer(
+    params: { projectId: string; registryServerId: string },
+    options?: RequestOptions,
+  ): Promise<{ deleted?: boolean }> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/installs/${encodeURIComponent(params.registryServerId)}`,
       {},
       options,
     );
@@ -3011,11 +3164,17 @@ export class PlatformApiClient {
     },
     options?: RequestOptions,
   ): Promise<Record<string, unknown>> {
-    const { projectId, resourceType, resourceId, ...body } = params;
+    const { projectId, resourceType, resourceId, mode, allowGuestAccess } =
+      params;
     return this.request(
       "PATCH",
       this.sharePath(projectId, resourceType, resourceId),
-      { body },
+      {
+        body: {
+          mode,
+          ...(allowGuestAccess !== undefined ? { allowGuestAccess } : {}),
+        },
+      },
       options,
     );
   }

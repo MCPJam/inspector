@@ -1031,6 +1031,22 @@ describe("tier derives from operation.risk", () => {
         "approves the start. confirmSeverity is none so the prompt does not " +
         "warn about money.",
     },
+    install_registry_directory_server: {
+      tier: "excluded",
+      reason:
+        "Exposure derives gated, and gated IS the destination: the frozen " +
+        "expectedContentHash/endpointUrl proposal entry lands in I4 " +
+        "(PR #4255). Excluded here so I2 can land without a half-built " +
+        "gate; this exception is deleted by the I4 PR.",
+    },
+    install_registry_server: {
+      tier: "excluded",
+      reason:
+        "Exposure derives gated, and gated IS the destination: the frozen " +
+        "expectedUpdatedAt proposal entry lands in I4 (PR #4255). Excluded " +
+        "here so I2 can land without a half-built gate; this exception is " +
+        "deleted by the I4 PR.",
+    },
   };
 
   const placementOf = (name: string): Placement | "unregistered" => {

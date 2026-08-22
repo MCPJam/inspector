@@ -104,6 +104,10 @@
     {
       "name": "Directory readiness",
       "description": "Grade a saved server against a publisher's listing requirements: Anthropic's connector directory or OpenAI's plugin directory. Reported as lane status and coverage, never as a numeric score, and excluded from `pooledConformanceScore`. Deterministic grading is free; model-backed experience observations are an explicit opt-in that consumes MCPJam credits and can never decide a verdict."
+    },
+    {
+      "name": "Registry",
+      "description": "Search the scraped MCP directories (Claude, ChatGPT, and any future source), list curated/org registry cards, and install them into a project. Install writes a `servers` row and provenance — it does not open a live session. There is no catalog-uninstall route: delete the project server instead. Directory reads require a bearer (including minted guest tokens) but do not materialize a user. Card/connection reads and all writes are authed-non-guest."
     }
   ],
   "paths": {
@@ -9789,6 +9793,488 @@
           },
           "504": {
             "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
+    },
+    "/registry/directory-servers": {
+      "get": {
+        "operationId": "searchRegistryDirectory",
+        "tags": [
+          "Registry"
+        ],
+        "summary": "Search the scraped MCP directories",
+        "description": "Cross-source search over Claude, ChatGPT, and any future directory source. Omit `source` (or pass `all`) to search every source. The `cursor` is filter-bound. Prefer a matching curated card from `listRegistryServers` (global scope) when one exists — those carry vetted OAuth config. Bearer always required (guest tokens allowed). Not in PUBLIC_OPERATIONS.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Search query. Empty/omitted browses by display name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "description": "Directory source id, or `all` (the API default). Discover ids via `GET /registry/directory-sources`. Not an enum — sources are data.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rowType",
+            "in": "query",
+            "required": false,
+            "description": "Filter by row type when the source publishes one.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "endpointKind",
+            "in": "query",
+            "required": false,
+            "description": "Filter by endpoint kind (`fixed`, `options`, `tenant`, …).",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "verifiedTier",
+            "in": "query",
+            "required": false,
+            "description": "Filter by verified tier when the source publishes one.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "connectableOnly",
+            "in": "query",
+            "required": false,
+            "description": "When true, only rows an install can target.",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque cursor from the previous page. Filter-bound.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size.",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Page of results. `nextCursor` is omitted on the last page. Cursors are filter-bound — do not reuse one after changing q/source/filters.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogServerPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/registry/directory-servers/{idOrName}": {
+      "get": {
+        "operationId": "getRegistryDirectoryServer",
+        "tags": [
+          "Registry"
+        ],
+        "summary": "Get one directory server",
+        "description": "Resolve by Convex `catalogServerId` (long unhyphenated id) or by `serverName`. Pass `source` to disambiguate a name that exists in more than one directory. The response includes `latestContentHash` — pass it as `expectedContentHash` on install to freeze the row.",
+        "parameters": [
+          {
+            "name": "idOrName",
+            "in": "path",
+            "required": true,
+            "description": "Catalog server id, or the directory `serverName`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "required": false,
+            "description": "Directory source id. When present the path is treated as a name even if it looks like an id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The directory server.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogServer"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/registry/directory-sources": {
+      "get": {
+        "operationId": "listRegistryDirectorySources",
+        "tags": [
+          "Registry"
+        ],
+        "summary": "List directory sources",
+        "description": "Discovery for the free-string `source` filter. Sources are data, not an enum — do not hardcode `claude`/`chatgpt` client-side.",
+        "responses": {
+          "200": {
+            "description": "All known directory sources, in one response. `nextCursor` is reserved on the page schema and is omitted today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogSourceStatusPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/registry/servers": {
+      "get": {
+        "operationId": "listRegistryServers",
+        "tags": [
+          "Registry"
+        ],
+        "summary": "List curated and org registry cards",
+        "description": "Merges global approved cards with the project's organization cards. Guest-denied. `scope` defaults to all.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "description": "`global`, `organization`, or `all`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The merged card set for the requested `scope`, in one response. `nextCursor` is reserved on the page schema and is omitted today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistryServerPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/registry/connections": {
+      "get": {
+        "operationId": "listRegistryConnections",
+        "tags": [
+          "Registry"
+        ],
+        "summary": "List registry installs in a project",
+        "description": "Merged catalog + card provenance. Guest-denied. Rows whose `servers` row is deleted are filtered out.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The project's registry installs, in one response. `nextCursor` is reserved on the page schema and is omitted today.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistryConnectionPage"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/registry/directory-installs": {
+      "post": {
+        "operationId": "installRegistryDirectoryServer",
+        "tags": [
+          "Registry"
+        ],
+        "summary": "Install a directory server into a project",
+        "description": "Writes a `servers` row and catalog provenance. SUCCESS MEANS INSTALLED, NOT CONNECTED — follow with `get_project_server_connection_status` and, for OAuth, the browser connect-link handoff. Pass `expectedContentHash` from `GET /registry/directory-servers/{id}` to reject a row that moved (TOCTOU). There is no catalog-uninstall route: delete the project server.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DirectoryInstallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Installed or already present (`outcome` is `created` or `reconnected`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistryInstall"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/registry/installs": {
+      "post": {
+        "operationId": "installRegistryServer",
+        "tags": [
+          "Registry"
+        ],
+        "summary": "Install a curated or org registry card",
+        "description": "Same install-not-connect contract as the directory install. Pass `expectedUpdatedAt` from `listRegistryServers` to freeze the card.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegistryInstallRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Installed or already present.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RegistryInstall"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/registry/installs/{registryServerId}": {
+      "delete": {
+        "operationId": "uninstallRegistryServer",
+        "tags": [
+          "Registry"
+        ],
+        "summary": "Uninstall a registry card",
+        "description": "Card-only. Directory uninstall is `DELETE /projects/{projectId}/servers/{serverId}` — provenance is cleaned with the server.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "name": "registryServerId",
+            "in": "path",
+            "required": true,
+            "description": "Registry card id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Uninstalled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
           }
         }
       }
@@ -20614,6 +21100,344 @@
         "type": "object",
         "description": "The backend's response, passed through verbatim along with its status code. Success shapes are `{ ok: true, ... }` envelopes the SDK reporter parses. Errors are canonical v1 `{ code, message }`.",
         "additionalProperties": true
+      },
+      "CatalogServer": {
+        "type": "object",
+        "description": "Allowlisted projection of a scraped directory row. Extra upstream fields are dropped.",
+        "required": [
+          "id",
+          "source",
+          "serverName"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "rowType": {
+            "type": "string"
+          },
+          "verifiedTier": {
+            "type": "string"
+          },
+          "authPosture": {
+            "type": "string"
+          },
+          "unavailableReason": {
+            "type": "string"
+          },
+          "endpointKind": {
+            "type": "string"
+          },
+          "remoteUrl": {
+            "type": "string"
+          },
+          "remoteUrlOptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "remoteUrlRegex": {
+            "type": "string"
+          },
+          "remoteUrlHint": {
+            "type": "string"
+          },
+          "latestContentHash": {
+            "type": "string",
+            "description": "Freshness pin for install."
+          },
+          "oauthProbe": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "CatalogServerPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogServer"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Opaque, filter-bound. Omitted on the last page."
+          }
+        }
+      },
+      "CatalogSourceStatus": {
+        "type": "object",
+        "required": [
+          "source"
+        ],
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "lastSyncedAt": {
+            "type": "number"
+          },
+          "liveCount": {
+            "type": "integer"
+          },
+          "upstreamFetchedAt": {
+            "type": "number"
+          }
+        }
+      },
+      "CatalogSourceStatusPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CatalogSourceStatus"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Opaque, filter-bound. Omitted on the last page."
+          }
+        }
+      },
+      "RegistryServer": {
+        "type": "object",
+        "required": [
+          "id",
+          "scope",
+          "name"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "organization"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "publisher": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "number",
+            "description": "Freshness pin for install."
+          },
+          "transport": {
+            "type": "object",
+            "properties": {
+              "transportType": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              },
+              "useOAuth": {
+                "type": "boolean"
+              },
+              "hasOAuthConfig": {
+                "type": "boolean"
+              },
+              "oauthScopes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "RegistryServerPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegistryServer"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Opaque, filter-bound. Omitted on the last page."
+          }
+        }
+      },
+      "RegistryConnection": {
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "projectId",
+          "serverId"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "registry",
+              "catalog"
+            ]
+          },
+          "scope": {
+            "type": "string",
+            "enum": [
+              "global",
+              "organization"
+            ]
+          },
+          "projectId": {
+            "type": "string"
+          },
+          "serverId": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "registryServerId": {
+            "type": "string"
+          },
+          "catalogServerId": {
+            "type": "string"
+          },
+          "endpointUrl": {
+            "type": "string"
+          },
+          "endpointKind": {
+            "type": "string"
+          },
+          "connectedAt": {
+            "type": "number"
+          }
+        }
+      },
+      "RegistryConnectionPage": {
+        "type": "object",
+        "required": [
+          "items"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegistryConnection"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Opaque, filter-bound. Omitted on the last page."
+          }
+        }
+      },
+      "DirectoryInstallRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "catalogServerId"
+        ],
+        "properties": {
+          "catalogServerId": {
+            "type": "string"
+          },
+          "endpointUrl": {
+            "type": "string",
+            "description": "Required for `options` and `tenant` endpoint kinds."
+          },
+          "expectedContentHash": {
+            "type": "string",
+            "description": "TOCTOU pin from `latestContentHash`."
+          }
+        }
+      },
+      "RegistryInstallRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "registryServerId"
+        ],
+        "properties": {
+          "registryServerId": {
+            "type": "string"
+          },
+          "expectedUpdatedAt": {
+            "type": "number",
+            "description": "TOCTOU pin from `updatedAt`."
+          }
+        }
+      },
+      "RegistryInstall": {
+        "type": "object",
+        "required": [
+          "serverId",
+          "serverName",
+          "outcome"
+        ],
+        "properties": {
+          "serverId": {
+            "type": "string"
+          },
+          "serverName": {
+            "type": "string"
+          },
+          "outcome": {
+            "type": "string",
+            "enum": [
+              "created",
+              "reconnected"
+            ]
+          }
+        }
       }
     },
     "responses": {
