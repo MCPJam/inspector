@@ -1552,11 +1552,15 @@ Persistently enables anonymous CLI telemetry. If no install ID exists yet, this 
 
 ---
 
-## `login` / `logout` / `whoami` commands
+## `cloud login` / `cloud logout` / `cloud whoami` commands
 
-These commands manage your MCPJam platform session. `login` opens a browser for OAuth and stores the session locally; `logout` removes it; `whoami` shows the account behind the current credentials.
+These commands manage your MCPJam Cloud account session. `cloud login` opens a browser for OAuth and stores the session locally; `cloud logout` removes it; `cloud whoami` shows the account behind the current credentials.
 
-### `login`
+<Note>
+  `mcpjam oauth login` authenticates you to an MCP server (MCP OAuth). `mcpjam cloud login` authenticates you to your MCPJam account. They are separate commands.
+</Note>
+
+### `cloud login`
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -1572,11 +1576,11 @@ The `MCPJAM_API_URL` environment variable is equivalent to `--api-url`. An inval
 3. The `apiUrl` stored with the OAuth session (only when the stored login is the credential; `sk_` API keys do not inherit the stored URL)
 4. Production default (`https://app.mcpjam.com/api/v1`)
 
-### `logout`
+### `cloud logout`
 
 No additional flags. Removes the stored MCPJam session.
 
-### `whoami`
+### `cloud whoami`
 
 | Flag | Default | Description |
 |------|---------|-------------|
