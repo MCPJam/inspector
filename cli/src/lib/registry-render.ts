@@ -66,6 +66,10 @@ export function formatRegistryInstallHuman(
   if (result.nextSteps.connectLinkUrl) {
     lines.push("  Finish OAuth in the browser:");
     lines.push(`    ${result.nextSteps.connectLinkUrl}`);
+  } else if (result.nextSteps.connectLinkError) {
+    lines.push(
+      `  OAuth connect-link could not be created (${result.nextSteps.connectLinkError}); run the connect command above to start one.`,
+    );
   }
   return lines.join("\n");
 }

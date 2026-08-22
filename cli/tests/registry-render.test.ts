@@ -101,4 +101,18 @@ describe("registry human formatters", () => {
     assert.doesNotMatch(reconnected, /--project/);
     assert.doesNotMatch(reconnected, /Finish OAuth/);
   });
+
+  test("install surfaces a failed OAuth connect-link mint instead of dropping it", () => {
+    const text = formatRegistryInstallHuman({
+      serverId: "srv_3",
+      serverName: "linear",
+      outcome: "created",
+      nextSteps: {
+        connectionStatusOp: "get_project_server_connection_status",
+        connectLinkError: "connect-link mint failed",
+      },
+    });
+    assert.match(text, /OAuth connect-link could not be created \(connect-link mint failed\)/);
+    assert.doesNotMatch(text, /Finish OAuth/);
+  });
 });
