@@ -105,8 +105,13 @@ function resolveEnvironmentProject(
   options: { project?: string },
   body: Record<string, unknown> = {}
 ) {
+  if (body.project !== undefined && typeof body.project !== "string") {
+    throw usageError(
+      '"project" must be a string when supplied in JSON input.'
+    );
+  }
   return resolveCloudProjectArgs(options, {
-    inputProject: typeof body.project === "string" ? body.project : undefined,
+    inputProject: body.project,
   });
 }
 
