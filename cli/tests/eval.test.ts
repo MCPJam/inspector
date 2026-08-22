@@ -579,6 +579,7 @@ function evalArgv(fixtureUrl: string, ...args: string[]): string[] {
   return [
     "node",
     "mcpjam",
+    "cloud",
     "eval",
     ...args,
     "--api-key",

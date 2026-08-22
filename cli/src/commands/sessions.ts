@@ -24,10 +24,9 @@ import {
 } from "../lib/platform-command.js";
 
 /**
- * Extends `PlatformOptions` because `bindOperation` declares the credential
- * flags on the LEAF command and hands its action the merged options — the same
- * arrangement `organizations.ts` documents. Declaring them on the group instead
- * would put `--api-key` somewhere Commander never passes to this action.
+ * Extends `PlatformOptions` because `bindOperation` reads `--api-key` /
+ * `--api-url` from the `cloud` parent via `platformOptionsOf`. `--project`
+ * stays on this leaf so account-scoped commands do not pretend to have one.
  */
 type SearchOptions = PlatformOptions & {
   project?: string;

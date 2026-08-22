@@ -9,66 +9,18 @@
 import type { Command } from "commander";
 import {
   listChatSessionsOperation,
-  PlatformApiError,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import {
+  platformOptionsOf,
+  runPlatformOperation as runPlatformCommand,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
-};
 
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)",
-    );
-}
 
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>,
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        },
-      ),
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
-  } catch (error) {
-    // When OUR deadline fired, surface the armed TIMEOUT error rather than the
-    // bare AbortError some fetch implementations reject with.
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
-}
 
 /** Validate against the operation's own schema so bad flags fail before the call. */
 function validateOpInput<TInput>(
@@ -90,12 +42,12 @@ function validateOpInput<TInput>(
 async function executeOp<TInput, TOutput>(
   op: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  options: PlatformOptions,
+  _options: PlatformOptions,
   command: Command,
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
   const result = await runPlatformCommand(
-    options,
+    platformOptionsOf(command),
     globalOptions.timeout,
     ({ client, signal }) => op.execute(input, { client, signal }),
   );
@@ -107,8 +59,7 @@ export function registerChatCommands(program: Command): void {
     .command("chat-sessions")
     .description("Inspect saved chat sessions");
 
-  addPlatformOptions(
-    sessions
+      sessions
       .command("list")
       .description(
         "List chat sessions, newest first (all accessible projects unless --project is given)",
@@ -117,8 +68,8 @@ export function registerChatCommands(program: Command): void {
       .option("--status <status>", "Filter by session status")
       .option("--limit <n>", "Maximum sessions to return (1-200)", (value) =>
         Number.parseInt(value, 10),
-      ),
-  ).action(
+      )
+      .action(
     async (
       options: PlatformOptions & {
         project?: string;

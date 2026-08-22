@@ -8,19 +8,18 @@ import {
   updateHostOperation,
   setHostServersOperation,
   duplicateHostOperation,
-  PlatformApiError,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { HOST_TEMPLATES as SDK_HOST_TEMPLATES } from "@mcpjam/sdk/host-config/templates";
 import { JsonInputContext } from "../lib/json-input.js";
 import { usageError, writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import {
+  platformOptionsOf,
+  runPlatformOperation as runPlatformCommand,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
-};
 
 /**
  * Built-in host templates surfaced by `hosts templates`, derived from the SDK
@@ -30,52 +29,7 @@ type PlatformOptions = {
 const HOST_TEMPLATES: ReadonlyArray<{ id: string; label: string }> =
   SDK_HOST_TEMPLATES.map(({ id, label }) => ({ id, label }));
 
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
 
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
-  } catch (error) {
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
-}
 
 /** Read a JSON object from --file (literal path or `-` for stdin) / --json. */
 function loadConfigObject(options: {
@@ -134,18 +88,16 @@ export function registerHostsCommands(program: Command): void {
       writeResult({ items: HOST_TEMPLATES }, globalOptions.format);
     });
 
-  addPlatformOptions(
-    hosts
+      hosts
       .command("list")
       .description("List the hosts saved in a project")
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
-      )
-  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+      ).action(async (options: PlatformOptions & { project?: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         listHostsOperation.execute(
@@ -156,20 +108,18 @@ export function registerHostsCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    hosts
+      hosts
       .command("get")
       .description("Show one host's full settings, including its host config")
       .requiredOption("--host <id-or-name>", "Host name or ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; host: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getHostOperation.execute(
@@ -181,8 +131,7 @@ export function registerHostsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    hosts
+      hosts
       .command("create")
       .description(
         "Create a host from a built-in template (--template) or a full host config (--file/--json)"
@@ -198,8 +147,7 @@ export function registerHostsCommands(program: Command): void {
         "Theme for the seeded config: light or dark (template only)"
       )
       .option("--file <path>", "Host config v2 JSON file (or - for stdin)")
-      .option("--json <json>", "Inline host config v2 JSON (or @file, or -)")
-  ).action(
+      .option("--json <json>", "Inline host config v2 JSON (or @file, or -)").action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -223,7 +171,7 @@ export function registerHostsCommands(program: Command): void {
         ...(config !== undefined ? { config } : {}),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           createHostOperation.execute(input, { client, signal })
@@ -232,8 +180,7 @@ export function registerHostsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    hosts
+      hosts
       .command("update")
       .description("Edit a host's name and/or its host config")
       .requiredOption("--host <id-or-name>", "Host name or ID")
@@ -246,8 +193,7 @@ export function registerHostsCommands(program: Command): void {
       .option(
         "--json <json>",
         "Inline replacement host config v2 JSON (or @file, or -)"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -267,7 +213,7 @@ export function registerHostsCommands(program: Command): void {
         ...(config !== undefined ? { config } : {}),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           updateHostOperation.execute(input, { client, signal })
@@ -276,13 +222,11 @@ export function registerHostsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    hosts
+      hosts
       .command("delete")
       .description("Permanently delete a host from a project")
       .requiredOption("--host <id-or-name>", "Host name or ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -292,7 +236,7 @@ export function registerHostsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           deleteHostOperation.execute(
@@ -307,8 +251,7 @@ export function registerHostsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    hosts
+      hosts
       .command("servers")
       .description("Replace a host's required and optional server attachments")
       .requiredOption("--host <id-or-name>", "Host name or ID")
@@ -320,8 +263,7 @@ export function registerHostsCommands(program: Command): void {
         "--optional-server-ids <ids>",
         "Comma-separated optional server IDs"
       )
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -346,7 +288,7 @@ export function registerHostsCommands(program: Command): void {
           : {}),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           setHostServersOperation.execute(input, { client, signal })
@@ -355,14 +297,12 @@ export function registerHostsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    hosts
+      hosts
       .command("duplicate")
       .description("Duplicate a host's current config")
       .requiredOption("--host <id-or-name>", "Host name or ID")
       .option("--name <name>", "Name for the new host")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -378,7 +318,7 @@ export function registerHostsCommands(program: Command): void {
         ...(options.name === undefined ? {} : { name: options.name }),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           duplicateHostOperation.execute(input, { client, signal })

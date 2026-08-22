@@ -11,12 +11,15 @@ import {
   resolveEnvironmentOperation,
   restoreEnvironmentOperation,
   updateEnvironmentOperation,
-  PlatformApiError,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
 import { JsonInputContext } from "../lib/json-input.js";
 import { usageError, writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import {
+  platformOptionsOf,
+  runPlatformOperation as runPlatformCommand,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
@@ -33,57 +36,8 @@ import { getGlobalOptions } from "../lib/server-config.js";
  * rather than silently overwriting their edit.
  */
 
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
-};
 
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
 
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
-  } catch (error) {
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
-}
 
 function validateInput<TInput>(
   op: PlatformOperation<TInput, unknown>,
@@ -204,7 +158,7 @@ function parseRevision(raw: string): number {
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 0) {
     throw usageError(
-      "--expected-revision must be a non-negative integer (read it from `mcpjam environments get`)."
+      "--expected-revision must be a non-negative integer (read it from `mcpjam cloud environments get`)."
     );
   }
   return value;
@@ -217,8 +171,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       "List, create, and manage the project environments (host + servers + pinned skills/plugins) in your hosted MCPJam projects"
     );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("list")
       .description("List the project environments in a project")
       .option(
@@ -228,8 +181,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       .option(
         "--include-archived",
         "Include archived environments (needed to find one to restore)"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -239,7 +191,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           listEnvironmentsOperation.execute(
@@ -254,22 +206,20 @@ export function registerEnvironmentsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("get")
       .description(
         "Show one environment's settings and its current revision (pass that revision to update/archive/restore)"
       )
       .requiredOption("--environment <id-or-name>", "Environment name or ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; environment: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getEnvironmentOperation.execute(
@@ -281,22 +231,20 @@ export function registerEnvironmentsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("resolve")
       .description(
         "Preview what an environment resolves to right now: host config, closed server set, and pinned plugin versions"
       )
       .requiredOption("--environment <id-or-name>", "Environment name or ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; environment: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           resolveEnvironmentOperation.execute(
@@ -308,8 +256,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("create")
       .description(
         "Create a project environment (requires project admin). Body fields may be supplied via --file/--json"
@@ -324,14 +271,13 @@ export function registerEnvironmentsCommands(program: Command): void {
       )
       .option(
         "--sandbox-image <id>",
-        "Project-shared sandbox image (see `mcpjam images`) to pin: eval runs boot a fresh sandbox from it"
+        "Project-shared sandbox image (see `mcpjam cloud images`) to pin: eval runs boot a fresh sandbox from it"
       )
       .option(
         "--file <path>",
         "Environment JSON file with any of name/hostId/description/serverAttachmentId/modelId/skillSelection/pluginVersionIds/sandboxImageId (or - for stdin)"
       )
-      .option("--json <json>", "Inline environment JSON (or @file, or -)")
-  ).action(
+      .option("--json <json>", "Inline environment JSON (or @file, or -)").action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -353,7 +299,10 @@ export function registerEnvironmentsCommands(program: Command): void {
       // unknown `modelId` with an opaque validator error. Ask first, and only
       // when the caller actually supplied model input — an ordinary create has
       // no reason to pay for a round-trip.
-      await assertModelOverridesSupported(options, globalOptions.timeout, {
+      await assertModelOverridesSupported(
+        platformOptionsOf(command),
+        globalOptions.timeout,
+        {
         supplied: options.model !== undefined || "modelId" in body,
         ...projectSelector(options, body),
       });
@@ -371,7 +320,7 @@ export function registerEnvironmentsCommands(program: Command): void {
           : {}),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           createEnvironmentOperation.execute(input, { client, signal })
@@ -380,8 +329,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("ensure-adhoc")
       .description(
         "Get or create an UNNAMED environment for a composed stack. Deduplicated by content: the same stack always returns the same environment"
@@ -406,8 +354,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       .option(
         "--skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -435,7 +382,7 @@ export function registerEnvironmentsCommands(program: Command): void {
           : {}),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           ensureAdhocEnvironmentOperation.execute(input, { client, signal })
@@ -444,8 +391,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("name")
       .description(
         "Promote an UNNAMED (ad-hoc) environment to a named one, in place — the same id every existing run points at"
@@ -460,8 +406,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         "The revision you last read; a stale value is rejected instead of overwriting a concurrent edit"
       )
       .option("--project <id-or-name>", "Project name or ID")
-      .option("--description <text>", "Optional description")
-  ).action(
+      .option("--description <text>", "Optional description").action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -483,7 +428,7 @@ export function registerEnvironmentsCommands(program: Command): void {
           : {}),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           nameEnvironmentOperation.execute(input, { client, signal })
@@ -492,8 +437,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("update")
       .description(
         "Edit an environment. Only the fields you pass change; use --clear-model, or --file/--json with a null value, to clear serverAttachmentId, modelId, skillSelection, pluginVersionIds, or sandboxImageId"
@@ -526,8 +470,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         "--file <path>",
         "Environment JSON file with the fields to change (or - for stdin)"
       )
-      .option("--json <json>", "Inline environment JSON (or @file, or -)")
-  ).action(
+      .option("--json <json>", "Inline environment JSON (or @file, or -)").action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -551,7 +494,10 @@ export function registerEnvironmentsCommands(program: Command): void {
       if (options.model !== undefined && options.clearModel) {
         throw usageError("Provide either --model or --clear-model, not both.");
       }
-      await assertModelOverridesSupported(options, globalOptions.timeout, {
+      await assertModelOverridesSupported(
+        platformOptionsOf(command),
+        globalOptions.timeout,
+        {
         supplied:
           options.model !== undefined ||
           options.clearModel === true ||
@@ -577,7 +523,7 @@ export function registerEnvironmentsCommands(program: Command): void {
           : {}),
       });
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           updateEnvironmentOperation.execute(input, { client, signal })
@@ -586,8 +532,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("archive")
       .description(
         "Archive an environment (reversible; frees its name for a new one)"
@@ -597,8 +542,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         "--expected-revision <n>",
         "The revision you last read (from `environments get`)"
       )
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -609,7 +553,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           archiveEnvironmentOperation.execute(
@@ -625,8 +569,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("restore")
       .description(
         "Restore an archived environment. Plugin pins whose version no longer exists are dropped — check the returned pluginVersionIds"
@@ -636,8 +579,7 @@ export function registerEnvironmentsCommands(program: Command): void {
         "--expected-revision <n>",
         "The revision you last read (from `environments get --include-archived` via list)"
       )
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -648,7 +590,7 @@ export function registerEnvironmentsCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           restoreEnvironmentOperation.execute(

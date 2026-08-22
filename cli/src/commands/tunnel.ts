@@ -4,7 +4,8 @@ import {
   type CreateTunnelResult,
 } from "@mcpjam/sdk/platform";
 import { cliError, usageError, writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import { buildCloudClientContext, platformOptionsOf } from "../lib/platform-command.js";
+import { toCliError } from "../lib/platform-client.js";
 import { getGlobalOptions, parseServerConfig } from "../lib/server-config.js";
 import { startLocalBridge, type TunnelTarget } from "../lib/tunnel/local-bridge.js";
 import { RelayConnection } from "../lib/tunnel/relay-client.js";
@@ -32,7 +33,7 @@ export function parseTunnelTarget(tokens: string[]): ParsedTunnelTarget {
   const isUrl = (token: string) => /^https?:\/\//i.test(token);
   if (tokens.length === 0) {
     throw usageError(
-      "Specify a target: a local server URL (mcpjam tunnel http://localhost:9090/mcp --id my-server) or a stdio command (mcpjam tunnel --id my-server -- npx -y @modelcontextprotocol/server-everything).",
+      "Specify a target: a local server URL (mcpjam cloud tunnel http://localhost:9090/mcp --id my-server) or a stdio command (mcpjam cloud tunnel --id my-server -- npx -y @modelcontextprotocol/server-everything).",
     );
   }
   if (isUrl(tokens[0])) {
@@ -89,11 +90,6 @@ export function registerTunnelCommands(program: Command): void {
       "--project <id-or-name>",
       "Project name or ID (defaults to the most recently updated project)",
     )
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)",
-    )
     .option(
       "-e, --env <env...>",
       'Stdio environment assignment in "KEY=VALUE" format. Pass multiple values or repeat the flag.',
@@ -134,13 +130,15 @@ export function registerTunnelCommands(program: Command): void {
                 }),
               };
 
+        // Client request timeouts still use `--timeout`. The tunnel itself
+        // is not wrapped in `runPlatformOperation`: a session is meant to
+        // outlive the default 30-second whole-command deadline.
         let client;
         try {
-          ({ client } = buildPlatformClient({
-            apiKey: options.apiKey,
-            apiUrl: options.apiUrl,
-            timeoutMs: globalOptions.timeout,
-          }));
+          ({ client } = buildCloudClientContext(
+            platformOptionsOf(command),
+            globalOptions.timeout,
+          ));
         } catch (error) {
           throw toCliError(error);
         }

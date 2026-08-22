@@ -291,6 +291,7 @@ function projectsArgv(fixtureUrl: string, ...args: string[]): string[] {
   return [
     "node",
     "mcpjam",
+    "cloud",
     "projects",
     ...args,
     "--api-key",
@@ -831,7 +832,7 @@ test("server connect still prints the link when the account lookup fails", async
     // The connection request already succeeded. Failing the command because a
     // decorative lookup failed would trade a working result for none.
     assert.match(run.stderr, /connect\/server\/tok/);
-    assert.match(run.stderr, /mcpjam whoami/);
+    assert.match(run.stderr, /mcpjam cloud whoami/);
     assert.equal(run.result.exitCode, 0);
   } finally {
     await fixture.close();

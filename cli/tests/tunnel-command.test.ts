@@ -30,7 +30,7 @@ async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
     }
     return (originalStdoutWrite as (...args: unknown[]) => boolean)(
       chunk,
-      ...rest,
+      ...rest
     );
   }) as typeof process.stdout.write;
   process.stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
@@ -40,7 +40,7 @@ async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
     }
     return (originalStderrWrite as (...args: unknown[]) => boolean)(
       chunk,
-      ...rest,
+      ...rest
     );
   }) as typeof process.stderr.write;
 
@@ -73,19 +73,22 @@ test("parseTunnelTarget maps post-`--` tokens to a stdio command", () => {
       kind: "stdio",
       command: "npx",
       args: ["-y", "@modelcontextprotocol/server-everything"],
-    },
+    }
   );
 });
 
 test("parseTunnelTarget rejects empty, mixed, and malformed targets", () => {
-  assert.throws(() => parseTunnelTarget([]), (error: unknown) => {
-    assert.ok(error instanceof CliError);
-    assert.equal(error.code, "USAGE_ERROR");
-    return true;
-  });
+  assert.throws(
+    () => parseTunnelTarget([]),
+    (error: unknown) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, "USAGE_ERROR");
+      return true;
+    }
+  );
   assert.throws(
     () => parseTunnelTarget(["http://localhost:9090/mcp", "extra"]),
-    /not both/,
+    /not both/
   );
   assert.throws(() => parseTunnelTarget(["http://"]), /Invalid URL/);
 });
@@ -94,9 +97,21 @@ test("parseTunnelTarget rejects empty, mixed, and malformed targets", () => {
 
 test("tunnel without a target exits 2 with a usage error", async () => {
   const { result, stdout, stderr } = await captureProcessOutput(() =>
-    main(["node", "mcpjam", "tunnel", "--id", "my-server", "--format", "json"], {
-      telemetry: telemetryDisabled,
-    }),
+    main(
+      [
+        "node",
+        "mcpjam",
+        "cloud",
+        "tunnel",
+        "--id",
+        "my-server",
+        "--format",
+        "json",
+      ],
+      {
+        telemetry: telemetryDisabled,
+      }
+    )
   );
 
   assert.equal(result.exitCode, 2);
@@ -114,13 +129,14 @@ test("tunnel without --id exits 2 via commander's required option", async () => 
       [
         "node",
         "mcpjam",
+        "cloud",
         "tunnel",
         "http://localhost:9090/mcp",
         "--format",
         "json",
       ],
-      { telemetry: telemetryDisabled },
-    ),
+      { telemetry: telemetryDisabled }
+    )
   );
 
   assert.equal(result.exitCode, 2);
@@ -137,6 +153,7 @@ test("tunnel rejects --env with an http target", async () => {
       [
         "node",
         "mcpjam",
+        "cloud",
         "tunnel",
         "http://localhost:9090/mcp",
         "--id",
@@ -146,8 +163,8 @@ test("tunnel rejects --env with an http target", async () => {
         "--format",
         "json",
       ],
-      { telemetry: telemetryDisabled },
-    ),
+      { telemetry: telemetryDisabled }
+    )
   );
 
   assert.equal(result.exitCode, 2);
