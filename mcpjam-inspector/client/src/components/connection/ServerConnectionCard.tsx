@@ -71,6 +71,7 @@ import {
 } from "@/lib/apis/mcp-tunnels-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
@@ -135,7 +136,9 @@ interface ServerConnectionCardProps {
    * Share this server on the organization's registry shelf. Injected the same
    * way `onMoveToProject` is — the card knows the server, the parent owns the
    * dialog and the mutation. When omitted (no organization, guest role, or a
-   * surface with no registry) the item is not rendered at all.
+   * surface with no registry) the item is not rendered at all. Also hidden
+   * when the `registry-enabled` PostHog flag is off, even if a callback is
+   * provided — the flag is the rollout door, not the caller's permission.
    */
   onShareToOrgRegistry?: (server: ServerWithName) => void;
 }
@@ -156,6 +159,7 @@ export function ServerConnectionCard({
   onShareToOrgRegistry,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
+  const registryEnabled = useFeatureFlagEnabled("registry-enabled") === true;
 
   // A pinned protocol version the server doesn't offer is the one connect
   // failure with an exact, one-click fix, so the card offers it instead of
@@ -831,11 +835,14 @@ export function ServerConnectionCard({
                       </DropdownMenuSub>
                     ) : null}
                     {/*
-                      Remote HTTP only. An org entry carries an ADDRESS, and a
+                      Remote HTTP only, and only while the registry rollout
+                      flag is on. An org entry carries an ADDRESS, and a
                       stdio server's address is a command on one machine —
                       there is nothing to share.
                     */}
-                    {onShareToOrgRegistry && server.config?.url ? (
+                    {onShareToOrgRegistry &&
+                    registryEnabled &&
+                    server.config?.url ? (
                       <DropdownMenuItem
                         className="text-xs cursor-pointer"
                         onClick={() => {
