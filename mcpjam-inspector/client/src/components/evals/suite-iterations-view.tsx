@@ -55,6 +55,9 @@ import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { EvalExportModal } from "./eval-export-modal";
 import { ExportTracesModal } from "./export-traces-modal";
+import { ShareDialog } from "@/components/sharing/ShareDialog";
+import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
+import { buildEvalSharePath } from "@/lib/app-navigation";
 // SuiteExecutionConfigEditor was previously rendered on the suite settings
 // page; hidden there in the judge-config rework (see comment at the
 // removed render site). Import kept dropped to avoid an unused-symbol
@@ -452,6 +455,9 @@ export function SuiteIterationsView({
     cases: EvalExportCaseInput[];
   } | null>(null);
   const [tracesExportOpen, setTracesExportOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const unifiedShareEvals =
+    useFeatureFlagEnabled("unified-share-evals") === true;
   // chatSessionIds for the currently-selected run (unified-trace iterations
   // only; legacy `blob`-only iterations have no chatSessions row to export).
   const runChatSessionIds = useMemo(
@@ -950,6 +956,15 @@ export function SuiteIterationsView({
       selectedRunDetails={selectedRunDetails}
       caseGroupsForSelectedRun={caseGroupsForSelectedRun}
       onExportTraces={projectId ? () => setTracesExportOpen(true) : undefined}
+      onShare={
+        unifiedShareEvals &&
+        selectedRunDetails &&
+        (selectedRunDetails.status === "completed" ||
+          selectedRunDetails.status === "failed" ||
+          selectedRunDetails.status === "timed_out")
+          ? () => setShareOpen(true)
+          : undefined
+      }
       currentSuiteJudgeConfig={suite.judgeConfig ?? null}
       source={getRunMetricSource(selectedRunDetails, suite.source)}
       runDetailSortBy={effectiveRunDetailSortBy}
@@ -1780,6 +1795,30 @@ export function SuiteIterationsView({
           projectId={projectId}
           runChatSessionIds={runChatSessionIds}
         />
+      ) : null}
+      {unifiedShareEvals && selectedRunDetails ? (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          title="Share eval run"
+          description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
+        >
+          <ResourceSharePanel
+            resourceType="evalRun"
+            resourceId={selectedRunDetails._id}
+            footerSlot={
+              <p className="text-xs text-muted-foreground">
+                Transcripts, tool arguments, credentials, and full server URLs
+                are never included.
+              </p>
+            }
+            linkLabel="Share link"
+            buildShareUrl={(token) =>
+              `${window.location.origin}${buildEvalSharePath(token)}`
+            }
+            testIdPrefix="eval-share"
+          />
+        </ShareDialog>
       ) : null}
     </div>
   );

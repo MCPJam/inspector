@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { createMcpJamMcpServer } from "../src/lib/mcp-server.js";
 import { runCli } from "./support/cli-run.js";
+import { parseHelpCommandNames } from "./support/help.js";
 
 const FIXTURE_PATH = fileURLToPath(
   new URL("./fixtures/local-contract-manifest.json", import.meta.url)
@@ -87,28 +88,6 @@ function parseUsage(help: string): string {
   return line;
 }
 
-function parseCommandNames(help: string): string[] {
-  const marker = "\nCommands:\n";
-  const start = help.indexOf(marker);
-  if (start === -1) {
-    return [];
-  }
-  const names: string[] = [];
-  for (const line of help.slice(start + marker.length).split("\n")) {
-    const match = line.match(
-      /^  ([a-z][\w|-]*)(?: \[options\])?(?: \[[^\]]+\])?\s{2,}/
-    );
-    if (!match) {
-      continue;
-    }
-    const name = match[1].split("|")[0];
-    if (name !== "help") {
-      names.push(name);
-    }
-  }
-  return names;
-}
-
 function parseUsageError(stderr: string): { code: string; message: string } {
   const payload = JSON.parse(stderr) as {
     error?: { code?: string; message?: string };
@@ -124,7 +103,7 @@ function parseUsageError(stderr: string): { code: string; message: string } {
 async function collectManifest(): Promise<LocalContractManifest> {
   const root = await runCli(["--help"]);
   assert.equal(root.exitCode, 0, root.stderr);
-  const rootCommands = new Set(parseCommandNames(root.stdout));
+  const rootCommands = new Set(parseHelpCommandNames(root.stdout));
   for (const name of FROZEN_LOCAL_COMMANDS) {
     assert.ok(
       rootCommands.has(name),
@@ -138,7 +117,7 @@ async function collectManifest(): Promise<LocalContractManifest> {
     assert.equal(run.exitCode, 0, `${name} --help failed:\n${run.stderr}`);
     help[name] = {
       usage: parseUsage(run.stdout),
-      subcommands: parseCommandNames(run.stdout),
+      subcommands: parseHelpCommandNames(run.stdout),
     };
   }
 
@@ -377,6 +356,10 @@ test("local MCP serverInfo.name remains mcpjam", async () => {
     await client.connect(clientTransport as never);
     const serverInfo = client.getServerVersion();
     assert.equal(serverInfo?.name, "mcpjam");
+    assert.equal(serverInfo?.title, "MCPJam CLI");
+    const instructions = client.getInstructions() ?? "";
+    assert.match(instructions, /MCPJam CLI running locally/);
+    assert.match(instructions, /not the hosted MCPJam Cloud MCP/);
   } finally {
     await client.close().catch(() => undefined);
     await handle.close();

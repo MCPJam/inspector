@@ -103,7 +103,7 @@ test("tunnel without a target exits 2 with a usage error", async () => {
         "mcpjam",
         "cloud",
         "tunnel",
-        "--id",
+        "--server",
         "my-server",
         "--format",
         "json",
@@ -123,7 +123,7 @@ test("tunnel without a target exits 2 with a usage error", async () => {
   assert.match(payload.error.message, /Specify a target/);
 });
 
-test("tunnel without --id exits 2 via commander's required option", async () => {
+test("tunnel without --server exits 2 via commander's required option", async () => {
   const { result, stderr } = await captureProcessOutput(() =>
     main(
       [
@@ -144,7 +144,32 @@ test("tunnel without --id exits 2 via commander's required option", async () => 
     error: { code: string; message: string };
   };
   assert.equal(payload.error.code, "USAGE_ERROR");
-  assert.match(payload.error.message, /--id/);
+  assert.match(payload.error.message, /--server/);
+});
+
+test("tunnel accepts hidden --id as an alias of --server", async () => {
+  const { result, stderr } = await captureProcessOutput(() =>
+    main(
+      [
+        "node",
+        "mcpjam",
+        "cloud",
+        "tunnel",
+        "--id",
+        "my-server",
+        "--format",
+        "json",
+      ],
+      { telemetry: telemetryDisabled }
+    )
+  );
+
+  assert.equal(result.exitCode, 2);
+  const payload = JSON.parse(stderr.trim().split("\n").at(-1)!) as {
+    error: { code: string; message: string };
+  };
+  assert.equal(payload.error.code, "USAGE_ERROR");
+  assert.match(payload.error.message, /Specify a target/);
 });
 
 test("tunnel rejects --env with an http target", async () => {
@@ -156,7 +181,7 @@ test("tunnel rejects --env with an http target", async () => {
         "cloud",
         "tunnel",
         "http://localhost:9090/mcp",
-        "--id",
+        "--server",
         "x",
         "--env",
         "A=1",

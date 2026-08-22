@@ -1,6 +1,7 @@
 import type { Command } from "commander";
+import { addPlatformOptions } from "../lib/platform-command.js";
 import { registerAuthCommands } from "./auth.js";
-import { registerChatCommands } from "./chat.js";
+import { registerCloudLinkCommands } from "./cloud-link.js";
 import { registerEnvironmentsCommands } from "./environments.js";
 import { registerEvalCommands } from "./eval.js";
 import { registerHostsCommands } from "./hosts.js";
@@ -26,19 +27,28 @@ export function registerCloudCommands(program: Command): Command {
       "MCPJam Cloud account commands (login, projects, evals, tunnels). Local MCP testing stays at the top level — `mcpjam oauth login` is MCP OAuth; `mcpjam cloud login` is your MCPJam account."
     );
 
+  addPlatformOptions(cloud);
+
+  cloud.commandsGroup("Account:");
   registerAuthCommands(cloud);
+  registerCloudLinkCommands(cloud);
+
+  cloud.commandsGroup("Workspace:");
   registerOrganizationsCommands(cloud);
   registerProjectsCommands(cloud);
-  registerEvalCommands(cloud);
-  registerChatCommands(cloud);
   registerSessionsCommands(cloud);
+  registerTunnelCommands(cloud);
+
+  cloud.commandsGroup("Eval and environments:");
+  registerEvalCommands(cloud);
   registerHostsCommands(cloud);
   registerEnvironmentsCommands(cloud);
+  registerImagesCommands(cloud);
+
+  cloud.commandsGroup("Swarms and user testing:");
   const journeys = registerJourneysCommands(cloud);
   registerScenariosCommands(cloud);
   registerSwarmAuthoringCommands(cloud, journeys);
   registerUserTestingCommands(cloud);
-  registerImagesCommands(cloud);
-  registerTunnelCommands(cloud);
   return cloud;
 }
