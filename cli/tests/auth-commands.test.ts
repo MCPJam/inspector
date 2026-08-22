@@ -252,3 +252,38 @@ test("logout without a stored login reports not_logged_in", async () => {
     else process.env.MCPJAM_AUTH_FILE = originalAuthFile;
   }
 });
+
+test("logout warns on human stderr when MCPJAM_API_KEY remains active", async () => {
+  const { mkdtemp } = await import("node:fs/promises");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-auth-"));
+  const originalAuthFile = process.env.MCPJAM_AUTH_FILE;
+  const originalApiKey = process.env.MCPJAM_API_KEY;
+  process.env.MCPJAM_AUTH_FILE = path.join(directory, "auth.json");
+  process.env.MCPJAM_API_KEY = "sk_still_active";
+
+  try {
+    const human = await captureProcessOutput(() =>
+      main(["node", "mcpjam", "cloud", "logout", "--format", "human"], {
+        telemetry: telemetryDisabled,
+      })
+    );
+    assert.equal(human.result.exitCode, 0);
+    assert.match(human.stderr, /MCPJAM_API_KEY is still set/);
+
+    const json = await captureProcessOutput(() =>
+      main(["node", "mcpjam", "cloud", "logout", "--format", "json"], {
+        telemetry: telemetryDisabled,
+      })
+    );
+    assert.equal(json.result.exitCode, 0);
+    assert.doesNotMatch(json.stderr, /MCPJAM_API_KEY is still set/);
+    assert.equal(JSON.parse(json.stdout).status, "not_logged_in");
+  } finally {
+    if (originalAuthFile === undefined) delete process.env.MCPJAM_AUTH_FILE;
+    else process.env.MCPJAM_AUTH_FILE = originalAuthFile;
+    if (originalApiKey === undefined) delete process.env.MCPJAM_API_KEY;
+    else process.env.MCPJAM_API_KEY = originalApiKey;
+  }
+});
