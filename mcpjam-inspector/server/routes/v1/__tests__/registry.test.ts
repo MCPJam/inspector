@@ -231,6 +231,35 @@ describe("v1 registry", () => {
       expect(res.headers.get("x-mcpjam-next-cursor")).toBe("c1");
       expect(res.headers.get("link")).toContain('rel="next"');
     });
+
+    it("maps an unreachable upstream to 502 SERVER_UNREACHABLE", async () => {
+      fetchMock.mockRejectedValue(new Error("connect ECONNREFUSED"));
+      const res = await request("GET", "/api/v1/registry/directory-servers");
+      expect(res.status).toBe(502);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "SERVER_UNREACHABLE"
+      );
+    });
+
+    it("maps a non-JSON upstream response to 502 SERVER_UNREACHABLE", async () => {
+      fetchMock.mockResolvedValue(
+        new Response("<html>oops</html>", { status: 200 })
+      );
+      const res = await request("GET", "/api/v1/registry/directory-servers");
+      expect(res.status).toBe(502);
+      expect(((await res.json()) as { code?: string }).code).toBe(
+        "SERVER_UNREACHABLE"
+      );
+    });
+
+    it("maps an upstream timeout to 504 TIMEOUT", async () => {
+      const abortError = new Error("aborted");
+      abortError.name = "AbortError";
+      fetchMock.mockRejectedValue(abortError);
+      const res = await request("GET", "/api/v1/registry/directory-servers");
+      expect(res.status).toBe(504);
+      expect(((await res.json()) as { code?: string }).code).toBe("TIMEOUT");
+    });
   });
 
   describe("guest posture", () => {
@@ -549,6 +578,29 @@ describe("v1 registry", () => {
         "/api/v1/projects/p1/registry/installs",
         { body: { registryServerId: "rs1", expectedUpdatedAt: "not-a-number" } }
       );
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ["/api/v1/projects/p1/registry/directory-installs", { catalogServerId: "" }],
+      ["/api/v1/projects/p1/registry/directory-installs", { catalogServerId: "   " }],
+      [
+        "/api/v1/projects/p1/registry/directory-installs",
+        { catalogServerId: "cs1", endpointUrl: "" },
+      ],
+      [
+        "/api/v1/projects/p1/registry/directory-installs",
+        { catalogServerId: "cs1", expectedContentHash: "" },
+      ],
+      ["/api/v1/projects/p1/registry/installs", { registryServerId: "" }],
+      ["/api/v1/projects/p1/registry/installs", { registryServerId: "   " }],
+      [
+        "/api/v1/projects/p1/registry/installs",
+        { registryServerId: "rs1", expectedUpdatedAt: null },
+      ],
+    ])("rejects empty or null install fields %j", async (path, body) => {
+      const res = await request("POST", path, { body });
       expect(res.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
