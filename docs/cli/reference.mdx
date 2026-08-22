@@ -1399,9 +1399,9 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--server <id-or-name...>` | No | Override the suite's saved servers for this run |
 | `--environment <id-or-name>` | No | Project environment to run against (must be attached to the suite) |
 | `--host <id-or-name>` | No | Attached host to run against, so the run is stamped with that host's config |
-| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment; appends the composed environment to the suite |
+| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment. Default is ephemeral. |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
-| `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
+| `--compose-model <id>` | No | One model to run on the composed stack. A matrix of models is suite-level (`eval run`) only. |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 | `--iterations <n>` | No | Run the case this many times (1-10) |
@@ -1411,6 +1411,7 @@ Every `--compose-*` flag behaves exactly as it does for `eval run` — see
 [Composing a target instead of naming one](#composing-a-target-instead-of-naming-one).
 Target selection follows the same rules ([Which target runs](#which-target-runs)),
 except that a single case run targets ONE thing — there is no `--all-targets` here.
+`--compose-model` accepts only one model on a case run; use `eval run` for a multi-model matrix.
 
 #### `cloud eval cases create`
 
