@@ -155,7 +155,11 @@ export async function executePersistedConformanceRun(
     status: started.status,
   });
 
-  if (started.reused && started.status && started.status !== "queued") {
+  // A reused row already has an owner — the request that inserted it.
+  // Re-entering `runConformance` for a still-`queued` replay would dial the
+  // target twice and write conflicting reports for one run id. Recovery for a
+  // dead owner is heartbeat + sweep, never a second execute.
+  if (started.reused) {
     return {
       runId: started.runId,
       reused: true,
