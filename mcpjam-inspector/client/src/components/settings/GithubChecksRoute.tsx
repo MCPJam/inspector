@@ -216,6 +216,7 @@ export function GithubChecksRoute({
     setRepoEnabled,
     setRepoSuite,
     setRepoOutagePolicy,
+    setRepoConformance,
     disconnectRepo,
     listInstallationRepos,
     startInstallation,
@@ -258,6 +259,9 @@ export function GithubChecksRoute({
   const [pendingPolicies, setPendingPolicies] = useState<ReadonlySet<string>>(
     () => new Set()
   );
+  const [pendingConformance, setPendingConformance] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   // The picker's value is the repository's NUMERIC ID as a string, not its
   // name. Two accounts can both have a `widgets`, and the id is what the connect
   // is actually keyed on — selecting by name would make the disambiguation the
@@ -505,6 +509,25 @@ export function GithubChecksRoute({
     }
   };
 
+  const handleConformanceToggle = async (row: GithubCheckRepoConfigRow) => {
+    if (pendingConformance.has(row._id)) return;
+    setPendingConformance((current) => new Set(current).add(row._id));
+    try {
+      await setRepoConformance({
+        configId: row._id,
+        conformanceEnabled: row.conformanceEnabled !== true,
+      });
+    } catch (error) {
+      handleWriteError(error);
+    } finally {
+      setPendingConformance((current) => {
+        const next = new Set(current);
+        next.delete(row._id);
+        return next;
+      });
+    }
+  };
+
   const handleDisconnect = async (row: GithubCheckRepoConfigRow) => {
     try {
       await disconnectRepo({ configId: row._id });
@@ -577,6 +600,8 @@ export function GithubChecksRoute({
       <p className="text-sm text-muted-foreground">
         Connect a repository to run an eval suite as a GitHub check on every
         pull request. The check runs the suite you pick here against the PR's
+        preview server. Conformance is a second, opt-in check on the same build
+        — existing repositories stay eval-only until you turn it on.
         head commit and reports back as a status check.
       </p>
 
@@ -774,6 +799,13 @@ export function GithubChecksRoute({
                   disabled={pendingToggles.has(row._id)}
                   onCheckedChange={() => void handleToggle(row)}
                   aria-label={`Enable checks for ${row.repoFullName}`}
+                />
+
+                <Switch
+                  checked={row.conformanceEnabled === true}
+                  disabled={pendingConformance.has(row._id) || !row.enabled}
+                  onCheckedChange={() => void handleConformanceToggle(row)}
+                  aria-label={`Enable conformance check for ${row.repoFullName}`}
                 />
 
                 <Button
