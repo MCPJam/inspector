@@ -573,6 +573,7 @@ describe("platform tool registration", () => {
       "archive_swarm",
       "remove_user_testing_member",
       "rotate_user_testing_link",
+      "rotate_share_link",
     ]);
     const DESTRUCTIVE_OPS = new Set([
       "delete_eval_suite",

@@ -3079,11 +3079,17 @@ export class PlatformApiClient {
     },
     options?: RequestOptions,
   ): Promise<Record<string, unknown>> {
-    const { projectId, resourceType, resourceId, ...body } = params;
+    const { projectId, resourceType, resourceId, mode, allowGuestAccess } =
+      params;
     return this.request(
       "PATCH",
       this.sharePath(projectId, resourceType, resourceId),
-      { body },
+      {
+        body: {
+          mode,
+          ...(allowGuestAccess !== undefined ? { allowGuestAccess } : {}),
+        },
+      },
       options,
     );
   }
