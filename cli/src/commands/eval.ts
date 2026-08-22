@@ -987,7 +987,7 @@ async function runEvalGate(
 }
 
 /**
- * `mcpjam eval compare` — this run against a baseline.
+ * `mcpjam cloud eval compare` — this run against a baseline.
  *
  * Deliberately has NO `--wait`. A comparison against a run that has not
  * finished compares against a partial population, and the honest answer is
@@ -1177,7 +1177,7 @@ async function runEvalCompare(
 }
 
 /**
- * `mcpjam eval pull` — materialize a hosted suite into a local corpus lock.
+ * `mcpjam cloud eval pull` — materialize a hosted suite into a local corpus lock.
  *
  * Two modes, one code path. The default fetches and WRITES the lock; `--frozen`
  * fetches and only COMPARES, never writing. Sharing the fetch and
