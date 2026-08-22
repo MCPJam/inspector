@@ -25,6 +25,7 @@ import type {
 } from "./tasks-ext-types.js";
 import type { TaskLifecycleObservation } from "./task-lifecycle.js";
 import type { MCPTask } from "./types.js";
+import { MCP_ERROR_CODES } from "./mcp-error-codes.js";
 
 /**
  * Extension `tasks/get` result or `notifications/tasks` params → observation.
@@ -126,8 +127,16 @@ export function legacyTaskToObservation(
  */
 export const UNKNOWN_TASK_ERROR_CODE = -32602;
 
-/** The extension's "this operation requires the tasks declaration" code. */
-export const TASKS_DECLARATION_REQUIRED_ERROR_CODE = -32003;
+/**
+ * The extension's "this operation requires the tasks declaration" code. This is
+ * `MissingRequiredClientCapability`, so it follows the renumber the central
+ * table already records: ext-tasks drafted `-32003`, a value that appears in no
+ * core schema version, and corrected it to `-32021` to match SEP-2663, the core
+ * 2026-07-28 schema and the TypeScript SDK. A server still answering `-32003`
+ * is pre-final; `PRE_RENUMBER_DRAFT_ERROR_CODES` names that value.
+ */
+export const TASKS_DECLARATION_REQUIRED_ERROR_CODE =
+  MCP_ERROR_CODES.MissingRequiredClientCapability;
 
 function errorCodeOf(error: unknown): number | undefined {
   if (typeof error !== "object" || error === null) return undefined;
