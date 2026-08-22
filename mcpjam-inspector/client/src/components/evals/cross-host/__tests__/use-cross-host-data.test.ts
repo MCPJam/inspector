@@ -88,6 +88,7 @@ function makeIteration(
 
 function makeSuite(
   attachments: Array<{ namedHostId: string; hostName: string | null }> = [],
+  extras: { environmentIds?: string[] } = {},
 ): EvalSuite {
   return {
     _id: "s1",
@@ -104,6 +105,7 @@ function makeSuite(
       enabledOptionalServerIds: [],
       resolvedServerNames: [],
     })),
+    ...(extras.environmentIds ? { environmentIds: extras.environmentIds } : {}),
   };
 }
 
@@ -640,5 +642,125 @@ describe("useCrossHostData", () => {
     );
     const labels = result.current.hostColumns.map((c) => c.splitLabel);
     expect(labels).toEqual(["servers-aaaa", "servers-bbbb"]);
+  });
+
+  it("keeps a persisted inherit run on client-default after the env is edited", () => {
+    const suite = makeSuite([], { environmentIds: ["env1"] });
+    const cases = [makeCase("c1")];
+    const inherit = {
+      ...makeEnvironmentRun("rInherit", "h1", "env1", 1, 1000),
+      modelSource: "client_default" as const,
+      effectiveModelId: "anthropic/claude-sonnet-4-6",
+    };
+    const iters = [
+      makeIteration("i1", {
+        suiteRunId: "rInherit",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [inherit], iters, {
+        environments: [
+          {
+            environmentId: "env1",
+            hostId: "h1",
+            modelId: "google/gemini-2.5-flash",
+          },
+        ],
+      }),
+    );
+    const keys = result.current.hostColumns.map((c) => c.columnKey);
+    expect(keys).toContain("h1::client-default");
+    expect(
+      result.current.matrix.get("c1")?.get("h1::client-default")?.passCount
+    ).toBe(1);
+    expect(
+      result.current.matrix.get("c1")?.get("h1::google/gemini-2.5-flash")
+        ?.passCount ?? 0
+    ).toBe(0);
+  });
+
+  it("keeps a persisted override on its original model after the env model changes", () => {
+    const suite = makeSuite([], { environmentIds: ["env1"] });
+    const cases = [makeCase("c1")];
+    const override = {
+      ...makeEnvironmentRun("rOverride", "h1", "env1", 1, 1000),
+      modelSource: "override" as const,
+      effectiveModelId: "google/gemini-2.5-flash",
+    };
+    const iters = [
+      makeIteration("i1", {
+        suiteRunId: "rOverride",
+        testCaseId: "c1",
+        result: "failed",
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [override], iters, {
+        environments: [
+          {
+            environmentId: "env1",
+            hostId: "h1",
+            modelId: "openai/gpt-4o",
+          },
+        ],
+      }),
+    );
+    expect(
+      result.current.matrix.get("c1")?.get("h1::google/gemini-2.5-flash")
+        ?.failCount
+    ).toBe(1);
+    expect(
+      result.current.matrix.get("c1")?.get("h1::openai/gpt-4o")?.failCount ?? 0
+    ).toBe(0);
+  });
+
+  it("does not mint columns for named environments that are not on the suite", () => {
+    const suite = makeSuite([], { environmentIds: ["env-suite"] });
+    const cases = [makeCase("c1")];
+    const run = makeEnvironmentRun("r1", "h1", "env-suite", 1, 1000);
+    const iters = [
+      makeIteration("i1", {
+        suiteRunId: "r1",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [run], iters, {
+        environments: [
+          { environmentId: "env-suite", hostId: "h1" },
+          { environmentId: "env-other", hostId: "h2" },
+        ],
+      }),
+    );
+    expect(result.current.hostColumns.map((c) => c.hostId)).toEqual(["h1"]);
+    expect(result.current.hostColumns.map((c) => c.columnKey)).toEqual([
+      "h1::client-default",
+    ]);
+  });
+
+  it("still mints a column for a run-referenced environment no longer on the suite", () => {
+    const suite = makeSuite([], { environmentIds: ["env-suite"] });
+    const cases = [makeCase("c1")];
+    const historical = makeEnvironmentRun("rOld", "h2", "env-old", 1, 1000);
+    const iters = [
+      makeIteration("i1", {
+        suiteRunId: "rOld",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [historical], iters, {
+        environments: [
+          { environmentId: "env-suite", hostId: "h1" },
+          { environmentId: "env-old", hostId: "h2" },
+        ],
+      }),
+    );
+    const keys = result.current.hostColumns.map((c) => c.columnKey).sort();
+    expect(keys).toEqual(["h1::client-default", "h2::client-default"]);
   });
 });

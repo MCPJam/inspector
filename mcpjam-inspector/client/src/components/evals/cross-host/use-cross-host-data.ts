@@ -352,12 +352,19 @@ export function modelKeyForRun(
   run: EvalSuiteRun,
   envById: Map<string, CrossHostEnvironment>
 ): string {
-  const ref = runEnvironmentRef(run);
-  const env = ref ? envById.get(ref.environmentId) : undefined;
-  if (env?.modelId) return env.modelId;
+  // Persisted attribution is the run's frozen column. A later edit to the
+  // named environment must not move historical runs into a new model cell
+  // (or recast an inherit run as an override).
   if (run.modelSource === "override" && run.effectiveModelId) {
     return run.effectiveModelId;
   }
+  if (run.modelSource === "client_default") {
+    return CLIENT_DEFAULT_MODEL_KEY;
+  }
+  // Pre-attribution rows: join the live environment if present.
+  const ref = runEnvironmentRef(run);
+  const env = ref ? envById.get(ref.environmentId) : undefined;
+  if (env?.modelId) return env.modelId;
   return CLIENT_DEFAULT_MODEL_KEY;
 }
 
@@ -433,8 +440,19 @@ export function useCrossHostData(
       });
     }
 
+    // The caller often hands the project's full named-environment list.
+    // Only environments attached to this suite, or referenced by a
+    // displayed run, should mint columns — otherwise every other named
+    // row in the project appears as an empty host/model cell.
+    const relevantEnvIds = new Set<string>(suite.environmentIds ?? []);
+    for (const run of runs) {
+      const ref = runEnvironmentRef(run);
+      if (ref) relevantEnvIds.add(ref.environmentId);
+    }
+
     for (const env of environments ?? []) {
       if (!env.hostId) continue;
+      if (!relevantEnvIds.has(env.environmentId)) continue;
       const modelKey = env.modelId ?? CLIENT_DEFAULT_MODEL_KEY;
       touch(env.hostId, modelKey, {
         envId: env.environmentId,
