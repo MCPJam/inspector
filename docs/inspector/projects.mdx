@@ -133,6 +133,30 @@ When your deployment exposes computer-backed tools (such as **Bash**), a **Perso
 - **Detaching the computer also removes computer-backed tool ids** from the config, so the saved config is always consistent.
 - The toggle is hidden until the deployment enables at least one computer-backed tool, so it won't appear as a dead control before launch.
 
+## Organization sharing policy
+
+Organization admins can set an org-wide ceiling on how resources are shared. The **Sharing** card appears on the organization overview, next to the Audit Log card.
+
+### Maximum share access
+
+The **Maximum share access** select controls the highest share mode any member of the organization can grant:
+
+| Option | Effect |
+|---|---|
+| Anyone with the link | No ceiling — members can share with anyone who has the link (default) |
+| Invited users only | Shares can only be granted to explicitly invited users |
+| Project members | Shares are limited to existing project members |
+
+Tightening the ceiling takes effect immediately. Existing share rows are not rewritten — they are enforced at access time.
+
+### Organization members only
+
+When the **Organization members only** toggle is on, invites can only go to people who are already members of the organization. Turning it off allows inviting anyone by email.
+
+<Note>
+Non-admins see these controls in a disabled state. Only organization admins can change the sharing policy.
+</Note>
+
 ## What's Next
 
 - **[Servers](/inspector/connecting-servers)** - Configure MCP servers to add to your projects
