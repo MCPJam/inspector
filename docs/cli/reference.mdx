@@ -684,14 +684,7 @@ knowledge:
   - name: Test notes
     contents: Run `make test` before pushing.
 ```
- All `images` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.
-
-### Shared platform flags
-
-| Flag | Description |
-|------|-------------|
-| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
-| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+ All `images` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`. Pass credential flags on `mcpjam cloud` (see [Cloud credential flags](#cloud-credential-flags)).
 
 ### `images list`
 
