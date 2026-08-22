@@ -9149,6 +9149,300 @@
         }
       }
     },
+    "/projects/{projectId}/servers/{serverId}/conformance-runs": {
+      "post": {
+        "operationId": "startConformanceRun",
+        "tags": [
+          "Conformance runs"
+        ],
+        "summary": "Start a persisted conformance run",
+        "description": "Grades the saved server against the protocol, apps, and tasks suites and returns `202` with a run id. The target comes from the saved server the path names: a body cannot supply a URL. OAuth is not startable here. Poll the run detail for the verdict. Status, outcome, and score are three different answers.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "suites": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "protocol",
+                        "apps",
+                        "tasks"
+                      ]
+                    },
+                    "description": "Suites to run. Defaults to protocol, apps, and tasks. OAuth is not available on this surface."
+                  },
+                  "idempotencyKey": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "description": "Deduplicates a retried POST for the same saved server. Mapped to a namespaced externalRunId (`api:<projectId>:<serverId>:<key>`); a keyless start always inserts and spends quota."
+                  },
+                  "protocolVersion": {
+                    "type": "string"
+                  },
+                  "engineVersion": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "The run was accepted and is executing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "runId",
+                    "projectId",
+                    "serverId",
+                    "status",
+                    "deduped",
+                    "requestedSuites"
+                  ],
+                  "properties": {
+                    "runId": {
+                      "type": "string"
+                    },
+                    "projectId": {
+                      "type": "string"
+                    },
+                    "serverId": {
+                      "type": "string"
+                    },
+                    "status": {
+                      "type": "string"
+                    },
+                    "deduped": {
+                      "type": "boolean"
+                    },
+                    "requestedSuites": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body carried an unknown key, named OAuth, or the server uses a transport conformance cannot grade."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "The saved server's address could not be resolved."
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/conformance-runs": {
+      "get": {
+        "operationId": "listConformanceRuns",
+        "tags": [
+          "Conformance runs"
+        ],
+        "summary": "List persisted conformance runs",
+        "description": "Newest first. Optionally narrow to one saved server. `pending` counts checks the run's profile reported but did not score.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "name": "serverId",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "A page of conformance runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "items"
+                  ],
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    },
+                    "nextCursor": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/conformance-runs/{runId}": {
+      "get": {
+        "operationId": "getConformanceRun",
+        "tags": [
+          "Conformance runs"
+        ],
+        "summary": "Get a persisted conformance run",
+        "description": "Status, outcome, and score are three different answers. A run whose `projectId` is not the path's is `404`. Per-suite `profileId` / `pending` are present when the backend has stored them.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run row.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
+    "/projects/{projectId}/conformance-runs/{runId}/report": {
+      "get": {
+        "operationId": "getConformanceReport",
+        "tags": [
+          "Conformance runs"
+        ],
+        "summary": "Fetch a bounded conformance report projection",
+        "description": "Failing checks only, failed before could-not-run, capped at 50. `totalCases` is every case; `totalFailingCases` is the failing population `truncated` is computed from. `pending` on a check means this profile reported it but did not score it. `404` when the run has no stored report.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The projected report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "The stored report could not be read from storage."
+          }
+        }
+      }
+    },
     "/projects/{projectId}/conformance-ingest/report": {
       "post": {
         "operationId": "reportConformanceRun",
