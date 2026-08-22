@@ -204,7 +204,7 @@ function parseRevision(raw: string): number {
   const value = Number(raw);
   if (!Number.isInteger(value) || value < 0) {
     throw usageError(
-      "--expected-revision must be a non-negative integer (read it from `mcpjam environments get`)."
+      "--expected-revision must be a non-negative integer (read it from `mcpjam cloud environments get`)."
     );
   }
   return value;
@@ -324,7 +324,7 @@ export function registerEnvironmentsCommands(program: Command): void {
       )
       .option(
         "--sandbox-image <id>",
-        "Project-shared sandbox image (see `mcpjam images`) to pin: eval runs boot a fresh sandbox from it"
+        "Project-shared sandbox image (see `mcpjam cloud images`) to pin: eval runs boot a fresh sandbox from it"
       )
       .option(
         "--file <path>",

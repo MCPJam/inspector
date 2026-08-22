@@ -207,7 +207,7 @@ function describeHandoffAudience(audience: {
   const host = new URL(audience.origin).host;
   return audience.email
     ? `This link belongs to ${audience.email} on ${host}. Open it in a browser signed in to that account.\n`
-    : `This link belongs to the account this CLI is logged into, on ${host}. Open it in a browser signed in to that account — \`mcpjam whoami\` names it.\n`;
+    : `This link belongs to the account this CLI is logged into, on ${host}. Open it in a browser signed in to that account — \`mcpjam cloud whoami\` names it.\n`;
 }
 
 export function registerProjectsCommands(program: Command): void {
@@ -230,7 +230,7 @@ export function registerProjectsCommands(program: Command): void {
       // selector, which is why that one has no `-id` suffix.)
       .option(
         "--organization-id <id>",
-        "Restrict the listing to one organization (see `mcpjam organizations list`)"
+        "Restrict the listing to one organization (see `mcpjam cloud organizations list`)"
       )
   ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
@@ -579,7 +579,7 @@ export function registerProjectsCommands(program: Command): void {
       if (options.wait === false || isTerminalConnectionStatus(created.status)) {
         if (options.wait === false && !isTerminalConnectionStatus(created.status)) {
           process.stderr.write(
-            `Not waiting. Follow it with:\n  mcpjam projects server connect-status --request ${created.connectionRequestId}\n`
+            `Not waiting. Follow it with:\n  mcpjam cloud projects server connect-status --request ${created.connectionRequestId}\n`
           );
         }
         writeResult(created, globalOptions.format);
@@ -601,7 +601,7 @@ export function registerProjectsCommands(program: Command): void {
         // watching". Returning the last poll silently made those identical.
         process.stderr.write(
           `Stopped waiting; the request is still ${latest.status} and continues in the cloud.\n` +
-            `  mcpjam projects server connect-status --request ${created.connectionRequestId}\n`
+            `  mcpjam cloud projects server connect-status --request ${created.connectionRequestId}\n`
         );
         process.exitCode = 1;
       }

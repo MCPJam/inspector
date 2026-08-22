@@ -8,7 +8,7 @@ import { operationalError } from "./output.js";
 const AUTH_STORE_VERSION = 1;
 
 /**
- * Stored MCPJam platform login (`mcpjam login`). Tokens are AuthKit-issued;
+ * Stored MCPJam platform login (`mcpjam cloud login`). Tokens are AuthKit-issued;
  * `tokenEndpoint`/`clientId` are kept so refresh works without re-fetching
  * the hosted auth config.
  */

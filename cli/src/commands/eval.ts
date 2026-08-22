@@ -2682,7 +2682,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--computer-image <name-or-id|off>",
-        "Sandbox image eval runs boot from (see `mcpjam images list`); off uses the default base image"
+        "Sandbox image eval runs boot from (see `mcpjam cloud images list`); off uses the default base image"
       )
       .option("--host <name...>", "Replace host attachments (by name/ID)")
       .option("--model <id>", "Execution model id")

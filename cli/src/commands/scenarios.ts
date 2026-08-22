@@ -156,7 +156,7 @@ export function registerScenariosCommands(program: Command): void {
     scenarios
       .command("publish")
       .description(
-        "Publish an environment as a scenario and print its share link. Idempotent — re-publishing returns the existing scenario, with created: false. --name, --description and --mode apply at CREATE TIME, in the same call; on a re-publish they are ignored and the result says overridesIgnored: true (use `mcpjam user-testing update` to change an existing scenario)."
+        "Publish an environment as a scenario and print its share link. Idempotent — re-publishing returns the existing scenario, with created: false. --name, --description and --mode apply at CREATE TIME, in the same call; on a re-publish they are ignored and the result says overridesIgnored: true (use `mcpjam cloud user-testing update` to change an existing scenario)."
       )
       .requiredOption("--environment <id>", "Project environment ID")
       .option(
