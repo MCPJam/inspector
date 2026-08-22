@@ -410,3 +410,28 @@ test("environments create audience names the JSON body project, not MCPJAM_PROJE
     );
   }
 });
+
+test("environments create rejects a non-string JSON project before any write", async () => {
+  const run = await withEnv(isolatedEnv(), () =>
+    runCli([
+      "cloud",
+      "environments",
+      "create",
+      "--api-key",
+      "sk_test",
+      "--api-url",
+      "http://127.0.0.1:1/api/v1",
+      "--json",
+      JSON.stringify({
+        project: 123,
+        name: "FromFile",
+        hostId: "host-1",
+      }),
+    ])
+  );
+  assert.equal(run.exitCode, 2, run.stderr);
+  assert.match(
+    run.stderr,
+    /"project" must be a string when supplied in JSON input/
+  );
+});
