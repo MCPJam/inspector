@@ -959,6 +959,7 @@ export function SuiteResultsSplit({
                 onCellOpen={handleCellOpen}
                 onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                 hostNamesById={hostNamesById}
+                environments={environments}
               />
             </div>
           ) : (
