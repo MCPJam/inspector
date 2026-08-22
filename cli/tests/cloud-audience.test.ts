@@ -151,7 +151,7 @@ test("cloud eval list writes the audience line to stderr and keeps stdout JSON",
     assert.ok(Array.isArray(payload.items));
     assert.match(
       run.stderr,
-      /Using MCPJam Cloud as sk_…test · project: automatic \(most recently updated\) · /
+      /Using MCPJam Cloud as sk_… · project: automatic \(most recently updated\) · /
     );
     assert.match(run.stderr, new RegExp(fixture.baseUrl.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
     assert.doesNotMatch(run.stdout, /Using MCPJam Cloud/);
@@ -401,7 +401,7 @@ test("environments create audience names the JSON body project, not MCPJAM_PROJE
     assert.equal(run.exitCode, 0, run.stderr);
     assert.match(
       run.stderr,
-      /Using MCPJam Cloud as sk_…test · project: input \(proj-file\) · /
+      /Using MCPJam Cloud as sk_… · project: input \(proj-file\) · /
     );
     assert.doesNotMatch(run.stderr, /project: env \(proj-env\)/);
   } finally {
