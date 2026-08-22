@@ -9301,17 +9301,24 @@ export const rotateShareLinkOperation: PlatformOperation<
 const CONNECTION_STATUS_OP = "get_project_server_connection_status" as const;
 
 const INSTALL_NOT_CONNECT_DESCRIPTION =
-  "Install writes a project `servers` row and provenance and stops — it is NOT a live connection. Follow with get_project_server_connection_status. OAuth servers need the browser connect-link in nextSteps.connectLinkUrl.";
+  "Install writes a project `servers` row and provenance and stops — it is NOT a live connection. Follow with get_project_server_connection_status. A first-time OAuth install returns a browser connect-link in nextSteps.connectLinkUrl (or nextSteps.connectLinkError when minting it failed); a reconnected install returns no link — check the connection status and use connect_project_server if it is not connected.";
 
 async function nextStepsForInstall(
   client: PlatformApiClient,
   projectId: string,
   serverId: string,
+  outcome: PlatformRegistryInstallResult["outcome"],
   signal: AbortSignal | undefined,
 ): Promise<PlatformRegistryInstallResult["nextSteps"]> {
   const nextSteps: PlatformRegistryInstallResult["nextSteps"] = {
     connectionStatusOp: CONNECTION_STATUS_OP,
   };
+  // A reconnect means the server row — and possibly a completed OAuth grant —
+  // already existed. Minting a handoff link here would create a real pending
+  // connection request with a single-use token on every repeat install, and
+  // orphan it whenever the existing grant still works. The status op says
+  // whether it does; connect_project_server mints a link deliberately if not.
+  if (outcome === "reconnected") return nextSteps;
   try {
     const server = await client.getProjectServer(
       { projectId, serverId },
@@ -9325,9 +9332,19 @@ async function nextStepsForInstall(
     if (connection.handoffUrl) {
       nextSteps.connectLinkUrl = connection.handoffUrl;
     }
-  } catch {
-    // Guidance without a minted link is still useful; the caller can start
-    // connect_project_server themselves.
+  } catch (error) {
+    // Caller-initiated cancellation fails the whole operation; a success
+    // report after the caller cancelled would be a lie.
+    if (signal?.aborted) {
+      throw error;
+    }
+    // The install itself succeeded, so a link-minting failure stays
+    // non-fatal — but VISIBLY so, or the caller waits for a link that is
+    // not coming instead of starting connect_project_server themselves.
+    nextSteps.connectLinkError =
+      error instanceof Error && error.message.trim()
+        ? error.message
+        : "The browser connect-link could not be created.";
   }
   return nextSteps;
 }
@@ -9338,6 +9355,7 @@ export const searchRegistryDirectoryOperation: PlatformOperation<
     source?: string;
     rowType?: string;
     endpointKind?: string;
+    verifiedTier?: string;
     connectableOnly?: boolean;
     cursor?: string;
     limit?: number;
@@ -9347,7 +9365,7 @@ export const searchRegistryDirectoryOperation: PlatformOperation<
   name: "search_registry_directory",
   title: "Search the MCP directory",
   description:
-    "Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. Discover source ids with list_registry_directory_sources — do not hardcode source names. Prefer a matching curated card from list_registry_servers (scope global) when one exists: those carry vetted OAuth config.",
+    "Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. Discover source ids with list_registry_directory_sources — do not hardcode source names. Prefer a matching organization card from list_registry_servers when one exists: those carry config someone in the org already set up.",
   readOnly: true,
   inputSchema: z.object({
     q: z.string().trim().min(1).optional().describe("Search query."),
@@ -9359,6 +9377,12 @@ export const searchRegistryDirectoryOperation: PlatformOperation<
       .describe("Directory source id, or `all` (default). Not an enum."),
     rowType: z.string().trim().min(1).optional(),
     endpointKind: z.string().trim().min(1).optional(),
+    verifiedTier: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Verification-tier filter; tier values are data, not an enum."),
     connectableOnly: z.boolean().optional(),
     cursor: z.string().trim().min(1).optional(),
     limit: z.number().int().positive().optional(),
@@ -9382,6 +9406,15 @@ const getRegistryDirectoryServerInput = z
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: "Provide exactly one of catalogServerId or name.",
+      });
+    }
+    // Refused rather than ignored: silently dropping `source` would answer a
+    // question the caller did not ask (an id already names its source).
+    if (value.catalogServerId && value.source) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "source only applies to name lookups; a catalogServerId already names its source.",
       });
     }
   });
@@ -9432,7 +9465,7 @@ export const listRegistryServersOperation: PlatformOperation<
   name: "list_registry_servers",
   title: "List registry cards",
   description:
-    "List global curated cards and the project's organization registry cards. Prefer a global card over a scraped directory row when both match — curated cards carry vetted OAuth config.",
+    "List the project's organization registry cards (and any global cards; the global shelf is currently empty). Prefer an organization card over a scraped directory row when both match — cards carry config someone in the org already set up.",
   readOnly: true,
   inputSchema: z.object({
     project: z
@@ -9532,6 +9565,7 @@ export const installRegistryDirectoryServerOperation: PlatformOperation<
         client,
         project.id,
         installed.serverId,
+        installed.outcome,
         signal,
       ),
     };
@@ -9581,6 +9615,7 @@ export const installRegistryServerOperation: PlatformOperation<
         client,
         project.id,
         installed.serverId,
+        installed.outcome,
         signal,
       ),
     };

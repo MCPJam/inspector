@@ -168,6 +168,60 @@ describe("v1 registry", () => {
       );
     });
 
+    it("routes a long scraped serverName to name=, not catalogServerId", async () => {
+      // 20+ alphanumerics used to satisfy the id heuristic; real Convex ids
+      // are lowercase and ~32 chars.
+      for (const name of ["supercalifragilistic", "SomeScrapedServer2024Name"]) {
+        expect(looksLikeConvexId(name)).toBe(false);
+        fetchMock.mockClear();
+        fetchMock.mockResolvedValue(jsonResponse({ id: "c1", serverName: name }));
+        const res = await request(
+          "GET",
+          `/api/v1/registry/directory-servers/${name}`
+        );
+        expect(res.status).toBe(200);
+        const [target] = fetchMock.mock.calls[0] as [URL];
+        expect(new URL(String(target)).searchParams.get("name")).toBe(name);
+      }
+    });
+
+    it.each([
+      [404, { code: "NOT_FOUND", message: "Catalog server not found" }],
+      [400, { code: "VALIDATION_ERROR", message: "Invalid id" }],
+    ])(
+      "falls back to a name lookup when an id-shaped lookup misses with %d",
+      async (missStatus, missBody) => {
+        const idShapedName = "k57abcdefghijklmnopqrstuvwxyz012";
+        fetchMock
+          .mockResolvedValueOnce(jsonResponse(missBody, missStatus))
+          .mockResolvedValueOnce(
+            jsonResponse({ id: "c1", serverName: idShapedName })
+          );
+        const res = await request(
+          "GET",
+          `/api/v1/registry/directory-servers/${idShapedName}`
+        );
+        expect(res.status).toBe(200);
+        expect(await res.json()).toEqual({ id: "c1", serverName: idShapedName });
+        const [first] = fetchMock.mock.calls[0] as [URL];
+        const [second] = fetchMock.mock.calls[1] as [URL];
+        expect(new URL(String(first)).searchParams.get("catalogServerId")).toBe(
+          idShapedName
+        );
+        expect(new URL(String(second)).searchParams.get("name")).toBe(
+          idShapedName
+        );
+      }
+    );
+
+    it("does not retry by name when the id lookup succeeds", async () => {
+      const id = "k57abcdefghijklmnopqrstuvwxyz012";
+      fetchMock.mockResolvedValue(jsonResponse({ id, serverName: "linear" }));
+      const res = await request("GET", `/api/v1/registry/directory-servers/${id}`);
+      expect(res.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it("resolves a name path segment to name=", async () => {
       fetchMock.mockResolvedValue(jsonResponse({ id: "c1", serverName: "linear" }));
       const res = await request("GET", "/api/v1/registry/directory-servers/linear");
@@ -342,6 +396,9 @@ describe("v1 registry", () => {
           "/api/v1/projects/p1/registry/directory-installs",
           { token: "guest-token", body: { catalogServerId: "cs1" } }
         ),
+        await request("DELETE", "/api/v1/projects/p1/registry/installs/rs1", {
+          token: "guest-token",
+        }),
       ];
       for (const res of denied) {
         expect(res.status).toBe(401);
@@ -549,6 +606,70 @@ describe("v1 registry", () => {
       expect(await res.json()).toMatchObject({
         code: "NOT_FOUND",
         details: { code: "registry_server_not_found" },
+      });
+    });
+
+    it.each([
+      [
+        "POST card install",
+        () =>
+          request("POST", "/api/v1/projects/p1/registry/installs", {
+            body: { registryServerId: "not-an-id" },
+          }),
+      ],
+      [
+        "POST directory install",
+        () =>
+          request("POST", "/api/v1/projects/p1/registry/directory-installs", {
+            body: { catalogServerId: "k57directoryidonthecardshelf0012" },
+          }),
+      ],
+      [
+        "DELETE uninstall",
+        () => request("DELETE", "/api/v1/projects/p1/registry/installs/garbage"),
+      ],
+    ])(
+      "maps a Convex argument-validation rejection to 400, not 500 (%s)",
+      async (_label, run) => {
+        // The REAL failure shape for a malformed or wrong-shelf id: Convex
+        // rejects the arguments before the mutation runs, as a plain Error
+        // with no `data.code` — not the structured ConvexError the backend
+        // throws for a known-missing row.
+        convexMutationMock.mockRejectedValue(
+          new Error(
+            '[Request ID: req_1] Server Error\n' +
+              'ArgumentValidationError: Value does not match validator.\n' +
+              'Path: .registryServerId\nValue: "garbage"\n' +
+              'Validator: v.id("registryServers")'
+          )
+        );
+        const res = await run();
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { code?: string; message?: string };
+        expect(body.code).toBe("VALIDATION_ERROR");
+        // Convex's prose names functions and echoes arguments — it must not
+        // reach the caller.
+        expect(body.message).toBe("Invalid identifier in request");
+        expect(JSON.stringify(body)).not.toContain("ArgumentValidationError");
+        expect(JSON.stringify(body)).not.toContain("Request ID");
+      }
+    );
+
+    it("maps registry_connection_not_found on uninstall to NOT_FOUND", async () => {
+      convexMutationMock.mockRejectedValue(
+        convexError(
+          "registry_connection_not_found",
+          "This registry card is not connected here."
+        )
+      );
+      const res = await request(
+        "DELETE",
+        "/api/v1/projects/p1/registry/installs/rs1"
+      );
+      expect(res.status).toBe(404);
+      expect(await res.json()).toMatchObject({
+        code: "NOT_FOUND",
+        details: { code: "registry_connection_not_found" },
       });
     });
 
