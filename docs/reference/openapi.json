@@ -12738,6 +12738,22 @@
               }
             ]
           },
+          "runGroupId": {
+            "type": "string",
+            "description": "Shared by every per-target run from the same fan-out launch. Absent on a single-target launch and on rows created before run groups."
+          },
+          "effectiveModelId": {
+            "type": "string",
+            "description": "Model the run actually executed with. Absent on pre-attribution rows."
+          },
+          "modelSource": {
+            "type": "string",
+            "enum": [
+              "client_default",
+              "override"
+            ],
+            "description": "`client_default` inherited the host model; `override` used the environment's `modelId`."
+          },
           "executionEngine": {
             "type": "string",
             "description": "Which engine executed the run: `emulated` (the platform's own turn loop) or `harness:<id>` (a real agent runtime such as Claude Code). ABSENT means the run recorded no engine — a run created before the platform attributed one. Treat that as UNKNOWN, never as `emulated`: those are different claims, and the runs whose engine was never recorded are exactly the ones a reader must not vouch for."
@@ -13462,6 +13478,35 @@
                 "type": "null"
               }
             ]
+          },
+          "environment": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "name"
+            ]
+          },
+          "effectiveModelId": {
+            "type": "string",
+            "description": "Model the compared run actually executed with."
+          },
+          "modelSource": {
+            "type": "string",
+            "enum": [
+              "client_default",
+              "override"
+            ]
           }
         },
         "required": [
@@ -13498,6 +13543,7 @@
                 "type": "string",
                 "enum": [
                   "previous_completed",
+                  "previous_completed_same_environment",
                   "run"
                 ]
               },

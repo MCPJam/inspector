@@ -17,7 +17,11 @@ import { evalSurfaceCardClass } from "../eval-surface-chrome";
 import { EVAL_DESTRUCTIVE_BUTTON_CLASS } from "../constants";
 import { CrossHostMatrix, type HostVerdictMap } from "./cross-host-matrix";
 import type { CaseRowSort } from "./case-row-metrics";
-import { useCrossHostData, type CellData } from "./use-cross-host-data";
+import {
+  useCrossHostData,
+  type CellData,
+  type CrossHostEnvironment,
+} from "./use-cross-host-data";
 import {
   buildJudgeByRunAndCaseKey,
   buildWorkflowByRunAndCaseKey,
@@ -52,6 +56,12 @@ interface CrossHostDashboardProps {
    * the parent so this component stays queryless.
    */
   hostNamesById?: Map<string, string | null>;
+  /**
+   * The suite's project environments, owned by the parent for the same reason
+   * as `hostNamesById`. Without them a run can only be placed by its resolved
+   * host, so two model cells on one client share a column.
+   */
+  environments?: readonly CrossHostEnvironment[];
 }
 
 export function CrossHostDashboard({
@@ -71,10 +81,12 @@ export function CrossHostDashboard({
   sortControlInHeader = false,
   hostVerdicts,
   hostNamesById,
+  environments,
 }: CrossHostDashboardProps) {
   const data = useCrossHostData(suite, cases, runs, allIterations, {
     cellTrends,
     hostNamesById,
+    environments,
   });
   // Advisory judge verdicts indexed by run → caseKey, so each cell shows the
   // verdict from its own run next to the deterministic pass/fail.
