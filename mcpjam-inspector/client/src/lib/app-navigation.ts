@@ -108,6 +108,8 @@ export const routePaths = {
   evals: "/evals",
   /** Runs mode of Evaluate. Legacy `/ci-evals` URLs redirect here. */
   evalsRuns: "/evals/runs",
+  /** Redeem-based read-only share of an eval run. */
+  evalsShared: "/evals/shared",
   organizations: "/organizations",
 } as const;
 
@@ -583,6 +585,10 @@ export function buildConformanceRunPath(
 
 export function buildConformanceSharePath(token: string): string {
   return `${routePaths.conformanceShared}/${encodeURIComponent(token)}`;
+}
+
+export function buildEvalSharePath(token: string): string {
+  return `${routePaths.evalsShared}/${encodeURIComponent(token)}`;
 }
 
 export function pathnameToActiveTab(pathname: string): string {

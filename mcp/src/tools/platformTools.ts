@@ -127,6 +127,9 @@ import {
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  getShareSettingsOperation,
+  setShareModeOperation,
+  rotateShareLinkOperation,
   ALL_OPERATIONS,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -303,6 +306,11 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  // Unified share envelope — the same three verbs as the in-app agent
+  // registry, covering scenario / conformance / eval-run resources.
+  getShareSettingsOperation,
+  setShareModeOperation,
+  rotateShareLinkOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
@@ -457,6 +465,7 @@ const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   archiveSwarmOperation.name,
   removeUserTestingMemberOperation.name,
   rotateUserTestingLinkOperation.name,
+  rotateShareLinkOperation.name,
 ]);
 
 /**

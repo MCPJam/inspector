@@ -2014,6 +2014,13 @@ describe("operation catalog consistency", () => {
     reset_computer: {},
     search_sessions: { query: "q" },
     delete_sandbox_image: { image: "i" },
+    get_share_settings: { resourceType: "evalRun", resourceId: "r" },
+    set_share_mode: {
+      resourceType: "evalRun",
+      resourceId: "r",
+      mode: "project_members",
+    },
+    rotate_share_link: { resourceType: "evalRun", resourceId: "r" },
   };
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
@@ -2140,6 +2147,8 @@ describe("operation catalog consistency", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "set_share_mode",
+      "rotate_share_link",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));

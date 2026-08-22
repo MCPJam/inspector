@@ -54,6 +54,7 @@ import {
   ConformanceRunDetailPage,
   ConformanceSharedPage,
 } from "./components/conformance/ConformanceHistory";
+import { EvalRunSharedPage } from "./components/evals/EvalRunSharedPage";
 import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
@@ -1430,6 +1431,16 @@ export function ConformanceSharedRoute() {
   return <ConformanceSharedPage token={decodeParam(raw) ?? raw} />;
 }
 
+export function EvalRunSharedRoute() {
+  const params = useParams<{ token?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.token ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return <EvalRunSharedPage token={decodeParam(raw) ?? raw} />;
+}
+
 export function CompatibilityRoute() {
   const { appState, selectedServerEntry, activeProjectId, setSelectedServer } =
     useAppRouteContext();
@@ -2374,6 +2385,7 @@ export default function App() {
     barePathname === routePaths.embedScore ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
     barePathname.startsWith(`${routePaths.conformanceShared}/`) ||
+    barePathname.startsWith(`${routePaths.evalsShared}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
   // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
   // tile) is parked for the instant it takes `LoginInitiationRoute` to start a

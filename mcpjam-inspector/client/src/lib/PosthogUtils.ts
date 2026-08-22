@@ -67,8 +67,22 @@ function getPostHogBootstrap() {
  * with a placeholder before anything leaves the browser; the path itself is
  * still useful, and the token never was.
  */
+// Every path whose LAST segment is a bearer credential. Autocapture attaches
+// `$current_url` to each event, so a share viewer's address bar would ship the
+// redeem token to PostHog on every click if these were not redacted.
+const CREDENTIAL_PATH_PREFIXES = [
+  "/results/",
+  "/conformance/shared/",
+  "/evals/shared/",
+];
+
 export function scrubSensitiveUrl(value: string): string {
-  return value.replace(/(\/results\/)[^/?#]+/g, "$1[redacted]");
+  let out = value;
+  for (const prefix of CREDENTIAL_PATH_PREFIXES) {
+    const escaped = prefix.replace(/[/\-\\^$*+?.()|[\]{}]/g, "\\$&");
+    out = out.replace(new RegExp(`(${escaped})[^/?#]+`, "g"), "$1[redacted]");
+  }
+  return out;
 }
 
 function sanitizeAnalyticsProperties(
@@ -168,7 +182,8 @@ export function isCredentialBearingPath(
 ): boolean {
   return !!pathname && (
     pathname.startsWith("/results/") ||
-    pathname.startsWith("/conformance/shared/")
+    pathname.startsWith("/conformance/shared/") ||
+    pathname.startsWith("/evals/shared/")
   );
 }
 
