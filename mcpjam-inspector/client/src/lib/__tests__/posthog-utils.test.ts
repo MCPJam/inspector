@@ -4,8 +4,33 @@ import {
   getPageviewCaptureOptions,
   isPostHogBooleanFlagOn,
   options,
+  scrubSensitiveUrl,
   standardEventProps,
 } from "../PosthogUtils";
+
+describe("scrubSensitiveUrl", () => {
+  // Autocapture attaches $current_url to every event, so an unredacted share
+  // path ships the bearer token to PostHog on each click.
+  it.each([
+    ["/results/", "score run"],
+    ["/conformance/shared/", "conformance share"],
+    ["/evals/shared/", "eval share"],
+  ])("redacts the credential segment of %s (%s)", (prefix) => {
+    const url = `https://app.mcpjam.com${prefix}sk-secret-token-value`;
+    const scrubbed = scrubSensitiveUrl(url);
+    expect(scrubbed).not.toContain("sk-secret-token-value");
+    expect(scrubbed).toBe(`https://app.mcpjam.com${prefix}[redacted]`);
+  });
+
+  it("keeps the query string and leaves unrelated paths alone", () => {
+    expect(
+      scrubSensitiveUrl("https://app.mcpjam.com/evals/shared/tok?project=abc"),
+    ).toBe("https://app.mcpjam.com/evals/shared/[redacted]?project=abc");
+    expect(scrubSensitiveUrl("https://app.mcpjam.com/evals/suite/abc")).toBe(
+      "https://app.mcpjam.com/evals/suite/abc",
+    );
+  });
+});
 
 describe("PosthogUtils", () => {
   beforeEach(() => {

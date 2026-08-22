@@ -53,7 +53,7 @@ export function ResourceSharePanel({
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
   const { profilePictureUrl } = useProfilePicture();
-  const { settings } = useShareSettings({
+  const { settings, isLoading } = useShareSettings({
     isAuthenticated,
     resourceType,
     resourceId,
@@ -85,9 +85,19 @@ export function ResourceSharePanel({
   const members = useMemo(() => envelope?.members ?? [], [envelope?.members]);
 
   if (!envelope) {
+    // `getShareSettings` returns null — not undefined — for a resource the
+    // caller cannot read or that does not exist. Keying the spinner off
+    // "no envelope" left that case loading forever.
+    if (isLoading) {
+      return (
+        <p className="text-sm text-muted-foreground" role="status">
+          Loading share settings…
+        </p>
+      );
+    }
     return (
       <p className="text-sm text-muted-foreground" role="status">
-        Loading share settings…
+        Sharing is unavailable for this item.
       </p>
     );
   }
