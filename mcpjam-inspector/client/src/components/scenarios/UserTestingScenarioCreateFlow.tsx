@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { ArrowLeft, ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -26,7 +26,10 @@ import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { environmentLabel } from "@/lib/environment-label";
+import { useEffectiveSharePolicy } from "@/hooks/useOrgSharePolicy";
 import {
+  applyShareCeilingToScenarioOptions,
+  clampScenarioAccessPreset,
   SCENARIO_ACCESS_OPTIONS as ACCESS_OPTIONS,
   settingsFromScenarioAccessPreset,
   type ScenarioAccessPreset,
@@ -149,6 +152,7 @@ export function UserTestingScenarioCreateFlow({
   // rather than a prop, like `ClientsPill` right below in the same strip.
   const { isAuthenticated } = useConvexAuth();
   const { hosts } = useHostList({ isAuthenticated, projectId });
+  const { policy: effectiveSharePolicy } = useEffectiveSharePolicy(projectId);
   const [target, setTarget] = useState<EnvironmentComposerState>(
     emptyComposerState
   );
@@ -158,6 +162,15 @@ export function UserTestingScenarioCreateFlow({
   // its author expected is the failure that costs something.
   const [accessPreset, setAccessPreset] =
     useState<ScenarioAccessPreset>("invited_only");
+  const accessCeiling = effectiveSharePolicy?.maxShareMode;
+  const accessOptions = useMemo(
+    () => applyShareCeilingToScenarioOptions(ACCESS_OPTIONS, accessCeiling),
+    [accessCeiling],
+  );
+
+  useEffect(() => {
+    setAccessPreset((prev) => clampScenarioAccessPreset(prev, accessCeiling));
+  }, [accessCeiling]);
   /**
    * Per-turn ratings, on by default to match the frame.
    *
@@ -304,7 +317,10 @@ export function UserTestingScenarioCreateFlow({
     }
   };
 
-  const accessLabel = ACCESS_OPTIONS.find((o) => o.value === accessPreset);
+  const accessLabel = accessOptions.find((o) => o.value === accessPreset);
+  const accessCeilingNote = accessOptions.find(
+    (option) => option.disabled,
+  )?.disabledReason;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
@@ -443,14 +459,18 @@ export function UserTestingScenarioCreateFlow({
               >
                 <DropdownMenuRadioGroup
                   value={accessPreset}
-                  onValueChange={(v) =>
-                    setAccessPreset(v as ScenarioAccessPreset)
-                  }
+                  onValueChange={(v) => {
+                    const next = v as ScenarioAccessPreset;
+                    const option = accessOptions.find((o) => o.value === next);
+                    if (option?.disabled) return;
+                    setAccessPreset(clampScenarioAccessPreset(next, accessCeiling));
+                  }}
                 >
-                  {ACCESS_OPTIONS.map((option) => (
+                  {accessOptions.map((option) => (
                     <DropdownMenuRadioItem
                       key={option.value}
                       value={option.value}
+                      disabled={option.disabled}
                     >
                       {option.label}
                     </DropdownMenuRadioItem>
@@ -461,6 +481,11 @@ export function UserTestingScenarioCreateFlow({
             {accessLabel ? (
               <p className="text-xs text-muted-foreground">
                 {accessLabel.description}
+              </p>
+            ) : null}
+            {accessCeilingNote ? (
+              <p className="text-xs text-muted-foreground">
+                {accessCeilingNote}
               </p>
             ) : null}
           </div>

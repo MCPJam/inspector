@@ -1,6 +1,6 @@
 /**
  * The gate engine: one implementation shared by the SDK (`assertGate` in a
- * code-first run) and the CLI (`mcpjam eval gate` against a hosted run).
+ * code-first run) and the CLI (`mcpjam cloud eval gate` against a hosted run).
  *
  * Everything upstream is normalized into {@link GateInput} first. Two surfaces
  * evaluating "did this run pass?" with two subtly different implementations is
@@ -435,7 +435,7 @@ export function evaluateGates(
       status: "usage_error",
       message:
         `"${field}" is a comparative gate and requires a baseline run — ` +
-        `use evaluateCompareGates() or \`mcpjam eval compare\`. ` +
+        `use evaluateCompareGates() or \`mcpjam cloud eval compare\`. ` +
         `evaluateGates() sees one run and cannot decide it.`,
     });
   }
