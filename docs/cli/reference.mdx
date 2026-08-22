@@ -566,7 +566,7 @@ Preview what the environment resolves to right now: the host's current config, t
 | `--environment <id-or-name>` | Yes | Environment name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `environments create`
+### `cloud environments create`
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -580,14 +580,14 @@ Preview what the environment resolves to right now: the host's current config, t
 \* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, and `pluginVersionIds`:
 
 ```bash
-mcpjam environments create --project Acme --json '{
+mcpjam cloud environments create --project Acme --json '{
   "name": "Staging",
   "hostId": "h_123",
   "skillSelection": { "mode": "explicit", "skillIds": ["sk_1"] }
 }'
 ```
 
-### `environments update`
+### `cloud environments update`
 
 | Flag | Required | Description |
 |------|----------|-------------|
