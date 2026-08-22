@@ -200,10 +200,29 @@ async function captureRequest(
   return request;
 }
 
-async function captureResponse(response: Response): Promise<RawResponse> {
+async function captureResponse(
+  response: Response,
+  options: { skipStreamBodies?: boolean } = {}
+): Promise<RawResponse> {
+  const contentType = response.headers.get("content-type") ?? "";
+
+  // An event-stream the caller does not own the lifetime of must not be read:
+  // `clone.text()` resolves only when the stream ENDS, and a server is entitled
+  // to hold one open for the life of the connection. Record the head and let
+  // the real consumer have the stream.
+  if (options.skipStreamBodies && contentType.includes("text/event-stream")) {
+    return {
+      status: response.status,
+      statusText: response.statusText,
+      headers: headersToObject(response.headers),
+      bodyText: "",
+      bodyError:
+        "body not captured: an event-stream may stay open for the life of the connection",
+    };
+  }
+
   // Read a clone so the original body stays intact for the real consumer.
   const clone = response.clone();
-  const contentType = response.headers.get("content-type") ?? "";
   // A body that errors mid-stream is itself evidence: keep the status line and
   // whatever bytes arrived rather than turning the whole exchange into a throw.
   let bodyText = "";
@@ -235,13 +254,23 @@ async function captureResponse(response: Response): Promise<RawResponse> {
  * `fetch` option); the real caller receives an untouched response.
  */
 export function createCapturingFetch(
-  underlying: FetchLike = fetch
+  underlying: FetchLike = fetch,
+  options: {
+    /**
+     * Record `text/event-stream` responses head-only instead of reading them.
+     * Set this whenever the wrapped fetch may be handed to a transport that
+     * opens a stream the SERVER decides when to end — buffering one of those
+     * never resolves, so the consumer never receives its response. Leave it off
+     * for the raw probes, which drive bounded streams they close themselves.
+     */
+    skipStreamBodies?: boolean;
+  } = {}
 ): CapturingFetch {
   const exchanges: RawExchange[] = [];
   const wrapped: FetchLike = async (input, init) => {
     const request = await captureRequest(input, init);
     const response = await underlying(input, init);
-    const captured = await captureResponse(response);
+    const captured = await captureResponse(response, options);
     exchanges.push({ request, response: captured });
     return response;
   };

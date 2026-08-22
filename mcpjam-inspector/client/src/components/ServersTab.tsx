@@ -876,7 +876,9 @@ export function ServersTab({
     isLoading: isRegistryCatalogLoading,
     connect: connectRegistryServer,
   } = useRegistryServers({
-    enabled: isRegistryEnabled,
+    // The hand-curated catalog is retired. Keep the hook mounted so
+    // connection helpers stay imported, but do not fetch those cards.
+    enabled: false,
     projectId: registryProjectId,
     isAuthenticated,
     liveServers: projectServers,
@@ -2036,7 +2038,7 @@ export function ServersTab({
                       onMoveToProject={handleMoveServerToProject}
                       isMovingToProject={movingServerName === name}
                       onShareToOrgRegistry={
-                        orgRegistry.canAdd
+                        isRegistryEnabled && orgRegistry.canAdd
                           ? handleShareToOrgRegistry
                           : undefined
                       }
