@@ -3,14 +3,14 @@
  * sessions.
  *
  * `search` spans every surface (Playground, user testing, evals, swarms).
- * `list` is the older Playground-only listing (`chat-sessions list`): all
- * accessible projects unless `--project` is given. Ambient `.mcpjam/project.json`
- * does not narrow `list`; that stays an explicit flag until the shared
- * project-selection rule lands.
+ * `list` is the older Playground-only listing (`chat-sessions list`). It uses
+ * the shared project-selection rule; pass `--all-projects` to list across
+ * every accessible project (the previous default).
  */
-import type { Command } from "commander";
+import { Option, type Command } from "commander";
 import {
   listChatSessionsOperation,
+  resolveProject,
   searchSessionsOperation,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -23,6 +23,10 @@ import {
   runPlatformOperation as runPlatformCommand,
   type PlatformOptions,
 } from "../lib/platform-command.js";
+import {
+  appendProjectLinkHint,
+  resolveCloudProjectArgs,
+} from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 type SearchOptions = PlatformOptions & {
@@ -80,12 +84,19 @@ export function registerSessionsCommands(program: Command): void {
       "List Playground chat sessions, or search conversations across Playground, user testing, evals and swarms."
     );
 
-  sessions
-    .command("list")
-    .description(
-      "List Playground chat sessions, newest first (all accessible projects unless --project is given)"
+  addProjectOption(
+    sessions
+      .command("list")
+      .description(
+        "List Playground chat sessions, newest first (one project; pass --all-projects to include every accessible project)"
+      )
+  )
+    .addOption(
+      new Option(
+        "--all-projects",
+        "List sessions across every accessible project, ignoring the project link and MCPJAM_PROJECT"
+      ).conflicts("project")
     )
-    .option("--project <id-or-name>", "Restrict to one project")
     .option("--status <status>", "Filter by session status")
     .option("--limit <n>", "Maximum sessions to return (1-200)", (value) =>
       Number.parseInt(value, 10)
@@ -94,32 +105,67 @@ export function registerSessionsCommands(program: Command): void {
       async (
         options: PlatformOptions & {
           project?: string;
+          allProjects?: boolean;
           status?: string;
           limit?: number;
         },
         command
       ) => {
-        const input = validateOpInput(listChatSessionsOperation, {
-          ...(options.project === undefined ? {} : { project: options.project }),
-          ...(options.status === undefined ? {} : { status: options.status }),
-          ...(options.limit === undefined ? {} : { limit: options.limit }),
-        });
         const globalOptions = getGlobalOptions(command);
+        if (options.allProjects) {
+          const input = validateOpInput(listChatSessionsOperation, {
+            ...(options.status === undefined ? {} : { status: options.status }),
+            ...(options.limit === undefined ? {} : { limit: options.limit }),
+          });
+          const result = await runPlatformCommand(
+            platformOptionsOf(command),
+            globalOptions.timeout,
+            ({ client, signal }) =>
+              listChatSessionsOperation.execute(input, { client, signal }),
+            {
+              quiet: globalOptions.quiet,
+              cloudScope: { kind: "all-projects" },
+            }
+          );
+          writeResult(result, globalOptions.format);
+          return;
+        }
+
+        const resolved = resolveCloudProjectArgs(options);
         const result = await runPlatformCommand(
           platformOptionsOf(command),
           globalOptions.timeout,
-          ({ client, signal }) =>
-            listChatSessionsOperation.execute(input, { client, signal }),
+          async ({ client, signal }) => {
+            let project = resolved.project;
+            if (project === undefined) {
+              const page = await client.listProjects({}, { signal });
+              const resolution = resolveProject(page.items, undefined);
+              if (!resolution.ok) {
+                throw usageError(
+                  appendProjectLinkHint(
+                    resolution.message,
+                    resolved.projectScope
+                  )
+                );
+              }
+              project = resolution.project.id;
+            }
+            const input = validateOpInput(listChatSessionsOperation, {
+              project,
+              ...(options.status === undefined
+                ? {}
+                : { status: options.status }),
+              ...(options.limit === undefined ? {} : { limit: options.limit }),
+            });
+            return listChatSessionsOperation.execute(input, {
+              client,
+              signal,
+            });
+          },
           {
             quiet: globalOptions.quiet,
-            cloudScope:
-              options.project !== undefined
-                ? {
-                    kind: "project",
-                    selector: options.project,
-                    source: "flag",
-                  }
-                : { kind: "all-projects" },
+            projectScope: resolved.projectScope,
+            cloudScope: resolved.projectScope,
           }
         );
         writeResult(result, globalOptions.format);

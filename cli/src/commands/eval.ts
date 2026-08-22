@@ -121,6 +121,7 @@ import {
 } from "../lib/reporting.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
+  addProjectOption,
   platformOptionsOf,
   runPlatformOperation as runPlatformCommand,
   runCloudOp,
@@ -522,19 +523,47 @@ function loadBodyObject(options: {
   return base as Record<string, unknown>;
 }
 
+/**
+ * Operation schemas still require `project`. Cloud CLI fills that later
+ * from `--project` / env / link / automatic, so callers that validate
+ * before `executeOp` must drop the requirement.
+ */
+function schemaWithOptionalProject<TInput>(
+  schema: PlatformOperation<TInput, unknown>["inputSchema"]
+): PlatformOperation<TInput, unknown>["inputSchema"] {
+  const objectSchema = schema as {
+    shape?: Record<string, unknown>;
+    partial?: (
+      mask: { project: true }
+    ) => PlatformOperation<TInput, unknown>["inputSchema"];
+  };
+  if (
+    objectSchema.shape !== undefined &&
+    "project" in objectSchema.shape &&
+    typeof objectSchema.partial === "function"
+  ) {
+    return objectSchema.partial({ project: true });
+  }
+  return schema;
+}
+
 /** Validate a merged input object against an operation's schema (usage error on failure). */
 function validateOpInput<TInput>(
   op: PlatformOperation<TInput, unknown>,
-  raw: unknown
+  raw: unknown,
+  extras: { projectOptional?: boolean } = {}
 ): TInput {
-  const parsed = op.inputSchema.safeParse(raw);
+  const schema = extras.projectOptional
+    ? schemaWithOptionalProject(op.inputSchema)
+    : op.inputSchema;
+  const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     const detail = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
       .join("; ");
     throw usageError(`Invalid input: ${detail}`);
   }
-  return parsed.data;
+  return parsed.data as TInput;
 }
 
 /** Run an operation with a pre-validated input and print the result. */
@@ -774,7 +803,7 @@ const DEFAULT_GATE_WAIT_TIMEOUT_MS = 600_000;
 async function runEvalGate(
   options: PlatformOptions &
     EvalGateOptions & {
-      project: string;
+      project?: string;
       run: string;
       wait?: boolean;
       waitTimeout?: string;
@@ -937,7 +966,7 @@ async function runEvalGate(
 async function runEvalCompare(
   options: PlatformOptions &
     EvalCompareOptions & {
-      project: string;
+      project?: string;
       run: string;
       baseRun?: string;
       reporter?: string;
@@ -1921,13 +1950,14 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+      addProjectOption(
       evals
       .command("status")
       .description("Get the status and summary of an eval run")
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption("--project <id-or-name>", "Project name or ID").action(
+      ).action(
     async (
-      options: PlatformOptions & { project: string; run: string },
+      options: PlatformOptions & { project?: string; run: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
@@ -1939,11 +1969,19 @@ export function registerEvalCommands(program: Command): void {
         (context) => {
           webOrigin = context.webOrigin;
           return getEvalRunOperation.execute(
-            { project: resolved.project ?? options.project, runId: options.run },
+            {
+              runId: options.run,
+              ...(resolved.project === undefined
+                ? {}
+                : { project: resolved.project }),
+            } as { project: string; runId: string },
             { client: context.client, signal: context.signal }
           );
         },
-        { projectScope: resolved.projectScope }
+        {
+          projectScope: resolved.projectScope,
+          quiet: globalOptions.quiet,
+        }
       );
       writeResult(result, globalOptions.format);
       writeJudgeSummary(globalOptions.format, result.run.judges);
@@ -1955,33 +1993,38 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+      addProjectOption(
       evals
       .command("cancel")
       .description(
         "Cancel an in-flight eval run (no-op if already cancelled; errors if it already finished)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption("--project <id-or-name>", "Project name or ID").action(
+      ).action(
     async (
-      options: PlatformOptions & { project: string; run: string },
+      options: PlatformOptions & { project?: string; run: string },
       command
     ) => {
       await executeOp(
         cancelEvalRunOperation,
-        { project: options.project, runId: options.run },
+        {
+          runId: options.run,
+          ...(options.project === undefined ? {} : { project: options.project }),
+        } as { project: string; runId: string },
         options,
         command
       );
     }
   );
 
+      addProjectOption(
       evals
       .command("judge")
       .description(
         "Grade a finished eval run with LLM as Judge (SPENDS your model budget)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
+      )
       .option("--force", "Re-grade a run that already has a judge result")
       .option(
         "--enable",
@@ -1991,7 +2034,7 @@ export function registerEvalCommands(program: Command): void {
       .option("--judge-threshold <0-1>", "Pass threshold for this run only").action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         force?: boolean;
         enable?: boolean;
@@ -2004,17 +2047,26 @@ export function registerEvalCommands(program: Command): void {
         options.judgeThreshold !== undefined
           ? parseJudgeThreshold(options.judgeThreshold)
           : undefined;
-      const input = validateOpInput(requestEvalRunJudgeOperation, {
-        project: options.project,
-        runId: options.run,
-        ...(options.force ? { force: true } : {}),
-        ...(options.enable ? { enable: true } : {}),
-        ...(options.judgeModel !== undefined
-          ? { model: options.judgeModel }
-          : {}),
-        ...(threshold !== undefined ? { threshold } : {}),
-      });
-      await executeOp(requestEvalRunJudgeOperation, input, options, command);
+      const input = validateOpInput(
+        requestEvalRunJudgeOperation,
+        {
+          runId: options.run,
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(options.force ? { force: true } : {}),
+          ...(options.enable ? { enable: true } : {}),
+          ...(options.judgeModel !== undefined
+            ? { model: options.judgeModel }
+            : {}),
+          ...(threshold !== undefined ? { threshold } : {}),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        requestEvalRunJudgeOperation,
+        input,
+        options,
+        command
+      );
     }
   );
 
@@ -2084,48 +2136,53 @@ export function registerEvalCommands(program: Command): void {
   );
 
   // ── Eval run iterations + traces ───────────────────────────────────
+      addProjectOption(
       evals
       .command("iterations")
       .description(
         "List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       )
       .option("--cursor <cursor>", "Pagination cursor from a previous response")
       .option("--limit <n>", "Max iterations per page (1–200)").action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         cursor?: string;
         limit?: string;
       },
       command
     ) => {
-      const input = validateOpInput(listEvalRunIterationsOperation, {
-        project: options.project,
-        runId: options.run,
-        ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
-        ...(options.limit !== undefined
-          ? { limit: Number(options.limit) }
-          : {}),
-      });
-      await executeOp(listEvalRunIterationsOperation, input, options, command);
+      const input = validateOpInput(
+        listEvalRunIterationsOperation,
+        {
+          runId: options.run,
+          ...(options.project === undefined ? {} : { project: options.project }),
+          ...(options.cursor !== undefined ? { cursor: options.cursor } : {}),
+          ...(options.limit !== undefined
+            ? { limit: Number(options.limit) }
+            : {}),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        listEvalRunIterationsOperation,
+        input,
+        options,
+        command
+      );
     }
   );
 
+      addProjectOption(
       evals
       .command("gate")
       .description(
         "Apply a pass/fail policy to a finished eval run and set an exit code (0 pass, 1 eval failure, 2 usage, 3 incomplete)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       )
       .option(
         "--min-pass-rate-percent <0-100>",
@@ -2155,7 +2212,7 @@ export function registerEvalCommands(program: Command): void {
     async (
       options: PlatformOptions &
         EvalGateOptions & {
-          project: string;
+          project?: string;
           run: string;
           wait?: boolean;
           waitTimeout?: string;
@@ -2166,15 +2223,13 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+      addProjectOption(
       evals
       .command("compare")
       .description(
         "Compare a finished eval run against a baseline and set an exit code (0 pass, 1 regression, 2 usage, 3 incomplete)"
       )
       .requiredOption("--run <id>", "Eval run ID to compare")
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       )
       .option(
         "--base-run <id>",
@@ -2208,7 +2263,7 @@ export function registerEvalCommands(program: Command): void {
     async (
       options: PlatformOptions &
         EvalCompareOptions & {
-          project: string;
+          project?: string;
           run: string;
           baseRun?: string;
           reporter?: string;
@@ -2300,6 +2355,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+      addProjectOption(
       evals
       .command("trace")
       .description(
@@ -2310,13 +2366,10 @@ export function registerEvalCommands(program: Command): void {
         "--iteration <id>",
         "Iteration ID (from `eval iterations`)"
       )
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       ).action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         iteration: string;
       },
@@ -2325,16 +2378,17 @@ export function registerEvalCommands(program: Command): void {
       await executeOp(
         getEvalIterationTraceOperation,
         {
-          project: options.project,
           runId: options.run,
           iterationId: options.iteration,
-        },
+          ...(options.project === undefined ? {} : { project: options.project }),
+        } as Parameters<typeof getEvalIterationTraceOperation.execute>[0],
         options,
         command
       );
     }
   );
 
+      addProjectOption(
       evals
       .command("steps")
       .description(
@@ -2345,13 +2399,10 @@ export function registerEvalCommands(program: Command): void {
         "--iteration <id>",
         "Iteration ID (from `eval iterations`)"
       )
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       ).action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         iteration: string;
       },
@@ -2360,16 +2411,17 @@ export function registerEvalCommands(program: Command): void {
       await executeOp(
         getEvalRunStepsOperation,
         {
-          project: options.project,
           runId: options.run,
           iterationId: options.iteration,
-        },
+          ...(options.project === undefined ? {} : { project: options.project }),
+        } as Parameters<typeof getEvalRunStepsOperation.execute>[0],
         options,
         command
       );
     }
   );
 
+      addProjectOption(
       evals
       .command("screenshot")
       .description(
@@ -2380,9 +2432,6 @@ export function registerEvalCommands(program: Command): void {
         "--iteration <id>",
         "Iteration ID (from `eval iterations`)"
       )
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       )
       .option(
         "--out <path>",
@@ -2391,7 +2440,7 @@ export function registerEvalCommands(program: Command): void {
       .option("--index <n>", "Show only the Nth screenshot (1-based)").action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         iteration: string;
         out?: string;
@@ -2412,13 +2461,18 @@ export function registerEvalCommands(program: Command): void {
         ({ client, signal }) =>
           getEvalIterationTraceOperation.execute(
             {
-              project: resolved.project ?? options.project,
               runId: options.run,
               iterationId: options.iteration,
-            },
+              ...(resolved.project === undefined
+                ? {}
+                : { project: resolved.project }),
+            } as Parameters<typeof getEvalIterationTraceOperation.execute>[0],
             { client, signal }
           ),
-        { projectScope: resolved.projectScope }
+        {
+          projectScope: resolved.projectScope,
+          quiet: globalOptions.quiet,
+        }
       );
 
       let shots = extractRenderedScreenshots(result);
@@ -2505,6 +2559,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
+      addProjectOption(
       evals
       .command("video")
       .description(
@@ -2515,9 +2570,6 @@ export function registerEvalCommands(program: Command): void {
         "--iteration <id>",
         "Iteration ID (from `eval iterations`)"
       )
-      .requiredOption(
-        "--project <id-or-name>",
-        "Project the run belongs to (name or ID)"
       )
       .option(
         "--out <path>",
@@ -2525,7 +2577,7 @@ export function registerEvalCommands(program: Command): void {
       ).action(
     async (
       options: PlatformOptions & {
-        project: string;
+        project?: string;
         run: string;
         iteration: string;
         out?: string;
@@ -2540,13 +2592,18 @@ export function registerEvalCommands(program: Command): void {
         ({ client, signal }) =>
           getEvalIterationTraceOperation.execute(
             {
-              project: resolved.project ?? options.project,
               runId: options.run,
               iterationId: options.iteration,
-            },
+              ...(resolved.project === undefined
+                ? {}
+                : { project: resolved.project }),
+            } as Parameters<typeof getEvalIterationTraceOperation.execute>[0],
             { client, signal }
           ),
-        { projectScope: resolved.projectScope }
+        {
+          projectScope: resolved.projectScope,
+          quiet: globalOptions.quiet,
+        }
       );
 
       const videoUrl = extractIterationVideoUrl(result);

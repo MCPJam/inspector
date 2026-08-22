@@ -430,8 +430,12 @@ test("environments create rejects a non-string JSON project before any write", a
     ])
   );
   assert.equal(run.exitCode, 2, run.stderr);
-  assert.match(
-    run.stderr,
-    /"project" must be a string when supplied in JSON input/
+  const payload = JSON.parse(run.stderr) as {
+    error?: { code?: string; message?: string };
+  };
+  assert.equal(payload.error?.code, "USAGE_ERROR");
+  assert.equal(
+    payload.error?.message,
+    '"project" must be a string when supplied in JSON input.'
   );
 });

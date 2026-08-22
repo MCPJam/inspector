@@ -1494,6 +1494,61 @@ test("eval judge rejects a blank --judge-threshold before any request", async ()
   }
 });
 
+test("eval judge rejects a blank --judge-model before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "judge",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--judge-model",
+          "   ",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2, run.stderr);
+    assert.match(run.stderr, /Invalid input:.*model/);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval iterations rejects a bad --limit before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    for (const value of ["abc", "0", "201", "-1"]) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "iterations",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--limit",
+            value,
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      );
+      assert.equal(run.result.exitCode, 2, `accepted --limit ${JSON.stringify(value)}: ${run.stderr}`);
+      assert.match(run.stderr, /Invalid input:.*limit/);
+    }
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval status summarizes the judges that graded, and stays silent about the rest", async () => {
   const fixture = await startEvalFixture();
   try {
