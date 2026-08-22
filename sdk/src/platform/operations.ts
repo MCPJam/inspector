@@ -2871,7 +2871,9 @@ const evalCaseInput = z.object({
     ),
 });
 
-const createEvalSuiteInput = z.object({
+// STRICT: `--json` / MCP args that invent a top-level key must fail
+// validation, not be stripped before the request is built.
+const createEvalSuiteInput = z.strictObject({
   project: z
     .string()
     .trim()
@@ -3116,7 +3118,9 @@ export const getEvalSuiteOperation: PlatformOperation<
   },
 };
 
-const updateEvalSuiteInput = z.object({
+// STRICT: the reported silent no-op (`hostIds` / top-level `servers`)
+// was stripped here before the HTTP body was ever built.
+const updateEvalSuiteInput = z.strictObject({
   project: z
     .string()
     .trim()

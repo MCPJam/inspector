@@ -22,11 +22,14 @@
  *   - `resultType: "task"` on `CreateTaskResult` (tasks.md:102) — the real
  *     discriminator, always on outside misbehaving mode;
  *   - `resultType: "complete"` on `tasks/get|update|cancel` (tasks.md:338,
- *     :381, :410) — prose-only: `resultType` appears NOWHERE in the pinned
- *     `schema.ts`/`schema.json`, and each `DetailedTask` variant is rendered
- *     with `additionalProperties: false`, which would reject the key. It is
- *     therefore a TOGGLE ({@link ExtensionTasksFixtureOptions.emitTaskResultType},
- *     default on) so both directions are testable;
+ *     :381, :410). This was recorded here as "prose-only, appears NOWHERE in
+ *     the pinned schema" — that is FALSE for the 2026-07-28 ext-tasks document
+ *     vendored under `src/mcp-conformance/schemas/`: `Result.required` lists
+ *     `resultType`, and `UpdateTaskResult`/`CancelTaskResult` each re-declare
+ *     it as `required` with `const: "complete"`. `wire-schema-valid` grades it
+ *     there. The TOGGLE
+ *     ({@link ExtensionTasksFixtureOptions.emitTaskResultType}, default on)
+ *     stays, because both directions are still worth testing;
  *   - never a `CreateTaskResult` to a `tools/call` that did not declare the
  *     extension in `_meta` (tasks.md:61);
  *   - `-32021` for `tasks/get|update|cancel` and task-filtered
@@ -219,9 +222,10 @@ export interface ExtensionTasksFixtureOptions {
    */
   tasksExtensionCapability?: unknown;
   /**
-   * Emit `resultType: "complete"` on `tasks/get|update|cancel`. Default true
-   * (the prose MUST). Set false for the schema-literal reading, in which the
-   * `DetailedTask` variants' `additionalProperties: false` forbids the key.
+   * Emit `resultType: "complete"` on `tasks/get|update|cancel`. Default true —
+   * and it is a schema `required`, not merely prose (see the note at the top of
+   * this file). Set false to exercise the omission, which `wire-schema-valid`
+   * reports and the Tasks ack check warns about.
    */
   emitTaskResultType?: boolean;
   /**
