@@ -70,6 +70,12 @@ Switch between three perspectives on the same conversation from the segmented co
 - **Trace** — A timestamped timeline of every step (user turns, agent turns, tool calls) with per-step and total latency and token counts. Expand any step to inspect its raw input and output.
 - **Raw** — The full JSON payload sent to the model (system prompt, tool definitions, conversation history). Available for both live sessions and previously-saved sessions you reopen.
 
+<Note>
+  Live sessions keep the most recent 200 turns in the Trace and Raw views. In
+  sessions longer than 200 turns, the oldest turns are no longer shown. Saved
+  sessions are also capped at 200 turns on reopen.
+</Note>
+
 <Frame>
   <img
     className="block"
