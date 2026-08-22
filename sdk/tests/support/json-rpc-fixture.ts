@@ -37,10 +37,16 @@ export async function readJsonRpcBody(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<JsonRpcRequestBody | undefined> {
+  // Accumulate chunks and decode once: a multi-byte character split across two
+  // chunks decodes to replacement characters under per-chunk stringification,
+  // which would turn a valid body into a fabricated parse error.
   const body = await new Promise<string>((resolve) => {
-    let text = "";
-    req.on("data", (chunk) => (text += chunk));
-    req.on("end", () => resolve(text));
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
+    // A socket that dies mid-body would otherwise leave this promise pending
+    // forever, hanging the fixture instead of failing the test.
+    req.on("error", () => resolve(""));
   });
 
   try {
@@ -59,8 +65,19 @@ export async function readJsonRpcBody(
   }
 }
 
-/** A request's JSON-RPC id, normalized to what an error response must echo. */
-export function requestId(body: JsonRpcRequestBody): string | number | null {
-  const id = body.id;
+/**
+ * A request's JSON-RPC id, normalized to what an error response must echo.
+ *
+ * JSON-RPC 2.0: an error response's id "MUST be the same as the value of the id
+ * member in the Request Object", and `null` is reserved for the case where
+ * detecting it failed. A fixture that always answered `null` would train the
+ * suite to accept a real violation — `wire-schema-valid` caught exactly that in
+ * this repo's own mock server.
+ *
+ * Takes `unknown` so callers that never ran the body through
+ * {@link readJsonRpcBody} can share the one implementation.
+ */
+export function requestId(body: unknown): string | number | null {
+  const id = (body as { id?: unknown } | undefined)?.id;
   return typeof id === "string" || typeof id === "number" ? id : null;
 }

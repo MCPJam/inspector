@@ -256,18 +256,30 @@ test("fixtures: file entries and flag entries merge", async () => {
   const file = path.join(dir, "fixtures.json");
   await writeFile(
     file,
-    JSON.stringify({ toolCalls: [{ toolName: "weather", arguments: {} }] }),
+    JSON.stringify({
+      toolCalls: [{ toolName: "weather", arguments: {} }],
+      promptGets: [{ promptName: "summarize", arguments: { topic: "mcp" } }],
+    }),
   );
 
   const config = buildConfig({
     url: "https://example.com/mcp",
     fixturesFile: file,
     fixtureTool: ["echo"],
+    fixturePrompt: ["welcome"],
   });
+  // Order is part of the contract, not an accident: file entries first, then
+  // flags. The file is the only place arguments can be supplied, so a merge
+  // that put flags first would make an arguments-bearing entry look like a
+  // duplicate of a bare one.
   assert.deepEqual(
     config.fixtures?.toolCalls?.map((entry) => entry.toolName),
     ["weather", "echo"],
   );
+  assert.deepEqual(config.fixtures?.promptGets, [
+    { promptName: "summarize", arguments: { topic: "mcp" } },
+    { promptName: "welcome" },
+  ]);
 });
 
 test("fixtures: a malformed file is a usage error, never a silent empty set", async () => {

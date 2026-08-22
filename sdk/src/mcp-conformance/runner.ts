@@ -147,11 +147,22 @@ function createServerConfig(
   // capturing fetch over `config.fetchFn` and records there, while this
   // wrapper sits on the Client's `baseFetch`. The two stacks never share an
   // exchange.
-  const capture = createCapturingFetch(config.fetchFn);
   const recordingFetch: typeof fetch = async (input, init) => {
+    // ONE CAPTURE PER CALL. A single shared instance appends every exchange to
+    // one array, and reading the last element after an `await` is only correct
+    // while nothing else is in flight — which is never true here: the client
+    // phase fans `tools/list`, `prompts/list`, `resources/list` and
+    // `resources/templates/list` out through one `Promise.all`. Whichever
+    // settles second would be recorded twice and the other not at all, and
+    // since `recordExchange` derives the request method from the exchange it
+    // was handed, a `tools/list` response would be graded against
+    // `ListPromptsResult` — a fabricated violation in the one check whose
+    // entire value is correlation.
+    const capture = createCapturingFetch(config.fetchFn);
     const response = await capture.fetch(input, init);
-    const exchange = capture.exchanges[capture.exchanges.length - 1];
-    if (exchange) recorder.recordExchange(exchange);
+    for (const exchange of capture.exchanges) {
+      recorder.recordExchange(exchange);
+    }
     return response;
   };
   return {
@@ -559,7 +570,18 @@ export class MCPConformanceTest {
     // obligation went untested, so the run is `incomplete`. Collapsing that
     // into "nothing failed" is what let a run with unexercised checks report
     // success.
-    const verdict = decideConformanceOutcome(scored);
+    // An empty SCORED set is not the same fact as an empty CHECK set.
+    // `decideConformanceOutcome([])` reports "no checks were selected, so this
+    // run establishes nothing" — true for an empty selection, and the exact
+    // opposite of what happened when checks ran and every one of them is
+    // pending (e.g. `checkIds: ["wire-schema-valid"]`).
+    const verdict =
+      scored.length === 0 && pending.length > 0
+        ? {
+            outcome: "incomplete" as const,
+            incompleteReason: `all ${pending.length} selected check(s) ran but are unscored by profile ${profile.id}@${profile.version}, so this run establishes no conformance verdict`,
+          }
+        : decideConformanceOutcome(scored);
 
     return {
       // Readiness is deliberately absent from this expression: the verdict is

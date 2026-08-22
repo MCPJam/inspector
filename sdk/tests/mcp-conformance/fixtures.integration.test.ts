@@ -131,7 +131,13 @@ async function serveFixtureServer(options: FixtureServerOptions) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   closers.push(
-    () => new Promise<void>((resolve) => server.close(() => resolve())),
+    () =>
+      new Promise<void>((resolve) => {
+        // `close` only stops new connections; the conformance client leaves
+        // keep-alive sockets open, and without this the promise never settles.
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
   );
   return `http://127.0.0.1:${port}/mcp`;
 }
@@ -303,9 +309,9 @@ describe("fixtures widen the wire-schema coverage", () => {
   });
 
   it("catches a malformed prompts/get result the unfixtured run never sees", async () => {
-    const url = await serveFixtureServer({});
-    // Re-serve with a broken prompts/get by pointing at a server whose result
-    // omits the required `messages`.
+    // A server whose `prompts/get` result omits the required `messages`. The
+    // unfixtured run never calls `prompts/get` at all, so only the fixture
+    // lane can reach this defect.
     const broken = http.createServer((req, res) => {
       void (async () => {
         const parsed = await readJsonRpcBody(req, res);
@@ -346,10 +352,12 @@ describe("fixtures widen the wire-schema coverage", () => {
     );
     const { port } = broken.address() as AddressInfo;
     closers.push(
-      () => new Promise<void>((resolve) => broken.close(() => resolve())),
+      () =>
+        new Promise<void>((resolve) => {
+          broken.closeAllConnections();
+          broken.close(() => resolve());
+        }),
     );
-    void url;
-
     const result = await new MCPConformanceTest({
       serverUrl: `http://127.0.0.1:${port}/mcp`,
       protocolVersion: MODERN,

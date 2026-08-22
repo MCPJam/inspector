@@ -205,6 +205,7 @@ describe("pooledConformanceScore", () => {
       failed: 0,
       couldNotRun: 0,
       notApplicable: 5,
+      pending: 0,
       advisories: [],
       advicePointsLost: 0,
     };

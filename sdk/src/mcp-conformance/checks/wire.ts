@@ -108,10 +108,15 @@ export async function runWireSchemaCheck(
   // Swallowed on failure, because a fixture that turns out not to work must not
   // take down a check that had other traffic to grade.
   let promptFixturesDriven = 0;
+  let promptFixtureError: string | undefined;
   try {
     promptFixturesDriven = await drivePromptFixtures(ctx);
-  } catch {
-    // Those frames simply do not appear in the record.
+  } catch (error) {
+    // Those frames simply do not appear in the record. Swallowing the failure
+    // is right; hiding it is not — an operator whose fixtures silently did
+    // nothing needs the reason in the report, not a coverage number that is
+    // quietly zero.
+    promptFixtureError = error instanceof Error ? error.message : String(error);
   }
 
   const observations = recorder.observations;
@@ -143,6 +148,7 @@ export async function runWireSchemaCheck(
     methodCorrelated: report.correlated,
     violationCount: report.violations.length,
     promptFixturesDriven,
+    ...(promptFixtureError ? { promptFixtureError } : {}),
   };
 
   if (report.violations.length === 0) {

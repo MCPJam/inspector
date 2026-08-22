@@ -80,9 +80,9 @@ describe("MCPConformanceTest", () => {
       const legacyApplicable = result.checks.filter(
         (check) => CHECK_ERAS[check.id].includes("legacy"),
       ).length;
-      // The three modern-only pending checks era-skipped out of the legacy
+      // The modern-only pending checks era-skipped out of the legacy
       // denominator already; only `wire-schema-valid` is both legacy-applicable
-      // and unscored.
+      // and unscored, so exactly one comes off.
       expect(score.applicable).toBe(legacyApplicable - 1);
     } finally {
       await mockServer.stop();

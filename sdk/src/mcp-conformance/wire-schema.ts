@@ -158,13 +158,6 @@ export interface WireSchemaValidationReport {
 }
 
 /**
- * Method → result definition name, derived from the document's own request
- * definitions. A method whose request definition has no `…Result` sibling
- * (`logging/setLevel`, `resources/subscribe`) is absent: those answer the base
- * empty result, and pinning them to a definition that does not exist would
- * make Ajv fail to COMPILE, i.e. break the check rather than catch a server.
- */
-/**
  * The document's error-response definition. The name moved across revisions
  * (`JSONRPCError` through 2025-06-18, `JSONRPCErrorResponse` from 2025-11-25),
  * so it is read off the document rather than assumed.
@@ -179,6 +172,13 @@ function errorResponseDefinition(
   return undefined;
 }
 
+/**
+ * Method → result definition name, derived from the document's own request
+ * definitions. A method whose request definition has no `…Result` sibling
+ * (`logging/setLevel`, `resources/subscribe`) is absent: those answer the base
+ * empty result, and pinning them to a definition that does not exist would
+ * make Ajv fail to COMPILE, i.e. break the check rather than catch a server.
+ */
 function deriveResultDefinitions(
   document: WireSchemaDocument,
 ): Map<string, string> {
@@ -264,8 +264,14 @@ export class WireSchemaValidator {
         // A task-eligible `tools/call` answers EITHER normally or with a
         // `CreateTaskResult`. Both are conforming; grading only the first
         // would fail every server that actually implements the extension.
+        //
+        // The pointer segment is read off the extension document, not the core
+        // one and not hardcoded: an extension may be published under a
+        // different dialect than the revision it extends, and a `$ref` into the
+        // wrong keyword makes Ajv fail to compile.
+        const extensionDefsKey = definitionsPointer(extension).key;
         this.extensionResultOverrides.set("tools/call", [
-          `${schemaId}#/$defs/CreateTaskResult`,
+          `${schemaId}#/${extensionDefsKey}/CreateTaskResult`,
         ]);
       }
     }
@@ -411,11 +417,6 @@ export class WireSchemaValidator {
   }
 }
 
-/**
- * A digest over a document's DEFINITION NAMES and the JSON itself. Cheap,
- * stable, and enough to tell two vendored revisions apart in a stamp — the
- * point is provenance, not tamper resistance.
- */
 /** A shallow copy without `id`. See the undeterminable-id case in `targetFor`. */
 function withoutId(message: unknown): unknown {
   if (message === null || typeof message !== "object") return message;
@@ -423,6 +424,11 @@ function withoutId(message: unknown): unknown {
   return rest;
 }
 
+/**
+ * A digest over the document's serialized JSON. Cheap, stable, and enough to
+ * tell two vendored revisions apart in a stamp — the point is provenance, not
+ * tamper resistance.
+ */
 function stableDigest(document: WireSchemaDocument): string {
   return bytesToHex(sha256(utf8ToBytes(JSON.stringify(document)))).slice(0, 16);
 }

@@ -101,7 +101,13 @@ async function serveHeaderFixture(options: HeaderFixtureOptions) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const { port } = server.address() as AddressInfo;
   closers.push(
-    () => new Promise<void>((resolve) => server.close(() => resolve())),
+    () =>
+      new Promise<void>((resolve) => {
+        // `close` only stops new connections; the conformance client leaves
+        // keep-alive sockets open, and without this the promise never settles.
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
   );
   return `http://127.0.0.1:${port}/mcp`;
 }

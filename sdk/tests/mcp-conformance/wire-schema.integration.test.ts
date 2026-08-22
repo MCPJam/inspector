@@ -31,7 +31,10 @@ async function runAgainst(options: WireFixtureOptions) {
   return { result, check };
 }
 
-describe("wire-schema-valid against production-shaped defects", () => {
+// Each case stands up an HTTP fixture and drives a full conformance run
+// through it. Vitest's 5s default is under the wire on a loaded CI box, and a
+// timeout here reads as a product hang rather than an impatient runner.
+describe("wire-schema-valid against production-shaped defects", { timeout: 20_000 }, () => {
   it("passes a conforming server (the linear/notion shape)", async () => {
     const { check } = await runAgainst({});
     expect([check.id, check.status, check.error?.message]).toEqual([

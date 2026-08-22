@@ -123,12 +123,12 @@ describe("profile stamp", () => {
       checks: [
         passed("ping"),
         passed("wire-schema-valid"),
-        passed("modern-header-missing-rejected"),
+        passed("modern-missing-method-header-rejected"),
       ],
       protocolVersion: "2026-07-28",
     });
     expect(stamp.pendingCheckIds).toEqual([
-      "modern-header-missing-rejected",
+      "modern-missing-method-header-rejected",
       "wire-schema-valid",
     ]);
     expect(stamp.profileId).toBe("mcp-protocol");

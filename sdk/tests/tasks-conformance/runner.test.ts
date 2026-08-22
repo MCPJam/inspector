@@ -5,6 +5,7 @@ import {
   decideOutcome,
   findDeclarationViolations,
   findRawTaskStates,
+  sentRequestIds,
   pickProbeTool,
   resolveProbeTool,
   validateCreateTaskShape,
@@ -170,11 +171,19 @@ function rpcErrorValue(code: number, message: string) {
  * The conformant -32021. It carries `error.data.requiredCapabilities` because
  * the core schema REQUIRES that member — a rejection that names nothing tells a
  * client it is missing something without saying what.
+ *
+ * The value is a `ClientCapabilities` OBJECT, not a list of capability names:
+ * `MissingRequiredClientCapabilityError.error.data.requiredCapabilities` is
+ * `$ref: "#/$defs/ClientCapabilities"` in 2026-07-28. This fixture carried the
+ * array form — a pre-final draft shape — until the check that reads it started
+ * grading the schema's shape rather than accepting whatever was there.
  */
+const REQUIRED_CAPABILITIES = { extensions: { [EXT_ID]: {} } };
+
 function missingCapabilityError() {
   return Object.assign(new Error("missing capability"), {
     code: -32021,
-    data: { requiredCapabilities: [EXT_ID] },
+    data: { requiredCapabilities: REQUIRED_CAPABILITIES },
   });
 }
 
@@ -240,11 +249,13 @@ describe("declaration hygiene", () => {
 });
 
 describe("findRawTaskStates", () => {
-  const frame = (taskId: string, status: string, extra = {}) => ({
+  const frame = (id: number, taskId: string, status: string, extra = {}) => ({
     jsonrpc: "2.0",
-    id: 1,
+    id,
     result: { taskId, status, ...extra },
   });
+  /** Every id the cases below use for a `tasks/get`. */
+  const GETS = new Set(["1", "2", "3", "4"]);
 
   it("returns EVERY frame for the task, in wire order", () => {
     // Not just the last: a run that drives past an `input_required` gate
@@ -252,12 +263,13 @@ describe("findRawTaskStates", () => {
     // malformed mid-flight frame pass behind a well-formed terminal one.
     const states = findRawTaskStates(
       [
-        frame("t1", "working"),
-        frame("t2", "working"),
-        frame("t1", "input_required"),
-        frame("t1", "completed", { result: {} }),
+        frame(1, "t1", "working"),
+        frame(2, "t2", "working"),
+        frame(3, "t1", "input_required"),
+        frame(4, "t1", "completed", { result: {} }),
       ],
       "t1",
+      GETS,
     );
     expect(states.map((state) => state.status)).toEqual([
       "working",
@@ -267,17 +279,57 @@ describe("findRawTaskStates", () => {
   });
 
   it("ignores frames for another task and non-task results", () => {
-    expect(findRawTaskStates([frame("t2", "working")], "t1")).toEqual([]);
+    expect(findRawTaskStates([frame(1, "t2", "working")], "t1", GETS)).toEqual(
+      [],
+    );
     expect(
-      findRawTaskStates([{ jsonrpc: "2.0", id: 1, result: { tools: [] } }], "t1"),
+      findRawTaskStates(
+        [{ jsonrpc: "2.0", id: 1, result: { tools: [] } }],
+        "t1",
+        GETS,
+      ),
     ).toEqual([]);
     // A payload with no `status` is not a task state.
     expect(
       findRawTaskStates(
         [{ jsonrpc: "2.0", id: 1, result: { taskId: "t1" } }],
         "t1",
+        GETS,
       ),
     ).toEqual([]);
+  });
+
+  it("excludes the tools/call creation frame, which is a bare Task", () => {
+    // A `CreateTaskResult` carries `taskId` and `status` and — correctly — no
+    // `result`/`error`/`inputRequests`. Matching on shape alone swept it in, so
+    // a server that created an already-`completed` task failed the status
+    // payload check even though every `tasks/get` it answered was well formed.
+    const states = findRawTaskStates(
+      [
+        // id 9 is the `tools/call`, not a `tasks/get`.
+        { jsonrpc: "2.0", id: 9, result: { resultType: "task", taskId: "t1", status: "completed" } },
+        frame(1, "t1", "completed", { result: { content: [] } }),
+      ],
+      "t1",
+      GETS,
+    );
+    expect(states).toHaveLength(1);
+    expect(states[0].result).toBeDefined();
+  });
+
+  it("sentRequestIds collects only the ids of the named method", () => {
+    const ids = sentRequestIds(
+      [
+        { jsonrpc: "2.0", id: 9, method: "tools/call" },
+        { jsonrpc: "2.0", id: 1, method: "tasks/get" },
+        { jsonrpc: "2.0", id: "2", method: "tasks/get" },
+        { jsonrpc: "2.0", method: "notifications/initialized" },
+      ],
+      "tasks/get",
+    );
+    // Ids compare as strings: JSON-RPC permits either type, and a run that
+    // numbered its requests must not miss a server echoing them as strings.
+    expect([...ids].sort()).toEqual(["1", "2"]);
   });
 });
 
@@ -887,7 +939,7 @@ describe("undeclared task requests (-32021)", () => {
       outcome: "rejected",
       code: -32021,
       reachedWire: true,
-      requiredCapabilities: [EXT_ID],
+      requiredCapabilities: REQUIRED_CAPABILITIES,
     };
     expect(check?.details?.probes).toEqual([
       { method: "tasks/get", ...rejected },

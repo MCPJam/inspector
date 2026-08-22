@@ -136,10 +136,14 @@ export interface ConformanceReport {
   score?: ConformanceScore;
   /**
    * Which questions the run asked, and which build asked them (see
-   * `conformance-profile.ts`). Present for the protocol suite; absent for the
-   * suites that carry no profile yet, and for reports produced before profiles
-   * existed. A reader comparing two reports must check this first: two scores
-   * from different profile versions are not the same measurement.
+   * `conformance-profile.ts`). Present for the protocol suite (`mcp-protocol`)
+   * and the Tasks suite (`mcp-tasks`); absent for the suites that carry no
+   * profile yet, and for reports produced before profiles existed.
+   *
+   * A reader comparing two reports must check this first, and must check the
+   * ID as well as the version: two scores from different profile versions are
+   * not the same measurement, and two scores from different profile IDs are not
+   * even the same question set.
    */
   profile?: ConformanceProfileStamp;
   durationMs: number;
@@ -995,6 +999,9 @@ export function toConformanceReport(
       passed: result.passed,
       ...outcomeFields(result),
       score: scoreFromTasksResult(result),
+      // `mcp-tasks`, never `mcp-protocol` — the two suites are separately
+      // versioned so a Tasks addition cannot move the protocol denominator.
+      ...(result.profile ? { profile: result.profile } : {}),
       durationMs: result.durationMs,
       groups: [
         appsGroupFromResult(result, "MCP Tasks Conformance", 0, "tasks"),

@@ -307,10 +307,17 @@ describe("tasks-input-required-update-completes", () => {
     // Before this, an input-gated task polled to `pollTimeoutMs` to arrive at
     // the state it was already in, and every dependent check reported its gap
     // seconds later than it had to.
+    //
+    // Counted in REQUESTS, not wall-clock: the fixture parks on
+    // `input_required` with `pollIntervalMs: 20`, so burning a 5s timeout is
+    // ~250 `tasks/get` calls while stopping early is a handful. A count bound
+    // states that gap exactly and cannot go red because CI was slow.
     const fixture = await serve(defaultTaskPhases());
-    const startedAt = Date.now();
     await run(fixture, [ID], { pollTimeoutMs: 5_000 });
-    expect(Date.now() - startedAt).toBeLessThan(4_000);
+    const polls = fixture.received.filter(
+      (request) => request.method === "tasks/get",
+    );
+    expect(polls.length).toBeLessThanOrEqual(12);
   });
 
   it("is not applicable when the task never asks for input", async () => {

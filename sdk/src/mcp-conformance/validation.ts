@@ -122,6 +122,19 @@ function normalizeFixtures(
         `MCP conformance fixtures.promptGets[${index}] requires a non-empty promptName`,
       );
     }
+    // `GetPromptRequest.params.arguments` is `Record<string, string>` in every
+    // revision's schema. The type says so, but this config arrives as JSON from
+    // a CLI flag or the UI, where nothing enforces it. Rejecting here is the
+    // difference between "your config has a number where a string goes" and a
+    // `wire-schema-valid` violation reported against the SERVER for a request
+    // WE malformed.
+    for (const [key, value] of Object.entries(entry.arguments ?? {})) {
+      if (typeof value !== "string") {
+        throw new Error(
+          `MCP conformance fixtures.promptGets[${index}].arguments.${key} must be a string (prompt arguments are Record<string, string>), got ${typeof value}`,
+        );
+      }
+    }
     return { promptName, arguments: entry.arguments };
   });
 

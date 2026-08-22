@@ -4,6 +4,7 @@ export {
   describeUndeclaredProbe,
   findDeclarationViolations,
   findRawTaskStates,
+  sentRequestIds,
   pickProbeTool,
   resolveProbeTool,
   toolTaskSupport,

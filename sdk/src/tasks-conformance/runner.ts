@@ -875,12 +875,27 @@ export function findRawTaskResponse(
  * well-formed `completed` one. That became reachable the moment this runner
  * learned to drive the update leg.
  *
- * Identified by shape (`taskId` + `status`) rather than by request id, because
- * the runner polls many times and every poll's answer is evidence.
+ * Identified by BOTH shape (`taskId` + `status`) and request-id membership in
+ * `getRequestIds`: every poll's answer is evidence, but only `tasks/get`
+ * answers are — see the parameter's own note for what shape-only matching
+ * wrongly swept in.
  */
 export function findRawTaskStates(
   messages: unknown[],
-  taskId: string
+  taskId: string,
+  /**
+   * JSON-RPC ids of the `tasks/get` requests this run sent. REQUIRED for
+   * correctness, not an optimization: a `CreateTaskResult` from `tools/call` is
+   * a bare `Task` carrying `taskId` and `status` and — entirely correctly — no
+   * `result`, `error` or `inputRequests`. Matching on shape alone would sweep
+   * it in, so a server that creates an already-`completed` (or `failed`, or
+   * `input_required`) task would fail the status-payload check even when every
+   * `tasks/get` it later answers is perfectly formed.
+   *
+   * The status payload rules are stated for `tasks/get` responses; grading a
+   * creation frame against them invents a requirement.
+   */
+  getRequestIds: ReadonlySet<string>
 ): Array<Record<string, unknown>> {
   const found: Array<Record<string, unknown>> = [];
   for (const message of messages) {
@@ -889,9 +904,33 @@ export function findRawTaskStates(
     if (!result) continue;
     if (result.taskId !== taskId) continue;
     if (typeof result.status !== "string") continue;
+    const id = message.id;
+    if (
+      (typeof id !== "string" && typeof id !== "number") ||
+      !getRequestIds.has(String(id))
+    ) {
+      continue;
+    }
     found.push(result);
   }
   return found;
+}
+
+/** JSON-RPC ids of the outbound requests for `method`, as strings. */
+export function sentRequestIds(
+  sent: unknown[],
+  method: string
+): Set<string> {
+  const ids = new Set<string>();
+  for (const message of sent) {
+    if (!isRecord(message)) continue;
+    if (message.method !== method) continue;
+    const id = message.id;
+    if (typeof id === "string" || typeof id === "number") {
+      ids.add(String(id));
+    }
+  }
+  return ids;
 }
 
 /** The failure a missing/wrong `resultType: "task"` actually causes. */
@@ -1593,7 +1632,11 @@ export class MCPTasksConformanceTest {
             // grading only the state the task ended in would let a malformed
             // `input_required` frame pass behind a well-formed `completed` one.
             const rawStates = createdTaskId
-              ? findRawTaskStates(received, createdTaskId)
+              ? findRawTaskStates(
+                  received,
+                  createdTaskId,
+                  sentRequestIds(sent, "tasks/get")
+                )
               : [];
             if (rawStates.length === 0) {
               checks.push(
@@ -1648,7 +1691,18 @@ export class MCPTasksConformanceTest {
 
           if (selected.has("tasks-ttl-integer-shape")) {
             const stepStartedAt = Date.now();
-            if (!finalTask) {
+            if (wire !== "extension") {
+              // "integer milliseconds" is the EXTENSION's `Task` interface
+              // talking. The legacy wire's `ttl`/`pollInterval` carry no such
+              // statement, so grading them here would fail a legacy server
+              // against a requirement its revision never made.
+              checks.push(
+                notApplicable(
+                  "tasks-ttl-integer-shape",
+                  "the integer-milliseconds statement belongs to the tasks extension; the legacy wire states no such bound"
+                )
+              );
+            } else if (!finalTask) {
               checks.push(noTask("tasks-ttl-integer-shape"));
             } else {
               const verdict = validateTaskTtlIntegerShape(wire, finalTask);
@@ -1934,20 +1988,44 @@ export class MCPTasksConformanceTest {
                   "check applies to the extension wire only"
                 )
               );
+            } else if (!createdTaskId) {
+              // Distinct from the seam case below, and the distinction is the
+              // whole product of a `could-not-run`: "no task existed to probe
+              // with" and "the connection cannot send an undeclared request"
+              // point the operator at different fixes.
+              checks.push(
+                noTask("tasks-undeclared-capability-names-requirements")
+              );
             } else if (undeclaredProbes === undefined) {
               checks.push(
                 couldNotRun(
                   "tasks-undeclared-capability-names-requirements",
-                  "no -32021 rejection was observed, so there was no error payload to inspect"
+                  "the connection exposes no raw request seam, so no undeclared request could be sent and no -32021 payload could be inspected"
                 )
               );
             } else {
               const rejections = undeclaredProbes.filter(
                 (probe) => probe.outcome === "rejected"
               );
+              // The core schema types this member as `ClientCapabilities` and
+              // marks it REQUIRED on the error, so anything that is not an
+              // object — absent, null, an array, a string — violates it.
               const unnamed = rejections.filter(
-                (probe) => probe.requiredCapabilities === undefined
+                (probe) => !isRecord(probe.requiredCapabilities)
               );
+              // Naming the tasks extension specifically is what the extension's
+              // own examples show, and it is what makes the error actionable —
+              // but the SCHEMA only says `ClientCapabilities`, so demanding the
+              // exact key would promote an example to a requirement. Advice.
+              const unspecific = rejections.filter((probe) => {
+                const capabilities = probe.requiredCapabilities;
+                if (!isRecord(capabilities)) return false;
+                const extensions = capabilities.extensions;
+                return (
+                  !isRecord(extensions) ||
+                  !(MCP_TASKS_EXTENSION_ID in extensions)
+                );
+              });
               checks.push(
                 rejections.length === 0
                   ? couldNotRun(
@@ -1963,14 +2041,21 @@ export class MCPTasksConformanceTest {
                             method: probe.method,
                             requiredCapabilities: probe.requiredCapabilities,
                           })),
-                        }
+                        },
+                        unspecific.length > 0
+                          ? [
+                              `${unspecific.length} -32021 rejection(s) carry a requiredCapabilities object that does not name ${MCP_TASKS_EXTENSION_ID} under \`extensions\`: ${unspecific
+                                .map((probe) => probe.method)
+                                .join(", ")}. The extension's own examples do, and a client cannot act on a requirement it cannot identify`,
+                            ]
+                          : undefined
                       )
                     : failed(
                         "tasks-undeclared-capability-names-requirements",
                         Date.now() - stepStartedAt,
-                        `${unnamed.length} -32021 rejection(s) carried no error.data.requiredCapabilities: ${unnamed
+                        `${unnamed.length} -32021 rejection(s) carried no error.data.requiredCapabilities OBJECT: ${unnamed
                           .map((probe) => probe.method)
-                          .join(", ")}. A client told it is missing a capability, but not which one, cannot act on the error`,
+                          .join(", ")}. The core schema types it as ClientCapabilities and requires it; a client told it is missing a capability, but not which one, cannot act on the error`,
                         {
                           unnamed: unnamed.map((probe) => probe.method),
                         }

@@ -822,16 +822,12 @@ function cacheablePayload(
 }
 
 async function runCacheHintCoverageCheck(
-  ctx: RawHttpCheckContext,
-  state: ModernRunState,
   operations: () => Promise<
     Awaited<ReturnType<typeof collectCacheableOperations>>
   >
 ): Promise<MCPCheckResult> {
   const meta = MODERN_CHECK_METADATA["modern-cache-hint-coverage"];
   const startedAt = Date.now();
-  void ctx;
-  void state;
   const { probes, unprobed } = await operations();
 
   const missing: Array<{ method: string; fields: string[] }> = [];
@@ -1492,7 +1488,14 @@ async function runToolOutputSchemaCheck(
   });
 
   const problems: string[] = [];
-  const graded: Array<{ tool: string; outcome: string }> = [];
+  // `schemaBound` is the load-bearing field, not the prose: it records whether
+  // an output schema actually GRADED this result. Deriving that from the
+  // outcome text would make a reworded message silently change the verdict.
+  const graded: Array<{
+    tool: string;
+    outcome: string;
+    schemaBound: boolean;
+  }> = [];
   let id = 7950;
 
   for (const fixture of fixtures) {
@@ -1517,6 +1520,7 @@ async function runToolOutputSchemaCheck(
       graded.push({
         tool: fixture.toolName,
         outcome: "no outputSchema declared; nothing to validate against",
+        schemaBound: false,
       });
       continue;
     }
@@ -1539,6 +1543,7 @@ async function runToolOutputSchemaCheck(
       graded.push({
         tool: fixture.toolName,
         outcome: "tool reported isError: true; output schema does not bind",
+        schemaBound: false,
       });
       continue;
     }
@@ -1563,12 +1568,14 @@ async function runToolOutputSchemaCheck(
       );
       continue;
     }
-    graded.push({ tool: fixture.toolName, outcome: "structuredContent conforms" });
+    graded.push({
+      tool: fixture.toolName,
+      outcome: "structuredContent conforms",
+      schemaBound: true,
+    });
   }
 
-  const withSchema = graded.filter((entry) =>
-    entry.outcome.startsWith("structuredContent")
-  ).length;
+  const withSchema = graded.filter((entry) => entry.schemaBound).length;
   const details = { graded, problems, fixtureCount: fixtures.length };
 
   if (problems.length > 0) {
@@ -2323,7 +2330,7 @@ async function runModernCheck(
     case "modern-cacheable-result-hints":
       return runCacheHintsCheck(await cacheableProbes(), startedAt);
     case "modern-cache-hint-coverage":
-      return await runCacheHintCoverageCheck(ctx, state, cacheableOperations);
+      return await runCacheHintCoverageCheck(cacheableOperations);
     case "modern-cache-hint-values-valid":
       return await runCacheHintValuesCheck(cacheableOperations);
     case "modern-cache-scope-stable-across-pages":
