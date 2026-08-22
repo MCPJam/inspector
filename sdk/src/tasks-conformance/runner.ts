@@ -5,7 +5,7 @@
  * tasks wire the connection resolves to, whether the client-side declaration
  * hygiene holds for that wire, and whether the server honours the parts of the
  * contract a debugger can observe from the outside (result-type discipline,
- * `-32003` on an undeclared capability, inline results, TTL shapes, and
+ * `-32021` on an undeclared capability, inline results, TTL shapes, and
  * `Mcp-Name` routing for HTTP transports).
  *
  * Every check is derived from a single connection and, where a task is needed,
@@ -18,6 +18,10 @@ import type {
   ListToolsResult,
   RpcLogEvent,
 } from "../mcp-client-manager/index.js";
+import {
+  MCP_ERROR_CODES,
+  PRE_RENUMBER_DRAFT_ERROR_CODES,
+} from "../mcp-client-manager/mcp-error-codes.js";
 import { MCP_TASKS_EXTENSION_ID } from "../mcp-client-manager/tasks-dispatch.js";
 import type { TasksWire } from "../mcp-client-manager/tasks-dispatch.js";
 import { CLIENT_CAPABILITIES_META_KEY } from "../mcp-client-manager/tasks-ext.js";
@@ -73,14 +77,14 @@ export const CHECK_METADATA: Record<
     category: "creation",
     title: "Undeclared Task Creation Refused",
     description:
-      "On the extension wire, a tools/call that did not carry the extension declaration must not come back as a CreateTaskResult: the server either answers normally or rejects with -32003.",
+      "On the extension wire, a tools/call that did not carry the extension declaration must not come back as a CreateTaskResult: the server either answers normally or rejects with -32021.",
   },
   "tasks-undeclared-capability-rejected": {
     id: "tasks-undeclared-capability-rejected",
     category: "lifecycle",
     title: "Undeclared Capability Rejected",
     description:
-      "tasks/get, tasks/update, tasks/cancel and a task-filtered subscriptions/listen sent WITHOUT the extension declaration must each be rejected with -32003 (Missing Required Client Capability).",
+      "tasks/get, tasks/update, tasks/cancel and a task-filtered subscriptions/listen sent WITHOUT the extension declaration must each be rejected with -32021 (Missing Required Client Capability).",
   },
   "tasks-ttl-shape": {
     id: "tasks-ttl-shape",
@@ -534,7 +538,15 @@ async function captureTaskRequestHeaders(
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
 /** Missing Required Client Capability — the only conformant answer here. */
-const MISSING_REQUIRED_CLIENT_CAPABILITY = -32003;
+const MISSING_REQUIRED_CLIENT_CAPABILITY =
+  MCP_ERROR_CODES.MissingRequiredClientCapability;
+/**
+ * The pre-renumber draft spelling of the same code. Named so a server still
+ * emitting it is told which draft it is running, rather than being reported as
+ * an anonymous wrong code.
+ */
+const OBSOLETE_MISSING_REQUIRED_CLIENT_CAPABILITY =
+  PRE_RENUMBER_DRAFT_ERROR_CODES.MissingRequiredClientCapability;
 /** Method not found: the server does not implement the method at all. */
 const METHOD_NOT_FOUND = -32601;
 /** The client gave up waiting — the server never refused the request. */
@@ -542,14 +554,14 @@ const REQUEST_TIMEOUT = -32001;
 
 /**
  * Cap on the undeclared `subscriptions/listen` probe. A conforming server
- * refuses it immediately with `-32003`; one that wrongly accepts opens a
+ * refuses it immediately with `-32021`; one that wrongly accepts opens a
  * long-lived stream, so the probe — not the server — decides when to stop.
  */
 const LISTEN_PROBE_TIMEOUT_MS = 5_000;
 
 /** What a server did with a request that carried no extension declaration. */
 export type UndeclaredProbeOutcome =
-  /** Rejected with -32003: the required behavior. */
+  /** Rejected with -32021: the required behavior. */
   | "rejected"
   /** The server served the request. */
   | "answered"
@@ -586,11 +598,13 @@ export function describeUndeclaredProbe(probe: UndeclaredProbe): string {
     case "answered":
       return `${probe.method} was answered instead of rejected`;
     case "wrong-code":
-      return `${probe.method} was rejected with ${probe.code} rather than -32003`;
+      return probe.code === OBSOLETE_MISSING_REQUIRED_CLIENT_CAPABILITY
+        ? `${probe.method} was rejected with -32003, the code the tasks extension carried before it was corrected to -32021; the server is running against a pre-final draft`
+        : `${probe.method} was rejected with ${probe.code} rather than -32021`;
     case "no-response":
       return `${probe.method} produced no JSON-RPC rejection (${
         probe.message ?? "no answer"
-      }); a conforming server refuses it immediately with -32003`;
+      }); a conforming server refuses it immediately with -32021`;
     case "probe-failed":
       return `${probe.method} never reached the server (${
         probe.message ?? "no answer"
@@ -598,7 +612,7 @@ export function describeUndeclaredProbe(probe: UndeclaredProbe): string {
     case "unsupported":
       return `${probe.method} is not implemented (-32601)`;
     case "rejected":
-      return `${probe.method} was rejected with -32003`;
+      return `${probe.method} was rejected with -32021`;
   }
 }
 
@@ -1016,7 +1030,7 @@ export class MCPTasksConformanceTest {
                   failed(
                     "tasks-undeclared-creation-refused",
                     stepDurationMs,
-                    `an undeclared tools/call returned a CreateTaskResult; a server must not create a task for a client that never declared the tasks capability (it must answer normally or reject with -32003)${
+                    `an undeclared tools/call returned a CreateTaskResult; a server must not create a task for a client that never declared the tasks capability (it must answer normally or reject with -32021)${
                       creation.discriminated
                         ? ""
                         : '. The payload also carries no resultType "task" discriminator, so it was only visible on the raw wire — a client cannot discriminate it and the task is unreachable (tasks.md:102)'
@@ -1054,7 +1068,10 @@ export class MCPTasksConformanceTest {
                     creation.outcome === "refused" &&
                       creation.code !== MISSING_REQUIRED_CLIENT_CAPABILITY
                       ? [
-                          `the undeclared tools/call was rejected with ${creation.code} rather than -32003; no task was created (which is what tasks.md:61 requires) but the refusal is not the one the extension names`,
+                          creation.code ===
+                          OBSOLETE_MISSING_REQUIRED_CLIENT_CAPABILITY
+                            ? `the undeclared tools/call was rejected with -32003, the code the tasks extension carried before it was corrected to -32021; no task was created (which is what tasks.md:61 requires) but the server is running against a pre-final draft`
+                            : `the undeclared tools/call was rejected with ${creation.code} rather than -32021; no task was created (which is what tasks.md:61 requires) but the refusal is not the one the extension names`,
                         ]
                       : undefined
                   )
@@ -1279,11 +1296,11 @@ export class MCPTasksConformanceTest {
                 checks.push(
                   couldNotRun(
                     "tasks-undeclared-capability-rejected",
-                    "the connection exposes no raw request seam, so an undeclared call could not be sent and the -32003 requirement was not tested"
+                    "the connection exposes no raw request seam, so an undeclared call could not be sent and the -32021 requirement was not tested"
                   )
                 );
               } else {
-                // tasks.md:797-799 — the server MUST answer -32003 for a
+                // tasks.md:797-799 — the server MUST answer -32021 for a
                 // non-declaring client on tasks/get, tasks/update,
                 // tasks/cancel and on task notifications requested through
                 // subscriptions/listen. This is UNCONDITIONAL; anything else
@@ -1312,7 +1329,7 @@ export class MCPTasksConformanceTest {
                         Date.now() - stepStartedAt,
                         `${
                           offenders.length
-                        } undeclared request(s) were not rejected with -32003 (Missing Required Client Capability): ${offenders
+                        } undeclared request(s) were not rejected with -32021 (Missing Required Client Capability): ${offenders
                           .map(describeUndeclaredProbe)
                           .join("; ")}`,
                         { taskId: createdTaskId, probes }
@@ -1423,7 +1440,7 @@ export class MCPTasksConformanceTest {
    *   - `created`  — a `CreateTaskResult` came back: the violation.
    *   - `answered` — a normal tool result: conformant.
    *   - `refused`  — a JSON-RPC error response: also conformant (no task was
-   *     handed to a non-declaring client), with `-32003` being the refusal the
+   *     handed to a non-declaring client), with `-32021` being the refusal the
    *     spec names and any other code carried through as a warning.
    *   - `errored`  — no JSON-RPC response exists at all. Same v2 discriminator
    *     as {@link runUndeclaredProbe}: `ProtocolError` carries a NUMERIC code

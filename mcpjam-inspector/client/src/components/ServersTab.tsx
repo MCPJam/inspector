@@ -2038,7 +2038,7 @@ export function ServersTab({
                       onMoveToProject={handleMoveServerToProject}
                       isMovingToProject={movingServerName === name}
                       onShareToOrgRegistry={
-                        orgRegistry.canAdd
+                        isRegistryEnabled && orgRegistry.canAdd
                           ? handleShareToOrgRegistry
                           : undefined
                       }

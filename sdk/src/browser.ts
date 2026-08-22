@@ -728,6 +728,12 @@ export {
   scoreFromProtocolResult,
   scoreFromTasksResult,
 } from "./conformance-score.js";
+export { toConformanceReport } from "./conformance-reporting.js";
+export type {
+  ConformanceReport,
+  ConformanceReportCase,
+  ConformanceReportGroup,
+} from "./conformance-reporting.js";
 export type {
   ConformanceAdvisoryTier,
   ConformanceScore,
@@ -751,6 +757,18 @@ export {
   TASKS_CHECK_CATALOG,
 } from "./conformance-catalog.js";
 export type { ConformanceCheckInfo } from "./conformance-catalog.js";
+
+export {
+  buildConformanceRunReport,
+  CONFORMANCE_RUN_SCHEMA_VERSION,
+  CONFORMANCE_SUITE_KINDS,
+  DEFAULT_CONFORMANCE_SUITES,
+  normalizeConformanceSuites,
+} from "./conformance-run-types.js";
+export type {
+  ConformanceRunReportV1,
+  ConformanceSuiteKind,
+} from "./conformance-run-types.js";
 
 // Host-side sandbox policy resolver (SEP-1865 + ChatGPT Apps). Pure
 // resolver — DOM-free, React-free, Convex-free. Browser-safe by
