@@ -220,6 +220,13 @@ export function buildDoctorProbeConfig(
   options: {
     timeout: number;
     retryPolicy?: RetryPolicy;
+    /**
+     * Transport for every probe request. Deployments that must not let a target
+     * steer the probe at their own network pass a guarded fetch here — the probe
+     * cannot resolve DNS itself without pulling `node:dns` into runtimes that
+     * have no such module.
+     */
+    fetchFn?: typeof fetch;
   }
 ): ProbeMcpServerConfig {
   const accessToken = resolveProbeAccessToken(config);
@@ -232,6 +239,7 @@ export function buildDoctorProbeConfig(
     ...(clientCapabilities ? { clientCapabilities } : {}),
     timeoutMs: options.timeout,
     retryPolicy: options.retryPolicy,
+    ...(options.fetchFn ? { fetchFn: options.fetchFn } : {}),
   };
 }
 
@@ -312,12 +320,22 @@ export function summarizeProbeCheck(
           probe.transport.selected ?? "unknown transport"
         }.`
       );
-    case "oauth_required":
+    case "oauth_required": {
+      // The probe accepts a 403 that still carries a Bearer challenge, so the
+      // check has to name the status it accepted. Reporting a server that only
+      // ever answers 403 as a clean OAuth requirement hides the reason clients
+      // keying on the status alone never start OAuth against it.
+      const challenge = probe.oauth.nonCompliantChallengeStatus
+        ? ` The challenge arrived on HTTP ${probe.oauth.nonCompliantChallengeStatus}; MCP requires 401 Unauthorized here, so clients that decide to authenticate from the status code alone will not start OAuth against this server.`
+        : "";
       return hasCredentials
         ? okCheck(
-            "Unauthenticated probe requires OAuth; continuing with provided credentials."
+            `Unauthenticated probe requires OAuth; continuing with provided credentials.${challenge}`
           )
-        : errorCheck("Server requires OAuth before it can be connected.");
+        : errorCheck(
+            `Server requires OAuth before it can be connected.${challenge}`
+          );
+    }
     case "reachable":
       return errorCheck(
         "HTTP endpoint was reachable, but the initialize probe did not complete successfully."

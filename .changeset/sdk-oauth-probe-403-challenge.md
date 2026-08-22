@@ -1,0 +1,25 @@
+---
+"@mcpjam/sdk": patch
+---
+
+Continue the OAuth debugger's flow when a server challenges with 403 instead of 401.
+
+The debugger's second step sends an unauthenticated `initialize` and expects a 401 carrying `WWW-Authenticate`. A server that answers 403 instead dead-ended the flow with `Failed to request MCP server: Expected 401 Unauthorized but got HTTP 403: Forbidden` (Sentry INSPECTOR-CLIENT-21N). Two separate problems produced that line.
+
+The wrapper was wrong. A status mismatch was thrown inside the same `try` that covers the request itself, so the outer `catch` relabelled it "Failed to request MCP server" — a claim that the server was unreachable, when it had in fact replied. The step now throws `UnexpectedProbeStatusError`, which the `catch` rethrows untouched; genuine transport failures keep the original wrapper. That distinction is what the message was hiding, and it is now covered by a test per protocol version asserting each phrasing lands on the right failure.
+
+The 403 itself is worth continuing from. MCP requires 401 here, but servers fronted by a CDN or WAF, and those treating anonymous access as a scope failure (RFC 6750 §3.1 pairs 403 with `insufficient_scope`), answer 403 — and when that response still carries a Bearer challenge it supplies everything discovery needs. `shared/challenges.ts` already read exactly this pairing for step-up; the probe step now does too, advancing on the challenge and logging a warning that names the violation. This follows the bargain `addResourceMismatchWarning` already strikes: a debugger proceeds through non-compliant server behavior so the user can observe real behavior, but has to say so, because clients that decide to authenticate from the status code alone will never start OAuth against that server.
+
+A 403 with no challenge still fails, since there is nothing to discover from, but it no longer blames the MCP server's OAuth configuration. It reports that a proxy, WAF, or IP allowlist likely rejected the request before the MCP server saw it — the far more common cause, and one the previous "expected 401" phrasing sent people looking in the wrong place for. Both messages stay under the client reporter's 500-character cap, so the diagnostic survives into Sentry intact.
+
+Challenge grouping was fixed alongside it. `WWW-Authenticate: Bearer` with no auth-params is a valid challenge (RFC 7235 §4.1) and is what a WAF commonly sends, but the parser only opened a challenge on a `<scheme> <params>` segment, so a param-less scheme was folded into the preceding challenge's auth-params instead. A bare scheme token now opens its own challenge. This is the RFC reading and it is stricter than the old tolerant one: in a malformed `Bearer realm="x", scope, error="insufficient_scope"`, the trailing param now belongs to a `scope` challenge rather than to Bearer, so it no longer reads as a step-up. Tests pin that, since the tolerant behavior looks like the intuitive one to restore.
+
+All four protocol machines carried the same step and all four are fixed.
+
+The acceptance gate is exported. `classifyUnauthenticatedProbe`, `hasBearerChallenge`, and `isUnauthenticatedProbeChallenge` are now on the browser entrypoint, so surfaces that render the flow can ask whether an exchange was an expected challenge instead of re-deriving it from the status code and disagreeing with the step that accepted it.
+
+`probeMcpServer` carried the same 401-only gate on the connect path, on both the streamable-HTTP and SSE probes. A 403 with a Bearer challenge fell past them into the generic error branch, so a server the debugger could authenticate against was reported as an unexplained HTTP failure. Both probes now accept the challenge and report `oauth_required`. Acceptance is not silent: `ProbeOAuthDetails.nonCompliantChallengeStatus` records the status a challenge arrived on when MCP does not allow it there, and is absent for a compliant 401. The doctor's probe check reads it and names the status in its detail, so a server that only ever answers 403 is not reported as a clean OAuth requirement. The conformance suite is untouched and still fails a non-401 outright — that surface asserts the obligation, this one diagnoses it.
+
+That path also read its RFC 9728 pointer by matching `resource_metadata="…"` anywhere in the raw header, so it accepted one belonging to a different scheme's challenge, or sitting inside a quoted realm that only looked like one, and pointed discovery at a PRM URL the server never advertised for Bearer. It now reads the parsed Bearer challenge. That bug was reachable on the ordinary 401 path, not just the new one.
+
+`auth-scheme` and `auth-param` names are the same `token` production (RFC 7235 §2.1) and now share one definition in the parser. They had drifted: scheme tokens accepted the full `tchar` set while parameter names required a leading letter or underscore, so `Bearer 2fa="totp"` was tokenized as a Bearer auth-param and then recorded under the truncated name `fa`. A parameter whose name opens with a digit keeps that name.

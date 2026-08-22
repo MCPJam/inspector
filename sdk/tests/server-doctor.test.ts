@@ -212,6 +212,44 @@ describe("runServerDoctor", () => {
     expect(result.checks.probe.detail).toMatch(
       /continuing with provided credentials/i
     );
+    // A compliant 401 leaves no status note behind.
+    expect(result.checks.probe.detail).not.toMatch(/HTTP 4\d\d/);
+  });
+
+  it("names a challenge status the probe accepted but MCP does not allow", async () => {
+    const result = await runServerDoctor(
+      {
+        config: {
+          url: "https://example.com/mcp",
+          requestInit: {
+            headers: {
+              Authorization: "Bearer oauth-token",
+            },
+          },
+          timeout: 4_000,
+        },
+        target: { label: "https://example.com/mcp" },
+        timeout: 4_000,
+      },
+      {
+        probeServer: jest.fn().mockResolvedValue(
+          createProbeResult({
+            status: "oauth_required",
+            oauth: {
+              required: true,
+              optional: false,
+              registrationStrategies: ["dcr"],
+              nonCompliantChallengeStatus: 403,
+            },
+          })
+        ),
+        withManager: async (_config, fn) => fn(createMockManager(), "srv"),
+      }
+    );
+
+    expect(result.checks.probe.status).toBe("ok");
+    expect(result.checks.probe.detail).toMatch(/HTTP 403/);
+    expect(result.checks.probe.detail).toMatch(/401 Unauthorized/);
   });
 
   it("passes retry policy through probe and ephemeral manager dependencies", async () => {

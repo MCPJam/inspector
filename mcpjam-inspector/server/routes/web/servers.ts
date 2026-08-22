@@ -23,6 +23,13 @@ import {
   exportSingleServerForInspection,
   type ServerToolSnapshot,
 } from "../../utils/export-helpers.js";
+import {
+  BlockedEgressTargetError,
+  EgressResolutionError,
+  assertAllowedHostedTargetUrl,
+  createGuardedFetch,
+} from "../../utils/hosted-egress-guard.js";
+import { ErrorCode, WebRouteError } from "./errors.js";
 import { getInspectorClientRuntimeConfig } from "../../env.js";
 import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { logger } from "../../utils/logger.js";
@@ -171,6 +178,25 @@ servers.post("/doctor", async (c) => {
 
 export default servers;
 
+/**
+ * Refuse a doctor target the hosted inspector must not dial, mapping the two
+ * guard outcomes the way the conformance routes do: a blocked address is the
+ * caller's problem (400), a resolver failure is ours (503).
+ */
+async function assertHostedDoctorTarget(url: string): Promise<void> {
+  try {
+    await assertAllowedHostedTargetUrl(url, "Server URL");
+  } catch (error) {
+    if (error instanceof BlockedEgressTargetError) {
+      throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, error.message);
+    }
+    if (error instanceof EgressResolutionError) {
+      throw new WebRouteError(503, ErrorCode.SERVER_UNREACHABLE, error.message);
+    }
+    throw error;
+  }
+}
+
 export async function runHostedDoctor(
   c: any,
   rawBody: Record<string, unknown>,
@@ -198,6 +224,14 @@ export async function runHostedDoctor(
     body.clientCapabilities
   );
 
+  // The guarded `fetchFn` below covers the probe's own requests and nothing
+  // else: `runServerDoctor` records a failed probe and connects anyway, over an
+  // MCP transport that takes no fetch. So a target the guard would refuse still
+  // gets dialed by the connection step. Judge the target once, here, before
+  // either step runs — the same check the conformance routes make, and a no-op
+  // outside hosted mode.
+  await assertHostedDoctorTarget(config.url);
+
   return runServerDoctor({
     config,
     target: {
@@ -210,5 +244,12 @@ export async function runHostedDoctor(
     },
     timeout: timeoutMs,
     rpcLogger,
+    // The probe follows two destinations the target names for itself — the RFC
+    // 9728 pointer in its challenge and the authorization server that document
+    // advertises. The SDK guard classifies IP literals, but only a resolver can
+    // catch a hostname that answers with a private address, and only per-hop
+    // checking can catch a redirect. Both live here. Outside hosted mode this
+    // is the identity function, so localhost and LAN probing is unaffected.
+    fetchFn: createGuardedFetch(),
   });
 }

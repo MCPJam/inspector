@@ -13,6 +13,7 @@ import { InfoLogEntry } from "@/components/oauth/InfoLogEntry";
 import {
   getStepInfo,
   getStepIndex,
+  isUnauthenticatedProbeChallenge,
   type HttpHistoryEntry,
   type OAuthFlowState,
   type OAuthFlowStep,
@@ -37,6 +38,18 @@ import {
   splitHttpEntriesForDisplay,
   type HttpEntryView,
 } from "@/lib/http-entry-views";
+
+// The unauthenticated probe answered with an auth challenge — what the flow
+// expects, so the exchange is not an error. A 403 carrying a Bearer challenge
+// counts: the flow continues from it and reports the status violation as a
+// warning, and a red step card would contradict that.
+const isExpectedProbeChallenge = (entry: HttpHistoryEntry): boolean =>
+  isUnauthenticatedProbeChallenge({
+    step: entry.step,
+    status: entry.response?.status,
+    statusText: entry.response?.statusText,
+    wwwAuthenticateHeader: entry.response?.headers?.["www-authenticate"],
+  });
 
 interface OAuthFlowLoggerProps {
   oauthFlowState: OAuthFlowState;
@@ -634,11 +647,8 @@ export function OAuthFlowLogger({
                     // under the paired received card — count it there.
                     if (item.view === "request") return false;
                     const status = entry.response?.status;
-                    // Don't treat 401 on initial request as error
-                    if (
-                      entry.step === "request_without_token" &&
-                      status === 401
-                    ) {
+                    // Don't treat the probe's auth challenge as an error
+                    if (isExpectedProbeChallenge(entry)) {
                       return false;
                     }
                     // Don't treat 4xx on authenticated_mcp_request as error if deprecated transport was detected
@@ -664,10 +674,7 @@ export function OAuthFlowLogger({
                     httpEntries.find((item) => {
                       if (item.view === "request") return false;
                       const status = item.entry.response?.status;
-                      if (
-                        item.entry.step === "request_without_token" &&
-                        status === 401
-                      ) {
+                      if (isExpectedProbeChallenge(item.entry)) {
                         return false;
                       }
                       return (
@@ -979,8 +986,7 @@ export function OAuthFlowLogger({
                   const displayStep = entry.step ?? httpEntry.step;
                   const status = httpEntry.response?.status;
                   const isExpectedAuthChallenge =
-                    httpEntry.step === "request_without_token" &&
-                    status === 401;
+                    isExpectedProbeChallenge(httpEntry);
                   const isHttpError =
                     Boolean(httpEntry.error) ||
                     (typeof status === "number" &&
