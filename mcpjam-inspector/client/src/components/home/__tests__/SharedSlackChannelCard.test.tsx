@@ -138,13 +138,27 @@ describe("SharedSlackChannelCard", () => {
       })
     );
     render(<SharedSlackChannelCard organizationId="org_1" />);
-    expect(screen.getByText(/Invite sent to sam@acme.com/)).toBeInTheDocument();
+    const expectedExpiry = new Date(Date.UTC(2026, 8, 5)).toLocaleDateString(
+      undefined,
+      { month: "short", day: "numeric", year: "numeric" }
+    );
+    expect(
+      screen.getByText(
+        `Invite sent to sam@acme.com, expires ${expectedExpiry}.`
+      )
+    ).toBeInTheDocument();
     expect(
       screen.getByText(/Check your email for Slack's invite/)
     ).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: /Accept the invite in Slack/ })
-    ).toHaveAttribute("href", "https://slack.com/invite");
+    const inviteLink = screen.getByRole("link", {
+      name: /Accept the invite in Slack/,
+    });
+    expect(inviteLink).toHaveAttribute("href", "https://slack.com/invite");
+    fireEvent.click(inviteLink);
+    expect(trackMock).toHaveBeenCalledWith("home_shared_slack_invite_opened", {
+      location: "home",
+      state: "invite_sent",
+    });
     expect(mockRefresh).toHaveBeenCalledWith({ organizationId: "org_1" });
   });
 
@@ -191,9 +205,18 @@ describe("SharedSlackChannelCard", () => {
     );
     render(<SharedSlackChannelCard organizationId="org_1" />);
     expect(screen.getByText("#ext-acme-mcpjam")).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: /Open your shared Slack channel/ })
-    ).toHaveAttribute("href", "https://app.slack.com/client/T1/C1");
+    const channelLink = screen.getByRole("link", {
+      name: /Open your shared Slack channel/,
+    });
+    expect(channelLink).toHaveAttribute(
+      "href",
+      "https://app.slack.com/client/T1/C1"
+    );
+    fireEvent.click(channelLink);
+    expect(trackMock).toHaveBeenCalledWith("home_shared_slack_channel_opened", {
+      location: "home",
+      state: "active",
+    });
   });
 
   it("shows per-code error copy and Retry for an admin", () => {
@@ -208,7 +231,12 @@ describe("SharedSlackChannelCard", () => {
     );
     render(<SharedSlackChannelCard organizationId="org_1" />);
     expect(screen.getByText(/our team has been notified/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(trackMock).toHaveBeenCalledWith("home_shared_slack_retry_clicked", {
+      location: "home",
+      state: "error",
+    });
+    expect(mockProvision).toHaveBeenCalledWith({ organizationId: "org_1" });
   });
 
   it("hides Retry when the viewer cannot manage the invite", () => {
