@@ -1,7 +1,8 @@
 import { formatDistanceToNow } from "date-fns";
-import { AlertTriangle, Inbox, Plus } from "lucide-react";
+import { AlertTriangle, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
+import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import type { ScenarioListItem } from "@/hooks/useScenarios";
 import {
   getScenarioHostLabel,
@@ -193,7 +194,7 @@ function LoadFailureState({
 }) {
   return (
     <div
-      className="flex flex-col items-center justify-center px-6 py-16 text-center"
+      className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
       data-testid="user-testing-overview-error"
     >
       <AlertTriangle className="size-8 text-amber-500" />
@@ -212,6 +213,21 @@ function LoadFailureState({
   );
 }
 
+/**
+ * The redesigned User Testing empty state (BB-125).
+ *
+ * The graphic is one of the project's pixel characters rather than the frame's
+ * bitmap: the asset lives in the design file, and reaching for a stock icon
+ * instead would put a third visual language on a page that already sits beside
+ * the Swarm empty state. Scaled up because at its native 44px it reads as a
+ * list bullet, not an illustration.
+ *
+ * The scale goes on a WRAPPER so it stays independent of the avatar, which
+ * animates its own `transform` for the idle float every PersonaPixelAvatar
+ * carries. Tailwind emits the standalone `scale` property, so the two do
+ * compose today — the wrapper is what keeps that true if the utility ever
+ * compiles to `transform` instead, where the animation would win.
+ */
 function EmptyState({
   onCreateScenario,
   createLabel,
@@ -221,16 +237,31 @@ function EmptyState({
 }) {
   return (
     <div
-      className="flex flex-col items-center justify-center px-6 py-16 text-center"
+      className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
       data-testid="user-testing-overview-empty"
     >
-      <Inbox className="size-8 text-muted-foreground/70" />
-      <h2 className="mt-4 text-base font-semibold">No scenarios yet</h2>
-      <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        A scenario puts one of your environments behind a link you can hand to a
-        real person, so you can read what happened in their sessions.
+      <div
+        className="flex h-[120px] w-[88px] items-end justify-center"
+        data-testid="user-testing-empty-illustration"
+      >
+        {/* origin-bottom so the scale grows upward from the character's feet
+            and the row keeps its baseline. */}
+        <span className="origin-bottom scale-[2]">
+          <PersonaPixelAvatar
+            seed="user-testing-empty-state"
+            shapeIndex={1}
+            paletteIndex={5}
+            size="lg"
+          />
+        </span>
+      </div>
+      <h2 className="mt-4 text-lg font-semibold">Create your first study</h2>
+      <p className="mt-2 max-w-md text-sm leading-relaxed text-foreground">
+        A study starts with a link you send. Users open it, use your server
+        inside the client they&rsquo;re used to seeing, and their sessions are
+        recorded here.
       </p>
-      <Button className="mt-5" onClick={onCreateScenario}>
+      <Button size="sm" className="mt-4" onClick={onCreateScenario}>
         <Plus className="mr-1.5 size-4" />
         {createLabel}
       </Button>
