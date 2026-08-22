@@ -146,24 +146,6 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
       "Rotating a unified share URL is irreversible and confirmed in the UI; no CLI command exists yet.",
   },
 
-  // ── Unified share (scenarios, conformance runs, eval runs) ───────────────
-  // Scenario-specific share already lives on `user-testing`. The I5 SDK
-  // operations cover three resource types with one envelope; bind them
-  // together when a `cloud share` group exists, not as a second spelling of
-  // the scenario commands.
-  get_share_settings: {
-    excluded:
-      "`user-testing get` and `scenarios get` already print the scenario share envelope. The unified read also covers conformance and eval runs, and those have no CLI share group yet — bind all three resource types together when that group lands.",
-  },
-  set_share_mode: {
-    excluded:
-      "Scenario exposure is already `user-testing update --mode`. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode ahead of the shared command group.",
-  },
-  rotate_share_link: {
-    excluded:
-      "Scenario rotation is already `user-testing rotate-link`. The unified rotate is destructive across resource types (old URLs stop redeeming immediately) and should land with the same share group as the get/set pair, not as a third rotate command.",
-  },
-
   // ── Evals ───────────────────────────────────────────────────────────────
   list_eval_suites: { command: "cloud eval list" },
   create_eval_suite: { command: "cloud eval create" },
