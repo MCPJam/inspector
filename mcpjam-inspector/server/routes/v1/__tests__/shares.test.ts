@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Hono } from "hono";
 
 const { queryMock, mutationMock } = vi.hoisted(() => ({
@@ -60,6 +60,12 @@ const envelope = {
 };
 
 describe("v1 shares", () => {
+  beforeEach(() => {
+    queryMock.mockReset();
+    mutationMock.mockReset();
+    vi.stubEnv("CONVEX_URL", "https://convex.test");
+  });
+
   it("cross-project preflight is 404", async () => {
     queryMock.mockResolvedValueOnce({ ...envelope, projectId: OTHER });
     const res = await call("GET", BASE);
@@ -72,7 +78,7 @@ describe("v1 shares", () => {
     const res = await call("GET", BASE);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.data).toEqual({
+    expect(body).toEqual({
       resourceType: "conformanceRun",
       resourceId: RUN,
       projectId: PROJECT,
@@ -81,7 +87,7 @@ describe("v1 shares", () => {
       link: { token: "tok" },
       members: [],
     });
-    expect(body.data).not.toHaveProperty("inviteEpoch");
+    expect(body).not.toHaveProperty("inviteEpoch");
   });
 
   it("forwards sendInviteEmail explicitly, defaulting false", async () => {
