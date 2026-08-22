@@ -264,7 +264,11 @@ proposedActions.post(
       (key) => claim.input[key] === undefined
     );
     if (missingPins.length > 0) {
-      logger.error("[v1/proposed-actions] refused an unpinned proposal", {
+      // Declared 400, not a thrown catch-site: `reportRouteFailure` would
+      // still page unless we mint a fake 4xx error object. `logger.error`
+      // with no Error argument captures `new Error(message)` on every stale
+      // click. Same warn as the unknown-operation refusal above.
+      logger.warn("[v1/proposed-actions] refused an unpinned proposal", {
         operation: operation.name,
         missing: missingPins,
       });

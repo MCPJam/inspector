@@ -570,6 +570,27 @@ describe("agent op registry", () => {
     expect(frozen.endpointUrl).toBe("https://real.example/mcp");
   });
 
+  it("drops a model-authored endpoint when the card has no transport", async () => {
+    const client = {
+      listRegistryServers: async () => ({
+        items: [{ id: "rs_1", scope: "global", name: "linear", updatedAt: 5 }],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    const frozen = await proposalMetaFor(
+      installRegistryServerOperation.name
+    ).normalizeArgs(
+      { registryServerId: "rs_1", endpointUrl: "https://evil.tld/mcp" },
+      { projectId: "p1", client }
+    );
+    expect(frozen.endpointUrl).toBeUndefined();
+    expect(
+      proposalMetaFor(installRegistryServerOperation.name).description(frozen)
+    ).toBe("Install registry card rs_1");
+  });
+
   it("REFUSES an install freeze the platform cannot answer — never an unpinned proposal", async () => {
     // INVERTED from the generic tier's degrade (tested below for the eval
     // ops): for the installs the mint-time pin IS what the human approves.
