@@ -543,21 +543,21 @@ mcpjam cloud environments update --environment Staging --expected-revision 3 --n
 
 If someone else changed the environment in between, the write fails with a `CONFLICT` error (HTTP 409) instead of overwriting their edit — re-read it and retry. `CONFLICT` also covers a duplicate name and archive-state errors (archiving something already archived, editing something archived), so read the message.
 
-### `environments list`
+### `cloud environments list`
 
 | Flag | Description |
 |------|-------------|
 | `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
 | `--include-archived` | Include archived environments (needed to find one to restore) |
 
-### `environments get`
+### `cloud environments get`
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--environment <id-or-name>` | Yes | Environment name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `environments resolve`
+### `cloud environments resolve`
 
 Preview what the environment resolves to right now: the host's current config, the closed server set, and the pinned plugin versions. Fails with `CONFLICT` when the environment can't currently produce a runnable configuration (for example a pinned plugin was disabled); `details.code` carries the specific reason.
 
