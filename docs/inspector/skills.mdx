@@ -96,9 +96,9 @@ The `/` picker works in both local and hosted modes. In the hosted app, it lists
   allowFullScreen
 ></iframe>
 
-## LLM Tool Integration
+## LLM tool integration
 
-When skills are available, the LLM has access to three tools:
+When skills are available, the LLM has access to the following tools:
 
 | Tool | Description |
 |------|-------------|
@@ -106,4 +106,6 @@ When skills are available, the LLM has access to three tools:
 | `listSkillFiles(name)` | List all files in the skill directory |
 | `readSkillFile(name, path)` | Read the content of a specific supporting file |
 
-These tools allow the LLM to progressively discover and load skill content as needed during a conversation, rather than injecting all skill content upfront.
+The skill catalog (names and descriptions) is inlined in the system prompt rather than exposed as a discovery tool. `loadSkill` is only advertised when the project has at least one skill — empty projects receive no skill tools.
+
+`listSkills` is available only when a connected MCP server provides skills via the SEP-2640 extension; it lists those server-provided skills only.
