@@ -723,13 +723,14 @@ function FieldCell({
       // A `light-dark(…)` value is NOT this case: it is decoded upstream into
       // the pair below, so the notation a host happens to use never changes
       // the shape of its cell.
-      // `inline-flex` so the block hugs its content and stays centered by the
-      // cell rather than stretching across it; the theme blocks inside share
-      // a left edge (`items-start` on the column) so the two values line up
-      // for reading, and each label centers over the row it names.
+      // Everything centers on the cell's own axis: each theme block spans the
+      // full cell (`w-full`), so LIGHT and DARK center over the same width
+      // and therefore line up with each other AND with the same rows in every
+      // other column. Sizing the blocks to their own content instead makes
+      // each label drift to wherever its value happens to be wide.
       if ("same" in v) {
         return (
-          <span className="inline-flex max-w-full items-center gap-1.5 text-left">
+          <span className="inline-flex max-w-full items-center justify-center gap-1.5">
             {isColor ? <StyleColorSwatch value={v.same} /> : null}
             <span className="min-w-0 font-mono text-[12px] break-all">
               {v.same}
@@ -738,25 +739,19 @@ function FieldCell({
         );
       }
       return (
-        <span
-          className="inline-flex max-w-full flex-col items-start gap-1.5 text-left"
-          title={v.raw}
-        >
+        <span className="flex w-full flex-col gap-1.5" title={v.raw}>
           {(["light", "dark"] as const).map((theme) => (
             // `items-center` centers the theme label over the swatch+value row
             // it names; the row itself keeps its own left edge, so the two
             // themes still line up with each other for reading down the cell.
-            <span
-              key={theme}
-              className="flex max-w-full flex-col items-center gap-0.5"
-            >
+            <span key={theme} className="flex w-full flex-col items-center gap-0.5">
               <span className="text-[10px] uppercase leading-none tracking-wide text-muted-foreground/60">
                 {theme}
               </span>
               {v[theme] === undefined ? (
                 <span className="text-[12px] text-muted-foreground/60">—</span>
               ) : (
-                <span className="flex max-w-full items-center gap-1.5">
+                <span className="flex max-w-full items-center justify-center gap-1.5">
                   {isColor ? <StyleColorSwatch value={v[theme]} /> : null}
                   <span className="min-w-0 font-mono text-[12px] break-all">
                     {v[theme]}
