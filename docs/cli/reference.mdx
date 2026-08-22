@@ -455,6 +455,91 @@ The result includes a per-host `verdict` (`works`, `degraded`, `blocked`, or `un
 
 ---
 
+## `registry` commands
+
+Search scraped MCP directories and curated cards, then install into a Cloud project. `registry` lives at the program root (not under `mcpjam cloud`), but project-scoped subcommands (`servers`, `connections`, `install`, `uninstall`) resolve their project with the same precedence as every `cloud projects` command: `--project` flag → `MCPJAM_PROJECT` → nearest `.mcpjam/project.json` → most recently updated project.
+
+All `registry` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+
+### `registry sources`
+
+List directory source ids. Sources are data, not an enum — pass one to `registry search --source`. No additional flags.
+
+### `registry search`
+
+Search scraped MCP directories. Prefer a matching curated card from `registry servers --scope global` when one exists.
+
+| Flag | Description |
+|------|-------------|
+| `[q]` | Search query (positional, optional) |
+| `--source <id>` | Directory source id, or `all` (default). Discover ids with `registry sources`. |
+| `--connectable` | Only rows that can be installed |
+| `--row-type <type>` | Filter by row type |
+| `--endpoint-kind <kind>` | Filter by endpoint kind |
+| `--cursor <cursor>` | Page cursor from a previous response |
+| `--limit <n>` | Page size |
+
+### `registry show`
+
+Show one directory row by name or catalog id. Prints the freshness pin (`--expected-content-hash`) and, when a `remoteUrl` is known, a ready-to-run `mcpjam server probe` command for ad-hoc local use.
+
+| Flag | Description |
+|------|-------------|
+| `<id-or-name>` | Directory server name or catalog server id (positional, required) |
+| `--source <id>` | Directory source id when looking up by name. Discover ids with `registry sources`. |
+
+### `registry servers`
+
+List curated global cards and the project's organization registry cards.
+
+| Flag | Description |
+|------|-------------|
+| `--scope <scope>` | `global`, `organization`, or `all` (default `all`) |
+| `--project <id-or-name>` | Project name or ID |
+
+### `registry connections`
+
+List directory and card installs already in a Cloud project.
+
+| Flag | Description |
+|------|-------------|
+| `--project <id-or-name>` | Project name or ID |
+
+### `registry install`
+
+Install a directory row into a Cloud project. Pass `--card` to install a curated or organization card instead. This writes a project servers row — it is not a live connection.
+
+One verb, two shelves: the default shelf is a directory row; `--card` selects a curated or org card. The flag is the disambiguator — cross-shelf flag combinations are rejected before any network call.
+
+| Flag | Description |
+|------|-------------|
+| `<id>` | `catalogServerId` for a directory install, or `registryServerId` with `--card` (positional, required) |
+| `--card` | Install a curated or org registry card instead of a directory row |
+| `--endpoint-url <url>` | Override the directory endpoint (required for `tenant` or `options` endpoint kinds). Directory installs only; rejected with `--card`. |
+| `--expected-content-hash <hash>` | Freshness pin from `registry show`. Directory installs only; rejected with `--card`. |
+| `--expected-updated-at <ms>` | Freshness pin from `registry servers`. Card installs only; requires `--card`. |
+| `--project <id-or-name>` | Project name or ID |
+
+Human output prints runnable follow-up commands (`mcpjam cloud projects status` and `mcpjam cloud projects servers connect`) and an OAuth browser link when one is available.
+
+### `registry uninstall`
+
+Remove a curated or org card install. Card-only — directory uninstall is `cloud projects servers remove`.
+
+| Flag | Description |
+|------|-------------|
+| `<registryServerId>` | Registry card id (positional, required) |
+| `--project <id-or-name>` | Project name or ID |
+
+---
+
 ## `cloud hosts` commands
 
 Manage the hosts saved in your hosted MCPJam projects. All `hosts` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
