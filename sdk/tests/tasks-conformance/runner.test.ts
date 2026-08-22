@@ -4,6 +4,7 @@ import {
   MCP_TASKS_CHECK_IDS,
   decideOutcome,
   findDeclarationViolations,
+  findRawTaskStates,
   pickProbeTool,
   resolveProbeTool,
   validateCreateTaskShape,
@@ -235,6 +236,48 @@ describe("declaration hygiene", () => {
       },
     ];
     expect(findDeclarationViolations("none", sent)).toEqual([]);
+  });
+});
+
+describe("findRawTaskStates", () => {
+  const frame = (taskId: string, status: string, extra = {}) => ({
+    jsonrpc: "2.0",
+    id: 1,
+    result: { taskId, status, ...extra },
+  });
+
+  it("returns EVERY frame for the task, in wire order", () => {
+    // Not just the last: a run that drives past an `input_required` gate
+    // observes several statuses, and grading only the final one would let a
+    // malformed mid-flight frame pass behind a well-formed terminal one.
+    const states = findRawTaskStates(
+      [
+        frame("t1", "working"),
+        frame("t2", "working"),
+        frame("t1", "input_required"),
+        frame("t1", "completed", { result: {} }),
+      ],
+      "t1",
+    );
+    expect(states.map((state) => state.status)).toEqual([
+      "working",
+      "input_required",
+      "completed",
+    ]);
+  });
+
+  it("ignores frames for another task and non-task results", () => {
+    expect(findRawTaskStates([frame("t2", "working")], "t1")).toEqual([]);
+    expect(
+      findRawTaskStates([{ jsonrpc: "2.0", id: 1, result: { tools: [] } }], "t1"),
+    ).toEqual([]);
+    // A payload with no `status` is not a task state.
+    expect(
+      findRawTaskStates(
+        [{ jsonrpc: "2.0", id: 1, result: { taskId: "t1" } }],
+        "t1",
+      ),
+    ).toEqual([]);
   });
 });
 

@@ -132,25 +132,45 @@ function validateOptionalStringRecord(value: unknown, label: string): void {
   }
 }
 
+/** The only two keys a fixtures block may carry, and the name each entry needs. */
+const FIXTURE_COLLECTIONS = [
+  ["toolCalls", "toolName"],
+  ["promptGets", "promptName"],
+] as const;
+
 /**
  * Fixtures name primitives the operator says are SAFE TO EXECUTE, so the
- * validation is deliberately strict about the NAMES and permissive about the
- * arguments (arbitrary JSON by definition). A misspelled key would otherwise
- * yield an empty fixture set, and the fixture-gated checks would skip — which
- * an operator reads as "my server does not support this" rather than "my config
- * has a typo".
+ * validation is deliberately strict about the KEYS and the NAMES, and
+ * permissive about the arguments (arbitrary JSON by definition).
+ *
+ * UNKNOWN KEYS ARE REJECTED, and that is the point rather than tidiness. A
+ * misspelled `toolCall` would otherwise be silently ignored, leaving an empty
+ * fixture set — and an empty fixture set makes the fixture-gated checks SKIP,
+ * which an operator reads as "my server does not support this" rather than "my
+ * config has a typo". A config error that presents as a server finding is worse
+ * than a loud rejection.
+ *
+ * Shared with the `--fixtures-file` reader so the two paths cannot drift into
+ * disagreeing about what a valid fixtures block is.
  */
-function validateFixtures(value: unknown, label: string): void {
+export function validateFixtures(value: unknown, label: string): void {
   if (value === undefined) {
     return;
   }
   assertObject(value, label);
   const fixtures = value as JsonObject;
 
-  for (const [key, nameField] of [
-    ["toolCalls", "toolName"],
-    ["promptGets", "promptName"],
-  ] as const) {
+  const known = new Set<string>(FIXTURE_COLLECTIONS.map(([key]) => key));
+  const unknown = Object.keys(fixtures).filter((key) => !known.has(key));
+  if (unknown.length > 0) {
+    throw usageError(
+      `${label} has unknown key${unknown.length === 1 ? "" : "s"} ${unknown
+        .map((key) => JSON.stringify(key))
+        .join(", ")}; expected ${[...known].join(" and/or ")}`,
+    );
+  }
+
+  for (const [key, nameField] of FIXTURE_COLLECTIONS) {
     const entries = fixtures[key];
     if (entries === undefined) continue;
     if (!Array.isArray(entries)) {

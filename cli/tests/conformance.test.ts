@@ -302,6 +302,48 @@ test("fixtures: a malformed file is a usage error, never a silent empty set", as
       error instanceof CliError && /must be an array/.test(error.message),
   );
 
+  // The case the whole "never a silent empty set" rule exists for: a
+  // misspelled key would otherwise be ignored, leaving no fixtures at all —
+  // and the fixture-gated checks would then SKIP, which an operator reads as
+  // "my server does not support this" rather than "my config has a typo".
+  const typo = path.join(dir, "typo.json");
+  await writeFile(typo, JSON.stringify({ toolCall: [{ toolName: "echo" }] }));
+  assert.throws(
+    () => buildConfig({ url: "https://example.com/mcp", fixturesFile: typo }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /unknown key "toolCall"/.test(error.message),
+  );
+
+  // Entry shapes fail here as a usage error rather than blowing up later
+  // inside SDK normalization.
+  const badEntry = path.join(dir, "entry.json");
+  await writeFile(badEntry, JSON.stringify({ toolCalls: ["echo"] }));
+  assert.throws(
+    () =>
+      buildConfig({ url: "https://example.com/mcp", fixturesFile: badEntry }),
+    (error: unknown) =>
+      error instanceof CliError && /toolCalls\[0\]/.test(error.message),
+  );
+
+  const missingName = path.join(dir, "name.json");
+  await writeFile(
+    missingName,
+    JSON.stringify({ promptGets: [{ promptNam: "welcome" }] }),
+  );
+  assert.throws(
+    () =>
+      buildConfig({
+        url: "https://example.com/mcp",
+        fixturesFile: missingName,
+      }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      /promptGets\[0\]\.promptName must be a non-empty string/.test(
+        error.message,
+      ),
+  );
+
   assert.throws(
     () =>
       buildConfig({

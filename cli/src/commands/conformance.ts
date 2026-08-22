@@ -18,7 +18,10 @@ import {
 } from "@mcpjam/sdk";
 import { readFileSync } from "node:fs";
 import { Command } from "commander";
-import { loadProtocolSuiteConfig } from "../lib/config-file.js";
+import {
+  loadProtocolSuiteConfig,
+  validateFixtures,
+} from "../lib/config-file.js";
 import {
   renderConformanceForCli,
   resolveConformanceOutputFormatForCli,
@@ -271,19 +274,18 @@ function readFixturesFile(
     );
   }
 
+  // Validated with the SAME rule the suite-config path uses, rather than a
+  // second hand-rolled one here: an unknown key is REJECTED (a typo'd
+  // `toolCall` would otherwise yield an empty fixture set, and an empty set
+  // makes the fixture-gated checks skip — which reads as "my server does not
+  // support this" rather than "my config has a typo"), and every entry must be
+  // an object naming a non-empty primitive.
+  validateFixtures(parsed, `Fixtures file ${path}`);
+
   const document = parsed as {
     toolCalls?: unknown;
     promptGets?: unknown;
   };
-  // Shape-checked here rather than left to the SDK: a typo'd key would
-  // otherwise produce an empty fixture set, and the operator would read the
-  // resulting skip as "my server does not support this".
-  for (const key of ["toolCalls", "promptGets"] as const) {
-    const value = document[key];
-    if (value !== undefined && !Array.isArray(value)) {
-      throw usageError(`Fixtures file ${path}: ${key} must be an array`);
-    }
-  }
 
   return {
     toolCalls: (document.toolCalls ?? []) as NonNullable<

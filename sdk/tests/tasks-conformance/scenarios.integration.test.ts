@@ -141,6 +141,66 @@ describe("tasks-status-payload-shape", () => {
     expect(entry.error?.message).toContain("`result`");
   });
 
+  it("grades a frame the DECODED task never even reported", async () => {
+    // Two properties at once, and the second is the stronger one.
+    //
+    // (1) Every observed payload is graded, not just the state the task ended
+    //     in — `inspectedPayloads` is 3 here.
+    // (2) The violating frame is one the client never surfaced AT ALL: without
+    //     `inputRequests` the decoder cannot resolve the `input_required`
+    //     variant, so the round-trip check beside this one reports the task
+    //     "never reported input_required". A check reading the decoded task
+    //     would therefore see nothing wrong; the wire is the only witness.
+    const result = await run(
+      await serve([
+        { status: "working", ttlMs: 60_000, pollIntervalMs: 5 },
+        { status: "input_required", polls: 1, omit: ["inputRequests"] },
+        {
+          status: "completed",
+          ttlMs: 30_000,
+          result: { content: [{ type: "text", text: "done" }], isError: false },
+        },
+      ]),
+      [ID, "tasks-input-required-update-completes"],
+      {
+        inputResponses: {
+          [DEFAULT_INPUT_REQUEST_KEY]: {
+            result: { action: "accept", content: { name: "Ada" } },
+          },
+        },
+      },
+    );
+
+    const entry = check(result, ID);
+    expect(entry.status).toBe("failed");
+    expect(entry.error?.message).toContain("input_required");
+    expect(entry.error?.message).toContain("`inputRequests`");
+    expect(Number(entry.details?.inspectedPayloads)).toBeGreaterThan(1);
+
+    // The decoded view never saw the state the raw frame was rejected for.
+    expect(
+      check(result, "tasks-input-required-update-completes").error?.message,
+    ).toContain("never reported input_required");
+  });
+
+  it("reports a repeated bad snapshot once, not once per poll", async () => {
+    // The fixture re-sends its `input_required` snapshot on every poll while
+    // the gate is open. One finding, not N copies of it.
+    const phases = defaultTaskPhases();
+    const gateIndex = phases.findIndex(
+      (phase) => phase.status === "input_required",
+    );
+    phases[gateIndex] = { ...phases[gateIndex]!, omit: ["inputRequests"] };
+
+    const entry = check(await run(await serve(phases), [ID]), ID);
+    expect(entry.status).toBe("failed");
+    const occurrences = (
+      entry.error?.message.match(/`inputRequests`/g) ?? []
+    ).length;
+    expect(occurrences).toBe(1);
+    expect(Number(entry.details?.inspectedPayloads)).toBeGreaterThan(1);
+  });
+
   it("fails a failed task with no error field, which the client itself rejects", async () => {
     // The reason this check reads RAW frames. The SDK's payload schema refuses
     // a `failed` task carrying no `error`, so the decoded task never reaches a

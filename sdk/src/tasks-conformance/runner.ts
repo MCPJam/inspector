@@ -859,8 +859,8 @@ export function findRawTaskResponse(
 }
 
 /**
- * The LAST raw `tasks/get` task payload for `taskId`, read off the inbound
- * bytes rather than off the decoded task.
+ * EVERY raw `tasks/get` task payload for `taskId`, in wire order, read off the
+ * inbound bytes rather than off the decoded task.
  *
  * Raw, and unavoidably so — the same reason `findRawTaskResponse` above is.
  * The SDK's `taskExtSchema` rejects a `failed` task that carries no `error`
@@ -869,21 +869,27 @@ export function findRawTaskResponse(
  * green on precisely the malformed states it exists to catch. The wire is the
  * only place those states exist.
  *
- * Identified by shape (`taskId` + `status`) rather than by request id: the
- * runner polls many times and the caller wants the state the task ended in.
+ * ALL of them, not just the last: a run that answers an `input_required` gate
+ * observes several statuses, and grading only the state the task ended in would
+ * let a malformed `input_required` or `failed` frame pass unexamined behind a
+ * well-formed `completed` one. That became reachable the moment this runner
+ * learned to drive the update leg.
+ *
+ * Identified by shape (`taskId` + `status`) rather than by request id, because
+ * the runner polls many times and every poll's answer is evidence.
  */
-export function findRawTaskState(
+export function findRawTaskStates(
   messages: unknown[],
   taskId: string
-): Record<string, unknown> | undefined {
-  let found: Record<string, unknown> | undefined;
+): Array<Record<string, unknown>> {
+  const found: Array<Record<string, unknown>> = [];
   for (const message of messages) {
     if (!isRecord(message)) continue;
     const result = isRecord(message.result) ? message.result : undefined;
     if (!result) continue;
     if (result.taskId !== taskId) continue;
     if (typeof result.status !== "string") continue;
-    found = result;
+    found.push(result);
   }
   return found;
 }
@@ -1581,10 +1587,15 @@ export class MCPTasksConformanceTest {
             // `failed` task with no `error` before any check sees it, so
             // reading the decoded task would score a server green on exactly
             // the malformed states this check exists to catch.
-            const rawState = createdTaskId
-              ? findRawTaskState(received, createdTaskId)
-              : undefined;
-            if (!rawState) {
+            //
+            // EVERY observed payload, not just the final one. A run that
+            // answers an `input_required` gate sees several statuses, and
+            // grading only the state the task ended in would let a malformed
+            // `input_required` frame pass behind a well-formed `completed` one.
+            const rawStates = createdTaskId
+              ? findRawTaskStates(received, createdTaskId)
+              : [];
+            if (rawStates.length === 0) {
               checks.push(
                 createdTaskId
                   ? couldNotRun(
@@ -1594,22 +1605,42 @@ export class MCPTasksConformanceTest {
                   : noTask("tasks-status-payload-shape")
               );
             } else {
-              const verdict = validateTaskStatusPayload(rawState);
+              // Deduped by status + text: a server re-sends the same snapshot on
+              // every poll while a gate is open, and reporting one violation
+              // per poll would bury the finding in repeats of itself.
+              const violations = new Set<string>();
+              const warnings = new Set<string>();
+              for (const state of rawStates) {
+                const verdict = validateTaskStatusPayload(state);
+                for (const violation of verdict.violations) {
+                  violations.add(`${String(state.status)}: ${violation}`);
+                }
+                for (const warning of verdict.warnings) {
+                  warnings.add(`${String(state.status)}: ${warning}`);
+                }
+              }
+              const observedStatuses = [
+                ...new Set(rawStates.map((state) => String(state.status))),
+              ];
+              const details = {
+                observedStatuses,
+                inspectedPayloads: rawStates.length,
+              };
               checks.push(
-                verdict.violations.length === 0
+                violations.size === 0
                   ? passed(
                       "tasks-status-payload-shape",
                       Date.now() - stepStartedAt,
-                      { status: rawState.status },
-                      verdict.warnings
+                      details,
+                      warnings.size > 0 ? [...warnings] : undefined
                     )
                   : failed(
                       "tasks-status-payload-shape",
                       Date.now() - stepStartedAt,
-                      `task status payload is incomplete: ${verdict.violations.join(
+                      `task status payload is incomplete: ${[...violations].join(
                         "; "
                       )}`,
-                      { status: rawState.status }
+                      details
                     )
               );
             }
