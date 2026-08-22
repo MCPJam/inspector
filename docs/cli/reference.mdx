@@ -541,21 +541,21 @@ mcpjam cloud environments update --environment Staging --expected-revision 3 --n
 
 If someone else changed the environment in between, the write fails with a `CONFLICT` error (HTTP 409) instead of overwriting their edit — re-read it and retry. `CONFLICT` also covers a duplicate name and archive-state errors (archiving something already archived, editing something archived), so read the message.
 
-### `environments list`
+### `cloud environments list`
 
 | Flag | Description |
 |------|-------------|
 | `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
 | `--include-archived` | Include archived environments (needed to find one to restore) |
 
-### `environments get`
+### `cloud environments get`
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--environment <id-or-name>` | Yes | Environment name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `environments resolve`
+### `cloud environments resolve`
 
 Preview what the environment resolves to right now: the host's current config, the closed server set, and the pinned plugin versions. Fails with `CONFLICT` when the environment can't currently produce a runnable configuration (for example a pinned plugin was disabled); `details.code` carries the specific reason.
 
@@ -564,7 +564,7 @@ Preview what the environment resolves to right now: the host's current config, t
 | `--environment <id-or-name>` | Yes | Environment name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `environments create`
+### `cloud environments create`
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -578,19 +578,19 @@ Preview what the environment resolves to right now: the host's current config, t
 \* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, and `pluginVersionIds`:
 
 ```bash
-mcpjam environments create --project Acme --json '{
+mcpjam cloud environments create --project Acme --json '{
   "name": "Staging",
   "hostId": "h_123",
   "skillSelection": { "mode": "explicit", "skillIds": ["sk_1"] }
 }'
 ```
 
-### `environments update`
+### `cloud environments update`
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--environment <id-or-name>` | Yes | Environment name or ID |
-| `--expected-revision <n>` | Yes | The revision you last read (from `environments get`) |
+| `--expected-revision <n>` | Yes | The revision you last read (from `cloud environments get`) |
 | `--project <id-or-name>` | No | Project name or ID |
 | `--name <name>` | No | New display name |
 | `--host-id <id>` | No | New host |
@@ -601,11 +601,11 @@ mcpjam environments create --project Acme --json '{
 Only the fields you pass change. To **clear** `serverAttachmentId`, `skillSelection`, or `pluginVersionIds`, send an explicit `null` in the JSON body — an empty array is rejected, it is not a way to clear:
 
 ```bash
-mcpjam environments update --environment Staging --expected-revision 3 \
+mcpjam cloud environments update --environment Staging --expected-revision 3 \
   --json '{ "pluginVersionIds": null }'
 ```
 
-### `environments archive`
+### `cloud environments archive`
 
 Archiving is reversible and frees the name for a new environment; the row is kept.
 
@@ -615,19 +615,19 @@ Archiving is reversible and frees the name for a new environment; the row is kep
 | `--expected-revision <n>` | Yes | The revision you last read |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `environments restore`
+### `cloud environments restore`
 
 Fails with `CONFLICT` if another live environment took the name while this one was archived. Plugin pins whose version no longer exists at all are dropped on restore — compare the returned `pluginVersionIds` against what you archived.
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--environment <id-or-name>` | Yes | Environment name or ID |
-| `--expected-revision <n>` | Yes | The revision you last read (use `environments list --include-archived`) |
+| `--expected-revision <n>` | Yes | The revision you last read (use `cloud environments list --include-archived`) |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `environments ensure-adhoc`
+### `cloud environments ensure-adhoc`
 
-Get or create an **unnamed** environment for a composed stack. Deduplicated by content: the same stack always returns the same environment, with `created: false` on the second call. Ad-hoc environments do not appear in `environments list` — they exist so a one-off combination can be run and reproduced without adding a name to the project's list.
+Get or create an **unnamed** environment for a composed stack. Deduplicated by content: the same stack always returns the same environment, with `created: false` on the second call. Ad-hoc environments do not appear in `cloud environments list` — they exist so a one-off combination can be run and reproduced without adding a name to the project's list.
 
 Requires project membership, not admin (pinning plugin versions still requires admin).
 
@@ -640,7 +640,7 @@ Requires project membership, not admin (pinning plugin versions still requires a
 | `--skill <id...>` | No | Project-shared skill IDs to pin |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `environments name`
+### `cloud environments name`
 
 Promote an ad-hoc environment to a named one **in place** — the same id every existing run already points at, so history stays attached. Fails with `CONFLICT` if the environment already has a name.
 
