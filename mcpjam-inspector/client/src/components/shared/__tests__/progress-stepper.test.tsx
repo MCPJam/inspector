@@ -96,6 +96,26 @@ describe("ProgressStepper", () => {
     expect(connectors).toHaveLength(STEPS.length - 1);
     expect(screen.getByTestId("stepper")).toBeInTheDocument();
   });
+
+  it("keeps every step a real list item, and the connectors out of the list", () => {
+    // The steps used to be `display: contents`, which drops the <li> from the
+    // layout — and, in Safari before 16.4, from the accessibility tree too,
+    // taking `listitem` and this component's `aria-current` contract with it.
+    // The connectors are decoration, so they are hidden instead of counted.
+    render(<ProgressStepper steps={STEPS} activeIndex={1} />);
+
+    const items = screen.getAllByRole("listitem");
+    expect(items).toHaveLength(STEPS.length);
+    expect(items.map((item) => item.textContent)).toEqual([
+      expect.stringContaining("Describe"),
+      expect.stringContaining("Confirm personas"),
+      expect.stringContaining("Running"),
+      expect.stringContaining("Findings"),
+    ]);
+    for (const item of items) {
+      expect(item.className).not.toContain("contents");
+    }
+  });
 });
 
 describe("clampStepIndex", () => {

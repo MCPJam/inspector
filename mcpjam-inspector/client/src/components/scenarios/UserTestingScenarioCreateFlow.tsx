@@ -260,6 +260,7 @@ export function UserTestingScenarioCreateFlow({
       // per environment, so on a collision the existing study keeps its own
       // settings — silently rewriting its rating widget would be this screen
       // reconfiguring someone else's study.
+      let ratingsFailed = false;
       if (created) {
         try {
           await onSetPerTurnFeedback(scenarioId, {
@@ -270,20 +271,26 @@ export function UserTestingScenarioCreateFlow({
           // The study exists; only the ratings setting did not land. Say which
           // half failed and where to fix it, rather than reporting a failed
           // creation the user can see succeeded.
+          ratingsFailed = true;
           toast.error(
             "Study created, but the per-turn ratings setting didn't save. Turn it on from the study's settings."
           );
         }
       }
 
-      toast.success(
-        created
-          ? "Study created"
-          : // Publishing is idempotent per environment, and composing makes a
-            // collision likelier: an identical setup resolves to the SAME row,
-            // whose scenario keeps its own name and access.
-            "This setup is already published — opening its study, with the name and access it already has",
-      );
+      // The error above already opens with "Study created" — pairing it with a
+      // bare success toast makes the screen say two things about one outcome
+      // and reads like one of them is stale.
+      if (!ratingsFailed) {
+        toast.success(
+          created
+            ? "Study created"
+            : // Publishing is idempotent per environment, and composing makes a
+              // collision likelier: an identical setup resolves to the SAME row,
+              // whose scenario keeps its own name and access.
+              "This setup is already published — opening its study, with the name and access it already has",
+        );
+      }
     } catch (err) {
       // Surface the backend's copy verbatim: publishing is project-admin
       // gated, and "you need admin" is a different problem than "it failed".

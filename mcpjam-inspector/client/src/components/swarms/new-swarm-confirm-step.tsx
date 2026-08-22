@@ -12,15 +12,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ChevronDown, Loader2, Plus, Trash2, X } from "lucide-react";
+import { ChevronDown, Loader2, Trash2, X } from "lucide-react";
 import { useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
+import { PersonaPickerPopover } from "@/components/swarms/persona-picker-popover";
+import { SectionLabel } from "@/components/shared/section-label";
 import { JudgesSection } from "@/components/evals/judges-section";
 import { areAllChecksValid } from "@/components/evals/checks-section";
 import { JourneyRubricEditor } from "@/components/swarms/journey-rubric-editor";
@@ -46,18 +43,6 @@ import {
 } from "@/shared/journey-rubric";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
-
-/**
- * Field-group label shared with the Personas library (BB-123), so a persona
- * reads the same in the library as it does on Confirm.
- */
-export function SectionLabel({ children }: { children: ReactNode }) {
-  return (
-    <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-      {children}
-    </p>
-  );
-}
 
 /** A generated persona + journeys, still only in memory. */
 export type ProposedPersona = {
@@ -158,6 +143,57 @@ type ReusedResolved = {
   grading: { journeyId: string; rubric: JourneyCriterion[] }[];
 };
 
+/** Uncommitted edits to one EXISTING persona, held while its panel is open. */
+export type ReusedPersonaDraft = {
+  name: string;
+  role: string;
+  notes: string;
+  goals: Record<string, string>;
+};
+
+/**
+ * What a draft would actually write.
+ *
+ * One definition of "what moved", because two callers ask the same question for
+ * opposite reasons: Save sends exactly this, and closing the panel uses it to
+ * know whether anything is about to be thrown away. Deriving them separately is
+ * how a discard warning starts disagreeing with what a save would have done.
+ */
+export function diffReusedDraft(
+  draft: ReusedPersonaDraft | undefined,
+  persona: ReusedPersona,
+  goals: readonly ReusedGoal[]
+): {
+  patch: { name?: string; role?: string; notes?: string };
+  goalEdits: { journeyId: string; goal: string }[];
+  dirty: boolean;
+} {
+  const patch: { name?: string; role?: string; notes?: string } = {};
+  const goalEdits: { journeyId: string; goal: string }[] = [];
+  if (!draft) return { patch, goalEdits, dirty: false };
+
+  if (draft.name !== persona.name) patch.name = draft.name;
+  if (draft.role !== persona.role) patch.role = draft.role;
+  if (draft.notes !== (persona.notes ?? "")) patch.notes = draft.notes;
+
+  for (const goal of goals) {
+    const next = draft.goals[goal.journeyId];
+    // A journey needs a goal — the backend throws on an empty one, so an
+    // emptied field is dropped rather than sent and surfaced as an error the
+    // user cannot act on from here. It is not a pending edit either: there is
+    // nothing this panel could save, so closing loses nothing.
+    if (next === undefined || next.trim().length === 0) continue;
+    if (next === goal.label) continue;
+    goalEdits.push({ journeyId: goal.journeyId, goal: next });
+  }
+
+  return {
+    patch,
+    goalEdits,
+    dirty: Object.keys(patch).length > 0 || goalEdits.length > 0,
+  };
+}
+
 function journeyLabel(journey: { name?: string; goal: string }): string {
   const name = journey.name?.trim();
   if (name) return name;
@@ -207,17 +243,16 @@ function CompactPersonaCard({
 }) {
   return (
     <li>
+      {/* A plain div, not `role="button"`: it holds the real Edit and Remove
+          buttons, and a widget that contains other widgets is exactly the
+          nesting assistive tech cannot describe — the row announced itself as
+          one button whose content was two more. The click handler stays, so
+          clicking anywhere on the card still expands it for pointer users;
+          keyboard users reach the same thing through Edit, which is a real
+          focusable control and names its persona. */}
       <div
-        role="button"
-        tabIndex={0}
         data-testid="new-swarm-persona-compact"
         onClick={onSelect}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            onSelect();
-          }
-        }}
         className={cn(
           "flex w-full cursor-pointer items-start gap-4 rounded-xl border border-border/50 bg-muted/15 p-4 text-left transition-colors hover:bg-muted/25",
           muted && "opacity-70"
@@ -309,6 +344,11 @@ function CompactPersonaCard({
  * draft and this is what commits them — mirroring keystrokes into a shared row
  * would rewrite other people's swarms as you type. A failed save keeps the
  * panel open with the draft intact.
+ *
+ * The two exits therefore mean two different things for a reused persona, and
+ * both are honest about it: Save commits and collapses, Escape discards and
+ * collapses. Neither leaves an edit that the collapsed card doesn't show and
+ * the launch wouldn't use.
  */
 function PersonaDetailPanel({
   seed,
@@ -346,7 +386,11 @@ function PersonaDetailPanel({
   loadingGoals?: boolean;
   /** In-memory row: edits apply immediately, no Save. */
   draftEditable?: boolean;
-  /** Collapse the editor. Reached by Escape — the design shows no close button. */
+  /**
+   * Leave the editor WITHOUT saving. Reached by Escape — the design shows no
+   * close button. For a persisted persona the caller discards the draft, so
+   * what the collapsed card shows is always what launches.
+   */
   onClose: () => void;
   onRemoveGoal?: (goalKey: string) => void;
   onRemoveCheck?: (goalKey: string, checkId: string) => void;
@@ -927,10 +971,7 @@ export function NewSwarmConfirmStep({
    * and cannot show a stale "saved" value.
    */
   const [reusedDrafts, setReusedDrafts] = useState<
-    Record<
-      string,
-      { name: string; role: string; notes: string; goals: Record<string, string> }
-    >
+    Record<string, ReusedPersonaDraft>
   >({});
   const [savingReusedId, setSavingReusedId] = useState<string | null>(null);
   const [addExistingOpen, setAddExistingOpen] = useState(false);
@@ -981,21 +1022,12 @@ export function NewSwarmConfirmStep({
       try {
         // Only what actually moved. A no-op patch would still bump the row's
         // `updatedAt` for every other swarm reusing it.
-        const patch: { name?: string; role?: string; notes?: string } = {};
-        if (draft.name !== persona.name) patch.name = draft.name;
-        if (draft.role !== persona.role) patch.role = draft.role;
-        if (draft.notes !== (persona.notes ?? "")) patch.notes = draft.notes;
+        const { patch, goalEdits } = diffReusedDraft(draft, persona, goals);
         if (Object.keys(patch).length > 0) {
           await onSaveReusedPersona(persona._id, patch);
         }
-        for (const goal of goals) {
-          const next = draft.goals[goal.journeyId];
-          // A journey needs a goal — the backend throws on an empty one, so an
-          // emptied field is dropped rather than sent and surfaced as an error
-          // the user cannot act on from here.
-          if (next === undefined || next.trim().length === 0) continue;
-          if (next === goal.label) continue;
-          await onSaveReusedGoal(goal.journeyId, next);
+        for (const edit of goalEdits) {
+          await onSaveReusedGoal(edit.journeyId, edit.goal);
         }
         setReusedDrafts((drafts) => {
           const { [persona._id]: _saved, ...rest } = drafts;
@@ -1019,6 +1051,33 @@ export function NewSwarmConfirmStep({
       }
     },
     [onSaveReusedGoal, onSaveReusedPersona, reusedDrafts]
+  );
+
+  /**
+   * Close WITHOUT saving — the Escape route out of a reused persona's editor.
+   *
+   * It discards, rather than keeping the draft around: this row is never
+   * launched from the draft, so a kept-but-uncommitted edit is one the collapsed
+   * card doesn't show and the launch doesn't use, and the user only finds out
+   * their typing did nothing after the swarm has run. Whatever the collapsed
+   * card shows is what launches, on both exits.
+   *
+   * A toast, and only when something was actually lost: silently dropping text
+   * somebody typed is the other half of the same problem.
+   */
+  const discardReused = useCallback(
+    (persona: ReusedPersona, goals: ReusedGoal[]) => {
+      const { dirty } = diffReusedDraft(reusedDrafts[persona._id], persona, goals);
+      if (dirty) {
+        setReusedDrafts((drafts) => {
+          const { [persona._id]: _discarded, ...rest } = drafts;
+          return rest;
+        });
+        toast.info(`Discarded unsaved changes to ${persona.name}.`);
+      }
+      setSelected(null);
+    },
+    [reusedDrafts]
   );
 
   const personasAvailableToAdd = useMemo(
@@ -1214,7 +1273,7 @@ export function NewSwarmConfirmStep({
                             }
                             avatarShape={persona.avatarShape}
                             avatarPalette={persona.avatarPalette}
-                            onClose={() => setSelected(null)}
+                            onClose={() => discardReused(persona, goals)}
                             onChangeName={(name) =>
                               patchReusedDraft(persona, goals, { name })
                             }
@@ -1264,56 +1323,17 @@ export function NewSwarmConfirmStep({
             + Add persona
           </button>
           {personasAvailableToAdd.length > 0 ? (
-            <Popover
+            // Add-only: what is already attached is dropped from the list, and
+            // detaching is the card's own Remove.
+            <PersonaPickerPopover
+              personas={personasAvailableToAdd}
               open={addExistingOpen}
               onOpenChange={setAddExistingOpen}
-            >
-              <PopoverTrigger asChild>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  data-testid="new-swarm-confirm-add-existing"
-                >
-                  <Plus className="mr-1.5 size-4" />
-                  Add existing personas
-                </Button>
-              </PopoverTrigger>
-              <PopoverContent align="start" className="w-80 p-1">
-                <div
-                  role="group"
-                  aria-label="Add existing personas"
-                  className="max-h-72 space-y-0.5 overflow-y-auto"
-                >
-                  {personasAvailableToAdd.map((persona) => (
-                    <button
-                      key={persona._id}
-                      type="button"
-                      aria-label={`Add ${persona.name}`}
-                      onClick={() => onAddReused(persona._id)}
-                      className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent/60"
-                    >
-                      <PersonaPixelAvatar
-                        seed={persona._id}
-                        shapeIndex={persona.avatarShape}
-                        paletteIndex={persona.avatarPalette}
-                        size="sm"
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="block truncate font-medium text-foreground">
-                          {persona.name}
-                        </span>
-                        {persona.role ? (
-                          <span className="block truncate text-xs text-muted-foreground">
-                            {persona.role}
-                          </span>
-                        ) : null}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </PopoverContent>
-            </Popover>
+              groupLabel="Add existing personas"
+              triggerSize="sm"
+              triggerTestId="new-swarm-confirm-add-existing"
+              mode={{ kind: "add", onAdd: onAddReused }}
+            />
           ) : null}
         </div>
 
