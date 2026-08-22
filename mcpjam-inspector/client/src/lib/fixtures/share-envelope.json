@@ -44,6 +44,7 @@
     "workspaceId": "jd7…",
     "projectId": "jd7…",
     "mode": "anyone_with_link",
+    "maxShareMode": "anyone_with_link",
     "policyVersion": 1,
     "inviteEpoch": 1,
     "linkGrantEpoch": 1,
