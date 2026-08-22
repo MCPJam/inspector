@@ -234,6 +234,8 @@ export function registerCloudLinkCommands(cloud: Command): void {
         const selector = resolveProjectSelector({
           flagProject: project,
           ignoreLink: true,
+          emptyFlagMessage:
+            "Project argument cannot be empty. Omit it to use MCPJAM_PROJECT or automatic selection.",
         });
 
         const result = await runPlatformOperation(

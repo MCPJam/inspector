@@ -89,6 +89,19 @@ test("empty flag and MCPJAM_PROJECT are usage errors, not automatic", () => {
       /--project cannot be empty/.test(error.message)
   );
   assert.throws(
+    () =>
+      resolveProjectSelector({
+        flagProject: "  ",
+        emptyFlagMessage:
+          "Project argument cannot be empty. Omit it to use MCPJAM_PROJECT or automatic selection.",
+      }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      error.exitCode === 2 &&
+      /Project argument cannot be empty/.test(error.message) &&
+      !/--project/.test(error.message)
+  );
+  assert.throws(
     () => resolveProjectSelector({ env: { MCPJAM_PROJECT: "" } }),
     (error: unknown) =>
       error instanceof CliError &&

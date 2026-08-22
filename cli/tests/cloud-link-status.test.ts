@@ -367,6 +367,13 @@ test("cloud link --here writes in cwd; --remove deletes the nearest file", async
   }
 });
 
+test("cloud link empty project argument is a usage error", async () => {
+  const run = await runCli(["cloud", "link", "   ", "--format", "json"]);
+  assert.equal(run.exitCode, 2);
+  assert.match(run.stderr, /Project argument cannot be empty/);
+  assert.doesNotMatch(run.stderr, /--project cannot be empty/);
+});
+
 test("cloud link --remove rejects a project argument", async () => {
   const run = await runCli([
     "cloud",

@@ -35,6 +35,11 @@ export type ProjectCloudScope = Extract<CloudScope, { kind: "project" }>;
 
 export type ResolveProjectSelectorOptions = {
   flagProject?: string | null;
+  /**
+   * Override the empty-`--project` usage text. `cloud link` has a positional
+   * project argument, not `--project`, so it must name that argument.
+   */
+  emptyFlagMessage?: string;
   inputProject?: string | null;
   env?: NodeJS.ProcessEnv;
   ignoreLink?: boolean;
@@ -60,7 +65,8 @@ export function resolveProjectSelector(
       kind: "project",
       selector: requireNonEmpty(
         options.flagProject,
-        "Option --project cannot be empty. Omit it to use MCPJAM_PROJECT, a project link, or automatic selection."
+        options.emptyFlagMessage ??
+          "Option --project cannot be empty. Omit it to use MCPJAM_PROJECT, a project link, or automatic selection."
       ),
       source: "flag",
     };
