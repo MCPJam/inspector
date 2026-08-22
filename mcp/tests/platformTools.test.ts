@@ -210,6 +210,9 @@ const PLAIN_TOOLS = [
   "upsert_user_testing_member",
   "remove_user_testing_member",
   "rebind_user_testing_scenario",
+  "get_share_settings",
+  "set_share_mode",
+  "rotate_share_link",
   "search_registry_directory",
   "get_registry_directory_server",
   "list_registry_directory_sources",
@@ -436,6 +439,9 @@ describe("platform tool registration", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "get_share_settings",
+      "set_share_mode",
+      "rotate_share_link",
       "search_registry_directory",
       "get_registry_directory_server",
       "list_registry_directory_sources",
@@ -557,6 +563,7 @@ describe("platform tool registration", () => {
       "set_user_testing_guest_execution",
       "upsert_user_testing_member",
       "rebind_user_testing_scenario",
+      "set_share_mode",
     ]);
     // Destructive AND not safe to repeat — for opposite reasons: the soft
     // deletes 404 on a retry, the rotation mints another link.
@@ -584,6 +591,7 @@ describe("platform tool registration", () => {
       "unpublish_scenario",
       // Rotating invalidates every copy of the share link that anyone holds.
       "rotate_user_testing_link",
+      "rotate_share_link",
       "remove_user_testing_member",
       "uninstall_registry_server",
     ]);

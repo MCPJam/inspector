@@ -126,7 +126,12 @@ export interface OrganizationSeatPaymentIntent {
   email: string;
   role: "guest" | "member";
   source: string;
-  status: "pending" | "requires_action" | "failed" | "canceled";
+  status:
+    | "pending"
+    | "requires_action"
+    | "cleanup_pending"
+    | "failed"
+    | "canceled";
   /**
    * The charge ended terminally and the invitee is still waiting. Only ever
    * true for charges raised automatically at signup — when an owner starts one
@@ -144,6 +149,11 @@ export type SeatPaymentResult =
   | { status: "paid"; seatQuantity: number; stripeInvoiceId?: string }
   | { status: "failed"; stripeInvoiceId?: string; reason?: string }
   | { status: "noop"; reason: string };
+
+export type SeatPaymentCancelResult = {
+  voided: boolean;
+  outcome: "canceled" | "deferred" | "paid" | "not_active";
+};
 
 export interface PlanCatalogEntry {
   plan: OrganizationPlan;
@@ -503,6 +513,7 @@ export function useOrganizationBilling(
                 organizationId,
                 seatPaymentIntentId: activeSeatPaymentIntentId,
                 stripeInvoiceId: startResult.stripeInvoiceId,
+                terminalStatus: "failed",
               } as any);
             } catch (cancelError) {
               console.warn(
@@ -612,27 +623,27 @@ export function useOrganizationBilling(
   }, [finishSeatPayment, organizationId, retrySeatPaymentMutation]);
 
   const cancelSeatPayment = useCallback(
-    async (seatPaymentIntentId?: string): Promise<void> => {
+    async (seatPaymentIntentId?: string): Promise<SeatPaymentCancelResult> => {
       if (!organizationId) throw new Error("Organization is required");
       const activeSeatPaymentIntentId =
         seatPaymentIntentId ?? activeSeatPaymentIntent?._id;
       if (!activeSeatPaymentIntentId) {
-        return;
+        return { voided: false, outcome: "not_active" };
       }
       if (seatPaymentCompletionInFlightRef.current) {
-        return;
+        return { voided: false, outcome: "not_active" };
       }
 
       setIsCancelingSeatPayment(true);
       seatPaymentCancelVersionRef.current += 1;
       setError(null);
       try {
-        await cancelSeatPaymentAction({
+        return (await cancelSeatPaymentAction({
           organizationId,
           seatPaymentIntentId: activeSeatPaymentIntentId,
           stripeInvoiceId:
             activeSeatPaymentIntent?.stripeInvoiceId ?? undefined,
-        } as any);
+        } as any)) as SeatPaymentCancelResult;
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to cancel seat payment";
