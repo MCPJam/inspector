@@ -751,6 +751,48 @@ describe("v1 eval-edit routes", () => {
     expect(suiteReads).toBeGreaterThanOrEqual(2);
   });
 
+  it("PATCH hosts.servers resolves a projectServerId as well as a bound name", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "hosts:listHosts")
+        return Promise.resolve([{ hostId: "host_1", name: "Prod" }]);
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      {
+        hosts: [{ host: "host_1", servers: ["srv_1"] }],
+      }
+    );
+    expect(res.status).toBe(200);
+    const hostCall = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite" && c[1].hostAttachments
+    );
+    expect(hostCall![1].hostAttachments).toEqual([
+      { namedHostId: "host_1", selectedServerIds: ["srv_1"] },
+    ]);
+  });
+
+  it("PATCH suite rejects the hostIds/servers near-miss (400, names the keys)", async () => {
+    // The reported silent no-op: undeclared top-level keys used to 200 with
+    // hosts: [] and zero mutations. Strict body + path-aware errors name them.
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      {
+        hostIds: ["host_1"],
+        servers: ["Excalidraw (App)"],
+      }
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code?: string; message?: string };
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toContain("hostIds");
+    expect(body.message).toContain("servers");
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
   it("PATCH execution config round-trips getSuiteConfig and preserves servers", async () => {
     const res = await request(
       "PATCH",
@@ -2710,5 +2752,80 @@ describe("v1 eval-edit routes", () => {
         (c) => c[0] === "testSuites:createTestCases"
       )
     ).toBe(false);
+  });
+
+  describe("strict write bodies", () => {
+    const PROMPT_STEP = { id: "s1", kind: "prompt", prompt: "hi" };
+
+    it.each([
+      [
+        "PATCH /eval-suites/:suiteId",
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { name: "Renamed", hostz: [] },
+        "hostz",
+      ],
+      [
+        "PATCH /eval-suites/:suiteId/schedule",
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: false, interval: 60 },
+        "interval",
+      ],
+      [
+        "POST /cases",
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases",
+        { title: "t", steps: [PROMPT_STEP], kind: "prompt" },
+        "kind",
+      ],
+      [
+        "POST /cases/batch",
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+        {
+          cases: [{ title: "t", steps: [PROMPT_STEP] }],
+          dryRun: true,
+        },
+        "dryRun",
+      ],
+      [
+        "PATCH /cases/:caseId",
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+        { title: "n", query: "old field" },
+        "query",
+      ],
+      [
+        "POST /cases/generate",
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+        { mode: "normal", count: 5 },
+        "count",
+      ],
+    ] as const)(
+      "rejects an unknown key on %s (400, names the key, no mutation)",
+      async (_label, method, path, body, key) => {
+        const res = await request(method, path, { ...body });
+        expect(res.status).toBe(400);
+        const json = (await res.json()) as { code?: string; message?: string };
+        expect(json.code).toBe("VALIDATION_ERROR");
+        expect(json.message).toContain(key);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      }
+    );
+
+    it("names the field path on a typed-wrong declared key", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { name: 12 }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toMatch(/^name:/);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
   });
 });
