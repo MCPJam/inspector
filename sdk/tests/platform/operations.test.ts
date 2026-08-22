@@ -1233,6 +1233,23 @@ describe("createEvalSuiteOperation", () => {
     ).toBe(true);
   });
 
+  it("rejects an unknown top-level key rather than stripping it", () => {
+    const parsed = createEvalSuiteOperation.inputSchema.safeParse({
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+      cases: [
+        { title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+      ],
+      hostz: [],
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.error.issues.some((issue) => /hostz/.test(issue.message))).toBe(
+      true
+    );
+  });
+
   it("requires a name, at least one server, and at least one case", () => {
     expect(createEvalSuiteOperation.inputSchema.safeParse({}).success).toBe(
       false

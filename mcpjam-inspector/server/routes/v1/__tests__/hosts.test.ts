@@ -371,6 +371,21 @@ describe("v1 host routes", () => {
       );
     });
 
+    it("rejects an unknown key rather than silently dropping it (400)", async () => {
+      const res = await request("POST", "/api/v1/projects/p1/hosts", {
+        body: {
+          name: "Alpha",
+          config: { modelId: "gpt-4o-mini" },
+          hostIds: ["h1"],
+        },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("hostIds");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
     it("rejects a body with neither template nor config (400)", async () => {
       const res = await request("POST", "/api/v1/projects/p1/hosts", {
         body: { name: "Alpha" },
@@ -522,6 +537,17 @@ describe("v1 host routes", () => {
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
 
+    it("rejects an unknown key rather than silently dropping it (400)", async () => {
+      const res = await request("PATCH", "/api/v1/projects/p1/hosts/h1", {
+        body: { name: "Renamed", theme: "dark" },
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("theme");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
     describe("the model invariant", () => {
       it.each([
         ["empty", ""],
@@ -579,6 +605,21 @@ describe("v1 host routes", () => {
     });
   });
 
+  describe("POST servers", () => {
+    it("rejects an unknown key rather than silently dropping it (400)", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/hosts/h1/servers",
+        { body: { serverIds: ["s1"], serverNames: ["Echo"] } }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("serverNames");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+
   describe("POST duplicate", () => {
     it("refuses to duplicate a modelless host (400)", async () => {
       // Duplication MINTS a host, so it is held to the same invariant as
@@ -594,6 +635,20 @@ describe("v1 host routes", () => {
       );
       expect(res.status).toBe(400);
       expect(JSON.stringify(await res.json())).toMatch(/does not pin a model/i);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unknown key rather than silently dropping it (400)", async () => {
+      mockQuery({ "hosts:getHost": DETAIL_ROW });
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/hosts/h1/duplicate",
+        { body: { name: "Copy", force: true } }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("force");
       expect(convexMutationMock).not.toHaveBeenCalled();
     });
 

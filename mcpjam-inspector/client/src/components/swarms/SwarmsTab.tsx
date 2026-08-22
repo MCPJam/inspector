@@ -53,10 +53,10 @@ import { toast } from "@/lib/toast";
 import { isNamedEnvironment } from "@/lib/environment-label";
 import { cn } from "@/lib/utils";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { EditableTitle } from "@/components/evals/EditableTitle";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
+import { SectionLabel } from "@/components/shared/section-label";
 import { JourneyNetworkBackdrop } from "@/components/swarms/journey-network-backdrop";
 import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
 import {
@@ -151,6 +151,9 @@ import type {
 // data dump. Personas/journeys are usually few; the cap just bounds the
 // pathological case.
 const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
+
+/** Above this, the library is long enough that scanning it needs a filter. */
+const SEARCHABLE_PERSONA_COUNT = 5;
 const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
 
 const SWARM_VIEW_OPTIONS = [
@@ -429,6 +432,23 @@ export function SwarmsTab({
     () => personas?.find((p) => p._id === selectedPersonaId) ?? null,
     [personas, selectedPersonaId]
   );
+
+  /**
+   * Personas library search (BB-123). Filters the rail only — the selection
+   * survives a search that hides it, so typing never silently swaps which
+   * persona the editor (or the agent bridge) is pointed at.
+   */
+  const [personaSearch, setPersonaSearch] = useState("");
+  const personaList = useMemo(() => personas ?? [], [personas]);
+  const visiblePersonas = useMemo(() => {
+    const query = personaSearch.trim().toLowerCase();
+    if (!query) return personaList;
+    return personaList.filter(
+      (persona) =>
+        persona.name.toLowerCase().includes(query) ||
+        persona.role.toLowerCase().includes(query)
+    );
+  }, [personaList, personaSearch]);
 
   // Always land on someone — pick the first list entry when none is selected or
   // the current id no longer exists (deleted / stale deep link).
@@ -980,12 +1000,12 @@ export function SwarmsTab({
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
-          onEditExistingPersona={(personaRefId) => {
-            setSelectedPersonaId(personaRefId);
-            setViewMode("journeys");
-            navigate(
-              `${routePaths.swarms}?persona=${encodeURIComponent(personaRefId)}`
-            );
+          // Raw, NOT `savePersonaField`: that helper toasts and rethrows for
+          // the Personas library, where its toast is the only error surface.
+          // Confirm owns the message for its own panel, so routing through it
+          // would show the same error twice.
+          onSaveExistingPersona={async (personaRefId, patch) => {
+            await updatePersona({ personaRefId, ...patch } as any);
           }}
           onSetInsightsTuning={async (tuning) => {
             await setInsightsTuning({ projectId, tuning } as any);
@@ -1077,6 +1097,24 @@ export function SwarmsTab({
                   </Button>
                 </div>
               </div>
+              {/* Only once the list is long enough to hunt through — a search
+                  box over three rows is furniture, not a tool. Kept while a
+                  query is active regardless: deleting a persona can drop the
+                  list under the threshold, and hiding the input then would
+                  leave the filter applied with nothing to clear it. */}
+              {personaList.length > SEARCHABLE_PERSONA_COUNT ||
+              personaSearch.trim().length > 0 ? (
+                <div className="border-b px-3 py-2">
+                  <Input
+                    value={personaSearch}
+                    onChange={(event) => setPersonaSearch(event.target.value)}
+                    placeholder="Search personas…"
+                    aria-label="Search personas"
+                    className="h-8"
+                    data-testid="swarm-persona-search"
+                  />
+                </div>
+              ) : null}
               <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
                 {personas === undefined ? (
                   <div className="p-4 text-sm text-muted-foreground">
@@ -1089,11 +1127,11 @@ export function SwarmsTab({
                     </div>
                     <div className="space-y-1">
                       <p className="text-sm font-semibold text-foreground">
-                        No personas yet
+                        No saved personas yet
                       </p>
                       <p className="max-w-xs text-xs text-muted-foreground">
-                        Create a persona to simulate user goals across your
-                        clients.
+                        Personas you save here are the ones you send into
+                        swarms.
                       </p>
                     </div>
                     <Button
@@ -1108,11 +1146,18 @@ export function SwarmsTab({
                       ) : (
                         <Plus className="h-3.5 w-3.5" />
                       )}
-                      Create your first persona
+                      Create a persona
                     </Button>
                   </div>
+                ) : visiblePersonas.length === 0 ? (
+                  <p
+                    className="p-4 text-sm text-muted-foreground"
+                    data-testid="swarm-persona-search-empty"
+                  >
+                    No personas match &ldquo;{personaSearch.trim()}&rdquo;.
+                  </p>
                 ) : (
-                  personas.map((p) => {
+                  visiblePersonas.map((p) => {
                     const selected = p._id === selectedPersonaId;
                     return (
                       <div
@@ -1203,7 +1248,7 @@ export function SwarmsTab({
                             : "flex items-center justify-between"
                         )}
                       >
-                        <h3 className="text-sm font-semibold">Goals</h3>
+                        <SectionLabel>Goals</SectionLabel>
                         {journeyFormOpen ? null : (
                           <Button
                             type="button"
@@ -1559,6 +1604,19 @@ function RunSessionsView({
 
 // ── persona detail (evals-style editable header) ─────────────────────────────
 
+/**
+ * Persona identity + context editor for the Personas library.
+ *
+ * Mirrors the field groups Confirm personas uses — identity, Persona, Use cases
+ * & context — so a persona reads the same in the library as it does mid-flow
+ * (BB-123). Goals follow below, owned by the caller.
+ *
+ * No Save button: every field commits on blur, which is what "direct fields"
+ * means here and matches how notes already behaved. A field that failed to
+ * save rolls back to the stored value rather than showing a phantom edit.
+ * `Delete persona` is the only button, since it is the one action that is not
+ * an edit.
+ */
 function PersonaDetailHeader({
   persona,
   running,
@@ -1578,80 +1636,137 @@ function PersonaDetailHeader({
   }) => Promise<void>;
   onDelete: () => Promise<void>;
 }) {
+  const [name, setName] = useState(persona.name);
+  const [role, setRole] = useState(persona.role);
   const [notes, setNotes] = useState(persona.notes ?? "");
 
+  // Re-seed when the selection changes, or when the stored row moves under us
+  // (another tab, or the AI generator writing into this persona).
+  useEffect(() => {
+    setName(persona.name);
+  }, [persona._id, persona.name]);
+  useEffect(() => {
+    setRole(persona.role);
+  }, [persona._id, persona.role]);
   useEffect(() => {
     setNotes(persona.notes ?? "");
   }, [persona._id, persona.notes]);
 
-  const persistNotes = async () => {
-    const next = notes.trim();
-    const prev = (persona.notes ?? "").trim();
-    if (next === prev) return;
+  /**
+   * Commit one field on blur. Compares trimmed values so whitespace-only
+   * churn never writes, and rolls the local value back if the write throws —
+   * leaving the edit on screen would claim a save that did not happen.
+   *
+   * The rollback is guarded by a per-field sequence number. Blur, edit again,
+   * blur again before the first write settles, and a late failure from the
+   * FIRST would otherwise reset the field to the stale stored value and throw
+   * away the newer edit — the exact loss the rollback exists to prevent.
+   */
+  const commitSeqRef = useRef<Record<string, number>>({});
+  const commit = async (
+    field: "name" | "role" | "notes",
+    next: string,
+    stored: string,
+    reset: (value: string) => void
+  ) => {
+    const trimmed = next.trim();
+    if (trimmed === stored.trim()) return;
+    // A persona needs a name; an emptied field is a slip, not an intent.
+    if (field === "name" && trimmed.length === 0) {
+      reset(stored);
+      return;
+    }
+    const seq = (commitSeqRef.current[field] ?? 0) + 1;
+    commitSeqRef.current[field] = seq;
     try {
-      await onSave({ notes: next });
+      await onSave({ [field]: trimmed });
     } catch {
-      setNotes(persona.notes ?? "");
+      // Stale failure: a newer commit for this field has already started, and
+      // its value is what is on screen.
+      if (commitSeqRef.current[field] !== seq) return;
+      reset(stored);
     }
   };
 
   return (
-    <div className="mb-4 flex items-start justify-between gap-4">
-      <div className="flex min-w-0 flex-1 items-start gap-3">
-        <PersonaAvatarLookPicker
-          seed={persona._id}
-          avatarShape={persona.avatarShape}
-          avatarPalette={persona.avatarPalette}
-          state={running ? "running" : "idle"}
-          onSave={(look) => onSave(look)}
-        />
-        <div className="min-w-0 flex-1">
-          <EditableTitle
-            value={persona.name}
-            onSave={(name) => onSave({ name })}
-            startInEditMode={autoEditName}
-            variant="h2"
-            fullWidth
-            truncate={false}
-            placeholder="Persona name"
-            className="-ml-2 px-2 text-lg font-semibold tracking-tight sm:text-xl"
-            inputClassName="text-lg font-semibold tracking-tight sm:text-xl"
+    <div className="mb-5 space-y-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <PersonaAvatarLookPicker
+            seed={persona._id}
+            avatarShape={persona.avatarShape}
+            avatarPalette={persona.avatarPalette}
+            state={running ? "running" : "idle"}
+            onSave={(look) => onSave(look)}
           />
-          <EditableTitle
-            value={persona.role}
-            onSave={(role) => onSave({ role })}
-            variant="text"
-            fullWidth
-            truncate={false}
-            placeholder="Role"
-            className="-ml-2 mt-0.5 px-2 font-normal text-muted-foreground"
-            inputClassName="font-normal text-muted-foreground"
-          />
-          <TextareaAutosize
-            aria-label="Notes / personality"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            onBlur={() => void persistNotes()}
-            minRows={1}
-            maxRows={4}
-            placeholder="Add personality notes…"
-            className={cn(
-              "mt-2 min-h-0 resize-none border-0 bg-transparent px-0 py-0 text-sm",
-              "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
-              "focus-visible:border-0 focus-visible:ring-0"
-            )}
-          />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-xl font-semibold tracking-tight text-foreground">
+              {persona.name}
+            </p>
+            {persona.role ? (
+              <p className="truncate text-sm text-muted-foreground">
+                {persona.role}
+              </p>
+            ) : null}
+          </div>
+        </div>
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          className="shrink-0 text-destructive hover:text-destructive"
+          onClick={() => void onDelete()}
+        >
+          Delete persona
+        </Button>
+      </div>
+
+      <div className="space-y-1.5">
+        <SectionLabel>Persona</SectionLabel>
+        <div className="space-y-2.5">
+          <div className="space-y-1">
+            <Label htmlFor="persona-name" className="text-xs">
+              Name
+            </Label>
+            <Input
+              id="persona-name"
+              value={name}
+              autoFocus={autoEditName}
+              placeholder="Persona name"
+              onChange={(event) => setName(event.target.value)}
+              onBlur={() => void commit("name", name, persona.name, setName)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="persona-role" className="text-xs">
+              Role
+            </Label>
+            <Input
+              id="persona-role"
+              value={role}
+              placeholder="Role"
+              onChange={(event) => setRole(event.target.value)}
+              onBlur={() => void commit("role", role, persona.role, setRole)}
+            />
+          </div>
         </div>
       </div>
-      <Button
-        type="button"
-        size="sm"
-        variant="ghost"
-        className="shrink-0 text-muted-foreground hover:text-destructive"
-        onClick={() => void onDelete()}
-      >
-        Delete persona
-      </Button>
+
+      <div className="space-y-1.5">
+        <SectionLabel>Use cases &amp; context</SectionLabel>
+        <TextareaAutosize
+          aria-label="Use cases and context"
+          value={notes}
+          onChange={(event) => setNotes(event.target.value)}
+          onBlur={() =>
+            void commit("notes", notes, persona.notes ?? "", setNotes)
+          }
+          minRows={3}
+          maxRows={10}
+          placeholder="Who they are and how they show up…"
+          className="resize-none text-sm leading-relaxed"
+        />
+      </div>
     </div>
   );
 }
