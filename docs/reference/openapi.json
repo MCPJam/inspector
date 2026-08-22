@@ -9261,6 +9261,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "503": {
+            "description": "The saved server's address could not be resolved."
           }
         }
       }
@@ -9398,7 +9401,7 @@
           "Conformance runs"
         ],
         "summary": "Fetch a bounded conformance report projection",
-        "description": "Failing checks only, failed before could-not-run, capped at 50. `pending` on a check means this profile reported it but did not score it. `404` when the run has no stored report.",
+        "description": "Failing checks only, failed before could-not-run, capped at 50. `totalCases` is every case; `totalFailingCases` is the failing population `truncated` is computed from. `pending` on a check means this profile reported it but did not score it. `404` when the run has no stored report.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -9433,6 +9436,9 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "description": "The stored report could not be read from storage."
           }
         }
       }

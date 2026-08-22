@@ -399,6 +399,8 @@ describe("v1 persisted conformance runs", () => {
       expect(res.status).toBe(200);
       const body = (await res.json()) as Record<string, any>;
       expect(body.totalCases).toBe(4);
+      expect(body.totalFailingCases).toBe(3);
+      expect(body.truncated).toBe(false);
       expect(body.checks.map((check: { id: string }) => check.id)).toEqual([
         "wire-schema-valid",
         "auth-fail",

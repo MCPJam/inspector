@@ -95,6 +95,8 @@ export type ConformanceReportProjection = {
   pending: number;
   checks: ConformanceReportCheck[];
   totalCases: number;
+  /** Failed + could-not-run count, the denominator behind `truncated`. */
+  totalFailingCases: number;
   truncated: boolean;
   profiles: ConformanceReportProfile[];
 };
@@ -346,6 +348,7 @@ export function projectConformanceReports(
     pending: run.pending ?? 0,
     checks,
     totalCases: all.length,
+    totalFailingCases: failing.length,
     truncated: failing.length > checks.length,
     profiles,
   };

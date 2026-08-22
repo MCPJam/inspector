@@ -2677,6 +2677,8 @@ export interface PlatformConformanceReport {
   pending: number;
   checks: PlatformConformanceReportCheck[];
   totalCases: number;
+  /** Failed + could-not-run count, the denominator behind `truncated`. */
+  totalFailingCases: number;
   truncated: boolean;
   profiles: PlatformConformanceReportProfile[];
 }
