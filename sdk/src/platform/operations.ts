@@ -9536,7 +9536,22 @@ export const installRegistryDirectoryServerOperation: PlatformOperation<
       .optional()
       .describe(PROJECT_SELECTOR_DESCRIPTION),
     catalogServerId: z.string().trim().min(1),
-    endpointUrl: z.string().trim().min(1).optional(),
+    endpointUrl: z
+      .string()
+      .trim()
+      .min(1)
+      .refine(
+        (value) => {
+          try {
+            const parsed = new URL(value);
+            return parsed.protocol === "http:" || parsed.protocol === "https:";
+          } catch {
+            return false;
+          }
+        },
+        { message: "Must be an http:// or https:// URL." },
+      )
+      .optional(),
     expectedContentHash: z
       .string()
       .trim()
@@ -9598,6 +9613,17 @@ export const installRegistryServerOperation: PlatformOperation<
       .string()
       .trim()
       .min(1)
+      .refine(
+        (value) => {
+          try {
+            const parsed = new URL(value);
+            return parsed.protocol === "http:" || parsed.protocol === "https:";
+          } catch {
+            return false;
+          }
+        },
+        { message: "Must be an http:// or https:// URL." },
+      )
       .optional()
       .describe(
         "Display-only: the card's endpoint, resolved at proposal time so the " +

@@ -2073,6 +2073,19 @@ describe("operation catalog consistency", () => {
         expectedUpdatedAt: 1_700_000_000_000,
       }).success
     ).toBe(true);
+    expect(
+      installRegistryServerOperation.inputSchema.safeParse({
+        registryServerId: "rs",
+        endpointUrl: "file:///etc/passwd",
+        expectedUpdatedAt: 1_700_000_000_000,
+      }).success
+    ).toBe(false);
+    expect(
+      installRegistryDirectoryServerOperation.inputSchema.safeParse({
+        catalogServerId: "cs",
+        endpointUrl: "javascript:alert(1)",
+      }).success
+    ).toBe(false);
   });
 
   it("marks every operation read-only except the run/call/tunnel writes", () => {
