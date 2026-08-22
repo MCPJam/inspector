@@ -49,6 +49,10 @@ import {
   type ProtocolVersionPin,
   type SuiteState,
 } from "@/hooks/use-conformance-run";
+import {
+  PersistConformanceRun,
+  type ConformancePersistConfig,
+} from "@/components/conformance/PersistConformanceRun";
 
 /** One row in a suite's "what this will run" preview, before any run. */
 interface CatalogEntry {
@@ -484,10 +488,17 @@ function SuiteSection({
   );
 }
 
-function ConformanceContent({ server }: { server: ServerWithName }) {
+function ConformanceContent({
+  server,
+  persist,
+}: {
+  server: ServerWithName;
+  persist?: ConformancePersistConfig;
+}) {
   // Run state, per-suite scores and the pooled headline all live in the shared
   // hook — score.mcpjam.com runs the same four suites and must pool them the
   // same way. Rendering stays here.
+  const snapshot = useConformanceRun({ server });
   const {
     protocol,
     apps,
@@ -504,7 +515,7 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
     pooledScore,
     oauthNotScored,
     isRunning,
-  } = useConformanceRun({ server });
+  } = snapshot;
 
   const protocolChecks = useMemo(
     () => protocolCatalog(versionPin),
@@ -513,6 +524,13 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      {persist ? (
+        <PersistConformanceRun
+          persist={persist}
+          server={server}
+          snapshot={snapshot}
+        />
+      ) : null}
       <div className="space-y-1 border-b border-border/50 pb-4">
         <h2 className="text-lg font-semibold">Conformance</h2>
         <p className="text-sm text-muted-foreground">
@@ -697,7 +715,13 @@ function ConformanceContent({ server }: { server: ServerWithName }) {
   );
 }
 
-export function ConformanceTab({ server }: { server?: ServerWithName | null }) {
+export function ConformanceTab({
+  server,
+  persist,
+}: {
+  server?: ServerWithName | null;
+  persist?: ConformancePersistConfig;
+}) {
   // In hosted mode `selectedMCPConfig` can arrive as a stub with falsy name
   // and/or missing config while the project is still hydrating — treat any
   // non-connected shape as "no server selected" so the panel never runs
@@ -716,7 +740,7 @@ export function ConformanceTab({ server }: { server?: ServerWithName | null }) {
 
   return (
     <div className="h-full overflow-hidden p-4 lg:p-6">
-      <ConformanceContent key={server.name} server={server} />
+      <ConformanceContent key={server.name} server={server} persist={persist} />
     </div>
   );
 }

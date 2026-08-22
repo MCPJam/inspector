@@ -31,10 +31,12 @@ export type ArgumentMismatch = EvalArgumentMismatch;
 export type OutOfOrderToolCall = EvalOutOfOrderToolCall;
 
 /**
- * The emulated skill tool names, across BOTH delivery paths:
- *   - cloud / pinned: `listSkills`, `loadSkill` (`cloud-skill-tools.ts`)
- *   - local FS:       `loadSkill`, `listSkillFiles`, `readSkillFile`
- *     (`skill-tools.ts`; the local path lists skills in the prompt, not a tool)
+ * The emulated skill tool names.
+ *
+ * Static paths (live cloud, pinned, effective, local FS) list the catalog in
+ * the system prompt and advertise `loadSkill` (+ file tools where wired).
+ * `listSkills` remains only on the SEP-2640 wrapper (MCP-server skills) and
+ * is kept in this set so stored/old traces still match.
  *
  * The matcher exempts calls to these from tool-call expectations (a skill LOAD
  * is agent housekeeping, not a task action), so a `maxExtraToolCalls: 0` case
@@ -61,8 +63,9 @@ export function isSkillToolName(name: string): boolean {
  * Whether skill tools are active in a prepared tool set — true when ANY skill
  * tool is advertised. Runners pass the result as `skillToolsActive` so the
  * matcher only filters skill calls when skills were genuinely in play (never for
- * a suite that happens to have no skills). Robust across both paths: cloud
- * advertises `listSkills`, local FS advertises `loadSkill`.
+ * a suite that happens to have no skills). Robust across paths: static
+ * surfaces advertise `loadSkill`; the SEP-2640 wrapper may also advertise
+ * `listSkills`.
  */
 export function hasSkillTools(toolNames: Iterable<string>): boolean {
   for (const name of toolNames) {
