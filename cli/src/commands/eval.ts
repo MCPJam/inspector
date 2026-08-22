@@ -523,12 +523,40 @@ function loadBodyObject(options: {
   return base as Record<string, unknown>;
 }
 
+/**
+ * Operation schemas still require `project`. Cloud CLI fills that later
+ * from `--project` / env / link / automatic, so callers that validate
+ * before `executeOp` must drop the requirement.
+ */
+function schemaWithOptionalProject<TInput>(
+  schema: PlatformOperation<TInput, unknown>["inputSchema"]
+): PlatformOperation<TInput, unknown>["inputSchema"] {
+  const objectSchema = schema as {
+    shape?: Record<string, unknown>;
+    partial?: (
+      mask: { project: true }
+    ) => PlatformOperation<TInput, unknown>["inputSchema"];
+  };
+  if (
+    objectSchema.shape !== undefined &&
+    "project" in objectSchema.shape &&
+    typeof objectSchema.partial === "function"
+  ) {
+    return objectSchema.partial({ project: true });
+  }
+  return schema;
+}
+
 /** Validate a merged input object against an operation's schema (usage error on failure). */
 function validateOpInput<TInput>(
   op: PlatformOperation<TInput, unknown>,
-  raw: unknown
+  raw: unknown,
+  extras: { projectOptional?: boolean } = {}
 ): TInput {
-  const parsed = op.inputSchema.safeParse(raw);
+  const schema = extras.projectOptional
+    ? schemaWithOptionalProject(op.inputSchema)
+    : op.inputSchema;
+  const parsed = schema.safeParse(raw);
   if (!parsed.success) {
     const detail = parsed.error.issues
       .map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
@@ -2019,7 +2047,7 @@ export function registerEvalCommands(program: Command): void {
         options.judgeThreshold !== undefined
           ? parseJudgeThreshold(options.judgeThreshold)
           : undefined;
-      await executeOp(
+      const input = validateOpInput(
         requestEvalRunJudgeOperation,
         {
           runId: options.run,
@@ -2030,7 +2058,12 @@ export function registerEvalCommands(program: Command): void {
             ? { model: options.judgeModel }
             : {}),
           ...(threshold !== undefined ? { threshold } : {}),
-        } as Parameters<typeof requestEvalRunJudgeOperation.execute>[0],
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        requestEvalRunJudgeOperation,
+        input,
         options,
         command
       );
@@ -2122,7 +2155,7 @@ export function registerEvalCommands(program: Command): void {
       },
       command
     ) => {
-      await executeOp(
+      const input = validateOpInput(
         listEvalRunIterationsOperation,
         {
           runId: options.run,
@@ -2131,7 +2164,12 @@ export function registerEvalCommands(program: Command): void {
           ...(options.limit !== undefined
             ? { limit: Number(options.limit) }
             : {}),
-        } as Parameters<typeof listEvalRunIterationsOperation.execute>[0],
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        listEvalRunIterationsOperation,
+        input,
         options,
         command
       );
