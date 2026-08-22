@@ -51,6 +51,10 @@ so results respect the caller's project access.
 | `list_readiness_runs` | List a project's readiness runs, newest first, optionally narrowed to one publisher or server. | — |
 | `cancel_readiness_run` | Stop a readiness run that is still going. | — |
 | `get_readiness_report` | Read a finished readiness run's findings, ordered most-consequential-first and capped. | — |
+| `start_conformance_run` | Run protocol/apps/tasks conformance on a saved HTTP server. Starts a durable run and returns its id; poll for the verdict. | — |
+| `get_conformance_run` | Read one conformance run: whether it finished, the outcome, score, and pending count. | — |
+| `list_conformance_runs` | List a project's conformance runs, newest first, optionally narrowed to one saved server. | — |
+| `get_conformance_report` | Read a finished conformance run's failing checks, capped, with per-suite profile stamps. | — |
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
 | `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
