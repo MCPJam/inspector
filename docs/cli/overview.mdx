@@ -4,7 +4,10 @@ description: "Stateless MCP server probing, debugging, OAuth, and conformance fr
 icon: "terminal"
 ---
 
-The `mcpjam` CLI is a stateless tool for inspecting, debugging, and testing MCP servers from the command line or CI. It covers the full lifecycle: connectivity checks, OAuth login, MCP Apps validation, tool/resource/prompt exploration, and protocol conformance.
+The `mcpjam` CLI has two modes:
+
+- **Local MCP testing** — stateless commands for inspecting, debugging, and testing MCP servers from the command line or CI. No account required.
+- **MCPJam Cloud** — account-bound commands for managing projects, running evals, exposing tunnels, and more. All Cloud commands live under `mcpjam cloud`.
 
 ## Recommended: Use with Agent Skills
 
