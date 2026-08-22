@@ -205,6 +205,20 @@ describe("v1 write routes", () => {
   });
 
   describe("POST /eval-runs", () => {
+    it("rejects an unknown key rather than silently dropping it (400)", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        { suiteId: "suite_1", hostIds: ["h1"] }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("hostIds");
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+    });
+
     it("rejects a body with neither suiteId nor tests (400)", async () => {
       const res = await request(
         makeApp(),
@@ -1313,6 +1327,27 @@ describe("v1 write routes", () => {
       expect(((await res.json()) as { code?: string }).code).toBe(
         "VALIDATION_ERROR"
       );
+      expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects an unknown key rather than silently dropping it (400)", async () => {
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+          hostIds: ["h1"],
+        }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toContain("hostIds");
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
       expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
     });
 

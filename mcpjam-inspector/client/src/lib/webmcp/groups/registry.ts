@@ -1,7 +1,6 @@
 /**
  * Registry-screen tools: search the mirrored connector directories, and
- * install/connect, disconnect, and star servers from either catalog on the
- * screen — MCPJam's curated registry or one of those directories.
+ * install/connect servers from those directories into the current project.
  *
  * The first mount-scoped group (the Connect-screen tools are "global"-kind
  * and self-navigate; these do not): `RegistryTab` owns the command handlers
@@ -21,7 +20,7 @@ import { asOptionalString, errorResult, fromActionResult } from "./shared";
 const SERVER_NAME_PROPERTY = {
   type: "string",
   description:
-    "Server as shown on its card: display name (e.g. 'Asana'), curated registry name (e.g. 'com.asana.mcp'), or a directory entry's catalog name.",
+    "Server as shown on its card: display name (e.g. 'Asana') or a directory entry's catalog name.",
 } as const;
 
 const VARIANT_PROPERTY = {
@@ -44,7 +43,7 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
     {
       name: "ui_connect_registry_server",
       description:
-        "Install a server from either catalog on this screen — the curated registry, or the Claude directory below it — into the current project and start connecting it. Catalog entries only: for a server ALREADY in the project use ui_connect_server. It finishes in the background; watch ui_snapshot_app. Some entries are reported, not started: 'authorization_required' (it would redirect the browser) and 'endpoint_choice_required' (the URL is the user's to pick). Relay those; the user clicks Connect on the card.",
+        "Install a server from a connector directory on this screen into the current project and start connecting it. Catalog entries only: for a server ALREADY in the project use ui_connect_server. It finishes in the background; watch ui_snapshot_app. Some entries are reported, not started: 'authorization_required' (it would redirect the browser) and 'endpoint_choice_required' (the URL is the user's to pick). Relay those; the user clicks Connect on the card.",
       inputSchema: {
         type: "object",
         properties: {
@@ -170,7 +169,7 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
     {
       name: "ui_search_registry_directory",
       description:
-        "Search a mirrored connector directory beneath the curated catalog — thousands of entries, far more than the page lists. Matches names, descriptions and tool/skill names, so 'invoice' and 'create_issue' work as well as 'Linear'. Omit 'query' to browse. Two directories, one at a time; 'source' switches, omit to keep the user's view. Drives the screen's own controls, so results are what the user sees — read them from ui_snapshot_app's `directory` block, then install with ui_connect_registry_server.",
+        "Search a mirrored connector directory — thousands of entries, far more than the page lists. Matches names, descriptions and tool/skill names, so 'invoice' and 'create_issue' work as well as 'Linear'. Omit 'query' to browse. Two directories, one at a time; 'source' switches, omit to keep the user's view. Drives the screen's own controls, so results are what the user sees — read them from ui_snapshot_app's `directory` block, then install with ui_connect_registry_server.",
       inputSchema: {
         type: "object",
         properties: {

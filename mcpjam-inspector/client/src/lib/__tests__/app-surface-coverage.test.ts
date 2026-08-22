@@ -24,10 +24,7 @@ import {
   parseOrganizationSection,
   routePaths,
 } from "../app-navigation";
-import {
-  HOSTED_HASH_ALLOWED_TABS,
-  HOSTED_HASH_BLOCKED_TABS,
-} from "../hosted-tab-policy";
+import { HOSTED_HASH_BLOCKED_TABS } from "../hosted-tab-policy";
 
 const screenRoutes = APP_ROUTES.filter((r) => r.kind === "screen");
 
@@ -155,23 +152,21 @@ describe("surface manifests are model-usable", () => {
 });
 
 describe("hosted tab policy stays consistent with the manifests", () => {
-  it("every hosted policy entry names a real nav segment", () => {
+  it("names a real nav segment for every blocked tab", () => {
     // The policy filters segments; it must not name one that no longer
-    // exists, or it silently stops filtering anything.
+    // exists, or it silently stops filtering anything. This holds by
+    // construction now that the list is derived — the test guards the
+    // derivation, not a hand-kept copy of it.
     const segments = new Set(listAppSurfaceNavSegments());
-    for (const tab of [
-      ...HOSTED_HASH_ALLOWED_TABS,
-      ...HOSTED_HASH_BLOCKED_TABS,
-    ]) {
+    for (const tab of HOSTED_HASH_BLOCKED_TABS) {
       expect(segments.has(tab), `policy tab "${tab}"`).toBe(true);
     }
   });
 
-  it("hostedBlocked manifests match the blocked policy list exactly", () => {
-    const blockedByManifest = APP_SURFACES.filter((s) => s.hostedBlocked)
-      .flatMap((s) => s.navSegments)
-      .sort();
-    expect(blockedByManifest).toEqual([...HOSTED_HASH_BLOCKED_TABS].sort());
+  it("blocks hosted surfaces sparingly", () => {
+    // A growing block list means screens are being written that hosted
+    // cannot serve — worth noticing deliberately rather than by drift.
+    expect(HOSTED_HASH_BLOCKED_TABS).toEqual(["tracing"]);
   });
 });
 
