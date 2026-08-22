@@ -718,6 +718,30 @@ describe("resolveComposerEnvironments — model axis", () => {
     expect(result.environmentIds).toEqual(["a", "b", "c", "d"]);
   });
 
+  it("dedupes explicit model ids before minting or counting the product", async () => {
+    const ensure = ensureReturning(["inherit", "override"]);
+    await resolveComposerEnvironments({
+      ...base,
+      modelMatrixEnabled: true,
+      state: composeState({
+        hostIds: ["h1"],
+        modelSelection: {
+          includeClientDefaults: true,
+          explicitModelIds: ["google/gemini-2.5-flash", "google/gemini-2.5-flash"],
+        },
+      }),
+      liveEnvironments: [],
+      ensureAdhocEnvironments: ensure,
+    });
+    expect(ensure).toHaveBeenCalledWith({
+      projectId: "proj-1",
+      stacks: [
+        { hostId: "h1" },
+        { hostId: "h1", modelId: "google/gemini-2.5-flash" },
+      ],
+    });
+  });
+
   it("omits modelId on inherit cells and sends it on explicit cells", async () => {
     const ensure = ensureReturning(["inherit", "override"]);
     await resolveComposerEnvironments({

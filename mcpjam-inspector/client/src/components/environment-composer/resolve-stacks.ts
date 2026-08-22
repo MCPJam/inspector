@@ -234,9 +234,13 @@ export async function resolveComposerEnvironments(args: {
   }
 
   const hostIds = [...new Set(state.stack.hostIds.filter(Boolean))];
-  const modelSelection: ModelSelection = state.stack.modelSelection ?? {
+  const rawSelection: ModelSelection = state.stack.modelSelection ?? {
     includeClientDefaults: true,
     explicitModelIds: [],
+  };
+  const modelSelection: ModelSelection = {
+    includeClientDefaults: rawSelection.includeClientDefaults,
+    explicitModelIds: [...new Set(rawSelection.explicitModelIds.filter(Boolean))],
   };
   const choices = expandModelChoices(modelSelection);
   if (hostIds.length === 0 || choices.length === 0) {

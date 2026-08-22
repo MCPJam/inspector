@@ -763,4 +763,54 @@ describe("useCrossHostData", () => {
     const keys = result.current.hostColumns.map((c) => c.columnKey).sort();
     expect(keys).toEqual(["h1::client-default", "h2::client-default"]);
   });
+
+  it("keeps a residual column for a legacy run when a (host, model) group splits", () => {
+    const suite = makeSuite([{ namedHostId: "h1", hostName: "Claude" }]);
+    const cases = [makeCase("c1")];
+    const legacy = makeRun("rLegacy", "h1", 500);
+    const runA = makeEnvironmentRun("rA", "h1", "envA", 1, 1000);
+    const runB = makeEnvironmentRun("rB", "h1", "envB", 1, 2000);
+    const iters = [
+      makeIteration("iL", {
+        suiteRunId: "rLegacy",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      makeIteration("iA", {
+        suiteRunId: "rA",
+        testCaseId: "c1",
+        result: "failed",
+      }),
+      makeIteration("iB", {
+        suiteRunId: "rB",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [legacy, runA, runB], iters, {
+        environments: [
+          {
+            environmentId: "envA",
+            hostId: "h1",
+            serverAttachmentId: "att-aaaa",
+          },
+          {
+            environmentId: "envB",
+            hostId: "h1",
+            serverAttachmentId: "att-bbbb",
+          },
+        ],
+      }),
+    );
+    const keys = result.current.hostColumns.map((c) => c.columnKey);
+    expect(keys).toEqual([
+      "h1::client-default::envA",
+      "h1::client-default::envB",
+      "h1::client-default",
+    ]);
+    expect(
+      result.current.matrix.get("c1")?.get("h1::client-default")?.passCount
+    ).toBe(1);
+  });
 });

@@ -127,6 +127,23 @@ describe("ModelsPill", () => {
     expect(screen.getByRole("checkbox", { name: "Locked" })).toBeDisabled();
   });
 
+  it("lets the user deselect a persisted locked model", async () => {
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: true,
+      explicitModelIds: ["locked-model"],
+    });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    const locked = screen.getByRole("checkbox", { name: "Locked" });
+    expect(locked).toBeChecked();
+    expect(locked).not.toBeDisabled();
+    await user.click(locked);
+    expect(onChange).toHaveBeenCalledWith({
+      includeClientDefaults: true,
+      explicitModelIds: [],
+    });
+  });
+
   it("single mode replaces the selection", async () => {
     const user = userEvent.setup();
     const onChange = renderPill(
