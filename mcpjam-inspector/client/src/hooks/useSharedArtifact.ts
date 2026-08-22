@@ -33,11 +33,40 @@ async function bearerForViewer(
 function stripTokenFromUrl() {
   if (typeof window === "undefined") return;
   const url = new URL(window.location.href);
-  if (!url.searchParams.has("token") && !url.pathname.includes("/shared/")) {
+  const hasQueryToken = url.searchParams.has("token");
+  if (!hasQueryToken && !url.pathname.includes("/shared/")) {
     return;
+  }
+  // The query form has to be dropped explicitly: re-appending `url.search`
+  // would otherwise carry the credential straight back into the address bar.
+  if (hasQueryToken) {
+    url.searchParams.delete("token");
   }
   const next = url.pathname.replace(/\/shared\/[^/]+$/, "/shared");
   window.history.replaceState({}, "", next + url.search);
+}
+
+/**
+ * Read a pre-shareable-layer conformance share link. The legacy endpoint is
+ * unauthenticated by design (the HMAC token IS the credential) and returns
+ * the same redacted public artifact. Deleted with the HMAC scheme at I6/B6.
+ */
+async function loadLegacyConformanceArtifact(
+  token: string,
+): Promise<unknown | null> {
+  try {
+    const res = await fetch(
+      `/api/web/conformance-shared/${encodeURIComponent(token)}`,
+      { credentials: "include" },
+    );
+    if (!res.ok) return null;
+    const body = (await res.json().catch(() => null)) as {
+      artifact?: unknown;
+    } | null;
+    return body?.artifact ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function useSharedArtifact({
@@ -104,6 +133,7 @@ export function useSharedArtifact({
       }
       const artifact = await artifactRes.json().catch(() => null);
       stripTokenFromUrl();
+
       setState({
         loading: false,
         error: null,
@@ -118,6 +148,28 @@ export function useSharedArtifact({
         },
       });
     } catch {
+      // MIXED-VERSION FALLBACK, REMOVED AT I6/B6.
+      //
+      // Conformance links minted before the shareable layer are stateless
+      // HMAC tokens: they were never registered in `shareResources`, so the
+      // redeem above can never find them. Without this, deploying the new
+      // viewer would kill every conformance share link already in the wild —
+      // and, while the management flag is off, the legacy toggle keeps
+      // minting exactly those links, so sharing would mint dead links.
+      if (resourceType === "conformanceRun") {
+        const legacy = await loadLegacyConformanceArtifact(token);
+        if (legacy) {
+          stripTokenFromUrl();
+          setState({
+            loading: false,
+            error: null,
+            artifact: legacy,
+            redeem: null,
+          });
+          return;
+        }
+      }
+      stripTokenFromUrl();
       setState({
         loading: false,
         error: SHARE_LINK_DENIED_MESSAGE,
