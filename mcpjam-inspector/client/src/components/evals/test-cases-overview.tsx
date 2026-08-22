@@ -45,6 +45,7 @@ import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 import {
   useCrossHostData,
   formatHostFallback,
+  type CrossHostEnvironment,
 } from "./cross-host/use-cross-host-data";
 import { HostCell } from "./cross-host/host-cell";
 import { HostChip } from "@/components/hosts/host-chip";
@@ -145,6 +146,12 @@ interface TestCasesOverviewProps {
    */
   hostNamesById?: Map<string, string | null>;
   /**
+   * The suite's project environments, owned by the parent for the same reason
+   * as `hostNamesById`. Without them a run can only be placed by its resolved
+   * host, so two model cells on one client share a column.
+   */
+  environments?: readonly CrossHostEnvironment[];
+  /**
    * Iteration override the per-case Run control will send (quick-run state).
    * Forwarded to the credit estimate so the number matches the run the button
    * will actually launch.
@@ -178,6 +185,7 @@ export function TestCasesOverview({
   isGeneratingTestCases = false,
   onCreateTestCase,
   hostNamesById,
+  environments,
   quickRunIterationOverride,
 }: TestCasesOverviewProps) {
   const convex = useConvex();
@@ -397,7 +405,7 @@ export function TestCasesOverview({
     effectiveCases,
     runs ?? [],
     effectiveIterations,
-    { hostNamesById },
+    { hostNamesById, environments },
   );
   const clientColumns = useMemo(
     () =>
@@ -557,6 +565,7 @@ export function TestCasesOverview({
               onTestCaseClick={onTestCaseClick}
               onDeleteTestCasesBatch={onDeleteTestCasesBatch}
               hostNamesById={hostNamesById}
+              environments={environments}
             />
           </div>
         ) : (

@@ -593,5 +593,52 @@ describe("useCrossHostData", () => {
       "h1::client-default::envB",
     ]);
     expect(result.current.hostColumns[0].splitLabel).toMatch(/sandbox-/);
+    // Telling the columns apart is the whole point of splitting them.
+    expect(result.current.hostColumns[0].splitLabel).not.toBe(
+      result.current.hostColumns[1].splitLabel,
+    );
+  });
+
+  it("annotates a split by the slot that actually differs, not the sandbox pin", () => {
+    const suite = makeSuite();
+    const cases = [makeCase("c1")];
+    const runA = makeEnvironmentRun("rA", "h1", "envA", 1, 1000);
+    const runB = makeEnvironmentRun("rB", "h1", "envB", 1, 2000);
+    const iters = [
+      makeIteration("iA", {
+        suiteRunId: "rA",
+        testCaseId: "c1",
+        result: "passed",
+      }),
+      makeIteration("iB", {
+        suiteRunId: "rB",
+        testCaseId: "c1",
+        result: "failed",
+      }),
+    ];
+    const { result } = renderHook(() =>
+      useCrossHostData(suite, cases, [runA, runB], iters, {
+        hostNamesById: new Map([["h1", "Claude"]]),
+        environments: [
+          // Same image on both, so the sandbox is NOT what separates them —
+          // the server group is. Labelling by the pin would print the same
+          // annotation twice and name the wrong dimension.
+          {
+            environmentId: "envA",
+            hostId: "h1",
+            serverAttachmentId: "att-aaaa",
+            computerEnvironmentId: "img-shared",
+          },
+          {
+            environmentId: "envB",
+            hostId: "h1",
+            serverAttachmentId: "att-bbbb",
+            computerEnvironmentId: "img-shared",
+          },
+        ],
+      }),
+    );
+    const labels = result.current.hostColumns.map((c) => c.splitLabel);
+    expect(labels).toEqual(["servers-aaaa", "servers-bbbb"]);
   });
 });
