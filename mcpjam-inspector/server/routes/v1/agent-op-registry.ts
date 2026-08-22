@@ -356,28 +356,35 @@ function describeComposeEvalSuiteRun(
   compose: Record<string, unknown>,
 ): string {
   const host = named(compose, "host");
+  const hostNote = host ? ` (${host})` : "";
   const choices = expandComposeModelChoices({
     model: named(compose, "model"),
     models: readStringList(compose, "models"),
     includeClientDefault: compose.includeClientDefault === true,
   });
   const n = choices.length;
+  // `saveTargets` is the only attach the caller opted into. A single cell
+  // against a backend that cannot launch ephemerally still ATTACHES (the
+  // SDK compat fallback in `composeLaunchPolicy`). This copy must not
+  // promise "without attaching" on that path — describe is sync and cannot
+  // probe capabilities, so inherit-only hedges. Multi-cell refuses rather
+  // than attaching, so that sentence can stay ephemeral.
   const attach =
     compose.saveTargets === true
       ? n <= 1
         ? "and the composed environment is attached to the suite"
         : "and the composed environments are attached to the suite"
       : n <= 1
-        ? "without attaching it to the suite"
+        ? "ephemeral when supported; otherwise attached"
         : "without attaching them to the suite";
   if (n <= 1) {
     return (
-      `Run eval suite ${suite} on a composed setup${host ? ` (${host})` : ""}` +
+      `Run eval suite ${suite} on a composed setup${hostNote}` +
       ` — one paid run, ${attach}`
     );
   }
   return (
-    `Start ${n} paid eval runs of suite ${suite}: 1 client × ${n} model choices = ${n} runs, ${attach}`
+    `Start ${n} paid eval runs of suite ${suite}${hostNote}: 1 client × ${n} model choices = ${n} runs, ${attach}`
   );
 }
 

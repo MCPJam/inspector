@@ -264,7 +264,11 @@ describe("agent op registry", () => {
     expect(composed).toContain("composed");
     expect(composed).toContain("Claude Code");
     expect(composed).toContain("one paid run");
-    expect(composed).toContain("without attaching it to the suite");
+    // Inherit-only compose ATTACHES on a backend that cannot launch
+    // ephemerally. Do not promise "without attaching" from saveTargets
+    // alone — describe cannot probe the flag.
+    expect(composed).toContain("ephemeral when supported; otherwise attached");
+    expect(composed).not.toContain("without attaching");
     expect(composed).not.toContain("attached to the suite");
 
     expect(
@@ -276,7 +280,18 @@ describe("agent op registry", () => {
         },
       })
     ).toBe(
-      "Start 2 paid eval runs of suite smoke: 1 client × 2 model choices = 2 runs, without attaching them to the suite"
+      "Start 2 paid eval runs of suite smoke (Claude Code): 1 client × 2 model choices = 2 runs, without attaching them to the suite"
+    );
+    expect(
+      describeRun({
+        suite: "smoke",
+        compose: {
+          host: "ChatGPT",
+          models: ["anthropic/claude-haiku-4.5", "google/gemini-2.5-flash"],
+        },
+      })
+    ).toBe(
+      "Start 2 paid eval runs of suite smoke (ChatGPT): 1 client × 2 model choices = 2 runs, without attaching them to the suite"
     );
     expect(
       describeRun({
@@ -288,7 +303,7 @@ describe("agent op registry", () => {
         },
       })
     ).toBe(
-      "Start 3 paid eval runs of suite smoke: 1 client × 3 model choices = 3 runs, without attaching them to the suite"
+      "Start 3 paid eval runs of suite smoke (Claude Code): 1 client × 3 model choices = 3 runs, without attaching them to the suite"
     );
     expect(
       describeRun({
