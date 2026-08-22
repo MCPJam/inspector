@@ -54,6 +54,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /organizations": "listOrganizations",
   "get /chat-sessions": "listChatSessions",
 
+  // Registry (directory + curated cards)
+  "get /registry/directory-servers": "searchRegistryDirectory",
+  "get /registry/directory-servers/{idOrName}": "getRegistryDirectoryServer",
+  "get /registry/directory-sources": "listRegistryDirectorySources",
+  "get /projects/{projectId}/registry/servers": "listRegistryServers",
+  "get /projects/{projectId}/registry/connections": "listRegistryConnections",
+  "post /projects/{projectId}/registry/directory-installs":
+    "installRegistryDirectoryServer",
+  "post /projects/{projectId}/registry/installs": "installRegistryServer",
+  "delete /projects/{projectId}/registry/installs/{registryServerId}":
+    "uninstallRegistryServer",
+
   // Server connections
   "post /server-connections": "createServerConnection",
   "get /server-connections/{requestId}": "getServerConnection",

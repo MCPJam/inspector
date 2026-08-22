@@ -73,6 +73,84 @@ export interface PlatformProject {
   updatedAt: number | null;
 }
 
+export interface PlatformCatalogOauthProbe {
+  probedAt?: number;
+  endpointUrl?: string;
+  outcome?: string;
+  supportsDcr?: boolean;
+  supportsCimd?: boolean;
+  authorizationServerUrl?: string;
+}
+
+/** Scraped directory row — allowlisted; unknown upstream fields are dropped. */
+export interface PlatformCatalogServer {
+  id: string;
+  source: string;
+  serverName: string;
+  displayName?: string;
+  description?: string;
+  rowType?: string;
+  verifiedTier?: string;
+  authPosture?: string;
+  unavailableReason?: string;
+  endpointKind?: string;
+  remoteUrl?: string;
+  remoteUrlOptions?: string[];
+  remoteUrlRegex?: string;
+  remoteUrlHint?: string;
+  latestContentHash?: string;
+  oauthProbe?: PlatformCatalogOauthProbe;
+}
+
+export interface PlatformCatalogSourceStatus {
+  source: string;
+  lastSyncedAt?: number;
+  liveCount?: number;
+  upstreamFetchedAt?: number;
+}
+
+export interface PlatformRegistryServerTransport {
+  transportType?: string;
+  url?: string;
+  useOAuth?: boolean;
+  hasOAuthConfig?: boolean;
+  oauthScopes?: string[];
+}
+
+export interface PlatformRegistryServer {
+  id: string;
+  scope: "global" | "organization";
+  name: string;
+  displayName?: string;
+  description?: string;
+  category?: string;
+  tags?: string[];
+  publisher?: string;
+  status?: string;
+  updatedAt?: number;
+  transport?: PlatformRegistryServerTransport;
+}
+
+export interface PlatformRegistryConnection {
+  id: string;
+  kind: "registry" | "catalog";
+  scope?: "global" | "organization";
+  projectId: string;
+  serverId: string;
+  serverName?: string;
+  registryServerId?: string;
+  catalogServerId?: string;
+  endpointUrl?: string;
+  endpointKind?: string;
+  connectedAt?: number;
+}
+
+export interface PlatformRegistryInstall {
+  serverId: string;
+  serverName: string;
+  outcome: "created" | "reconnected";
+}
+
 export interface PlatformProjectServer {
   id: string;
   projectId: string | null;

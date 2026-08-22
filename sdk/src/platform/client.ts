@@ -86,6 +86,11 @@ import type {
   PlatformReadinessRun,
   PlatformReadinessRunReceipt,
   PlatformReadinessStartBody,
+  PlatformCatalogServer,
+  PlatformCatalogSourceStatus,
+  PlatformRegistryServer,
+  PlatformRegistryConnection,
+  PlatformRegistryInstall,
 } from "./types.js";
 
 export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
@@ -252,6 +257,141 @@ export class PlatformApiClient {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(params.projectId)}`,
+      {},
+      options,
+    );
+  }
+
+  // ── Registry (directory + curated cards) ─────────────────────────────────
+
+  searchRegistryDirectory(
+    params: {
+      q?: string;
+      source?: string;
+      rowType?: string;
+      endpointKind?: string;
+      verifiedTier?: string;
+      connectableOnly?: boolean;
+      cursor?: string;
+      limit?: number;
+    } = {},
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformCatalogServer>> {
+    return this.request(
+      "GET",
+      "/registry/directory-servers",
+      {
+        query: {
+          q: params.q,
+          source: params.source,
+          rowType: params.rowType,
+          endpointKind: params.endpointKind,
+          verifiedTier: params.verifiedTier,
+          connectableOnly:
+            params.connectableOnly === undefined
+              ? undefined
+              : params.connectableOnly
+                ? "true"
+                : "false",
+          ...pageQuery({ cursor: params.cursor, limit: params.limit }),
+        },
+      },
+      options,
+    );
+  }
+
+  getRegistryDirectoryServer(
+    params: { catalogServerId: string } | { name: string; source?: string },
+    options?: RequestOptions,
+  ): Promise<PlatformCatalogServer> {
+    if ("catalogServerId" in params) {
+      return this.request(
+        "GET",
+        `/registry/directory-servers/${encodeURIComponent(params.catalogServerId)}`,
+        {},
+        options,
+      );
+    }
+    return this.request(
+      "GET",
+      `/registry/directory-servers/${encodeURIComponent(params.name)}`,
+      { query: { source: params.source } },
+      options,
+    );
+  }
+
+  listRegistryDirectorySources(
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformCatalogSourceStatus>> {
+    return this.request("GET", "/registry/directory-sources", {}, options);
+  }
+
+  listRegistryServers(
+    params: { projectId: string; scope?: "global" | "organization" | "all" },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformRegistryServer>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/servers`,
+      { query: { scope: params.scope } },
+      options,
+    );
+  }
+
+  listRegistryConnections(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformRegistryConnection>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/connections`,
+      {},
+      options,
+    );
+  }
+
+  installRegistryDirectoryServer(
+    params: {
+      projectId: string;
+      catalogServerId: string;
+      endpointUrl?: string;
+      expectedContentHash?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformRegistryInstall> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/registry/directory-installs`,
+      { body },
+      options,
+    );
+  }
+
+  installRegistryServer(
+    params: {
+      projectId: string;
+      registryServerId: string;
+      expectedUpdatedAt?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformRegistryInstall> {
+    const { projectId, ...body } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/registry/installs`,
+      { body },
+      options,
+    );
+  }
+
+  uninstallRegistryServer(
+    params: { projectId: string; registryServerId: string },
+    options?: RequestOptions,
+  ): Promise<{ deleted?: boolean }> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/installs/${encodeURIComponent(params.registryServerId)}`,
       {},
       options,
     );
