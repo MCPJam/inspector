@@ -1552,6 +1552,81 @@ Persistently enables anonymous CLI telemetry. If no install ID exists yet, this 
 
 ---
 
+## `cloud link` / `cloud status` commands
+
+`cloud link` pins a working directory to a Cloud project by writing a `.mcpjam/project.json` file. The file contains no secrets and is safe to commit; per-developer setups may gitignore it instead. `cloud status` is a zero-network command that reports how the CLI would authenticate and which project it would use, without making any API calls.
+
+### Project resolution order
+
+All project-scoped Cloud commands (`eval`, `hosts`, `images`, `environments`, `journeys`, `scenarios`, `tunnel`, and others) resolve `--project` using this precedence:
+
+1. `--project` flag
+2. Explicit `project` field in a `--file` / `--json` input document
+3. `MCPJAM_PROJECT` environment variable
+4. Nearest valid `.mcpjam/project.json` link (walks up to the Git worktree root)
+5. Automatic selection (most recently updated accessible project)
+
+Passing an empty `--project` or setting `MCPJAM_PROJECT` to an empty string is a usage error (exit 2), not a fall-through to automatic. `MCPJAM_PROJECT_ID` is used only for SDK eval reporting and does not select a Cloud CLI project.
+
+When a link-sourced selector fails online (for example, the linked project was deleted), the error message includes the link file path and a prompt to re-run `mcpjam cloud link`.
+
+### `cloud link`
+
+Pin the current directory to a Cloud project. By default the file is written at the Git worktree root; `--here` writes it in the current directory instead.
+
+```bash
+# Pin to a project by name or ID
+mcpjam cloud link "My Project"
+
+# Write in the current directory instead of the Git root
+mcpjam cloud link "My Project" --here
+
+# Remove the nearest link
+mcpjam cloud link --remove
+```
+
+| Flag | Description |
+|------|-------------|
+| `--here` | Write `.mcpjam/project.json` in the current directory instead of the Git worktree root. |
+| `--remove` | Remove the nearest project link (or the link in the current directory when combined with `--here`). Cannot be combined with a project argument. |
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`). |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`). |
+
+The positional project argument follows the same resolution rules as `--project` on other commands (name or ID). Passing an empty string is a usage error.
+
+**Output** (JSON): `{ status: "linked", path, project: { id, name }, apiUrl }` on success; `{ status: "removed", path }` on `--remove`.
+
+### `cloud status`
+
+Report the current credential, deployment, project scope, and link validity without calling the network.
+
+```bash
+mcpjam cloud status --format json
+```
+
+No additional flags beyond the shared platform flags (`--api-key`, `--api-url`). The command exits `0` when everything is valid and `1` when the nearest link is invalid.
+
+**Output fields:**
+
+| Field | Description |
+|-------|-------------|
+| `ok` | `true` when no problems were detected. |
+| `credential.source` | How the credential was found: `flag`, `env`, `oauth`, or `missing`. |
+| `credential.kind` | `api-key`, `oauth`, or `none`. |
+| `credential.redactedKey` | Redacted key (last 4 chars), present for `api-key` credentials. |
+| `credential.envShadowsOauth` | `true` when `MCPJAM_API_KEY` is set and a stored OAuth session also exists. |
+| `deployment.apiUrl` | The API URL that would be used. |
+| `deployment.source` | How the URL was found: `flag`, `env`, `oauth`, or `default`. |
+| `project.selector` | The project name or ID that would be sent, or `null` for automatic. |
+| `project.source` | How the selector was found: `flag`, `input`, `env`, `link`, or `automatic`. |
+| `project.description` | Human-readable description of the project scope. |
+| `link.path` | Path to the nearest `.mcpjam/project.json`, or `null` if none. |
+| `link.valid` | `true`, `false`, or `null` (no link found). |
+| `link.apiUrlMatchesDeployment` | `false` when the link's `apiUrl` differs from the active deployment URL (the deployment URL is used; the link's project selector remains active). |
+| `warnings` | Array of advisory messages (e.g. `MCPJAM_API_KEY` shadowing OAuth, `MCPJAM_PROJECT_ID` set). |
+
+---
+
 ## `login` / `logout` / `whoami` commands
 
 These commands manage your MCPJam platform session. `login` opens a browser for OAuth and stores the session locally; `logout` removes it; `whoami` shows the account behind the current credentials.
