@@ -73,6 +73,101 @@ export interface PlatformProject {
   updatedAt: number | null;
 }
 
+export interface PlatformCatalogOauthProbe {
+  probedAt?: number;
+  endpointUrl?: string;
+  outcome?: string;
+  supportsDcr?: boolean;
+  supportsCimd?: boolean;
+  authorizationServerUrl?: string;
+}
+
+/**
+ * Scraped directory row — allowlisted; unknown upstream fields are dropped.
+ *
+ * The nullable fields match the wire: the backend DTO
+ * (`mcpjam-backend/convex/publicApi/dtos.ts::toCatalogServerDto`) emits
+ * `null` for an absent value on these, never omits them.
+ */
+export interface PlatformCatalogServer {
+  id: string;
+  source: string;
+  serverName: string;
+  displayName?: string;
+  description?: string | null;
+  rowType?: string;
+  verifiedTier?: string | null;
+  authPosture?: string | null;
+  unavailableReason?: string | null;
+  endpointKind?: string;
+  remoteUrl?: string;
+  remoteUrlOptions?: string[];
+  remoteUrlRegex?: string;
+  remoteUrlHint?: string;
+  latestContentHash?: string | null;
+  oauthProbe?: PlatformCatalogOauthProbe;
+}
+
+/**
+ * The directory search page, plus the server's echo of which mode actually
+ * ran: `"search"` when a non-blank `q` selected text search, `"browse"` for
+ * the plain listing. Optional so a tolerant reader survives a backend that
+ * predates the marker.
+ */
+export type PlatformDirectorySearchPage =
+  PlatformPage<PlatformCatalogServer> & {
+    mode?: "search" | "browse";
+  };
+
+export interface PlatformCatalogSourceStatus {
+  source: string;
+  lastSyncedAt?: number | null;
+  liveCount?: number | null;
+  upstreamFetchedAt?: number | null;
+}
+
+export interface PlatformRegistryServerTransport {
+  transportType?: string;
+  url?: string | null;
+  useOAuth?: boolean;
+  hasOAuthConfig?: boolean;
+  oauthScopes?: string[];
+}
+
+export interface PlatformRegistryServer {
+  id: string;
+  scope: "global" | "organization";
+  name: string;
+  displayName?: string;
+  description?: string | null;
+  category?: string | null;
+  tags?: string[];
+  publisher?: string | null;
+  status?: string;
+  updatedAt?: number | null;
+  transport?: PlatformRegistryServerTransport;
+}
+
+export interface PlatformRegistryConnection {
+  id: string;
+  kind: "registry" | "catalog";
+  scope?: "global" | "organization";
+  projectId: string | null;
+  serverId: string;
+  serverName?: string | null;
+  registryServerId?: string;
+  catalogServerId?: string;
+  endpointUrl?: string;
+  endpointKind?: string;
+  connectedAt?: number | null;
+}
+
+export interface PlatformRegistryInstall {
+  serverId: string;
+  serverName: string;
+  outcome: "created" | "reconnected";
+}
+
 export interface PlatformProjectServer {
   id: string;
   projectId: string | null;
