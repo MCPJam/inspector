@@ -27,6 +27,7 @@ function draft(overrides: Partial<NewSwarmFlowDraft> = {}): NewSwarmFlowDraft {
         serverAttachmentId: null,
         skillSelection: null,
         computerEnvironmentId: null,
+        modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
       },
       customized: false,
     },

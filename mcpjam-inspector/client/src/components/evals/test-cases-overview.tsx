@@ -579,14 +579,21 @@ export function TestCasesOverview({
                   <div className="grid shrink-0" style={clientRailStyle}>
                     {clientColumns.map((col) => (
                       <div
-                        key={col.hostId}
+                        key={col.columnKey ?? col.hostId}
                         className="flex justify-center border-l border-border/40 px-2"
                       >
-                        <HostChip
-                          name={col.hostName ?? formatHostFallback(col.hostId)}
-                          hostId={col.hostId}
-                          className="max-w-[8rem] border-border/70 bg-background/80 px-2 py-0.5 text-[10px] shadow-none"
-                        />
+                        <div className="flex flex-col items-center gap-0.5">
+                          <HostChip
+                            name={col.hostName ?? formatHostFallback(col.hostId)}
+                            hostId={col.hostId}
+                            className="max-w-[8rem] border-border/70 bg-background/80 px-2 py-0.5 text-[10px] shadow-none"
+                          />
+                          {col.modelLabel ? (
+                            <span className="max-w-[8rem] truncate font-mono text-[9px] text-muted-foreground">
+                              {col.modelLabel}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -704,7 +711,7 @@ export function TestCasesOverview({
                   // clients disagree, red when they all fail (mirrors the matrix).
                   const byHost = crossHost.matrix.get(testCase._id);
                   const cellsWithData = clientColumns
-                    .map((col) => byHost?.get(col.hostId))
+                    .map((col) => byHost?.get(col.columnKey ?? col.hostId))
                     .filter(
                       (c): c is NonNullable<typeof c> => !!c && c.totalCount > 0,
                     );
@@ -723,10 +730,10 @@ export function TestCasesOverview({
                     <div className="grid shrink-0" style={clientRailStyle}>
                       {clientColumns.map((col) => (
                         <div
-                          key={col.hostId}
+                          key={col.columnKey ?? col.hostId}
                           className="border-l border-border/40"
                         >
-                          <HostCell data={byHost?.get(col.hostId)} />
+                          <HostCell data={byHost?.get(col.columnKey ?? col.hostId)} />
                         </div>
                       ))}
                     </div>

@@ -1,5 +1,5 @@
-import { useMemo } from "react";
-import { useMutation, useQuery, useConvexAuth } from "convex/react";
+import { useEffect, useMemo, useState } from "react";
+import { useConvex, useMutation, useQuery, useConvexAuth } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import {
@@ -72,6 +72,12 @@ export interface ProjectEnvironmentView {
   hostId: string;
   /** Standalone server group scope; absent ⇒ the host's own server picks. */
   serverAttachmentId?: string | null;
+  /**
+   * Stored model override. Absent ⇒ this environment inherits its client's
+   * model. Deliberately NOT the effective model: a list row that conflated
+   * the two could not tell "pinned to X" from "inheriting X".
+   */
+  modelId?: string;
   /** Additive standalone skill channel; absent ⇒ no env-channel skills. */
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
@@ -228,6 +234,8 @@ export function useEnsureAdhocEnvironment(): (args: {
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   computerEnvironmentId?: string;
+  /** Explicit model override. Omit to inherit the client's model. */
+  modelId?: string;
 }) => Promise<{ environment: ProjectEnvironmentView; created?: boolean }> {
   return useMutation(
     "projectEnvironments:ensureAdhocEnvironment" as any
@@ -253,6 +261,8 @@ export function useEnsureAdhocEnvironments(): (args: {
     serverAttachmentId?: string | null;
     skillSelection?: ProjectEnvironmentSkillSelection | null;
     computerEnvironmentId?: string;
+    /** Explicit model override. Omit to inherit the client's model. */
+    modelId?: string;
   }>;
 }) => Promise<
   Array<{ environment: ProjectEnvironmentView; created?: boolean }>
@@ -375,4 +385,63 @@ export function isRevisionConflictError(err: unknown): boolean {
   const message =
     typeof data === "string" ? data : err instanceof Error ? err.message : "";
   return /revision/i.test(message) && /conflict|stale|changed/i.test(message);
+}
+
+/**
+ * One-shot probe of `projectEnvironments:getCapabilities.modelMatrix`.
+ *
+ * `convex/react`'s `useQuery` throws during render on a missing function, so
+ * this MUST go through `useConvex().query(...)` in an effect and catch
+ * `/could not find public function/i` — the same probe as `isAdhocUnavailable`.
+ *
+ * Returns:
+ *  - `undefined` while probing (hide the models slot)
+ *  - `true` when the backend advertises the matrix
+ *  - `false` on skew or any other failure (hide the slot; resolver must
+ *    refuse to send `modelId`)
+ */
+export function useModelMatrixCapability(
+  projectId: string | null | undefined
+): boolean | undefined {
+  // Tests often mock `convex/react` without `useConvex`. Calling a missing
+  // export would throw during render; treat that as "no matrix".
+  const convex = typeof useConvex === "function" ? useConvex() : undefined;
+  const [state, setState] = useState<boolean | undefined>(undefined);
+
+  useEffect(() => {
+    const normalized = projectId?.trim() || null;
+    if (!normalized || !shouldQueryProjectId(normalized) || !convex) {
+      setState(convex ? undefined : false);
+      return;
+    }
+    let cancelled = false;
+    setState(undefined);
+    void convex
+      .query("projectEnvironments:getCapabilities" as never, {
+        projectId: normalized,
+      } as never)
+      .then((caps: { modelMatrix?: boolean } | null) => {
+        if (!cancelled) setState(caps?.modelMatrix === true);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const data = (err as { data?: unknown } | null)?.data;
+        const message =
+          typeof data === "string"
+            ? data
+            : err instanceof Error
+              ? err.message
+              : String(err);
+        if (/could not find public function/i.test(message)) {
+          setState(false);
+          return;
+        }
+        setState(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [convex, projectId]);
+
+  return state;
 }

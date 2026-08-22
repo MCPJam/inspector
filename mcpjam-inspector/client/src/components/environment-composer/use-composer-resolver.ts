@@ -9,7 +9,10 @@ import {
 } from "@/components/environment-composer/resolve-stacks";
 import type { EnvironmentComposerState } from "@/components/environment-composer/environment-stack";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
-import { useEnsureAdhocEnvironments } from "@/hooks/useProjectEnvironments";
+import {
+  useEnsureAdhocEnvironments,
+  useModelMatrixCapability,
+} from "@/hooks/useProjectEnvironments";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 
@@ -25,6 +28,7 @@ export function useComposerResolver(rawProjectId: string): (args: {
   const ensureAdhocEnvironments = useEnsureAdhocEnvironments();
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
+  const modelMatrixEnabled = useModelMatrixCapability(projectId);
 
   return useCallback(
     ({ state, liveEnvironments, max }) =>
@@ -36,10 +40,12 @@ export function useComposerResolver(rawProjectId: string): (args: {
         skillsEnabled,
         computersEnabled,
         max,
+        modelMatrixEnabled: modelMatrixEnabled === true,
       }),
     [
       computersEnabled,
       ensureAdhocEnvironments,
+      modelMatrixEnabled,
       projectId,
       skillsEnabled,
     ]

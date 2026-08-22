@@ -12718,6 +12718,7 @@
                 "type": "string",
                 "enum": [
                   "previous_completed",
+                  "previous_completed_same_environment",
                   "run"
                 ]
               },

@@ -1166,6 +1166,13 @@ function toRunDto(run: RunDoc) {
     source: run.source ?? "ui",
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
+    ...(typeof run.runGroupId === "string" ? { runGroupId: run.runGroupId } : {}),
+    ...(typeof run.effectiveModelId === "string"
+      ? { effectiveModelId: run.effectiveModelId }
+      : {}),
+    ...(run.modelSource === "client_default" || run.modelSource === "override"
+      ? { modelSource: run.modelSource }
+      : {}),
     // Which engine the run actually executed on: `"emulated"` (the inspector's
     // own turn loop) or `"harness:<id>"` (a real agent runtime). Read from the
     // run's IMMUTABLE snapshot, where the platform derives it from the run's
@@ -3270,7 +3277,9 @@ evals.get("/projects/:projectId/eval-runs/:runId/compare", async (c) => {
       baselineSource.policy === "run" ||
       (baselineSource.policy === undefined && Boolean(baseRunId))
         ? "run"
-        : "previous_completed",
+        : baselineSource.policy === "previous_completed_same_environment"
+          ? "previous_completed_same_environment"
+          : "previous_completed",
     baseRunId: String(baselineSource.baseRunId ?? ""),
   };
 

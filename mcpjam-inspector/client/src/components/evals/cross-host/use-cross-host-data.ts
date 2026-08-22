@@ -1,16 +1,35 @@
 import { useMemo } from "react";
+import { compactModelIdTail } from "@/lib/environment-label";
 import { formatRunId, runEnvironmentRef } from "../helpers";
 import { computeIterationResult } from "../pass-criteria";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../types";
 
+export const CLIENT_DEFAULT_MODEL_KEY = "client-default";
+
+export type CrossHostEnvironment = {
+  environmentId: string;
+  hostId: string;
+  modelId?: string;
+  serverAttachmentId?: string | null;
+  skillSelection?: { skillIds: string[] } | null;
+  computerEnvironmentId?: string | null;
+  pluginVersionIds?: string[];
+};
+
 export type HostColumn = {
   hostId: string;
+  /** `(hostId, modelKey)` or per-env when a shared-slot collision splits. */
+  columnKey?: string;
+  modelKey?: string;
+  modelLabel?: string | null;
   hostName: string | null;
   /**
    * True when this host is no longer in hostAttachments AND no environment-backed
    * run resolved to it — i.e. genuinely detached, not merely run-derived.
    */
   isHistorical: boolean;
+  /** Annotating segment when a collision split this cell (e.g. `"sandbox-x"`). */
+  splitLabel?: string | null;
 };
 
 export type CellTrendPoint = {
@@ -62,6 +81,11 @@ export type UseCrossHostDataOptions = {
    * queryless. Without it, run-derived columns can only show a truncated id.
    */
   hostNamesById?: Map<string, string | null>;
+  /**
+   * Project environments for the suite — used to derive `modelKey` and to
+   * detect shared-slot collisions that must split a (host, model) cell.
+   */
+  environments?: readonly CrossHostEnvironment[];
 };
 
 /** Fallback display name for a host with no resolved name: last 6 id chars. */
@@ -148,7 +172,7 @@ function iterationLatencyMs(iter: EvalIteration): number | null {
  */
 export function buildCellTrendSeries(
   caseId: string,
-  hostId: string,
+  columnKey: string,
   runs: EvalSuiteRun[],
   allIterations: EvalIteration[],
   runHostMap: Map<string, string>,
@@ -159,7 +183,7 @@ export function buildCellTrendSeries(
 
   for (const iter of allIterations) {
     if (!iter.suiteRunId || !activeRunIds.has(iter.suiteRunId)) continue;
-    if (runHostMap.get(iter.suiteRunId) !== hostId) continue;
+    if (runHostMap.get(iter.suiteRunId) !== columnKey) continue;
     const iterCaseId = iter.testCaseId ?? `__no_case_${iter._id}`;
     if (iterCaseId !== caseId) continue;
 
@@ -256,6 +280,67 @@ function buildCellData(iterations: EvalIteration[]): CellData {
   };
 }
 
+function slotFingerprint(env: CrossHostEnvironment): string {
+  const skills = [...(env.skillSelection?.skillIds ?? [])].sort().join(",");
+  const plugins = [...(env.pluginVersionIds ?? [])].sort().join(",");
+  return [
+    env.serverAttachmentId ?? "",
+    skills,
+    env.computerEnvironmentId ?? "",
+    plugins,
+  ].join("|");
+}
+
+function differingSlotLabel(
+  envs: CrossHostEnvironment[]
+): string | null {
+  if (envs.length < 2) return null;
+  const first = envs[0]!;
+  const serversDiffer = envs.some(
+    (env) => (env.serverAttachmentId ?? "") !== (first.serverAttachmentId ?? "")
+  );
+  if (serversDiffer) return "servers";
+  const skillsDiffer = envs.some(
+    (env) =>
+      [...(env.skillSelection?.skillIds ?? [])].sort().join(",") !==
+      [...(first.skillSelection?.skillIds ?? [])].sort().join(",")
+  );
+  if (skillsDiffer) return "skills";
+  const computersDiffer = envs.some(
+    (env) =>
+      (env.computerEnvironmentId ?? "") !== (first.computerEnvironmentId ?? "")
+  );
+  if (computersDiffer) {
+    const id = first.computerEnvironmentId;
+    return id ? `sandbox-${id.slice(-4)}` : "sandbox";
+  }
+  const pluginsDiffer = envs.some(
+    (env) =>
+      [...(env.pluginVersionIds ?? [])].sort().join(",") !==
+      [...(first.pluginVersionIds ?? [])].sort().join(",")
+  );
+  if (pluginsDiffer) return "plugins";
+  return null;
+}
+
+export function modelKeyForRun(
+  run: EvalSuiteRun,
+  envById: Map<string, CrossHostEnvironment>
+): string {
+  const ref = runEnvironmentRef(run);
+  const env = ref ? envById.get(ref.environmentId) : undefined;
+  if (env?.modelId) return env.modelId;
+  if (run.modelSource === "override" && run.effectiveModelId) {
+    return run.effectiveModelId;
+  }
+  return CLIENT_DEFAULT_MODEL_KEY;
+}
+
+function modelLabelForKey(modelKey: string): string | null {
+  if (modelKey === CLIENT_DEFAULT_MODEL_KEY) return null;
+  return compactModelIdTail(modelKey);
+}
+
 export function useCrossHostData(
   suite: EvalSuite,
   cases: EvalCase[],
@@ -263,57 +348,132 @@ export function useCrossHostData(
   allIterations: EvalIteration[],
   options: UseCrossHostDataOptions = {},
 ): CrossHostData {
-  const { cellTrends = false, hostNamesById } = options;
+  const { cellTrends = false, hostNamesById, environments } = options;
 
   return useMemo(() => {
     const attachments = suite.hostAttachments ?? [];
     const hasHostAttachments = attachments.length > 0;
+    const envById = new Map(
+      (environments ?? []).map((env) => [env.environmentId, env])
+    );
 
-    // Build ordered host columns from attachments
-    const attachedHostIds = new Set(attachments.map((a) => a.namedHostId));
-    const hostColumns: HostColumn[] = attachments.map((a) => ({
-      hostId: a.namedHostId,
-      hostName: a.hostName ?? hostNamesById?.get(a.namedHostId) ?? null,
-      isHistorical: false,
-    }));
-
-    // Index active run IDs to avoid orphaned historical iterations
     const activeRunIds = new Set(runs.map((r) => r._id));
+    const attachedHostIds = new Set(attachments.map((a) => a.namedHostId));
 
-    // Hosts a run reached that the suite carries no attachment for. Two
-    // unrelated shapes land here:
-    //   • an environment-backed run — the backend stamps `namedHostId` with the
-    //     environment's RESOLVED host, and such a suite has no host
-    //     attachments at all, so its CURRENT host arrives only this way. That
-    //     host is live, not historical.
-    //   • a legacy host-backed run against a host since detached — genuinely
-    //     historical.
-    // Environments collapse into their resolved host: two environments
-    // resolving to the same host share one column, because the key is the host.
-    const runDerivedHostIds = new Map<string, boolean>();
-    for (const run of runs) {
-      if (!run.namedHostId || attachedHostIds.has(run.namedHostId)) continue;
-      const historical =
-        (runDerivedHostIds.get(run.namedHostId) ?? true) &&
-        runEnvironmentRef(run) === null;
-      runDerivedHostIds.set(run.namedHostId, historical);
+    type PendingColumn = {
+      hostId: string;
+      modelKey: string;
+      envIds: string[];
+      isHistorical: boolean;
+    };
+    const pending = new Map<string, PendingColumn>();
+    const groupKey = (hostId: string, modelKey: string) =>
+      `${hostId}::${modelKey}`;
+
+    const touch = (
+      hostId: string,
+      modelKey: string,
+      opts: { envId?: string; historical: boolean }
+    ) => {
+      const key = groupKey(hostId, modelKey);
+      const existing = pending.get(key);
+      if (!existing) {
+        pending.set(key, {
+          hostId,
+          modelKey,
+          envIds: opts.envId ? [opts.envId] : [],
+          isHistorical: opts.historical,
+        });
+        return;
+      }
+      if (opts.envId && !existing.envIds.includes(opts.envId)) {
+        existing.envIds.push(opts.envId);
+      }
+      existing.isHistorical = existing.isHistorical && opts.historical;
+    };
+
+    for (const a of attachments) {
+      touch(a.namedHostId, CLIENT_DEFAULT_MODEL_KEY, { historical: false });
     }
 
-    // Append stable fallback columns for run-derived host IDs
-    for (const [hostId, isHistorical] of runDerivedHostIds) {
-      hostColumns.push({
-        hostId,
-        hostName: hostNamesById?.get(hostId) ?? null,
-        isHistorical,
+    for (const run of runs) {
+      if (!run.namedHostId) continue;
+      const modelKey = modelKeyForRun(run, envById);
+      const ref = runEnvironmentRef(run);
+      const historical =
+        !attachedHostIds.has(run.namedHostId) && ref === null;
+      touch(run.namedHostId, modelKey, {
+        envId: ref?.environmentId,
+        historical,
       });
     }
 
-    // Build run → namedHostId index (only active runs)
+    for (const env of environments ?? []) {
+      if (!env.hostId) continue;
+      const modelKey = env.modelId ?? CLIENT_DEFAULT_MODEL_KEY;
+      touch(env.hostId, modelKey, {
+        envId: env.environmentId,
+        historical: false,
+      });
+    }
+
+    const hostColumns: HostColumn[] = [];
+    for (const group of pending.values()) {
+      const groupEnvs = group.envIds
+        .map((id) => envById.get(id))
+        .filter((e): e is CrossHostEnvironment => Boolean(e));
+      const fps = new Set(groupEnvs.map(slotFingerprint));
+      const collide = fps.size > 1;
+      if (collide) {
+        const slot = differingSlotLabel(groupEnvs);
+        for (const env of groupEnvs) {
+          hostColumns.push({
+            hostId: group.hostId,
+            columnKey: `${group.hostId}::${group.modelKey}::${env.environmentId}`,
+            modelKey: group.modelKey,
+            modelLabel: modelLabelForKey(group.modelKey),
+            hostName: hostNamesById?.get(group.hostId) ??
+              attachments.find((a) => a.namedHostId === group.hostId)?.hostName ??
+              null,
+            isHistorical: group.isHistorical,
+            splitLabel: env.computerEnvironmentId
+              ? `sandbox-${env.computerEnvironmentId.slice(-4)}`
+              : slot,
+          });
+        }
+        continue;
+      }
+      hostColumns.push({
+        hostId: group.hostId,
+        columnKey: groupKey(group.hostId, group.modelKey),
+        modelKey: group.modelKey,
+        modelLabel: modelLabelForKey(group.modelKey),
+        hostName:
+          attachments.find((a) => a.namedHostId === group.hostId)?.hostName ??
+          hostNamesById?.get(group.hostId) ??
+          null,
+        isHistorical: group.isHistorical,
+      });
+    }
+
+    // Build run → columnKey index (only active runs)
     const runHostMap = new Map<string, string>();
     for (const run of runs) {
-      if (run.namedHostId && activeRunIds.has(run._id)) {
-        runHostMap.set(run._id, run.namedHostId);
-      }
+      if (!run.namedHostId || !activeRunIds.has(run._id)) continue;
+      const modelKey = modelKeyForRun(run, envById);
+      const ref = runEnvironmentRef(run);
+      const splitCol = hostColumns.find(
+        (col) =>
+          col.hostId === run.namedHostId &&
+          col.modelKey === modelKey &&
+          col.splitLabel &&
+          ref &&
+          col.columnKey.endsWith(`::${ref.environmentId}`)
+      );
+      runHostMap.set(
+        run._id,
+        splitCol?.columnKey ?? groupKey(run.namedHostId, modelKey)
+      );
     }
 
     // Rank runs newest-first by completedAt ?? createdAt so cells can be
@@ -377,23 +537,23 @@ export function useCrossHostData(
     const matrix = new Map<string, Map<string, CellData>>();
     for (const [caseId, byHost] of rawMatrix) {
       const cellMap = new Map<string, CellData>();
-      for (const [hostId, iters] of byHost) {
+      for (const [columnKey, iters] of byHost) {
         const cell = buildCellData(iters);
         if (cellTrends) {
           const trendSeries = buildCellTrendSeries(
             caseId,
-            hostId,
+            columnKey,
             runs,
             allIterations,
             runHostMap,
             activeRunIds,
           );
           if (trendSeries.length > 0) {
-            cellMap.set(hostId, { ...cell, trendSeries });
+            cellMap.set(columnKey, { ...cell, trendSeries });
             continue;
           }
         }
-        cellMap.set(hostId, cell);
+        cellMap.set(columnKey, cell);
       }
       matrix.set(caseId, cellMap);
     }
@@ -420,5 +580,6 @@ export function useCrossHostData(
     allIterations,
     cellTrends,
     hostNamesById,
+    environments,
   ]);
 }
