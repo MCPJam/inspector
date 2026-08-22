@@ -8,7 +8,7 @@ The evals system spans three surfaces that share one backend:
 
 - **Inspector Evaluate UI** — author suites and cases, run them hosted, inspect traces. See [Evaluate](/inspector/evals) for the product view.
 - **`@mcpjam/sdk`** — run evals in your own process (`EvalTest` / `EvalSuite`) and upload results. See [Running Evals](/sdk/concepts/running-evals).
-- **`mcpjam` CLI** — author, start, and inspect hosted runs from a terminal (`mcpjam eval …`). See the [command reference](/cli/reference#eval-commands).
+- **`mcpjam` CLI** — author, start, and inspect hosted runs from a terminal (`mcpjam cloud eval …`). See the [command reference](/cli/reference#cloud-eval-commands).
 
 This page covers the wiring underneath: where results enter the system, how host configuration stays consistent across surfaces, and where the code lives.
 
@@ -138,7 +138,7 @@ The legacy `/sdk/v1/evals/*` endpoints and the project API keys (`mcpjam_…`) t
 
 ## Predicate gate
 
-The deterministic pass/fail layer lives in `@mcpjam/sdk/predicates` (`sdk/src/predicates/`), browser-safe so the Inspector GUI runner and the `mcpjam eval` CLI share one implementation:
+The deterministic pass/fail layer lives in `@mcpjam/sdk/predicates` (`sdk/src/predicates/`), browser-safe so the Inspector GUI runner and the `mcpjam cloud eval` CLI share one implementation:
 
 - `types.ts` — the `Predicate` union (12 types) plus Zod schemas. The union grows only when a real corpus task demands it.
 - `evaluate.ts` — `evaluatePredicate` / `evaluatePredicates` / `evaluateTurnChecks`, pure functions over an `IterationTranscript`.

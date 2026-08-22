@@ -23,7 +23,7 @@ export interface PlatformClientOptions {
  * hard-error: silently falling back to prod would run a login or send a
  * token somewhere the user did not ask for.
  */
-function validateApiUrl(value: string, source: string): string {
+export function validateApiUrl(value: string, source: string): string {
   let parsed: URL;
   try {
     parsed = new URL(value);
@@ -135,7 +135,7 @@ export function toCliError(error: unknown): CliError {
   if (isPlatformApiError(error)) {
     const message =
       error.code === "UNAUTHORIZED"
-        ? `${error.message} Run \`mcpjam login\` or pass a valid sk_ API key.`
+        ? `${error.message} Run \`mcpjam cloud login\` or pass a valid sk_ API key.`
         : error.message;
     return cliError(error.code, message, 1, error.details);
   }

@@ -2,6 +2,8 @@ import type {
   ConformanceRunOutcome,
   ConformanceSkipReason,
 } from "../conformance-outcome.js";
+import type { ConformanceProfileStamp } from "../conformance-profile.js";
+import type { WireObservationRecorder } from "./wire-observations.js";
 import type {
   ManagedMcpClient,
   MCPClientManager,
@@ -63,18 +65,46 @@ export const MCP_CHECK_IDS = [
   "modern-server-discover",
   "modern-result-type-present",
   "modern-cacheable-result-hints",
+  // The caching utility as SHIPPED in 2026-07-28, which is deeper than the
+  // original SEP-2549 reading `modern-cacheable-result-hints` encodes: six
+  // cacheable operations rather than four, a typed `ttlMs`/`cacheScope`
+  // contract, and page-to-page scope stability. New ids rather than a widened
+  // old one — widening a scored check silently re-grades every server that was
+  // green under the narrower reading.
+  "modern-cache-hint-coverage",
+  "modern-cache-hint-values-valid",
+  "modern-cache-scope-stable-across-pages",
   "modern-protocol-version-header-mismatch",
   "modern-method-header-mismatch",
   "modern-name-header-mismatch",
   "modern-unsupported-version-error",
+  // SEP-2243 header cases the mismatch checks above do not reach: a MISSING
+  // required standard header is a distinct validation-failure condition from a
+  // present-but-wrong one, and the case-insensitivity rule is an ACCEPTANCE
+  // MUST rather than a rejection MUST.
+  "modern-missing-method-header-rejected",
+  "modern-header-names-case-insensitive",
   "modern-undeclared-capability-error",
   "modern-no-session-id",
   "modern-removed-methods-not-found",
   "modern-resource-not-found-invalid-params",
+  // SEP-2164's other half: the right error CODE and a non-ambiguous answer are
+  // separate obligations, and a server can satisfy one without the other.
+  "modern-resource-read-no-empty-contents",
+  // Fixture-gated: the only way to observe a declared `outputSchema` being
+  // honored is to CALL the tool, and no advertised metadata says which tools
+  // are safe to call. Skips with an explanation when no fixture is supplied.
+  "modern-tool-output-schema-conformant",
   "modern-logs-require-log-level",
   "modern-subscription-ack-precedes-notifications",
   "modern-subscription-filter-and-tagging",
   "modern-subscription-graceful-close",
+  // The one check whose subject is the RUN rather than a probe of its own: it
+  // sends nothing and grades every message the other families already made the
+  // server say against the revision's published JSON Schema. Both eras — each
+  // revision ships its own schema, so the requirement is the same statement on
+  // either wire and only the document changes.
+  "wire-schema-valid",
 ] as const;
 
 export type MCPCheckId = (typeof MCP_CHECK_IDS)[number];
@@ -209,18 +239,26 @@ export const CHECK_ERAS: Record<MCPCheckId, MCPCheckEras> = {
   "modern-server-discover": ["modern"],
   "modern-result-type-present": ["modern"],
   "modern-cacheable-result-hints": ["modern"],
+  "modern-cache-hint-coverage": ["modern"],
+  "modern-cache-hint-values-valid": ["modern"],
+  "modern-cache-scope-stable-across-pages": ["modern"],
   "modern-protocol-version-header-mismatch": ["modern"],
   "modern-method-header-mismatch": ["modern"],
   "modern-name-header-mismatch": ["modern"],
   "modern-unsupported-version-error": ["modern"],
+  "modern-missing-method-header-rejected": ["modern"],
+  "modern-header-names-case-insensitive": ["modern"],
   "modern-undeclared-capability-error": ["modern"],
   "modern-no-session-id": ["modern"],
   "modern-removed-methods-not-found": ["modern"],
   "modern-resource-not-found-invalid-params": ["modern"],
+  "modern-resource-read-no-empty-contents": ["modern"],
+  "modern-tool-output-schema-conformant": ["modern"],
   "modern-logs-require-log-level": ["modern"],
   "modern-subscription-ack-precedes-notifications": ["modern"],
   "modern-subscription-filter-and-tagging": ["modern"],
   "modern-subscription-graceful-close": ["modern"],
+  "wire-schema-valid": ["legacy", "modern"],
 } as const satisfies Record<MCPCheckId, MCPCheckEras>;
 
 export interface MCPCheckResult {
@@ -283,6 +321,42 @@ export interface MCPConformanceConfig {
     toolName: string;
     arguments?: Record<string, unknown>;
   };
+  /**
+   * Operator-supplied primitives that are SAFE TO EXECUTE, generalizing the
+   * opt-in pattern {@link MCPConformanceConfig.inputRequiredProbe} and
+   * {@link MCPConformanceConfig.logProbe} already use.
+   *
+   * WHY THIS IS OPT-IN AND STAYS OPT-IN. A whole family of requirements can
+   * only be observed on a result the server produces by DOING something — a
+   * tool's declared `outputSchema` binds its `structuredContent`, and
+   * `CallToolResult` / `GetPromptResult` have shapes no listing can show. A
+   * default run cannot reach any of it, because nothing in a tool's advertised
+   * metadata says whether calling it charges a card or deletes a row, and a
+   * conformance run that guessed would be an outage waiting to happen.
+   *
+   * So the operator names what is safe. Absent ⇒ the fixture-gated checks
+   * report a skip that says exactly what they need, and the default run
+   * behaves as it always has: no arbitrary tool is ever called.
+   *
+   * The probes also flow into the run-wide wire record, so supplying them
+   * widens `wire-schema-valid`'s coverage to `CallToolResult` and
+   * `GetPromptResult` — result shapes an unfixtured run never sees at all.
+   */
+  fixtures?: MCPConformanceFixtures;
+}
+
+/** @see {@link MCPConformanceConfig.fixtures} */
+export interface MCPConformanceFixtures {
+  /** `tools/call` targets the operator declares safe to execute. */
+  toolCalls?: Array<{
+    toolName: string;
+    arguments?: Record<string, unknown>;
+  }>;
+  /** `prompts/get` targets the operator declares safe to render. */
+  promptGets?: Array<{
+    promptName: string;
+    arguments?: Record<string, string>;
+  }>;
 }
 
 export interface NormalizedMCPConformanceConfig {
@@ -308,6 +382,12 @@ export interface NormalizedMCPConformanceConfig {
     toolName: string;
     arguments?: Record<string, unknown>;
   };
+  /**
+   * See {@link MCPConformanceConfig.fixtures}. Always present after
+   * normalization (with empty arrays when the caller supplied none), so a check
+   * reads `fixtures.toolCalls.length` rather than a chain of optionals.
+   */
+  fixtures: Required<MCPConformanceFixtures>;
 }
 
 /**
@@ -341,6 +421,16 @@ export const MCP_READINESS_IDS = [
   // on the 2025 revisions, and 405-on-GET/DELETE is the 2026 revision's
   // backward-compat SHOULD; neither can fail a run.
   "readiness-session-termination",
+  // SEP-2243 makes `MCP-Protocol-Version` REQUIRED on every POST and lists its
+  // absence as a validation-failure condition — but the same section says a
+  // server supporting pre-2025-06-18 clients "MAY treat a request that omits
+  // the header as protocol version 2025-03-26". Tolerating the omission is
+  // therefore spec-legal, so it can only be advice.
+  "readiness-protocol-version-header-required",
+  // SEP-2164 shows `error.data.uri` echoing the requested resource in its
+  // example, but never states it as a MUST or a SHOULD. An example-only
+  // convention is MAY strength, and advice is the only honest home for it.
+  "readiness-resource-error-echoes-uri",
 ] as const;
 
 export type MCPReadinessId = (typeof MCP_READINESS_IDS)[number];
@@ -360,6 +450,19 @@ export interface MCPReadinessWarning {
   specStrength: MCPReadinessSpecStrength;
   message: string;
   details?: Record<string, unknown>;
+  /**
+   * Report this observation without deducting from the score.
+   *
+   * The readiness channel normally costs points, because a SHOULD a server
+   * ignores is a real (if non-fatal) shortfall. Some observations are not that:
+   * the behavior they describe is either EXPLICITLY PERMITTED by the spec (a
+   * MAY the server is entitled to take) or rests on a non-normative example.
+   * Deducting for those invents a requirement — the same over-strictness this
+   * program exists to remove, moved from the verdict onto the number.
+   *
+   * Absent ⇒ scored, so every existing warning keeps its deduction.
+   */
+  informational?: boolean;
 }
 
 export interface MCPConformanceResult {
@@ -404,6 +507,21 @@ export interface MCPConformanceResult {
    * real-world interop, and they NEVER affect `passed` or any check status.
    */
   readiness: MCPReadinessWarning[];
+  /**
+   * WHICH QUESTIONS THIS RUN ASKED, and which build asked them — the frozen
+   * scored-check manifest, the checker version, the revisions and (from the
+   * wire-schema check) the schema digest. See `conformance-profile.ts`.
+   *
+   * Without it, `protocolVersion` + the check list were the only identity a
+   * result carried, and two scores from two builds were incomparable by
+   * construction: the check inventory grows, and a growing inventory silently
+   * re-grades servers that never changed.
+   *
+   * Optional so every existing consumer and every stored report still reads;
+   * a result without it has no pending bucket, which is exactly the
+   * pre-profile behavior.
+   */
+  profile?: ConformanceProfileStamp;
 }
 
 export interface MCPConformanceSuiteConfig {
@@ -442,6 +560,16 @@ export interface RawHttpCheckContext {
   fetchFn: typeof fetch;
   /** Absent when the run selected raw-only checks and never connected. */
   surface?: MCPServerSurfaceSnapshot;
+  /**
+   * The run-wide wire record every raw probe feeds (see
+   * `wire-observations.ts`). Threaded on the CONTEXT rather than passed per
+   * call so that recording happens at one seam inside `rawRequest` — a new
+   * raw check is covered by construction and cannot forget to opt in.
+   *
+   * Optional because the raw harness is also driven directly by tests, which
+   * have nothing to record into.
+   */
+  recorder?: WireObservationRecorder;
 }
 
 export interface MCPClientCheckDefinition {
