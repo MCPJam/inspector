@@ -75,6 +75,7 @@ const RECIPE = {
 
 type Completion = {
   runId?: string;
+  conformanceRunId?: string;
   summary?: unknown;
   detailsMarkdown?: string;
   terminalAttempt?: AttemptInput;
@@ -111,6 +112,7 @@ function harness(
   planOptions?: {
     beginThrows?: unknown;
     attemptThrows?: (input: AttemptInput) => unknown;
+    evalAction?: "complete" | "run_conformance";
   }
 ): Harness {
   const reports: PlanlessCheckReport[] = [];
@@ -119,6 +121,11 @@ function harness(
   const events: string[] = [];
   const heartbeats: string[] = [];
   const resolveArgs: Array<{ cloneToken?: string }> = [];
+  const {
+    runEvalSuite: runEvalSuiteOverride,
+    runConformance: runConformanceOverride,
+    ...restOverrides
+  } = overrides ?? {};
 
   const session: CheckPlanSession = {
     planId: "plan-1",
@@ -132,6 +139,9 @@ function harness(
       const thrown = planOptions?.attemptThrows?.(input);
       if (thrown) throw thrown;
       if (input.phase === "eval" && input.ok) {
+        if (planOptions?.evalAction === "run_conformance") {
+          return { action: "run_conformance", reason: "eval_bound" };
+        }
         return { action: "complete", reason: "verdict_established" };
       }
       return { action: "continue_phase" };
@@ -211,12 +221,19 @@ function harness(
     },
     runEvalSuite: async (args) => {
       events.push("runEvalSuite");
+      if (runEvalSuiteOverride) return runEvalSuiteOverride(args);
       await args.onRunStarted?.("run-1");
       return {
         runId: "run-1",
         result: "passed",
         summary: { total: 3, passed: 3, failed: 0, passRate: 1 },
       };
+    },
+    runConformance: async (args) => {
+      events.push("runConformance");
+      if (runConformanceOverride) return runConformanceOverride(args);
+      await args.onRunStarted?.("conf-run-1");
+      return { runId: "conf-run-1" };
     },
     report: async (report) => {
       reports.push(report);
@@ -226,7 +243,7 @@ function harness(
       heartbeats.push(triggerId);
     },
     heartbeatIntervalMs: 1_000,
-    ...overrides,
+    ...restOverrides,
   };
 
   return {
@@ -272,6 +289,46 @@ describe("executeClaimedCheck — happy path", () => {
     // And the planless path — the only one that still names an outcome — was
     // never taken.
     expect(h.reports).toHaveLength(0);
+  });
+
+  it("runs conformance after a product-failing eval when the backend says run_conformance", async () => {
+    const h = harness(
+      {
+        runEvalSuite: async (args) => {
+          await args.onRunStarted?.("run-2");
+          return {
+            runId: "run-2",
+            result: "failed",
+            summary: { total: 4, passed: 1, failed: 3, passRate: 0.25 },
+          };
+        },
+      },
+      undefined,
+      { evalAction: "run_conformance" }
+    );
+    await executeClaimedCheck(
+      { ...CLAIM, conformanceEnabled: true },
+      "worker-1",
+      h.deps
+    );
+
+    expect(h.events).toEqual(
+      expect.arrayContaining([
+        "runEvalSuite",
+        "attempt:eval:ok",
+        "runConformance",
+        "attempt:conformance:ok",
+        "complete",
+      ])
+    );
+    expect(h.events.indexOf("runEvalSuite")).toBeLessThan(
+      h.events.indexOf("runConformance")
+    );
+    expect(h.completions[0]).toMatchObject({
+      runId: "run-2",
+      conformanceRunId: "conf-run-1",
+    });
+    expect(JSON.stringify(h.attempts)).not.toContain("evals_failed");
   });
 
   it("posts the eval attempt AT LAUNCH, carrying the runId that binds the run", async () => {

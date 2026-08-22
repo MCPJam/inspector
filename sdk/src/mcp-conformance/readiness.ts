@@ -58,6 +58,22 @@ function warning(
   return { id, title, severity: "warning", specStrength, message, details };
 }
 
+/**
+ * Advice that is REPORTED but costs no points — see
+ * {@link MCPReadinessWarning.informational}. Use this, not {@link warning},
+ * whenever the behavior described is one the specification explicitly allows or
+ * merely illustrates.
+ */
+function informational(
+  id: MCPReadinessWarning["id"],
+  title: string,
+  specStrength: MCPReadinessSpecStrength,
+  message: string,
+  details?: Record<string, unknown>
+): MCPReadinessWarning {
+  return { ...warning(id, title, specStrength, message, details), informational: true };
+}
+
 function toolOrderWarning(
   first: string[],
   second: string[]
@@ -509,6 +525,126 @@ async function oauthIssWarning(
  * endpoints) can show. Each probe is independently guarded: readiness is
  * advisory, so a probe that throws contributes nothing and never fails a run.
  */
+/**
+ * SEP-2243 makes `MCP-Protocol-Version` REQUIRED on every POST and lists a
+ * missing standard header among the conditions a server "**MUST** reject …
+ * with `400 Bad Request`". It is nonetheless ADVICE and not a check, because
+ * the same section grants an explicit escape hatch:
+ *
+ *   "A server that supports clients implementing protocol versions earlier
+ *    than 2025-06-18 … MAY treat a request that omits the header as protocol
+ *    version 2025-03-26. A server that does not support such clients MUST
+ *    reject a request without the header."
+ *
+ * Nothing on the wire says which kind of server this is, so a check that
+ * demanded rejection would fail conforming legacy-tolerant servers — including
+ * the official server SDK, which answers such a request normally. That is
+ * exactly the over-strict false positive this program exists to remove, so the
+ * observation is reported and never scored.
+ *
+ * The sibling `modern-missing-method-header-rejected` IS a check: `Mcp-Method`
+ * has no carve-out, and the reference implementation rejects without it.
+ */
+async function protocolVersionHeaderWarning(
+  ctx: RawHttpCheckContext
+): Promise<MCPReadinessWarning | undefined> {
+  if (ctx.config.era !== "modern") {
+    // The header does not exist before 2026-07-28; advising about its absence
+    // on a 2025 wire would invent a requirement.
+    return undefined;
+  }
+
+  const version = ctx.config.protocolVersion ?? "2026-07-28";
+  const result = await rawRequest(ctx, {
+    // Deliberately NO `MCP-Protocol-Version`, everything else well-formed —
+    // `server/discover` is read-only, so a server that processes it anyway has
+    // executed nothing.
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json, text/event-stream",
+      "Mcp-Method": "server/discover",
+    },
+    body: modernRequestBody({
+      id: 9401,
+      method: "server/discover",
+      protocolVersion: version,
+    }),
+    timeoutMs: Math.min(ctx.config.checkTimeout, 5_000),
+  });
+
+  if (result.status >= 400 || jsonRpcError(result)) {
+    // Rejected: the strict reading, and unobjectionable.
+    return undefined;
+  }
+
+  return informational(
+    "readiness-protocol-version-header-required",
+    "Protocol Version Header Required",
+    "SHOULD",
+    `The server answered a POST carrying no MCP-Protocol-Version header with HTTP ${result.status} and no error. SEP-2243 makes the header REQUIRED on every POST; tolerating its absence is permitted only for servers that still support pre-2025-06-18 clients, and it denies intermediaries the routing signal the header exists to provide`,
+    { status: result.status }
+  );
+}
+
+/**
+ * SEP-2164's error example carries the requested uri in `error.data`:
+ *
+ *   { "code": -32602, "message": "Resource not found",
+ *     "data": { "uri": "file:///nonexistent.txt" } }
+ *
+ * ADVICE, at the weakest strength, because the spec shows it and never states
+ * it — there is no MUST or SHOULD attached. Promoting an example to a
+ * requirement is how a conformance suite acquires false positives, and the
+ * `-32602` code itself is already a MUST covered by a real check. What the echo
+ * actually buys is diagnosis: a client batching several reads gets an error per
+ * request id, and without the uri a human reading a log cannot tell which read
+ * failed.
+ */
+async function resourceErrorUriWarning(
+  ctx: RawHttpCheckContext
+): Promise<MCPReadinessWarning | undefined> {
+  if (ctx.config.era !== "modern") {
+    return undefined;
+  }
+  const version = ctx.config.protocolVersion ?? "2026-07-28";
+  const missingUri = `mcpjam-readiness://missing/${version}`;
+  const result = await rawRequest(ctx, {
+    headers: {
+      ...modernHeaders({
+        protocolVersion: version,
+        method: "resources/read",
+        name: missingUri,
+      }),
+    },
+    body: modernRequestBody({
+      id: 9402,
+      method: "resources/read",
+      params: { uri: missingUri },
+      protocolVersion: version,
+    }),
+    timeoutMs: Math.min(ctx.config.checkTimeout, 5_000),
+  });
+
+  const error = jsonRpcError(result);
+  if (!error) {
+    // No error at all is a different finding, and it belongs to the check that
+    // asserts the -32602 MUST — not to advice about the error's contents.
+    return undefined;
+  }
+  const data = error.data as { uri?: unknown } | undefined;
+  if (typeof data?.uri === "string") {
+    return undefined;
+  }
+
+  return informational(
+    "readiness-resource-error-echoes-uri",
+    "Resource Errors Name Their URI",
+    "MAY",
+    `The server's error for an unreadable resource carries no error.data.uri. The spec's own example echoes it, and without it a client that batches reads cannot tell a human which uri failed`,
+    { probedUri: missingUri, jsonRpcCode: error.code }
+  );
+}
+
 export async function collectRawReadiness(
   ctx: RawHttpCheckContext
 ): Promise<MCPReadinessWarning[]> {
@@ -518,6 +654,8 @@ export async function collectRawReadiness(
     xMcpHeaderDeclarationsWarning(ctx),
     parseErrorHandlingWarning(ctx),
     sessionTerminationWarning(ctx),
+    protocolVersionHeaderWarning(ctx),
+    resourceErrorUriWarning(ctx),
   ];
   const settled = await Promise.allSettled(probes);
   return settled.flatMap((outcome) =>
