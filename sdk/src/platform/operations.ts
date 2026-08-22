@@ -9573,7 +9573,12 @@ export const installRegistryDirectoryServerOperation: PlatformOperation<
 };
 
 export const installRegistryServerOperation: PlatformOperation<
-  { project?: string; registryServerId: string; expectedUpdatedAt?: number },
+  {
+    project?: string;
+    registryServerId: string;
+    endpointUrl?: string;
+    expectedUpdatedAt?: number;
+  },
   PlatformRegistryInstallResult
 > = {
   name: "install_registry_server",
@@ -9589,6 +9594,16 @@ export const installRegistryServerOperation: PlatformOperation<
       .optional()
       .describe(PROJECT_SELECTOR_DESCRIPTION),
     registryServerId: z.string().trim().min(1),
+    endpointUrl: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Display-only: the card's endpoint, resolved at proposal time so the " +
+          "approver can see it. The install always uses the card's own " +
+          "transport; this field never chooses the endpoint.",
+      ),
     expectedUpdatedAt: z
       .number()
       .finite()
