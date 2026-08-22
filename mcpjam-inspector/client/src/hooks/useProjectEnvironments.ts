@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import { useConvex, useMutation, useQuery, useConvexAuth } from "convex/react";
+import { useMutation, useQuery, useConvexAuth } from "convex/react";
+import * as ConvexReact from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import {
@@ -403,8 +404,11 @@ export function isRevisionConflictError(err: unknown): boolean {
 export function useModelMatrixCapability(
   projectId: string | null | undefined
 ): boolean | undefined {
-  // Tests often mock `convex/react` without `useConvex`. Calling a missing
-  // export would throw during render; treat that as "no matrix".
+  // Named `import { useConvex }` throws at module load when a test mock
+  // omits the export (vitest: "No useConvex export is defined"). Read it
+  // off the namespace so those mocks stay "no matrix" instead of crashing
+  // every composer consumer (swarm, User Testing).
+  const useConvex = ConvexReact.useConvex;
   const convex = typeof useConvex === "function" ? useConvex() : undefined;
   const [state, setState] = useState<boolean | undefined>(undefined);
 

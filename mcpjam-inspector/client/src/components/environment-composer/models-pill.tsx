@@ -95,7 +95,7 @@ export function ModelsPill({
     mode === "multiple" &&
     !includeDefaults &&
     wouldExceedBudget(budget, { extraChoices: 1 });
-  const modelCapBlocked = (modelId: string, checked: boolean) =>
+  const modelCapBlocked = (checked: boolean) =>
     mode === "multiple" &&
     !checked &&
     wouldExceedBudget(budget, { extraChoices: 1 });
@@ -180,7 +180,7 @@ export function ModelsPill({
               const id = String(model.id);
               const checked = explicit.includes(id);
               const locked = model.disabled === true;
-              const capBlocked = modelCapBlocked(id, checked);
+              const capBlocked = modelCapBlocked(checked);
               const optionDisabled = locked || capBlocked || disabled;
               return (
                 <Label
