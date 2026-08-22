@@ -688,20 +688,20 @@ knowledge:
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
 
-### `images list`
+### `cloud images list`
 
 | Flag | Description |
 |------|-------------|
 | `--project <id-or-name>` | Project name or ID (defaults to the most recently updated project) |
 
-### `images get`
+### `cloud images get`
 
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--image <id-or-name>` | Yes | Sandbox image name or ID |
 | `--project <id-or-name>` | No | Project name or ID |
 
-### `images validate`
+### `cloud images validate`
 
 Lint a blueprint without saving it. Prints `ok` plus the resolved base digest, or structured errors with the YAML path of each violation.
 
