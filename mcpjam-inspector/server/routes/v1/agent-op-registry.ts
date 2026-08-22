@@ -213,12 +213,30 @@ export interface GatedProposalMeta {
    * The ONE async hook in an otherwise synchronous registry, because resolving
    * names to ids needs the platform. It runs best-effort at the call site: a
    * failure leaves the arguments as the model wrote them rather than losing the
-   * proposal, so the worst case is today's behaviour and not a dropped action.
+   * proposal, so the worst case is today's behaviour and not a dropped action —
+   * UNLESS the entry declares `requiredFrozenKeys`, which makes the freeze
+   * mandatory.
    */
   normalizeProposalArgs?(
     input: Record<string, unknown>,
     context: { projectId: string; client: PlatformApiClient },
   ): Promise<Record<string, unknown>>;
+  /**
+   * Keys `normalizeProposalArgs` MUST have pinned before the proposal may be
+   * persisted at all.
+   *
+   * The freeze above is best-effort by default because for most operations the
+   * frozen form merely narrows arguments that were already safe to store. For
+   * an INSTALL the pin IS what the human approves: an unpinned proposal reads
+   * "install cs_1" with no endpoint, and a click up to an hour later would
+   * install whatever the registry row resolves to THEN. Declaring keys here
+   * makes the freeze fail-CLOSED — a normalizer failure, or a frozen input
+   * still missing one of these keys, REFUSES to mint the proposal (the model
+   * gets a tool error) instead of persisting an unpinned one — and the
+   * approval-execute route refuses a stored input missing them, as defense in
+   * depth against rows minted before this contract existed.
+   */
+  requiredFrozenKeys?: readonly string[];
 }
 
 /** Read a string off an unknown result, at a dotted path. */
@@ -476,13 +494,23 @@ function readOptionalNumber(
  * what makes a later click TOCTOU-safe. If we stored only the catalog id, a
  * row that changed between propose and click would install a different
  * endpoint than the one the approver saw.
+ *
+ * FAIL-CLOSED: a row that cannot be pinned is a proposal that must not exist.
+ * Every throw here reaches `persistProposal`, which refuses the mint (see
+ * `requiredFrozenKeys`) — degrading to the unpinned input would persist an
+ * approval whose click installs whatever the row resolves to an hour later.
+ * A caller-supplied pin/endpoint is kept over the row's (the model may have
+ * read the row already, and a stale pin fails the mutation, not the user).
  */
 export async function freezeDirectoryInstallArgs(
   input: Record<string, unknown>,
   context: { projectId: string; client: PlatformApiClient },
 ): Promise<Record<string, unknown>> {
   const catalogServerId = named(input, "catalogServerId");
-  if (!catalogServerId) return input;
+  if (!catalogServerId) {
+    // Validated input requires it; reachable only through an upstream bug.
+    throw new Error("directory install carries no catalogServerId to pin");
+  }
   const row = await context.client.getRegistryDirectoryServer({
     catalogServerId,
   });
@@ -490,39 +518,62 @@ export async function freezeDirectoryInstallArgs(
     readOptionalString(input, "endpointUrl") ?? row.remoteUrl;
   const expectedContentHash =
     readOptionalString(input, "expectedContentHash") ?? row.latestContentHash;
-  return {
-    ...input,
-    ...(endpointUrl ? { endpointUrl } : {}),
-    ...(expectedContentHash ? { expectedContentHash } : {}),
-  };
+  if (!endpointUrl || !expectedContentHash) {
+    throw new Error(
+      `directory row ${catalogServerId} cannot be pinned — missing ` +
+        `${endpointUrl ? "content hash" : "endpoint"}`,
+    );
+  }
+  return { ...input, endpointUrl, expectedContentHash };
 }
 
 /**
  * Freeze a card install at proposal time (`expectedUpdatedAt` vs
- * `registryServers.updatedAt`). Same TOCTOU reason as the directory pin.
+ * `registryServers.updatedAt`). Same TOCTOU reason — and the same fail-closed
+ * contract — as the directory pin above.
  */
 export async function freezeCardInstallArgs(
   input: Record<string, unknown>,
   context: { projectId: string; client: PlatformApiClient },
 ): Promise<Record<string, unknown>> {
   const registryServerId = named(input, "registryServerId");
-  if (!registryServerId) return input;
+  if (!registryServerId) {
+    throw new Error("card install carries no registryServerId to pin");
+  }
+  // No get-by-id route exists for registry cards, so this reads the list and
+  // matches locally. `/registry/servers` is unpaginated today — neither the
+  // SDK method nor the route takes a cursor or limit — and if the backend
+  // ever caps the page, a real card beyond the cap surfaces HERE as a refusal
+  // to mint, never as a silently unpinned install.
   const page = await context.client.listRegistryServers({
     projectId: context.projectId,
     scope: "all",
   });
   const card = page.items.find((item) => item.id === registryServerId);
-  if (!card) return input;
-  const endpointUrl =
-    readOptionalString(input, "endpointUrl") ?? card.transport?.url;
-  return {
-    ...input,
-    ...(readOptionalNumber(input, "expectedUpdatedAt") === undefined &&
-    card.updatedAt !== undefined
-      ? { expectedUpdatedAt: card.updatedAt }
-      : {}),
-    ...(endpointUrl ? { endpointUrl } : {}),
-  };
+  if (!card) {
+    throw new Error(
+      `registry card ${registryServerId} is not visible to this project`,
+    );
+  }
+  const expectedUpdatedAt =
+    readOptionalNumber(input, "expectedUpdatedAt") ?? card.updatedAt;
+  if (expectedUpdatedAt === undefined) {
+    throw new Error(
+      `registry card ${registryServerId} carries no updatedAt to pin against`,
+    );
+  }
+  // The endpoint shown to the approver is the CARD'S own, never the model's:
+  // `install_registry_server` ignores any caller-supplied URL and installs
+  // the card's transport, so a model-authored `endpointUrl` here could only
+  // ever make the approval read differently from what the click does.
+  const next: Record<string, unknown> = { ...input, expectedUpdatedAt };
+  const endpointUrl = card.transport?.url;
+  if (endpointUrl) {
+    next.endpointUrl = endpointUrl;
+  } else {
+    delete next.endpointUrl;
+  }
+  return next;
 }
 
 /**
@@ -625,6 +676,22 @@ function named(
 ): string | undefined {
   const value = input[key];
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+/**
+ * The PARSED host of a URL, for approval copy. Never the raw string: a
+ * scraped `https://mcp.linear.app@evil.tld/mcp` reads as Linear while dialing
+ * evil.tld, and the parsed host is the one part userinfo cannot spoof.
+ * `undefined` on a parse failure, so callers render an explicit
+ * "(unparseable url)" instead of the spoofable text.
+ */
+function describableHost(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url).host || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // ── Parameter preview ────────────────────────────────────────────────
@@ -814,13 +881,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "gated",
     proposal: {
       describe: (input) => {
-        const url = named(input, "url");
-        let host: string | undefined;
-        try {
-          host = url ? new URL(url).host : undefined;
-        } catch {
-          host = undefined;
-        }
+        const host = describableHost(named(input, "url"));
         const project = named(input, "project");
         return `Connect MCP server ${host ?? "(unparseable url)"}${
           project ? ` to project ${project}` : ""
@@ -864,14 +925,22 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       describe: (input) => {
         const id = named(input, "catalogServerId") ?? "(unnamed)";
         const endpoint = named(input, "endpointUrl");
+        // The PARSED host, same as connect_project_server: a scraped
+        // `remoteUrl` with userinfo would otherwise read as a trusted vendor
+        // on the approval button while dialing somewhere else.
+        const host = describableHost(endpoint);
         return `Install directory server ${id}${
-          endpoint ? ` at ${endpoint}` : ""
+          endpoint ? ` at ${host ?? "(unparseable url)"}` : ""
         }`;
       },
       buttonLabel: "Install it",
       kind: "external",
       confirmSeverity: "external",
       normalizeProposalArgs: freezeDirectoryInstallArgs,
+      // The freeze is the security property of this entry — see
+      // `requiredFrozenKeys` on GatedProposalMeta. An unpinned directory
+      // install refuses to mint rather than degrading.
+      requiredFrozenKeys: ["endpointUrl", "expectedContentHash"],
     },
     promptNotes: [
       "- `install_registry_directory_server` writes a project servers row and stops — it is NOT a live connection. Calling it PROPOSES the install; a person approves it. After approval, follow with `get_project_server_connection_status`. OAuth servers need the browser connect-link; never write that URL into a shared channel.",
@@ -884,7 +953,10 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       describe: (input) => {
         const id = named(input, "registryServerId") ?? "(unnamed)";
         const endpoint = named(input, "endpointUrl");
-        return `Install registry card ${id}${endpoint ? ` at ${endpoint}` : ""}`;
+        const host = describableHost(endpoint);
+        return `Install registry card ${id}${
+          endpoint ? ` at ${host ?? "(unparseable url)"}` : ""
+        }`;
       },
       buttonLabel: "Install it",
       kind: "external",
@@ -892,6 +964,11 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       // endpoint. Org cards are not a softer hazard.
       confirmSeverity: "external",
       normalizeProposalArgs: freezeCardInstallArgs,
+      // `endpointUrl` is deliberately NOT required: a card without a remote
+      // transport has no endpoint to show, and the updatedAt pin alone is
+      // what stops the row moving between propose and click. When the card
+      // HAS one, the freeze always sets it (from the card, never the model).
+      requiredFrozenKeys: ["expectedUpdatedAt"],
     },
     promptNotes: [
       "- `install_registry_server` writes a project servers row and stops — it is NOT a live connection. Calling it PROPOSES the install; a person approves it. After approval, follow with `get_project_server_connection_status`. OAuth servers need the browser connect-link; never write that URL into a shared channel.",
@@ -1754,14 +1831,19 @@ export function proposalMetaFor(operationName: string): {
   /**
    * Freeze the arguments before they are persisted, or return them unchanged.
    *
-   * BEST-EFFORT BY CONSTRUCTION: a normalizer that throws leaves the arguments
-   * as the model wrote them, which is exactly today's behaviour — a failed
-   * resolution must not cost the user the proposal itself.
+   * BEST-EFFORT BY CONSTRUCTION for most operations: a normalizer that throws
+   * leaves the arguments as the model wrote them, which is exactly today's
+   * behaviour — a failed resolution must not cost the user the proposal
+   * itself. The exception is an entry with `requiredFrozenKeys`, where the
+   * pin IS the approval: there a failure propagates so `persistProposal`
+   * refuses the mint instead of persisting an unpinned proposal.
    */
   normalizeArgs: (
     input: Record<string, unknown>,
     context: { projectId: string; client: PlatformApiClient },
   ) => Promise<Record<string, unknown>>;
+  /** Keys the frozen input must carry, or the proposal is refused. */
+  requiredFrozenKeys: readonly string[];
 } {
   const entry = GATED_BY_NAME.get(operationName);
   if (!entry) {
@@ -1772,6 +1854,7 @@ export function proposalMetaFor(operationName: string): {
       severityFor: () => undefined,
       targetFor: () => undefined,
       normalizeArgs: async (input) => input,
+      requiredFrozenKeys: [],
     };
   }
   const severity = entry.proposal.confirmSeverity;
@@ -1803,9 +1886,15 @@ export function proposalMetaFor(operationName: string): {
           operation: operationName,
           error: error instanceof Error ? error.message : String(error),
         });
+        // Degrading to the raw input is fine when freezing merely NARROWS
+        // (an eval fan-out stays exactly today's behaviour), and is the
+        // vulnerability when the pin is the thing being approved — those
+        // entries declare `requiredFrozenKeys` and the failure propagates.
+        if ((entry.proposal.requiredFrozenKeys?.length ?? 0) > 0) throw error;
         return input;
       }
     },
+    requiredFrozenKeys: entry.proposal.requiredFrozenKeys ?? [],
   };
 }
 

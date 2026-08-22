@@ -16,6 +16,7 @@ import {
   getEvalRunStepsOperation,
   getPluginVersionOperation,
   getServerPromptOperation,
+  installRegistryServerOperation,
   listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
@@ -2055,6 +2056,20 @@ describe("operation catalog consistency", () => {
       runEvalSuiteOperation.inputSchema.safeParse({ suite: "s", servers: [] })
         .success
     ).toBe(false);
+  });
+
+  it("declares the frozen card-install shape, so a strict re-validation keeps it", () => {
+    // The inspector's proposal freeze injects a display-only `endpointUrl`
+    // (resolved from the card) next to the `expectedUpdatedAt` pin. Both must
+    // be schema-declared: a future strict re-validation at the execute seam
+    // would otherwise reject every approved card install.
+    expect(
+      installRegistryServerOperation.inputSchema.safeParse({
+        registryServerId: "rs",
+        endpointUrl: "https://mcp.example.com/mcp",
+        expectedUpdatedAt: 1_700_000_000_000,
+      }).success
+    ).toBe(true);
   });
 
   it("marks every operation read-only except the run/call/tunnel writes", () => {

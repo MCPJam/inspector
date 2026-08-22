@@ -453,11 +453,35 @@ describe("agent op registry", () => {
     );
     expect(frozen.expectedContentHash).toBe("hash_now");
     expect(frozen.endpointUrl).toBe("https://mcp.linear.app/mcp");
+    // The PARSED host, not the raw URL — same rule as connect_project_server:
+    // a scraped `https://mcp.linear.app@evil.tld/mcp` must not read as Linear
+    // on the approval button while dialing evil.tld.
     expect(
       proposalMetaFor(
         installRegistryDirectoryServerOperation.name
       ).description(frozen)
-    ).toBe("Install directory server cs_1 at https://mcp.linear.app/mcp");
+    ).toBe("Install directory server cs_1 at mcp.linear.app");
+  });
+
+  it("renders the parsed host on install buttons — a userinfo URL reads as its real host", () => {
+    const describeDirectory = proposalMetaFor(
+      installRegistryDirectoryServerOperation.name
+    ).description;
+    expect(
+      describeDirectory({
+        catalogServerId: "cs_1",
+        endpointUrl: "https://mcp.linear.app@evil.tld/mcp",
+      })
+    ).toBe("Install directory server cs_1 at evil.tld");
+    expect(
+      describeDirectory({ catalogServerId: "cs_1", endpointUrl: "not a url" })
+    ).toBe("Install directory server cs_1 at (unparseable url)");
+    expect(
+      proposalMetaFor(installRegistryServerOperation.name).description({
+        registryServerId: "rs_1",
+        endpointUrl: "https://mcp.linear.app@evil.tld/mcp",
+      })
+    ).toBe("Install registry card rs_1 at evil.tld");
   });
 
   it("keeps a caller-supplied directory pin rather than re-reading a moved row", async () => {
@@ -511,10 +535,124 @@ describe("agent op registry", () => {
     expect(frozen.endpointUrl).toBe("https://mcp.linear.app/mcp");
     expect(
       proposalMetaFor(installRegistryServerOperation.name).description(frozen)
-    ).toBe("Install registry card rs_1 at https://mcp.linear.app/mcp");
+    ).toBe("Install registry card rs_1 at mcp.linear.app");
     expect(
       proposalMetaFor(installRegistryServerOperation.name).severityFor({})
     ).toBe("external");
+  });
+
+  it("shows the approver the card's OWN endpoint, never a model-authored one", async () => {
+    // `install_registry_server` ignores any caller-supplied URL and installs
+    // the card's transport, so a model-authored `endpointUrl` could only ever
+    // make the approval read differently from what the click does.
+    const client = {
+      listRegistryServers: async () => ({
+        items: [
+          {
+            id: "rs_1",
+            scope: "global",
+            name: "linear",
+            updatedAt: 5,
+            transport: { url: "https://real.example/mcp" },
+          },
+        ],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    const frozen = await proposalMetaFor(
+      installRegistryServerOperation.name
+    ).normalizeArgs(
+      { registryServerId: "rs_1", endpointUrl: "https://mcp.linear.app/mcp" },
+      { projectId: "p1", client }
+    );
+    expect(frozen.endpointUrl).toBe("https://real.example/mcp");
+  });
+
+  it("REFUSES an install freeze the platform cannot answer — never an unpinned proposal", async () => {
+    // INVERTED from the generic tier's degrade (tested below for the eval
+    // ops): for the installs the mint-time pin IS what the human approves.
+    // A proposal persisted without it shows the approver no endpoint, and a
+    // click up to an hour later would install whatever the row resolves to
+    // THEN.
+    const client = {
+      getRegistryDirectoryServer: async () => {
+        throw new Error("platform unreachable");
+      },
+      listRegistryServers: async () => {
+        throw new Error("platform unreachable");
+      },
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    await expect(
+      proposalMetaFor(
+        installRegistryDirectoryServerOperation.name
+      ).normalizeArgs({ catalogServerId: "cs_1" }, { projectId: "p1", client })
+    ).rejects.toThrow(/platform unreachable/);
+    await expect(
+      proposalMetaFor(installRegistryServerOperation.name).normalizeArgs(
+        { registryServerId: "rs_1" },
+        { projectId: "p1", client }
+      )
+    ).rejects.toThrow(/platform unreachable/);
+  });
+
+  it("REFUSES a card install whose card is not in the list", async () => {
+    // No get-by-id route exists for cards, so the freeze list-and-finds. A
+    // deleted card — or one beyond a future page cap — must surface as a
+    // refusal to mint, never as a proposal that silently skipped its pin.
+    const client = {
+      listRegistryServers: async () => ({ items: [] }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    await expect(
+      proposalMetaFor(installRegistryServerOperation.name).normalizeArgs(
+        { registryServerId: "rs_missing" },
+        { projectId: "p1", client }
+      )
+    ).rejects.toThrow(/rs_missing/);
+  });
+
+  it("REFUSES a directory row that carries nothing to pin", async () => {
+    // A row with no remoteUrl (and no caller-supplied endpoint) or no content
+    // hash cannot be frozen into an approvable contract.
+    const client = {
+      getRegistryDirectoryServer: async () => ({
+        id: "cs_1",
+        source: "claude",
+        serverName: "linear",
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    await expect(
+      proposalMetaFor(
+        installRegistryDirectoryServerOperation.name
+      ).normalizeArgs({ catalogServerId: "cs_1" }, { projectId: "p1", client })
+    ).rejects.toThrow(/cannot be pinned/);
+  });
+
+  it("declares the pins the mint and execute seams enforce for the installs", () => {
+    // Both seams read this contract: `persistProposal` refuses to mint
+    // without these keys, and the approval-execute route refuses a stored
+    // input missing them.
+    expect(
+      proposalMetaFor(installRegistryDirectoryServerOperation.name)
+        .requiredFrozenKeys
+    ).toEqual(["endpointUrl", "expectedContentHash"]);
+    expect(
+      proposalMetaFor(installRegistryServerOperation.name).requiredFrozenKeys
+    ).toEqual(["expectedUpdatedAt"]);
+    // The generic tier stays best-effort — no pins, no refusal.
+    expect(
+      proposalMetaFor(runEvalSuiteOperation.name).requiredFrozenKeys
+    ).toEqual([]);
   });
 
   it("gates both registry installs as external — org cards are not a softer hazard", () => {
@@ -533,7 +671,9 @@ describe("agent op registry", () => {
 
   it("keeps the proposal when normalization cannot reach the platform", async () => {
     // A failed resolution must cost the caller a frozen target list, never the
-    // proposal itself — the worst case is the pre-existing behaviour.
+    // proposal itself — the worst case is the pre-existing behaviour. (The
+    // registry installs are the deliberate exception: their pin is the
+    // approval, so they refuse instead — see the REFUSES tests above.)
     const client = {
       listEvalSuites: async () => {
         throw new Error("platform unreachable");
