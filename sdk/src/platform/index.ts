@@ -330,6 +330,7 @@ export {
   resolveEnvironmentOperation,
   createEnvironmentOperation,
   ensureAdhocEnvironmentOperation,
+  expandComposeModelChoices,
   nameEnvironmentOperation,
   updateEnvironmentOperation,
   archiveEnvironmentOperation,

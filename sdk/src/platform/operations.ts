@@ -1803,27 +1803,59 @@ function runKnobBody(
 }
 
 /** What a `compose` produced, plus the report the result carries. */
+interface ComposedCell {
+  id: string;
+  modelId?: string;
+  created: boolean;
+}
+
 interface ComposedRunEnvironment {
   environment: { id: string };
+  environments: Array<{ id: string; modelId?: string }>;
   report: {
-    environment: { id: string; name: null; adhoc: true; created: boolean };
+    environment: {
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    };
+    environments: Array<{
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    }>;
     attachment: { attached: boolean };
   };
 }
 
+export function expandComposeModelChoices(stack: {
+  model?: string;
+  models?: string[];
+  includeClientDefault?: boolean;
+}): Array<{ modelId: string | undefined }> {
+  const explicit = [
+    ...new Set([...(stack.models ?? []), ...(stack.model ? [stack.model] : [])]),
+  ];
+  const includeDefault =
+    explicit.length === 0 ? true : stack.includeClientDefault === true;
+  const choices: Array<{ modelId: string | undefined }> = [];
+  if (includeDefault) choices.push({ modelId: undefined });
+  for (const modelId of explicit) choices.push({ modelId });
+  return choices;
+}
+
 /**
- * Turn a composed stack into a runnable target: ensure the ad-hoc environment,
- * then ATTACH it to the suite.
+ * Turn a composed stack into runnable target cells: ensure one ad-hoc
+ * environment per model choice (host-major inherit-then-explicit).
  *
- * THE ATTACHMENT IS DELIBERATE AND VISIBLE, not incidental. It is what makes
- * the run reproducible from the app afterwards — an environment the suite does
- * not list is one nobody can re-run from the UI — and it mirrors what the app's
- * own composer does when a user edits a pill. Both operations say so in their
- * descriptions, because a caller must not discover it from a changed suite.
- *
- * Appended ATOMICALLY rather than read-modify-write: the replace door would
- * silently detach an environment someone else attached between the read and
- * the write, and this path attaches on every launch.
+ * DEFAULT IS EPHEMERAL — mint and launch without mutating the suite. Attach
+ * is opt-in (`saveTargets` / `--save-targets`) because permanently appending
+ * on every compose experiment accumulates toward the 10-cap. When attach is
+ * requested, the union `|existing ∪ newCells|` is pre-flighted so a product
+ * that fits still cannot grow the suite past the cap mid-way.
  */
 async function composeRunEnvironment(
   client: PlatformApiClient,
@@ -1833,37 +1865,151 @@ async function composeRunEnvironment(
     host: string;
     serverGroup?: string;
     model?: string;
+    models?: string[];
+    includeClientDefault?: boolean;
+    saveTargets?: boolean;
     computer?: string;
     skills?: { mode: "explicit"; skillIds: string[] };
     pluginVersionIds?: string[];
   },
   signal: AbortSignal | undefined,
+  options: { attach: boolean } = { attach: true },
 ): Promise<ComposedRunEnvironment> {
-  const body = await resolveComposeStack(client, project, stack, signal);
-  const ensured = await client.ensureAdhocEnvironment(
-    { projectId: project.id, body },
-    { signal },
-  );
-  const attachment = await client.attachEvalSuiteEnvironment(
-    {
-      projectId: project.id,
-      suiteId: suite.id,
-      environmentId: ensured.environment.id,
-    },
-    { signal },
-  );
+  const choices = expandComposeModelChoices(stack);
+  const cells: ComposedCell[] = [];
+  for (const choice of choices) {
+    const body = await resolveComposeStack(
+      client,
+      project,
+      { ...stack, model: choice.modelId },
+      signal,
+    );
+    const ensured = await client.ensureAdhocEnvironment(
+      { projectId: project.id, body },
+      { signal },
+    );
+    cells.push({
+      id: ensured.environment.id,
+      ...(choice.modelId ? { modelId: choice.modelId } : {}),
+      created: ensured.created === true,
+    });
+  }
+
+  let attached = false;
+  if (options.attach) {
+    const detail = await client.getEvalSuite(
+      { projectId: project.id, suiteId: suite.id },
+      { signal },
+    );
+    const existing = new Set(detail.environmentIds ?? []);
+    const union = new Set([...existing, ...cells.map((cell) => cell.id)]);
+    if (union.size > 10) {
+      throw operationInputError(
+        `Attaching these composed cells would grow the suite to ${union.size} environments (limit 10). Detach some first, or omit --save-targets / saveTargets to launch ephemerally.`,
+      );
+    }
+    for (const cell of cells) {
+      const attachment = await client.attachEvalSuiteEnvironment(
+        {
+          projectId: project.id,
+          suiteId: suite.id,
+          environmentId: cell.id,
+        },
+        { signal },
+      );
+      attached = attached || attachment.attached === true;
+    }
+  }
+
+  const reports = cells.map((cell) => ({
+    id: cell.id,
+    name: null as null,
+    adhoc: true as const,
+    created: cell.created,
+    ...(cell.modelId ? { modelId: cell.modelId } : {}),
+  }));
   return {
-    environment: { id: ensured.environment.id },
+    environment: { id: cells[0]!.id },
+    environments: cells.map((cell) => ({
+      id: cell.id,
+      ...(cell.modelId ? { modelId: cell.modelId } : {}),
+    })),
     report: {
-      environment: {
-        id: ensured.environment.id,
-        name: null,
-        adhoc: true,
-        created: ensured.created === true,
-      },
-      attachment: { attached: attachment.attached === true },
+      environment: reports[0]!,
+      environments: reports,
+      attachment: { attached },
     },
   };
+}
+
+/**
+ * Probe whether this deployment accepts `ephemeralEnvironment` on launch.
+ *
+ * A missing capabilities route (older inspector) or a capabilities payload
+ * that omits the flag both mean "do not send the arg" — an unknown field is
+ * a hard 400 on a strict schema, not a silently ignored one.
+ */
+async function probeEphemeralEnvironmentLaunch(
+  client: PlatformApiClient,
+  projectId: string,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  try {
+    const capabilities = await client.getEnvironmentCapabilities(
+      { projectId },
+      { signal },
+    );
+    return capabilities.ephemeralEnvironmentLaunch === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decide whether a compose writes suite attachments and whether the launch
+ * may send `ephemeralEnvironment: true`.
+ *
+ * Multi-cell compose against a backend that cannot launch unattached envs
+ * is refused here — before any mint — rather than sending an unknown arg.
+ * A single cell on that same backend falls back to attach, which is what
+ * today's compose already did.
+ */
+function composeLaunchPolicy(input: {
+  choiceCount: number;
+  saveTargets: boolean;
+  ephemeralOk: boolean;
+  refreshSnapshot?: boolean;
+}): { attach: boolean; ephemeralLaunch: boolean } {
+  if (input.choiceCount > 1 && input.refreshSnapshot) {
+    throw operationInputError(
+      "refreshSnapshot cannot be used with a multi-target launch — it PERSISTS one host-config snapshot on the suite, and several runs racing to write it would leave the suite pinned to whichever finished last. Run one target at a time to refresh it.",
+    );
+  }
+  if (input.choiceCount > 1 && !input.ephemeralOk && !input.saveTargets) {
+    throw operationInputError(
+      "This MCPJam server cannot launch a multi-model compose without attaching the environments. Upgrade the backend (ephemeralEnvironmentLaunch) or pass --save-targets / saveTargets to attach them instead.",
+    );
+  }
+  if (input.choiceCount > 10) {
+    throw operationInputError(
+      `1 client × ${input.choiceCount} model choices = ${input.choiceCount} targets; limit 10.`,
+    );
+  }
+  const attach =
+    input.saveTargets || (!input.ephemeralOk && input.choiceCount === 1);
+  return {
+    attach,
+    ephemeralLaunch: !attach && input.ephemeralOk,
+  };
+}
+
+/**
+ * Id-shaped: a compact opaque token (Convex document ids, minted cells).
+ * Display names like `Staging` stay on the named-list path — a GET for every
+ * name would extra-roundtrip the common case.
+ */
+function looksLikeEnvironmentId(selector: string): boolean {
+  return /^[A-Za-z0-9_-]{16,128}$/.test(selector);
 }
 
 /**
@@ -1884,13 +2030,22 @@ async function createEvalRunOrReportCompose<T>(
   try {
     return await launch();
   } catch (error) {
-    const note = `(The composed environment ${
-      composed.report.environment.id
-    } was ${composed.report.environment.created ? "created" : "reused"} and ${
+    const cells = composed.report.environments ?? [composed.report.environment];
+    const cellNote = cells
+      .map(
+        (cell) =>
+          `${cell.id}${cell.created ? " (created)" : " (reused)"}${
+            cell.modelId ? ` · ${cell.modelId}` : ""
+          }`,
+      )
+      .join(", ");
+    const note = `(The composed environment${cells.length === 1 ? "" : "s"} ${
+      cellNote
+    } ${
       composed.report.attachment.attached
-        ? "attached to the suite"
-        : "was already attached"
-    }; retrying is safe — it will reuse both.)`;
+        ? "were attached to the suite"
+        : "were minted without attaching"
+    }; retrying is safe — it will reuse them.)`;
     if (error instanceof PlatformApiError) {
       throw new PlatformApiError(`${error.message} ${note}`, error.code, {
         status: error.status,
@@ -2056,11 +2211,11 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
  * environment. Declared here, above the run inputs, for the same
  * temporal-dead-zone reason `publicMatchOptionsSchema` is.
  *
- * The stack resolves to an ad-hoc (unnamed, content-addressed) environment and
+ * The stack resolves to ad-hoc (unnamed, content-addressed) environments and
  * then launches through the ORDINARY environment path — same resolution, same
- * immutable snapshot. There is deliberately no "override the model for this
- * run" field: that would be a second execution-context channel with none of an
- * environment's guarantees.
+ * immutable snapshot. Model fan-out is N of those cells (one per explicit
+ * model, plus an inherit cell when `includeClientDefault` is set), not a
+ * second run-level override channel.
  */
 const composeRunTargetInput = z
   .object({
@@ -2085,7 +2240,26 @@ const composeRunTargetInput = z
       .min(1)
       .optional()
       .describe(
-        "Model to run instead of the host's pinned one. Stored verbatim.",
+        "Singular alias for `models`. Prefer `models` for a matrix.",
+      ),
+    models: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(
+        "Explicit model overrides. Each id mints one override cell. Combined with `includeClientDefault` this is the model axis. Replaces the client default unless `includeClientDefault` is true.",
+      ),
+    includeClientDefault: z
+      .boolean()
+      .optional()
+      .describe(
+        "Also mint an inherit cell that uses the host's pinned model. Default false when `models` is set; implied true when no models are named.",
+      ),
+    saveTargets: z
+      .boolean()
+      .optional()
+      .describe(
+        "Attach the minted cells to the suite (append, capped at 10). Default is ephemeral: mint and launch without mutating suite attachments.",
       ),
     computer: z
       .string()
@@ -2109,7 +2283,7 @@ const composeRunTargetInput = z
       .describe("Plugin VERSION IDs to pin for the composed stack."),
   })
   .describe(
-    "Compose an execution stack to run instead of naming a saved environment. THIS EDITS THE SUITE: the composed environment is appended to the suite's environment list, which is what makes the run reproducible from the app afterwards. Deduplicated by content, so composing the same stack twice reuses one environment. Mutually exclusive with environment/environments/host/hosts/servers/allAttached.",
+    "Compose an execution stack to run instead of naming a saved environment. Default is EPHEMERAL: cells are minted and launched without attaching them to the suite (`saveTargets: true` opts into append). Deduplicated by content, so composing the same stack twice reuses one environment. Mutually exclusive with environment/environments/host/hosts/servers/allAttached.",
   );
 
 const RUN_KNOB_FIELDS = {
@@ -2272,7 +2446,20 @@ export type RunEvalSuiteResult = {
    * will hit the dedupe and no-op paths rather than composing again.
    */
   composed?: {
-    environment: { id: string; name: null; adhoc: true; created: boolean };
+    environment: {
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    };
+    environments?: Array<{
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    }>;
     attachment: { attached: boolean };
   };
   /** One entry per target, in launch order. */
@@ -2336,10 +2523,29 @@ export const runEvalSuiteOperation: PlatformOperation<
         )
       : undefined;
 
-    // COMPOSE runs before anything else target-shaped, because it PRODUCES the
-    // target: the stack becomes an ad-hoc environment, the environment is
-    // appended to the suite, and the launch then takes the ordinary pinned-
-    // environment path. Its two writes are reported even if the launch fails.
+    // COMPOSE produces the targets. Every refusal that can fire without a
+    // write (wrong cases already resolved above; refreshSnapshot × N cells;
+    // multi-model on a backend that cannot launch unattached) happens first
+    // so a mistyped request does not mint rows or edit the suite.
+    const composeChoices = input.compose
+      ? expandComposeModelChoices(input.compose)
+      : [];
+    let composeAttach = false;
+    let ephemeralLaunch = false;
+    if (input.compose) {
+      const policy = composeLaunchPolicy({
+        choiceCount: composeChoices.length,
+        saveTargets: input.compose.saveTargets === true,
+        ephemeralOk: await probeEphemeralEnvironmentLaunch(
+          client,
+          project.id,
+          signal,
+        ),
+        ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
+      });
+      composeAttach = policy.attach;
+      ephemeralLaunch = policy.ephemeralLaunch;
+    }
     const composed = input.compose
       ? await composeRunEnvironment(
           client,
@@ -2347,6 +2553,7 @@ export const runEvalSuiteOperation: PlatformOperation<
           suite,
           input.compose,
           signal,
+          { attach: composeAttach },
         )
       : undefined;
 
@@ -2390,13 +2597,22 @@ export const runEvalSuiteOperation: PlatformOperation<
       signal,
     );
 
-    // A composed stack IS the target — it produced an environment, so there is
-    // nothing left to select between and the attachment axes do not apply.
+    // A composed stack IS the target set: one cell → a single launch, N
+    // cells → one grouped launch under a single runGroupId. The attachment
+    // axes are not consulted; the stack produced the environments.
     const plan: RunTargetPlan = composed
-      ? {
-          kind: "single",
-          target: { kind: "environment", id: composed.environment.id },
-        }
+      ? composed.environments.length > 1
+        ? {
+            kind: "group",
+            targets: composed.environments.map((environment) => ({
+              kind: "environment" as const,
+              id: environment.id,
+            })),
+          }
+        : {
+            kind: "single",
+            target: { kind: "environment", id: composed.environment.id },
+          }
       : computeRunTargets({
           attachedEnvironments: (detail?.environmentIds ?? []).map((id) => ({
             id,
@@ -2446,6 +2662,7 @@ export const runEvalSuiteOperation: PlatformOperation<
                 ? { namedHostId: plan.target.id }
                 : {}),
               ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
+              ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
               ...knobs,
             },
           },
@@ -2491,19 +2708,22 @@ export const runEvalSuiteOperation: PlatformOperation<
       };
     }
 
-    const group = await createEvalRunGroupOrExplain(
-      client,
-      project.id,
-      {
-        suiteId: suite.id,
-        targets: plan.targets.map((target) =>
-          target.kind === "environment"
-            ? { environmentId: target.id }
-            : { namedHostId: target.id },
-        ),
-        ...knobs,
-      },
-      signal,
+    const group = await createEvalRunOrReportCompose(composed, () =>
+      createEvalRunGroupOrExplain(
+        client,
+        project.id,
+        {
+          suiteId: suite.id,
+          targets: plan.targets.map((target) =>
+            target.kind === "environment"
+              ? { environmentId: target.id }
+              : { namedHostId: target.id },
+          ),
+          ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
+          ...knobs,
+        },
+        signal,
+      ),
     );
 
     const nameById = new Map(
@@ -2563,6 +2783,7 @@ export const runEvalSuiteOperation: PlatformOperation<
       startedCount: group.startedCount,
       failedCount: group.failedCount,
       runGroupId: group.runGroupId,
+      ...(composed ? { composed: composed.report } : {}),
       targets,
       ...(firstStarted
         ? {
@@ -2631,7 +2852,20 @@ export type RunEvalCaseResult = {
   host?: { id: string; name: string };
   /** See `RunEvalSuiteResult.composed`. */
   composed?: {
-    environment: { id: string; name: null; adhoc: true; created: boolean };
+    environment: {
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    };
+    environments?: Array<{
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    }>;
     attachment: { attached: boolean };
   };
   runId: string;
@@ -2668,6 +2902,29 @@ export const runEvalCaseOperation: PlatformOperation<
     const overrideServers = input.servers
       ? await resolveRunServers(client, project, input.servers, signal)
       : undefined;
+    const composeChoices = input.compose
+      ? expandComposeModelChoices(input.compose)
+      : [];
+    if (composeChoices.length > 1) {
+      throw operationInputError(
+        "`run_eval_case` accepts only one compose model — its receipt is a single run. Use `run_eval_suite` / `eval run` for a client × model matrix.",
+      );
+    }
+    let composeAttach = false;
+    let ephemeralLaunch = false;
+    if (input.compose) {
+      const policy = composeLaunchPolicy({
+        choiceCount: composeChoices.length,
+        saveTargets: input.compose.saveTargets === true,
+        ephemeralOk: await probeEphemeralEnvironmentLaunch(
+          client,
+          project.id,
+          signal,
+        ),
+      });
+      composeAttach = policy.attach;
+      ephemeralLaunch = policy.ephemeralLaunch;
+    }
     const composed = input.compose
       ? await composeRunEnvironment(
           client,
@@ -2675,6 +2932,7 @@ export const runEvalCaseOperation: PlatformOperation<
           suite,
           input.compose,
           signal,
+          { attach: composeAttach },
         )
       : undefined;
     const environment = input.environment
@@ -2715,6 +2973,7 @@ export const runEvalCaseOperation: PlatformOperation<
             ...(composed ? { environmentId: composed.environment.id } : {}),
             ...(environment ? { environmentId: environment.id } : {}),
             ...(host ? { namedHostId: host.id } : {}),
+            ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
             ...(input.iterations !== undefined
               ? { iterationOverride: input.iterations }
               : {}),
@@ -5293,11 +5552,36 @@ async function resolveEnvironmentSelector(
   signal: AbortSignal | undefined,
   prefer: "live" | "archived" = "live",
 ): Promise<PlatformEnvironment> {
+  const trimmedSelector = selector.trim();
+  // Ad-hoc rows are list-hidden. GET /environments/:id serves them, so an
+  // id-shaped selector tries that first — otherwise `eval run --environment`,
+  // `environments get`, and schedule pins cannot name a minted cell.
+  if (looksLikeEnvironmentId(trimmedSelector)) {
+    try {
+      const byId = await client.getEnvironment(
+        { projectId: project.id, environmentId: trimmedSelector },
+        { signal },
+      );
+      return {
+        ...byId,
+        name:
+          typeof byId.name === "string" && byId.name.trim().length > 0
+            ? byId.name
+            : byId.id,
+      };
+    } catch (error) {
+      if (
+        !(error instanceof PlatformApiError) ||
+        (error.status !== 404 && error.code !== "NOT_FOUND")
+      ) {
+        throw error;
+      }
+    }
+  }
   const page = await client.listEnvironments(
     { projectId: project.id, includeArchived: true },
     { signal },
   );
-  const trimmedSelector = selector.trim();
   const idMatch = page.items.find((item) => item.id === trimmedSelector);
   if (idMatch) {
     return idMatch;

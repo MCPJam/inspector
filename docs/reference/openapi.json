@@ -11367,6 +11367,10 @@
             "type": "string",
             "description": "Run against one of the suite's attached project environments. Requires `suiteId`, and must be a member of that suite's `environmentIds` — otherwise `400` with `details.reason: \"ENVIRONMENT_NOT_ATTACHED\"`, raised before any case is authored or any server connected.\n\nOmission is meaningful: a suite with no attached environments runs legacy; a suite with exactly ONE attached environment runs against it automatically (the response's `environment` says which); a suite with several returns `400` with `details.reason: \"ENVIRONMENT_REQUIRED\"`, naming the candidates.\n\nThe environment supplies the closed server set (so `serverIds` is not required, and is rejected alongside it), and the run is pinned to the revision resolved at launch — if the environment changes in between, the run is rejected with `409` rather than executing against a different configuration."
           },
+          "ephemeralEnvironment": {
+            "type": "boolean",
+            "description": "When true, `environmentId` may be a project-scoped, non-archived environment that is NOT attached to the suite. The launch never mutates the suite. Absent / false keeps the membership check. Probe `GET /environments/capabilities` (`ephemeralEnvironmentLaunch`) before sending — older servers reject the unknown field."
+          },
           "namedHostId": {
             "type": "string",
             "description": "Run against ONE host attached to the suite. The platform snapshots that host's current config onto the run and derives the run's server set from it, so a host launch needs no `serverIds`. Without this, a suite with host attachments runs under the suite's own default host config — the run executes, but the result is attributed to the wrong host.\n\nTo run SEVERAL attached hosts, use `POST /eval-run-groups` rather than N calls here: it is the surface that bounds the fan-out and meters it as one launch."
@@ -11580,6 +11584,10 @@
             "type": "string",
             "maxLength": 256,
             "description": "Makes the whole launch replayable. The `runGroupId` is DERIVED from this key and each target's run key is derived from that, so a retry after a crash mid-launch returns the original run ids rather than double-launching the targets that already started. The `Idempotency-Key` header carries the same value and wins over this field."
+          },
+          "ephemeralEnvironment": {
+            "type": "boolean",
+            "description": "When true, each environment target may be a project-scoped, non-archived environment that is NOT attached to the suite. The launch never mutates the suite. Absent / false keeps the membership check. Probe `GET /environments/capabilities` (`ephemeralEnvironmentLaunch`) before sending — older servers reject the unknown field."
           }
         },
         "additionalProperties": false

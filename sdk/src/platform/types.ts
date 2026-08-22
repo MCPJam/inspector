@@ -1117,6 +1117,11 @@ export interface PlatformEnvironmentCapabilities {
   modelOverrides: boolean;
   /** Environment cells may vary by model on one host (the compare grid). */
   modelMatrix: boolean;
+  /**
+   * `startTestSuiteRun` accepts `ephemeralEnvironment` — a project-scoped
+   * env may launch without suite membership. Absent/false on older backends.
+   */
+  ephemeralEnvironmentLaunch?: boolean;
 }
 
 /** Body for the archive/restore sub-actions — the precondition only. */
