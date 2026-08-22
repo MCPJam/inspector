@@ -139,6 +139,9 @@ so results respect the caller's project access.
 | `upsert_user_testing_member` | Grant one person access to a scenario by email. | — |
 | `remove_user_testing_member` | Revoke one person's access. | — |
 | `rebind_user_testing_scenario` | Swap the environment behind a scenario, keeping its link, members and history. | — |
+| `get_share_settings` | Read the unified share envelope for a scenario, conformance run, or eval run. | — |
+| `set_share_mode` | Change who can open a shared scenario, conformance run, or eval run. | — |
+| `rotate_share_link` | Mint a new unified share URL and invalidate the old one. Immediate and irreversible. | — |
 
 <!-- The rows above are the CATALOG, not a hand-written summary: they are
      checked against `PLATFORM_CATALOG_OPERATIONS` by
