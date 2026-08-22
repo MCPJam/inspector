@@ -7,16 +7,20 @@
  *  - `environmentIds` — SAVED project environments the user picked from the
  *    Environments list. Curated, named, reusable.
  *  - `stack` — the loose slots a saved environment is made of (clients, server
- *    group, pinned skills, sandbox image), editable in place so "same setup,
- *    different client" costs one click instead of a trip to /environments.
+ *    group, model, pinned skills, sandbox image), editable in place so "same
+ *    setup, different client" costs one click instead of a trip to
+ *    /environments.
  *
  * Selecting a saved environment SEEDS the stack from it; editing any slot flips
  * `customized`. That flag is what tells a surface it can no longer just hand
  * `environmentIds` to the backend and must resolve the stack into real
  * environment rows first.
  *
- * Model is a designed next axis (it lives on the client) but out of v1 wiring —
- * no surface passes a modelId today. Keep the field as an extension point only.
+ * Model is an opt-in strip slot (evals create shows it; swarm omits it). It
+ * historically lives on the client; the stack field is the shared extension
+ * point so surfaces can pick a model without forking the lego strip. The
+ * resolver does not send it yet — environments still resolve through host +
+ * shared slots.
  */
 import type {
   ProjectEnvironmentSkillSelection,
@@ -32,10 +36,10 @@ export type EnvironmentStack = {
   skillSelection: ProjectEnvironmentSkillSelection | null;
   computerEnvironmentId: string | null;
   /**
-   * Reserved for a future model axis. Do not wire a picker in v1.
-   * Callers must leave this unset.
+   * Opt-in model axis for surfaces that render the models pill. Null/absent =
+   * use the selected client's own model. The resolver ignores this field today.
    */
-  modelId?: undefined;
+  modelId?: string | null;
 };
 
 export type EnvironmentComposerState = {
@@ -56,6 +60,7 @@ export function emptyEnvironmentStack(): EnvironmentStack {
     serverAttachmentId: null,
     skillSelection: null,
     computerEnvironmentId: null,
+    modelId: null,
   };
 }
 
@@ -121,6 +126,7 @@ export function stackFromEnvironment(
     serverAttachmentId: env.serverAttachmentId ?? null,
     skillSelection: env.skillSelection ?? null,
     computerEnvironmentId: env.computerEnvironmentId ?? null,
+    modelId: null,
   };
 }
 
@@ -249,6 +255,7 @@ export function composerStateFromEnvironments(
         (env) => env.computerEnvironmentId ?? null,
         (a, b) => a === b
       ),
+      modelId: null,
     },
     customized: !allNamed,
   };

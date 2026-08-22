@@ -469,6 +469,7 @@ describe("defaultComposerState", () => {
         serverAttachmentId: "grp-1",
         skillSelection: null,
         computerEnvironmentId: null,
+        modelId: null,
       },
       customized: true,
     });

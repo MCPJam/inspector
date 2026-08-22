@@ -24,6 +24,7 @@ import { useCallback, useMemo, type ReactNode } from "react";
 import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
+import { ModelsPill } from "@/components/environment-composer/models-pill";
 import { SkillsPill } from "@/components/environment-composer/skills-pill";
 import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
@@ -40,6 +41,31 @@ import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
 
+/**
+ * Configurable lego-strip slots. When omitted, the strip matches today's
+ * swarm/user-testing default: environments (flag), clients, servers, skills
+ * (flag), sandbox (flag) — and no models pill.
+ *
+ * Pass an explicit list to show a subset (evals create: servers alone, or
+ * clients + models). Flag-gated slots in the list still hide when their flag
+ * is off.
+ */
+export type EnvironmentComposerSlot =
+  | "environments"
+  | "clients"
+  | "servers"
+  | "models"
+  | "skills"
+  | "sandbox";
+
+const DEFAULT_SLOTS: readonly EnvironmentComposerSlot[] = [
+  "environments",
+  "clients",
+  "servers",
+  "skills",
+  "sandbox",
+];
+
 export function EnvironmentComposer({
   projectId,
   environments,
@@ -51,6 +77,9 @@ export function EnvironmentComposer({
   inModal = false,
   environmentPickerFooter,
   className,
+  slots,
+  emptyServerLabel = "Server group · client default",
+  serverInfoText = "Optional shared server group for every client in this setup.",
 }: {
   projectId: string;
   /** Selectable saved environments. Archived rows are filtered out here. */
@@ -76,6 +105,12 @@ export function EnvironmentComposer({
   /** Forwarded into the environment picker's popover footer. */
   environmentPickerFooter?: ReactNode;
   className?: string;
+  /** Which pills to render. Omit for the default swarm strip (no models). */
+  slots?: readonly EnvironmentComposerSlot[];
+  /** Trigger copy when the servers slot has no group. */
+  emptyServerLabel?: string;
+  /** Info-tooltip copy for the servers slot. */
+  serverInfoText?: string;
 }) {
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
@@ -121,6 +156,8 @@ export function EnvironmentComposer({
     value.environmentIds,
   ]);
   const slotsDisabled = disabled || stackEditBlock !== null;
+  const activeSlots = slots ?? DEFAULT_SLOTS;
+  const showSlot = (slot: EnvironmentComposerSlot) => activeSlots.includes(slot);
   const testId = (suffix: string) =>
     testIdPrefix ? `${testIdPrefix}-${suffix}` : undefined;
 
@@ -223,7 +260,7 @@ export function EnvironmentComposer({
         className="flex min-w-0 flex-wrap items-center gap-2"
         data-testid={testId("lego-strip")}
       >
-        {environmentsEnabled ? (
+        {showSlot("environments") && environmentsEnabled ? (
           <EnvironmentPicker
             projectId={projectId}
             value={
@@ -250,26 +287,44 @@ export function EnvironmentComposer({
             footerSlot={environmentPickerFooter}
           />
         ) : null}
-        <ClientsPill
-          projectId={projectId}
-          value={value.stack.hostIds}
-          onChange={(hostIds) => patchStack({ hostIds })}
-          max={maxTargets}
-          disabled={slotsDisabled}
-          testId={testId("clients-picker")}
-          inModal={inModal}
-        />
-        <ServerGroupPicker
-          projectId={projectId}
-          value={value.stack.serverAttachmentId}
-          onChange={(serverAttachmentId) => patchStack({ serverAttachmentId })}
-          disabled={slotsDisabled}
-          emptyTriggerLabel="Server group · client default"
-          infoText="Optional shared server group for every client in this setup."
-          onClearSelection={() => patchStack({ serverAttachmentId: null })}
-          inModal={inModal}
-        />
-        {skillsEnabled ? (
+        {showSlot("clients") ? (
+          <ClientsPill
+            projectId={projectId}
+            value={value.stack.hostIds}
+            onChange={(hostIds) => patchStack({ hostIds })}
+            max={maxTargets}
+            disabled={slotsDisabled}
+            testId={testId("clients-picker")}
+            inModal={inModal}
+          />
+        ) : null}
+        {showSlot("servers") ? (
+          <ServerGroupPicker
+            projectId={projectId}
+            value={value.stack.serverAttachmentId}
+            onChange={(serverAttachmentId) =>
+              patchStack({ serverAttachmentId })
+            }
+            disabled={slotsDisabled}
+            emptyTriggerLabel={emptyServerLabel}
+            infoText={serverInfoText}
+            onClearSelection={() => patchStack({ serverAttachmentId: null })}
+            inModal={inModal}
+            triggerTestId={testId("servers-picker")}
+            triggerAriaLabel="Servers"
+          />
+        ) : null}
+        {showSlot("models") ? (
+          <ModelsPill
+            projectId={projectId}
+            value={value.stack.modelId ?? null}
+            onChange={(modelId) => patchStack({ modelId })}
+            disabled={slotsDisabled}
+            testId={testId("models-picker")}
+            inModal={inModal}
+          />
+        ) : null}
+        {showSlot("skills") && skillsEnabled ? (
           <SkillsPill
             projectId={projectId}
             value={value.stack.skillSelection}
@@ -279,7 +334,7 @@ export function EnvironmentComposer({
             inModal={inModal}
           />
         ) : null}
-        {computersEnabled ? (
+        {showSlot("sandbox") && computersEnabled ? (
           <SandboxImagePill
             projectId={projectId}
             value={value.stack.computerEnvironmentId}
@@ -296,7 +351,7 @@ export function EnvironmentComposer({
           surface may already be disabling everything and saying its own version
           of this, and naming that control would then point at something the
           user cannot reach. */}
-      {stackEditBlock && !disabled ? (
+      {stackEditBlock && !disabled && showSlot("environments") ? (
         <p
           className="text-[11px] text-muted-foreground"
           data-testid={testId("collapse-hint")}
