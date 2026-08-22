@@ -24,11 +24,23 @@ const {
   updatePersonaMutation,
   deletePersonaMutation,
   runningPersonaRefIds,
+  personaRows,
+  journeyRows,
 } = vi.hoisted(() => ({
   createPersonaMutation: vi.fn(),
   updatePersonaMutation: vi.fn(),
   deletePersonaMutation: vi.fn(),
   runningPersonaRefIds: { current: [] as string[] },
+  personaRows: {
+    current: [] as {
+      _id: string;
+      personaId: string;
+      name: string;
+      role: string;
+      notes: string;
+    }[],
+  },
+  journeyRows: { current: [] as Record<string, unknown>[] },
 }));
 
 vi.mock("convex/react", () => ({
@@ -36,9 +48,9 @@ vi.mock("convex/react", () => ({
     if (args === "skip") return undefined;
     switch (name) {
       case "personas:listPersonas":
-        return [persona];
+        return personaRows.current;
       case "journeys:listJourneysByPersona":
-        return [];
+        return journeyRows.current;
       case "hosts:listHosts":
         return [];
       case "journeyRuns:listRunningPersonaRefIds":
@@ -104,6 +116,8 @@ function renderPersonasTab() {
 beforeEach(() => {
   vi.clearAllMocks();
   runningPersonaRefIds.current = [];
+  personaRows.current = [persona];
+  journeyRows.current = [];
   createPersonaMutation.mockResolvedValue({ _id: "persona-new" });
   updatePersonaMutation.mockResolvedValue({ ...persona });
   deletePersonaMutation.mockResolvedValue(undefined);
@@ -115,10 +129,10 @@ describe("SwarmsTab — persona create/edit", () => {
     renderPersonasTab();
 
     await waitFor(() => {
-      expect(screen.getByLabelText("Notes / personality")).toBeTruthy();
+      expect(screen.getByLabelText("Use cases and context")).toBeTruthy();
     });
     expect(
-      (screen.getByLabelText("Notes / personality") as HTMLTextAreaElement).value
+      (screen.getByLabelText("Use cases and context") as HTMLTextAreaElement).value
     ).toBe("curious and impatient");
     expect(
       screen.queryByText("Select a persona to see its goals.")
@@ -151,7 +165,7 @@ describe("SwarmsTab — persona create/edit", () => {
   it("saves personality notes on blur via updatePersona", async () => {
     renderPersonasTab();
 
-    const notes = await screen.findByLabelText("Notes / personality");
+    const notes = await screen.findByLabelText("Use cases and context");
     expect((notes as HTMLTextAreaElement).value).toBe("curious and impatient");
 
     fireEvent.change(notes, { target: { value: "calm and thorough" } });
@@ -242,3 +256,180 @@ describe("SwarmsTab — persona create/edit", () => {
   });
 });
 
+/**
+ * BB-123: the library mirrors Confirm personas — same field groups, same sense
+ * of what a persona is — and edits commit directly, with no Save button.
+ */
+describe("SwarmsTab — Personas library mirrors Confirm personas", () => {
+  it("groups the fields the way Confirm does", async () => {
+    renderPersonasTab();
+    await screen.findByLabelText("Use cases and context");
+
+    expect(screen.getByText("Persona")).toBeVisible();
+    expect(screen.getByText(/use cases & context/i)).toBeVisible();
+    expect(screen.getByText("Goals")).toBeVisible();
+    // Direct fields, not click-to-reveal editors.
+    expect(screen.getByLabelText("Name")).toHaveValue("Persona One");
+    expect(screen.getByLabelText("Role")).toHaveValue("tester");
+  });
+
+  it("has no Save button — Delete persona is the only action", async () => {
+    renderPersonasTab();
+    await screen.findByLabelText("Use cases and context");
+
+    expect(
+      screen.queryByRole("button", { name: /^save( changes)?$/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^delete persona$/i })
+    ).toBeVisible();
+  });
+
+  it("commits the role on blur, and sends only that field", async () => {
+    renderPersonasTab();
+    const role = await screen.findByLabelText("Role");
+
+    fireEvent.change(role, { target: { value: "finance ops" } });
+    fireEvent.blur(role);
+
+    await waitFor(() => {
+      expect(updatePersonaMutation).toHaveBeenCalledWith({
+        personaRefId: "persona-1",
+        role: "finance ops",
+      });
+    });
+  });
+
+  it("rolls an emptied name back instead of saving a nameless persona", async () => {
+    renderPersonasTab();
+    const name = await screen.findByLabelText("Name");
+
+    fireEvent.change(name, { target: { value: "   " } });
+    fireEvent.blur(name);
+
+    expect(name).toHaveValue("Persona One");
+    expect(updatePersonaMutation).not.toHaveBeenCalled();
+  });
+
+  it("does not put a delete control on a rendered goal row", async () => {
+    // Deliberately absent for now: the design shows a trash icon per goal, but
+    // goals here carry runs and grading, so removing one is not a row-level
+    // gesture yet.
+    //
+    // A journey is mocked on purpose. The first version of this ran against the
+    // EMPTY goals state, so it asserted the absence of a control on a row that
+    // was never rendered — a test that could not fail.
+    journeyRows.current = [
+      {
+        _id: "journey-1",
+        journeyId: "j1",
+        personaRefId: "persona-1",
+        name: "Reconcile payouts",
+        goal: "Reconcile the payouts ledger",
+        hostIds: [],
+        environmentIds: [],
+        config: { sessionsPerTarget: 1, maxTurns: 6 },
+      },
+    ];
+    renderPersonasTab();
+
+    // The row is really on screen before anything is asserted about it. The
+    // list renders `journey.goal`, not the journey name.
+    expect(
+      await screen.findByText("Reconcile the payouts ledger")
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: /remove goal/i })
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /delete goal/i })
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("SwarmsTab — Personas library search", () => {
+  const many = Array.from({ length: 7 }, (_, index) => ({
+    _id: `persona-${index + 1}`,
+    personaId: `p${index + 1}`,
+    name: index === 0 ? "Persona One" : `Persona ${index + 1}`,
+    role: index === 3 ? "finance ops" : "tester",
+    notes: "",
+  }));
+
+  it("stays hidden while the library is short enough to scan", async () => {
+    renderPersonasTab();
+    await screen.findByLabelText("Use cases and context");
+
+    expect(screen.queryByTestId("swarm-persona-search")).not.toBeInTheDocument();
+  });
+
+  it("filters the rail by name and by role once the library grows", async () => {
+    personaRows.current = many;
+    renderPersonasTab();
+
+    const search = await screen.findByTestId("swarm-persona-search");
+    const aside = screen.getByRole("complementary");
+
+    fireEvent.change(search, { target: { value: "finance" } });
+    expect(within(aside).getByText("Persona 4")).toBeVisible();
+    expect(within(aside).queryByText("Persona 2")).not.toBeInTheDocument();
+
+    fireEvent.change(search, { target: { value: "Persona 2" } });
+    expect(within(aside).getByText("Persona 2")).toBeVisible();
+    expect(within(aside).queryByText("Persona 4")).not.toBeInTheDocument();
+  });
+
+  it("says so when nothing matches, rather than showing an empty rail", async () => {
+    personaRows.current = many;
+    renderPersonasTab();
+
+    fireEvent.change(await screen.findByTestId("swarm-persona-search"), {
+      target: { value: "zzz" },
+    });
+
+    expect(screen.getByTestId("swarm-persona-search-empty")).toHaveTextContent(
+      /no personas match/i
+    );
+  });
+
+  it("stays available when the list shrinks under the threshold mid-search", async () => {
+    // Deleting a persona can take a 7-row library under the threshold while a
+    // query is still applied. Hiding the input then would leave the rail
+    // filtered with no control to clear it.
+    personaRows.current = many;
+    renderPersonasTab();
+
+    const search = await screen.findByTestId("swarm-persona-search");
+    fireEvent.change(search, { target: { value: "zzz" } });
+    expect(screen.getByTestId("swarm-persona-search-empty")).toBeVisible();
+
+    // Shrink the library WITHOUT remounting — a remount would reset the query
+    // and the regression would go unobserved. The second change re-renders
+    // against the shorter list with the filter still on.
+    personaRows.current = many.slice(0, 3);
+    fireEvent.change(search, { target: { value: "zzzz" } });
+
+    expect(screen.getByTestId("swarm-persona-search")).toBeVisible();
+    expect(screen.getByTestId("swarm-persona-search-empty")).toBeVisible();
+
+    // Clearing it hands the short library back, and the box retires.
+    fireEvent.change(
+      screen.getByTestId("swarm-persona-search"),
+      { target: { value: "" } }
+    );
+    expect(screen.queryByTestId("swarm-persona-search")).not.toBeInTheDocument();
+  });
+
+  it("keeps the editor on the selected persona when a search hides it", async () => {
+    // Filtering the rail must not silently repoint the editor — or the agent
+    // bridge, which resolves journeys through the selection.
+    personaRows.current = many;
+    renderPersonasTab();
+
+    fireEvent.change(await screen.findByTestId("swarm-persona-search"), {
+      target: { value: "finance" },
+    });
+
+    expect(screen.getByLabelText("Name")).toHaveValue("Persona One");
+  });
+});
