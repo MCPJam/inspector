@@ -27,6 +27,15 @@ The OAuth Debugger includes:
 - **Sequence Diagram** - Visual representation of the OAuth flow synchronized with your progress, showing the exact resource value the flow sends
 - **Export Capabilities** - Copy logs in guide or raw format for debugging and documentation
 
+### Required metadata enforcement
+
+Connect flows (Quick OAuth, Reconnect, hosted connect) fail closed when required OAuth metadata is missing:
+
+- **Protected-resource metadata (2025-06-18 and later):** If the RFC 9728 `authorization_servers` list is empty or absent, the flow stops before the browser redirect. The 2025-06-18 profile already required the PRM document to name at least one authorization server; silently substituting the MCP server's own URL would invent one the resource never named.
+- **PKCE S256 (2025-11-25 and later):** If the authorization server's `code_challenge_methods_supported` does not include `S256`, the flow stops. Advertising `plain` alongside `S256` is fine — the client picks `S256`. The 2025-03-26 era is unaffected because that revision predates the requirement.
+
+The **OAuth Debugger** runs in observe mode: it warns and continues so you can see what a nonconforming server actually does. The warning appears as an info log entry at the relevant step. Use the [OAuth Conformance](/cli/oauth-conformance) tool if you need strict enforcement during testing.
+
 ### Resource indicator warnings
 
 When the server's Protected Resource Metadata (PRM) advertises a `resource` identifier that does not fully satisfy RFC 9728 — for example, a same-origin resource on a different path than the transport endpoint — the debugger logs a warning at the `received_resource_metadata` step and continues the flow. The warning includes the advertised value, the server URL, and whether strict MCP clients (such as Quick OAuth or the official MCP SDK) will refuse to connect.
