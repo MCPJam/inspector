@@ -603,11 +603,11 @@ mcpjam cloud environments create --project Acme --json '{
 Only the fields you pass change. To **clear** `serverAttachmentId`, `skillSelection`, or `pluginVersionIds`, send an explicit `null` in the JSON body — an empty array is rejected, it is not a way to clear:
 
 ```bash
-mcpjam environments update --environment Staging --expected-revision 3 \
+mcpjam cloud environments update --environment Staging --expected-revision 3 \
   --json '{ "pluginVersionIds": null }'
 ```
 
-### `environments archive`
+### `cloud environments archive`
 
 Archiving is reversible and frees the name for a new environment; the row is kept.
 
