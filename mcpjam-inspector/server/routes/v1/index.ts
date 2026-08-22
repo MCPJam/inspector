@@ -35,8 +35,10 @@ import swarmInsights from "./swarm-insights.js";
 import swarmGenerateV1 from "./swarm-generate.js";
 import scenarios from "./scenarios.js";
 import userTesting from "./user-testing.js";
+import shares from "./shares.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
+import conformanceIngest from "./conformance-ingest.js";
 import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
@@ -150,11 +152,15 @@ v1.route("/", scenarios);
 // publishing (keyed by environment, because the scenario does not exist yet);
 // this is keyed by the scenario. Guest-DENIED by default, same as publishing.
 v1.route("/", userTesting);
+// Unified share control plane. Guest-DENIED (no GUEST_ALLOWED_V1_RULES
+// entry). Existing user-testing share endpoints stay as wrappers.
+v1.route("/", shares);
 // Computer sandbox images stay OFF the guest allowlist (no
 // GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
 // project-scoped caller.
 v1.route("/", sandboxImages);
 v1.route("/", evalIngest);
+v1.route("/", conformanceIngest);
 // Headless agent turn (Slack bot terminal). Guest-DENIED by default (no
 // GUEST_ALLOWED_V1_RULES entry) — every turn spends hosted-model credits.
 v1.route("/", agent);
