@@ -72,6 +72,35 @@ describe("correlating a response to the request it answers", () => {
     expect(recorder.observations[0].requestMethod).toBe("tools/list");
   });
 
+  it("records the cross-type pairing as an id-echo mismatch, so tolerance does not hide it", () => {
+    // Pairing loosely keeps the validation method-specific; it must not also
+    // make the wrong echo disappear. `RequestId` admits both types, so no
+    // schema can state this — "the response MUST contain the same ID as the
+    // request", and 1 and "1" are different JSON values.
+    const recorder = new WireObservationRecorder();
+    recorder.recordExchange(
+      exchange({
+        requestBody: { jsonrpc: "2.0", id: 1, method: "tools/list" },
+        responseBody: { jsonrpc: "2.0", id: "1", result: { tools: [] } },
+      }),
+    );
+    expect(recorder.observations[0].idEchoMismatch).toEqual({
+      sent: 1,
+      echoed: "1",
+    });
+  });
+
+  it("records no mismatch when the echo is exact", () => {
+    const recorder = new WireObservationRecorder();
+    recorder.recordExchange(
+      exchange({
+        requestBody: { jsonrpc: "2.0", id: 7, method: "tools/list" },
+        responseBody: { jsonrpc: "2.0", id: 7, result: { tools: [] } },
+      }),
+    );
+    expect(recorder.observations[0].idEchoMismatch).toBeUndefined();
+  });
+
   it("never attaches a method to a notification", () => {
     // A notification answers nothing; attributing it to the exchange's request
     // would make the validator grade it as that method's RESULT.

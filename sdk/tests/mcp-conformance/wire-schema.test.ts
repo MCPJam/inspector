@@ -84,6 +84,33 @@ describe("replaying the sweep's wire-schema findings", () => {
   });
 });
 
+describe("the id echo, which no schema can state", () => {
+  it("reports a response that echoed the id with a different type", () => {
+    const report = MODERN().validate([
+      {
+        message: {
+          jsonrpc: "2.0",
+          id: "1",
+          result: {
+            resultType: "tools/list",
+            tools: [],
+            ttlMs: 0,
+            cacheScope: "private",
+          },
+        },
+        requestMethod: "tools/list",
+        id: "1",
+        idEchoMismatch: { sent: 1, echoed: "1" },
+        origin: "POST tools/list",
+      },
+    ]);
+    // The RESULT is schema-valid; the violation is about the envelope's id.
+    expect(report.violations).toHaveLength(1);
+    expect(report.violations[0].definition).toBe("JSON-RPC id echo");
+    expect(report.violations[0].errors[0]).toContain("different JSON values");
+  });
+});
+
 describe("correlation is what makes the check non-vacuous", () => {
   it("would accept the defective result if it were NOT correlated", () => {
     // The generic union's `Result` branch allows every additional property and

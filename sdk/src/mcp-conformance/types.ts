@@ -450,6 +450,19 @@ export interface MCPReadinessWarning {
   specStrength: MCPReadinessSpecStrength;
   message: string;
   details?: Record<string, unknown>;
+  /**
+   * Report this observation without deducting from the score.
+   *
+   * The readiness channel normally costs points, because a SHOULD a server
+   * ignores is a real (if non-fatal) shortfall. Some observations are not that:
+   * the behavior they describe is either EXPLICITLY PERMITTED by the spec (a
+   * MAY the server is entitled to take) or rests on a non-normative example.
+   * Deducting for those invents a requirement — the same over-strictness this
+   * program exists to remove, moved from the verdict onto the number.
+   *
+   * Absent ⇒ scored, so every existing warning keeps its deduction.
+   */
+  informational?: boolean;
 }
 
 export interface MCPConformanceResult {

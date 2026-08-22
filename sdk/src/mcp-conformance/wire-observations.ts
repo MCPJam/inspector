@@ -62,6 +62,15 @@ export interface ObservedWireMessage {
    * from "dropped an id it had".
    */
   requestIdDeterminable?: boolean;
+  /**
+   * Set when the message paired with its request only after comparing ids
+   * ACROSS types — the request sent `1` and the response echoed `"1"`, or the
+   * reverse. Correlation still succeeds (see {@link sameId}), but the echo is
+   * wrong: "the response MUST contain the same ID as the request", and `1` and
+   * `"1"` are different JSON values. Reported by the wire check so a loose
+   * pairing cannot silently absorb a real defect.
+   */
+  idEchoMismatch?: { sent: string | number; echoed: string | number };
   /** Human-readable provenance, e.g. `POST tools/list`. Never a verdict. */
   origin: string;
 }
@@ -98,6 +107,21 @@ function sameId(a: ObservedRequestId, b: ObservedRequestId): boolean {
   // load-bearing half of the wire check.
   if (a === null || b === null) return false;
   return String(a) === String(b);
+}
+
+/**
+ * The echo the spec actually requires: same value, same type. `sameId` is
+ * deliberately looser so correlation survives a sloppy server; this is what
+ * decides whether that looseness hid a defect.
+ */
+function idEchoMismatchOf(
+  sent: ObservedRequestId,
+  echoed: ObservedRequestId,
+): ObservedWireMessage["idEchoMismatch"] {
+  if (sent === undefined || echoed === undefined) return undefined;
+  if (sent === null || echoed === null) return undefined;
+  if (sent === echoed) return undefined;
+  return { sent, echoed };
 }
 
 export class WireObservationRecorder {
@@ -138,6 +162,12 @@ export class WireObservationRecorder {
           ? { requestMethod }
           : {}),
         ...(record !== undefined && "id" in record ? { id } : {}),
+        ...(record !== undefined && "id" in record && sameId(id, requestId)
+          ? (() => {
+              const mismatch = idEchoMismatchOf(requestId, id);
+              return mismatch ? { idEchoMismatch: mismatch } : {};
+            })()
+          : {}),
         origin: label,
       });
     }
@@ -168,6 +198,14 @@ export class WireObservationRecorder {
           ? { requestMethod: options.requestMethod }
           : {}),
         ...(record !== undefined && "id" in record ? { id } : {}),
+        ...(record !== undefined &&
+        "id" in record &&
+        sameId(id, options.requestId)
+          ? (() => {
+              const mismatch = idEchoMismatchOf(options.requestId, id);
+              return mismatch ? { idEchoMismatch: mismatch } : {};
+            })()
+          : {}),
         origin: options.origin,
       });
     }

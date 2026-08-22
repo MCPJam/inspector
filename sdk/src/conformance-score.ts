@@ -284,10 +284,17 @@ export function scoreFromProtocolResult(
   // channel scores fine — it just has no advice to deduct.
   return computeConformanceScore(
     result.checks,
-    (result.readiness ?? []).map((warning) => ({
-      id: warning.id,
-      tier: warning.specStrength === "MAY" ? "may" : "should",
-    })),
+    // `informational` advice is REPORTED but never costs points: it describes
+    // behavior the spec explicitly permits, or rests on a non-normative
+    // example. Deducting for it would contradict the readiness module's own
+    // statement that such an observation is "reported and never scored", and
+    // would dock a server for exercising a MAY it is entitled to.
+    (result.readiness ?? [])
+      .filter((warning) => warning.informational !== true)
+      .map((warning) => ({
+        id: warning.id,
+        tier: warning.specStrength === "MAY" ? "may" : "should",
+      })),
     result.protocolVersion,
     // Read off the RESULT, not the current build's manifest: a stored report
     // must score the same way it did when it was produced, even after this

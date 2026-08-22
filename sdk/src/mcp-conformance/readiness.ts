@@ -58,6 +58,22 @@ function warning(
   return { id, title, severity: "warning", specStrength, message, details };
 }
 
+/**
+ * Advice that is REPORTED but costs no points — see
+ * {@link MCPReadinessWarning.informational}. Use this, not {@link warning},
+ * whenever the behavior described is one the specification explicitly allows or
+ * merely illustrates.
+ */
+function informational(
+  id: MCPReadinessWarning["id"],
+  title: string,
+  specStrength: MCPReadinessSpecStrength,
+  message: string,
+  details?: Record<string, unknown>
+): MCPReadinessWarning {
+  return { ...warning(id, title, specStrength, message, details), informational: true };
+}
+
 function toolOrderWarning(
   first: string[],
   second: string[]
@@ -561,7 +577,7 @@ async function protocolVersionHeaderWarning(
     return undefined;
   }
 
-  return warning(
+  return informational(
     "readiness-protocol-version-header-required",
     "Protocol Version Header Required",
     "SHOULD",
@@ -620,7 +636,7 @@ async function resourceErrorUriWarning(
     return undefined;
   }
 
-  return warning(
+  return informational(
     "readiness-resource-error-echoes-uri",
     "Resource Errors Name Their URI",
     "MAY",

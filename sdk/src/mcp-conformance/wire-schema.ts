@@ -464,6 +464,25 @@ export class WireSchemaValidator {
           ?.definition === target.definition;
       if (isMethodSpecific) correlated += 1;
 
+      // The id echo, which no schema can state: `RequestId` admits both a
+      // string and an integer, so `{"id": "1"}` answering `{"id": 1}` is
+      // schema-valid and still wrong — "the response MUST contain the same ID
+      // as the request", and those are different JSON values. The recorder
+      // pairs them anyway so correlation is not lost against a sloppy server;
+      // reporting it here is what stops that tolerance from swallowing the
+      // defect.
+      if (observation.idEchoMismatch) {
+        const { sent, echoed } = observation.idEchoMismatch;
+        violations.push({
+          origin: observation.origin,
+          definition: "JSON-RPC id echo",
+          id: observation.id,
+          errors: [
+            `response echoed id ${JSON.stringify(echoed)} (${typeof echoed}) for a request that sent ${JSON.stringify(sent)} (${typeof sent}); the id must be echoed unchanged, and these are different JSON values`,
+          ],
+        });
+      }
+
       // A method-specific target grades the RESULT payload, which is where the
       // required members live; everything else is graded as a whole envelope.
       const subject = isMethodSpecific

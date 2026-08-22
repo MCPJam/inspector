@@ -764,6 +764,14 @@ async function collectCacheableOperations(
 ): Promise<{
   probes: Array<{ method: string; result: RawHttpResult }>;
   unprobed: Array<{ method: string; reason: string }>;
+  /**
+   * Operations this server does not HAVE, because the capability behind them is
+   * optional and unadvertised. Not a coverage gap: the caching MUST binds the
+   * operations a server supports, so there is nothing here left unverified.
+   * Kept separate from {@link unprobed}, which is the real gap — a capability
+   * the server DOES advertise that this run could not exercise.
+   */
+  notApplicable: Array<{ method: string; reason: string }>;
 }> {
   const discover = await discoverOnce(ctx, state);
   const capabilities = advertisedCapabilities(discover);
@@ -771,6 +779,7 @@ async function collectCacheableOperations(
     { method: "server/discover", result: discover },
   ];
   const unprobed: Array<{ method: string; reason: string }> = [];
+  const notApplicable: Array<{ method: string; reason: string }> = [];
   // Seeded from the client phase when there was one, but PREFERRED from this
   // walk's own `resources/list` frame below: a raw-only selection never opens a
   // client session, and a check that could only run as part of a full suite
@@ -784,7 +793,13 @@ async function collectCacheableOperations(
       operation.capability !== undefined &&
       capabilities[operation.capability] === undefined
     ) {
-      unprobed.push({
+      // NOT a gap. `prompts`, `resources` and `tools` are optional
+      // capabilities; a server that advertises none of them has no
+      // `prompts/list` to return hints on, so there is no requirement here left
+      // untested. Counting it as unprobed forced the whole check to
+      // could-not-run and made a tools-only server look unverified for
+      // declining to implement features it never claimed.
+      notApplicable.push({
         method: operation.method,
         reason: `server does not advertise the ${operation.capability} capability`,
       });
@@ -831,7 +846,7 @@ async function collectCacheableOperations(
     }
   }
 
-  return { probes, unprobed };
+  return { probes, unprobed, notApplicable };
 }
 
 /** A cacheable payload, or `undefined` when the frame carried none to grade. */
@@ -880,7 +895,7 @@ async function runCacheHintCoverageCheck(
 ): Promise<MCPCheckResult> {
   const meta = MODERN_CHECK_METADATA["modern-cache-hint-coverage"];
   const startedAt = Date.now();
-  const { probes, unprobed } = await operations();
+  const { probes, unprobed, notApplicable } = await operations();
 
   const missing: Array<{ method: string; fields: string[] }> = [];
   const observed: Record<string, unknown> = {};
@@ -917,6 +932,7 @@ async function runCacheHintCoverageCheck(
   const details = {
     cacheHints: observed,
     unprobed,
+    ...(notApplicable.length > 0 ? { notApplicable } : {}),
     ...(unreadable.length > 0 ? { unreadable } : {}),
     ...(notComplete.length > 0 ? { notCacheable: notComplete } : {}),
   };
@@ -943,6 +959,11 @@ async function runCacheHintCoverageCheck(
   // A pass over four of six operations is not a pass over six, and saying so is
   // the difference between "this server is clean" and "this server did not
   // expose the rest".
+  //
+  // `notApplicable` is deliberately NOT a gap here: an operation behind an
+  // optional capability the server never advertised does not exist on this
+  // server, so nothing about it went unverified. Only an advertised capability
+  // this run failed to exercise leaves the requirement untested.
   if (unprobed.length > 0 || unreadable.length > 0) {
     const gaps = [
       ...unprobed.map((entry) => `${entry.method} (${entry.reason})`),
@@ -950,9 +971,10 @@ async function runCacheHintCoverageCheck(
         (method) => `${method} (answered with no readable result)`
       ),
     ];
+    const graded = probes.length + unreadable.length;
     return couldNotRunResult(
       meta,
-      `Hints are present on every cacheable operation this run could read, but ${gaps.length} of the six went ungraded: ${gaps.join("; ")}`,
+      `Hints are present on every cacheable operation this run could read, but ${gaps.length} of the ${graded + unprobed.length} this server supports went ungraded: ${gaps.join("; ")}`,
       details
     );
   }

@@ -31,6 +31,12 @@ interface CacheFixtureOptions {
    * shape the extension explicitly excuses from carrying them.
    */
   nonCompleteFor?: string[];
+  /**
+   * Capabilities to WITHHOLD from `server/discover`. `prompts`, `resources` and
+   * `tools` are optional; a server that advertises none of them simply has no
+   * such operation to carry hints on.
+   */
+  withholdCapabilities?: string[];
 }
 
 const LISTED_RESOURCE = "test://greeting";
@@ -87,11 +93,15 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
             });
 
       switch (method) {
-        case "server/discover":
-          return ok({
-            supportedVersions: [MODERN],
-            capabilities: { tools: {}, prompts: {}, resources: {} },
-          });
+        case "server/discover": {
+          const withheld = new Set(options.withholdCapabilities ?? []);
+          const capabilities = Object.fromEntries(
+            ["tools", "prompts", "resources"]
+              .filter((name) => !withheld.has(name))
+              .map((name) => [name, {}]),
+          );
+          return ok({ supportedVersions: [MODERN], capabilities });
+        }
         case "tools/list": {
           if (options.toolsPageScopes) {
             const page = params?.cursor === "p2" ? 1 : 0;
@@ -206,6 +216,37 @@ describe("modern-cache-hint-coverage", () => {
     expect(Object.keys(check.details?.cacheHints as object)).toEqual([
       "server/discover",
       "tools/list",
+      "prompts/list",
+      "resources/list",
+      "resources/templates/list",
+      "resources/read",
+    ]);
+  });
+
+  it("passes a server that simply does not implement the optional capabilities", async () => {
+    // `prompts` and `resources` are OPTIONAL. A server advertising neither has
+    // no `prompts/list` or `resources/*` to carry hints on, so nothing about
+    // the caching MUST went unverified — the requirement binds the operations a
+    // server supports. Counting them as unprobed forced could-not-run and made
+    // a tools-only server look unverified for declining features it never
+    // claimed.
+    const check = byId(
+      (await run({ withholdCapabilities: ["prompts", "resources"] }, [ID]))
+        .checks,
+      ID,
+    );
+    expect([check.status, check.error?.message]).toEqual(["passed", undefined]);
+    expect(Object.keys(check.details?.cacheHints as object)).toEqual([
+      "server/discover",
+      "tools/list",
+    ]);
+    // Reported as inapplicable, not as a gap — the distinction is the fix.
+    expect(check.details?.unprobed).toEqual([]);
+    expect(
+      (check.details?.notApplicable as Array<{ method: string }>).map(
+        (entry) => entry.method,
+      ),
+    ).toEqual([
       "prompts/list",
       "resources/list",
       "resources/templates/list",

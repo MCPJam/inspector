@@ -600,6 +600,14 @@ export function validateTaskTtlShape(
 export function validateCompletionAck(
   ack: unknown,
   method: string,
+  /**
+   * The acknowledgement AS IT ARRIVED, read off the rpc log rather than from
+   * the client's return value. `resultType` is a wire-only member the v2 client
+   * consumes on the way through, so the decoded `ack` cannot answer whether the
+   * server sent it — only this can. Absent when the frame could not be
+   * correlated, and then the member is reported as advice rather than judged.
+   */
+  rawAck?: Record<string, unknown>,
 ): ShapeVerdict {
   // A non-object is not an empty result, it is not a result at all. This was
   // the hole: the update path read `isRecord(ack) ? keys : []` and an ack of
@@ -627,17 +635,33 @@ export function validateCompletionAck(
       )}; the extension requires an empty result and the client re-polls for the new status`
     );
   }
-  if (ack.resultType === undefined) {
-    // `UpdateTaskResult`/`CancelTaskResult` mark `resultType` required, and
-    // `wire-schema-valid` now grades these frames against exactly those
-    // definitions. Failing here too would grade ONE schema statement in two
-    // suites, and would flip a call this repo made deliberately — the SDK's own
-    // ack schema treats the member as optional, and the fixture carries an
-    // `emitTaskResultType` toggle documenting why. Advice here, verdict there.
-    warnings.push(
-      `the acknowledgement omits resultType "complete"; the extension's ${method === "tasks/cancel" ? "CancelTaskResult" : "UpdateTaskResult"} marks it required`
-    );
-  } else if (ack.resultType !== "complete") {
+  // `resultType` is judged from the RAW frame when there is one. This used to
+  // defer to `wire-schema-valid` on the grounds that it grades these frames
+  // against `UpdateTaskResult` / `CancelTaskResult`, which mark the member
+  // required — but it never sees them: the Tasks suite runs its own runner,
+  // and that runner installs no `WireObservationRecorder` and runs no wire
+  // check. So the requirement had no verdict in any suite, and a missing
+  // required member read as a pass.
+  //
+  // It cannot be judged from the decoded `ack` either — the v2 client consumes
+  // `resultType` on the way through, so a conforming server's ack arrives here
+  // without it. Reading the rpc log is the same move `tasks-status-payload-shape`
+  // already makes, and for the same reason.
+  const observed = rawAck ?? (ack as Record<string, unknown>);
+  const canJudgeResultType = rawAck !== undefined;
+  const resultTypeName =
+    method === "tasks/cancel" ? "CancelTaskResult" : "UpdateTaskResult";
+
+  if (observed.resultType === undefined) {
+    const message = `the acknowledgement omits resultType "complete"; the extension's ${resultTypeName} marks it required`;
+    if (canJudgeResultType) {
+      violations.push(message);
+    } else {
+      warnings.push(
+        `${message} (read from the decoded result, which cannot prove what was on the wire)`
+      );
+    }
+  } else if (observed.resultType !== "complete") {
     // Present but WRONG is a different fact from absent: a client
     // discriminates on this member, so a wrong value actively misdirects it.
     violations.push(
@@ -950,6 +974,23 @@ export interface RawTaskResponse {
  * the point; callers pass a window of messages received during ONE request so
  * a later `tasks/get` response cannot be mistaken for a creation.
  */
+/**
+ * The `result` object of the first JSON-RPC response in a window, verbatim.
+ *
+ * Unlike {@link findRawTaskResponse} this does not require a `taskId`: an
+ * acknowledgement is legitimately empty apart from its envelope members, and
+ * those members are exactly what the caller needs to see.
+ */
+export function findRawResult(
+  messages: unknown[]
+): Record<string, unknown> | undefined {
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    if (isRecord(message.result)) return message.result;
+  }
+  return undefined;
+}
+
 export function findRawTaskResponse(
   messages: unknown[]
 ): RawTaskResponse | undefined {
@@ -1525,7 +1566,8 @@ export class MCPTasksConformanceTest {
               manager,
               serverId,
               createdTaskId,
-              inputRequiredTask
+              inputRequiredTask,
+              received
             );
             if (inputLeg.polled) {
               // The task moved on, so every downstream check reads the state it
@@ -2192,7 +2234,8 @@ export class MCPTasksConformanceTest {
               const cancel = await this.probeCancelAck(
                 manager,
                 serverId,
-                createdTaskId
+                createdTaskId,
+                received
               );
               checks.push(
                 cancel.unavailable !== undefined
@@ -2504,7 +2547,9 @@ export class MCPTasksConformanceTest {
     manager: MCPClientManager,
     serverId: string,
     taskId: string,
-    task: Record<string, unknown>
+    task: Record<string, unknown>,
+    /** Live rpc-log window, so the ack can be judged as it arrived. */
+    received: unknown[]
   ): Promise<InputRequiredLeg> {
     const requested = isRecord(task.inputRequests)
       ? Object.keys(task.inputRequests)
@@ -2516,6 +2561,7 @@ export class MCPTasksConformanceTest {
     }
 
     const answered = Object.keys(responses);
+    const receivedBefore = received.length;
     let ack: unknown;
     try {
       ack = await manager.updateTask(
@@ -2537,7 +2583,11 @@ export class MCPTasksConformanceTest {
     // envelope member `resultType` and the `_meta` container are part of every
     // result, so they are not "content" — anything else is the server answering
     // with state the client is told to re-poll for.
-    const ackVerdict = validateCompletionAck(ack, "tasks/update");
+    const ackVerdict = validateCompletionAck(
+      ack,
+      "tasks/update",
+      findRawResult(received.slice(receivedBefore))
+    );
 
     const polled = await this.pollToTerminal(manager, serverId, "extension", taskId);
     return {
@@ -2640,7 +2690,9 @@ export class MCPTasksConformanceTest {
   private async probeCancelAck(
     manager: MCPClientManager,
     serverId: string,
-    taskId: string
+    taskId: string,
+    /** Live rpc-log window, so the ack can be judged as it arrived. */
+    received: unknown[]
   ): Promise<{
     problems: string[];
     warnings: string[];
@@ -2651,6 +2703,7 @@ export class MCPTasksConformanceTest {
     const problems: string[] = [];
     const warnings: string[] = [];
 
+    const receivedBefore = received.length;
     let ack: unknown;
     try {
       ack = await manager.cancelTaskExt(serverId, taskId);
@@ -2688,7 +2741,11 @@ export class MCPTasksConformanceTest {
       return { problems, warnings, detail: { taskId, cancelCode: code } };
     }
 
-    const ackVerdict = validateCompletionAck(ack, "tasks/cancel");
+    const ackVerdict = validateCompletionAck(
+      ack,
+      "tasks/cancel",
+      findRawResult(received.slice(receivedBefore))
+    );
     problems.push(...ackVerdict.violations);
     warnings.push(...ackVerdict.warnings);
 

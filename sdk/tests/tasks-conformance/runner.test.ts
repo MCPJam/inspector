@@ -412,12 +412,29 @@ describe("completion acknowledgements", () => {
     ).toContain('rather than "complete"');
   });
 
-  it("only WARNS on an absent resultType, which wire-schema-valid fails", () => {
-    // Grading one schema statement in two suites would double-count it, and
-    // this repo deliberately treats the member as optional client-side.
+  it("FAILS an absent resultType when the raw frame proves it was absent", () => {
+    // `UpdateTaskResult` marks the member required. Nothing else grades it:
+    // the Tasks suite runs its own runner, which installs no wire recorder, so
+    // `wire-schema-valid` never sees this frame. Deferring to it left the
+    // requirement with no verdict anywhere.
+    const verdict = validateCompletionAck({}, "tasks/update", {});
+    expect(verdict.violations[0]).toContain("UpdateTaskResult");
+    expect(verdict.warnings).toEqual([]);
+  });
+
+  it("only advises when there is no raw frame to judge", () => {
+    // The decoded ack cannot answer the question: the v2 client consumes
+    // `resultType` on the way through, so its absence here is evidence about
+    // our client, not about the server.
     const verdict = validateCompletionAck({}, "tasks/update");
     expect(verdict.violations).toEqual([]);
-    expect(verdict.warnings[0]).toContain("UpdateTaskResult");
+    expect(verdict.warnings[0]).toContain("cannot prove what was on the wire");
+  });
+
+  it("passes when the raw frame carries the required resultType", () => {
+    expect(
+      validateCompletionAck({}, "tasks/cancel", { resultType: "complete" }),
+    ).toEqual({ violations: [], warnings: [] });
   });
 
   it("accepts the conformant ack, envelope members and all", () => {

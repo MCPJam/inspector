@@ -359,6 +359,42 @@ describe("suite adapters", () => {
     expect(score.notApplicable).toBe(1);
   });
 
+  /**
+   * Advice about behavior the spec EXPLICITLY PERMITS — a MAY the server is
+   * entitled to take, or a non-normative example — is reported and must not
+   * cost points. `readiness.ts` says as much in prose about the
+   * protocol-version header ("reported and never scored"); before this the
+   * scoring path deducted anyway, so a legacy-tolerant server lost SHOULD
+   * points for doing something streamable-http.mdx allows in as many words.
+   */
+  it("reports informational advice without deducting for it", () => {
+    const score = scoreFromProtocolResult(
+      protocolResult({
+        readiness: [
+          {
+            id: "readiness-protocol-version-header-required",
+            title: "Protocol Version Header Required",
+            severity: "warning",
+            specStrength: "SHOULD",
+            message: "…",
+            informational: true,
+          },
+          {
+            id: "readiness-resource-error-echoes-uri",
+            title: "Resource Errors Name Their URI",
+            severity: "warning",
+            specStrength: "MAY",
+            message: "…",
+            informational: true,
+          },
+        ],
+      }),
+    );
+
+    expect(score.advisories).toEqual([]);
+    expect(score.score).toBe(100);
+  });
+
   it("counts untyped apps/tasks check warnings at the weakest tier", () => {
     const base = {
       passed: true,
