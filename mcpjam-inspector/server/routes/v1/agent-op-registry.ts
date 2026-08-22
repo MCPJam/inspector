@@ -321,10 +321,11 @@ function evalRunResource(
 function describeEvalSuiteRun(input: Record<string, unknown>): string {
   const suite = named(input, "suite") ?? "(unnamed)";
   // COMPOSE fans out to N paid runs (client × model choices) and, when
-  // `saveTargets` is set, also edits the suite. Default is ephemeral: mint
-  // and launch without attaching. The spend line must state the multiplier
-  // so a `confirmSeverity: "spend"` proposal does not understate N×, and
-  // must mention an attach when the click would persist one.
+  // `saveTargets` is set, also edits the suite. Default is ephemeral on a
+  // capable backend; a single cell still attaches on an older one. The
+  // spend line must state the multiplier so a `confirmSeverity: "spend"`
+  // proposal does not understate N×, and must not promise "without
+  // attaching" when the click can still persist.
   const compose = input.compose;
   if (compose && typeof compose === "object") {
     return describeComposeEvalSuiteRun(
