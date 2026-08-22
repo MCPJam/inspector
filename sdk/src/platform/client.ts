@@ -359,7 +359,15 @@ export class PlatformApiClient {
     },
     options?: RequestOptions,
   ): Promise<PlatformRegistryInstall> {
-    const { projectId, ...body } = params;
+    // Explicit picks, not a rest spread — see `startClaudeReadinessRun`. The
+    // route's body schema forbids additional properties.
+    const { projectId, catalogServerId, endpointUrl, expectedContentHash } =
+      params;
+    const body: Record<string, unknown> = { catalogServerId };
+    if (endpointUrl !== undefined) body.endpointUrl = endpointUrl;
+    if (expectedContentHash !== undefined) {
+      body.expectedContentHash = expectedContentHash;
+    }
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/registry/directory-installs`,
@@ -376,7 +384,11 @@ export class PlatformApiClient {
     },
     options?: RequestOptions,
   ): Promise<PlatformRegistryInstall> {
-    const { projectId, ...body } = params;
+    const { projectId, registryServerId, expectedUpdatedAt } = params;
+    const body: Record<string, unknown> = { registryServerId };
+    if (expectedUpdatedAt !== undefined) {
+      body.expectedUpdatedAt = expectedUpdatedAt;
+    }
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(projectId)}/registry/installs`,
