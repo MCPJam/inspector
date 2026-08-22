@@ -33,6 +33,13 @@ describe("RunContextChip model attribution", () => {
     expect(label).toHaveAttribute("title", "gemini-2.5-flash");
   });
 
+  it("falls back to the model-id tail when modelLabel is null", () => {
+    renderChip({ modelLabel: null });
+    const label = screen.getByText("gemini-2.5-flash");
+    expect(label).toBeInTheDocument();
+    expect(label).toHaveAttribute("title", "gemini-2.5-flash");
+  });
+
   it("compacts a (Free) catalog label", () => {
     renderChip({
       modelLabel: "Gemini 2.5 Flash (Free)",
