@@ -7,6 +7,7 @@ import { registerCloudCommands } from "./commands/cloud.js";
 import { registerCompatCommands } from "./commands/compat.js";
 import { registerMcpCommands } from "./commands/mcp.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
+import { registerConformanceRunCommand } from "./commands/conformance-run.js";
 import { registerReadinessCommands } from "./commands/readiness.js";
 import { registerOAuthCommands } from "./commands/oauth.js";
 import { registerXaaCommands } from "./commands/xaa.js";
@@ -89,6 +90,7 @@ export async function main(
   registerOAuthCommands(program);
   registerXaaCommands(program);
   registerProtocolCommands(program);
+  registerConformanceRunCommand(program);
   registerReadinessCommands(program);
   registerCloudCommands(program);
   registerInspectorCommands(program);

@@ -29,7 +29,7 @@
  *     default on) so both directions are testable;
  *   - never a `CreateTaskResult` to a `tools/call` that did not declare the
  *     extension in `_meta` (tasks.md:61);
- *   - `-32003` for `tasks/get|update|cancel` and task-filtered
+ *   - `-32021` for `tasks/get|update|cancel` and task-filtered
  *     `subscriptions/listen` from a non-declaring client (tasks.md:797-799);
  *   - `-32602` for an unknown/expired `taskId` (tasks.md:793);
  *   - per-status payloads: `inputRequests` on `input_required`, inline
@@ -63,8 +63,13 @@ export const TASKS_EXTENSION_ID = "io.modelcontextprotocol/tasks";
 export const CLIENT_CAPABILITIES_META_KEY =
   "io.modelcontextprotocol/clientCapabilities";
 
-/** `MISSING_REQUIRED_CLIENT_CAPABILITY` (tasks.md:63). */
-export const MISSING_REQUIRED_CLIENT_CAPABILITY = -32003;
+/** `MISSING_REQUIRED_CLIENT_CAPABILITY` (tasks.md:63, tasks.md:797). */
+export const MISSING_REQUIRED_CLIENT_CAPABILITY = -32021;
+/**
+ * The code the extension carried before ext-tasks corrected it to `-32021`
+ * (`c523f2c`). Kept so a test can drive a pre-final server deliberately.
+ */
+export const OBSOLETE_MISSING_REQUIRED_CLIENT_CAPABILITY = -32003;
 /** `INVALID_PARAMS`, used for unknown/expired task ids (tasks.md:793). */
 export const INVALID_PARAMS = -32602;
 

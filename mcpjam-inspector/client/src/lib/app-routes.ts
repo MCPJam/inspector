@@ -70,6 +70,16 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "skills", kind: "screen", surfaceId: "skills" },
   { path: "learning", kind: "screen", surfaceId: "learning" },
   { path: "conformance", kind: "screen", surfaceId: "conformance" },
+  {
+    path: "conformance/runs/:runId",
+    kind: "screen",
+    surfaceId: "conformance",
+  },
+  {
+    path: "conformance/shared/:token",
+    kind: "special",
+    note: "Read-only shared conformance run. Public by HMAC token — no session required to read it.",
+  },
   { path: "compatibility", kind: "screen", surfaceId: "compatibility" },
   { path: "oauth-flow", kind: "screen", surfaceId: "oauth-flow" },
   { path: "xaa-flow", kind: "screen", surfaceId: "xaa-flow" },

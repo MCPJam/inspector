@@ -8,6 +8,12 @@ vi.mock("@/components/ui/sidebar", () => ({
   useSidebar: () => ({ open: mockSidebarOpen }),
   SidebarGroup: ({ children }: any) => <div>{children}</div>,
   SidebarGroupContent: ({ children }: any) => <div>{children}</div>,
+  // Forwards className: what NavMain passes IS the thing under test.
+  SidebarGroupLabel: ({ children, className }: any) => (
+    <div data-slot="sidebar-group-label" className={className}>
+      {children}
+    </div>
+  ),
   SidebarMenu: ({ children }: any) => <div>{children}</div>,
   SidebarMenuItem: ({ children }: any) => <div>{children}</div>,
   SidebarMenuButton: ({ children, isActive, tooltip, ...props }: any) => {
@@ -211,5 +217,36 @@ describe("NavMain", () => {
       "data-tooltip"
     );
     expect(screen.getByTestId("learn-more-servers")).toBeInTheDocument();
+  });
+});
+
+describe("NavMain — section heading inset", () => {
+  const ITEMS = [{ title: "Home", url: "/home", icon: FakeIcon }];
+
+  /**
+   * jsdom has no layout, so the class NavMain passes is the only observable.
+   * The measured intent: `px-0` cancels the primitive's own px-2 so the heading
+   * text sits at the group's 8px inset while its rows start at 16px. Sharing
+   * 16px with the row icons aligned the two exactly and left nothing to read
+   * the grouping by — reported twice as looking off.
+   */
+  it("cancels the primitive's px-2 so the heading sits left of its rows", () => {
+    render(<NavMain label="Explore" items={ITEMS} />);
+
+    const label = document.querySelector(
+      '[data-slot="sidebar-group-label"]'
+    ) as HTMLElement;
+    expect(label).toBeTruthy();
+    expect(label.textContent).toBe("Explore");
+    expect(label.className).toContain("px-0");
+  });
+
+  it("renders no heading at all for a section with no label", () => {
+    render(<NavMain items={ITEMS} />);
+
+    expect(
+      document.querySelector('[data-slot="sidebar-group-label"]')
+    ).toBeNull();
+    expect(screen.getByText("Home")).toBeVisible();
   });
 });
