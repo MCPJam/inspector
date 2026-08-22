@@ -43,6 +43,7 @@ import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
+import registry from "./registry.js";
 import organizations from "./organizations.js";
 import evalChecks from "./eval-checks.js";
 import projects from "./projects.js";
@@ -169,6 +170,12 @@ v1.route("/", agent);
 v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
 v1.route("/", catalog);
+// Registry — directory search/detail/sources (guest-allowed reads) plus
+// project-scoped card/connection reads and install/uninstall writes. Mounted
+// after auth middleware. Directory reads stay OUT of PUBLIC_OPERATIONS:
+// bearer is always required; anonymous MCP callers arrive with minted guest
+// tokens.
+v1.route("/", registry);
 // Organizations — READ ONLY, and the only organization route there is. It
 // exists so a caller can discover the `organizationId` that `/v1/projects`
 // filters by; org/member/role/billing writes stay off every machine surface.
