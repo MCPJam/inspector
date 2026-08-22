@@ -131,9 +131,6 @@ import {
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
-  getShareSettingsOperation,
-  setShareModeOperation,
-  rotateShareLinkOperation,
   searchRegistryDirectoryOperation,
   getRegistryDirectoryServerOperation,
   listRegistryDirectorySourcesOperation,
@@ -322,9 +319,6 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
-  getShareSettingsOperation,
-  setShareModeOperation,
-  rotateShareLinkOperation,
   searchRegistryDirectoryOperation,
   getRegistryDirectoryServerOperation,
   listRegistryDirectorySourcesOperation,
@@ -498,7 +492,6 @@ const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   archiveSwarmOperation.name,
   removeUserTestingMemberOperation.name,
   rotateUserTestingLinkOperation.name,
-  rotateShareLinkOperation.name,
 ]);
 
 /**

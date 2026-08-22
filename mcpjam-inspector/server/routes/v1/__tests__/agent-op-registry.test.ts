@@ -255,16 +255,47 @@ describe("agent op registry", () => {
     expect(describeRun({ suite: "smoke", allAttached: true })).toBe(
       "Run eval suite smoke against every attached target — one paid run each"
     );
-    // COMPOSE is the one target that also EDITS the suite, so approving it
-    // authorises a persistent change. A line that said only "Run eval suite
-    // smoke" would get that change approved without mentioning it.
+    // A line that said only "Run eval suite smoke" would approve a
+    // multiplier (or an attach) nobody mentioned.
     const composed = describeRun({
       suite: "smoke",
       compose: { host: "Claude Code" },
     });
     expect(composed).toContain("composed");
     expect(composed).toContain("Claude Code");
-    expect(composed).toContain("attached to the suite");
+    expect(composed).toContain("one paid run");
+    expect(composed).toContain("without attaching it to the suite");
+    expect(composed).not.toContain("attached to the suite");
+
+    expect(
+      describeRun({
+        suite: "smoke",
+        compose: {
+          host: "Claude Code",
+          models: ["anthropic/claude-haiku-4.5", "google/gemini-2.5-flash"],
+        },
+      })
+    ).toBe(
+      "Start 2 paid eval runs of suite smoke: 1 client × 2 model choices = 2 runs, without attaching them to the suite"
+    );
+    expect(
+      describeRun({
+        suite: "smoke",
+        compose: {
+          host: "Claude Code",
+          models: ["anthropic/claude-haiku-4.5", "google/gemini-2.5-flash"],
+          includeClientDefault: true,
+        },
+      })
+    ).toBe(
+      "Start 3 paid eval runs of suite smoke: 1 client × 3 model choices = 3 runs, without attaching them to the suite"
+    );
+    expect(
+      describeRun({
+        suite: "smoke",
+        compose: { host: "Claude Code", saveTargets: true },
+      })
+    ).toContain("attached to the suite");
   });
 
   it("marks both eval-run proposals as SPEND", () => {
