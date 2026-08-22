@@ -1496,6 +1496,12 @@ async function runToolOutputSchemaCheck(
     outcome: string;
     schemaBound: boolean;
   }> = [];
+  /**
+   * Fixtures that never produced a gradeable result. These are reported as an
+   * UNEXERCISED requirement, not as a server violation — see the JSON-RPC-error
+   * branch below.
+   */
+  const unexercised: string[] = [];
   let id = 7950;
 
   for (const fixture of fixtures) {
@@ -1528,10 +1534,20 @@ async function runToolOutputSchemaCheck(
     const payload = jsonRpcResult(result);
     if (!payload) {
       const error = jsonRpcError(result);
-      problems.push(
-        `${fixture.toolName} returned no result to validate (HTTP ${result.status}${
+      // NOT a server violation. A JSON-RPC error here means the call never
+      // produced a result to grade — and the likeliest cause is the FIXTURE:
+      // arguments the operator supplied that the tool's inputSchema rejects
+      // (`-32602`), a tool name that does not resolve (`-32601`), an auth
+      // scope the run lacks. Counting it as a `problem` would fail the check —
+      // "tool results do not honor their declared output schemas" — and brand
+      // the server nonconformant for correctly refusing a request this suite
+      // built badly. The requirement simply went untested, which is what
+      // `unexercised` reports; the `isError: true` branch below draws the same
+      // line for the tool-level case.
+      unexercised.push(
+        `${fixture.toolName} produced no result to validate (HTTP ${result.status}${
           error ? `, JSON-RPC ${error.code}: ${error.message}` : ""
-        })`
+        }); check the fixture's tool name and arguments against the tool's inputSchema`
       );
       continue;
     }
@@ -1576,13 +1592,29 @@ async function runToolOutputSchemaCheck(
   }
 
   const withSchema = graded.filter((entry) => entry.schemaBound).length;
-  const details = { graded, problems, fixtureCount: fixtures.length };
+  const details = {
+    graded,
+    problems,
+    fixtureCount: fixtures.length,
+    ...(unexercised.length > 0 ? { unexercised } : {}),
+  };
 
   if (problems.length > 0) {
     return failedResult(
       meta,
       Date.now() - startedAt,
       `Tool results do not honor their declared output schemas: ${problems.join("; ")}`,
+      details
+    );
+  }
+
+  // Nothing was gradeable AND at least one fixture failed to execute: the
+  // requirement went untested for a reason that points at the fixture, so say
+  // so rather than reporting the generic never-bound message.
+  if (withSchema === 0 && unexercised.length > 0) {
+    return couldNotRunResult(
+      meta,
+      `No tool fixture produced a gradeable result: ${unexercised.join("; ")}`,
       details
     );
   }

@@ -400,4 +400,40 @@ describe("renderConformanceReportJUnitXml", () => {
     expect(xml).toContain('<failure message="Ping failed">');
     expect(xml).toContain("<skipped/>");
   });
+
+  /**
+   * The exit code already refuses to fail on a pending check. If the JUnit
+   * renderer still emitted `<failure>` for one, the CI job would go red anyway
+   * — reopening the retroactive-failure hole the frozen profile exists to
+   * close, on the one channel most teams actually gate on.
+   */
+  it("renders a FAILING pending check as skipped, and excludes it from the failure tallies", () => {
+    const result: MCPConformanceResult = {
+      ...createProtocolResult(),
+      checks: [
+        {
+          id: "wire-schema-valid",
+          category: "protocol",
+          title: "Wire Schema Valid",
+          description: "Every observed message validates against the schema.",
+          status: "failed",
+          durationMs: 3,
+          error: { message: "ListToolsResult: must have required property 'ttlMs'" },
+        },
+      ],
+      profile: {
+        profileId: "mcp-protocol",
+        profileVersion: "2026-08-21.1",
+        manifestDigest: "0".repeat(64),
+        checkerVersion: "0.0.0-test",
+        pendingCheckIds: ["wire-schema-valid"],
+      },
+    };
+
+    const xml = renderConformanceReportJUnitXml(toConformanceReport(result));
+
+    expect(xml).not.toContain("<failure");
+    expect(xml).toContain("unscored by the active profile");
+    expect(xml).toContain('failures="0"');
+  });
 });

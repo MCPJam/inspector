@@ -158,7 +158,26 @@ function createServerConfig(
     // was handed, a `tools/list` response would be graded against
     // `ListPromptsResult` — a fabricated violation in the one check whose
     // entire value is correlation.
-    const capture = createCapturingFetch(config.fetchFn);
+    // NEVER BUFFER A STREAM THE SERVER MAY HOLD OPEN. The capturing fetch
+    // reads the response body to completion before returning it — its own
+    // docstring says it is "NOT suitable for wrapping a long-lived stream" —
+    // and the official client opens a standing `GET` with
+    // `accept: text/event-stream` through exactly this seam
+    // (`_startOrAuthSse`). A conforming 2025-era server that holds that stream
+    // open would never let the capture resolve, so the transport would never
+    // receive its response and the run would hang against a server that did
+    // nothing wrong. The same applies to a POST answered over SSE that the
+    // server keeps open (closing it is only a SHOULD).
+    //
+    // `skipStreamBodies` records those head-only — status and headers, no body
+    // — and hands the untouched stream to the transport. Nothing the graded
+    // checks read is lost: every wire member they inspect (`resultType`, the
+    // cache hints, the `_meta` envelope) rides the JSON responses, and the raw
+    // track captures its own SSE frames at a seam that owns the stream's
+    // lifetime.
+    const capture = createCapturingFetch(config.fetchFn, {
+      skipStreamBodies: true,
+    });
     const response = await capture.fetch(input, init);
     for (const exchange of capture.exchanges) {
       recorder.recordExchange(exchange);
