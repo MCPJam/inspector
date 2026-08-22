@@ -67,6 +67,23 @@ vi.mock("@/components/hosts/ServerGroupPicker", () => ({
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
 }));
+
+const sharePolicyState = vi.hoisted(() => ({
+  policy: undefined as
+    | {
+        maxShareMode: "project_members" | "invited_only" | "anyone_with_link";
+        inviteAudience: "anyone" | "org_members";
+        updatedAt: number | null;
+      }
+    | undefined,
+}));
+
+vi.mock("@/hooks/useOrgSharePolicy", () => ({
+  useEffectiveSharePolicy: () => ({
+    policy: sharePolicyState.policy,
+    isLoading: false,
+  }),
+}));
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
   routePaths: { hosts: "/hosts", environments: "/environments" },
@@ -138,6 +155,7 @@ function renderFlow(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sharePolicyState.policy = undefined;
   flagState.environments = true;
   ensureAdhocMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
@@ -159,6 +177,10 @@ beforeEach(() => {
 });
 
 describe("UserTestingScenarioCreateFlow", () => {
+  beforeEach(() => {
+    sharePolicyState.policy = undefined;
+  });
+
   it("writes nothing until Save, then publishes in ONE call", async () => {
     const { onCreateScenario } = renderFlow();
 
@@ -689,6 +711,40 @@ describe("UserTestingScenarioCreateFlow — ratings turned off", () => {
       expect(onSetPerTurnFeedback).toHaveBeenCalledWith("cb-1", {
         enabled: false,
         style: "stars",
+      });
+    });
+  });
+
+  it("snaps the access preset down to the org ceiling and greys over-ceiling options", async () => {
+    sharePolicyState.policy = {
+      maxShareMode: "project_members",
+      inviteAudience: "anyone",
+      updatedAt: 1,
+    };
+    const { onCreateScenario } = renderFlow();
+
+    expect(
+      screen.getByText("Your organization limits sharing to project members."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("user-testing-create-access"));
+    expect(
+      screen.getByRole("menuitemradio", { name: "Anyone with the link" }),
+    ).toHaveAttribute("data-disabled");
+    expect(
+      screen.getByRole("menuitemradio", { name: "Invited users only" }),
+    ).toHaveAttribute("data-disabled");
+
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => {
+      expect(onCreateScenario).toHaveBeenCalledWith({
+        environmentId: "env-1",
+        name: "Checkout flow",
+        mode: "project_members",
       });
     });
   });
