@@ -23,6 +23,7 @@ import {
   resolveConformanceOutputFormatForCli,
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
+import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
 import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
@@ -188,6 +189,11 @@ export function registerAppsCommands(program: Command): void {
       .option(
         "--protocol-version <version>",
         "Pin the MCP protocol version for the conformance connection (e.g. 2026-07-28). HTTP targets only.",
+      )
+      .option("--upload", "Upload this suite's result into MCPJam run history")
+      .option(
+        "--require-upload",
+        "Fail if reporting is configured but the UI record cannot be written",
       ),
   ).action(async (options, command) => {
     const reporter = parseReporterFormat(options.reporter as string | undefined);
@@ -220,6 +226,15 @@ export function registerAppsCommands(program: Command): void {
     // never ran.
     reportScore(scoreFromAppsResult(result), command);
     reportIncomplete(result, command);
+    await maybeUploadSingleSuite({
+      suiteKind: "apps",
+      result,
+      serverUrl:
+        "url" in config && typeof config.url === "string" ? config.url : undefined,
+      upload: Boolean((options as { upload?: boolean }).upload),
+      requireUpload: Boolean((options as { requireUpload?: boolean }).requireUpload),
+      command,
+    });
     const exitCode = conformanceExitCode(result);
     if (exitCode !== 0) {
       setProcessExitCode(exitCode);
