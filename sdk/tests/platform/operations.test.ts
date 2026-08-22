@@ -15,7 +15,10 @@ import {
   getEvalRunOperation,
   getEvalRunStepsOperation,
   getPluginVersionOperation,
+  getRegistryDirectoryServerOperation,
   getServerPromptOperation,
+  installRegistryDirectoryServerOperation,
+  searchRegistryDirectoryOperation,
   listScenariosOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
@@ -1979,6 +1982,13 @@ describe("operation catalog consistency", () => {
     upsert_user_testing_member: { scenario: "cb", email: "a@example.com" },
     remove_user_testing_member: { scenario: "cb", member: "a@example.com" },
     rebind_user_testing_scenario: { scenario: "cb", environmentId: "env_1" },
+    get_share_settings: { resourceType: "scenario", resourceId: "s1" },
+    set_share_mode: {
+      resourceType: "scenario",
+      resourceId: "s1",
+      mode: "project_members",
+    },
+    rotate_share_link: { resourceType: "scenario", resourceId: "s1" },
     list_hosts: {},
     get_host: { host: "h" },
     set_host_servers: { host: "h", serverIds: [] },
@@ -2014,6 +2024,14 @@ describe("operation catalog consistency", () => {
     reset_computer: {},
     search_sessions: { query: "q" },
     delete_sandbox_image: { image: "i" },
+    search_registry_directory: {},
+    get_registry_directory_server: { catalogServerId: "cs" },
+    list_registry_directory_sources: {},
+    list_registry_servers: {},
+    list_registry_connections: {},
+    install_registry_directory_server: { catalogServerId: "cs" },
+    install_registry_server: { registryServerId: "rs" },
+    uninstall_registry_server: { registryServerId: "rs" },
   };
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
@@ -2140,6 +2158,11 @@ describe("operation catalog consistency", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "set_share_mode",
+      "rotate_share_link",
+      "install_registry_directory_server",
+      "install_registry_server",
+      "uninstall_registry_server",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));
@@ -2294,6 +2317,173 @@ describe("createHostOperation input", () => {
       createHostOperation.inputSchema.safeParse({
         name: "h",
         template: "claude",
+      }).success
+    ).toBe(true);
+  });
+});
+
+describe("registry operations", () => {
+  /**
+   * A client for the install flow: install → getProjectServer → mint link.
+   * `connectionResponse` overrides the POST /server-connections answer;
+   * `outcome` is what the install route reports.
+   */
+  function registryClient(options?: {
+    outcome?: "created" | "reconnected";
+    connectionResponse?: () => Response | Promise<Response>;
+  }): { client: PlatformApiClient; fetchMock: ReturnType<typeof vi.fn> } {
+    const fetchMock = vi.fn(async (target: unknown) => {
+      const path = new URL(String(target)).pathname;
+      if (path === "/api/v1/projects") {
+        return Response.json({ items: PROJECTS });
+      }
+      if (/^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)) {
+        return Response.json({
+          serverId: "server-installed",
+          serverName: "Installed",
+          outcome: options?.outcome ?? "created",
+        });
+      }
+      if (/^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)) {
+        return Response.json({
+          id: "server-installed",
+          projectId: "project-new",
+          name: "Installed",
+          enabled: true,
+          transportType: "http",
+          url: "https://mcp.example.com/mcp",
+          useOAuth: true,
+          hasClientSecret: false,
+          createdAt: 1,
+          updatedAt: 1,
+        });
+      }
+      if (path === "/api/v1/server-connections") {
+        if (options?.connectionResponse) return options.connectionResponse();
+        return Response.json({
+          connectionRequestId: "conn-1",
+          status: "pending",
+          handoffUrl: "https://app.example.com/connect/tok",
+        });
+      }
+      if (path === "/api/v1/registry/directory-servers") {
+        return Response.json({ items: [] });
+      }
+      return Response.json(
+        { code: "NOT_FOUND", message: `No route for ${path}` },
+        { status: 404 }
+      );
+    });
+    const client = new PlatformApiClient({
+      baseUrl: "https://api.example.com/api/v1",
+      getAuth: () => "sk_test",
+      fetch: fetchMock as unknown as typeof fetch,
+    });
+    return { client, fetchMock };
+  }
+
+  it("mints a connect link for a first-time OAuth install", async () => {
+    const { client, fetchMock } = registryClient();
+
+    const result = await installRegistryDirectoryServerOperation.execute(
+      { project: "new", catalogServerId: "cs" },
+      { client }
+    );
+
+    expect(result.outcome).toBe("created");
+    expect(result.nextSteps.connectLinkUrl).toBe(
+      "https://app.example.com/connect/tok"
+    );
+    expect(result.nextSteps.connectLinkError).toBeUndefined();
+    expect(callsTo(fetchMock, "/server-connections")).toHaveLength(1);
+  });
+
+  it("does NOT mint a connect link on a repeat install (reconnected)", async () => {
+    // The server row — and possibly a completed OAuth grant — already
+    // existed. Minting here would orphan a single-use handoff token on every
+    // repeat install; the status op tells the caller whether a new link is
+    // even needed.
+    const { client, fetchMock } = registryClient({ outcome: "reconnected" });
+
+    const result = await installRegistryDirectoryServerOperation.execute(
+      { project: "new", catalogServerId: "cs" },
+      { client }
+    );
+
+    expect(result.outcome).toBe("reconnected");
+    expect(result.nextSteps.connectLinkUrl).toBeUndefined();
+    expect(result.nextSteps.connectLinkError).toBeUndefined();
+    expect(callsTo(fetchMock, "/server-connections")).toHaveLength(0);
+  });
+
+  it("reports a failed link mint instead of silently omitting the link", async () => {
+    const { client } = registryClient({
+      connectionResponse: () =>
+        Response.json(
+          { code: "RATE_LIMITED", message: "Too many connection requests" },
+          { status: 429 }
+        ),
+    });
+
+    const result = await installRegistryDirectoryServerOperation.execute(
+      { project: "new", catalogServerId: "cs" },
+      { client }
+    );
+
+    // The install itself succeeded and stays a success…
+    expect(result.serverId).toBe("server-installed");
+    expect(result.nextSteps.connectLinkUrl).toBeUndefined();
+    // …but the degradation is visible, not silent.
+    expect(result.nextSteps.connectLinkError).toContain(
+      "Too many connection requests"
+    );
+  });
+
+  it("propagates the caller's abort instead of reporting success", async () => {
+    const controller = new AbortController();
+    const { client } = registryClient({
+      connectionResponse: () => {
+        controller.abort();
+        const error = new Error("The operation was aborted.");
+        error.name = "AbortError";
+        throw error;
+      },
+    });
+
+    const error = await installRegistryDirectoryServerOperation
+      .execute(
+        { project: "new", catalogServerId: "cs" },
+        { client, signal: controller.signal }
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).name).toBe("AbortError");
+  });
+
+  it("forwards verifiedTier to the directory search", async () => {
+    const { client, fetchMock } = registryClient();
+    const input = searchRegistryDirectoryOperation.inputSchema.parse({
+      verifiedTier: "verified",
+    });
+
+    await searchRegistryDirectoryOperation.execute(input, { client });
+
+    const call = callsTo(fetchMock, "/registry/directory-servers")[0]!;
+    expect(call.searchParams.get("verifiedTier")).toBe("verified");
+  });
+
+  it("refuses catalogServerId + source together rather than ignoring source", () => {
+    expect(
+      getRegistryDirectoryServerOperation.inputSchema.safeParse({
+        catalogServerId: "cs",
+        source: "claude",
+      }).success
+    ).toBe(false);
+    expect(
+      getRegistryDirectoryServerOperation.inputSchema.safeParse({
+        name: "linear",
+        source: "claude",
       }).success
     ).toBe(true);
   });
