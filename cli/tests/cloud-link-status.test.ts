@@ -3,7 +3,13 @@
  */
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -146,6 +152,10 @@ function isolatedEnv(
   };
 }
 
+function assertSamePath(left: string, right: string): void {
+  assert.equal(realpathSync(left), realpathSync(right));
+}
+
 function writeLink(
   directory: string,
   body: Record<string, unknown>
@@ -226,6 +236,52 @@ test("cloud status warns when link apiUrl does not match the active deployment",
   assert.equal(payload.link.apiUrlMatchesDeployment, false);
   assert.equal(payload.project.source, "link");
   assert.match(payload.warnings.join("\n"), /does not match the active deployment/);
+  assert.match(
+    payload.warnings.join("\n"),
+    /The active deployment's API URL is used; the link's project selector remains active/
+  );
+});
+
+test("cloud status rejects a legacy --api-key like other Cloud commands", async () => {
+  const run = await withEnv(isolatedEnv(), () =>
+    runCli([
+      "cloud",
+      "status",
+      "--api-key",
+      "mcpjam_legacy",
+      "--format",
+      "json",
+    ])
+  );
+  assert.equal(run.exitCode, 2);
+  assert.equal(run.stdout, "");
+  const payload = JSON.parse(run.stderr) as {
+    error?: { code?: string; message?: string };
+  };
+  assert.equal(payload.error?.code, "USAGE_ERROR");
+  assert.match(payload.error?.message ?? "", /Legacy mcpjam_ API keys/);
+});
+
+test("cloud status rejects an invalid --api-url like other Cloud commands", async () => {
+  const run = await withEnv(isolatedEnv(), () =>
+    runCli([
+      "cloud",
+      "status",
+      "--api-key",
+      "sk_test",
+      "--api-url",
+      "not-a-url",
+      "--format",
+      "json",
+    ])
+  );
+  assert.equal(run.exitCode, 2);
+  assert.equal(run.stdout, "");
+  const payload = JSON.parse(run.stderr) as {
+    error?: { code?: string; message?: string };
+  };
+  assert.equal(payload.error?.code, "USAGE_ERROR");
+  assert.match(payload.error?.message ?? "", /Invalid --api-url/);
 });
 
 test("cloud link writes .mcpjam/project.json at the Git worktree root", async () => {
@@ -266,7 +322,7 @@ test("cloud link writes .mcpjam/project.json at the Git worktree root", async ()
     assert.equal(written.version, 1);
     assert.equal(written.project.name, "Beta");
     assert.equal(written.apiUrl, fixture.baseUrl);
-    assert.equal(payload.path, projectLinkPathForDir(root));
+    assertSamePath(payload.path, projectLinkPathForDir(root));
   } finally {
     await fixture.close();
   }
@@ -293,8 +349,8 @@ test("cloud link --here writes in cwd; --remove deletes the nearest file", async
       )
     );
     assert.equal(linkRun.exitCode, 0, linkRun.stderr);
-    assert.equal(
-      JSON.parse(linkRun.stdout).path,
+    assertSamePath(
+      JSON.parse(linkRun.stdout).path as string,
       projectLinkPathForDir(cwd)
     );
 

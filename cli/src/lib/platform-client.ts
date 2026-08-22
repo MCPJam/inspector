@@ -23,7 +23,7 @@ export interface PlatformClientOptions {
  * hard-error: silently falling back to prod would run a login or send a
  * token somewhere the user did not ask for.
  */
-function validateApiUrl(value: string, source: string): string {
+export function validateApiUrl(value: string, source: string): string {
   let parsed: URL;
   try {
     parsed = new URL(value);

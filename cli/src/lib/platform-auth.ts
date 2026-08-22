@@ -34,7 +34,7 @@ const LEGACY_API_KEY_PREFIX = "mcpjam_";
 const TOKEN_REFRESH_SKEW_MS = 60_000;
 const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
 
-const LEGACY_KEY_REMEDY =
+export const LEGACY_KEY_REMEDY =
   "Legacy mcpjam_ API keys are not supported by platform commands. Create an sk_ key at https://app.mcpjam.com/settings/api-keys or run `mcpjam cloud login`.";
 
 export interface PlatformCredential {

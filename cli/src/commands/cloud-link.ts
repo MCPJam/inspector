@@ -154,7 +154,7 @@ export function registerCloudLinkCommands(cloud: Command): void {
 
       if (link.valid === true && link.apiUrlMatchesDeployment === false) {
         warnings.push(
-          `Project link apiUrl (${link.apiUrl}) does not match the active deployment (${deployment.apiUrl}). The active deployment is used; the link is not.`
+          `Project link apiUrl (${link.apiUrl}) does not match the active deployment (${deployment.apiUrl}). The active deployment's API URL is used; the link's project selector remains active.`
         );
       }
 

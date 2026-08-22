@@ -7,6 +7,9 @@
  */
 import { DEFAULT_PLATFORM_API_BASE_URL } from "@mcpjam/sdk/platform";
 import { getAuthFilePath, readStoredAuth } from "./auth-store.js";
+import { LEGACY_KEY_REMEDY } from "./platform-auth.js";
+import { validateApiUrl } from "./platform-client.js";
+import { usageError } from "./output.js";
 
 const LEGACY_API_KEY_PREFIX = "mcpjam_";
 
@@ -61,6 +64,10 @@ export function describeCloudCredential(
   const envKey = trimmed(env.MCPJAM_API_KEY);
   const usableEnvKey = envKey && isUsableSkKey(envKey) ? envKey : undefined;
 
+  if (flagKey && !isUsableSkKey(flagKey)) {
+    throw usageError(LEGACY_KEY_REMEDY);
+  }
+
   let credential: CloudCredentialDescription;
   if (flagKey) {
     credential = {
@@ -98,9 +105,12 @@ export function describeCloudCredential(
   const envUrl = trimmed(env.MCPJAM_API_URL);
   let deployment: CloudDeploymentDescription;
   if (flagUrl) {
-    deployment = { apiUrl: flagUrl, source: "flag" };
+    deployment = { apiUrl: validateApiUrl(flagUrl, "--api-url"), source: "flag" };
   } else if (envUrl) {
-    deployment = { apiUrl: envUrl, source: "env" };
+    deployment = {
+      apiUrl: validateApiUrl(envUrl, "MCPJAM_API_URL"),
+      source: "env",
+    };
   } else if (stored?.apiUrl) {
     deployment = { apiUrl: stored.apiUrl, source: "oauth" };
   } else {

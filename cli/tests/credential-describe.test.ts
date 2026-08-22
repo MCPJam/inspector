@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_PLATFORM_API_BASE_URL } from "@mcpjam/sdk/platform";
 import { describeCloudCredential, redactCloudApiKey } from "../src/lib/credential-describe.js";
+import { CliError } from "../src/lib/output.js";
 
 function authFile(body: Record<string, unknown>): string {
   const directory = mkdtempSync(path.join(tmpdir(), "mcpjam-cred-"));
@@ -55,6 +56,30 @@ test("credential precedence is flag, usable env key, oauth, missing", () => {
   assert.equal(missing.credential.source, "missing");
   assert.equal(missing.deployment.source, "default");
   assert.equal(missing.deployment.apiUrl, DEFAULT_PLATFORM_API_BASE_URL);
+});
+
+test("legacy mcpjam_ flag keys are a usage error", () => {
+  assert.throws(
+    () => describeCloudCredential({ apiKey: "mcpjam_legacy" }, { env: {} }),
+    (error: unknown) =>
+      error instanceof CliError &&
+      error.code === "USAGE_ERROR" &&
+      /Legacy mcpjam_ API keys/.test(error.message)
+  );
+});
+
+test("invalid explicit API URLs are a usage error", () => {
+  assert.throws(
+    () =>
+      describeCloudCredential(
+        { apiKey: "sk_test", apiUrl: "not-a-url" },
+        { env: {} }
+      ),
+    (error: unknown) =>
+      error instanceof CliError &&
+      error.code === "USAGE_ERROR" &&
+      /Invalid --api-url/.test(error.message)
+  );
 });
 
 test("legacy mcpjam_ env keys fall through to stored OAuth", () => {
