@@ -537,8 +537,8 @@ All `environments` commands require an `sk_` API key (via `--api-key` or the `MC
 Environments use optimistic concurrency. Every write takes `--expected-revision`, the `revision` you last read:
 
 ```bash
-mcpjam environments get --environment Staging          # note the "revision" field
-mcpjam environments update --environment Staging --expected-revision 3 --name Prod
+mcpjam cloud environments get --environment Staging          # note the "revision" field
+mcpjam cloud environments update --environment Staging --expected-revision 3 --name Prod
 ```
 
 If someone else changed the environment in between, the write fails with a `CONFLICT` error (HTTP 409) instead of overwriting their edit — re-read it and retry. `CONFLICT` also covers a duplicate name and archive-state errors (archiving something already archived, editing something archived), so read the message.
