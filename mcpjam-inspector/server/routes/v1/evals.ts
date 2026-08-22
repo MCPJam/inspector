@@ -851,6 +851,44 @@ async function describeAttachedEnvironments(
  * a silent no-op: environment resolution wins outright in `startTestSuiteRun`,
  * so the override would be accepted and then ignored.
  */
+async function assertEphemeralEnvironmentLaunchable(
+  convexAuthToken: string,
+  projectId: string,
+  environmentId: string,
+): Promise<void> {
+  const convex = createConvexReadClient(convexAuthToken);
+  let row: {
+    environmentId?: string;
+    projectId?: string;
+    archivedAt?: number;
+    name?: string;
+  } | null;
+  try {
+    row = (await convex.query(
+      "projectEnvironments:getEnvironment" as any,
+      { projectId, environmentId } as any,
+    )) as typeof row;
+  } catch (error) {
+    throw translateConvexError(error);
+  }
+  if (!row) {
+    throw new WebRouteError(
+      404,
+      ErrorCode.NOT_FOUND,
+      `Environment ${environmentId} was not found in this project.`,
+      { reason: "ENVIRONMENT_NOT_FOUND", environmentId },
+    );
+  }
+  if (row.archivedAt !== undefined) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Environment ${row.name ?? environmentId} is archived and cannot be launched.`,
+      { reason: "ENVIRONMENT_ARCHIVED", environmentId },
+    );
+  }
+}
+
 async function selectSuiteEnvironmentId(params: {
   convexAuthToken: string;
   projectId: string;
@@ -860,6 +898,11 @@ async function selectSuiteEnvironmentId(params: {
   hasServerOverride: boolean;
   /** The request field that carries that override, for the 400 message. */
   serverField: string;
+  /**
+   * Compose-and-run: skip suite membership for a project-scoped, live env.
+   * Still requires an explicit `requestedEnvironmentId`.
+   */
+  ephemeralEnvironment?: boolean;
 }): Promise<string | undefined> {
   const {
     convexAuthToken,
@@ -868,6 +911,7 @@ async function selectSuiteEnvironmentId(params: {
     requestedEnvironmentId,
     hasServerOverride,
     serverField,
+    ephemeralEnvironment,
   } = params;
   const attached = suiteEnvironmentIds(suite);
   const describe = () =>
@@ -886,6 +930,14 @@ async function selectSuiteEnvironmentId(params: {
   }
 
   if (requestedEnvironmentId) {
+    if (ephemeralEnvironment === true) {
+      await assertEphemeralEnvironmentLaunchable(
+        convexAuthToken,
+        projectId,
+        requestedEnvironmentId,
+      );
+      return requestedEnvironmentId;
+    }
     if (!attached.includes(requestedEnvironmentId)) {
       throw new WebRouteError(
         400,
@@ -2451,6 +2503,7 @@ async function resolveLaunchServers(params: {
   namedHostId: string | undefined;
   requestedServerIds: string[];
   requestedServerNames: string[] | undefined;
+  ephemeralEnvironment?: boolean;
 }): Promise<{
   environmentId: string | undefined;
   environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
@@ -2475,6 +2528,9 @@ async function resolveLaunchServers(params: {
         requestedEnvironmentId: params.requestedEnvironmentId,
         hasServerOverride: params.requestedServerIds.length > 0,
         serverField: "serverIds",
+        ...(params.ephemeralEnvironment === true
+          ? { ephemeralEnvironment: true }
+          : {}),
       })
     : undefined;
 
@@ -2610,6 +2666,9 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       namedHostId: body.namedHostId,
       requestedServerIds: body.serverIds ?? [],
       requestedServerNames: body.serverNames,
+      ...(body.ephemeralEnvironment === true
+        ? { ephemeralEnvironment: true }
+        : {}),
     });
 
   const slotKey = orgConcurrencyKey(c);
@@ -2721,6 +2780,7 @@ const createEvalRunGroupSchema = z.object({
   notes: z.string().optional(),
   passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
   idempotencyKey: z.string().min(1).max(256).optional(),
+  ephemeralEnvironment: z.boolean().optional(),
 })
   // STRICT, like every other v1 write body: the published contract says an
   // unknown key is invalid, and the two knobs this route deliberately omits
@@ -2822,7 +2882,13 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       // VALIDATE EVERY TARGET BEFORE LAUNCHING ANY: a group that starts target
       // 1 and then rejects target 2 has already spent on a request that was
       // never satisfiable, and there is no refund for a started run.
-      if (!attachedEnvironmentIds.includes(target.environmentId)) {
+      if (body.ephemeralEnvironment === true) {
+        await assertEphemeralEnvironmentLaunchable(
+          convexAuthToken,
+          projectId,
+          target.environmentId,
+        );
+      } else if (!attachedEnvironmentIds.includes(target.environmentId)) {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
@@ -2880,6 +2946,9 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
       namedHostId: target.namedHostId,
       requestedServerIds: [],
       requestedServerNames: undefined,
+      ...(body.ephemeralEnvironment === true
+        ? { ephemeralEnvironment: true }
+        : {}),
     });
     // The host config THIS target executes under. An environment pins its own
     // host, so an environment target must be judged on that host's config —
@@ -2964,6 +3033,9 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
           ...(body.passCriteria ? { passCriteria: body.passCriteria } : {}),
           ...(target.namedHostId
             ? { namedHostId: target.namedHostId }
+            : {}),
+          ...(body.ephemeralEnvironment === true
+            ? { ephemeralEnvironment: true }
             : {}),
           // PER-TARGET run key derived from the group key. This is what makes a
           // replay after a crash mid-launch safe: each target dedupes at the
