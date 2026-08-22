@@ -91,6 +91,12 @@ const KNOWN_UNDOCUMENTED = new Set([
   // contract — documenting it would invite external callers to depend on the
   // shape of an internal list that changes with every tool we add.
   "get /agent-ops",
+  // Unified share control plane — REST ships in I2; OpenAPI + SDK in I5.
+  "get /projects/{projectId}/shares/{resourceType}/{resourceId}",
+  "patch /projects/{projectId}/shares/{resourceType}/{resourceId}",
+  "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link",
+  "put /projects/{projectId}/shares/{resourceType}/{resourceId}/members",
+  "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}",
 ]);
 
 /**
