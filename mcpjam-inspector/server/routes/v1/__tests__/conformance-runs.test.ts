@@ -27,6 +27,7 @@ const {
   convexMutationMock,
   authorizeServerMock,
   executePersistedConformanceRunMock,
+  assertAllowedHostedTargetUrlMock,
 } = vi.hoisted(() => ({
   validateGuestTokenMock: vi.fn(),
   validateApiKeyMock: vi.fn(),
@@ -36,6 +37,7 @@ const {
   convexMutationMock: vi.fn(),
   authorizeServerMock: vi.fn(),
   executePersistedConformanceRunMock: vi.fn(),
+  assertAllowedHostedTargetUrlMock: vi.fn(),
 }));
 
 vi.mock("../../../services/guest-token.js", () => ({
@@ -70,6 +72,20 @@ vi.mock("../../web/auth.js", async () => {
   return { ...actual, authorizeServer: authorizeServerMock };
 });
 
+vi.mock("../../../utils/hosted-egress-guard.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../../../utils/hosted-egress-guard.js")>();
+  return {
+    ...actual,
+    assertAllowedHostedTargetUrl: (...args: unknown[]) =>
+      assertAllowedHostedTargetUrlMock(...args),
+  };
+});
+
+import {
+  BlockedEgressTargetError,
+  EgressResolutionError,
+} from "../../../utils/hosted-egress-guard.js";
 import v1Routes from "../index.js";
 
 function makeApp(): Hono {
@@ -146,6 +162,7 @@ describe("v1 persisted conformance runs", () => {
     process.env.CONVEX_HTTP_URL = "https://convex-http.example.com";
     validateGuestTokenMock.mockResolvedValue({ valid: false });
     authorizeServerMock.mockResolvedValue(HTTP_SERVER);
+    assertAllowedHostedTargetUrlMock.mockResolvedValue(undefined);
     executePersistedConformanceRunMock.mockImplementation(async (args: any) => {
       await args.onRunStarted?.("run_1", {
         reused: false,
@@ -246,6 +263,34 @@ describe("v1 persisted conformance runs", () => {
         { body: {} },
       );
       expect(res.status).toBe(400);
+      expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a blocked saved-server target", async () => {
+      assertAllowedHostedTargetUrlMock.mockRejectedValue(
+        new BlockedEgressTargetError("Server URL is not allowed"),
+      );
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        { body: {} },
+      );
+      expect(res.status).toBe(400);
+      expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
+    });
+
+    it("answers 502 when the saved server's address cannot be resolved", async () => {
+      // The helper throws 503 SERVER_UNREACHABLE; v1 derives status from the
+      // public code, and SERVER_UNREACHABLE is 502.
+      assertAllowedHostedTargetUrlMock.mockRejectedValue(
+        new EgressResolutionError("Could not resolve connector.example.com"),
+      );
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        { body: {} },
+      );
+      expect(res.status).toBe(502);
       expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
     });
 
