@@ -26,6 +26,8 @@ import serverConnectionsWeb from "./server-connections.js";
 import guestToken from "./guest-token.js";
 import chatHistory from "./chat-history.js";
 import conformanceWeb from "./conformance.js";
+import conformanceShared from "./conformance-shared.js";
+import sharedResources from "./shared-resources.js";
 import score from "./score.js";
 import checks from "./checks.js";
 import apiKeys from "./api-keys.js";
@@ -63,6 +65,7 @@ web.use(
 );
 web.use("/chat-history/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use("/conformance/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+web.use("/shared/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // Conformance runs dial a caller-named third party, so they carry a per-IP
 // ceiling on top of the per-guest one — guest identities are free to mint, and
 // only the IP bounds how much of our egress a single actor can spend.
@@ -157,6 +160,11 @@ web.route("/caniuse", caniuse);
 // secret token in the URL is the credential. Submission is per-IP rate
 // limited inside the router.
 web.route("/score", score);
+// Shared conformance run (HMAC token in the path). Same no-session contract
+// as `/score`: the token is the credential, and the backend only returns the
+// redacted public artifact.
+web.route("/conformance-shared", conformanceShared);
+web.route("/shared", sharedResources);
 // `/api-keys` carries its own bearer-auth `.use()` because
 // `sessionAuthMiddleware` bypasses `/api/web/*` entirely. Nothing on this
 // sub-router is reachable without a session JWT (WorkOS `sk_…` keys are
