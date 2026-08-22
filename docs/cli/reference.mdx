@@ -513,15 +513,15 @@ Provide either `--template` or `--file`/`--json`, not both.
 
 ---
 
-## `environments` commands
+## `cloud environments` commands
 
 Manage **project environments** in your hosted MCPJam projects. A project environment is a named, live-editable execution bundle — one host, optionally a standalone server group, optionally a pinned skill selection and pinned plugin versions — that eval suites and journeys run against.
 
 <Note>
-A project environment is not a Computer sandbox image (those are `mcpjam images`), and not the STDIO environment variables you pass with `--env`.
+A project environment is not a Computer sandbox image (those are `mcpjam cloud images`), and not the STDIO environment variables you pass with `--env`.
 </Note>
 
-All `environments` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`. Reading requires project membership; **creating, updating, archiving, and restoring require project admin** — a key bound to a non-admin gets a `FORBIDDEN` error on those.
+All `cloud environments` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`. Reading requires project membership; **creating, updating, archiving, and restoring require project admin** — a key bound to a non-admin gets a `FORBIDDEN` error on those.
 
 ### Shared platform flags
 
