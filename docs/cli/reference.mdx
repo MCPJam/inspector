@@ -1304,9 +1304,9 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--json <json>` | No | Inline suite-update JSON (or `@file`, or `-`) |
 | `--name <name>` | No | Rename the suite |
 | `--description <text>` | No | Suite description |
-| `--server <name...>` | No | Replace the suite's server selection (project server names) |
-| `--computer-image <name-or-id\|off>` | No | Sandbox image eval runs boot a fresh computer from (list them with `mcpjam images list`). `off` uses the provider's default base image |
-| `--host <name...>` | No | Replace host attachments (by name/ID) |
+| `--server <id-or-name...>` | No | Replace the suite's server selection (project server names or IDs) |
+| `--computer-image <id-or-name\|off>` | No | Sandbox image eval runs boot a fresh computer from (list them with `mcpjam images list`). `off` uses the provider's default base image |
+| `--host <id-or-name...>` | No | Replace host attachments (by name or ID) |
 | `--model <id>` | No | Execution model ID |
 | `--system-prompt <text>` | No | Execution system prompt |
 | `--temperature <n>` | No | Execution temperature |
