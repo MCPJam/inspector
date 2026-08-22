@@ -315,7 +315,49 @@ export const NOT_SUPPORTED = Symbol("not-supported");
 /** One variable's value in each theme; `same` when a single string answers both. */
 export type StyleVariableByTheme =
   | { same: string }
-  | { light?: string; dark?: string };
+  /**
+   * `raw` is set when the pair was decoded from a single `light-dark(…)`
+   * string rather than probed per theme — the split is for reading, and the
+   * literal the host actually sends stays available for anyone who needs it.
+   */
+  | { light?: string; dark?: string; raw?: string };
+
+/**
+ * Split a CSS `light-dark(a, b)` value into its two themes.
+ *
+ * Hosts encode the same fact two ways: Claude sends one `light-dark(…)`
+ * string, ChatGPT and Codex send a resolved literal per theme. Rendering
+ * those differently makes a row impossible to compare down the column, so
+ * the pair is normalized here. Returns null for anything else, including a
+ * malformed call — a value we can't split is shown verbatim rather than
+ * guessed at.
+ *
+ * Splits on the top-level comma: the arguments are themselves functions
+ * (`rgba(50, 102, 173, 1)`) whose commas must not end the first argument.
+ */
+export function parseLightDarkPair(
+  value: string
+): { light: string; dark: string } | null {
+  const trimmed = value.trim();
+  const prefix = "light-dark(";
+  if (!trimmed.toLowerCase().startsWith(prefix) || !trimmed.endsWith(")")) {
+    return null;
+  }
+  const inner = trimmed.slice(prefix.length, -1);
+  let depth = 0;
+  for (let i = 0; i < inner.length; i += 1) {
+    const char = inner[i];
+    if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    else if (char === "," && depth === 0) {
+      const light = inner.slice(0, i).trim();
+      const dark = inner.slice(i + 1).trim();
+      if (!light || !dark) return null;
+      return { light, dark };
+    }
+  }
+  return null;
+}
 
 function readStyleVariable(
   cfg: HostConfigDtoV2,
@@ -342,7 +384,12 @@ function readStyleVariable(
   // A single value answers both themes — either because it is theme-agnostic
   // (`light-dark(…)`) or because only one theme was ever captured. Both read
   // the same way here; the catalog's per-theme pair is what distinguishes them.
-  if (typeof value === "string") return { same: value };
+  if (typeof value === "string") {
+    // A `light-dark(…)` host and a per-theme-probed host state the same fact
+    // in different notations; normalize so the column compares.
+    const pair = parseLightDarkPair(value);
+    return pair ? { ...pair, raw: value } : { same: value };
+  }
 
   // Only a probed host can be said not to support the variable: we connected,
   // read its host context, and it sent nothing here. For a vendor-doc or
@@ -354,11 +401,14 @@ function readStyleVariable(
 /**
  * Apps · Styles — one row per spec variable, showing the value each host sends.
  *
- * These are probed values, so the row shows them: `light-dark(rgba(255, 255,
- * 255, 1), ...)` against `#fff` is the comparison a widget author is here to
- * make, and collapsing it to a yes/no chip would discard the finding. A probed
- * host that sends nothing reads as an explicit "Not supported"; one nobody has
- * probed stays an em dash, so absence stays legible either way.
+ * These are probed values, so the row shows them: the value a widget actually
+ * receives is the comparison a widget author is here to make, and collapsing
+ * it to a yes/no chip would discard the finding. Hosts differ in notation —
+ * one `light-dark(…)` string vs a resolved literal per theme — so the pair is
+ * normalized (`parseLightDarkPair`) and every host reads down the column the
+ * same way. A probed host that sends nothing reads as an explicit "Not
+ * supported"; one nobody has probed stays an em dash, so absence stays
+ * legible either way.
  *
  * The trade is that value rows are not support-shaped: the only chip they ever
  * render is that `NOT_SUPPORTED` one, and they take no part in the coverage

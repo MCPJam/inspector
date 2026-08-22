@@ -588,6 +588,32 @@ function FieldRow({
   );
 }
 
+/**
+ * Color chip for a style-variable cell. The value is assigned as a real CSS
+ * property (never spliced into a CSS string), so a token this build does not
+ * understand — a `color-mix(…)` an older browser rejects, or a malformed
+ * value from a user-built host — is dropped by the CSSOM and leaves an empty
+ * chip rather than corrupting the cell. The checkerboard behind it is what
+ * makes a fully transparent `…-ghost` token distinguishable from an opaque
+ * white one.
+ */
+function StyleColorSwatch({ value }: { value: string }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-block size-3 shrink-0 overflow-hidden rounded-[3px] border border-border/70 align-middle"
+      style={{
+        backgroundImage:
+          "linear-gradient(45deg, rgba(120,120,120,0.35) 25%, transparent 25%, transparent 75%, rgba(120,120,120,0.35) 75%), linear-gradient(45deg, rgba(120,120,120,0.35) 25%, transparent 25%, transparent 75%, rgba(120,120,120,0.35) 75%)",
+        backgroundSize: "6px 6px",
+        backgroundPosition: "0 0, 3px 3px",
+      }}
+    >
+      <span className="block size-full" style={{ backgroundColor: value }} />
+    </span>
+  );
+}
+
 function FieldCell({
   field,
   subject,
@@ -714,13 +740,24 @@ function FieldCell({
 
     case "style-variable": {
       const v = value as StyleVariableByTheme;
+      // Colors get a chip: two hex strings are only comparable at a glance
+      // once you can see them. Sizes, radii and shadows have nothing to show.
+      const isColor = field.label.startsWith("--color-");
       // One string answering both themes renders bare — labelling it "light"
       // and "dark" twice would imply a distinction the host does not make.
+      // A `light-dark(…)` value is NOT this case: it is decoded upstream into
+      // the pair below, so the notation a host happens to use never changes
+      // the shape of its cell.
       if ("same" in v) {
-        return <span className="font-mono text-[12px] break-all">{v.same}</span>;
+        return (
+          <span className="inline-flex items-center gap-1.5">
+            {isColor ? <StyleColorSwatch value={v.same} /> : null}
+            <span className="font-mono text-[12px] break-all">{v.same}</span>
+          </span>
+        );
       }
       return (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1" title={v.raw}>
           {(["light", "dark"] as const).map((theme) => (
             <div key={theme} className="flex flex-col gap-0.5">
               <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
@@ -729,8 +766,11 @@ function FieldCell({
               {v[theme] === undefined ? (
                 <span className="text-[12px] text-muted-foreground/60">—</span>
               ) : (
-                <span className="font-mono text-[12px] break-all">
-                  {v[theme]}
+                <span className="inline-flex items-center gap-1.5">
+                  {isColor ? <StyleColorSwatch value={v[theme]} /> : null}
+                  <span className="font-mono text-[12px] break-all">
+                    {v[theme]}
+                  </span>
                 </span>
               )}
             </div>
