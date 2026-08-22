@@ -25,7 +25,6 @@ vi.mock("@ai-sdk/harness/agent", () => ({
     }));
   },
   collectHarnessAgentToolApprovalContinuations: vi.fn(() => []),
-  prewarmHarness: vi.fn(async () => {}),
 }));
 
 vi.mock("../registry.js", () => ({

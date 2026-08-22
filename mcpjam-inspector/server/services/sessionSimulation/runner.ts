@@ -633,18 +633,19 @@ export async function runSyntheticHostSession(
     // always member-initiated (the route authenticates the generator), so the
     // guest gate never trips here. Skills are delivered the same two ways chat
     // does — natively via the harness `skills` param when the turn runs the
-    // real Claude Code runtime, or as the emulated `listSkills`/`loadSkill`
-    // tools otherwise. `shouldEnableCloudSkillTools` returns false on the
+    // real Claude Code runtime, or as the emulated prompt-inlined catalog +
+    // `loadSkill` otherwise. `shouldEnableCloudSkillTools` returns false on the
     // harness path (it delivers skills itself), so this only wires the emulated
-    // tools, mirroring `web/chat-v2.ts`.
+    // path, mirroring `web/chat-v2.ts`. Zero skills → no tools/stanza.
     //
     // BUT skip skills entirely when the scenario requires tool approval. A
     // synthetic visitor is headless and can't grant approval: the local-runtime
     // BYOK path fail-closes on ANY non-empty tool set when approval is on (see
     // `drainAssistantTurn` below), and the cloud/MCPJam paths auto-deny every
-    // call — so advertising the `listSkills`/`loadSkill` meta-tools (always 2
-    // tools, even for a project with no skills) would turn an otherwise-toolless
-    // approval simulation into one that fails every session for no benefit.
+    // call — so advertising `loadSkill` on a project that has skills would turn
+    // an otherwise-toolless approval simulation into one that fails every
+    // session for no benefit. The skip stays correct even though empty
+    // projects no longer advertise phantom tools.
     const pinnedSkills = runtime.pinnedSkills;
     const cloudSkillsEnabled =
       pinnedSkills === undefined &&
@@ -707,6 +708,22 @@ export async function runSyntheticHostSession(
       ...(skillsSource ? { skillsSource } : {}),
       ...(cloudSkillsEnabled ? { cloudSkills: { authHeader, projectId } } : {}),
     });
+
+    if (prepared.skillsFetchFailed) {
+      logger.warn("[sessionSimulation.runner] skills catalog fetch failed", {
+        runId,
+        chatSessionId,
+        errorClass: prepared.skillsFetchFailed.errorClass,
+        status: prepared.skillsFetchFailed.status,
+        latencyMs: prepared.skillsFetchFailed.latencyMs,
+      });
+      emit?.({
+        type: "session_notice",
+        kind: "tool_suppressed",
+        toolId: "skills",
+        message: prepared.skillsFetchFailed.message,
+      });
+    }
 
     // One browser context per session: renders MCP App tool results in the
     // headless harness (render observations for every model) and, for assistant
