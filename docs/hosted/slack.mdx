@@ -84,6 +84,27 @@ Three things are true of that button, each on purpose:
 Approved runs post a status message that updates in place as the run
 progresses. If a run fails, the bot attaches screenshots of what broke.
 
+## Registry installs
+
+The bot can search the MCP registry and propose installing a server into your
+project. Registry reads (search, listing sources, viewing a server's details)
+happen directly. Installs are always gated — the bot proposes the install and
+a person approves it.
+
+The approval button shows the **endpoint host** the install will connect to,
+resolved at the time the bot proposed it. If the registry entry changes between
+the proposal and the click, the install is rejected rather than silently
+connecting to a different endpoint.
+
+After an approved install, the server is added to your project but **not yet
+connected**. Follow up by asking the bot to check the connection status, or
+open the Connect tab in the app. If the server requires OAuth, you will need to
+complete the browser authorization yourself — the bot will never post the
+authorization URL into a shared channel.
+
+Uninstalling a server from the registry is not available through the bot.
+Use the Connect tab in the app instead.
+
 ## Removing it
 
 Uninstall the app from Slack's **Apps** settings to end the workspace install.
