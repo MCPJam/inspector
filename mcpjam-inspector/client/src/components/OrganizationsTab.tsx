@@ -226,17 +226,38 @@ function PendingSeatPaymentNotice({
   onFinish: () => void;
   onCancel: () => void;
 }) {
+  const needsRetry = intent.needsRetry === true;
+
   return (
     <Alert
-      className="border-primary/20 bg-primary/[0.04]"
-      data-testid="pending-seat-payment-notice"
+      className={
+        needsRetry
+          ? "border-destructive/30 bg-destructive/[0.04]"
+          : "border-primary/20 bg-primary/[0.04]"
+      }
+      data-testid={
+        needsRetry ? "failed-seat-payment-notice" : "pending-seat-payment-notice"
+      }
     >
-      <CreditCard className="size-4 text-primary" />
-      <AlertTitle>Seat payment required</AlertTitle>
+      <CreditCard
+        className={needsRetry ? "size-4 text-destructive" : "size-4 text-primary"}
+      />
+      <AlertTitle>
+        {needsRetry ? "Seat payment didn't go through" : "Seat payment required"}
+      </AlertTitle>
       <AlertDescription className="space-y-3">
         <p>
-          Finish payment to add {intent.email}. They will not get access or
-          credits until payment succeeds.
+          {needsRetry ? (
+            <>
+              We couldn't charge for {intent.email}'s seat. They won't get
+              access or credits until it's paid.
+            </>
+          ) : (
+            <>
+              Finish payment to add {intent.email}. They will not get access or
+              credits until payment succeeds.
+            </>
+          )}
         </p>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -250,7 +271,7 @@ function PendingSeatPaymentNotice({
             ) : (
               <CreditCard className="mr-2 size-4" />
             )}
-            Finish payment
+            {needsRetry ? "Retry payment" : "Finish payment"}
           </Button>
           <Button
             type="button"
@@ -262,7 +283,7 @@ function PendingSeatPaymentNotice({
             {isCancelingSeatPayment ? (
               <Loader2 className="mr-2 size-4 animate-spin" />
             ) : null}
-            Cancel
+            {needsRetry ? "Remove invite" : "Cancel"}
           </Button>
         </div>
       </AlertDescription>
@@ -599,6 +620,7 @@ function OrganizationPage({
     openIntervalChangePortal,
     cancelScheduledBillingChange,
     finishSeatPayment,
+    retrySeatPayment,
     cancelSeatPayment,
   } = useOrganizationBilling(organization._id, {
     enabled: isAuthenticated,
@@ -842,8 +864,52 @@ function OrganizationPage({
     }
   };
 
-  const handleCancelSeatPayment = async () => {
+  const seatInviteRemovalInFlightRef = useRef(false);
+  const [isRemovingSeatInvite, setIsRemovingSeatInvite] = useState(false);
+
+  const handleRetrySeatPayment = async () => {
     try {
+      const result = await retrySeatPayment();
+      if (result?.status === "paid") {
+        toast.success(
+          `${activeSeatPaymentIntent?.email ?? "Member"} added to the organization.`
+        );
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Payment was not completed. The member was not added."
+      );
+    }
+  };
+
+  const handleCancelSeatPayment = async () => {
+    // For a terminal charge the button says "Remove invite", and that is what
+    // it has to do: cancelSeatPayment returns immediately for anything not
+    // still active, so calling it here left the invite and the notice exactly
+    // where they were while claiming success.
+    const isInviteRemoval = activeSeatPaymentIntent?.needsRetry === true;
+    // Removal has no spinner of its own — the shared one belongs to
+    // cancelSeatPayment, which this path never calls — so a second click would
+    // fire a concurrent removeMember that finds no row and reports "Member not
+    // found" on top of the first one's success. The state below disables the
+    // button and is what normally prevents that; the ref keeps the handler
+    // self-guarding rather than depending on its own button being disabled.
+    if (isInviteRemoval) {
+      if (seatInviteRemovalInFlightRef.current) return;
+      seatInviteRemovalInFlightRef.current = true;
+      setIsRemovingSeatInvite(true);
+    }
+    try {
+      if (isInviteRemoval && activeSeatPaymentIntent) {
+        await removeMember({
+          organizationId: organization._id,
+          email: activeSeatPaymentIntent.email,
+        });
+        toast.success(`Invite for ${activeSeatPaymentIntent.email} removed.`);
+        return;
+      }
       await cancelSeatPayment();
       toast.success("Pending seat payment canceled.");
     } catch (error) {
@@ -852,6 +918,11 @@ function OrganizationPage({
           ? error.message
           : "Failed to cancel pending seat payment"
       );
+    } finally {
+      if (isInviteRemoval) {
+        seatInviteRemovalInFlightRef.current = false;
+        setIsRemovingSeatInvite(false);
+      }
     }
   };
 
@@ -1199,8 +1270,12 @@ function OrganizationPage({
         intent={activeSeatPaymentIntent}
         isFinishingSeatPayment={isFinishingSeatPayment}
         isCompletingSeatPayment={isCompletingSeatPayment}
-        isCancelingSeatPayment={isCancelingSeatPayment}
-        onFinish={() => void handleFinishSeatPayment()}
+        isCancelingSeatPayment={isCancelingSeatPayment || isRemovingSeatInvite}
+        onFinish={() =>
+          void (activeSeatPaymentIntent.needsRetry
+            ? handleRetrySeatPayment()
+            : handleFinishSeatPayment())
+        }
         onCancel={() => void handleCancelSeatPayment()}
       />
     ) : null;

@@ -368,6 +368,73 @@ describe("SidebarContextSwitcher", () => {
     expect(screen.queryByTestId("org-switch-list")).not.toBeInTheDocument();
   });
 
+  // A `seatPending` org is a paid-seat invite whose membership hasn't linked
+  // yet. Every org-scoped query for it is denied server-side, so opening it
+  // crashed the route (Sentry INSPECTOR-CLIENT-24C). It stays visible so the
+  // user knows they were invited, but it must not be openable.
+  it("shows a seat-pending org as disabled with a 'Seat not paid yet' tooltip", () => {
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [orgs[0], { ...orgs[1], seatPending: true }],
+      isLoading: false,
+      createdCount: 0,
+      canCreateOrganization: true,
+    });
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+        onSwitchActiveOrganization={vi.fn()}
+      />
+    );
+    openMainDropdown();
+    openOrgSwitchList();
+
+    const row = screen.getByTestId("org-row-org_b");
+    expect(row).toBeInTheDocument();
+    expect(row).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByText("Seat not paid yet")).toBeInTheDocument();
+  });
+
+  it("clicking a seat-pending org does not switch to it", () => {
+    const onSwitchActiveOrganization = vi.fn();
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [orgs[0], { ...orgs[1], seatPending: true }],
+      isLoading: false,
+      createdCount: 0,
+      canCreateOrganization: true,
+    });
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+        onSwitchActiveOrganization={onSwitchActiveOrganization}
+      />
+    );
+    openMainDropdown();
+    openOrgSwitchList();
+
+    const row = screen.getByTestId("org-row-org_b");
+    // Removed from the tab order too — reachable by keyboard would imply
+    // activatable, and it is not.
+    expect(row).toHaveAttribute("tabindex", "-1");
+
+    fireEvent.click(row);
+    fireEvent.keyDown(row, { key: "Enter" });
+    fireEvent.keyDown(row, { key: " " });
+
+    expect(onSwitchActiveOrganization).not.toHaveBeenCalled();
+    // The menu stays open — nothing happened.
+    expect(screen.getByTestId("org-switch-list")).toBeInTheDocument();
+  });
+
   it("clicking the already-active org in the switch list does not call onSwitchActiveOrganization", () => {
     const onSwitchActiveOrganization = vi.fn();
     render(
