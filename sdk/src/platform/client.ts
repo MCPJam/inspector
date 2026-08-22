@@ -2891,6 +2891,71 @@ export class PlatformApiClient {
     );
   }
 
+  private sharePath(
+    projectId: string,
+    resourceType: string,
+    resourceId: string,
+  ): string {
+    return `/projects/${encodeURIComponent(projectId)}/shares/${encodeURIComponent(
+      resourceType,
+    )}/${encodeURIComponent(resourceId)}`;
+  }
+
+  getShareSettings(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      this.sharePath(params.projectId, params.resourceType, params.resourceId),
+      {},
+      options,
+    );
+  }
+
+  setShareMode(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+      mode: "project_members" | "invited_only" | "anyone_with_link";
+      allowGuestAccess?: boolean;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    const { projectId, resourceType, resourceId, ...body } = params;
+    return this.request(
+      "PATCH",
+      this.sharePath(projectId, resourceType, resourceId),
+      { body },
+      options,
+    );
+  }
+
+  /**
+   * Rotate the share link. Immediate: holders of the old URL can no longer
+   * redeem it. Agent-excluded; available on REST/CLI/MCP.
+   */
+  rotateShareLink(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.sharePath(params.projectId, params.resourceType, params.resourceId)}/rotate-link`,
+      {},
+      options,
+    );
+  }
+
   private serverOp<T>(
     params: ServerScope & { body?: Record<string, unknown> },
     op: string,

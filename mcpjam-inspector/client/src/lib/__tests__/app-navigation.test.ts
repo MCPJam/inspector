@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   buildConformanceRunPath,
   buildConformanceSharePath,
+  buildEvalSharePath,
   buildOrganizationPath,
   buildSessionsPath,
   buildSwarmPath,
@@ -33,6 +34,7 @@ describe("conformance run and share paths", () => {
     expect(buildConformanceSharePath("tok/en")).toBe(
       "/conformance/shared/tok%2Fen"
     );
+    expect(buildEvalSharePath("tok/en")).toBe("/evals/shared/tok%2Fen");
   });
 });
 

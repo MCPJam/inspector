@@ -79,6 +79,9 @@ export function buildConformanceRunReport(input: {
         failed: 0,
         couldNotRun: 1,
         notApplicable: 0,
+        // A suite that never reported has no pending bucket: the one thing
+        // known about it is that an obligation went untested.
+        pending: 0,
         advicePointsLost: 0,
         advisories: [],
       });
