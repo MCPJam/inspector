@@ -1179,7 +1179,7 @@ export function SwarmsTab({
                             size="md"
                             state={runningSet.has(p._id) ? "running" : "idle"}
                           />
-                          <span className="flex min-w-0 flex-col items-start gap-0.5">
+                          <span className="flex min-w-0 flex-col gap-0.5">
                             <span className="truncate text-sm font-medium">
                               {p.name}
                             </span>
