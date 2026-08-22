@@ -111,16 +111,42 @@ const CACHE_HINT_FIELDS = ["ttlMs", "cacheScope"] as const;
  * declared produces an error, not an uncached result.
  */
 const CACHEABLE_OPERATIONS = [
-  { method: "server/discover", capability: undefined },
-  { method: "tools/list", capability: "tools" },
-  { method: "prompts/list", capability: "prompts" },
-  { method: "resources/list", capability: "resources" },
-  { method: "resources/templates/list", capability: "resources" },
-  { method: "resources/read", capability: "resources" },
+  { method: "server/discover", capability: undefined, paginated: false },
+  { method: "tools/list", capability: "tools", paginated: true },
+  { method: "prompts/list", capability: "prompts", paginated: true },
+  { method: "resources/list", capability: "resources", paginated: true },
+  {
+    method: "resources/templates/list",
+    capability: "resources",
+    paginated: true,
+  },
+  { method: "resources/read", capability: "resources", paginated: false },
 ] as const satisfies ReadonlyArray<{
   method: string;
   capability: string | undefined;
+  paginated: boolean;
 }>;
+
+/**
+ * The cacheable operations that PAGINATE, gated on advertised capabilities.
+ *
+ * Derived from {@link CACHEABLE_OPERATIONS} rather than listed again: the
+ * page-consistency check used to keep its own three-method list, so
+ * `resources/templates/list` — added to the cacheable set by this very work,
+ * paginated (`PaginatedRequestParams`, `nextCursor`) and carrying `cacheScope`
+ * — was never walked. A server could flip scope across template pages and pass.
+ * One list, one truth.
+ */
+function paginatedCacheableMethods(
+  capabilities: Record<string, unknown>
+): string[] {
+  return CACHEABLE_OPERATIONS.filter(
+    (operation) =>
+      operation.paginated &&
+      (operation.capability === undefined ||
+        capabilities[operation.capability] !== undefined)
+  ).map((operation) => operation.method);
+}
 
 /**
  * Pages walked when checking cacheScope consistency. Small on purpose: this
@@ -489,6 +515,13 @@ function advertisedCapabilities(
  * Cacheable list methods to probe, gated on advertised capabilities.
  * Capability advertisements OMIT empty `{}` objects on the wire, so presence of
  * the KEY is the only signal — never assert an empty capability object exists.
+ *
+ * DELIBERATELY NARROWER than {@link CACHEABLE_OPERATIONS}, and must stay that
+ * way. This feeds the pre-existing SCORED checks (`modern-result-type-present`,
+ * `modern-cacheable-result-hints`); widening it to the six would silently
+ * re-grade every server already judged under the narrower reading — the
+ * profile's own failure mode at a finer grain. The six-operation depth ships as
+ * NEW pending checks instead. Use {@link paginatedCacheableMethods} for those.
  */
 function cacheableListMethods(capabilities: Record<string, unknown>): string[] {
   const methods: string[] = [];
@@ -1010,7 +1043,7 @@ async function runCacheScopePaginationCheck(
   const problems: string[] = [];
   let id = 7180;
 
-  for (const method of cacheableListMethods(capabilities)) {
+  for (const method of paginatedCacheableMethods(capabilities)) {
     const scopes: unknown[] = [];
     let cursor: string | undefined;
 

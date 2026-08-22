@@ -20,6 +20,8 @@ interface CacheFixtureOptions {
   hints?: Record<string, { ttlMs?: number | null; cacheScope?: unknown }>;
   /** Serve `tools/list` as two pages, with these cacheScope values in order. */
   toolsPageScopes?: unknown[];
+  /** Same, for `resources/templates/list`. */
+  templatePageScopes?: unknown[];
   /** Answer a read of an unknown resource with `{ contents: [] }`. */
   emptyContentsForMissing?: boolean;
   /** Include `error.data.uri` on a resource error. */
@@ -113,8 +115,23 @@ async function serveCacheFixture(options: CacheFixtureOptions) {
           return ok({
             resources: [{ uri: LISTED_RESOURCE, name: "greeting" }],
           });
-        case "resources/templates/list":
+        case "resources/templates/list": {
+          if (options.templatePageScopes) {
+            const page = params?.cursor === "t2" ? 1 : 0;
+            return send({
+              jsonrpc: "2.0",
+              id,
+              result: {
+                resultType: "complete",
+                resourceTemplates: [],
+                ttlMs: 60_000,
+                cacheScope: options.templatePageScopes[page],
+                ...(page === 0 ? { nextCursor: "t2" } : {}),
+              },
+            });
+          }
           return ok({ resourceTemplates: [] });
+        }
         case "resources/read": {
           const uri = params?.uri ?? "";
           if (uri === LISTED_RESOURCE) {
@@ -283,6 +300,20 @@ describe("modern-cache-hint-values-valid", () => {
 
 describe("modern-cache-scope-stable-across-pages", () => {
   const ID: MCPCheckId = "modern-cache-scope-stable-across-pages";
+
+  it("walks resources/templates/list, which the three-method list skipped", async () => {
+    // `resources/templates/list` paginates (`PaginatedRequestParams`,
+    // `nextCursor`) and carries `cacheScope`, so the same-scope-across-pages
+    // MUST covers it. The check drove off a hand-kept three-method list that
+    // predates this work's six-operation set, so a server could flip scope
+    // across template pages and pass.
+    const check = byId(
+      (await run({ templatePageScopes: ["public", "private"] }, [ID])).checks,
+      ID,
+    );
+    expect(check.status).toBe("failed");
+    expect(check.error?.message).toContain("resources/templates/list");
+  });
 
   it("passes when every page carries the same scope", async () => {
     const check = byId(
