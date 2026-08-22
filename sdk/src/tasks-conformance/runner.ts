@@ -1124,6 +1124,12 @@ export class MCPTasksConformanceTest {
       this.config.serverConfig.rpcLogger?.(event);
     };
 
+    // Hoisted above the `try` so the connection-failure path can stamp it too.
+    // A report that omits its profile is unusable for the one thing the stamp
+    // exists for: a reader comparing two runs must be able to tell whether they
+    // asked the same questions, and "failed to connect" is still a run.
+    const profile = conformanceProfile("mcp-tasks");
+
     try {
       return await withEphemeralClient(
         this.config.serverConfig,
@@ -2088,7 +2094,6 @@ export class MCPTasksConformanceTest {
           // but it is excluded from the verdict and the score — a scenario
           // added this week must not retroactively fail a server that was green
           // last week. Same mechanism as the protocol suite, separate manifest.
-          const profile = conformanceProfile("mcp-tasks");
           const { scored, pending } = partitionByProfile(checks, profile);
           const verdict = decideOutcome(scored);
 
@@ -2146,6 +2151,7 @@ export class MCPTasksConformanceTest {
         summary: buildSummary([failure]),
         durationMs: Date.now() - startedAt,
         categorySummary: summarizeChecks([failure]),
+        profile: buildConformanceProfileStamp({ profile, checks: [failure] }),
         discovery: {
           wire: "none",
           toolCount: 0,

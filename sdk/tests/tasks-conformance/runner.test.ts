@@ -907,6 +907,14 @@ describe("MCPTasksConformanceTest", () => {
 
     expect(result.passed).toBe(false);
     expect(result.checks[0].error?.message).toContain("connect refused");
+    // A failed run is still a run, and its report still has to say which
+    // questions were asked. Without this the profile stamp was dropped on
+    // exactly the path where a reader is most likely to be comparing reports.
+    expect(result.profile).toMatchObject({
+      profileId: "mcp-tasks",
+      profileVersion: expect.any(String),
+      manifestDigest: expect.any(String),
+    });
   });
 });
 

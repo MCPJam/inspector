@@ -8,6 +8,7 @@ import {
   type MCPCheckResult,
   type MCPConformanceFixtures,
 } from "../../src/mcp-conformance/index.js";
+import { normalizeMCPConformanceConfig } from "../../src/mcp-conformance/validation.js";
 
 const MODERN = "2026-07-28" as const;
 const closers: Array<() => Promise<void>> = [];
@@ -369,5 +370,57 @@ describe("fixtures widen the wire-schema coverage", () => {
     const check = byId(result.checks, WIRE);
     expect(check.status).toBe("failed");
     expect(check.error?.message).toContain("GetPromptResult");
+  });
+});
+
+/**
+ * The harness must never be the source of a malformed request.
+ *
+ * `GetPromptRequest.params.arguments` is `Record<string, string>` in every
+ * revision's schema. If a bad value reaches the wire, `wire-schema-valid`
+ * reports a violation against the SERVER for a request WE built — the single
+ * most damaging thing a conformance suite can do.
+ */
+describe("prompt fixture arguments are validated before they reach the wire", () => {
+  const normalize = (args: unknown) =>
+    normalizeMCPConformanceConfig({
+      serverUrl: "https://example.test/mcp",
+      fixtures: {
+        promptGets: [{ promptName: "welcome", arguments: args as never }],
+      },
+    });
+
+  it("accepts an object of string values, and an absent arguments key", () => {
+    expect(
+      normalize({ name: "Ada" }).fixtures?.promptGets?.[0].arguments,
+    ).toEqual({ name: "Ada" });
+    expect(normalize(undefined).fixtures?.promptGets?.[0].arguments).toBeUndefined();
+    // An empty object is a legitimate "no arguments"; only the container shape
+    // is being judged here.
+    expect(normalize({}).fixtures?.promptGets?.[0].arguments).toEqual({});
+  });
+
+  // The container cases are the ones a values-only loop lets through, because
+  // `Object.entries` COERCES rather than throwing: a string spreads into
+  // index/character pairs whose values are all strings, and a number or boolean
+  // yields no entries at all. Each of these once passed validation and was
+  // forwarded verbatim as `params.arguments`.
+  for (const [label, value] of [
+    ["a string", "Ada"],
+    ["a number", 42],
+    ["a boolean", false],
+    ["null", null],
+    ["an array", ["Ada"]],
+    ["an empty array", []],
+  ] as const) {
+    it(`rejects ${label}`, () => {
+      expect(() => normalize(value)).toThrow(/arguments must be an object/);
+    });
+  }
+
+  it("rejects a non-string value inside a well-shaped object, naming the key", () => {
+    expect(() => normalize({ count: 2 })).toThrow(
+      /arguments\.count must be a string/,
+    );
   });
 });

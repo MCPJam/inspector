@@ -128,7 +128,26 @@ function normalizeFixtures(
     // difference between "your config has a number where a string goes" and a
     // `wire-schema-valid` violation reported against the SERVER for a request
     // WE malformed.
-    for (const [key, value] of Object.entries(entry.arguments ?? {})) {
+    //
+    // The CONTAINER is checked before its entries, and that order is the whole
+    // point: `Object.entries` does not throw on a non-object, it coerces. A
+    // string spreads into index/character pairs whose values are all strings
+    // (`"Ada"` → `[["0","A"], …]`), and a number or boolean yields NO entries at
+    // all. Every one of those passes a values-only loop and is then forwarded
+    // verbatim as `params.arguments` — exactly the malformed request this check
+    // exists to prevent.
+    const args = entry.arguments;
+    if (
+      args !== undefined &&
+      (args === null || typeof args !== "object" || Array.isArray(args))
+    ) {
+      throw new Error(
+        `MCP conformance fixtures.promptGets[${index}].arguments must be an object mapping argument names to strings (prompt arguments are Record<string, string>), got ${
+          args === null ? "null" : Array.isArray(args) ? "array" : typeof args
+        }`,
+      );
+    }
+    for (const [key, value] of Object.entries(args ?? {})) {
       if (typeof value !== "string") {
         throw new Error(
           `MCP conformance fixtures.promptGets[${index}].arguments.${key} must be a string (prompt arguments are Record<string, string>), got ${typeof value}`,
