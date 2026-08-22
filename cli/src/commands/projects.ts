@@ -10,7 +10,6 @@ import {
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
-  PlatformApiError,
   showServersOperation,
   updateProjectOperation,
 } from "@mcpjam/sdk/platform";
@@ -20,72 +19,20 @@ import {
   formatShowServersHuman,
 } from "../lib/projects-render.js";
 import { writeResult } from "../lib/output.js";
-import {
-  buildPlatformClient,
-  toCliError,
-  webOriginForApiBaseUrl,
-} from "../lib/platform-client.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
+import {
+  addPlatformOptions,
+  buildCloudClientContext,
+  platformOptionsOf,
+  runPlatformCommand,
+  type PlatformOptions as SharedPlatformOptions,
+} from "../lib/platform-command.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 import { openUrlInBrowser } from "@mcpjam/sdk";
 
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
+type PlatformOptions = SharedPlatformOptions & {
   project?: string;
 };
-
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
-
-/**
- * The one place `--api-key`, `--api-url` and `--project` are resolved.
- *
- * READ THIS BEFORE USING `options.x` FOR ANY OF THE THREE. Each is declared on
- * the `servers` group AND on its subcommands, and Commander does not give the
- * subcommand a copy: whichever command declares a flag NEAREST THE TOP consumes
- * it, wherever it appears on the line. `projects server connect --project alpha`
- * stores `alpha` on `servers`, and `connect`'s own `options.project` is
- * `undefined` — so reading it there silently ignores what the caller typed and
- * falls back to the default project. That is not a hypothetical; it is what the
- * connect command did.
- *
- * The same mechanism makes a `requiredOption` on such a subcommand impossible
- * to satisfy — the group eats the value, then the subcommand fails the parse
- * for not having received it — which is why the duplicate declarations here are
- * plain `option()` and required-ness is checked in the action instead.
- *
- * Ancestors are merged first and the action command last, so the nearest
- * declaration wins. Commander's own `optsWithGlobals()` reduces the other way
- * — its source comments the loop "globals overwrite locals" — which is the
- * wrong precedence for a flag the caller repeated closer to the command they
- * were running. Undefined values are skipped so a future Commander that
- * materializes an unset flag as `undefined` cannot erase a real value.
- */
-function platformOptionsOf(command: Command): PlatformOptions {
-  const nearestFirst: Command[] = [];
-  for (
-    let current: Command | null = command;
-    current !== null;
-    current = current.parent
-  ) {
-    nearestFirst.push(current);
-  }
-
-  const merged: Record<string, unknown> = {};
-  for (const cmd of nearestFirst.reverse()) {
-    for (const [key, value] of Object.entries(cmd.opts())) {
-      if (value !== undefined) merged[key] = value;
-    }
-  }
-  return merged as PlatformOptions;
-}
 
 /**
  * `--project`, for the commands that cannot run without one.
@@ -96,7 +43,9 @@ function platformOptionsOf(command: Command): PlatformOptions {
  * --project alpha --server srv-1` could not be typed at all. Enforcing it here
  * keeps the same outcome for the same mistake (`command.error` raises the
  * `CommanderError` the CLI already maps to a usage error) while letting the
- * value arrive from wherever Commander actually put it.
+ * value arrive from wherever Commander actually put it. See
+ * {@link platformOptionsOf} for why flags on the group and the leaf must be
+ * merged nearest-first.
  */
 function requireProject(command: Command, options: PlatformOptions): string {
   const project = options.project?.trim();
@@ -104,59 +53,6 @@ function requireProject(command: Command, options: PlatformOptions): string {
     command.error("error: required option '--project <id-or-name>' not specified");
   }
   return project;
-}
-
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>,
-  /**
-   * Cancels the request from outside its own deadline — today that is Ctrl-C
-   * during a poll. Without it the only way out of an in-flight request is the
-   * timeout, so a user who interrupted a watch still waits the better part of
-   * `timeoutMs` for the terminal to come back.
-   */
-  externalSignal?: AbortSignal
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  const onExternalAbort = () => controller.abort(externalSignal?.reason);
-  if (externalSignal?.aborted) onExternalAbort();
-  else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
-
-  try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
-  } catch (error) {
-    // When OUR deadline fired, surface the armed TIMEOUT error: depending
-    // on the fetch implementation, the rejection may be a bare AbortError
-    // that would otherwise map to INTERNAL_ERROR.
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-    externalSignal?.removeEventListener("abort", onExternalAbort);
-  }
 }
 
 /**
@@ -182,16 +78,15 @@ async function resolveHandoffAudience(
   timeoutMs: number
 ): Promise<{ email: string | null; origin: string }> {
   try {
-    const { client, baseUrl } = buildPlatformClient({ ...options, timeoutMs });
-    const origin = webOriginForApiBaseUrl(baseUrl);
+    const { client, webOrigin } = buildCloudClientContext(options, timeoutMs);
     try {
       const me = await client.getMe();
-      return { email: me.email ?? null, origin };
+      return { email: me.email ?? null, origin: webOrigin };
     } catch {
-      return { email: null, origin };
+      return { email: null, origin: webOrigin };
     }
   } catch {
-    // `buildPlatformClient` throws when there is no usable credential at all.
+    // `buildCloudClientContext` throws when there is no usable credential at all.
     // The request that produced the link plainly had one, so this is close to
     // unreachable — but it must not be the thing that breaks the output.
     return { email: null, origin: DEFAULT_PLATFORM_ORIGIN };
@@ -246,7 +141,7 @@ export function registerProjectsCommands(program: Command): void {
     }
     const organizationId = rawOrganization?.trim();
     const result = await runPlatformCommand(
-      platformOptionsOf(command),
+      platformOptionsOf<PlatformOptions>(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         listProjectsOperation.execute(
@@ -296,7 +191,7 @@ export function registerProjectsCommands(program: Command): void {
           : { visibility: options.visibility }),
       });
       const result = await runPlatformCommand(
-        platformOptionsOf(command),
+        platformOptionsOf<PlatformOptions>(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           createProjectOperation.execute(input, { client, signal })
@@ -323,7 +218,7 @@ export function registerProjectsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const platformOptions = platformOptionsOf(command);
+      const platformOptions = platformOptionsOf<PlatformOptions>(command);
       const input = updateProjectOperation.inputSchema.parse({
         project: requireProject(command, platformOptions),
         ...(options.name === undefined ? {} : { name: options.name }),
@@ -351,7 +246,7 @@ export function registerProjectsCommands(program: Command): void {
       .requiredOption("--project <id-or-name>", "Project name or ID")
   ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const input = deleteProjectOperation.inputSchema.parse({
       project: requireProject(command, platformOptions),
     });
@@ -375,7 +270,7 @@ export function registerProjectsCommands(program: Command): void {
   );
   servers.action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const result = await runPlatformCommand(
       platformOptions,
       globalOptions.timeout,
@@ -410,7 +305,7 @@ export function registerProjectsCommands(program: Command): void {
       .requiredOption("--body <json>", "Server JSON body")
   ).action(async (options: PlatformOptions & { body: string }, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
       platformOptions,
@@ -432,7 +327,7 @@ export function registerProjectsCommands(program: Command): void {
       .requiredOption("--server <id>", "Server ID")
   ).action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
       platformOptions,
@@ -459,7 +354,7 @@ export function registerProjectsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const platformOptions = platformOptionsOf(command);
+      const platformOptions = platformOptionsOf<PlatformOptions>(command);
       const project = requireProject(command, platformOptions);
       const result = await runPlatformCommand(
         platformOptions,
@@ -487,7 +382,7 @@ export function registerProjectsCommands(program: Command): void {
       .requiredOption("--server <id>", "Server ID")
   ).action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
       platformOptions,
@@ -530,7 +425,7 @@ export function registerProjectsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const platformOptions = platformOptionsOf(command);
+      const platformOptions = platformOptionsOf<PlatformOptions>(command);
 
       // Parsed at the keyboard, like every sibling command here. Commander
       // hands back whatever was typed, so without this `--url " "` and
@@ -620,7 +515,7 @@ export function registerProjectsCommands(program: Command): void {
         connectionRequestId: options.request,
       });
       const payload = await runPlatformCommand(
-        platformOptionsOf(command),
+        platformOptionsOf<PlatformOptions>(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getProjectServerConnectionStatusOperation.execute(input, {
@@ -644,7 +539,7 @@ export function registerProjectsCommands(program: Command): void {
       )
   ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const payload = await runPlatformCommand(
       platformOptions,
       globalOptions.timeout,
@@ -773,7 +668,7 @@ async function pollConnection(
               { connectionRequestId },
               { client, signal }
             ),
-          interruptController.signal
+          { externalSignal: interruptController.signal, announce: false }
         );
       } catch (error) {
         // OUR abort, not a failure: the user asked to stop and we cancelled the

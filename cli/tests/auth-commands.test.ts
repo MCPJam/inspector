@@ -56,25 +56,34 @@ async function captureProcessOutput<T>(fn: () => Promise<T>): Promise<{
 async function startMeFixture(options: {
   status?: number;
   body?: unknown;
+  delayMs?: number;
 }): Promise<{ baseUrl: string; close: () => Promise<void> }> {
   const server: Server = createServer((req, res) => {
     if (req.url?.endsWith("/me")) {
-      res.statusCode = options.status ?? 200;
-      res.setHeader("content-type", "application/json");
-      res.end(
-        JSON.stringify(
-          options.body ?? {
-            id: "user-1",
-            email: "dev@example.com",
-            name: "Dev",
-            imageUrl: null,
-            profilePictureUrl: null,
-            plan: "pro",
-            createdAt: null,
-            updatedAt: null,
-          }
-        )
-      );
+      const reply = () => {
+        if (res.destroyed) return;
+        res.statusCode = options.status ?? 200;
+        res.setHeader("content-type", "application/json");
+        res.end(
+          JSON.stringify(
+            options.body ?? {
+              id: "user-1",
+              email: "dev@example.com",
+              name: "Dev",
+              imageUrl: null,
+              profilePictureUrl: null,
+              plan: "pro",
+              createdAt: null,
+              updatedAt: null,
+            }
+          )
+        );
+      };
+      if (options.delayMs) {
+        setTimeout(reply, options.delayMs);
+        return;
+      }
+      reply();
       return;
     }
     res.statusCode = 404;
@@ -173,6 +182,38 @@ test("login hard-errors on an invalid --api-url before any network call", async 
   const payload = JSON.parse(run.stderr);
   assert.equal(payload.error.code, "USAGE_ERROR");
   assert.match(payload.error.message, /--api-url/);
+});
+
+test("whoami honors the global timeout option", async () => {
+  const fixture = await startMeFixture({ delayMs: 100 });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          "node",
+          "mcpjam",
+          "cloud",
+          "whoami",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          fixture.baseUrl,
+          "--timeout",
+          "20",
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 1);
+    const payload = JSON.parse(run.stderr);
+    assert.equal(payload.error.code, "TIMEOUT");
+    assert.match(payload.error.message, /20ms/);
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("whoami hard-errors on an explicit legacy key", async () => {

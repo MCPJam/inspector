@@ -27,7 +27,6 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
-  PlatformApiError,
   resolveProject,
   runEvalCaseOperation,
   runEvalSuiteOperation,
@@ -122,10 +121,10 @@ import {
 } from "../lib/reporting.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
-  buildPlatformClient,
-  toCliError,
-  webOriginForApiBaseUrl,
-} from "../lib/platform-client.js";
+  addPlatformOptions,
+  runPlatformOperation as runPlatformCommand,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
 import {
   getGlobalOptions,
   parsePositiveInteger,
@@ -134,11 +133,6 @@ import {
   detectInlineImageProtocol,
   encodeInlineImage,
 } from "../lib/terminal-image.js";
-
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
-};
 
 type CreateOptions = PlatformOptions & {
   project?: string;
@@ -150,28 +144,6 @@ type CreateOptions = PlatformOptions & {
   server?: string[];
 };
 
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
-
-/**
- * Print a deep link to a run, after the command's own machine-readable
- * output.
- *
- * HUMAN FORMAT ONLY, and written separately rather than folded into
- * `writeResult`: that helper is format-generic and its `--format json` bytes
- * are a contract scripts parse. A trailing prose line would break every one
- * of them, so the gate lives here at the call site.
- *
- * The route is the unflagged `/evals/suite/:suiteId/runs/:runId` — the
- * `/ci-evals` twin is behind the `evaluate-ci` flag and its redirect drops
- * the run path.
- */
 /**
  * A variadic selector maps to the SINGULAR op field for one value and the
  * PLURAL for several. The op rejects both together, and the singular field
@@ -366,6 +338,19 @@ function writeRunGroupSummary(
   }
 }
 
+/**
+ * Print a deep link to a run, after the command's own machine-readable
+ * output.
+ *
+ * HUMAN FORMAT ONLY, and written separately rather than folded into
+ * `writeResult`: that helper is format-generic and its `--format json` bytes
+ * are a contract scripts parse. A trailing prose line would break every one
+ * of them, so the gate lives here at the call site.
+ *
+ * The route is the unflagged `/evals/suite/:suiteId/runs/:runId` — the
+ * `/ci-evals` twin is behind the `evaluate-ci` flag and its redirect drops
+ * the run path.
+ */
 function writeRunLink(
   format: string,
   webOrigin: string,
@@ -432,50 +417,6 @@ function writeJudgeSummary(format: string, judges: unknown): void {
     process.stdout.write(
       `Judge ${label}: ${passed}/${cases.length} passed${at}${model}\n`
     );
-  }
-}
-
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-    /** App origin matching the API base this call went to. */
-    webOrigin: string;
-  }) => Promise<TOutput>
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  try {
-    const { client, baseUrl } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({
-      client,
-      signal: controller.signal,
-      webOrigin: webOriginForApiBaseUrl(baseUrl),
-    });
-  } catch (error) {
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
   }
 }
 
