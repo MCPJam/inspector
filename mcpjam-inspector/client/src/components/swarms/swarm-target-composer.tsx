@@ -8,6 +8,7 @@
 import { useCallback } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
+import { RequiredMark } from "@/components/shared/required-mark";
 import { CloudRunBadge } from "@/components/computer/CloudRunBadge";
 import { CloudUnreachableNotice } from "@/components/computer/CloudUnreachableNotice";
 import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
@@ -34,6 +35,7 @@ export function SwarmTargetComposer({
   draftNameHint,
   disabled = false,
   serverBlock = null,
+  required = false,
 }: {
   projectId: string;
   environments: ProjectEnvironmentView[];
@@ -50,6 +52,8 @@ export function SwarmTargetComposer({
    * that fix it.
    */
   serverBlock?: { message: string; detail: string } | null;
+  /** Renders the required marker beside the label. The caller still owns gating. */
+  required?: boolean;
 }) {
   const skillsEnabled = useSkillsEnabled();
   const computersEnabled = useComputersEnabled();
@@ -94,7 +98,10 @@ export function SwarmTargetComposer({
     <div className="space-y-3" data-testid="new-swarm-target-composer">
       <div className="space-y-1">
         <div className="flex flex-wrap items-center gap-2">
-          <Label>Where it runs</Label>
+          <Label>
+            Where it runs
+            {required ? <RequiredMark /> : null}
+          </Label>
           {computersEnabled ? (
             <CloudRunBadge
               tooltip="Swarm sessions run their computer commands in disposable MCPJam cloud sandboxes — never on the machine running this inspector."

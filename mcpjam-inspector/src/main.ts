@@ -1,4 +1,8 @@
 /// <reference types="@electron-forge/plugin-vite/forge-vite-env" />
+// MUST stay the first import: it sets WS_NO_BUFFER_UTIL, which `ws` reads at
+// module-eval time, and the bundled `ws` is otherwise handed an empty stub for
+// its optional `bufferutil` dep. See the file for the full story (#4208).
+import "./ws-native-fallback.js";
 import * as Sentry from "@sentry/electron/main";
 import { app, BrowserWindow, shell, Menu, dialog } from "electron";
 import { buildElectronSentryConfig } from "../shared/sentry-config.js";
