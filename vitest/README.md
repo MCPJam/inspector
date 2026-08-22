@@ -9,7 +9,7 @@ npm install -D @mcpjam/vitest vitest
 
 ## The flagship: gate a hosted corpus in CI
 
-Pull your hosted suite once with `mcpjam eval pull`, commit the lock, and run
+Pull your hosted suite once with `mcpjam cloud eval pull`, commit the lock, and run
 it locally on every change. The lock is the reproducibility record — the same
 cases, graded the same way, until you pull again.
 

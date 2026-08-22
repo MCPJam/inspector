@@ -28,6 +28,10 @@
  *     checks: none of them cost points.
  *   - `could-not-run` checks stay IN the denominator as unearned points, so
  *     an incomplete run can never display 100.
+ *   - `pending` checks — ones the run's conformance profile does not score yet
+ *     (see `conformance-profile.ts`) — leave the denominator AND the verdict.
+ *     A newly added MUST check must not silently re-grade every server that
+ *     was green before it existed; promoting it is a profile version bump.
  *
  * 100 therefore means exactly one thing: every applicable check ran and
  * passed, and nothing was left to advise.
@@ -43,6 +47,10 @@ import {
   type ConformanceRunOutcome,
   type OutcomeCheckLike,
 } from "./conformance-outcome.js";
+import {
+  partitionByStamp,
+  type ConformanceProfileStamp,
+} from "./conformance-profile.js";
 import type { MCPConformanceResult } from "./mcp-conformance/types.js";
 import type {
   MCPAppsConformanceResult,
@@ -82,6 +90,14 @@ export interface ConformanceScore {
   failed: number;
   couldNotRun: number;
   notApplicable: number;
+  /**
+   * Checks that ran and reported a verdict the active conformance profile does
+   * NOT score yet (see `conformance-profile.ts`). Excluded from `applicable`,
+   * from `passed`/`failed`/`couldNotRun`, and from the outcome — a check
+   * arriving in the pool must not re-grade servers that were already green.
+   * Always 0 for a result with no profile stamp.
+   */
+  pending: number;
   advisories: ScoredAdvisory[];
   /** Points the advisories cost, after the cap. */
   advicePointsLost: number;
@@ -101,7 +117,8 @@ function scoreFromCounts(
   counts: Pick<
     ConformanceScore,
     "passed" | "failed" | "couldNotRun" | "notApplicable"
-  >,
+  > &
+    Partial<Pick<ConformanceScore, "pending">>,
   advisories: ScoredAdvisory[],
   outcome: ConformanceRunOutcome,
   protocolVersion?: string,
@@ -136,6 +153,9 @@ function scoreFromCounts(
     outcome,
     applicable,
     ...counts,
+    // Normalized rather than optional: every consumer can read `.pending`
+    // without a `?? 0`, and a suite with no profile reports an honest zero.
+    pending: counts.pending ?? 0,
     advisories,
     advicePointsLost,
     ...(protocolVersion !== undefined ? { protocolVersion } : {}),
@@ -151,16 +171,26 @@ export function computeConformanceScore(
   checks: OutcomeCheckLike[],
   advisories: ScoredAdvisory[] = [],
   protocolVersion?: string,
+  /**
+   * The run's profile stamp, when it has one. Checks the profile does not score
+   * are partitioned out BEFORE the counts and before the verdict — a pending
+   * check must not move the number and must not fail the run. Absent ⇒ every
+   * check is scored, which is the pre-profile arithmetic exactly.
+   */
+  profileStamp?: Pick<ConformanceProfileStamp, "pendingCheckIds">,
 ): ConformanceScore {
+  const { scored, pending } = partitionByStamp(checks, profileStamp);
   const counts = {
-    passed: checks.filter((check) => check.status === "passed").length,
-    failed: checks.filter((check) => check.status === "failed").length,
-    couldNotRun: checks.filter(isUnrunCheck).length,
-    notApplicable: checks.filter(isInapplicableCheck).length,
+    passed: scored.filter((check) => check.status === "passed").length,
+    failed: scored.filter((check) => check.status === "failed").length,
+    couldNotRun: scored.filter(isUnrunCheck).length,
+    notApplicable: scored.filter(isInapplicableCheck).length,
+    pending: pending.length,
   };
   // The outcome word comes from the shared verdict logic, never from the
-  // arithmetic — the score annotates the verdict, it does not override it.
-  const { outcome } = decideConformanceOutcome(checks);
+  // arithmetic — the score annotates the verdict, it does not override it. It
+  // reads the SCORED checks only, for the same reason the counts do.
+  const { outcome } = decideConformanceOutcome(scored);
   return scoreFromCounts(counts, advisories, outcome, protocolVersion);
 }
 
@@ -181,8 +211,11 @@ export function pooledConformanceScore(
     failed: sum(parts, (part) => part.failed),
     couldNotRun: sum(parts, (part) => part.couldNotRun),
     notApplicable: sum(parts, (part) => part.notApplicable),
+    // `?? 0`: a part deserialized from a build that predates the pending
+    // bucket carries no field, and reading it as NaN would poison the pool.
+    pending: sum(parts, (part) => part.pending ?? 0),
   };
-  const advisories = parts.flatMap((part) => part.advisories);
+  const advisories = parts.flatMap((part) => part.advisories ?? []);
 
   // Worst-of, failure outranking incomplete — the same ordering the CLI exit
   // codes and suite reports use. Scoreless parts carry "passed" (nothing
@@ -231,6 +264,11 @@ export function describeConformanceScore(score: ConformanceScore): string {
       `${score.advisories.length} advisor${score.advisories.length === 1 ? "y" : "ies"} (−${score.advicePointsLost})`,
     );
   }
+  // Named, never silent: a reader has to be able to tell "this run asked 36
+  // questions and scored all of them" from "it asked 39 and scored 36".
+  if ((score.pending ?? 0) > 0) {
+    parts.push(`${score.pending} pending (unscored by this profile)`);
+  }
   const version = score.protocolVersion ? ` [${score.protocolVersion}]` : "";
   return `${score.score}/100 — ${parts.join(", ")}${version}`;
 }
@@ -246,11 +284,22 @@ export function scoreFromProtocolResult(
   // channel scores fine — it just has no advice to deduct.
   return computeConformanceScore(
     result.checks,
-    (result.readiness ?? []).map((warning) => ({
-      id: warning.id,
-      tier: warning.specStrength === "MAY" ? "may" : "should",
-    })),
+    // `informational` advice is REPORTED but never costs points: it describes
+    // behavior the spec explicitly permits, or rests on a non-normative
+    // example. Deducting for it would contradict the readiness module's own
+    // statement that such an observation is "reported and never scored", and
+    // would dock a server for exercising a MAY it is entitled to.
+    (result.readiness ?? [])
+      .filter((warning) => warning.informational !== true)
+      .map((warning) => ({
+        id: warning.id,
+        tier: warning.specStrength === "MAY" ? "may" : "should",
+      })),
     result.protocolVersion,
+    // Read off the RESULT, not the current build's manifest: a stored report
+    // must score the same way it did when it was produced, even after this
+    // build promotes some of its pending checks.
+    result.profile,
   );
 }
 
@@ -262,16 +311,22 @@ export function scoreFromProtocolResult(
 function scoreFromWarningChecks(
   checks: Array<OutcomeCheckLike & { warnings?: string[] }>,
   protocolVersion?: string,
+  profileStamp?: Pick<ConformanceProfileStamp, "pendingCheckIds">,
 ): ConformanceScore {
+  // Warnings on a PENDING check must not cost points either: the check is not
+  // being scored, and letting its advice deduct would move the number a
+  // profile bump is supposed to gate.
+  const { scored } = partitionByStamp(checks, profileStamp);
   return computeConformanceScore(
     checks,
-    checks.flatMap((check) =>
+    scored.flatMap((check) =>
       (check.warnings ?? []).map((_, index) => ({
         id: `${check.id}-warning-${index + 1}`,
         tier: "may" as const,
       })),
     ),
     protocolVersion,
+    profileStamp,
   );
 }
 
@@ -287,6 +342,10 @@ export function scoreFromTasksResult(
   return scoreFromWarningChecks(
     result.checks,
     result.discovery.protocolVersion,
+    // Read off the RESULT, not the current build's manifest, for the same
+    // reason the protocol suite does: a stored report must score the way it did
+    // when it was produced.
+    result.profile,
   );
 }
 
