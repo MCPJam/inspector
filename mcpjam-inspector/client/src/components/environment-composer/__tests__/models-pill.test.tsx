@@ -127,6 +127,23 @@ describe("ModelsPill", () => {
     expect(screen.getByRole("checkbox", { name: "Locked" })).toBeDisabled();
   });
 
+  it("lets the user remove a selected model that is no longer in the catalog", async () => {
+    const user = userEvent.setup();
+    const onChange = renderPill({
+      includeClientDefaults: true,
+      explicitModelIds: ["retired/old-model"],
+    });
+    await user.click(screen.getByRole("button", { name: "Models" }));
+    const stale = screen.getByRole("checkbox", { name: "retired/old-model" });
+    expect(stale).toBeChecked();
+    expect(stale).not.toBeDisabled();
+    await user.click(stale);
+    expect(onChange).toHaveBeenCalledWith({
+      includeClientDefaults: true,
+      explicitModelIds: [],
+    });
+  });
+
   it("lets the user deselect a persisted locked model", async () => {
     const user = userEvent.setup();
     const onChange = renderPill({
