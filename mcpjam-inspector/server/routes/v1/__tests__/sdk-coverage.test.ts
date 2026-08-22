@@ -263,6 +263,12 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "setUserTestingGuestExecution",
   "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link":
     "rotateUserTestingLink",
+  "get /projects/{projectId}/shares/{resourceType}/{resourceId}":
+    "getShareSettings",
+  "patch /projects/{projectId}/shares/{resourceType}/{resourceId}":
+    "setShareMode",
+  "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link":
+    "rotateShareLink",
   "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members":
     "upsertUserTestingMember",
   "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}":
@@ -337,12 +343,6 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Keeps a long-running uploaded conformance run from looking stale.",
   "post /projects/{projectId}/conformance-ingest/runs/finalize":
     "Closes the incremental conformance ingest the reporter opened.",
-  "get /projects/{projectId}/shares/{resourceType}/{resourceId}":
-    "Unified share settings. REST-first in I2; SDK wrappers ship in I5.",
-  "patch /projects/{projectId}/shares/{resourceType}/{resourceId}":
-    "Unified set-share-mode. REST-first in I2; SDK wrappers ship in I5.",
-  "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link":
-    "Unified rotate-share-link. REST-first in I2; SDK wrappers ship in I5.",
   "put /projects/{projectId}/shares/{resourceType}/{resourceId}/members":
     "Share member upsert stays REST-only for now.",
   "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}":

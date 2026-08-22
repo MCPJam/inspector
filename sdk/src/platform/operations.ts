@@ -9161,6 +9161,134 @@ export const getProjectServerConnectionStatusOperation: PlatformOperation<
   },
 };
 
+const shareResourceSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  resourceType: z
+    .enum(["scenario", "conformanceRun", "evalRun"])
+    .describe("Shared resource kind."),
+  resourceId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Id of the scenario, conformance run, or eval run."),
+});
+
+export type GetShareSettingsInput = z.infer<typeof shareResourceSelectorInput>;
+export type GetShareSettingsResult = {
+  project: SelectedProjectInfo;
+  settings: Record<string, unknown>;
+};
+
+export const getShareSettingsOperation: PlatformOperation<
+  GetShareSettingsInput,
+  GetShareSettingsResult
+> = {
+  name: "get_share_settings",
+  title: "Get unified share settings",
+  description:
+    "Read the share envelope for a scenario, conformance run, or eval run: mode, policyVersion, link token, and invited members.",
+  readOnly: true,
+  inputSchema: shareResourceSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const settings = await client.getShareSettings(
+      {
+        projectId: project.id,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), settings };
+  },
+};
+
+const setShareModeInput = shareResourceSelectorInput.extend({
+  mode: z.enum(["project_members", "invited_only", "anyone_with_link"]),
+  allowGuestAccess: z.boolean().optional(),
+});
+
+export type SetShareModeInput = z.infer<typeof setShareModeInput>;
+export type SetShareModeResult = {
+  project: SelectedProjectInfo;
+  settings: Record<string, unknown>;
+};
+
+export const setShareModeOperation: PlatformOperation<
+  SetShareModeInput,
+  SetShareModeResult
+> = {
+  name: "set_share_mode",
+  title: "Set who can open a shared resource",
+  description:
+    "Change the share mode for a scenario, conformance run, or eval run. anyone_with_link means anyone holding the URL, including guests (browser sessions, not verified individuals). invited_only restricts to named emails. project_members is private to the project.",
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: setShareModeInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const settings = await client.setShareMode(
+      {
+        projectId: project.id,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+        mode: input.mode,
+        allowGuestAccess: input.allowGuestAccess,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), settings };
+  },
+};
+
+export type RotateShareLinkInput = z.infer<typeof shareResourceSelectorInput>;
+export type RotateShareLinkResult = {
+  project: SelectedProjectInfo;
+  settings: Record<string, unknown>;
+};
+
+export const rotateShareLinkOperation: PlatformOperation<
+  RotateShareLinkInput,
+  RotateShareLinkResult
+> = {
+  name: "rotate_share_link",
+  title: "Rotate a share link",
+  description:
+    "Mint a new share URL and invalidate the old one. IMMEDIATE: everyone holding the old URL loses the ability to redeem it. Invited people keep their access. Use this when a link has leaked, not as routine hygiene.",
+  readOnly: false,
+  risk: "destructive",
+  inputSchema: shareResourceSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const settings = await client.rotateShareLink(
+      {
+        projectId: project.id,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), settings };
+  },
+};
+
 export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getMeOperation,
   listModelsOperation,
@@ -9309,4 +9437,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  getShareSettingsOperation,
+  setShareModeOperation,
+  rotateShareLinkOperation,
 ];
