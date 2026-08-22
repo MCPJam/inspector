@@ -86,6 +86,17 @@ describe("RunEvalsRequestSchema environmentId boundary", () => {
     expect(result.success).toBe(true);
     expect(result.success && result.data.runGroupId).toBe("group-1");
   });
+
+  it("accepts AND preserves ephemeralEnvironment", () => {
+    const base = buildSuiteRequest() as Record<string, unknown>;
+    const result = RunEvalsRequestSchema.safeParse({
+      ...base,
+      environmentId: "env_123",
+      ephemeralEnvironment: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.success && result.data.ephemeralEnvironment).toBe(true);
+  });
 });
 
 describe("RunEvalsRequestSchema runs cap", () => {

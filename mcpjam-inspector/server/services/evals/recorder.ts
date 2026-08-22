@@ -359,6 +359,7 @@ export const startSuiteRunWithRecorder = async ({
   source,
   idempotencyKey,
   skillsOverride,
+  ephemeralEnvironment,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -464,6 +465,11 @@ export const startSuiteRunWithRecorder = async ({
    * for the deliberate plugin-servers asymmetry.
    */
   skillsOverride?: "exclude";
+  /**
+   * Compose-and-run: accept a project-scoped, non-archived environment that
+   * is not a suite member. Forwarded to `startTestSuiteRun`.
+   */
+  ephemeralEnvironment?: boolean;
 }) => {
   let response: any;
   try {
@@ -496,6 +502,7 @@ export const startSuiteRunWithRecorder = async ({
         ...(source ? { source } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
+        ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
         runnerCapabilities: RUNNER_CAPABILITIES,
       }
     );
