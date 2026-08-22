@@ -4,10 +4,19 @@
  * `docs/cli/migration.mdx` is the only page allowed to mention 3.x paths.
  */
 import assert from "node:assert/strict";
-import { readdirSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { discoverCliTestFiles } from "../scripts/run-tests.mjs";
 
 const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -54,7 +63,10 @@ const EXTRA_DOC_PATHS = [
   "vitest/README.md",
 ] as const;
 
-const EXTRA_SOURCE_ROOTS = [path.join(CLI_ROOT, "src")] as const;
+const EXTRA_SOURCE_ROOTS = [
+  path.join(CLI_ROOT, "src"),
+  path.join(REPO_ROOT, "sdk/src"),
+] as const;
 
 const STALE_PATTERNS: ReadonlyArray<{ name: string; re: RegExp }> = [
   {
@@ -149,6 +161,34 @@ test("CLI reference documents removing a Cloud project link", () => {
   assert.match(reference, /\| `--remove` \| Remove the nearest project link/);
 });
 
+test("CLI reference marks eval inspection --project as optional", () => {
+  const reference = readFileSync(
+    path.join(CLI_DOCS_DIR, "reference.mdx"),
+    "utf8"
+  );
+  for (const heading of ["### `cloud eval iterations`", "### `cloud eval trace`"]) {
+    const start = reference.indexOf(heading);
+    assert.ok(start >= 0, `missing ${heading}`);
+    const next = reference.indexOf("\n### ", start + heading.length);
+    const section = reference.slice(start, next === -1 ? undefined : next);
+    assert.match(
+      section,
+      /\| `--project <id-or-name>` \| No \|/,
+      `${heading} must mark --project optional`
+    );
+    assert.match(
+      section,
+      /`--project` is optional\. Selection follows `--project`/,
+      `${heading} must document selector precedence`
+    );
+    assert.doesNotMatch(
+      section,
+      /\| `--project <id-or-name>` \| Yes \|/,
+      `${heading} must not mark --project required`
+    );
+  }
+});
+
 test("CLI overview documents Local vs Cloud and status validity", () => {
   const overview = readFileSync(path.join(CLI_DOCS_DIR, "overview.mdx"), "utf8");
   assert.match(overview, /The `mcpjam` CLI is two invocations/);
@@ -192,14 +232,30 @@ test("docs nav includes the CLI 4.0 migration page after overview", () => {
 test("CLI test runner discovers every tests/**/*.test.ts file", () => {
   const expected = listFilesRecursive(path.join(CLI_ROOT, "tests"), [
     ".test.ts",
-  ]);
+  ]).sort();
   assert.ok(expected.length > 0, "expected at least one CLI test file");
-  const runner = readFileSync(
-    path.join(CLI_ROOT, "scripts/run-tests.mjs"),
-    "utf8"
-  );
-  assert.match(runner, /function discoverCliTestFiles/);
-  assert.match(runner, /--test/);
+  assert.deepEqual(discoverCliTestFiles(), expected);
+
+  const fixtureRoot = mkdtempSync(path.join(tmpdir(), "cli-discover-"));
+  try {
+    mkdirSync(path.join(fixtureRoot, "nested", "deeper"), { recursive: true });
+    writeFileSync(path.join(fixtureRoot, "top.test.ts"), "");
+    writeFileSync(path.join(fixtureRoot, "nested", "mid.test.ts"), "");
+    writeFileSync(path.join(fixtureRoot, "nested", "deeper", "leaf.test.ts"), "");
+    writeFileSync(path.join(fixtureRoot, "nested", "skip.ts"), "");
+    writeFileSync(path.join(fixtureRoot, "nested", "notes.md"), "");
+    const found = discoverCliTestFiles(fixtureRoot).map((filePath) =>
+      path.relative(fixtureRoot, filePath)
+    );
+    assert.deepEqual(found, [
+      path.join("nested", "deeper", "leaf.test.ts"),
+      path.join("nested", "mid.test.ts"),
+      "top.test.ts",
+    ]);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+
   const pkg = JSON.parse(
     readFileSync(path.join(CLI_ROOT, "package.json"), "utf8")
   ) as { scripts?: { test?: string } };
