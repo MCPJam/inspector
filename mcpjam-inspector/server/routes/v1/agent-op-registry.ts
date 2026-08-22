@@ -483,7 +483,31 @@ function readinessRunResource(
   };
 }
 
-function conformanceRunResource(
+/**
+ * Resolve a server selector to its stable project server id.
+ *
+ * A name is a pointer: rename or reuse between proposal and approval would
+ * dial a different saved server than the one shown to the approver. Failure
+ * is best-effort — leave the arguments as written so a lookup miss does not
+ * drop the proposal.
+ */
+async function freezeConformanceServer(
+  input: Record<string, unknown>,
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const selector = named(input, "server");
+  if (!selector) return input;
+  const page = await client.listProjectServers({ projectId });
+  const match = page.items.find(
+    (server) =>
+      server.id === selector ||
+      server.name.toLocaleLowerCase() === selector.toLocaleLowerCase(),
+  );
+  if (!match) return input;
+  return { ...input, server: match.id };
+}
+
+export function conformanceRunResource(
   result: unknown,
   { projectId }: { projectId: string },
 ): ExecutedActionResource | undefined {
@@ -860,6 +884,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         const server = named(input, "server");
         return server ? { type: "server", selector: server } : undefined;
       },
+      normalizeProposalArgs: freezeConformanceServer,
     },
     promptNotes: [
       "- `start_conformance_run` returns a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_conformance_run` and report what it says, never the receipt.",

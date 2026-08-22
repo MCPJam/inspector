@@ -13,13 +13,14 @@
  * notes, it stays the place where a prompt change is a visible diff rather than
  * an invisible cache invalidation.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AGENT_API_GATED_OPERATIONS,
   AGENT_API_OPERATIONS,
   AGENT_OP_PROMPT_NOTES,
   AGENT_OP_REGISTRY,
   EXCLUDED_FROM_AGENT,
+  conformanceRunResource,
   proposalMetaFor,
   WRITE_OPERATION_NAMES,
   gatedEntryFor,
@@ -45,6 +46,7 @@ import {
   runEvalCaseOperation,
   runEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
+  startConformanceRunOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
 } from "@mcpjam/sdk/platform";
@@ -447,6 +449,123 @@ describe("agent op registry", () => {
         client,
       })
     ).toEqual(input);
+  });
+
+  it("freezes a conformance server NAME to its id at MINT time", async () => {
+    // A name is a pointer. Resolving it only when the approval executes would
+    // let a rename or reuse between mint and click dial a different saved
+    // server than the one shown to the approver.
+    const client = {
+      listProjectServers: async () => ({
+        items: [
+          { id: "srv_1", name: "Acme MCP" },
+          { id: "srv_2", name: "Other" },
+        ],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(startConformanceRunOperation.name).normalizeArgs(
+        { server: "acme mcp", suites: ["protocol"] },
+        { projectId: "p1", client }
+      )
+    ).toEqual({ server: "srv_1", suites: ["protocol"] });
+  });
+
+  it("passes an already-stable conformance server ID through unchanged", async () => {
+    const client = {
+      listProjectServers: async () => ({
+        items: [{ id: "srv_1", name: "Acme MCP" }],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(startConformanceRunOperation.name).normalizeArgs(
+        { server: "srv_1" },
+        { projectId: "p1", client }
+      )
+    ).toEqual({ server: "srv_1" });
+  });
+
+  it("leaves an UNRESOLVABLE conformance server selector alone", async () => {
+    // Freezing is a narrowing. A name that resolves to nothing here may still
+    // resolve on the click, and the operation rejects it with its own message.
+    const client = {
+      listProjectServers: async () => ({ items: [] }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(startConformanceRunOperation.name).normalizeArgs(
+        { server: "Ghost" },
+        { projectId: "p1", client }
+      )
+    ).toEqual({ server: "Ghost" });
+  });
+
+  it("leaves the conformance proposal when the server resolver cannot reach the platform", async () => {
+    const client = {
+      listProjectServers: async () => {
+        throw new Error("platform unreachable");
+      },
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+    const input = { server: "Acme MCP" };
+    expect(
+      await proposalMetaFor(startConformanceRunOperation.name).normalizeArgs(
+        input,
+        { projectId: "p1", client }
+      )
+    ).toEqual(input);
+  });
+
+  it("leaves empty or missing conformance server selectors alone", async () => {
+    // `named()` treats null, empty, and whitespace as absent — there is
+    // nothing to freeze, so the resolver must not be asked.
+    const listProjectServers = vi.fn(async () => ({ items: [] }));
+    const client = { listProjectServers } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    for (const input of [
+      {},
+      { server: "" },
+      { server: "   " },
+      { server: null },
+    ]) {
+      expect(
+        await proposalMetaFor(startConformanceRunOperation.name).normalizeArgs(
+          input,
+          { projectId: "p1", client }
+        )
+      ).toEqual(input);
+    }
+    expect(listProjectServers).not.toHaveBeenCalled();
+  });
+
+  it("does not link a conformance resource when the result has no run id", () => {
+    const entry = gatedEntryFor(startConformanceRunOperation.name);
+    expect(entry?.proposal.resource?.({}, { projectId: "p1" })).toBeUndefined();
+    expect(
+      entry?.proposal.resource?.({ run: {} }, { projectId: "p1" })
+    ).toBeUndefined();
+    expect(
+      entry?.proposal.resource?.({ runId: "" }, { projectId: "p1" })
+    ).toBeUndefined();
+    expect(
+      entry?.proposal.resource?.(null, { projectId: "p1" })
+    ).toBeUndefined();
+    expect(conformanceRunResource(undefined, { projectId: "p1" })).toBeUndefined();
+
+    expect(
+      entry?.proposal.resource?.({ runId: "run_1" }, { projectId: "p1" })
+    ).toMatchObject({ type: "conformance_run", id: "run_1" });
   });
 
   it("links a GROUP launch to the group, not to one of its runs", () => {
