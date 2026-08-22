@@ -190,6 +190,47 @@ describe("v1 registry", () => {
         `https://convex-http.example.com/v1/registry/directory-server?name=${id}&source=claude`
       );
     });
+
+    it("does not double-decode a percent-encoded path segment", async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ id: "c1", serverName: "foo%2Fbar" }));
+      const res = await request(
+        "GET",
+        "/api/v1/registry/directory-servers/foo%252Fbar"
+      );
+      expect(res.status).toBe(200);
+      const [target] = fetchMock.mock.calls[0] as [URL];
+      expect(new URL(String(target)).searchParams.get("name")).toBe("foo%2Fbar");
+    });
+
+    it("does not 500 on a malformed percent sequence in the path", async () => {
+      fetchMock.mockResolvedValue(jsonResponse({ id: "c1", serverName: "foo%bar" }));
+      const res = await request(
+        "GET",
+        "/api/v1/registry/directory-servers/foo%bar"
+      );
+      expect(res.status).toBe(200);
+      const [target] = fetchMock.mock.calls[0] as [URL];
+      expect(new URL(String(target)).searchParams.get("name")).toBe("foo%bar");
+    });
+
+    it("forwards Convex pagination headers", async () => {
+      fetchMock.mockResolvedValue(
+        new Response(JSON.stringify({ items: [] }), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            "x-next-cursor": "c1",
+            "x-mcpjam-next-cursor": "c1",
+            link: '</v1/registry/directory-servers?cursor=c1>; rel="next"',
+          },
+        })
+      );
+      const res = await request("GET", "/api/v1/registry/directory-servers?q=linear");
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-next-cursor")).toBe("c1");
+      expect(res.headers.get("x-mcpjam-next-cursor")).toBe("c1");
+      expect(res.headers.get("link")).toContain('rel="next"');
+    });
   });
 
   describe("guest posture", () => {
@@ -487,6 +528,26 @@ describe("v1 registry", () => {
         "POST",
         "/api/v1/projects/p1/registry/directory-installs",
         { body: { catalogServerId: "cs1", extra: true } }
+      );
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects unknown body fields on card install", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/registry/installs",
+        { body: { registryServerId: "rs1", extra: true } }
+      );
+      expect(res.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a non-number expectedUpdatedAt on card install", async () => {
+      const res = await request(
+        "POST",
+        "/api/v1/projects/p1/registry/installs",
+        { body: { registryServerId: "rs1", expectedUpdatedAt: "not-a-number" } }
       );
       expect(res.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
