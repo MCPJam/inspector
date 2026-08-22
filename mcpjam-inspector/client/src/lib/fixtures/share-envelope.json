@@ -23,6 +23,18 @@
     "shares:revokeAllShares": {
       "args": ["resourceType", "resourceId"],
       "returns": "ShareSettingsEnvelope"
+    },
+    "orgSharePolicy:getOrgSharePolicy": {
+      "args": ["organizationId"],
+      "returns": "OrgSharePolicyKnobs"
+    },
+    "orgSharePolicy:setOrgSharePolicy": {
+      "args": ["organizationId", "maxShareMode", "inviteAudience"],
+      "returns": "OrgSharePolicyKnobs"
+    },
+    "orgSharePolicy:getEffectiveSharePolicyForProject": {
+      "args": ["projectId"],
+      "returns": "OrgSharePolicyKnobs"
     }
   },
   "shareSettingsEnvelope": {
