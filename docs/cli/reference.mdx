@@ -1117,12 +1117,21 @@ Get the status and summary of an eval run.
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
-| `--project <id-or-name>` | Yes | Project name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
 The response carries a `judges` block with each advisory grader's state and
 per-case grades. `status: null` means that judge was never requested for the
 run — different from a judge that ran and graded nothing. In `--format human`,
 each judge that actually graded gets a one-line summary.
+
+### `eval cancel`
+
+Cancel an in-flight eval run. No-op if already cancelled; errors if the run already finished.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
 ### `eval judge`
 
@@ -1132,7 +1141,7 @@ budget.** Returns a pending receipt; read the grades from `eval status`.
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
-| `--project <id-or-name>` | Yes | Project name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--force` | No | Re-grade a run that already has a judge result |
 | `--enable` | No | Grade this run even though the judge was off when it ran |
 | `--judge-model <id>` | No | Judge model for this run only |
