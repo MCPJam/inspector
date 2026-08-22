@@ -4,7 +4,7 @@ description: "Local MCP testing and mcpjam cloud: probing, debugging, OAuth, con
 icon: "terminal"
 ---
 
-The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level: a stateless tool for inspecting, debugging, and testing MCP servers from the command line or CI (connectivity, OAuth, MCP Apps, tools/resources/prompts, protocol conformance). Account-bound commands live under `mcpjam cloud`. There are no compatibility aliases for the old Cloud paths — see [Migrating to CLI 4.0](/cli/migration).
+The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level: inspect, debug, and test MCP servers from the command line or CI (connectivity, OAuth, MCP Apps, tools/resources/prompts, protocol conformance). Most local commands are one-shot; `mcpjam mcp` and `subscriptions listen` keep a process open. Account-bound commands live under `mcpjam cloud` and talk to your MCPJam account. There are no compatibility aliases for the old Cloud paths — see [Migrating to CLI 4.0](/cli/migration).
 
 ## Recommended: Use with Agent Skills
 
@@ -69,6 +69,63 @@ Account-bound commands. Declare `--api-key` / `--api-url` on `mcpjam cloud` (bef
 | [`cloud images`](/cli/reference#cloud-images-commands) | Manage custom Computer sandbox images (blueprints) | `list`, `get`, `create`, `validate`, `edit`, `build`, `logs`, `use`, `reset`, `promote`, `delete` |
 
 Also under `mcpjam cloud`: `journeys`, `scenarios`, `personas`, `swarms`, `user-testing`. Full flag tables are in the [command reference](/cli/reference).
+
+## Cloud credentials and API URL
+
+`--api-key` and `--api-url` are declared on `mcpjam cloud` and work before or after descendants (`mcpjam cloud --api-key sk_… eval list` and `mcpjam cloud eval list --api-key sk_…` are the same). Local commands, including hosted `readiness`, reject those flags at the program root. Hosted `readiness` still takes leaf `--api-key`.
+
+Credential precedence for Cloud commands:
+
+1. `--api-key` — must be an `sk_` key. A `mcpjam_…` legacy key is a usage error.
+2. `MCPJAM_API_KEY` — same `sk_` rule. A legacy value in this env var is ignored (with a warning) so SDK eval reporting can still use it.
+3. Stored OAuth from `mcpjam cloud login`
+4. Missing — Cloud commands fail with login guidance before they hit the network (`mcpjam cloud status` reports `missing` instead)
+
+API URL precedence:
+
+1. `--api-url`
+2. `MCPJAM_API_URL`
+3. The `apiUrl` stored with the OAuth login (only when that login is the credential)
+4. `https://app.mcpjam.com/api/v1`
+
+An explicit `--api-url` or `MCPJAM_API_URL` that is not an `http(s)` URL is a usage error. `mcpjam cloud status` uses the same checks.
+
+Successful Cloud commands print an audience line to stderr (`Using MCPJam Cloud as … · project: … · <apiUrl>`). `--quiet` suppresses it. Machine-readable JSON stays on stdout.
+
+## Cloud project scope
+
+Most Cloud commands pick one project:
+
+1. `--project <id-or-name>`
+2. An explicit `project` field in `--file` / `--json`
+3. `MCPJAM_PROJECT`
+4. The nearest valid `.mcpjam/project.json`
+5. Automatic — the most recently updated project you can see
+
+Empty `--project` or `MCPJAM_PROJECT` is a usage error. `MCPJAM_PROJECT_ID` does **not** select a Cloud CLI project (it is SDK eval reporting only).
+
+```bash
+mcpjam cloud login
+mcpjam cloud link                  # writes .mcpjam/project.json (no secrets)
+mcpjam cloud status                # zero-network: credential, deployment, selector
+mcpjam cloud eval list             # uses the link
+mcpjam cloud link --remove
+```
+
+`mcpjam cloud sessions list` follows the same rule. `--all-projects` restores a cross-project listing and cannot be combined with `--project`. Hosted `readiness` never reads the project link.
+
+## What `--host` means
+
+`--host` is not one flag. The meaning depends on the command:
+
+| Where | What it selects |
+|-------|-----------------|
+| `server`, `tools`, `resources`, `prompts` | An **AI client** (`claude`, `chatgpt`, `cursor`, …). The CLI sends that host's `clientInfo`, capabilities, and protocol version in `initialize`. |
+| `compat --host` | Which AI clients to report. Repeatable; default is all. |
+| `cloud eval --host`, `cloud journeys`, `cloud scenarios` | A **saved project Host** (`<id-or-name>`), the client config an eval or journey is stamped with. |
+| `cloud environments --host-id` | The project Host id the environment runs as. Distinct from eval's `--host`. |
+
+`--host` on a local command is mutually exclusive with `--client-capabilities`. A Cloud `--host` is mutually exclusive with `--server` / `--environment` when those already supply a closed server set.
 
 ## Global flags
 
