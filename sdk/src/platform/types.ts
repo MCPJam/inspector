@@ -151,6 +151,15 @@ export interface PlatformRegistryInstall {
   outcome: "created" | "reconnected";
 }
 
+export interface PlatformRegistryInstallNextSteps {
+  connectionStatusOp: "get_project_server_connection_status";
+  connectLinkUrl?: string;
+}
+
+export interface PlatformRegistryInstallResult extends PlatformRegistryInstall {
+  nextSteps: PlatformRegistryInstallNextSteps;
+}
+
 export interface PlatformProjectServer {
   id: string;
   projectId: string | null;

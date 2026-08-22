@@ -2014,6 +2014,14 @@ describe("operation catalog consistency", () => {
     reset_computer: {},
     search_sessions: { query: "q" },
     delete_sandbox_image: { image: "i" },
+    search_registry_directory: {},
+    get_registry_directory_server: { catalogServerId: "cs" },
+    list_registry_directory_sources: {},
+    list_registry_servers: {},
+    list_registry_connections: {},
+    install_registry_directory_server: { catalogServerId: "cs" },
+    install_registry_server: { registryServerId: "rs" },
+    uninstall_registry_server: { registryServerId: "rs" },
   };
 
   it("keeps tool-safe names and accepts each operation's minimal input", () => {
@@ -2140,6 +2148,9 @@ describe("operation catalog consistency", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "install_registry_directory_server",
+      "install_registry_server",
+      "uninstall_registry_server",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));

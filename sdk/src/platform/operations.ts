@@ -113,6 +113,11 @@ import type {
   PlatformProjectServer,
   PlatformServerConnection,
   PlatformTunnelGrant,
+  PlatformCatalogServer,
+  PlatformCatalogSourceStatus,
+  PlatformRegistryServer,
+  PlatformRegistryConnection,
+  PlatformRegistryInstallResult,
 } from "./types.js";
 
 export interface PlatformOperationContext {
@@ -9165,6 +9170,327 @@ export const getProjectServerConnectionStatusOperation: PlatformOperation<
   },
 };
 
+const CONNECTION_STATUS_OP = "get_project_server_connection_status" as const;
+
+const INSTALL_NOT_CONNECT_DESCRIPTION =
+  "Install writes a project `servers` row and provenance and stops — it is NOT a live connection. Follow with get_project_server_connection_status. OAuth servers need the browser connect-link in nextSteps.connectLinkUrl.";
+
+async function nextStepsForInstall(
+  client: PlatformApiClient,
+  projectId: string,
+  serverId: string,
+  signal: AbortSignal | undefined,
+): Promise<PlatformRegistryInstallResult["nextSteps"]> {
+  const nextSteps: PlatformRegistryInstallResult["nextSteps"] = {
+    connectionStatusOp: CONNECTION_STATUS_OP,
+  };
+  try {
+    const server = await client.getProjectServer(
+      { projectId, serverId },
+      { signal },
+    );
+    if (!server.useOAuth || !server.url) return nextSteps;
+    const connection = await client.createServerConnection(
+      { body: { url: server.url, projectId, serverId } },
+      { signal },
+    );
+    if (connection.handoffUrl) {
+      nextSteps.connectLinkUrl = connection.handoffUrl;
+    }
+  } catch {
+    // Guidance without a minted link is still useful; the caller can start
+    // connect_project_server themselves.
+  }
+  return nextSteps;
+}
+
+export const searchRegistryDirectoryOperation: PlatformOperation<
+  {
+    q?: string;
+    source?: string;
+    rowType?: string;
+    endpointKind?: string;
+    connectableOnly?: boolean;
+    cursor?: string;
+    limit?: number;
+  },
+  PlatformPage<PlatformCatalogServer>
+> = {
+  name: "search_registry_directory",
+  title: "Search the MCP directory",
+  description:
+    "Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. Discover source ids with list_registry_directory_sources — do not hardcode source names. Prefer a matching curated card from list_registry_servers (scope global) when one exists: those carry vetted OAuth config.",
+  readOnly: true,
+  inputSchema: z.object({
+    q: z.string().trim().min(1).optional().describe("Search query."),
+    source: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Directory source id, or `all` (default). Not an enum."),
+    rowType: z.string().trim().min(1).optional(),
+    endpointKind: z.string().trim().min(1).optional(),
+    connectableOnly: z.boolean().optional(),
+    cursor: z.string().trim().min(1).optional(),
+    limit: z.number().int().positive().optional(),
+  }),
+  async execute(input, { client, signal }) {
+    return client.searchRegistryDirectory(
+      { ...input, source: input.source ?? "all" },
+      { signal },
+    );
+  },
+};
+
+const getRegistryDirectoryServerInput = z
+  .object({
+    catalogServerId: z.string().trim().min(1).optional(),
+    name: z.string().trim().min(1).optional(),
+    source: z.string().trim().min(1).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!!value.catalogServerId === !!value.name) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide exactly one of catalogServerId or name.",
+      });
+    }
+  });
+
+export const getRegistryDirectoryServerOperation: PlatformOperation<
+  z.infer<typeof getRegistryDirectoryServerInput>,
+  PlatformCatalogServer
+> = {
+  name: "get_registry_directory_server",
+  title: "Get a directory server",
+  description:
+    "Fetch one scraped directory row by catalogServerId, or by name (optionally with source). The latestContentHash is the freshness pin for install_registry_directory_server.",
+  readOnly: true,
+  inputSchema: getRegistryDirectoryServerInput,
+  async execute(input, { client, signal }) {
+    if (input.catalogServerId) {
+      return client.getRegistryDirectoryServer(
+        { catalogServerId: input.catalogServerId },
+        { signal },
+      );
+    }
+    return client.getRegistryDirectoryServer(
+      { name: input.name!, source: input.source },
+      { signal },
+    );
+  },
+};
+
+export const listRegistryDirectorySourcesOperation: PlatformOperation<
+  Record<string, never>,
+  PlatformPage<PlatformCatalogSourceStatus>
+> = {
+  name: "list_registry_directory_sources",
+  title: "List directory sources",
+  description:
+    "Discover directory source ids for search_registry_directory. Sources are data, not an enum.",
+  readOnly: true,
+  inputSchema: z.object({}),
+  async execute(_input, { client, signal }) {
+    return client.listRegistryDirectorySources({ signal });
+  },
+};
+
+export const listRegistryServersOperation: PlatformOperation<
+  { project?: string; scope?: "global" | "organization" | "all" },
+  { project: SelectedProjectInfo; items: PlatformRegistryServer[] }
+> = {
+  name: "list_registry_servers",
+  title: "List registry cards",
+  description:
+    "List global curated cards and the project's organization registry cards. Prefer a global card over a scraped directory row when both match — curated cards carry vetted OAuth config.",
+  readOnly: true,
+  inputSchema: z.object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    scope: z.enum(["global", "organization", "all"]).optional(),
+  }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const page = await client.listRegistryServers(
+      { projectId: project.id, scope: input.scope ?? "all" },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export const listRegistryConnectionsOperation: PlatformOperation<
+  { project?: string },
+  { project: SelectedProjectInfo; items: PlatformRegistryConnection[] }
+> = {
+  name: "list_registry_connections",
+  title: "List registry installs",
+  description:
+    "List directory and card installs already in a project (provenance rows whose server still exists).",
+  readOnly: true,
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const page = await client.listRegistryConnections(
+      { projectId: project.id },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export const installRegistryDirectoryServerOperation: PlatformOperation<
+  {
+    project?: string;
+    catalogServerId: string;
+    endpointUrl?: string;
+    expectedContentHash?: string;
+  },
+  PlatformRegistryInstallResult
+> = {
+  name: "install_registry_directory_server",
+  title: "Install a directory server",
+  description: INSTALL_NOT_CONNECT_DESCRIPTION,
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: z.object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    catalogServerId: z.string().trim().min(1),
+    endpointUrl: z.string().trim().min(1).optional(),
+    expectedContentHash: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Freshness pin from get_registry_directory_server."),
+  }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const installed = await client.installRegistryDirectoryServer(
+      {
+        projectId: project.id,
+        catalogServerId: input.catalogServerId,
+        endpointUrl: input.endpointUrl,
+        expectedContentHash: input.expectedContentHash,
+      },
+      { signal },
+    );
+    return {
+      ...installed,
+      nextSteps: await nextStepsForInstall(
+        client,
+        project.id,
+        installed.serverId,
+        signal,
+      ),
+    };
+  },
+};
+
+export const installRegistryServerOperation: PlatformOperation<
+  { project?: string; registryServerId: string; expectedUpdatedAt?: number },
+  PlatformRegistryInstallResult
+> = {
+  name: "install_registry_server",
+  title: "Install a registry card",
+  description: INSTALL_NOT_CONNECT_DESCRIPTION,
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: z.object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    registryServerId: z.string().trim().min(1),
+    expectedUpdatedAt: z
+      .number()
+      .finite()
+      .optional()
+      .describe("Freshness pin from list_registry_servers.updatedAt."),
+  }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const installed = await client.installRegistryServer(
+      {
+        projectId: project.id,
+        registryServerId: input.registryServerId,
+        expectedUpdatedAt: input.expectedUpdatedAt,
+      },
+      { signal },
+    );
+    return {
+      ...installed,
+      nextSteps: await nextStepsForInstall(
+        client,
+        project.id,
+        installed.serverId,
+        signal,
+      ),
+    };
+  },
+};
+
+export const uninstallRegistryServerOperation: PlatformOperation<
+  { project?: string; registryServerId: string },
+  { deleted?: boolean }
+> = {
+  name: "uninstall_registry_server",
+  title: "Uninstall a registry card",
+  description:
+    "Remove a curated/org registry card install from a project. Directory uninstall is delete_project_server — there is no separate catalog-uninstall route.",
+  readOnly: false,
+  risk: "destructive",
+  inputSchema: z.object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    registryServerId: z.string().trim().min(1),
+  }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    return client.uninstallRegistryServer(
+      { projectId: project.id, registryServerId: input.registryServerId },
+      { signal },
+    );
+  },
+};
+
 export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getMeOperation,
   listModelsOperation,
@@ -9313,4 +9639,12 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
 ];
