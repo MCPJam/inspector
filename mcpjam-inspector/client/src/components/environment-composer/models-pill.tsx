@@ -56,6 +56,11 @@ export function ModelsPill({
   const [open, setOpen] = useState(false);
 
   const explicit = value.explicitModelIds;
+  const catalogIds = useMemo(
+    () => new Set(availableModels.map((model) => String(model.id))),
+    [availableModels]
+  );
+  const staleExplicit = explicit.filter((id) => !catalogIds.has(id));
   const includeDefaults = value.includeClientDefaults;
   const triggerLabel = useMemo(
     () => modelsPillTriggerLabel(value),
@@ -186,12 +191,13 @@ export function ModelsPill({
               )}
             </p>
           ) : null}
-          {availableModels.length === 0 ? (
+          {availableModels.length === 0 && staleExplicit.length === 0 ? (
             <p className="px-2 py-1.5 text-xs text-muted-foreground">
               No catalog models available.
             </p>
           ) : (
-            availableModels.map((model) => {
+            <>
+            {availableModels.map((model) => {
               const id = String(model.id);
               const checked = explicit.includes(id);
               const locked = model.disabled === true;
@@ -231,7 +237,25 @@ export function ModelsPill({
                   </span>
                 </Label>
               );
-            })
+            })}
+            {staleExplicit.map((id) => (
+              <Label
+                key={id}
+                className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30"
+                title="No longer in the catalog"
+              >
+                <Checkbox
+                  checked
+                  onCheckedChange={(next) => toggleModel(id, next === true)}
+                  disabled={disabled}
+                  aria-label={id}
+                />
+                <span className="min-w-0 flex-1 truncate font-normal text-muted-foreground">
+                  {id}
+                </span>
+              </Label>
+            ))}
+            </>
           )}
         </div>
       </PopoverContent>
