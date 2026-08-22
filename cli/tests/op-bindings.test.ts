@@ -3,20 +3,8 @@ import assert from "node:assert/strict";
 import { Command } from "commander";
 import { ALL_OPERATIONS } from "@mcpjam/sdk/platform";
 import { CLI_BINDINGS } from "../src/lib/op-bindings.js";
-import { registerChatCommands } from "../src/commands/chat.js";
-import { registerEnvironmentsCommands } from "../src/commands/environments.js";
-import { registerEvalCommands } from "../src/commands/eval.js";
-import { registerHostsCommands } from "../src/commands/hosts.js";
-import { registerJourneysCommands } from "../src/commands/journeys.js";
-import { registerScenariosCommands } from "../src/commands/scenarios.js";
-import { registerSessionsCommands } from "../src/commands/sessions.js";
-import { registerImagesCommands } from "../src/commands/images.js";
-import { registerOrganizationsCommands } from "../src/commands/organizations.js";
-import { registerProjectsCommands } from "../src/commands/projects.js";
-import { registerTunnelCommands } from "../src/commands/tunnel.js";
+import { registerCloudCommands } from "../src/commands/cloud.js";
 import { registerReadinessCommands } from "../src/commands/readiness.js";
-import { registerSwarmAuthoringCommands } from "../src/commands/swarms.js";
-import { registerUserTestingCommands } from "../src/commands/user-testing.js";
 
 /**
  * The CLI's half of the operation-exposure ratchet.
@@ -30,23 +18,7 @@ import { registerUserTestingCommands } from "../src/commands/user-testing.js";
 /** A program carrying every command group that binds platform operations. */
 function buildPlatformProgram(): Command {
   const program = new Command().name("mcpjam").exitOverride();
-  registerOrganizationsCommands(program);
-  registerProjectsCommands(program);
-  registerEvalCommands(program);
-  registerChatCommands(program);
-  registerSessionsCommands(program);
-  registerHostsCommands(program);
-  registerEnvironmentsCommands(program);
-  const journeys = registerJourneysCommands(program);
-  registerScenariosCommands(program);
-  // Swarms authoring hangs its journey subcommands off the SAME group, so the
-  // group has to be threaded through here exactly as `src/index.ts` does it —
-  // building a second `journeys` command would resolve paths that the real CLI
-  // does not have.
-  registerSwarmAuthoringCommands(program, journeys);
-  registerUserTestingCommands(program);
-  registerImagesCommands(program);
-  registerTunnelCommands(program);
+  registerCloudCommands(program);
   registerReadinessCommands(program);
   return program;
 }
