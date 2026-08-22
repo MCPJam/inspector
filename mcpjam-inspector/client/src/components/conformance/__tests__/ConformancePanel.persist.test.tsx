@@ -41,6 +41,10 @@ vi.mock("convex/react", () => ({
   useAction: () => vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("@/components/conformance/directory-readiness/DirectoryReadinessSection", () => ({
+  DirectoryReadinessSection: () => null,
+}));
+
 import { ConformanceTab } from "../ConformancePanel";
 
 function createHttpServer(): ServerWithName {
