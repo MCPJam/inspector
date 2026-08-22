@@ -281,7 +281,7 @@ export function CrossHostMatrix({
             // still running mid-"Run all" carry no verdict yet, so excluding
             // them keeps the row from flashing red before any iteration lands.
             const settledOutcomes = hostColumns
-              .map((col) => byHost?.get(col.hostId))
+              .map((col) => byHost?.get(col.columnKey ?? col.hostId))
               .filter(
                 (c): c is NonNullable<typeof c> => !!c && c.totalCount > 0,
               )
@@ -408,7 +408,7 @@ export function CrossHostMatrix({
                   };
                   return (
                     <td
-                      key={col.hostId}
+                      key={col.columnKey ?? col.hostId}
                       className={cn(
                         "border-r border-border/50 align-top",
                         evalSurfaceCellClass,

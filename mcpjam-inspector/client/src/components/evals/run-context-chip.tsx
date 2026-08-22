@@ -90,8 +90,7 @@ export function RunContextChip({
   const modelId = run.effectiveModelId;
   const modelSource = run.modelSource;
   const resolvedModelLabel = modelId
-    ? modelLabel ||
-      compactModelLabel(modelId) ||
+    ? (modelLabel && compactModelLabel(modelLabel)) ||
       compactModelIdTail(modelId)
     : null;
 
@@ -107,14 +106,16 @@ export function RunContextChip({
           <span
             className={cn(
               "truncate text-[11px]",
-              modelSource === "client_default"
-                ? "text-muted-foreground"
-                : "text-foreground"
+              modelSource === "override"
+                ? "text-foreground"
+                : "text-muted-foreground"
             )}
             title={
               modelSource === "client_default"
                 ? `Client default · ${resolvedModelLabel}`
-                : `Override · ${resolvedModelLabel}`
+                : modelSource === "override"
+                  ? `Override · ${resolvedModelLabel}`
+                  : resolvedModelLabel
             }
           >
             {resolvedModelLabel}

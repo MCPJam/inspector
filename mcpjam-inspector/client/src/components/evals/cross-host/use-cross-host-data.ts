@@ -460,6 +460,23 @@ export function useCrossHostData(
       });
     }
 
+    const resolveHostName = (hostId: string): string | null =>
+      attachments.find((a) => a.namedHostId === hostId)?.hostName ??
+      hostNamesById?.get(hostId) ??
+      null;
+
+    // Runs with no environmentRef cannot land in a split column. If a
+    // colliding group also has a legacy host-backed run, keep the plain
+    // group key alive so those iterations stay visible.
+    const groupsNeedingResidual = new Set<string>();
+    for (const run of runs) {
+      if (!run.namedHostId) continue;
+      if (runEnvironmentRef(run)) continue;
+      groupsNeedingResidual.add(
+        groupKey(run.namedHostId, modelKeyForRun(run, envById))
+      );
+    }
+
     const hostColumns: HostColumn[] = [];
     for (const group of pending.values()) {
       const groupEnvs = group.envIds
@@ -475,24 +492,21 @@ export function useCrossHostData(
             columnKey: `${group.hostId}::${group.modelKey}::${env.environmentId}`,
             modelKey: group.modelKey,
             modelLabel: modelLabelForKey(group.modelKey),
-            hostName: hostNamesById?.get(group.hostId) ??
-              attachments.find((a) => a.namedHostId === group.hostId)?.hostName ??
-              null,
+            hostName: resolveHostName(group.hostId),
             isHistorical: group.isHistorical,
             splitLabel: splitLabelFor(env, slot),
           });
         }
-        continue;
+        if (!groupsNeedingResidual.has(groupKey(group.hostId, group.modelKey))) {
+          continue;
+        }
       }
       hostColumns.push({
         hostId: group.hostId,
         columnKey: groupKey(group.hostId, group.modelKey),
         modelKey: group.modelKey,
         modelLabel: modelLabelForKey(group.modelKey),
-        hostName:
-          attachments.find((a) => a.namedHostId === group.hostId)?.hostName ??
-          hostNamesById?.get(group.hostId) ??
-          null,
+        hostName: resolveHostName(group.hostId),
         isHistorical: group.isHistorical,
       });
     }

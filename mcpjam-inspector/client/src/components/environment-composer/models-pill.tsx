@@ -196,7 +196,10 @@ export function ModelsPill({
               const checked = explicit.includes(id);
               const locked = model.disabled === true;
               const capBlocked = modelCapBlocked(checked);
-              const optionDisabled = locked || capBlocked || disabled;
+              // A persisted locked model must stay checkable so the user
+              // can remove it. Lock and cap only block adding a new pick.
+              const optionDisabled =
+                disabled || (!checked && (locked || capBlocked));
               return (
                 <Label
                   key={id}
