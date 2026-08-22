@@ -404,12 +404,20 @@ export function isRevisionConflictError(err: unknown): boolean {
 export function useModelMatrixCapability(
   projectId: string | null | undefined
 ): boolean | undefined {
-  // Named `import { useConvex }` throws at module load when a test mock
-  // omits the export (vitest: "No useConvex export is defined"). Read it
-  // off the namespace so those mocks stay "no matrix" instead of crashing
-  // every composer consumer (swarm, User Testing).
-  const useConvex = ConvexReact.useConvex;
-  const convex = typeof useConvex === "function" ? useConvex() : undefined;
+  // Named `import { useConvex }` and even `ConvexReact.useConvex` throw
+  // when a test mock omits the export (vitest: "No useConvex export is
+  // defined"). Catch that so swarm / User Testing composers — which opt
+  // out of the models slot — stay "no matrix" instead of crashing.
+  let convex: { query: (name: never, args: never) => Promise<unknown> } | undefined;
+  try {
+    const useConvex = (ConvexReact as { useConvex?: () => typeof convex })
+      .useConvex;
+    if (typeof useConvex === "function") {
+      convex = useConvex();
+    }
+  } catch {
+    convex = undefined;
+  }
   const [state, setState] = useState<boolean | undefined>(undefined);
 
   useEffect(() => {
