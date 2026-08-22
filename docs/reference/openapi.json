@@ -9687,7 +9687,7 @@
         "description": "Discovery for the free-string `source` filter. Sources are data, not an enum — do not hardcode `claude`/`chatgpt` client-side.",
         "responses": {
           "200": {
-            "description": "Page of results. `nextCursor` is omitted on the last page. Cursors are filter-bound — do not reuse one after changing q/source/filters.",
+            "description": "All known directory sources, in one response. `nextCursor` is reserved on the page schema and is omitted today.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9738,7 +9738,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Page of results. `nextCursor` is omitted on the last page. Cursors are filter-bound — do not reuse one after changing q/source/filters.",
+            "description": "The merged card set for the requested `scope`, in one response. `nextCursor` is reserved on the page schema and is omitted today.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9783,7 +9783,7 @@
         ],
         "responses": {
           "200": {
-            "description": "Page of results. `nextCursor` is omitted on the last page. Cursors are filter-bound — do not reuse one after changing q/source/filters.",
+            "description": "The project's registry installs, in one response. `nextCursor` is reserved on the page schema and is omitted today.",
             "content": {
               "application/json": {
                 "schema": {
@@ -9957,7 +9957,12 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "boolean"
+                    }
+                  }
                 }
               }
             }
