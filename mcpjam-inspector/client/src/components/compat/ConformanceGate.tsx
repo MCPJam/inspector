@@ -40,11 +40,37 @@ type SuiteOutcome =
   | { status: "unsupported"; reason: string }
   | { status: "running" }
   | { status: "error"; error: string }
-  | { status: "done"; passed: boolean; failedTitles: string[]; total: number };
+  | {
+      status: "done";
+      passed: boolean;
+      failedTitles: string[];
+      /** Failed checks the run's profile does not score. Reported, never red. */
+      pendingFailedTitles: string[];
+      total: number;
+    };
 
+/**
+ * Failed checks, split by whether the active profile SCORES them.
+ *
+ * A failing pending check must not turn this gate red — that is the
+ * retroactive-failure hole the frozen profile exists to close, and `passed`
+ * already excludes it. But it must not vanish either: the gate previously
+ * rendered "N checks passed" in green while a pending check had failed,
+ * because the green branch short-circuits on `outcome.passed` and never looked
+ * at the titles it had collected.
+ */
 const failedTitlesOf = (
-  checks: ReadonlyArray<{ status: string; title: string }>
-): string[] => checks.filter((c) => c.status === "failed").map((c) => c.title);
+  checks: ReadonlyArray<{ status: string; title: string; id?: string }>,
+  pendingIds: ReadonlySet<string>
+): { scored: string[]; pending: string[] } => {
+  const scored: string[] = [];
+  const pending: string[] = [];
+  for (const check of checks) {
+    if (check.status !== "failed") continue;
+    (check.id && pendingIds.has(check.id) ? pending : scored).push(check.title);
+  }
+  return { scored, pending };
+};
 
 export function ConformanceGate({ server }: { server: ServerWithName }) {
   const isConnected = server.connectionStatus === "connected";
@@ -96,7 +122,8 @@ export function ConformanceGate({ server }: { server: ServerWithName }) {
       run: () => Promise<{
         result: {
           passed: boolean;
-          checks: ReadonlyArray<{ status: string; title: string }>;
+          checks: ReadonlyArray<{ status: string; title: string; id?: string }>;
+          profile?: { pendingCheckIds?: string[] };
         };
       }>
     ) => {
@@ -110,10 +137,15 @@ export function ConformanceGate({ server }: { server: ServerWithName }) {
       apply(suite, { status: "running" });
       try {
         const { result } = await run();
+        const failed = failedTitlesOf(
+          result.checks,
+          new Set(result.profile?.pendingCheckIds ?? [])
+        );
         apply(suite, {
           status: "done",
           passed: result.passed,
-          failedTitles: failedTitlesOf(result.checks),
+          failedTitles: failed.scored,
+          pendingFailedTitles: failed.pending,
           total: result.checks.length,
         });
       } catch (err) {
@@ -256,12 +288,25 @@ function SuiteRow({
   }
   if (outcome.status === "done") {
     const failedCount = outcome.failedTitles.length;
+    const pendingFailedCount = outcome.pendingFailedTitles.length;
     if (outcome.passed || failedCount === 0) {
       return (
         <Row label={label}>
           <CheckCircle2 className="h-3 w-3 text-emerald-500" />
           <span className="text-muted-foreground">
-            {outcome.total} check{outcome.total === 1 ? "" : "s"} passed
+            {/* `total` is the whole check list, so counting it as "passed"
+                while also reporting a pending failure said "1 check passed ·
+                1 unscored check failed" about a single check. The failures
+                come out of the passed count; only the note carries them. */}
+            {outcome.total - pendingFailedCount} check
+            {outcome.total - pendingFailedCount === 1 ? "" : "s"} passed
+            {pendingFailedCount > 0
+              ? ` · ${pendingFailedCount} unscored check${
+                  pendingFailedCount === 1 ? "" : "s"
+                } failed (not counted): ${outcome.pendingFailedTitles
+                  .slice(0, 2)
+                  .join(", ")}`
+              : ""}
           </span>
         </Row>
       );
