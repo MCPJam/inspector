@@ -34,12 +34,15 @@ function expandTokens() {
   fireEvent.click(screen.getByRole("button", { name: /style tokens/i }));
 }
 
-describe("HostStyleTokens", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockClipboard.writeText.mockResolvedValue(undefined);
-  });
+// File-level, not per-describe: a `mockRejectedValue` set by the failure test
+// otherwise leaks into every describe below it, silently running their
+// success paths through the catch branch.
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockClipboard.writeText.mockResolvedValue(undefined);
+});
 
+describe("HostStyleTokens", () => {
   it("lists the host preset's tokens, grouped, with the light/dark pair", () => {
     render(<HostStyleTokens draft={draftWith({ hostStyle: "claude" })} />);
     expandTokens();
@@ -220,6 +223,18 @@ describe("HostStyleTokens per-row copy", () => {
     );
     // The row's own icon confirms; a toast per copy would be noise down 76 rows.
     expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+    // That confirmation is the check mark, and only on the row that copied.
+    const row = screen
+      .getByText("--color-text-primary")
+      .closest("button") as HTMLElement;
+    await waitFor(() =>
+      expect(row.querySelector(".lucide-check")).not.toBeNull()
+    );
+    const other = screen
+      .getByText("--color-text-secondary")
+      .closest("button") as HTMLElement;
+    expect(other.querySelector(".lucide-check")).toBeNull();
   });
 
   it("labels every row with the value it puts on the clipboard", () => {

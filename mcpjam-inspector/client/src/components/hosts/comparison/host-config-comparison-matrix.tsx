@@ -12,6 +12,7 @@ import {
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
+import { StyleColorSwatch } from "@/components/hosts/style-token-swatch";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import type { HostThemeMode } from "@/lib/client-styles";
 import {
@@ -588,32 +589,6 @@ function FieldRow({
   );
 }
 
-/**
- * Color chip for a style-variable cell. The value is assigned as a real CSS
- * property (never spliced into a CSS string), so a token this build does not
- * understand — a `color-mix(…)` an older browser rejects, or a malformed
- * value from a user-built host — is dropped by the CSSOM and leaves an empty
- * chip rather than corrupting the cell. The checkerboard behind it is what
- * makes a fully transparent `…-ghost` token distinguishable from an opaque
- * white one.
- */
-function StyleColorSwatch({ value }: { value: string }) {
-  return (
-    <span
-      aria-hidden
-      className="inline-block size-3 shrink-0 overflow-hidden rounded-[3px] border border-border/70 align-middle"
-      style={{
-        backgroundImage:
-          "linear-gradient(45deg, rgba(120,120,120,0.35) 25%, transparent 25%, transparent 75%, rgba(120,120,120,0.35) 75%), linear-gradient(45deg, rgba(120,120,120,0.35) 25%, transparent 25%, transparent 75%, rgba(120,120,120,0.35) 75%)",
-        backgroundSize: "6px 6px",
-        backgroundPosition: "0 0, 3px 3px",
-      }}
-    >
-      <span className="block size-full" style={{ backgroundColor: value }} />
-    </span>
-  );
-}
-
 function FieldCell({
   field,
   subject,
@@ -748,10 +723,10 @@ function FieldCell({
       // A `light-dark(…)` value is NOT this case: it is decoded upstream into
       // the pair below, so the notation a host happens to use never changes
       // the shape of its cell.
-      // `inline-flex` + `items-start` so the block hugs its content and stays
-      // centered by the cell, while everything INSIDE it shares one left edge:
-      // the theme label sits directly above its swatch and value instead of
-      // being centered away from them by the cell's `text-center`.
+      // `inline-flex` so the block hugs its content and stays centered by the
+      // cell rather than stretching across it; the theme blocks inside share
+      // a left edge (`items-start` on the column) so the two values line up
+      // for reading, and each label centers over the row it names.
       if ("same" in v) {
         return (
           <span className="inline-flex max-w-full items-center gap-1.5 text-left">

@@ -6,12 +6,17 @@
  * string — so you can read the tokens a widget will actually see without
  * mounting a widget and cracking open DevTools.
  *
- * SOURCE. Values are resolved through `resolveEffectiveHostStyle`, the same
- * resolver the widget host uses: the registry preset named by the host
- * config's `hostStyle`, with the config's persisted `chatUiOverride`
- * (`styleVariables` / `fontCss`) layered on top. Nothing is re-declared
- * here, so a BYO host that persists its own palette shows its real tokens
- * and never the preset's.
+ * SOURCE — and a known gap. Values come from `resolveEffectiveHostStyle`:
+ * the registry preset named by `hostStyle`, with the config's persisted
+ * `chatUiOverride` layered on top. That is NOT what the widget host resolves.
+ * `widget-react/src/mcp-apps-renderer.tsx` reads the preset via
+ * `getHostStyleOrDefault`, ignores `chatUiOverride`, merges the config's
+ * `hostContext.styles.variables` over it and drops non-SEP keys through
+ * `sanitizeHostStyleVariables`. So a host carrying either an override or a
+ * `hostContext` palette is displayed differently from what its views receive.
+ * Rebuilding this on `readStyleVariable` (`lib/host-config-field-schema.ts`),
+ * which the compare matrix already uses, is the fix; until then the subtitle
+ * below deliberately does not claim to be the wire payload.
  *
  * READ-ONLY on purpose. Editing lives in the `chatUiOverride` surfaces;
  * this block is the "what does the widget get" view.
@@ -26,9 +31,11 @@ import {
 } from "react";
 import { Check, ChevronDown, Copy } from "lucide-react";
 import { toast } from "sonner";
+import { copyToClipboard } from "@/lib/clipboard";
 import type { HostConfigInputV2 } from "@/lib/client-config-v2";
 import { resolveEffectiveHostStyle } from "@/lib/client-styles";
 import { cn } from "@/lib/utils";
+import { STYLE_SWATCH_CHECKERBOARD } from "@/components/hosts/style-token-swatch";
 
 /**
  * Presentation buckets, in the order SEP-1865 lists its style variables
@@ -84,23 +91,18 @@ interface StyleTokenRow {
  * both the shortest honest rendering and paste-able into a stylesheet.
  */
 function formatTokenValue(row: StyleTokenRow): string {
-  const { light, dark } = row;
+  const { name, light, dark } = row;
   if (light !== undefined && dark !== undefined) {
-    return light === dark ? light : `light-dark(${light}, ${dark})`;
+    if (light === dark) return light;
+    // CSS `light-dark()` only accepts colors, so synthesizing it for a size,
+    // radius or font stack would print an invalid declaration in a block
+    // whose values are meant to be paste-able. Those show both values plainly.
+    return name.startsWith("--color-")
+      ? `light-dark(${light}, ${dark})`
+      : `${light} / ${dark}`;
   }
   return light ?? dark ?? "—";
 }
-
-/**
- * Alpha-revealing checkerboard behind the color swatches — without it a
- * `rgba(…, 0)` ghost token and an opaque white one look identical.
- */
-const CHECKERBOARD_STYLE = {
-  backgroundImage:
-    "linear-gradient(45deg, rgba(120,120,120,0.35) 25%, transparent 25%, transparent 75%, rgba(120,120,120,0.35) 75%), linear-gradient(45deg, rgba(120,120,120,0.35) 25%, transparent 25%, transparent 75%, rgba(120,120,120,0.35) 75%)",
-  backgroundSize: "6px 6px",
-  backgroundPosition: "0 0, 3px 3px",
-} as const;
 
 /**
  * Per-token preview chip. Colors render as a split light/dark swatch;
@@ -120,7 +122,7 @@ function StyleTokenPreview({ row }: { row: StyleTokenRow }) {
 
   if (name.startsWith("--color-")) {
     return (
-      <span className={boxClasses} style={CHECKERBOARD_STYLE}>
+      <span className={boxClasses} style={STYLE_SWATCH_CHECKERBOARD}>
         <span className="h-full w-1/2" style={{ backgroundColor: light }} />
         <span className="h-full w-1/2" style={{ backgroundColor: dark }} />
       </span>
@@ -195,11 +197,13 @@ export function HostStyleTokens({ draft }: { draft: HostConfigInputV2 }) {
     });
     // `McpUiStyles` is `Record<key, string | undefined>`; widen to a plain
     // record so tokens outside the spec union (BYO hosts) still enumerate.
-    const light = definition.mcp.resolveStyleVariables("light") as Record<
-      string,
-      string | undefined
-    >;
-    const dark = definition.mcp.resolveStyleVariables("dark") as Record<
+    // `?? {}`: the resolver hands back `styleVariables[theme]` unguarded and
+    // `chatUiOverride` is never validated at runtime, so a config persisting
+    // only one theme would otherwise throw out of `Object.keys` and take the
+    // whole Apps tab down with it.
+    const light = (definition.mcp.resolveStyleVariables("light") ??
+      {}) as Record<string, string | undefined>;
+    const dark = (definition.mcp.resolveStyleVariables("dark") ?? {}) as Record<
       string,
       string | undefined
     >;
@@ -241,16 +245,19 @@ export function HostStyleTokens({ draft }: { draft: HostConfigInputV2 }) {
   // the form a widget author pastes into their own stylesheet, and it keeps
   // the widget themed by the host instead of pinned to today's hex.
   const copyToken = async (name: string) => {
-    try {
-      await navigator.clipboard.writeText(`var(${name})`);
+    // The shared helper, not `navigator.clipboard` directly: it falls back to
+    // execCommand where the async API is unavailable (non-secure-origin dev
+    // servers, older Electron webviews), which is why every other copy
+    // affordance in the app keeps working there.
+    if (await copyToClipboard(`var(${name})`)) {
       // The row's own check mark is the confirmation — a toast for a gesture
       // this small, repeated down a list of 76, is noise.
       setCopiedToken(name);
       if (copiedTimer.current) clearTimeout(copiedTimer.current);
       copiedTimer.current = setTimeout(() => setCopiedToken(null), 1500);
-    } catch {
-      toast.error("Couldn't copy to clipboard");
+      return;
     }
+    toast.error("Couldn't copy to clipboard");
   };
 
   return (
@@ -265,7 +272,7 @@ export function HostStyleTokens({ draft }: { draft: HostConfigInputV2 }) {
         <div className="flex flex-col gap-0.5">
           <span className="text-[12px] font-medium">Style tokens</span>
           <span className="text-[11px] text-muted-foreground">
-            hostContext.styles — what this host sends views on ui/initialize.
+            Style variables resolved for this host config.
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -314,7 +321,14 @@ export function HostStyleTokens({ draft }: { draft: HostConfigInputV2 }) {
                   >
                     <StyleTokenPreview row={row} />
                     <code className="font-mono text-[11.5px]">{row.name}</code>
-                    <code className="ml-auto truncate font-mono text-[11px] text-muted-foreground">
+                    {/* The row's own title/aria-label describe the copy, so
+                        the truncated value needs a title of its own or it is
+                        unreachable once clipped — and the value is the point
+                        of the block. */}
+                    <code
+                      title={formatTokenValue(row)}
+                      className="ml-auto truncate font-mono text-[11px] text-muted-foreground"
+                    >
                       {formatTokenValue(row)}
                     </code>
                     {copiedToken === row.name ? (

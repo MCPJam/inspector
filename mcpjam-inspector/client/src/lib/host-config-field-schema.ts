@@ -335,6 +335,16 @@ export type StyleVariableByTheme =
  * Splits on the top-level comma: the arguments are themselves functions
  * (`rgba(50, 102, 173, 1)`) whose commas must not end the first argument.
  */
+function hasTopLevelComma(value: string): boolean {
+  let depth = 0;
+  for (const char of value) {
+    if (char === "(") depth += 1;
+    else if (char === ")") depth -= 1;
+    else if (char === "," && depth === 0) return true;
+  }
+  return false;
+}
+
 export function parseLightDarkPair(
   value: string
 ): { light: string; dark: string } | null {
@@ -353,6 +363,10 @@ export function parseLightDarkPair(
       const light = inner.slice(0, i).trim();
       const dark = inner.slice(i + 1).trim();
       if (!light || !dark) return null;
+      // `light-dark()` takes exactly two arguments. A third top-level comma
+      // means this is not a value we understand, and splitting on the first
+      // one would invent a `dark` of "#000, #333" — worse than not splitting.
+      if (hasTopLevelComma(dark)) return null;
       return { light, dark };
     }
   }
@@ -388,7 +402,13 @@ function readStyleVariable(
     // A `light-dark(…)` host and a per-theme-probed host state the same fact
     // in different notations; normalize so the column compares.
     const pair = parseLightDarkPair(value);
-    return pair ? { ...pair, raw: value } : { same: value };
+    if (!pair) return { same: value };
+    // `light-dark(x, x)` states a theme-agnostic fact in a two-argument
+    // notation. Collapse it exactly as the per-theme branch above collapses
+    // an equal capture, or the same fact renders stacked here and bare there
+    // — the split-grammar problem this function exists to remove.
+    if (pair.light === pair.dark) return { same: pair.light };
+    return { ...pair, raw: value };
   }
 
   // Only a probed host can be said not to support the variable: we connected,
@@ -1071,11 +1091,30 @@ export function fieldDiverges(
   hosts: ReadonlyArray<HostConfigDtoV2>
 ): boolean {
   if (hosts.length < 2) return false;
-  const first = stableStringify(field.read(hosts[0]));
+  const read = (cfg: HostConfigDtoV2) =>
+    stableStringify(comparable(field.read(cfg)));
+  const first = read(hosts[0]);
   for (let i = 1; i < hosts.length; i += 1) {
-    if (stableStringify(field.read(hosts[i])) !== first) return true;
+    if (read(hosts[i]) !== first) return true;
   }
   return false;
+}
+
+/**
+ * Strip read-only provenance off a value before comparing two hosts.
+ *
+ * `raw` records the `light-dark(…)` literal a host sent so the cell can show
+ * it on hover; it is not part of the fact being compared. Leaving it in makes
+ * a host that sends `light-dark(a, b)` diverge from one that sends the same
+ * two values per theme — two cells that now render identically, flagged as
+ * different, which is exactly backwards.
+ */
+function comparable(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || !("raw" in value)) {
+    return value;
+  }
+  const { raw: _raw, ...rest } = value as Record<string, unknown>;
+  return rest;
 }
 
 /** Convenience: an ordered { sectionId, subsection, fields[] } grouping. */
