@@ -175,7 +175,7 @@ describe("v1 persisted conformance runs", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     for (const [key, value] of Object.entries(originalEnv)) {
-      if (value) process.env[key] = value;
+      if (value !== undefined) process.env[key] = value;
       else delete process.env[key];
     }
   });
@@ -208,6 +208,18 @@ describe("v1 persisted conformance runs", () => {
 
   describe("starting a run", () => {
     it("answers 202 and detaches against the SAVED server", async () => {
+      let release!: (value: { runId: string }) => void;
+      const stillRunning = new Promise<{ runId: string }>((resolve) => {
+        release = resolve;
+      });
+      executePersistedConformanceRunMock.mockImplementation(async (args: any) => {
+        await args.onRunStarted?.("run_1", {
+          reused: false,
+          status: "queued",
+        });
+        return stillRunning;
+      });
+
       const res = await request(
         "POST",
         "/api/v1/projects/p1/servers/s1/conformance-runs",
@@ -230,6 +242,8 @@ describe("v1 persisted conformance runs", () => {
           target: { kind: "server", serverId: "s1" },
         },
       );
+      release({ runId: "run_1" });
+      await stillRunning;
     });
 
     it("refuses a body that tries to name its own target", async () => {
@@ -291,6 +305,7 @@ describe("v1 persisted conformance runs", () => {
         { body: {} },
       );
       expect(res.status).toBe(502);
+      expect(await res.json()).toMatchObject({ code: "SERVER_UNREACHABLE" });
       expect(executePersistedConformanceRunMock).not.toHaveBeenCalled();
     });
 
