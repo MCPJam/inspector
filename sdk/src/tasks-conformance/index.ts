@@ -3,10 +3,15 @@ export {
   decideOutcome,
   describeUndeclaredProbe,
   findDeclarationViolations,
+  findRawTaskStates,
+  sentRequestIds,
   pickProbeTool,
   resolveProbeTool,
   toolTaskSupport,
   validateCreateTaskShape,
+  validateCompletionAck,
+  validateTaskStatusPayload,
+  validateTaskTtlIntegerShape,
   validateTaskTtlShape,
 } from "./runner.js";
 

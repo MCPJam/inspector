@@ -12,6 +12,7 @@ import type {
   MCPConformanceResult,
   MCPConformanceSuiteResult,
 } from "../src/mcp-conformance/index.js";
+import type { MCPTasksConformanceResult } from "../src/tasks-conformance/index.js";
 import type {
   ConformanceResult as OAuthConformanceResult,
   OAuthConformanceSuiteResult,
@@ -399,5 +400,82 @@ describe("renderConformanceReportJUnitXml", () => {
     expect(xml).toContain('testsuite name="Run 2"');
     expect(xml).toContain('<failure message="Ping failed">');
     expect(xml).toContain("<skipped/>");
+  });
+
+  /**
+   * The exit code already refuses to fail on a pending check. If the JUnit
+   * renderer still emitted `<failure>` for one, the CI job would go red anyway
+   * — reopening the retroactive-failure hole the frozen profile exists to
+   * close, on the one channel most teams actually gate on.
+   */
+  it("renders a FAILING pending check as skipped, and excludes it from the failure tallies", () => {
+    const result: MCPConformanceResult = {
+      ...createProtocolResult(),
+      checks: [
+        {
+          id: "wire-schema-valid",
+          category: "protocol",
+          title: "Wire Schema Valid",
+          description: "Every observed message validates against the schema.",
+          status: "failed",
+          durationMs: 3,
+          error: { message: "ListToolsResult: must have required property 'ttlMs'" },
+        },
+      ],
+      profile: {
+        profileId: "mcp-protocol",
+        profileVersion: "2026-08-21.1",
+        manifestDigest: "0".repeat(64),
+        checkerVersion: "0.0.0-test",
+        pendingCheckIds: ["wire-schema-valid"],
+      },
+    };
+
+    const xml = renderConformanceReportJUnitXml(toConformanceReport(result));
+
+    expect(xml).not.toContain("<failure");
+    expect(xml).toContain("unscored by the active profile");
+    expect(xml).toContain('failures="0"');
+  });
+
+  /**
+   * The same hole, on the TASKS suite. Tasks cases go through
+   * `reportCaseFromCheck`, which never read `pendingCheckIds` — so the fix
+   * above closed the protocol path and left this one open, and a failing
+   * pending Tasks check still turned the CI job red against a green exit code.
+   */
+  it("renders a FAILING pending TASKS check as skipped too", () => {
+    const result: MCPTasksConformanceResult = {
+      passed: false,
+      outcome: "failed",
+      target: "https://mcp.example.com/mcp",
+      durationMs: 12,
+      summary: "1 failed",
+      checks: [
+        {
+          id: "tasks-status-payload-shape",
+          category: "lifecycle",
+          title: "Task status payloads carry their required members",
+          description: "Each observed status carries what the extension states.",
+          status: "failed",
+          durationMs: 3,
+          error: { message: "completed: must carry the `result` field" },
+        },
+      ],
+      categorySummary: {},
+      discovery: { wire: "extension", toolCount: 1, taskCapableToolCount: 1 },
+      profile: {
+        profileId: "mcp-tasks",
+        profileVersion: "2026-08-22.1",
+        manifestDigest: "0".repeat(64),
+        checkerVersion: "0.0.0-test",
+        pendingCheckIds: ["tasks-status-payload-shape"],
+      },
+    } as unknown as MCPTasksConformanceResult;
+
+    const xml = renderConformanceReportJUnitXml(toConformanceReport(result));
+
+    expect(xml).not.toContain("<failure");
+    expect(xml).toContain('failures="0"');
   });
 });

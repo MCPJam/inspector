@@ -90,6 +90,27 @@ import type {
 
 export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
 
+/**
+ * Parse a request URL, tolerating a relative `baseUrl`.
+ *
+ * The default base and every Node caller pass an absolute origin, which
+ * `new URL` parses on its own. Browser and Worker callers may instead pass a
+ * same-origin prefix like `/api/v1` so the request rides the current origin's
+ * session (see `mcpjam-inspector`'s directory-readiness client). That prefix is
+ * not a valid URL by itself: `new URL("/api/v1/...")` throws "Failed to
+ * construct 'URL': Invalid URL" and the call never reaches `fetch`. Resolving
+ * against the document/worker origin fixes the relative case while leaving an
+ * absolute spec untouched (a second `base` argument is ignored when the first
+ * argument is already absolute).
+ */
+function resolvePlatformRequestUrl(spec: string): URL {
+  const origin =
+    typeof globalThis !== "undefined"
+      ? (globalThis as { location?: { origin?: string } }).location?.origin
+      : undefined;
+  return origin ? new URL(spec, origin) : new URL(spec);
+}
+
 export interface PlatformApiClientOptions {
   /** API origin + version prefix. Defaults to the hosted production API. */
   baseUrl?: string;
@@ -2870,6 +2891,71 @@ export class PlatformApiClient {
     );
   }
 
+  private sharePath(
+    projectId: string,
+    resourceType: string,
+    resourceId: string,
+  ): string {
+    return `/projects/${encodeURIComponent(projectId)}/shares/${encodeURIComponent(
+      resourceType,
+    )}/${encodeURIComponent(resourceId)}`;
+  }
+
+  getShareSettings(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      this.sharePath(params.projectId, params.resourceType, params.resourceId),
+      {},
+      options,
+    );
+  }
+
+  setShareMode(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+      mode: "project_members" | "invited_only" | "anyone_with_link";
+      allowGuestAccess?: boolean;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    const { projectId, resourceType, resourceId, ...body } = params;
+    return this.request(
+      "PATCH",
+      this.sharePath(projectId, resourceType, resourceId),
+      { body },
+      options,
+    );
+  }
+
+  /**
+   * Rotate the share link. Immediate: holders of the old URL can no longer
+   * redeem it. Agent-excluded; available on REST/CLI/MCP.
+   */
+  rotateShareLink(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.sharePath(params.projectId, params.resourceType, params.resourceId)}/rotate-link`,
+      {},
+      options,
+    );
+  }
+
   private serverOp<T>(
     params: ServerScope & { body?: Record<string, unknown> },
     op: string,
@@ -2891,7 +2977,7 @@ export class PlatformApiClient {
     init: { query?: QueryParams; body?: unknown },
     options?: RequestOptions,
   ): Promise<T> {
-    const url = new URL(`${this.baseUrl}${path}`);
+    const url = resolvePlatformRequestUrl(`${this.baseUrl}${path}`);
     for (const [name, value] of Object.entries(init.query ?? {})) {
       if (value !== undefined) {
         url.searchParams.set(name, String(value));
