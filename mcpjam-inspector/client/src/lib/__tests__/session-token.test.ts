@@ -183,6 +183,20 @@ describe("session-token module", () => {
       );
     });
 
+    it("throws a SessionTokenError carrying the HTTP status", async () => {
+      vi.mocked(global.fetch).mockResolvedValue({
+        ok: false,
+        status: 403,
+      } as Response);
+
+      await expect(
+        sessionToken.initializeSessionToken(),
+      ).rejects.toMatchObject({
+        name: "SessionTokenError",
+        status: 403,
+      });
+    });
+
     it("caches token after successful API fetch", async () => {
       vi.mocked(global.fetch).mockResolvedValue({
         ok: true,
@@ -243,6 +257,28 @@ describe("session-token module", () => {
 
       expect(results).toEqual(["dedup-token", "dedup-token", "dedup-token"]);
       expect(global.fetch).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("isSessionTokenHostDenied", () => {
+    it("is true for a 403 SessionTokenError (host not allowed)", () => {
+      const error = new sessionToken.SessionTokenError(403);
+      expect(sessionToken.isSessionTokenHostDenied(error)).toBe(true);
+    });
+
+    it("is false for other session-token statuses", () => {
+      expect(
+        sessionToken.isSessionTokenHostDenied(
+          new sessionToken.SessionTokenError(500),
+        ),
+      ).toBe(false);
+    });
+
+    it("is false for unrelated errors", () => {
+      expect(sessionToken.isSessionTokenHostDenied(new Error("boom"))).toBe(
+        false,
+      );
+      expect(sessionToken.isSessionTokenHostDenied(undefined)).toBe(false);
     });
   });
 

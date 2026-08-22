@@ -72,6 +72,23 @@ docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
 docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 ```
 
+## Accessing over the network
+
+For security, the inspector only issues its session token to `localhost`. If you
+run it on a remote server or in a container and open it from another machine
+(e.g. `http://192.168.1.50:6274`), it will otherwise dead-end on an
+authentication error. To allow a specific host, set `MCPJAM_ALLOWED_HOSTS` to
+that hostname (or a comma-separated list; wildcards like `*.example.com` are
+supported), and bind the port to your network interface:
+
+```bash
+docker run -p 6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
+```
+
+Only add hosts you trust — any client that can reach an allowlisted host can
+obtain the session token. Tunnel/relay domains are never allowed, even if
+listed.
+
 # Key features
 
 | Capability            | Description                                                                                                                                                                                                                                                                                        |
