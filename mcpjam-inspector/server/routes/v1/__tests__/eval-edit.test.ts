@@ -751,6 +751,48 @@ describe("v1 eval-edit routes", () => {
     expect(suiteReads).toBeGreaterThanOrEqual(2);
   });
 
+  it("PATCH hosts.servers resolves a projectServerId as well as a bound name", async () => {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "hosts:listHosts")
+        return Promise.resolve([{ hostId: "host_1", name: "Prod" }]);
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      {
+        hosts: [{ host: "host_1", servers: ["srv_1"] }],
+      }
+    );
+    expect(res.status).toBe(200);
+    const hostCall = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite" && c[1].hostAttachments
+    );
+    expect(hostCall![1].hostAttachments).toEqual([
+      { namedHostId: "host_1", selectedServerIds: ["srv_1"] },
+    ]);
+  });
+
+  it("PATCH suite rejects the hostIds/servers near-miss (400, names the keys)", async () => {
+    // The reported silent no-op: undeclared top-level keys used to 200 with
+    // hosts: [] and zero mutations. Strict body + path-aware errors name them.
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      {
+        hostIds: ["host_1"],
+        servers: ["Excalidraw (App)"],
+      }
+    );
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { code?: string; message?: string };
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(body.message).toContain("hostIds");
+    expect(body.message).toContain("servers");
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
   it("PATCH execution config round-trips getSuiteConfig and preserves servers", async () => {
     const res = await request(
       "PATCH",
@@ -1601,6 +1643,75 @@ describe("v1 eval-edit routes", () => {
     expect(createArgs.promptTurns).toBeUndefined();
   });
 
+  it("generate carries the backend's sanitized arguments through verbatim", async () => {
+    // Producer-side regression for the assertions that could never pass. The
+    // backend now drops every expected-argument entry the case's own prompt
+    // does not determine, so what arrives here is already narrow. This pins
+    // that the inspector neither re-inflates it nor drops what survived: the
+    // step's args are EXACTLY the backend's, and an empty object stays empty
+    // (under `partial` matching that reads as "this tool was called", which is
+    // the assertion a correct server can satisfy).
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({
+      success: true,
+      tests: [
+        {
+          title: "Draw a rectangle",
+          query: "Draw a rectangle on the canvas",
+          runs: 1,
+          expectedToolCalls: [
+            { toolName: "create_element", arguments: { type: "rectangle" } },
+          ],
+        },
+        {
+          title: "Draw a flowchart",
+          query: "Draw a flowchart of our deploy process",
+          runs: 1,
+          expectedToolCalls: [{ toolName: "create_element", arguments: {} }],
+        },
+      ],
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await request(
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      { mode: "normal" }
+    );
+    expect(res.status).toBe(200);
+
+    const assertions = allAuthoredCaseArgs()
+      .flatMap((item: any) => item.steps ?? [])
+      .filter((step: any) => step.kind === "assert")
+      .map((step: any) => step.assertion);
+    expect(assertions).toEqual([
+      {
+        type: "toolCalledWith",
+        toolName: "create_element",
+        args: { args: { type: "rectangle" } },
+      },
+      {
+        type: "toolCalledWith",
+        toolName: "create_element",
+        args: { args: {} },
+      },
+    ]);
+    // No unmatched free-form payload anywhere: every asserted argument value
+    // is a scalar. A nested object or array here is the shape that made the
+    // 2026-08-20 Excalidraw cases unpassable.
+    for (const assertion of assertions) {
+      for (const value of Object.values(assertion.args.args)) {
+        expect(typeof value).not.toBe("object");
+      }
+    }
+  });
+
   it("generate discovers tools from the suite's environment, not its saved selection", async () => {
     createAuthorizedManagerMock.mockResolvedValue({
       manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
@@ -1845,6 +1956,155 @@ describe("v1 eval-edit routes", () => {
         (c) => c[0] === "testSuites:recordCaseGeneration"
       )
     ).toBe(false);
+  });
+
+  /**
+   * The gap these close: before this, the generate route read ONLY the
+   * `x-mcpjam-idempotency-key` header, while `PlatformApiClient` sends
+   * `idempotency-key` and the operation had no body field at all. So the CLI,
+   * the MCP plugin, and direct SDK callers — exactly the surfaces that hit the
+   * 30s client timeout and retry — had no way to reach the ledger, and every
+   * retry re-spent. The failure was SILENT: a key went out on the wire and
+   * nothing read it.
+   *
+   * Each test therefore asserts against the ledger read (`getCaseGeneration`
+   * carries the key) and not merely that a key was sent.
+   */
+  function ledgerKeys(): unknown[] {
+    return convexQueryMock.mock.calls
+      .filter((c) => c[0] === "testSuites:getCaseGeneration")
+      .map((c) => (c[1] as any)?.idempotencyKey);
+  }
+
+  function withNoPriorLedger() {
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      if (name === "testSuites:getCaseGeneration") return Promise.resolve(null);
+      return defaultQueryImpl(name);
+    });
+  }
+
+  async function generateWith(init: {
+    headers?: Record<string, string>;
+    body?: Record<string, unknown>;
+  }) {
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    generateEvalTestsMock.mockResolvedValue({ success: true, tests: [] });
+    withNoPriorLedger();
+    return makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+          ...(init.headers ?? {}),
+        },
+        body: JSON.stringify({ mode: "normal", ...(init.body ?? {}) }),
+      }
+    );
+  }
+
+  it("generate reaches the ledger with a BODY idempotency key", async () => {
+    const res = await generateWith({ body: { idempotencyKey: "cli-run-7" } });
+    expect(res.status).toBe(200);
+    expect(ledgerKeys()).toContain("cli-run-7");
+    expect(
+      convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:recordCaseGeneration"
+      )?.[1].idempotencyKey
+    ).toBe("cli-run-7");
+  });
+
+  it("generate reaches the ledger with the SDK client's transport header", async () => {
+    // `PlatformApiClient` puts `options.idempotencyKey` here, unprefixed.
+    // Reading only the prefixed spelling is what made a key sent this way
+    // degrade silently to no idempotency at all.
+    const res = await generateWith({
+      headers: { "idempotency-key": "sdk-transport-key" },
+    });
+    expect(res.status).toBe(200);
+    expect(ledgerKeys()).toContain("sdk-transport-key");
+  });
+
+  it("generate lets the prefixed HEADER win over both other channels", async () => {
+    // The agent adapter sets the prefixed header per operation; a body key
+    // could otherwise be shaped by model output, so it must never override it.
+    const res = await generateWith({
+      headers: {
+        "x-mcpjam-idempotency-key": "proposal:act_9:generate_eval_cases",
+        "idempotency-key": "sdk-transport-key",
+      },
+      body: { idempotencyKey: "body-key" },
+    });
+    expect(res.status).toBe(200);
+    expect(ledgerKeys()).toEqual(["proposal:act_9:generate_eval_cases"]);
+  });
+
+  it("generate prefers the transport header over a body key", async () => {
+    const res = await generateWith({
+      headers: { "idempotency-key": "sdk-transport-key" },
+      body: { idempotencyKey: "body-key" },
+    });
+    expect(res.status).toBe(200);
+    expect(ledgerKeys()).toEqual(["sdk-transport-key"]);
+  });
+
+  it("generate stays keyless — and reads no ledger — when no key is sent", async () => {
+    // The unkeyed path must keep working exactly as before: no ledger read,
+    // no ledger write, and certainly no fabricated key.
+    const res = await generateWith({});
+    expect(res.status).toBe(200);
+    expect(ledgerKeys()).toEqual([]);
+    expect(
+      convexMutationMock.mock.calls.some(
+        (c) => c[0] === "testSuites:recordCaseGeneration"
+      )
+    ).toBe(false);
+  });
+
+  it("generate replays the first attempt's drafts for a BODY key retry", async () => {
+    // The end-to-end property the plumbing exists for: retrying with the same
+    // key from a direct caller costs nothing and returns the same cases.
+    createAuthorizedManagerMock.mockResolvedValue({
+      manager: { disconnectAllServers: vi.fn().mockResolvedValue(undefined) },
+    });
+    convexQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:getSuiteRunServerSelection")
+        return Promise.resolve({ serverIds: ["srv_1"], serverNames: ["S"] });
+      if (name === "testSuites:getCaseGeneration")
+        return Promise.resolve({
+          drafts: [
+            {
+              title: "Cached",
+              query: "from ledger",
+              runs: 1,
+              expectedToolCalls: [],
+            },
+          ],
+          createdCaseIds: null,
+        });
+      return defaultQueryImpl(name);
+    });
+
+    const res = await makeApp().request(
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer tok",
+        },
+        body: JSON.stringify({ mode: "normal", idempotencyKey: "cli-run-7" }),
+      }
+    );
+    expect(res.status).toBe(200);
+    expect((await res.json()).created).toHaveLength(1);
+    expect(generateEvalTestsMock).not.toHaveBeenCalled();
+    expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
   });
 
   it("generate resolves a server NAME override to an ID before authorizing", async () => {
@@ -2492,5 +2752,80 @@ describe("v1 eval-edit routes", () => {
         (c) => c[0] === "testSuites:createTestCases"
       )
     ).toBe(false);
+  });
+
+  describe("strict write bodies", () => {
+    const PROMPT_STEP = { id: "s1", kind: "prompt", prompt: "hi" };
+
+    it.each([
+      [
+        "PATCH /eval-suites/:suiteId",
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { name: "Renamed", hostz: [] },
+        "hostz",
+      ],
+      [
+        "PATCH /eval-suites/:suiteId/schedule",
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+        { enabled: false, interval: 60 },
+        "interval",
+      ],
+      [
+        "POST /cases",
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases",
+        { title: "t", steps: [PROMPT_STEP], kind: "prompt" },
+        "kind",
+      ],
+      [
+        "POST /cases/batch",
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+        {
+          cases: [{ title: "t", steps: [PROMPT_STEP] }],
+          dryRun: true,
+        },
+        "dryRun",
+      ],
+      [
+        "PATCH /cases/:caseId",
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+        { title: "n", query: "old field" },
+        "query",
+      ],
+      [
+        "POST /cases/generate",
+        "POST",
+        "/api/v1/projects/p1/eval-suites/suite_1/cases/generate",
+        { mode: "normal", count: 5 },
+        "count",
+      ],
+    ] as const)(
+      "rejects an unknown key on %s (400, names the key, no mutation)",
+      async (_label, method, path, body, key) => {
+        const res = await request(method, path, { ...body });
+        expect(res.status).toBe(400);
+        const json = (await res.json()) as { code?: string; message?: string };
+        expect(json.code).toBe("VALIDATION_ERROR");
+        expect(json.message).toContain(key);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      }
+    );
+
+    it("names the field path on a typed-wrong declared key", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { name: 12 }
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("VALIDATION_ERROR");
+      expect(body.message).toMatch(/^name:/);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
   });
 });

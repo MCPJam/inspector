@@ -27,6 +27,76 @@ export {
   type McpLinkedResourceReader,
 } from "./mcp-client-manager/model-output.js";
 /**
+ * Model-backed observations — the RENDERING and STATUS surface only.
+ *
+ * A browser needs to render an observation, badge its confidence, and branch
+ * on `billing_limit_reached` to offer a top-up. It has no business VALIDATING
+ * provider output or MAPPING an envelope into findings: both happen where the
+ * run is graded, and a second implementation in the client would eventually
+ * disagree with the first about what a model was allowed to say.
+ *
+ * So the constants, the reason union and the result types cross; the parser
+ * and the mappers do not.
+ */
+export {
+  DIRECTORY_OBSERVATION_CONFIDENCE,
+  DIRECTORY_OBSERVATION_FINDING_CLASSES,
+  DIRECTORY_OBSERVATION_LIMITS,
+  DIRECTORY_OBSERVATION_REASONS,
+  DIRECTORY_OBSERVATION_STATUSES,
+  NOT_REQUESTED_OBSERVATIONS,
+} from "./directory-readiness/observations.js";
+export type {
+  DirectoryObservation,
+  DirectoryObservationConfidence,
+  DirectoryObservationEnvelope,
+  DirectoryObservationFindingClass,
+  DirectoryObservationReason,
+  DirectoryObservationState,
+  DirectoryObservationStatus,
+} from "./directory-readiness/observations.js";
+
+/**
+ * The reuse guard's VOCABULARY, so a client can explain a refused adaptation
+ * ("that apps result graded a different server") without holding the adapters
+ * themselves — those read raw tool `_meta` a browser has no business seeing.
+ */
+export {
+  EVIDENCE_REUSE_REFUSALS,
+  sameReadinessTarget,
+} from "./directory-readiness/evidence-reuse.js";
+export type {
+  AttributableEvidenceSource,
+  EvidenceReuse,
+  EvidenceReuseExpectation,
+  EvidenceReuseRefusal,
+} from "./directory-readiness/evidence-reuse.js";
+
+export {
+  CLAUDE_OBSERVATION_IDS,
+  CLAUDE_OBSERVATION_KINDS,
+  CLAUDE_OBSERVATION_SCHEMA_VERSION,
+} from "./claude-readiness/observations.js";
+export type {
+  ClaudeExperienceObservations,
+  ClaudeObservationId,
+  ClaudeObservationKind,
+  ClaudeObservationState,
+} from "./claude-readiness/observations.js";
+
+export {
+  OPENAI_OBSERVATION_IDS,
+  OPENAI_OBSERVATION_KINDS,
+  OPENAI_OBSERVATION_SCHEMA_VERSION,
+} from "./openai-readiness/observations.js";
+export type {
+  OpenAIExperienceObservations,
+  OpenAIObservationId,
+  OpenAIObservationKind,
+  OpenAIObservationState,
+} from "./openai-readiness/observations.js";
+
+/**
  * Claude directory readiness — the RENDERING surface only.
  *
  * Named rather than `export *`, and narrower than the readiness barrel, for
@@ -658,11 +728,37 @@ export {
   scoreFromProtocolResult,
   scoreFromTasksResult,
 } from "./conformance-score.js";
+export { toConformanceReport } from "./conformance-reporting.js";
+export type {
+  ConformanceReport,
+  ConformanceReportCase,
+  ConformanceReportGroup,
+} from "./conformance-reporting.js";
 export type {
   ConformanceAdvisoryTier,
   ConformanceScore,
   ScoredAdvisory,
 } from "./conformance-score.js";
+// The frozen scored-check manifest a score is computed over, plus the identity
+// stamp that says which questions a given number came from. Pure data, so it
+// ships from the browser entry alongside the score itself.
+export {
+  buildConformanceProfileStamp,
+  conformanceProfile,
+  conformanceProfileDigest,
+  partitionByProfile,
+  partitionByStamp,
+  unscoredCheckIds,
+  CONFORMANCE_CHECKER_VERSION,
+  CONFORMANCE_PROFILE_IDS,
+} from "./conformance-profile.js";
+export type {
+  ConformanceProfile,
+  ConformanceProfileId,
+  ConformanceProfileStamp,
+  ProfileCheckLike,
+} from "./conformance-profile.js";
+
 // Redaction for reports that leave the machine that produced them (a stored,
 // shareable run). Structural drop of raw HTTP evidence plus a credential-shaped
 // key sweep — see the module header for why both layers exist.
@@ -681,6 +777,18 @@ export {
   TASKS_CHECK_CATALOG,
 } from "./conformance-catalog.js";
 export type { ConformanceCheckInfo } from "./conformance-catalog.js";
+
+export {
+  buildConformanceRunReport,
+  CONFORMANCE_RUN_SCHEMA_VERSION,
+  CONFORMANCE_SUITE_KINDS,
+  DEFAULT_CONFORMANCE_SUITES,
+  normalizeConformanceSuites,
+} from "./conformance-run-types.js";
+export type {
+  ConformanceRunReportV1,
+  ConformanceSuiteKind,
+} from "./conformance-run-types.js";
 
 // Host-side sandbox policy resolver (SEP-1865 + ChatGPT Apps). Pure
 // resolver — DOM-free, React-free, Convex-free. Browser-safe by

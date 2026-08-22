@@ -35,6 +35,7 @@ import { WEB_CALL_TIMEOUT_MS } from "../../config.js";
 import {
   deriveItemIdempotencyKey,
   deriveOperationIdempotencyKey,
+  readAnyIdempotencyKey,
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
 import { opaqueIdSchema } from "@mcpjam/sdk/contract";
@@ -95,7 +96,7 @@ import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
 import { loadInsightsEnvelope } from "./insights-envelope-load.js";
-import { readJsonObjectBody, synthesizeServerBody } from "./adapter.js";
+import { readJsonObjectBody } from "./adapter.js";
 import {
   getCanonicalModelId,
   hostedModelDefinitionsFromSnapshot,
@@ -387,6 +388,9 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
       .union([publicMatchOptionsSchema, matchOptionsSchema])
       .optional(),
   })
+  // STRICT on the object, before the refinements: ZodEffects has no `.strict()`.
+  // An unknown key is a 400, not a silently-dropped field on a spend route.
+  .strict()
   .refine((body) => body.suiteId || (body.tests?.length ?? 0) > 0, {
     message: "Provide suiteId (rerun) and/or inline tests",
   })
@@ -431,7 +435,7 @@ const createEvalRunSchema = RunEvalsRequestSchema.omit({
 // suite-level defaults by `normalizeCreateTestsToRunTests` before the strict
 // run schema validates them. The case body is the public `steps` contract
 // (`TestStep[]`), projected to the internal case fields by that normalizer.
-const createEvalSuiteSchema = z.object({
+const createEvalSuiteSchema = z.strictObject({
   name: z.string().min(1),
   description: z.string().optional(),
   serverIds: z.array(z.string()).min(1),
@@ -1670,7 +1674,7 @@ const publicCaseBodyShape = {
     .optional(),
 } as const;
 
-const createCaseSchema = z.object({
+const createCaseSchema = z.strictObject({
   ...publicCaseBodyShape,
   /**
    * The case's DECLARED identity. Callers mint it (`mintCaseId` from
@@ -1685,7 +1689,7 @@ const createCaseSchema = z.object({
    */
   id: opaqueIdSchema.optional(),
 });
-const updateCaseSchema = z.object(publicCaseBodyShape);
+const updateCaseSchema = z.strictObject(publicCaseBodyShape);
 
 /**
  * A case inside a `POST …/cases/batch` body. Same shape as a single create —
@@ -1693,7 +1697,7 @@ const updateCaseSchema = z.object(publicCaseBodyShape);
  */
 const batchCaseSchema = createCaseSchema;
 
-const createCasesBatchSchema = z.object({
+const createCasesBatchSchema = z.strictObject({
   cases: z
     .array(batchCaseSchema)
     .min(1, "cases must contain at least one case.")
@@ -1718,7 +1722,7 @@ const createCasesBatchSchema = z.object({
  * settings-sheet row the shared manifest marks `api:` is genuinely accepted
  * here. Nothing else should import it — the route is the only writer.
  */
-export const updateSuiteSchema = z.object({
+export const updateSuiteSchema = z.strictObject({
   name: z.string().min(1).optional(),
   description: z.string().optional(),
   // The LEGACY server bag (kept as rollback/compat data). Unrelated to
@@ -1816,7 +1820,7 @@ const requestRunJudgeSchema = z
   })
   .strict();
 
-const scheduleSchema = z.object({
+const scheduleSchema = z.strictObject({
   enabled: z.boolean(),
   intervalMinutes: z.number().int().min(5).max(10080).optional(),
   // A schedule fires exactly ONE run, so an environment-based suite must pin
@@ -1856,7 +1860,16 @@ const generateCasesSchema = z
     // Condition the generated cases on a realistic range of user styles so the
     // queries read like different users wrote them.
     varyUserStyles: z.boolean().optional(),
+    // Body channel for the idempotency key, matching `run_eval_suite` and
+    // `run_eval_case` — the two closest siblings, which also spend. The agent
+    // surfaces set the prefixed header and win the merge below; every other
+    // caller can reach the ledger from here without controlling headers at
+    // all, which is what the CLI, the MCP plugin, and direct SDK callers
+    // could not do before.
+    idempotencyKey: z.string().min(1).max(256).optional(),
   })
+  // STRICT on the object, before the refinement: ZodEffects has no `.strict()`.
+  .strict()
   // Same mutual exclusion the run-create schema enforces: an environment's
   // closed server set is the point, so a `servers` override alongside it would
   // have to be silently dropped.
@@ -2142,12 +2155,12 @@ async function resolveHostAttachments(
     byName.set(key, [...(byName.get(key) ?? []), h]);
   }
   const bindingByName = new Map<string, string>();
+  const bindingIds = new Set<string>();
   for (const b of suite.environment?.serverBindings ?? []) {
     if (b?.projectServerId) {
-      bindingByName.set(
-        String(b.serverName).toLocaleLowerCase(),
-        String(b.projectServerId),
-      );
+      const id = String(b.projectServerId);
+      bindingIds.add(id);
+      bindingByName.set(String(b.serverName).toLocaleLowerCase(), id);
     }
   }
 
@@ -2176,16 +2189,16 @@ async function resolveHostAttachments(
       namedHostId: String(resolved.hostId),
     };
     if (servers !== undefined) {
-      attachment.selectedServerIds = servers.map((name) => {
-        const id = bindingByName.get(name.trim().toLocaleLowerCase());
-        if (!id) {
-          throw new WebRouteError(
-            400,
-            ErrorCode.VALIDATION_ERROR,
-            `Server "${name}" is not in the suite's environment; add it via environment.servers first.`,
-          );
-        }
-        return id;
+      attachment.selectedServerIds = servers.map((entry) => {
+        const trimmed = entry.trim();
+        const byName = bindingByName.get(trimmed.toLocaleLowerCase());
+        if (byName) return byName;
+        if (bindingIds.has(trimmed)) return trimmed;
+        throw new WebRouteError(
+          400,
+          ErrorCode.VALIDATION_ERROR,
+          `Server "${entry}" is not in the suite's environment by name (as bound) or id; add it via environment.servers first.`,
+        );
       });
     }
     return attachment;
@@ -2545,7 +2558,10 @@ function describeLaunchFailure(error: unknown): {
 // poll GET /eval-runs/:runId for progress.
 evals.post("/projects/:projectId/eval-runs", async (c) => {
   const projectId = c.req.param("projectId");
-  const rawBody = await synthesizeServerBody(c);
+  // Read WITHOUT injecting path params, so the strict schema sees only the
+  // caller's fields. `projectId` is a declared key and is merged back in —
+  // path wins over a body value, same as before.
+  const rawBody = await readJsonObjectBody(c);
   const headerIdempotencyKey = readIdempotencyKey(c);
   const body = parseWithSchema(createEvalRunSchema, {
     ...rawBody,
@@ -2876,12 +2892,6 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
     const admission = checkEvalHarnessStaticAdmission({
       hostConfig,
       serverIds: servers.serverIds,
-      // RESOLVED, not omitted: the dry run above already resolved this
-      // target's environment, so the pin is a fact we hold. `null` is the
-      // honest answer for a target with no environment at all — there is
-      // nowhere for a pin to live — and a harness needs one either way.
-      pinnedComputerImageId:
-        servers.environmentLaunch?.computerEnvironmentId ?? null,
     });
     if (!admission.ok) {
       throw new WebRouteError(
@@ -3054,7 +3064,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
 // no recorder, no execution.
 evals.post("/projects/:projectId/eval-suites", async (c) => {
   const projectId = c.req.param("projectId");
-  const rawBody = await synthesizeServerBody(c);
+  const rawBody = await readJsonObjectBody(c);
   const body = parseWithSchema(createEvalSuiteSchema, rawBody);
   const idempotencyKey = readIdempotencyKey(c);
 
@@ -3785,7 +3795,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const suiteId = c.req.param("suiteId");
   const body = parseWithSchema(
     updateSuiteSchema,
-    await synthesizeServerBody(c),
+    await readJsonObjectBody(c),
   );
   const token = await getConvexBearerForRequest(c);
   const { convexClient } = createConvexClients(token);
@@ -4075,7 +4085,7 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
 evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = c.req.param("suiteId");
-  const body = parseWithSchema(scheduleSchema, await synthesizeServerBody(c));
+  const body = parseWithSchema(scheduleSchema, await readJsonObjectBody(c));
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
   let suite: SuiteDoc | null;
@@ -4207,7 +4217,7 @@ evals.get(
 evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = c.req.param("suiteId");
-  const body = parseWithSchema(createCaseSchema, await synthesizeServerBody(c));
+  const body = parseWithSchema(createCaseSchema, await readJsonObjectBody(c));
   const title = assertCreatableCase(body);
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
@@ -4279,7 +4289,7 @@ evals.post(
     const suiteId = c.req.param("suiteId");
     const body = parseWithSchema(
       createCasesBatchSchema,
-      await synthesizeServerBody(c),
+      await readJsonObjectBody(c),
     );
 
     // Every case is checked before the suite is even loaded: a batch with one
@@ -4414,7 +4424,7 @@ evals.patch(
     const caseId = c.req.param("caseId");
     const body = parseWithSchema(
       updateCaseSchema,
-      await synthesizeServerBody(c),
+      await readJsonObjectBody(c),
     );
     const token = await getConvexBearerForRequest(c);
     const existing = await loadCaseInScope(
@@ -4496,7 +4506,7 @@ evals.post(
     const suiteId = c.req.param("suiteId");
     const body = parseWithSchema(
       generateCasesSchema,
-      await synthesizeServerBody(c),
+      await readJsonObjectBody(c),
     );
     const mode = body.mode ?? "normal";
     const token = await getConvexBearerForRequest(c);
@@ -4506,7 +4516,17 @@ evals.post(
     // retry (a proposal reclaim, a redelivered click) replays the recorded
     // drafts instead of spending credits again — and each case is persisted
     // under a derived per-item key, so the persistence loop is resumable.
-    const idempotencyKey = readIdempotencyKey(c);
+    // The HEADER wins over any body value. Both are caller-supplied, but the
+    // header is the transport-level channel unattended clients use, and it is
+    // the one the agent adapter controls — a body key could otherwise be
+    // shaped by model output.
+    //
+    // `readAnyIdempotencyKey` and not `readIdempotencyKey`: the SDK client
+    // puts `options.idempotencyKey` on a bare `idempotency-key` header, so
+    // reading only the prefixed spelling would ignore an SDK caller's key and
+    // re-spend on the retry while the caller watched a key go out. This route
+    // is the one with the most to lose from that.
+    const idempotencyKey = readAnyIdempotencyKey(c) ?? body.idempotencyKey;
 
     // Project-scope guard.
     const readClient = createConvexReadClient(token);

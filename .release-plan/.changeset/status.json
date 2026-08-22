@@ -5,38 +5,28 @@
         {
           "name": "@mcpjam/sdk",
           "type": "patch"
-        }
-      ],
-      "summary": "Claude readiness: name the input that closes each gap, and stop recommending intrusive probes.\n\nRunning the grader against two live connectors turned up two reporting bugs that\nonly appear on a target the run cannot fully reach.\n\nThe tool, apps and RFC 8707 checks reported `not-evaluated` without naming an\ninput that would close the gap, so the run-level summary could only offer inputs\nsome other check had declared. On an OAuth connector the run could not\nauthenticate to, the single remaining candidate was `intrusive` — and the report\ntold the reader to \"supply intrusive to close the gap\" on a server whose only\nactual problem was a missing token. Those checks now name `toolListing`,\n`appsResult` and `authorizationRequests`.\n\n`intrusive` is now a GATED input: it registers OAuth clients and spends refresh\ngrants, so it is only legitimate against a server the submitter controls with a\ndedicated test account. It never appears in the summary's `Supply …` clause. A\nrun whose only remaining gap is intrusive now says nothing failed and that the\ngap needs explicit opt-in, instead of reading as advice to go run it.\n\n`claude.auth.rfc8707-resource-canonical` was unreachable in practice: it grades\nthe `resource` parameter sent to `/authorize` and `/token`, but\n`discoverClaudeAuthEvidence` excluded `resourceIndicatorsSent` from the extras a\ncaller may pass, and an access token carries no record of the requests that\nproduced it. The extras now accept it (alongside `insufficientScopeChallenge`),\nand a new pure `resourceIndicatorsFrom({ authorizationUrl, tokenRequestBody })`\nreads the parameter out of the two requests that carry it — returning\n`undefined` rather than an empty object when neither did, so an absent parameter\nstays `not-evaluated` instead of being graded as a bad one.\n\nNew exports: `CLAUDE_GATED_INPUTS`, `CLAUDE_TOOL_LISTING_INPUT`,\n`CLAUDE_APPS_RESULT_INPUT`, `CLAUDE_AUTHORIZATION_REQUESTS_INPUT`,\n`resourceIndicatorsFrom`.",
-      "id": "claude-readiness-actionable-gaps"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "`mcpjam eval run` gains the full target matrix and every run knob.\n\nThe CLI could name one environment and override the server list; the web UI\ncould fan a suite out across every attached host or environment and set\niterations, matchers, case subsets and pass thresholds per run. Worse, running a\nhost-attached suite from the CLI silently executed under the suite's DEFAULT\nhost config — the run happened, and the result named a host that never ran it.\n\n`--environment` and `--host` are now variadic (one value targets one thing,\nseveral fan out), `--all-targets` runs every attached target, and\n`--iterations`, `--case`, `--exclude-skills`, `--refresh-snapshot`, `--notes`,\n`--min-pass-rate`, `--match-options` and `--idempotency-key` expose the rest.\n`--host` is the mis-attribution fix: a run against a named host is stamped with\nthat host's configuration.\n\nA suite with several attached targets no longer guesses — it fails with\n`TARGET_REQUIRED` and lists every choice, because guessing here is guessing how\nmuch to spend. A fan-out goes through the single grouped-launch endpoint, so it\noccupies one concurrency slot rather than N.\n\n`--format json` still prints exactly one JSON document, so CI can parse stdout\ndirectly. Human format adds a `View:` link per started run, a\n`Started N/M runs (group …)` summary, and a named line per failure. A partial or\nwholly failed fan-out exits 1: a per-target failure does not abort its siblings,\nso exiting 0 would let a pipeline read \"1 of 3 runs never started\" as a clean\nlaunch.\n\n`mcpjam eval cases run` gains `--host`, `--iterations` and `--idempotency-key`.",
-      "id": "cli-eval-run-targets"
-    },
-    {
-      "releases": [
+        },
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
+          "type": "patch"
+        }
+      ],
+      "summary": "Fix Cursor's MCP Apps matrix disagreeing with the host catalog.\n\n`MCP_APPS_CURSOR` is a hand-maintained mirror of the catalog's Cursor row, and\ntwo keys had fallen out of sync: it pinned `downloadFile: false` where the\ncatalog says `true`, and inherited `requestTeardown: true` from `MCP_APPS_FULL`\nwhere the catalog says `false`. The catalog corrections landed without the\nmirror being updated.\n\nThe two are read by different consumers — the Playground emulation resolves\nfrom this matrix, `mcpjam compat` grades from the catalog — and `downloadFile`\nis one of the keys the compat evaluator grades. So the Playground showed a\nCursor widget's file download failing while the compat report said Cursor\nsupports it.\n\nNothing enforces agreement between the two sources today; this is the value fix\nonly.",
+      "id": "cursor-capabilities-catalog-parity"
+    },
+    {
+      "releases": [
         {
           "name": "@mcpjam/sdk",
           "type": "minor"
         },
         {
-          "name": "@mcpjam/cli",
+          "name": "@mcpjam/inspector",
           "type": "minor"
         }
       ],
-      "summary": "Let agent surfaces compose an execution stack, not just name a saved one.\n\nThe app's environment composer lets someone start from a saved environment OR\nquickly assemble a client/model/computer/skills stack. The stack becomes an\nad-hoc — unnamed, content-addressed — environment, which is precisely what keeps\nthrowaway combinations out of the project's environment list. Agent surfaces had\nno path to it: `create_project_environment` forces a name and adds a permanent\nentry someone else then has to reason about, which is the pollution ad-hoc rows\nexist to avoid.\n\n`ensure_adhoc_environment` (and `POST /environments/ensure-adhoc`) gets or\ncreates one from a stack in selector vocabulary. It is deduplicated by CONTENT,\nso the same stack always returns the same environment and `created` tells a\ncaller which happened — the status line cannot, because get-or-create answers\n200 either way. `name_environment` promotes one in place, keeping the id every\nexisting run points at; it is the only promotion path, because the platform's\nrename is admin-gated and refuses an unnamed row while promotion is member-gated\nand refuses a named one.\n\n`run_eval_suite` and `run_eval_case` gain `compose`, and the CLI gains\n`--compose-host` / `--compose-computer` / `--compose-model` /\n`--compose-server-group` / `--compose-skill`. A composed stack is not a new\nexecution channel: it resolves to an environment and launches through the\nordinary environment path, so it inherits the same authoritative resolution and\nimmutable snapshot. There is deliberately no per-run \"override the model\"\nfield — that would be a second, weaker channel with none of those guarantees.\n\nComposing APPENDS the environment to the suite, mirroring what the app's own\ncomposer does, because an environment the suite does not list is one nobody can\nre-run from the app afterwards. Both operations say so up front, the appended\nwrite is atomic (`POST /eval-suites/{id}/environments` — the replace door would\nsilently detach an environment someone else attached in between), and the result\nreports what was persisted even when the launch itself fails, so a caller whose\nrun errored still learns their suite changed and that a retry is safe.",
-      "id": "composed-run-targets"
+      "summary": "Directory readiness: the observation algebra, a real dial, and the hosted worker\n\nSurfaces the Claude and OpenAI directory-readiness runners through the product,\nagainst the backend's durable run lifecycle and its managed observation broker.\n\n**A model may observe; it may not decide.** Observation ids come from a frozen\nper-publisher catalogue, and the lane, class, title and citation of the\nresulting finding are the SDK's, fixed at build time. Both invariants are\nre-checked when the finding is built rather than trusted from the catalogue's\ntype, so the one-character edit that moves an observation into a dispositive\nlane cannot land silently. `llm` joins the provenance union. Every failure —\nprovider outage, malformed output, a reservation the org could not afford — is\na first-class state with a machine-readable reason, because \"we could not\nafford to look\" must never render as \"we looked and it was fine\".\n\n**A tool listing readiness never dialled.** `gatherOpenAIReadinessEvidence`\ntook a tool listing as an argument and never fetched one, so every wire run\ngraded the whole annotation inventory `not-evaluated` — checks that existed,\nwere wired up, and could not fire. `directory-readiness/mcp-dial.ts` performs\nthe handshake and the paginated listings, including the\n`notifications/initialized` the lifecycle requires and server frameworks\nenforce. Every listing reports whether it FINISHED, and a truncated one\nproduces a coverage gap rather than a universal claim over a subset.\n\n**Reuse is guarded.** `gatherClaudeReadinessEvidence` is the OpenAI gatherer's\nsymmetrical twin, and the evidence adapters refuse a conformance result from a\ndifferent target, a different config, or a run that did not exercise everything\nit selected — completeness read from the checks, since a run is `\"failed\"` from\nits first violation whatever else never ran. Refusal degrades to MISSING, never\nto a pass.\n\nNode plugin file sources move into the SDK's Node entry so the CLI can grade a\nlocal package without depending on a web server or copying the archive rules.\n`plugin-bundle/index.ts` and the browser entry stay free of `node:fs` and of an\narchive library.\n\nAdds `POST /api/mcp/conformance/readiness/:publisher`, synchronous and\ndeterministic, with no observation broker and no flag to ask for one: a local\nrun has no lease and no payer.",
+      "id": "directory-readiness-surfaces"
     },
     {
       "releases": [
@@ -53,106 +43,8 @@
           "type": "minor"
         }
       ],
-      "summary": "GitHub Checks — \"run this suite on every pull request\" — is reachable from agents.\n\nTwo new operations, `list_eval_check_repos` and `connect_eval_check_repo`, over\na new org-scoped route family (`GET`/`POST\n/v1/organizations/{organizationId}/eval-check-repos`). Not fields on\n`update_eval_suite`: a connection binds the organization's GitHub App\ninstallation to a repository, and the suite only decides which suite that\nrepository answers for — modelling it as a suite setting would have put an\norganization-wide write behind a suite id.\n\nThe connect goes through `checkRepoConfigsNode:connectVerifiedRepo`, never the\n`checkRepoConfigs:connectRepo` mutation beside it, which is marked\n`@deprecated COMPATIBILITY ONLY — the unverified connect path` and cannot stamp\nan installation id. A test pins that, because nothing else would notice a new\nsurface growing the unverified pile.\n\n`outagePolicy` is REQUIRED, though the platform leaves it optional: it decides\nwhat a check reports when MCPJam cannot conclude, and a surface that defaults it\nis the one that quietly produces repositories nobody chose a policy for — which\nan agent would do every time. `outagePolicy: null` on the read is likewise a\nreal state (nobody chose), not reported as `fail_open`.\n\nThe surface is deliberately as narrow as the suite-side section it exposes:\nconnect, and see what is connected. Retargeting, pausing and disconnecting are\nrepo-level decisions and stay in Settings → Integrations. `connect_eval_check_repo`\ndeclares `risk: \"exposure\"`, is gated behind an approval proposal that names the\nrepository and the policy, and is excluded from the in-app chat toolset with a\nwritten reason.\n\nCLI: `mcpjam eval checks list` and `mcpjam eval checks connect --repo owner/repo\n--outage-policy fail-open|fail-closed`.",
-      "id": "eval-github-checks-ops"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Run a harness eval on the iteration's own box, and admit only what it can honestly do.\n\nThe honesty gate turned silent emulation into an explicit refusal. This turns\nthe refusal into execution for the configurations a harness can actually run,\nand keeps refusing the ones it cannot.\n\nAdmission now decides on two facts. A **pinned computer image is required**,\nwith no fallback to the acting member's personal computer: a harness eval\niteration runs on one disposable box, and borrowing a shared one would carry\nstate between iterations, which is the opposite of what a per-iteration box is\nfor. Its static half distinguishes an *omitted* pin (\"not looked up\" — the\nbatch route validates targets before any environment resolution) from an\nexplicit `null` (\"resolved absence\"), so a fan-out never refuses every harness\ntarget over a fact nobody checked. And `widgetRendered` assertions are\n**refused rather than skipped**: a harness reaches MCP through the signed\nproxy, so the inspector's widget manager never sees the call — and a skipped\nassertion on a passing run is indistinguishable from one that held.\n\nExecution threads what the harness turn needs, every field gated on the harness\nselector so an emulated eval stays byte-identical: the iteration's **existing**\nsandbox (the same box already exposed as `bash` — one box per iteration, never\ntwo, carried on the handler options rather than the member-readable run\nsnapshot so it cannot be forged), the same MCP-proxy strategy the hosted chat\nroutes resolve, and `builtInTools` passed explicitly, because the harness reads\nbuilt-ins off that field and nowhere else.\n\nPinned skills are deliberately not wired yet, and the code says so: an eval\npins skills that carry no runtime identity or aggregate hash, and synthesizing\nthem would put an invented integrity hash on the box.",
-      "id": "eval-harness-execution"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Stop harness-hosted eval suites from silently running on the emulated engine.\n\nA host config carrying `harness` runs the REAL runtime in chat and in swarms —\nboth pre-flight the shared `checkHarnessRuntimeAvailable` gate and refuse\nrather than degrade. Eval runs forwarded the same selector into the turn\npipeline but pre-flighted nothing and supplied no MCP proxy, so a suite pinned\nto a Claude Code host quietly executed on the emulated engine and reported\nGREEN. That is the worst available answer: the suite claims it measured Claude\nCode, and it measured something else.\n\nEval runs now call the same gate — not a re-derived subset, so a rule added to\nit later applies here too — once the run's host config and cases are known and\nbefore anything spends. A refusal finalizes the run with the gate's own reason\n(broker delivery off, approval-plus-MCP-tools, an enterprise-managed host, a\nharness that cannot deliver the suite's servers, an ineligible model). A suite\nmixing hosted and BYOK models names the cases that cannot run rather than\nsaying \"some model is ineligible\", and a model-free (pinned-only) case is never\ngated on a model it does not use.\n\nWhat was silent emulation is now one of two honest answers, never a green run\non an engine nobody asked for: an eligible configuration executes on the\nharness (see \"Run a harness eval on the iteration's own box\"), and everything\nelse is refused by name. A suite that wants emulated execution keeps a\nnon-harness host, the same choice a chat user has.\n\nRuns also record which engine they executed on. `configSnapshot.executionEngine`\nis derived server-side from the run's own host config — never sent by a caller,\nso nothing can claim a runtime it did not use — and surfaces as\n`executionEngine` on `GET /eval-runs/{id}`. ABSENT means the run recorded no\nengine, which readers must treat as unknown rather than as `emulated`: those\nare different claims, and conflating them is the exact ambiguity that let the\nsilent degradation survive.",
-      "id": "eval-harness-honesty-gate"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        }
-      ],
-      "summary": "Give `run_eval_suite` the full target matrix — explicitly, never guessed.\n\nThe web UI could fan an eval suite out across every attached host or\nenvironment, apply iteration and matcher overrides, and refresh the suite's\nsnapshot. `run_eval_suite` took a project, a suite, servers, and one\nenvironment. Worse, a host-attached suite run from an agent surface silently\nexecuted under the suite's DEFAULT host config — the run happened, and the\nresult was attributed to a host that never ran it — and a multi-environment\nsuite simply errored.\n\nTargets are now explicit. A suite with nothing attached runs its saved\nselection, exactly as before. A suite with exactly ONE attached environment or\nhost runs against that one automatically — not a guess, the only option, and\nthe fix for the mis-attribution. A suite with SEVERAL fails with\nTARGET_REQUIRED naming every choice, because each of the alternatives is a\ndifferent amount of the caller's money. `environment`/`environments`,\n`host`/`hosts` name targets; `allAttached` runs every one of them, one paid run\neach, through the single atomic batch endpoint rather than N independent\nlaunches.\n\nEvery selector resolves AND is checked against the suite's attachments before\nthe first request. A fan-out issues one launch per target, so a bad target\nfound late is a bad target found after its siblings started spending.\n\nBoth launch operations now carry `risk: \"spend\"`, which every surface reads\ninstead of re-deriving \"does this cost money\" from an operation name: the MCP\ncatalog appends a COSTS MONEY cue to their descriptions, and the in-app agent\nmarks their approvals spend-severity.\n\nAgent proposals for a fan-out are FROZEN at mint time: `allAttached` is\nresolved to an explicit id list and dropped, and environment/host NAMES are\nresolved to ids — so neither attaching a fourth environment nor moving a name\nbetween the proposal and the click changes what an approval runs. The freeze is\nbest-effort by design: when the platform cannot be reached to resolve the set,\nthe proposal is still offered with its selectors unresolved, because failing to\nnarrow is a worse outcome than the behaviour that came before it. The approval\nline says how many paid runs a click starts (and, for a composed target, that\nthe suite's environment list changes), and a grouped launch links to the group\nrather than to one of its runs — linking the first run would hide a sibling's\nfailure.\n\nNew knobs on both run operations: `iterations`, `cases`, `matchOptions` (public\nvocabulary), `excludeSkills`, `notes`, `minPassRate`, `idempotencyKey`, and\n`refreshSnapshot` — which states up front that it PERSISTS a new host-config\nsnapshot on the suite, and is rejected on any multi-target launch where\nlast-writer-wins on a frozen snapshot is never what was meant.",
-      "id": "eval-run-explicit-targets"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add `POST /projects/{projectId}/eval-run-groups` — one atomic fan-out launch.\n\nRunning an eval suite against several attached hosts or environments meant N\nseparate `POST /eval-runs` calls, and nothing tied them together. Each one\ncharged its own concurrency slot (so a 3-target fan-out was unlaunchable under\nthe default cap of 2), each one could fail after its siblings had already\nstarted spending, and the `runGroupId` that grouped their rows was minted by the\nclient — a claim about intent the server had no way to verify.\n\nThe new endpoint is the only surface with grouped-launch semantics. It mints the\ngroup id, bounds the fan-out at 10 targets, requires ONE axis (all environments\nor all hosts — a mix would have to answer whether a host runs inside an\nenvironment or beside it), deduplicates targets by id, validates every target\nagainst the suite's attachments AND runs the static harness-admission checks\nbefore launching anything, and holds exactly one organization concurrency slot\nfor the whole group — released only when the last sibling finishes, through\nwhichever of the two paths that sibling took.\n\nThe receipt is discriminated rather than optional-field soup: `outcome` is\n`started | partial | failed`, and each target entry is either\n`{status: \"started\", runId, runStatus, …}` or `{status: \"failed\", error}`. A\nper-target failure does not abort its siblings. Deprecated top-level mirrors of\nthe first started run are preserved for readers written against the single-run\nreceipt, and are absent when nothing started rather than inventing a run.\n\nSend an idempotency key and the launch becomes replayable: the group id is\nderived from the key and each target's run key from that, so a retry after a\ncrash mid-launch returns the original run ids instead of double-launching the\ntargets that already started.\n\n`POST /eval-runs` gains two things: it accepts the PUBLIC match-option\nvocabulary (`any|in-order|exact`, `extraToolCalls`, `arguments`) alongside the\ninternal one, and it echoes a caller-supplied `runGroupId` — as a display label\nonly. It gives N separate launches no group treatment, which is exactly why a\nfan-out has to come through the new endpoint.\n\nThe OpenAPI spec also documents the single-run fields it has been accepting all\nalong and never described: `caseIds`, `matchOptionsOverride`, `namedHostId`,\n`refreshSnapshot` (flagged as the persisted suite mutation it is), `runGroupId`,\n`idempotencyKey`, and `skillsOverride`.",
-      "id": "eval-run-groups-endpoint"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Stop an idempotent retry from re-running the suite it already ran.\n\nAn eval launch that carries an idempotency key is asking not to be charged\ntwice. Convex honoured half of that: a repeat key returns the existing run\ninstead of inserting a second row. But it returned it shaped exactly like a\nfresh launch — no marker saying it was a replay — so the inspector could not\ntell the two apart, took the run it was handed, and executed the whole suite\nagainst it. Every case ran a second time and billed a second time, writing over\nresults that were already final. The key prevented a duplicate row and not the\nduplicate spend, which is the opposite of what the field's own documentation\npromises (\"returns the EXISTING run instead of creating and billing a second\none\"), and it is why the run receipt reported a hardcoded `running` for a run\nthat may have finished an hour earlier.\n\nThe platform now says `deduped` and reports the run's real `status`, and every\npath that executes a prepared run consults `shouldSkipExecution` before doing\nso. This is Stripe's rule, not a new one: a duplicate key replays the original\noutcome rather than performing the work again. Crash recovery does not need to\nride on it, because an explicit replay endpoint already exists for that.\n\nThe skip is deliberately narrow — a replay of a run that has REACHED A TERMINAL\nSTATUS, and nothing else. A replay of a run still marked `running` executes\nexactly as it does today: genuinely in flight and abandoned mid-flight are\nindistinguishable from here and want opposite treatments, and refusing to\nexecute would strand the second. Telling them apart needs a liveness signal on\nthe run, not a guess. Deploy skew is treated the same way: a backend that does\nnot report `deduped` is unknown rather than fresh, so it keeps the old\nbehaviour instead of gaining a refusal.\n\nApplied at every launch surface rather than the public API alone, because the\ncallers that retry are the unattended ones. The scheduled worker passes its\ntrigger id, so a redelivered trigger was re-running a completed scheduled run;\nthe GitHub-checks worker passes its claim's trigger id, and now skips only the\nexecution while still reading and reporting the finished run's verdict, which\nis what a redelivery should do.\n\n`/api/v1` responses gain `deduped` alongside the now-truthful `status`, on the\nsingle-run receipt and on each target of a grouped launch, so a caller can tell\n\"I started this\" from \"this already existed\" without diffing run ids across\nretries.\n\nRequires the companion backend change to be deployed first; against an older\nbackend nothing changes.",
-      "id": "eval-run-idempotent-replay"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Judge results are readable, and grading is requestable, from every agent surface.\n\nA suite could be configured to grade and still grade into a place no agent could\nsee: the run DTO returned no judge results, and nothing outside the app could\nask for grading on a finished run.\n\n`GET …/eval-runs/{runId}` now carries a `judges` envelope — `goalCompletion`\nand `groundedness`, each with `status`, `errorCode`, `summary`, `generatedAt`,\n`modelUsed`, `threshold` and per-case grades. An envelope rather than a bare\n`judge` field because goal completion is one of several advisory graders on a\nrun, and a third is a new key rather than a reshaped response. `status: null`\nmeans a judge was never requested, which is a different answer from \"requested\nand graded nothing\"; a pending or failed judge carries no cases. `caseKey`\nkeeps its persisted name — it is the authored-case identity, not a case row id.\n\nNew operation `request_eval_run_judge` (`POST …/eval-runs/{runId}/judge`,\n`mcpjam eval judge`) requests grading. It declares `risk: \"spend\"`, is gated\nbehind an approval proposal on the agent registry, and requires approval on the\nin-app chat surface. `force` re-grades; `model` and `threshold` override for one\nrun; `enable` grades a run recorded while the judge was off — a run's grading\nconfig is pinned when it starts, so enabling the judge on the suite does not\nreach an already-recorded run. `enable` needs a platform deployment carrying the\nmatching backend change; older ones refuse the override rather than silently\ngrading nothing.\n\n`mcpjam eval status` prints a one-line summary per judge that actually graded,\nin `--format human` only. `--format json` output is unchanged in shape beyond\nthe new `judges` field.",
-      "id": "eval-run-judge-read-and-request"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "patch"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "patch"
-        }
-      ],
-      "summary": "Finish the run-target receipt, and stop deciding admission on prose.\n\nA FAILED ENVIRONMENT TARGET now says which environment it was. Only host targets\nwere carried onto failed entries, so a fan-out across environments reported\n`Failed: target` — a receipt that names no target cannot tell you what to retry,\nwhich is the whole reason it is discriminated rather than a bag of optional\nfields. Attached environments also gain their names from a single listing, which\nthe `TARGET_REQUIRED` refusal needed just as badly: it was offering ids to choose\nbetween, not the names anyone knows them by.\n\nCOMPOSING NO LONGER WRITES BEFORE THE REQUEST IS KNOWN TO BE GOOD. A mistyped\ncase name used to leave an ad-hoc environment created and attached to the suite\nfor a run that never started, with an error mentioning neither write. Reads that\ncan reject a request now happen while rejecting is still free. The report of\nwhat compose persisted also reaches non-API failures — a dropped connection\npersists the same two writes — and rides structured `details` rather than prose\nalone, annotated in place so an abort stays an abort for callers matching on it.\nThe approval line for a composed proposal says the suite's environment list\nchanges, because approving one authorises that edit.\n\nHARNESS REFUSALS CARRY A STRUCTURED `kind` instead of being recognised by their\nown wording. Eval admission runs the shared gate twice — once from the host\nconfig alone, before the run's per-case models are known — and told a model\nrefusal from a host-level one by matching the message text. Rephrasing a\nuser-facing sentence could therefore change which runs are admitted, silently.\n\nThe batch dry run also passes the environment's PINNED COMPUTER IMAGE, which it\nhad already resolved. The gate distinguishes \"no pin\" from \"nobody looked\", and\nthe dry run was reporting the second when it knew the first.\n\nAlso: `readJsonObjectBody` moves to the v1 adapter beside `synthesizeServerBody`\n— the two are a pair, and the difference between them (whether a strict schema\ncan see the caller's fields) now has one explanation instead of a copy per\nroute; the suite-environment attach body is strict for the same reason the\ngrouped-launch body is; a 404 is blamed on the server's version only when it is\na route miss, not when the live route reports a deleted suite; the environments\nroute header no longer claims every write needs ADMIN when creating does not;\nand the CLI reference documents `environments ensure-adhoc` and\n`environments name`, which shipped with no documentation at all.",
-      "id": "eval-run-target-fixes"
+      "summary": "Durable conformance runs: history, CLI upload, and GitHub dual checks\n\nReplace browser-only conformance state with project-owned immutable runs.\n`runConformance` / `reportConformanceRun` upload a composite report; `mcpjam\nconformance run` defaults to Protocol + Apps + Tasks and prints the UI deep\nlink. Hosted Inspector keeps a history-first view and shareable read-only\nlinks. GitHub App execution can emit an opt-in `MCPJam Conformance` check\nalongside `MCPJam Evals` from the same parent build.",
+      "id": "durable-conformance-runs"
     },
     {
       "releases": [
@@ -161,8 +53,68 @@
           "type": "patch"
         }
       ],
-      "summary": "A settings row can no longer ship UI-only.\n\nThe suite settings sheet is the only place several eval behaviors can be\nconfigured, and a row could ship there — a JSX block, a toggle, a picker — with\nno representation on the SDK, CLI or MCP and nothing in the codebase that\nnoticed. That is how LLM as Judge stayed unreachable from the CLI, and how the\ncomputer-image picker ended up with no API field at all.\n\nA hand-kept list of setting keys would not have caught either, because nothing\nforces a new JSX row to touch such a list. Instead there is now a shared\nmanifest — one entry per row, declaring either the PATCH field path that\nreaches it, the platform operation that does, or a written reason it is\ndeliberately app-only. `SettingsSection` takes a manifest key and stamps\n`data-setting-key`, so a row authored without an entry does not typecheck.\n\nTwo tests close the loop, because a type error can be cast away and a manifest\nentry is only a claim: a render test asserts every stamped key has an entry\n(and that no entry outlived its row, or drifted from its label), and an API\ntest parses every `api:` path through the real PATCH schema — checking the\nnested LEAF survives, not just that the object was accepted — and resolves\nevery `op:` against the real operation catalog.\n\nThe one `excluded:` entry today is GitHub Checks, which is org-scoped rather\nthan suite-scoped and needs its own route family.",
-      "id": "eval-settings-parity-ratchet"
+      "summary": "Harness evals: stop requiring a pinned computer image\n\nA harness eval run needs a machine per iteration, and until now the only\nmachine it was allowed to use was a **custom pinned image**. On a deployment\nwhose image builder is the inert `stub` — the default, because\n`COMPUTERS_ENV_BUILDER` is deliberately separate from `COMPUTERS_PROVIDER` and\nthe E2B build API is still unverified — every image such a deployment can build\nboots a template the model broker then refuses to lease against. So harness\nevals had no working road at all, while chat harness turns worked fine on the\nsame deployment by booting the personal computer's default template.\n\nAn unpinned harness run now boots the **deployment-default template**: the same\nreal image chat gets, still one fresh disposable box per iteration, still\nreleased after. What the old rule actually protected — never borrowing the\nacting member's personal computer, which is shared and stateful — is preserved\nby always provisioning a box, not by demanding an image. (Requires the backend\ncounterpart; deploy that first.)\n\n**Closes a gap where that protection did not hold.** The two single-case\nsurfaces never ran the harness gate at all, so a harness host there passed\nadmission, booted no box (both provisioning sites require a run), and fell\nthrough to `resolveHarnessSandbox` — the personal computer, the one fallback\neval execution must never take. Single-case runs now refuse a harness host and\nsay to run the case as part of a suite.\n\nThe `bash`-without-a-computer refusal stays exactly as it is for **emulated**\nruns, which still boot nothing. A harness run is exempt because its premise —\n\"there will be no computer\" — is simply false for it.\n\nWhich iterations get a box is now `needsEphemeralEvalSandbox`, its own module\nwith its own tests. As an inline condition it could only be exercised by\ndriving a whole iteration, which is how the harness half of the rule went\nmissing: a harness run that boots no box does not fail loudly, it quietly runs\non someone's personal computer.",
+      "id": "harness-evals-unpinned-computer"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Replace the hosted-mode tab allow-list with a block list derived from the surface manifests.\n\n`hosted-tab-policy.ts` was written when hosted mode was a small subset of the\ndesktop app, and it never stopped being default-deny: every new tab had to be\nadded to `HOSTED_SIDEBAR_ALLOWED_TABS` by hand, and one that nobody remembered\nwas simply absent on app.mcpjam.com — no error, no flag that could bring it\nback, because the sidebar filter runs before `filterByFeatureFlags`. That is how\nSessions shipped invisible (#4210), and the file had taken 37 commits of\ncatch-up edits before it.\n\nThe premise had inverted: of ~30 nav segments exactly one, Tracing, genuinely\ncannot run hosted (it needs the local OTLP collector). So the allow-lists and\ntheir two predicates are gone. `hostedBlocked` in `shared/app-surfaces.ts` — a\nfield that already existed and already drove the agent atlas — is now the single\nsource of truth, exposed as `listHostedBlockedNavSegments()`, and\n`isHostedTabBlocked()` is the one availability check the sidebar, hash/route\nresolution, and `ui_navigate` all share. `ui-actions.ts` already worked this way.\n\nBehavior change: a new tab is reachable on hosted the day it lands, with its\nfeature flag deciding visibility. The sidebar/hash split disappears with the\nallow-lists; it only ever differed on `computer` and `skills`, neither of which\nis a sidebar item.",
+      "id": "hosted-tab-policy-blocklist-only"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "An auth-walled readiness run names its one next step\n\nA run against an OAuth server with no token completes honestly — dozens of\nchecks gray, the verdict amber, nothing red — but the section left the reader\nto infer what to do about it, and the agent surfaces had the same facts with\nno instruction attached.\n\nThe section now shows a banner when two facts agree: this run carried no\ntoken (`authMode: \"headless\"`), and the server challenged correctly (a\nsatisfied `unauthenticated-challenge` finding, or an `authorizationRequests`\ngap). Either alone stays silent — headless-alone is every run against every\nopen server, and the banner would nag universally. Together they mean one\naction closes the gaps: connect the server with OAuth and run again. Nothing\nreadiness-specific to configure — a hosted run reads the saved token\nautomatically, which is why the banner can promise it.\n\nThe agent learns the same rule through a prompt note keyed to the same two\nmachine-readable fields, ending in the same instruction: connecting earns the\nserver its remaining grades; the challenge it already gave earned it green\nmarks, not red ones.",
+      "id": "readiness-auth-wall-invite"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        }
+      ],
+      "summary": "`mcpjam readiness check` — grade a connector or plugin locally\n\nTwo of OpenAI's four submission shapes carry a PACKAGE, and a package is bytes\non the developer's disk: there is no upload for it, deliberately, so those\nshapes can only ever be graded here. Anthropic's intrusive probes are the same\nstory from the other side — they register an OAuth client on the target, which\nis a thing to do to a server you own from a machine you control, not something\na hosted worker should do on somebody's behalf.\n\nSo this is not the offline fallback for the hosted endpoints. It grades what\nonly the developer's machine can reach; the hosted commands grade the server as\nthe PLATFORM reaches it, and the two answers are worth having separately.\n\n**The mode is declared, never inferred.** `--submission-mode` is required for\nOpenAI, and the per-mode input rules are usage errors rather than silent\nadjustments: a wire mode refuses `--package`, a package mode refuses a URL,\nand either refuses to run without the input its shape requires. Inferring\nwould read a forgotten `--package` as `mcp-only`, report the package lane\n`not-applicable`, and hand a submitter a clean bill of health for an artifact\nnobody looked at. The rules are read off `OPENAI_SUBMISSION_MODE_SHAPES`, so a\nfifth mode cannot arrive with this command quietly accepting the wrong inputs.\n\n`--package` takes a directory or a `.zip`, decided by what is on disk rather\nthan by suffix — someone pointing at the folder they are about to zip should\nget the same grade as someone pointing at the archive. A directory reports the\narchive-shaped checks as gaps rather than inventing answers, because it is not\nan archive yet; a zip closes them by reading the RAW central directory before\nthe zip library normalizes it, since `..`, backslashes and duplicate names are\nexactly what the portal rejects and a repairing loader would hide.\n\nExit codes match every other gate here — `0` ready, `1` not-ready, `3`\nincomplete, `2` usage — with a `directoryReadinessExitCode` of its own rather\nthan a reuse of `conformanceExitCode`, whose `{passed, outcome}` shape would\nread an incomplete readiness run as a violation. No infrastructure condition\nmaps to `1`.\n\nOutput follows the same channel discipline as `protocol conformance`: stdout\ncarries only the result (`--reporter json-summary|junit-xml` work today, since\nthe report providers already know both readiness kinds), while the verdict and\nthe gap list go to stderr, are suppressed by `--quiet`, and never affect the\nexit code. The gap list names the input that would close each lane, because an\n`incomplete` verdict without the next action is an adjective rather than an\nanswer.",
+      "id": "readiness-cli-local-check"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Directory readiness on the /conformance page\n\nTwo new sections — Claude and OpenAI — beside the Protocol, Apps, Tasks and\nOAuth suites, behind the `mcpjam-directory-readiness` flag. The engine, the\nAPI and the local route already existed; this is the first surface that calls\nany of them.\n\n**Each section owns its run.** They are deliberately outside the page's shared\n\"Run available checks\" button: a hosted readiness run takes minutes, and\njoining the shared busy state would hold that button and the protocol-version\nselector hostage for its duration. They are also outside the pooled score,\nbecause readiness produces lanes and coverage rather than passed and failed\nchecks — there is no number to pool, by design.\n\n**Two execution modes behind one control.** Locally the run is synchronous and\nfree, and cannot spend: the route has no observations flag at all. Hosted, it\nis a durable run — `202`, poll, cancel, and a report fetched lazily when\nsomebody opens the findings, because it can be megabytes. A reload mid-run\nfinds its way back to the run still going, which no other suite on the page\ncan do.\n\n**The three axes stay apart.** Whether the run finished, what it graded, and\nwhether the optional paid pass ran are three different answers. A run that\nFAILED shows \"Run failed\" rather than \"not ready\" — our runner falling over is\nnot a finding about somebody's server. A refused AI observation renders as a\ngap with the reason, never as a failure, because `billing_limit_reached` means\n\"we could not afford to look\" and the deterministic grade is complete without\nit.\n\n**Coverage travels with every verdict.** A lane prints what it evaluated out of\nwhat it selected, states `not applicable` separately from `not evaluated`, and\nnames the input that would close its gap. Findings group by class in the order\nsomebody fixes them — blockers, requirements, recommendations, human review,\nobservations — because the class is what decides whether a finding moved the\nverdict, and a model-authored line is labelled as one.\n\n**The two package submission modes are offered but disabled**, with the CLI\ncommand that can run them. They need bytes on the developer's machine, and a\nshorter menu would teach a submitter that readiness cannot grade their plugin\nat all.\n\nThe hosted routes needed the user's bearer, and their scope sits in the middle\nof the path so no prefix could name them. Rather than allowlisting all of\n`/api/v1/projects/` — which would hand the bearer to every project-scoped\npublic route that ever ships — `HOSTED_AUTH_PATH_PREFIXES` gained a sibling\npattern list, anchored at both ends, with tests covering the six paths that\nmust carry it and six neighbours that must not.",
+      "id": "readiness-conformance-ui"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Readiness sections need no flag of their own\n\n`/conformance` is already gated by `mcpjam-conformance` — the sidebar filters\nthe nav item and, more to the point, `App.tsx` redirects the route away unless\nthe flag reads `true`. Nobody without it can reach the page at all, so a\nsecond flag on two sections inside that page gated an audience against itself.\n\nThe cost was not theoretical: the sections shipped invisible, waiting on a\nflag that had to be created before anyone could see the feature that had\nalready merged.\n\nRemoved rather than switched to `mcpjam-conformance`, because the check adds\nnothing over the gate that already ran. A flag can be reintroduced in one line\nif readiness ever needs to lag the page — deleting one later is the harder\ndirection, and this one had no consumers.",
+      "id": "readiness-drop-section-flag"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Readiness findings arrive with the verdict, in the suites' own grammar\n\nThe readiness sections rendered lane counts over nothing. Two causes, one\nsymptom.\n\n**The findings never loaded.** The report fetch was wired to the section's\nexpand click — and the sections open by default, so the click never came, the\nfetch never fired, and the report component returned `null` on the resulting\nstate instead of saying anything. A run that produced 49 findings rendered\nexactly like a run that produced none. The report now loads the moment a run\nis terminal, with a regression test proving no click is involved.\n\n**The copy was the engine's wire vocabulary.** \"Supply authorizationRequests,\nintrusive to close this gap\" is a `missingInputs` token list, named for runner\noptions a reader has never heard of. Each token now maps to a sentence that\nsays what happened and what to do — complete an OAuth flow, run the CLI with\nthe intrusive flags on a server you own, add a submission profile — with\nunknown tokens falling back to their raw names rather than being hidden.\n\nThe report itself is regrouped to feel like the suites beside it: findings\nsit under the lane that graded them, the group header carrying the same\n\"10/14 evaluated\" a reader saw in the summary, red-and-gap lanes open by\ndefault while clean lanes stay folded. Every row expands to the sentence it\nexists to deliver — the remediation for a violation, the engine's own reason\nfor a check that never ran — plus its evidence and a link to the exact page\nand section of the publisher's rules. That is the bar for an agent fixing an\nerror from this screen: id, status, why, what to change, and where it is\nwritten.",
+      "id": "readiness-findings-visible"
     },
     {
       "releases": [
@@ -171,169 +123,184 @@
           "type": "minor"
         },
         {
-          "name": "@mcpjam/cli",
+          "name": "@mcpjam/inspector",
           "type": "minor"
         },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        }
+      ],
+      "summary": "Directory readiness reaches the MCP tools, the agent, in-app chat and the CLI\n\nSix operations in the platform catalog, and the five registries that fan them\nout. One PR because it has to be: the MCP worker's partition guard throws at\nmodule load, so an operation that exists without a catalog entry does not fail\na test — it stops the worker from booting.\n\n**Starts return a receipt, and every surface says so.** A run dials somebody\nelse's server for minutes, so the API answers `202` and the caller polls. A\nmodel handed a receipt will report the receipt as the answer unless told\notherwise, which is what the tool descriptions and the agent's prompt notes\nare for.\n\n**The spend declaration is the worst case; the approval copy is the real one.**\n`includeLlmObservations` defaults off and most runs are free, but `risk` is a\nstatic field read by five surfaces, and one that described the cheap case\nwould describe the case that needs no describing. So the starts declare\n`spend` — and the agent's `confirmSeverity` is a FUNCTION, so a run without\nthe flag still asks for approval saying it costs nothing. Cancel declares\n`none`: it stops traffic to a third party and destroys no record, which is why\nit is direct rather than gated, matching `cancel_wave_insights` beside it.\n\n**The report operation returns a projection, not the document.** A stored\nreport can be megabytes and the chat surface caps model output at 24k\ncharacters — a cut that lands mid-structure produces a JSON object that still\nparses and is simply wrong. So the operation caps the findings itself, orders\nthem most-consequential-first so a truncated list keeps what matters, drops\nthe raw per-finding evidence a model has no use for, and reports\n`totalFindings` / `returnedFindings` / `truncated` so a subset can never read\nas the whole.\n\n**The three axes are taught, not just exposed.** Prompt notes state that\n`status`, `overallStatus` and `llmObservations` answer different questions:\nthat a `completed` run can be `not-ready`, that a `billing-blocked`\nobservation leaves a complete and valid grade, and that a run which FAILED\nproduced no grade at all and must never be reported as a verdict about the\nserver. Without that, every model surface reports the first field it finds.\n\nThe CLI gains the hosted half beside its local one — `readiness start`,\n`status`, `list`, `cancel`, `report` — because a hosted run reaches the server\nthrough the saved row and the authorize exchange, which is how the platform\nitself reaches it. A different question from what the local command answers,\nand the only one that can spend for observations or leave a record.\n\nAlso maps the six `/api/v1` readiness routes to their SDK client methods in\nthe coverage ratchet, which has been failing on `main` since the routes\nshipped.",
+      "id": "readiness-platform-operations"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Directory readiness: redact the stored report, and instrument the run\n\nTwo things a readiness run needed before any surface reads its output.\n\n**The report is redacted on the way into storage.** A readiness report is a\ndebugging artifact — findings carry the raw observation behind each verdict,\nwhich is how a submitter learns why a lane failed. That is the right default\ninside the process that produced it and the wrong one for a blob that outlives\nthe run and gets read back by surfaces that did not exist when it was written;\n`DirectoryReadinessFinding.details` already documents itself as redacted before\nit travels, and the stored path was the one place that promise was not kept.\n\nIt goes through `redactConformanceReportForSharing` — both layers, because the\nkey-name pass alone is a blocklist and a blocklist eventually misses the shape\na future check introduces. Redaction is structure-preserving, so lanes,\ncoverage and remediation survive.\n\nThis is defense in depth, not a breach fix: the report route is\nproject-authorized and was never public, and no check shipping today writes a\ncredential into a finding. That last fact is the argument rather than the\ncounter-argument — the guarantee has to exist before the check that first\nrecords a request, not after.\n\nOne accepted cost, pinned in a test so it stays a decision: the redactor\nscrubs whatever follows a `Bearer ` scheme, which is right for an\n`Authorization` header and also catches the parameter name of a\n`WWW-Authenticate` challenge (`Bearer realm=\"x\"` → `Bearer [REDACTED]\"x\"`).\nThe parameter value survives. Teaching a shared security utility to recognise\none header narrows a rule that currently errs safe, which deserves its own\nreview.\n\n**Runs are instrumented at both ends.** A start event from the v1 route — the\none place a hosted run is created, so it covers every surface that starts one\n— and a terminal event from the detached worker, attributed through a new\n`captureServerEventForActor` to the identity resolved while the request still\nexisted. The terminal event is emitted from a `finally`, so an abandoned lease\ncounts as an outcome rather than as missing data.\n\nThe three axes are reported separately, because collapsing them is the\nmisreading the product exists to prevent: whether the run finished, what it\ngraded, and whether the optional paid pass ran are three different answers. No\nreport contents and no target URL are ever sent.",
+      "id": "readiness-report-redaction-telemetry"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Readiness: use the platform client instead of a second copy of it\n\nThe /conformance page's hosted half hand-rolled five request wrappers, a\nrequest/parse/error helper, and a field-by-field body build for the start\nroutes — all of which `PlatformApiClient` already does, with typed parameters\nand a timeout the copy did not have.\n\nThe body build is the part worth naming. The start routes are `strictObject`,\nso an unknown key is a 400 rather than an ignored extra, and a rejected start\nnever reaches its idempotency key — meaning the retry dedupes against nothing\nand dials somebody's server twice. The SDK client has `pickReadinessStartBody`\nfor exactly that. The copy re-derived the same rule from the same reasoning,\nwith its own comment explaining it, unaware the original existed. Two\nimplementations of one wire contract drift, and the one nobody is looking at\ndrifts first.\n\n`sdk/src/platform` is CI-guarded against `node:` imports and `process.env` on\nboth source and dist, so a browser can use it — which is what that guard is\nfor.\n\nOne wrinkle worth keeping: the client sets its own `authorization` header, and\n`authFetch` reads a caller-provided Authorization as \"this caller owns its\nauth\" and skips both its own header AND its refresh-and-retry on 401. Passing\nthe client straight through would have quietly cost the session self-healing\nevery other hosted call has, on the one surface that polls for minutes. The\ntransport strips the header on the way out so the bearer has exactly one\nowner.\n\nThe local half stays hand-written: it is one synchronous, free, unpersisted\ncall to `/api/mcp`, which no platform client speaks.\n\nNet 54 lines lighter, and the run row and receipt are now the platform's types\nrather than a restatement of them.",
+      "id": "readiness-reuse-platform-client"
+    },
+    {
+      "releases": [
         {
           "name": "@mcpjam/inspector",
           "type": "minor"
         }
       ],
-      "summary": "The suite's computer image is settable, readable, and discoverable from agents.\n\n`environment.computerEnvironment` is now on `PATCH …/eval-suites/{id}` and on\n`update_eval_suite`, taking a sandbox-image name or id (`null` clears the pin\nand runs fall back to the provider's default base image). It also appears on\nthe suite detail, reporting the resolved image NAME beside its id so a caller\ncan echo back what it just set without a second read.\n\n`list_sandbox_images` and `get_sandbox_image` join the MCP catalog. They were\nexcluded under a \"sandbox image lifecycle\" rationale that is about builds and\npromotions and never fitted two read-only ops — while it stood, an MCP agent\ncould pin a suite's computer image with no way to enumerate the choices. The\nbuild/promote/use writes stay excluded, and their exclusion strings now say\n\"lifecycle WRITES\" so the distinction survives.\n\nFixes a data-loss bug in the same write: `updateTestSuite` replaces the\nenvironment envelope wholesale, and the PATCH handler sent `{ servers }`\nalone — so editing a suite's server list through the API silently dropped its\nserver bindings, and would have dropped the new image pin. The handler now\nlayers onto the suite's current environment, matching what the settings sheet\ndoes.\n\nOn the CLI: `mcpjam eval update --computer-image <name-or-id|off>`.",
-      "id": "eval-suite-computer-image"
+      "summary": "Add the ChatGPT app directory beside the Claude one in the Registry tab, behind\na source facet.\n\nShips DARK, behind the same two gates as the Claude half: the\n`registry-enabled` PostHog flag and the `REGISTRY_FEATURE_ENABLED` constant. It\nalso needs the matching backend (`chatgpt-directory` rows, the `authPosture`\nsearch filter, `getCatalogSourceStatus`, and `connectCatalogServer`'s new\n`outcome` field); until that deploys the facet has nothing to show.\n\n**One directory at a time, Claude by default.** The backend's browse and search\nare source-scoped index reads, so a merged \"both\" mode would be a second query\nand a merge with no defensible ordering. The facet is also how a person says\nwhich catalog they are looking at, which the cards cannot state as clearly.\n\n**\"Listed in ChatGPT\" is provenance, not endorsement.** OpenAI accepting a\nsubmission is not a verification tier of ours, so ChatGPT rows carry no tier and\nthe tier filter is hidden entirely for that source — an always-empty filter\nreads as \"this directory has no partners\", which would be a claim we invented.\n\n**Rows with no endpoint are shown, disabled, with a reason.** About 37% of the\nChatGPT directory is a hosted server OpenAI proxies and never publishes a URL\nfor. Those are ingested — the census is the point — and rendered as\nnon-connectable cards. The copy keys on the row's `unavailableReason`, not on\n`endpointKind === 'none'`, because that kind used to mean exactly one thing:\n\"a local desktop extension\". Telling someone their SaaS connector is a desktop\nextension sends them looking for an installer that does not exist.\n\n**Connecting the same server from both directories collapses.** The backend\ndedupes by canonical endpoint across sources and hands back the existing\nconnection; the UI says \"Already connected via the Claude directory\" rather\nthan silently doing nothing. Listing overlap still shows both cards — dual\nlisting is a signal — and only connect collapses.\n\nA **Connectable only** toggle hides the rows that cannot be installed. It is\noff by default — hiding a third of a catalog before anyone asked would make the\ndirectory look smaller than it is — and it filters in the QUERY rather than on\nthe page, because filtering a page after it arrives returns short pages and\neventually blank ones.\n\nEach source shows its own \"as of\" date, taken from the upstream scrape time\nrather than our ingest time: uploading a Tuesday sweep on Friday makes the\ncatalog Tuesday-fresh, and saying Friday would overstate it by three days. The\nClaude feed syncs daily; the ChatGPT one is a manual weekly upload, so\nstaleness there is an expected condition and worth surfacing.\n\nAgent surface: `ui_search_registry_directory` gains an optional `source`\n(omitted leaves the user's current view alone, so a model that does not know\nthere are two cannot silently switch it), and `ui_snapshot_app`'s `directory`\nblock reports the source, the as-of date, and `connectable: false` with the\nreason for rows that cannot be installed. Still no endpoint URLs in the\nsnapshot.\n\n`useClaudeDirectory` is now `useServerDirectory`; it was never going to stay\nClaude-only.",
+      "id": "registry-chatgpt-directory-source"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Send the hosted bearer on the registry's Convex routes so the catalog stops 401ing.\n\nOpening Registry on a hosted deployment fired two `Missing or invalid bearer token` toasts and rendered every card with zero stars. The catalog request went out with no `Authorization` header at all — signed in, signed out, or as a guest, the outcome was identical, so it never looked like an expired session.\n\n`authFetch` attaches the hosted bearer only when the request's path matches an entry in `HOSTED_AUTH_PATH_PREFIXES`. Most callers hit same-origin `/api/web/*` and are covered by that prefix; the registry client is one of the few that calls Convex directly at an absolute `https://<deployment>.convex.site/web/registry/...` URL, and `/web/oauth/` was the only `/web/` entry on the list. Every registry route fell through the match and was sent bare. On the other side, `/web/registry/catalog` opens with `ctx.auth.getUserIdentity()` and answers 401 with exactly that message when there is no identity — it needs one to resolve per-viewer `isStarred`, so there is no anonymous read to fall back to.\n\nAdding `/web/registry/` to the list covers all four routes, which share the same helper and had the same defect: `catalog`, `star`, `unstar`, and `merge-guest-stars`. The last one meant a guest's stars were silently dropped instead of merged on sign-in.\n\nThis does not widen where credentials can go. A path-prefix match is necessary but not sufficient — `shouldAttachHostedAuthorization` first requires `isHostedAuthAllowedOrigin`, which admits only the app's own origin, a loopback host, or the configured `*.convex.site` hostname. A foreign origin serving the same path still gets nothing, and the accompanying test pins that.\n\nThe failure mode is worth naming, because the next direct-to-Convex route will hit it too: a path missing from the prefix list produces no warning and no type error. The request simply goes out unauthenticated and surfaces as a generic 401 from the server.",
+      "id": "registry-hosted-bearer-401"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Stop toasting `Missing or invalid bearer token` on every hosted /servers pageload.\n\n`useRegistryServers` fetches the curated catalog and, after sign-in, merges leftover guest stars. Both hit Convex HTTP actions; when the hosted bearer is not attached yet they 401, and the hook toasted the raw backend message three times (catalog + merge + retry). Auth bootstrap failures are now swallowed and retried; only a real catalog/merge failure still toasts. Signing in re-fetches the catalog so `isStarred` populates once a session exists.",
+      "id": "registry-pageload-auth-toasts"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        }
+      ],
+      "summary": "Badge directory rows whose OAuth probe resolved to pre-registered-only\nregistration — \"Requires pre-registered client\" on the card and the detail\ndialog.\n\nThe verdict is the backend's nightly `oauthProbe` sweep asking each\nconnectable row's authorization server for its registration posture\n(DCR / CIMD / neither). It is a probe **fact**, distinct from the upstream\nlisting's `authPosture` claim, and the badge renders only when the probe can\nback it:\n\n- **`resolved` verdicts only.** `no_metadata` and `unreachable` are\n  indistinguishable from a server that does not do OAuth discovery at all, so\n  they render nothing.\n- **The verdict must be about the row's current endpoint.** The ETL never\n  touches `oauthProbe`, so between an endpoint move and the next sweep a row\n  can hold a verdict about its old URL; `requiresPreregisteredClient` mirrors\n  the backend's `probeTargetFor` (fixed → `remoteUrl`, options → first\n  published endpoint) and refuses a mismatched verdict.",
+      "id": "registry-preregistered-badge"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/cli",
+          "type": "minor"
+        },
+        {
+          "name": "@mcpjam/sdk",
+          "type": "minor"
+        }
+      ],
+      "summary": "Release the latest Inspector, CLI, and SDK updates.",
+      "id": "releases-2026-08-21"
+    },
+    {
+      "releases": [
+        {
+          "name": "@mcpjam/inspector",
+          "type": "patch"
+        }
+      ],
+      "summary": "Make the Sessions tab reachable on the hosted app.\n\nThe unified Sessions feed shipped with its nav item, route, and\n`unified-sessions-enabled` flag wiring all in place, but `\"sessions\"` was never\nadded to `HOSTED_SIDEBAR_ALLOWED_TABS`. On hosted deployments the sidebar builds\nfrom `getHostedNavigationSections`, which drops any item whose segment is not on\nthat list — and it runs *before* the feature-flag filter. So flagged-in users on\napp.mcpjam.com saw no Sessions item, and a direct `/sessions` URL fell through to\nServers via the same policy in `App.tsx`.\n\nNothing about the feed is hosted-specific: it reads the Convex-backed session\nrows the hosted surfaces already write. Adding the one entry restores parity\nbetween hosted and local, and `HOSTED_HASH_ALLOWED_TABS` picks it up because it\nspreads the sidebar list. Visibility is still governed by the PostHog flag —\nthis only makes the tab reachable.",
+      "id": "sessions-hosted-allowlist"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
+          "type": "patch"
         },
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Minimum iterations is settable from the SDK, CLI and MCP.\n\nThe suite settings sheet's per-case iteration floor — every case runs at least\nN times, `max(case.iterations, minimumIterations)` — had no representation\noutside the app. It is now `settings.minimumIterations` on\n`PATCH …/eval-suites/{id}` and on `update_eval_suite`, and it appears on the\nsuite detail.\n\n`null` clears the floor, matching the platform's own `minIterations` contract\nexactly rather than inventing a second way to say \"no floor\". On the CLI that\nis `mcpjam eval update --min-iterations off`; `--min-iterations <1-10>` sets\none. A value outside 1–10, or a non-integer, is refused before the write.\n\n`null` on the read means no floor, which is the suite's real state rather than\na stand-in for 1: a floor of 1 and no floor produce identical runs today, but\nonly one of them is something the user chose.",
-      "id": "eval-suite-minimum-iterations"
+      "summary": "Recognize `-32021` as the tasks extension's Missing Required Client Capability\ncode, not the pre-renumber `-32003`.\n\n`mcp-error-codes.ts` has recorded the right values since the 2026-07-28\nrenumber: `MissingRequiredClientCapability` is `-32021`, and `-32003` sits in\n`PRE_RENUMBER_DRAFT_ERROR_CODES` under a comment saying those are \"NOT final\nwire codes\". Two places never got the memo and kept `-32003` as a literal:\n`TASKS_DECLARATION_REQUIRED_ERROR_CODE` in the client manager, and the tasks\nconformance runner's own copy of the constant. Both now read from the central\ntable, so the next renumber is a one-line change in one file.\n\nThe conformance consequence was a false verdict in both directions. A server\nanswering the canonical `-32021` failed `tasks-undeclared-capability-rejected`,\nand one still answering the obsolete `-32003` passed it — on the check whose\nwhole job is to prove the server refuses undeclared task work. The core suite\nalready asserted `-32021` in `modern-undeclared-capability-error`, so the two\nconformance modules were grading the same requirement against different codes.\n\next-tasks made this change in `c523f2c`, for the reasons the commit gives:\nSEP-2663 uses `-32021` throughout, the core 2026-07-28 schema defines\n`MissingRequiredClientCapabilityError` as `-32021`, and `-32003` appears in no\ncore schema version. The extension's root `index.md` still shows `-32003` and is\nstale; `specification/draft/tasks.md` is authoritative.\n\nA server that still emits `-32003` now fails — it does not conform — but it is\ntold which draft it is running rather than being reported as an anonymous wrong\ncode, so the fix is one line for whoever reads the report. The same naming\napplies to the `tasks-undeclared-creation-refused` warning, which stays a pass\nbecause no task reached a non-declaring client.",
+      "id": "tasks-missing-capability-32021"
     },
     {
       "releases": [
         {
           "name": "@mcpjam/inspector",
-          "type": "minor"
+          "type": "patch"
         }
       ],
-      "summary": "Connect GitHub accounts to a workspace, and say when a connected repository is\nnot actually ready.\n\nNeeds the matching backend deployment: until it lands, the account and\nbinding functions this surface calls do not resolve.\n\nGitHub Checks used to assume one GitHub App installation for the whole\ndeployment, so the settings page had nothing to say about WHICH account a\nrepository came from — there was only ever one. That is changing on the backend,\nand this is the surface for it.\n\nSettings → Integrations → GitHub now has a **GitHub accounts** section. Install\nthe app on an account from here, or _claim_ an installation somebody already\nadded from GitHub's side. Claiming asks you to sign in to GitHub, and the copy\nsays why: installing the app is not on its own proof that an installation is\nyours to connect to this workspace, so the backend requires a GitHub user\nauthorization that names you as someone who administers that account.\nDisconnecting asks for confirmation, and the confirmation says what is KEPT as\nwell as what stops — your suite and policy choices survive, so reconnecting is\nnot a rebuild.\n\nConnected repositories now carry a state when something is wrong: **Reconnect\nrequired**, **App inactive**, or **No access**. Each one names what happened and\nrules out the reading that would send you to fix the wrong thing — three of the\nfour states have nothing to do with your code, and the natural assumption when a\ncheck stops is that it does. A healthy row gets no badge at all. The state is\ndecided by the backend; it is never inferred from a missing visibility badge,\nwhich means \"GitHub did not tell us\", not \"something is wrong\".\n\nThe repository picker now aggregates every connected account and selects by\nGitHub's numeric repository id rather than by name — two accounts can each have\na `widgets`, and a name is not an identity. The account is shown beside a\nrepository only when it disambiguates.\n\nA repository conflict, an installation already connected to another workspace,\nor a failed proof all read exactly as the backend worded them, and none of them\nnames another workspace.",
-      "id": "github-checks-installation-binding"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "LLM as Judge can be turned on from the CLI, the SDK and MCP.\n\n`settings.judge` carried only `enabled` and `model`, and `enabled` already\ndefaults to `true`. The flag the grader actually gates on is `autoRun`, which\nno agent surface exposed — so `mcpjam eval update --judge on` wrote a field\nthat was already set and graded nothing. `autoRun` and `threshold` are now\npart of the public judge settings on `PATCH …/eval-suites/{id}`, the\n`update_eval_suite` operation, and the MCP catalog (which picks them up with no\ntool-side edit).\n\n`mcpjam eval update --judge <on|off>` writes `enabled` and `autoRun` together,\nmatching the single switch in the app's suite settings sheet: \"turn the judge\non\" means \"grade my runs\", not \"make a setting available\". If you want the\nknobs separately, pass `settings.judge` through `--json`. `--judge-threshold\n<0-1>` is new alongside it.\n\nThe suite DTO's `judge` block is now consistently RESOLVED — `enabled`,\n`model`, `autoRun` and `threshold` all layered over the platform defaults,\nmirroring the backend resolver. It used to mix a resolved `enabled` with a raw\n`model`, so a suite that never picked a judge model reported\n`{ enabled: true, model: null }` — a state that never exists at grading time.\n\nWire-visible change: `judge.model` stops being `null` for suites that never\npicked one; it now reports the model a run would actually grade with. The SDK\ntype keeps `model: string | null` because older deployments still send null,\nand `autoRun`/`threshold` are optional there for the same reason.",
-      "id": "judge-config-agent-parity"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        }
-      ],
-      "summary": "Add the Claude connectors directory to the Registry tab — ~2,000 mirrored\nentries, searchable, alongside MCPJam's curated catalog.\n\nShips DARK. The whole section is behind the two gates the Registry tab already\nhas: the `registry-enabled` PostHog flag and the `REGISTRY_FEATURE_ENABLED`\nconstant. Flipping them is a separate decision. It also needs the matching\nbackend deployment (`searchCatalogServers`, `getProjectCatalogConnections`, and\n`connectCatalogServer`'s `{serverId, serverName}` return) plus its column\nbackfill; until those land the queries do not resolve.\n\nThe curated registry is ~21 cards MCPJam stands behind. The directory is a\ndaily mirror of Anthropic's public one — two orders of magnitude larger, and\nnothing we vouch for. So it is a SEPARATE section with its own search box and\ntier filter, not a longer grid: a catalog that size is not browsable, and\nfolding it into the curated one would quietly restate 2,000 upstream listings\nas recommendations.\n\nAbout a dozen connectors are in both. The curated card wins: the directory row\nis hidden, and the agent's connect resolves curated-first for the same reason —\ninstalling the mirrored copy of a server we curate would drop the transport\nconfig we maintain for it.\n\n**Connecting is mutation-first.** The backend validates the endpoint, refuses a\nwithdrawn listing, dedupes against an existing connection, writes the audit\nevent and creates the server row — all before anything can redirect the\nbrowser. The curated flow does the reverse and writes its provenance from a\nlater effect keyed on React state, which an OAuth redirect destroys; this\nordering cannot lose it. Success means INSTALLED, not connected: the live\nconnection is client-initiated as always, and the card reads `added` from the\nconnection rows but `connecting` / `connected` / `error` from the live servers\nmap.\n\nAuth is probed, never assumed. The connect runs `authMethod: \"auto\"` —\nunauthenticated first, OAuth escalation on a 401, with a confirmation before\nthe redirect — rather than deriving OAuth from the directory's `is_authless`\nflag, which is upstream metadata that can be stale. A stale `true` would\notherwise produce a server that silently never authorizes.\n\nSome entries cannot be connected from a card alone, and each says so in its own\nwords: a multi-region connector opens a picker of its published endpoints, and\none that runs on your own instance asks for that URL and shows the pattern it\nhas to match. The client checks the pattern to save you a round trip; the\nserver re-checks it and its refusal is what you see. If the listing has moved\non since the page loaded, the retry re-seeds from the server's answer rather\nthan the stale card.\n\nIcons come from third-party CDNs, so they load lazily, send no referrer, and\nfall back to a placeholder rather than leaving a hole.\n\nFor the agent: `ui_connect_registry_server` now resolves directory entries too,\nand reports `endpoint_choice_required` or `authorization_required` instead of\nstarting anything that would redirect the browser mid-turn — a URL only the\nperson can choose is never guessed. One new read-only tool,\n`ui_search_registry_directory`, types into the screen's own search box so the\nmodel and the person are looking at the same results. The snapshot gains a\nbounded `directory` block carrying names, tiers and statuses — never an\nendpoint URL, same redaction rule as the curated half.\n\nThe verified check mark is now shared between both halves, and its fill moved\nfrom a hardcoded light-theme hex to `fill-primary`, so it tracks the palette\nand is legible in dark mode.",
-      "id": "registry-claude-directory-section"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/inspector",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        }
-      ],
-      "summary": "Release the latest Inspector, CLI, and SDK updates.\n\n- Give agent surfaces the full eval-run target matrix: explicit fan-out, one atomic batch launch, ad-hoc composed client/model/computer/skills stacks, and a retry that replays its run instead of running it again.\n- Expose the suite settings that were app-only — LLM-as-Judge `autoRun` and threshold, minimum iterations, and the computer image — with a ratchet that stops a new settings row from shipping UI-only.\n- Make judge results readable and grading requestable from the SDK, CLI, and MCP, instead of grading into a place no agent could see.\n- Reach GitHub Checks from agents: list and connect check repositories, bind a GitHub account to a workspace, and say when a connected repository is not actually ready.\n- Load suite files from disk, and add `mcpjam eval validate` and `mcpjam eval export`.\n- Add the Claude connectors directory to the Registry tab, and make Claude readiness name the input that closes each gap rather than recommending intrusive probes.",
-      "id": "releases-2026-08-19-2"
-    },
-    {
-      "releases": [
-        {
-          "name": "@mcpjam/sdk",
-          "type": "minor"
-        },
-        {
-          "name": "@mcpjam/cli",
-          "type": "minor"
-        }
-      ],
-      "summary": "Suite files get a loader, and the CLI gets `eval validate` and `eval export`.\n\nThe suite-file contract has existed for a while as schemas and a generated JSON\nSchema, and its own module says outright that it is the contract and not the\nloader: \"reading YAML, resolving defaults onto cases, and `eval validate` are a\nseparate concern that consumes these schemas\". That separate concern is what\nthis adds.\n\n## `loadEvalSuiteFile` / `serializeEvalSuiteFile` (`@mcpjam/sdk`)\n\nText in, text out. Pure and browser-safe — no `node:fs`, no `node:path`, no\n`process` — because three consumers need it and only one of them is a CLI: this\nCLI, the importer that converts foreign eval formats into suite files, and a\nfuture `validate_eval_suite` agent tool.\n\nYAML is canonical and JSON is accepted, through **one** parser and no format\nsniffing: JSON is a subset of YAML 1.2, so a sniffing branch would only be a\nsecond code path that could disagree with the first about the same bytes. A\nmulti-document stream is refused rather than read as its first document.\n\nInput is capped at 1,048,576 bytes of UTF-8 and is never truncated. The cap is\nmeasured in bytes, not `String.length`, for the reason the server's\n`mcpjam.yaml` parser already spells out: code units undercount multi-byte text,\nso a length check admits inputs larger than the bound it is meant to be.\n\nThe loader returns **both** the validated authored value and a resolved value\nwith the documented defaults applied — `minCompletionRate` 0.8,\n`maxEvaluatorErrorRate` 0.1, `captureLevel` `full`, and per-case model /\nrepetitions / pass threshold. The serializer accepts only the AUTHORED value,\nand the two are different TypeScript types, which is what makes it structurally\nimpossible for a resolved default to be written back into a file. That is the\ncontract's own rule 1 (\"no `.default()` anywhere\") enforced one layer up: an\nunchanged suite round-trips with an empty diff.\n\nFailures are findings, never exceptions — a validator that throws cannot report\nmore than the first thing it found. Each finding carries a stable machine code,\na field path (as segments and as a rendered `cases[3].steps[0].id`), a message,\nand — on a YAML syntax finding, which is the only kind the parser can place in\nthe text — a source line and column. They are sorted into document order rather\nthan emitted in the validator's traversal order, so two runs over the same bytes\nproduce byte-identical output.\n\nExported from `@mcpjam/sdk`, deliberately NOT from `@mcpjam/sdk/contract`: that\nsubpath is dependency-light and browser-bundled on purpose, and routing the\nloader through it would pull `yaml` into every client bundle that imports the\ncontract for its types.\n\n## `mcpjam eval validate --file <path>`\n\nOffline. No auth, no network, no `--project` — it builds no API client and reads\nno API key. Exit `0` valid, `1` parsed-but-contract-invalid with every finding\nreported, `2` when nothing was validated at all (unreadable path, over the cap,\nmalformed YAML). The difference between 1 and 2 is the point: a script that\nretries on 2 and opens a ticket on 1 is doing the right thing with both.\n\nIt deliberately does not re-resolve tool names, server references or fixtures\nagainst a project's live discovery. That is project-aware validation, it needs a\nnetwork round trip, and it belongs to a later step — which is why this command\ntakes no project at all rather than taking one and ignoring it. \"Valid\" here\nmeans \"a valid suite file\", never \"this will run\", and the docs say so.\n\n## `mcpjam eval export --suite <id-or-name>`\n\nFetches a hosted suite with the same operation pair `eval pull` uses, including\nits fail-closed pagination guard, and writes `.mcpjam/evals/<suite-id>.yaml` —\nthe suite's stable, path-safe identity, never its display name, so a rename does\nnot leave a second file behind.\n\n**It refuses rather than approximating.** A suite file cannot express everything\na hosted suite can — host attachments, attached project environments, a pinned\nsandbox image, an execution system prompt or temperature, LLM-as-judge grading,\nnon-default match options, an iterations floor that raises a case, a\ncompare-across-models case, a scenario-bound case, `replace`/`extend` check\noverrides, and a suite that serializes past the 1 MiB file limit. Each of those\nemits an `UNSUPPORTED_SUITE_EXPORT` finding and **no file is written at all** —\nnot a partial one, not one with a warning comment. A file that quietly dropped a\nhost attachment still parses, still runs, and measures something other than what\nthe dashboard measures while carrying the dashboard's suite id, so its results\njoin the same history. There is no comment that fixes that.\n\nTwo of the shapes a suite file reuses are open on purpose (a tool call's\n`arguments`, and predicates), and an open zod object strips unknown keys rather\nthan refusing them. So \"the candidate validated\" is not proof that nothing was\nlost. The proof is a deep-equality check after validation: anything the\nvalidator quietly removed surfaces as a finding naming the path.\n\nCase identity is never freshly minted. A case exports under its declared id, or\nunder its platform row id, or the export refuses. The dashboard's own exporter\nmints one as a fallback and is right to — its normal input is a draft that may\nhave no identity yet. A CLI export of a persisted suite always has a row id, so\na mint here would not be a fallback: it would be a brand-new identity for a case\nthat already has one, minted afresh on every single export. That is the history\nfork declared ids exist to prevent.\n\nThe file is written through a sibling temp file, an `fsync` and a `rename` —\nthe corpus lock's mechanism, now extracted and shared, with the lock's own\nbehaviour unchanged. It never passes through `writeJsonArtifact`, whose\ntelemetry redaction would silently alter authored content in a file that is then\nread back.\n\n## `eval pull` is legacy now\n\nThe suite file is the on-disk format going forward. `eval pull` and\n`mcpjam-evals.lock.json` survive for exactly one reason — they are the\ndocumented consumption path for `@mcpjam/vitest` (pull once, commit the lock,\n`loadCorpusFromLock`) — and its help text now says so and points at\n`eval export`. Retiring it is a follow-up gated on `@mcpjam/vitest` adopting the\nnew loader; nothing here teaches the lock any new capability.",
-      "id": "suite-file-loader-validate-export"
+      "summary": "Desktop tunnels forward real traffic again, instead of dying on the first MCP message.\n\n**A tunnel created in the desktop app was unusable.** The URL connected, then returned an empty 200 or `{\"error\":\"gateway_timeout\"}` for every request, and `main.log` recorded an uncaught `TypeError: mask is not a function` timed exactly to each incoming request. The cause is a bundling accident with a very narrow tell. The Electron main process bundles `ws` — `src/main.ts` dynamically imports the whole server, so `server/services/relay-client.ts` is in that graph — and `ws` decides whether a native masker is available by requiring its optional peer dep `bufferutil` inside a `try` and treating a thrown require as \"not installed\". `bufferutil` is not installed here, but Vite does not leave the require unresolvable: it resolves an absent optional peer dep to a frozen empty namespace. The require succeeds, returns `{}`, and `ws` installs a fast path whose `.mask` and `.unmask` do not exist.\n\n**Which is why it looked connected.** `ws` only takes the native path above a size threshold — 48 bytes to mask, 32 to unmask. The tunnel handshake and its 0-byte heartbeat pings stayed on the JS implementation and passed, so the app reported a healthy tunnel. Every real MCP JSON-RPC message clears 48 bytes and threw, uncaught, out of the relay's response pump. The relay's own control frames throw on the same line but are swallowed by an existing `try`, so the edge saw nothing at all and timed out. The `unauthorized` responses some users saw were the same thing from the other side: the local client kept dying and de-registering.\n\n**`src/ws-native-fallback.ts` sets `WS_NO_BUFFER_UTIL` before `ws` loads**, which skips the probe and keeps `ws` on its pure-JS masker — a few XORs per byte, well inside what a tunnel moves. It is the first import in `main.ts` because `ws` reads the variable at module-eval time. `WS_NO_UTF_8_VALIDATE` is set alongside it as insurance: `utf-8-validate` is stubbed identically, and is unreachable today only because `ws` prefers `node:buffer`'s `isUtf8`.\n\n**Only the desktop app was ever affected**, and both packaged builds and `electron:dev` were. The `npx` and Docker server and the `mcpjam` CLI leave `ws` as a bare import resolved from real `node_modules`, where the require genuinely throws and the fallback engages as designed. `npm run dev` bundles nothing, which is why this never reproduced locally despite shipping in every release since tunnels replaced ngrok.\n\n**The packaging step now refuses to ship the broken shape.** This class of defect exists only after bundling, so no source-level test can see it; `forge.config.ts`'s `packageAfterCopy` hook, which already inspects the built bundles before asar packing, now fails the build if the `bufferutil` stub is in the graph with nothing setting `WS_NO_BUFFER_UTIL`. It asserts the fix is present rather than the stub absent — the fix stops `ws` from using the stub, it does not remove it.",
+      "id": "ws-bufferutil-empty-stub"
     }
   ],
   "releases": [
     {
       "name": "@mcpjam/sdk",
       "type": "minor",
-      "oldVersion": "6.1.0",
+      "oldVersion": "6.3.0",
       "changesets": [
-        "claude-readiness-actionable-gaps",
-        "composed-run-targets",
-        "eval-github-checks-ops",
-        "eval-harness-honesty-gate",
-        "eval-run-explicit-targets",
-        "eval-run-groups-endpoint",
-        "eval-run-idempotent-replay",
-        "eval-run-judge-read-and-request",
-        "eval-run-target-fixes",
-        "eval-suite-computer-image",
-        "eval-suite-minimum-iterations",
-        "judge-config-agent-parity",
-        "releases-2026-08-19-2",
-        "suite-file-loader-validate-export"
+        "cursor-capabilities-catalog-parity",
+        "directory-readiness-surfaces",
+        "durable-conformance-runs",
+        "readiness-platform-operations",
+        "releases-2026-08-21",
+        "tasks-missing-capability-32021"
       ],
-      "newVersion": "6.2.0"
-    },
-    {
-      "name": "@mcpjam/cli",
-      "type": "minor",
-      "oldVersion": "3.26.0",
-      "changesets": [
-        "cli-eval-run-targets",
-        "composed-run-targets",
-        "eval-github-checks-ops",
-        "eval-run-judge-read-and-request",
-        "eval-suite-computer-image",
-        "eval-suite-minimum-iterations",
-        "judge-config-agent-parity",
-        "releases-2026-08-19-2",
-        "suite-file-loader-validate-export"
-      ],
-      "newVersion": "3.27.0"
+      "newVersion": "6.4.0"
     },
     {
       "name": "@mcpjam/inspector",
       "type": "minor",
-      "oldVersion": "2.42.0",
+      "oldVersion": "2.44.0",
       "changesets": [
-        "composed-run-targets",
-        "eval-github-checks-ops",
-        "eval-harness-execution",
-        "eval-harness-honesty-gate",
-        "eval-run-explicit-targets",
-        "eval-run-groups-endpoint",
-        "eval-run-idempotent-replay",
-        "eval-run-judge-read-and-request",
-        "eval-run-target-fixes",
-        "eval-settings-parity-ratchet",
-        "eval-suite-computer-image",
-        "eval-suite-minimum-iterations",
-        "github-checks-installation-binding",
-        "judge-config-agent-parity",
-        "registry-claude-directory-section",
-        "releases-2026-08-19-2"
+        "cursor-capabilities-catalog-parity",
+        "directory-readiness-surfaces",
+        "durable-conformance-runs",
+        "harness-evals-unpinned-computer",
+        "hosted-tab-policy-blocklist-only",
+        "readiness-auth-wall-invite",
+        "readiness-conformance-ui",
+        "readiness-drop-section-flag",
+        "readiness-findings-visible",
+        "readiness-platform-operations",
+        "readiness-report-redaction-telemetry",
+        "readiness-reuse-platform-client",
+        "registry-chatgpt-directory-source",
+        "registry-hosted-bearer-401",
+        "registry-pageload-auth-toasts",
+        "registry-preregistered-badge",
+        "releases-2026-08-21",
+        "sessions-hosted-allowlist",
+        "tasks-missing-capability-32021",
+        "ws-bufferutil-empty-stub"
       ],
-      "newVersion": "2.43.0"
+      "newVersion": "2.45.0"
+    },
+    {
+      "name": "@mcpjam/cli",
+      "type": "minor",
+      "oldVersion": "3.28.0",
+      "changesets": [
+        "durable-conformance-runs",
+        "readiness-cli-local-check",
+        "readiness-platform-operations",
+        "releases-2026-08-21"
+      ],
+      "newVersion": "3.29.0"
     },
     {
       "name": "@mcpjam/mcp",

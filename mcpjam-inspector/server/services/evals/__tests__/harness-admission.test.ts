@@ -71,19 +71,20 @@ describe("checkEvalHarnessAdmission", () => {
     });
   });
 
-  it("REFUSES a harness host with no pinned computer, rather than borrowing one", () => {
-    // Falling back to the acting member's personal computer would carry state
-    // between iterations — the opposite of what a per-iteration box is for.
-    const verdict = checkEvalHarnessAdmission({
-      hostConfig: harnessHost(),
-      serverIds: ["s1"],
-      cases: [{ title: "a", ...HOSTED_MODEL }],
-    });
-    expect(verdict.ok).toBe(false);
-    if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.harness).toBe("claude-code");
-    expect(verdict.reason).toContain("must pin a computer image");
-    expect(verdict.reason).toContain("no fallback to your personal computer");
+  it("ADMITS a harness host with no pinned computer — it boots the default image", () => {
+    // Requiring a pinned image left harness evals with no working road on a
+    // deployment whose image builder is the inert `stub`: the only permitted
+    // road was a custom image, and every image such a deployment can build
+    // boots a template the model broker then refuses to lease against. An
+    // unpinned run boots the deployment-default template instead — still a
+    // fresh disposable box per iteration, still never the personal computer.
+    expect(
+      checkEvalHarnessAdmission({
+        hostConfig: harnessHost(),
+        serverIds: ["s1"],
+        cases: [{ title: "a", ...HOSTED_MODEL }],
+      })
+    ).toEqual({ ok: true, harness: "claude-code" });
   });
 
   it("REFUSES cases asserting something a harness run cannot observe", () => {
@@ -94,7 +95,6 @@ describe("checkEvalHarnessAdmission", () => {
       hostConfig: harnessHost(),
       serverIds: ["s1"],
       cases: [{ title: "a", ...HOSTED_MODEL }],
-      pinnedComputerImageId: "img-1",
       widgetAssertingCaseTitles: ["renders the card"],
     });
     expect(verdict.ok).toBe(false);
@@ -114,7 +114,6 @@ describe("checkEvalHarnessAdmission", () => {
       // A pinned computer clears the last admission rule, so an ineligible
       // model must still fail — it routes through the direct engine, which
       // never forwards a harness.
-      pinnedComputerImageId: "img-1",
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
@@ -131,7 +130,6 @@ describe("checkEvalHarnessAdmission", () => {
         { title: "one", ...HOSTED_MODEL },
         { title: "two", ...HOSTED_MODEL },
       ],
-      pinnedComputerImageId: "img-1",
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
@@ -147,18 +145,16 @@ describe("checkEvalHarnessAdmission", () => {
       hostConfig: harnessHost(),
       serverIds: ["s1"],
       cases: [{ title: "probe", model: "widget-probe", provider: "none" }],
-      pinnedComputerImageId: "img-1",
     });
     expect(verdict).toEqual({ ok: true, harness: "claude-code" });
   });
 
-  it("admits an eligible harness host with a pinned computer", () => {
+  it("admits an eligible harness host", () => {
     expect(
       checkEvalHarnessAdmission({
         hostConfig: harnessHost(),
         serverIds: ["s1"],
         cases: [{ title: "a", ...HOSTED_MODEL }],
-        pinnedComputerImageId: "img-1",
       })
     ).toEqual({ ok: true, harness: "claude-code" });
   });
@@ -169,7 +165,6 @@ describe("checkEvalHarnessAdmission", () => {
       hostConfig: harnessHost(),
       serverIds: ["s1"],
       cases: [{ title: "a", ...HOSTED_MODEL }],
-      pinnedComputerImageId: "img-1",
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
@@ -184,7 +179,6 @@ describe("checkEvalHarnessAdmission", () => {
       hostConfig: { harness: "codex" },
       serverIds: ["s1"],
       cases: [{ title: "a", model: "openai/gpt-5", provider: "openai" }],
-      pinnedComputerImageId: "img-1",
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
@@ -193,28 +187,17 @@ describe("checkEvalHarnessAdmission", () => {
 });
 
 describe("checkEvalHarnessStaticAdmission", () => {
-  it("does NOT refuse over a pin it was never given — the batch dry run has none", () => {
+  it("never consults a pinned image — the batch dry run has none to give", () => {
     // The group route validates targets before any environment resolution, so
-    // an omitted pin means "not looked up". Refusing here would reject every
-    // harness target in a fan-out for a fact nobody had checked.
+    // it could only ever pass "not looked up". Now nothing asks: a harness run
+    // boots a box with or without a pinned image, so the fan-out's dry run has
+    // one less fact to hold and one less way to refuse a target wrongly.
     expect(
       checkEvalHarnessStaticAdmission({
         hostConfig: harnessHost(),
         serverIds: ["s1"],
       })
     ).toEqual({ ok: true, harness: "claude-code" });
-  });
-
-  it("DOES refuse an explicitly absent pin", () => {
-    // `null` is a resolved absence, which is a different claim from omission.
-    const verdict = checkEvalHarnessStaticAdmission({
-      hostConfig: harnessHost(),
-      serverIds: ["s1"],
-      pinnedComputerImageId: null,
-    });
-    expect(verdict.ok).toBe(false);
-    if (verdict.ok) throw new Error("unreachable");
-    expect(verdict.reason).toContain("must pin a computer image");
   });
 
   it("decides host-level rules with no cases at all — what batch dry-run needs", () => {
@@ -228,7 +211,6 @@ describe("checkEvalHarnessStaticAdmission", () => {
     const approvalHost = checkEvalHarnessStaticAdmission({
       hostConfig: harnessHost({ requireToolApproval: true }),
       serverIds: ["s1"],
-      pinnedComputerImageId: "img-1",
     });
     expect(approvalHost.ok).toBe(false);
   });
@@ -239,7 +221,6 @@ describe("checkEvalHarnessStaticAdmission", () => {
     const verdict = checkEvalHarnessStaticAdmission({
       hostConfig: harnessHost(),
       serverIds: ["s1"],
-      pinnedComputerImageId: "img-1",
     });
     expect(verdict).toEqual({ ok: true, harness: "claude-code" });
   });
@@ -248,7 +229,6 @@ describe("checkEvalHarnessStaticAdmission", () => {
     const verdict = checkEvalHarnessStaticAdmission({
       hostConfig: harnessHost({ modelId: "ollama/llama3" }),
       serverIds: ["s1"],
-      pinnedComputerImageId: "img-1",
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
@@ -262,7 +242,6 @@ describe("checkEvalHarnessStaticAdmission", () => {
       hostConfig: { harness: "codex" },
       serverIds: [],
       pluginServerIds: ["plugin-server-1"],
-      pinnedComputerImageId: "img-1",
     });
     expect(verdict.ok).toBe(false);
     if (verdict.ok) throw new Error("unreachable");
@@ -294,7 +273,6 @@ describe("checkEvalHarnessAdmission — org-level suites", () => {
     hostConfig: harnessHost(),
     serverIds: ["srv-1"],
     cases: [HOSTED_MODEL],
-    pinnedComputerImageId: "env-1",
   };
 
   it("refuses a harness run with no resolved project", () => {
@@ -304,12 +282,12 @@ describe("checkEvalHarnessAdmission — org-level suites", () => {
     expect(verdict.reason).toContain("organization");
   });
 
-  it("names the missing PROJECT, not the pinned image, when both are absent", () => {
-    // An org-level suite has neither. "Pin a computer image" would send the
-    // author to a setting that cannot fix a run with no project to pin it on.
+  it("names the missing PROJECT — the one thing that still cannot be defaulted", () => {
+    // An image can be defaulted; a project cannot. There is nothing to bill or
+    // provision against, so this stays a refusal — and it must not send the
+    // author to a computer-image setting that cannot fix it.
     const verdict = checkEvalHarnessAdmission({
       ...args,
-      pinnedComputerImageId: null,
       projectId: null,
     });
     expect(verdict.ok).toBe(false);
@@ -339,7 +317,6 @@ describe("checkEvalHarnessAdmission — the pinned model must be canonical", () 
   const args = {
     hostConfig: harnessHost(),
     serverIds: ["srv-1"],
-    pinnedComputerImageId: "env-1",
     projectId: "proj-1",
   };
   // Same model as HOSTED_MODEL, written the short way — which is what the
@@ -388,7 +365,6 @@ describe("checkEvalHarnessAdmission — the pinned model must be canonical", () 
       checkEvalHarnessAdmission({
         hostConfig: { hostStyle: "mcpjam" },
         cases: [{ title: "a", ...SHORT }],
-        pinnedComputerImageId: null,
       }).ok
     ).toBe(true);
   });
@@ -432,7 +408,6 @@ describe("checkEvalExecutionAdmission", () => {
       checkEvalHarnessAdmission({
         hostConfig: emulated,
         cases: [HOSTED_MODEL],
-        pinnedComputerImageId: null,
       }).ok
     ).toBe(true);
     expect(
@@ -505,6 +480,54 @@ describe("checkEvalExecutionAdmission", () => {
         surface: "single-case",
       }).ok
     ).toBe(true);
+  });
+
+  it("REFUSES a harness on the single-case surface, whatever tools it grants", () => {
+    // The gap this closes: a single-case run boots no box, so `runHarnessTurn`
+    // would fall through to `resolveHarnessSandbox` — the acting member's
+    // PERSONAL computer. That is the one fallback eval execution must never
+    // take, and it was reachable here because this surface never ran the
+    // harness gate at all.
+    for (const hostConfig of [
+      { harness: "claude-code" },
+      { harness: "claude-code", builtInToolIds: [] },
+      { harness: "claude-code", builtInToolIds: ["bash"] },
+    ]) {
+      const verdict = checkEvalExecutionAdmission({
+        hostConfig,
+        pinnedComputerImageId: "env-1",
+        surface: "single-case",
+      });
+      expect(verdict.ok).toBe(false);
+      if (verdict.ok) throw new Error("unreachable");
+      expect(verdict.reason).toContain("as part of a suite");
+      expect(verdict.reason).toContain("personal computer");
+    }
+  });
+
+  it("ADMITS a bash-granting HARNESS host with no image — it boots its own box", () => {
+    // The rule's premise ("there will be no computer") is false for a harness
+    // run: it provisions a disposable box whether or not an image is pinned.
+    // Refusing here would re-impose the pinned-image requirement through the
+    // back door, for exactly the hosts most likely to want a shell.
+    expect(
+      checkEvalExecutionAdmission({
+        hostConfig: { harness: "claude-code", builtInToolIds: ["bash"] },
+        pinnedComputerImageId: null,
+      }).ok
+    ).toBe(true);
+  });
+
+  it("keeps refusing an EMULATED bash host with no image", () => {
+    // The exemption above is scoped to harness runs only — an emulated run
+    // still boots nothing, so the silent-missing-shell failure it prevents is
+    // still live for the much larger emulated population.
+    expect(
+      checkEvalExecutionAdmission({
+        hostConfig: { harness: "not-a-harness", builtInToolIds: ["bash"] },
+        pinnedComputerImageId: null,
+      }).ok
+    ).toBe(false);
   });
 
   it("leaves the suite surface unchanged — an image still admits it", () => {

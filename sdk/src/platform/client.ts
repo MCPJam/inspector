@@ -81,9 +81,41 @@ import type {
   PlatformSessionsPage,
   PlatformTunnelClosed,
   PlatformTunnelGrant,
+  PlatformOpenAIReadinessStartBody,
+  PlatformReadinessKind,
+  PlatformReadinessRun,
+  PlatformReadinessRunReceipt,
+  PlatformReadinessStartBody,
+  PlatformCatalogServer,
+  PlatformCatalogSourceStatus,
+  PlatformDirectorySearchPage,
+  PlatformRegistryServer,
+  PlatformRegistryConnection,
+  PlatformRegistryInstall,
 } from "./types.js";
 
 export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
+
+/**
+ * Parse a request URL, tolerating a relative `baseUrl`.
+ *
+ * The default base and every Node caller pass an absolute origin, which
+ * `new URL` parses on its own. Browser and Worker callers may instead pass a
+ * same-origin prefix like `/api/v1` so the request rides the current origin's
+ * session (see `mcpjam-inspector`'s directory-readiness client). That prefix is
+ * not a valid URL by itself: `new URL("/api/v1/...")` throws "Failed to
+ * construct 'URL': Invalid URL" and the call never reaches `fetch`. Resolving
+ * against the document/worker origin fixes the relative case while leaving an
+ * absolute spec untouched (a second `base` argument is ignored when the first
+ * argument is already absolute).
+ */
+function resolvePlatformRequestUrl(spec: string): URL {
+  const origin =
+    typeof globalThis !== "undefined"
+      ? (globalThis as { location?: { origin?: string } }).location?.origin
+      : undefined;
+  return origin ? new URL(spec, origin) : new URL(spec);
+}
 
 export interface PlatformApiClientOptions {
   /** API origin + version prefix. Defaults to the hosted production API. */
@@ -132,6 +164,27 @@ type ServerScope = {
  * injected. Tolerant reader: unknown response fields pass through untouched,
  * and empty success bodies (204) resolve to `undefined`.
  */
+/**
+ * The two fields a readiness start body shares, and nothing else.
+ *
+ * Undefined entries are dropped rather than serialized as `null`: the
+ * endpoint's schema types both as optional, and an explicit `null` is a value
+ * it rejects rather than an absence it ignores.
+ */
+function pickReadinessStartBody(params: {
+  idempotencyKey?: string;
+  includeLlmObservations?: boolean;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  if (params.idempotencyKey !== undefined) {
+    body.idempotencyKey = params.idempotencyKey;
+  }
+  if (params.includeLlmObservations !== undefined) {
+    body.includeLlmObservations = params.includeLlmObservations;
+  }
+  return body;
+}
+
 export class PlatformApiClient {
   private readonly baseUrl: string;
   private readonly getAuth: () => string | Promise<string>;
@@ -205,6 +258,153 @@ export class PlatformApiClient {
     return this.request(
       "DELETE",
       `/projects/${encodeURIComponent(params.projectId)}`,
+      {},
+      options,
+    );
+  }
+
+  // ── Registry (directory + curated cards) ─────────────────────────────────
+
+  searchRegistryDirectory(
+    params: {
+      q?: string;
+      source?: string;
+      rowType?: string;
+      endpointKind?: string;
+      verifiedTier?: string;
+      connectableOnly?: boolean;
+      cursor?: string;
+      limit?: number;
+    } = {},
+    options?: RequestOptions,
+  ): Promise<PlatformDirectorySearchPage> {
+    return this.request(
+      "GET",
+      "/registry/directory-servers",
+      {
+        query: {
+          q: params.q,
+          source: params.source,
+          rowType: params.rowType,
+          endpointKind: params.endpointKind,
+          verifiedTier: params.verifiedTier,
+          connectableOnly:
+            params.connectableOnly === undefined
+              ? undefined
+              : params.connectableOnly
+                ? "true"
+                : "false",
+          ...pageQuery({ cursor: params.cursor, limit: params.limit }),
+        },
+      },
+      options,
+    );
+  }
+
+  getRegistryDirectoryServer(
+    params: { catalogServerId: string } | { name: string; source?: string },
+    options?: RequestOptions,
+  ): Promise<PlatformCatalogServer> {
+    if ("catalogServerId" in params) {
+      return this.request(
+        "GET",
+        `/registry/directory-servers/${encodeURIComponent(params.catalogServerId)}`,
+        {},
+        options,
+      );
+    }
+    return this.request(
+      "GET",
+      `/registry/directory-servers/${encodeURIComponent(params.name)}`,
+      { query: { source: params.source } },
+      options,
+    );
+  }
+
+  listRegistryDirectorySources(
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformCatalogSourceStatus>> {
+    return this.request("GET", "/registry/directory-sources", {}, options);
+  }
+
+  listRegistryServers(
+    params: { projectId: string; scope?: "global" | "organization" | "all" },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformRegistryServer>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/servers`,
+      { query: { scope: params.scope } },
+      options,
+    );
+  }
+
+  listRegistryConnections(
+    params: { projectId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformRegistryConnection>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/connections`,
+      {},
+      options,
+    );
+  }
+
+  installRegistryDirectoryServer(
+    params: {
+      projectId: string;
+      catalogServerId: string;
+      endpointUrl?: string;
+      expectedContentHash?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformRegistryInstall> {
+    // Explicit picks, not a rest spread — see `startClaudeReadinessRun`. The
+    // route's body schema forbids additional properties.
+    const { projectId, catalogServerId, endpointUrl, expectedContentHash } =
+      params;
+    const body: Record<string, unknown> = { catalogServerId };
+    if (endpointUrl !== undefined) body.endpointUrl = endpointUrl;
+    if (expectedContentHash !== undefined) {
+      body.expectedContentHash = expectedContentHash;
+    }
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/registry/directory-installs`,
+      { body },
+      options,
+    );
+  }
+
+  installRegistryServer(
+    params: {
+      projectId: string;
+      registryServerId: string;
+      expectedUpdatedAt?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformRegistryInstall> {
+    const { projectId, registryServerId, expectedUpdatedAt } = params;
+    const body: Record<string, unknown> = { registryServerId };
+    if (expectedUpdatedAt !== undefined) {
+      body.expectedUpdatedAt = expectedUpdatedAt;
+    }
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/registry/installs`,
+      { body },
+      options,
+    );
+  }
+
+  uninstallRegistryServer(
+    params: { projectId: string; registryServerId: string },
+    options?: RequestOptions,
+  ): Promise<{ deleted?: boolean }> {
+    return this.request(
+      "DELETE",
+      `/projects/${encodeURIComponent(params.projectId)}/registry/installs/${encodeURIComponent(params.registryServerId)}`,
       {},
       options,
     );
@@ -1254,6 +1454,151 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId,
       )}/eval-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options,
+    );
+  }
+
+  // ── Directory readiness ───────────────────────────────────────────────
+  //
+  // Asynchronous by design: a readiness run dials somebody else's server,
+  // walks its redirect chain, discovers its authorization metadata and lists
+  // its tools. A start answers `202` with a run id and everything after it is
+  // a separate call.
+  //
+  // The TARGET comes from the saved server the path names, never from a body.
+  // These methods have no URL parameter for the same reason the endpoint has
+  // no URL field: a caller cannot point a hosted run at an arbitrary host.
+
+  /**
+   * Start a Claude connector-directory readiness run.
+   *
+   * Deterministic grading is FREE. `includeLlmObservations` is the only field
+   * that can spend, and it defaults off.
+   */
+  startClaudeReadinessRun(
+    params: { projectId: string; serverId: string } & PlatformReadinessStartBody,
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRunReceipt> {
+    // Explicit picks, not a rest spread. The endpoint's body schema is
+    // `strictObject`, and TypeScript's structural typing lets a caller hand a
+    // WIDER object to this parameter — so a spread would forward whatever else
+    // that object carries and turn a valid start into a 400. Worse, the
+    // rejected request never reaches the idempotency key, so the caller's
+    // retry dedupes against nothing. `publishScenario` picks for the same
+    // reason.
+    const { projectId, serverId } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId,
+      )}/readiness-runs/claude`,
+      { body: pickReadinessStartBody(params) },
+      options,
+    );
+  }
+
+  /**
+   * Start an OpenAI plugin-directory readiness run.
+   *
+   * `submissionMode` is required by the TYPE as well as by the endpoint,
+   * because it is never inferred: a run with no declared shape reads as
+   * `mcp-only`, which reports the package lane not-applicable and turns a
+   * missing input into a clean bill of health.
+   */
+  startOpenAIReadinessRun(
+    params: {
+      projectId: string;
+      serverId: string;
+    } & PlatformOpenAIReadinessStartBody,
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRunReceipt> {
+    // Explicit picks — see `startClaudeReadinessRun`.
+    const { projectId, serverId, submissionMode } = params;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId,
+      )}/readiness-runs/openai`,
+      { body: { ...pickReadinessStartBody(params), submissionMode } },
+      options,
+    );
+  }
+
+  /** Lane statuses, coverage and the observation axis. Poll this. */
+  getReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformReadinessRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options,
+    );
+  }
+
+  listReadinessRuns(
+    params: {
+      projectId: string;
+      readinessKind?: PlatformReadinessKind;
+      serverId?: string;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformReadinessRun>> {
+    const { projectId, ...query } = params;
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(projectId)}/readiness-runs`,
+      { query },
+      options,
+    );
+  }
+
+  /**
+   * Cancel an in-flight run.
+   *
+   * The executing node learns about this on its next heartbeat and aborts the
+   * run in flight — which matters more than the row's status, because the
+   * thing being stopped is traffic to somebody else's server.
+   */
+  cancelReadinessRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<{ runId: string; projectId: string; status: string }> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/cancel`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * The full report: every finding, with its class, provenance, citation and
+   * remediation.
+   *
+   * Returned as `unknown` deliberately. The report's shape is the SDK's
+   * `ClaudeReadinessResult` / `OpenAIReadinessResult`, and importing either
+   * here would pull the whole readiness result model into the platform entry —
+   * which is loaded by surfaces that only ever render a lane status. A caller
+   * that wants the narrow type imports it from `@mcpjam/sdk/browser` and
+   * narrows on `readinessKind`.
+   */
+  getReadinessReport(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<unknown> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/readiness-runs/${encodeURIComponent(params.runId)}/report`,
       {},
       options,
     );
@@ -2699,6 +3044,77 @@ export class PlatformApiClient {
     );
   }
 
+  private sharePath(
+    projectId: string,
+    resourceType: string,
+    resourceId: string,
+  ): string {
+    return `/projects/${encodeURIComponent(projectId)}/shares/${encodeURIComponent(
+      resourceType,
+    )}/${encodeURIComponent(resourceId)}`;
+  }
+
+  getShareSettings(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "GET",
+      this.sharePath(params.projectId, params.resourceType, params.resourceId),
+      {},
+      options,
+    );
+  }
+
+  setShareMode(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+      mode: "project_members" | "invited_only" | "anyone_with_link";
+      allowGuestAccess?: boolean;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    const { projectId, resourceType, resourceId, mode, allowGuestAccess } =
+      params;
+    return this.request(
+      "PATCH",
+      this.sharePath(projectId, resourceType, resourceId),
+      {
+        body: {
+          mode,
+          ...(allowGuestAccess !== undefined ? { allowGuestAccess } : {}),
+        },
+      },
+      options,
+    );
+  }
+
+  /**
+   * Rotate the share link. Immediate: holders of the old URL can no longer
+   * redeem it. Agent-excluded; available on REST/CLI/MCP.
+   */
+  rotateShareLink(
+    params: {
+      projectId: string;
+      resourceType: "scenario" | "conformanceRun" | "evalRun";
+      resourceId: string;
+    },
+    options?: RequestOptions,
+  ): Promise<Record<string, unknown>> {
+    return this.request(
+      "POST",
+      `${this.sharePath(params.projectId, params.resourceType, params.resourceId)}/rotate-link`,
+      {},
+      options,
+    );
+  }
+
   private serverOp<T>(
     params: ServerScope & { body?: Record<string, unknown> },
     op: string,
@@ -2720,7 +3136,7 @@ export class PlatformApiClient {
     init: { query?: QueryParams; body?: unknown },
     options?: RequestOptions,
   ): Promise<T> {
-    const url = new URL(`${this.baseUrl}${path}`);
+    const url = resolvePlatformRequestUrl(`${this.baseUrl}${path}`);
     for (const [name, value] of Object.entries(init.query ?? {})) {
       if (value !== undefined) {
         url.searchParams.set(name, String(value));

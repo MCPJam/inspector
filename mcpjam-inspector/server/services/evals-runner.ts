@@ -6,6 +6,7 @@ import {
   type UsageTotals,
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
+import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import {
   buildLocalStepHandlers,
@@ -3584,10 +3585,18 @@ const runHostedIterationWithBrowser = async (
     const pinnedEnvironmentId = (
       environment as { computerEnvironmentId?: string } | undefined
     )?.computerEnvironmentId;
-    if (pinnedEnvironmentId && runId !== null) {
+    if (
+      needsEphemeralEvalSandbox({
+        pinnedEnvironmentId,
+        harness: resolvedExecution.harness,
+        runId,
+      })
+    ) {
       if (!isComputersDataPlaneConfigured()) {
         throw new Error(
-          "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+          pinnedEnvironmentId
+            ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+            : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
         );
       }
       evalSandbox = await provisionEvalSandbox({

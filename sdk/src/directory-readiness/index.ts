@@ -40,3 +40,51 @@ export type {
   DirectoryFindingConstructorOptions,
   DirectoryFindingConstructors,
 } from "./helpers.js";
+
+export {
+  DIRECTORY_OBSERVATION_CONFIDENCE,
+  DIRECTORY_OBSERVATION_FINDING_CLASSES,
+  DIRECTORY_OBSERVATION_LIMITS,
+  DIRECTORY_OBSERVATION_REASONS,
+  DIRECTORY_OBSERVATION_STATUSES,
+  NOT_REQUESTED_OBSERVATIONS,
+  mapObservationsToFindings,
+  observationFailure,
+  parseDirectoryObservationEnvelope,
+} from "./observations.js";
+export type {
+  DirectoryObservation,
+  DirectoryObservationCatalog,
+  DirectoryObservationConfidence,
+  DirectoryObservationEnvelope,
+  DirectoryObservationFindingClass,
+  DirectoryObservationMapping,
+  DirectoryObservationParseFailure,
+  DirectoryObservationParseResult,
+  DirectoryObservationReason,
+  DirectoryObservationSchema,
+  DirectoryObservationState,
+  DirectoryObservationStatus,
+} from "./observations.js";
+
+export {
+  EVIDENCE_REUSE_REFUSALS,
+  checkEvidenceReuse,
+  sameReadinessTarget,
+} from "./evidence-reuse.js";
+export type {
+  AttributableEvidenceSource,
+  EvidenceReuse,
+  EvidenceReuseExpectation,
+  EvidenceReuseRefusal,
+} from "./evidence-reuse.js";
+
+/**
+ * The MCP dial (`./mcp-dial.js`) is deliberately NOT re-exported here.
+ *
+ * This barrel's contract is the first line of its docblock: pure data
+ * reasoning, safe from the browser entry. The dial opens sockets, so it is
+ * reachable only from `sdk/src/index.ts` — the same arrangement the publisher
+ * barrels use for their discovery modules, and the reason importing a result
+ * model can never pull a transport in with it.
+ */

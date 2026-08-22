@@ -73,6 +73,101 @@ export interface PlatformProject {
   updatedAt: number | null;
 }
 
+export interface PlatformCatalogOauthProbe {
+  probedAt?: number;
+  endpointUrl?: string;
+  outcome?: string;
+  supportsDcr?: boolean;
+  supportsCimd?: boolean;
+  authorizationServerUrl?: string;
+}
+
+/**
+ * Scraped directory row — allowlisted; unknown upstream fields are dropped.
+ *
+ * The nullable fields match the wire: the backend DTO
+ * (`mcpjam-backend/convex/publicApi/dtos.ts::toCatalogServerDto`) emits
+ * `null` for an absent value on these, never omits them.
+ */
+export interface PlatformCatalogServer {
+  id: string;
+  source: string;
+  serverName: string;
+  displayName?: string;
+  description?: string | null;
+  rowType?: string;
+  verifiedTier?: string | null;
+  authPosture?: string | null;
+  unavailableReason?: string | null;
+  endpointKind?: string;
+  remoteUrl?: string;
+  remoteUrlOptions?: string[];
+  remoteUrlRegex?: string;
+  remoteUrlHint?: string;
+  latestContentHash?: string | null;
+  oauthProbe?: PlatformCatalogOauthProbe;
+}
+
+/**
+ * The directory search page, plus the server's echo of which mode actually
+ * ran: `"search"` when a non-blank `q` selected text search, `"browse"` for
+ * the plain listing. Optional so a tolerant reader survives a backend that
+ * predates the marker.
+ */
+export type PlatformDirectorySearchPage =
+  PlatformPage<PlatformCatalogServer> & {
+    mode?: "search" | "browse";
+  };
+
+export interface PlatformCatalogSourceStatus {
+  source: string;
+  lastSyncedAt?: number | null;
+  liveCount?: number | null;
+  upstreamFetchedAt?: number | null;
+}
+
+export interface PlatformRegistryServerTransport {
+  transportType?: string;
+  url?: string | null;
+  useOAuth?: boolean;
+  hasOAuthConfig?: boolean;
+  oauthScopes?: string[];
+}
+
+export interface PlatformRegistryServer {
+  id: string;
+  scope: "global" | "organization";
+  name: string;
+  displayName?: string;
+  description?: string | null;
+  category?: string | null;
+  tags?: string[];
+  publisher?: string | null;
+  status?: string;
+  updatedAt?: number | null;
+  transport?: PlatformRegistryServerTransport;
+}
+
+export interface PlatformRegistryConnection {
+  id: string;
+  kind: "registry" | "catalog";
+  scope?: "global" | "organization";
+  projectId: string | null;
+  serverId: string;
+  serverName?: string | null;
+  registryServerId?: string;
+  catalogServerId?: string;
+  endpointUrl?: string;
+  endpointKind?: string;
+  connectedAt?: number | null;
+}
+
+export interface PlatformRegistryInstall {
+  serverId: string;
+  serverName: string;
+  outcome: "created" | "reconnected";
+}
+
 export interface PlatformProjectServer {
   id: string;
   projectId: string | null;
@@ -2421,4 +2516,172 @@ export interface PlatformServerConnectionCreateBody {
   /** Used only when a server row is created; ignored on reuse. */
   name?: string;
   reauthorize?: boolean;
+}
+
+// ── Directory readiness ─────────────────────────────────────────────────
+
+/**
+ * The two words the public vocabulary uses.
+ *
+ * Never `anthropic`/`chatgpt`: a caller writes what the product says, and the
+ * product says "Claude directory readiness" and "OpenAI plugin directory".
+ */
+export type PlatformReadinessKind = "claude" | "openai";
+
+/**
+ * The submission shapes a HOSTED run may grade.
+ *
+ * The package shapes are real and are deliberately absent here: they need an
+ * upload the API cannot receive, and they run on the local CLI. Listing them
+ * in this type would let a caller write a request the server refuses.
+ */
+export type PlatformReadinessSubmissionMode =
+  | "mcp-only"
+  | "mcp-imported-skills";
+
+export type PlatformReadinessLaneStatus = "ready" | "not-ready" | "incomplete";
+
+/**
+ * Every lane either publisher grades, as one union.
+ *
+ * Claude uses five of these and OpenAI seven; the union is their sum rather
+ * than two types, because a client renders a run whose publisher it learns at
+ * runtime. Spelled out rather than left as `string` so a `switch` over lane
+ * copy is exhaustiveness-checked — a lane added here becomes a compile error
+ * at every renderer instead of an unlabelled row in production.
+ */
+export type PlatformReadinessLane =
+  | "runtime-compatibility"
+  | "directory-policy"
+  | "optional-features"
+  | "submission-artifacts"
+  | "experience-insights"
+  | "plugin-package"
+  | "release-contract";
+
+/**
+ * What one lane managed to look at, reported separately from what it found.
+ *
+ * A lane with zero violations and zero evaluated checks is not a pass, and
+ * publishing the denominator is the only way to keep those apart.
+ */
+export interface PlatformReadinessLaneCoverage {
+  lane: PlatformReadinessLane;
+  status: PlatformReadinessLaneStatus;
+  evaluated: number;
+  notEvaluated: number;
+  notApplicable: number;
+  /** Named inputs the caller could supply to close the gap. */
+  missingInputs: string[];
+}
+
+export interface PlatformReadinessStageResult {
+  stage: "technical-preflight" | "submission-ready";
+  status: PlatformReadinessLaneStatus;
+  lanes: PlatformReadinessLane[];
+}
+
+/**
+ * The model-observation axis, INDEPENDENT of the run's own status.
+ *
+ * `billing_limit_reached` is the value a client keys a top-up prompt on — it
+ * is machine-readable precisely so nobody has to string-match `detail`.
+ */
+export interface PlatformReadinessObservationState {
+  status:
+    | "not-requested"
+    | "pending"
+    | "completed"
+    | "billing-blocked"
+    | "provider-failed"
+    | "invalid-output";
+  reason?:
+    | "not_requested"
+    | "billing_limit_reached"
+    | "provider_error"
+    | "provider_timeout"
+    | "schema_invalid"
+    | "no_evidence"
+    | "cancelled";
+  detail?: string;
+}
+
+export interface PlatformReadinessRun {
+  id: string;
+  readinessKind: PlatformReadinessKind;
+  /** Null only on rows written before the field existed. */
+  serverId: string | null;
+  serverUrl: string;
+  submissionMode: PlatformReadinessSubmissionMode | null;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  overallStatus: PlatformReadinessLaneStatus | null;
+  lanes: PlatformReadinessLaneCoverage[];
+  stages: PlatformReadinessStageResult[];
+  authMode: "headless" | "interactive" | "provided-token" | null;
+  capabilities: string[];
+  attemptCount: number;
+  terminalReason: string | null;
+  errorMessage: string | null;
+  policySnapshotDate: string | null;
+  engineVersion: string | null;
+  sdkVersion: string | null;
+  includeLlmObservations: boolean;
+  llmObservations: PlatformReadinessObservationState;
+  hasReport: boolean;
+  reportUrl: string | null;
+  createdAt: number;
+  updatedAt: number;
+}
+
+/** The `202` receipt. Poll the run detail; do not re-POST. */
+export interface PlatformReadinessRunReceipt {
+  runId: string;
+  projectId: string;
+  serverId: string;
+  readinessKind: PlatformReadinessKind;
+  /**
+   * The run's status at the moment the start returned.
+   *
+   * `pending` for a fresh start. For a DEDUPED start it is whatever the
+   * existing run is already at — which may be `completed`, because an
+   * idempotency key replayed hours later names a run that finished long ago.
+   * Reporting `pending` unconditionally would send such a caller into a poll
+   * loop for a result it could already read.
+   */
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  /** True when an idempotency key replayed an existing run. */
+  deduped: boolean;
+  includeLlmObservations: boolean;
+}
+
+/** Fields both start endpoints accept. */
+export interface PlatformReadinessStartBody {
+  /**
+   * Deduplicates a retried POST.
+   *
+   * More load-bearing here than usual: a readiness run dials a third party's
+   * server, and a retried start that created a second run would do that twice.
+   */
+  idempotencyKey?: string;
+  /**
+   * Add model-backed experience observations. CONSUMES MCPJam CREDITS.
+   *
+   * Off by default. Observations are non-dispositive — they can never make a
+   * server not-ready — and a refused reservation makes no provider call and
+   * completes the run with `llmObservations.reason` of
+   * `billing_limit_reached`.
+   */
+  includeLlmObservations?: boolean;
+}
+
+export interface PlatformOpenAIReadinessStartBody
+  extends PlatformReadinessStartBody {
+  /**
+   * The DECLARED submission shape. REQUIRED, and never inferred.
+   *
+   * Inference reads a forgotten package as `mcp-only`, which reports the
+   * package lane not-applicable — turning a missing input into a clean bill of
+   * health.
+   */
+  submissionMode: PlatformReadinessSubmissionMode;
 }

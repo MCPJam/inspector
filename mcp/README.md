@@ -45,6 +45,12 @@ so results respect the caller's project access.
 | `list_server_resources` | List the resources a saved MCP server exposes: uris, names, and mime types. | — |
 | `read_server_resource` | Read one resource from a saved MCP server by uri and return its contents. | — |
 | `check_host_compatibility` | Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). | — |
+| `start_claude_readiness_run` | Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; poll for the verdict. | — |
+| `start_openai_readiness_run` | Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit submission mode; starts a durable run and returns its id. | — |
+| `get_readiness_run` | Read one readiness run: whether it finished, what it graded, and whether the optional model pass ran. | — |
+| `list_readiness_runs` | List a project's readiness runs, newest first, optionally narrowed to one publisher or server. | — |
+| `cancel_readiness_run` | Stop a readiness run that is still going. | — |
+| `get_readiness_report` | Read a finished readiness run's findings, ordered most-consequential-first and capped. | — |
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
 | `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
@@ -133,6 +139,9 @@ so results respect the caller's project access.
 | `upsert_user_testing_member` | Grant one person access to a scenario by email. | — |
 | `remove_user_testing_member` | Revoke one person's access. | — |
 | `rebind_user_testing_scenario` | Swap the environment behind a scenario, keeping its link, members and history. | — |
+| `get_share_settings` | Read the unified share envelope for a scenario, conformance run, or eval run. | — |
+| `set_share_mode` | Change who can open a shared resource. `anyone_with_link` includes guests as browser sessions. | — |
+| `rotate_share_link` | Mint a new unified share URL and invalidate the old one. Immediate and irreversible. | — |
 
 <!-- The rows above are the CATALOG, not a hand-written summary: they are
      checked against `PLATFORM_CATALOG_OPERATIONS` by

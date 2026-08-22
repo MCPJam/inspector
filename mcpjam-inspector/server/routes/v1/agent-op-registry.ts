@@ -44,6 +44,12 @@ import {
   createEvalCasesOperation,
   createEvalSuiteOperation,
   diagnoseServerOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
   generateEvalCasesOperation,
   ensureAdhocEnvironmentOperation,
   getEnvironmentOperation,
@@ -111,6 +117,8 @@ import {
   upsertUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
   setUserTestingGuestExecutionOperation,
+  getShareSettingsOperation,
+  setShareModeOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
@@ -242,8 +250,9 @@ function evalRunResource(
   const suiteId =
     readString(result, "suite.id") ?? readString(result, "suiteId");
   if (!suiteId) return undefined;
-  const suiteUrl =
-    `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}`;
+  const suiteUrl = `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
+    suiteId,
+  )}`;
 
   // A GROUPED launch links to the group, not to one of its runs. The contract
   // carries a single resource, and linking to the first run would hide the
@@ -298,7 +307,9 @@ function describeEvalSuiteRun(input: Record<string, unknown>): string {
     ...readStringList(input, "hosts"),
   ];
   if (targets.length > 1) {
-    return `Start ${targets.length} paid eval runs of suite ${suite}: ${targets.join(", ")}`;
+    return `Start ${
+      targets.length
+    } paid eval runs of suite ${suite}: ${targets.join(", ")}`;
   }
   const single =
     targets[0] ?? named(input, "environment") ?? named(input, "host");
@@ -376,7 +387,10 @@ async function freezeEvalRunTargets(
   const next: Record<string, unknown> = { ...rest };
   if (namedHosts.length > 0 || namedHost) {
     const byName = new Map(
-      (detail.hosts ?? []).map((host) => [host.name.toLocaleLowerCase(), host.id]),
+      (detail.hosts ?? []).map((host) => [
+        host.name.toLocaleLowerCase(),
+        host.id,
+      ]),
     );
     const freeze = (selector: string) =>
       byName.get(selector.toLocaleLowerCase()) ?? selector;
@@ -425,10 +439,7 @@ async function freezeEvalRunTargets(
 }
 
 /** Read a string array off validated input, dropping non-strings. */
-function readStringList(
-  input: Record<string, unknown>,
-  key: string,
-): string[] {
+function readStringList(input: Record<string, unknown>, key: string): string[] {
   const value = input[key];
   return Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === "string")
@@ -443,6 +454,31 @@ function readStringList(
  * each operation's result shape, and would silently link to nothing the moment
  * one changed.
  */
+/**
+ * The /conformance section a finished readiness run is read on.
+ *
+ * The EXACT run id travels in the link, not just the page. The section can
+ * rediscover "the newest run for this server" when it has nothing better, but
+ * that is the wrong run for somebody following a link about a specific one —
+ * two runs started minutes apart would send an approver to the other one's
+ * verdict.
+ */
+function readinessRunResource(
+  result: unknown,
+  { projectId }: { projectId: string },
+): ExecutedActionResource | undefined {
+  const runId = readString(result, "run.runId") ?? readString(result, "run.id");
+  if (!runId) return undefined;
+  return {
+    type: "readiness_run",
+    id: runId,
+    url:
+      `${MCPJAM_HOSTED_ORIGIN}/conformance` +
+      `?project=${encodeURIComponent(projectId)}` +
+      `&readinessRun=${encodeURIComponent(runId)}`,
+  };
+}
+
 function journeyRunResource(
   result: unknown,
   { projectId }: { projectId: string },
@@ -728,6 +764,71 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- When a server is erroring, won't connect, or behaves unexpectedly, run `diagnose_server` on it before guessing. It probes the URL, connects, initializes, and reports exactly what failed — which is usually the whole answer.",
     ],
   },
+  {
+    operation: startClaudeReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade ${
+          named(input, "server") ?? "a server"
+        } against Anthropic's connector directory`,
+      buttonLabel: "Run it",
+      kind: "start",
+      // A FUNCTION because the hazard is in the input. The deterministic grade
+      // is free; only the opt-in model pass spends. Static `"spend"` would
+      // warn about money on every free run, and `"none"` would stay silent on
+      // the one run that costs something.
+      confirmSeverity: (input) =>
+        (input as { includeLlmObservations?: boolean }).includeLlmObservations
+          ? "spend"
+          : "none",
+      resource: readinessRunResource,
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
+      "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
+      "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
+      "- When a readiness run reports `authMode: \"headless\"` and a lane's `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.",
+    ],
+  },
+  {
+    operation: startOpenAIReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade ${
+          named(input, "server") ?? "a server"
+        } against OpenAI's app directory`,
+      buttonLabel: "Run it",
+      kind: "start",
+      confirmSeverity: (input) =>
+        (input as { includeLlmObservations?: boolean }).includeLlmObservations
+          ? "spend"
+          : "none",
+      resource: readinessRunResource,
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
+    ],
+  },
+  { operation: getReadinessRunOperation, tier: "direct" },
+  { operation: listReadinessRunsOperation, tier: "direct" },
+  { operation: getReadinessReportOperation, tier: "direct" },
+  {
+    operation: cancelReadinessRunOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Cancelling a readiness run STOPS traffic to somebody else's server, so it needs no approval. The run's real terminal state arrives on a later `get_readiness_run` — the cancel response reports the request, not the outcome.",
+    ],
+  },
   { operation: listServerToolsOperation, tier: "direct" },
   { operation: listServerPromptsOperation, tier: "direct" },
   { operation: listServerResourcesOperation, tier: "direct" },
@@ -834,6 +935,11 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Generate eval cases for ${named(input, "suite") ?? "(unnamed)"}`,
       buttonLabel: "Generate them",
       kind: "generate",
+      // Generation calls the authoring model, so it spends credits exactly
+      // like the two run operations above. Without this the Slack and Discord
+      // approval cards omit the spend warning for the one operation whose
+      // cost is least obvious from its name.
+      confirmSeverity: "spend",
     },
   },
   {
@@ -1244,6 +1350,23 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
     ],
   },
+  { operation: getShareSettingsOperation, tier: "direct" },
+  {
+    operation: setShareModeOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Set ${named(input, "resourceType") ?? "resource"} ${
+          named(input, "resourceId") ?? "(unnamed)"
+        } access to ${named(input, "mode") ?? "the requested mode"}`,
+      buttonLabel: "Apply it",
+      kind: "schedule",
+      confirmSeverity: "external",
+    },
+    promptNotes: [
+      "- `set_share_mode` changes who can open a shared scenario, conformance run, or eval run. `anyone_with_link` includes guests as browser sessions, not verified individuals.",
+    ],
+  },
 ];
 
 /**
@@ -1292,6 +1415,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // to hand it back except by re-inviting them individually.
   rotate_user_testing_link:
     "Immediate and irreversible: every holder of the old link loses access and every live session dies.",
+  rotate_share_link:
+    "Immediate and irreversible: every holder of the old unified share URL loses the ability to redeem it. Same rationale as rotate_user_testing_link.",
   remove_user_testing_member:
     "Revokes a named person's access; the agent proposes authoring, never destruction.",
 

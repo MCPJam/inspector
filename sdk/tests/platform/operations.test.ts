@@ -1233,6 +1233,23 @@ describe("createEvalSuiteOperation", () => {
     ).toBe(true);
   });
 
+  it("rejects an unknown top-level key rather than stripping it", () => {
+    const parsed = createEvalSuiteOperation.inputSchema.safeParse({
+      name: "s",
+      model: "anthropic/claude-haiku-4.5",
+      servers: ["echo"],
+      cases: [
+        { title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+      ],
+      hostz: [],
+    });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    expect(parsed.error.issues.some((issue) => /hostz/.test(issue.message))).toBe(
+      true
+    );
+  });
+
   it("requires a name, at least one server, and at least one case", () => {
     expect(createEvalSuiteOperation.inputSchema.safeParse({}).success).toBe(
       false
@@ -1834,6 +1851,12 @@ describe("operation catalog consistency", () => {
     get_server_prompt: { server: "s", promptName: "p" },
     read_server_resource: { server: "s", uri: "u" },
     check_host_compatibility: { server: "s" },
+    start_claude_readiness_run: { server: "s" },
+    start_openai_readiness_run: { server: "s", submissionMode: "mcp-only" },
+    get_readiness_run: { run: "r" },
+    list_readiness_runs: {},
+    cancel_readiness_run: { run: "r" },
+    get_readiness_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
     run_eval_suite: { suite: "s" },
@@ -1956,6 +1979,13 @@ describe("operation catalog consistency", () => {
     upsert_user_testing_member: { scenario: "cb", email: "a@example.com" },
     remove_user_testing_member: { scenario: "cb", member: "a@example.com" },
     rebind_user_testing_scenario: { scenario: "cb", environmentId: "env_1" },
+    get_share_settings: { resourceType: "scenario", resourceId: "s1" },
+    set_share_mode: {
+      resourceType: "scenario",
+      resourceId: "s1",
+      mode: "project_members",
+    },
+    rotate_share_link: { resourceType: "scenario", resourceId: "s1" },
     list_hosts: {},
     get_host: { host: "h" },
     set_host_servers: { host: "h", serverIds: [] },
@@ -2021,6 +2051,12 @@ describe("operation catalog consistency", () => {
 
   it("marks every operation read-only except the run/call/tunnel writes", () => {
     const writes = new Set([
+      // Creates a durable run that dials a third party's server, and — with
+      // the opt-in — spends the organization's credits.
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      // Stops one. A write because it changes the row, spending nothing.
+      "cancel_readiness_run",
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
@@ -2111,6 +2147,8 @@ describe("operation catalog consistency", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "set_share_mode",
+      "rotate_share_link",
     ]);
     for (const operation of ALL_OPERATIONS) {
       expect(operation.readOnly).toBe(!writes.has(operation.name));

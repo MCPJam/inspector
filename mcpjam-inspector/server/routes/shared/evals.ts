@@ -2166,19 +2166,16 @@ export async function prepareEvalRun(
       model?: string;
       provider?: string;
     }>,
-    // Read off the RUN's frozen environment — the same value the runner itself
-    // uses to decide whether to provision a box — rather than off the live
-    // environment row, so the gate judges what will actually execute.
-    // Explicitly `null` when absent: here that is a resolved fact, not
-    // "not looked up".
-    pinnedComputerImageId:
-      (config.environment as { computerEnvironmentId?: string } | undefined)
-        ?.computerEnvironmentId ?? null,
     widgetAssertingCaseTitles: casesAssertingWidgetRender(config.tests),
     // Explicitly `null` when the suite is org-level. `runHarnessTurn` needs a
     // project to resolve the box and throws without one — mid-iteration, after
     // the box was booted and paid for. This makes it a pre-flight refusal.
     projectId: projectIdForOrgConfig ?? null,
+    // NO pinned image is passed, and none is required: a harness run boots a
+    // box either way — the run's frozen image when it pins one, the
+    // deployment-default template when it doesn't. What it must never do is
+    // borrow the acting member's personal computer, and that is prevented by
+    // always provisioning, not by demanding an image.
   });
   if (!harnessAdmission.ok) {
     await failRunBeforeExecution(convexClient, recorder, runId, {

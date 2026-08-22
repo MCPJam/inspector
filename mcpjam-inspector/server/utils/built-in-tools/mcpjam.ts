@@ -59,6 +59,12 @@ import {
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getCapabilitiesOperation,
@@ -115,6 +121,12 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getServerPromptOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,
@@ -247,6 +259,12 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "The spend dial for anonymous visitors; the tab shows the current caps and what they have already used.",
   rotate_user_testing_link:
     "Immediate and irreversible — everyone holding the old link loses access. The UI confirms it.",
+  rotate_share_link:
+    "Immediate and irreversible — everyone holding the old unified share URL loses the ability to redeem it. The UI confirms it.",
+  get_share_settings:
+    "Share settings belong next to the Share dialog, which already shows the link, mode, and members.",
+  set_share_mode:
+    "Changing who can open a shared resource belongs next to the share link the UI already shows.",
   upsert_user_testing_member:
     "Granting someone access to a live scenario is a decision about who may talk to your servers.",
   remove_user_testing_member:
@@ -351,11 +369,11 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
 };
 
 const OPERATIONS_BY_ID = new Map(
-  WORKSPACE_OPERATIONS.map((operation) => [operation.name, operation])
+  WORKSPACE_OPERATIONS.map((operation) => [operation.name, operation]),
 );
 
 export const MCPJAM_TOOL_IDS: ReadonlyArray<string> = WORKSPACE_OPERATIONS.map(
-  (operation) => operation.name
+  (operation) => operation.name,
 );
 
 export function isMcpjamToolId(id: string): boolean {
@@ -386,6 +404,12 @@ const APPROVAL_REQUIRED_IDS = new Set([
   // useful if you can ask for them — but the spend is the user's to approve,
   // so it sits here with `cancel_eval_run` rather than executing on request.
   requestEvalRunJudgeOperation.name,
+  // Dials a third party's server for minutes and, with the opt-in, spends the
+  // organization's credits. Reading grades is only useful if you can ask for
+  // one, so these are advertised rather than excluded — but the asking is the
+  // user's to approve. Cancelling is NOT here: it stops that traffic.
+  startClaudeReadinessRunOperation.name,
+  startOpenAIReadinessRunOperation.name,
   createProjectServerOperation.name,
   updateProjectServerOperation.name,
   deleteProjectServerOperation.name,
@@ -426,7 +450,7 @@ const AMBIENT_PROJECT_NOTE =
 type WorkspaceInputClamp = {
   descriptionNote: string;
   transform: (
-    input: Record<string, unknown>
+    input: Record<string, unknown>,
   ) => Record<string, unknown> | { error: string };
 };
 
@@ -521,7 +545,7 @@ export function capForModel(value: unknown): unknown {
 /** Map a thrown error to the `{ error }` envelope, preferring its message. */
 export function toToolError(
   error: unknown,
-  fallback: string
+  fallback: string,
 ): { error: string } {
   const message =
     error instanceof Error && error.message.trim() ? error.message : "";
@@ -534,7 +558,7 @@ export function toToolError(
  */
 export function buildMcpjamTool(
   id: string,
-  opts: McpjamToolOptions
+  opts: McpjamToolOptions,
 ): ToolSet[string] | null {
   const operation = OPERATIONS_BY_ID.get(id);
   if (!operation) return null;

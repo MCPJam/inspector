@@ -113,6 +113,14 @@ const PLAIN_TOOLS = [
   "read_server_resource",
   // Host-compat check: agent-oriented per-host verdict payload, no widget view.
   "check_host_compatibility",
+  // Directory readiness: receipts and run rows are agent-oriented payloads,
+  // and a report is a document to read rather than a card to render.
+  "start_claude_readiness_run",
+  "start_openai_readiness_run",
+  "get_readiness_run",
+  "list_readiness_runs",
+  "cancel_readiness_run",
+  "get_readiness_report",
   "run_eval_case",
   "run_eval_suite",
   "create_eval_suite",
@@ -202,6 +210,9 @@ const PLAIN_TOOLS = [
   "upsert_user_testing_member",
   "remove_user_testing_member",
   "rebind_user_testing_scenario",
+  "get_share_settings",
+  "set_share_mode",
+  "rotate_share_link",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -326,6 +337,12 @@ describe("platform tool registration", () => {
       "list_server_resources",
       "read_server_resource",
       "check_host_compatibility",
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "get_readiness_run",
+      "list_readiness_runs",
+      "cancel_readiness_run",
+      "get_readiness_report",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_case",
@@ -414,6 +431,9 @@ describe("platform tool registration", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "get_share_settings",
+      "set_share_mode",
+      "rotate_share_link",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {
@@ -456,6 +476,11 @@ describe("platform tool registration", () => {
     );
 
     const NON_DESTRUCTIVE_WRITES = new Set([
+      // Starting dials a third party's server and can spend; cancelling stops
+      // one. Neither destroys a record, so both annotate as plain writes.
+      "start_claude_readiness_run",
+      "start_openai_readiness_run",
+      "cancel_readiness_run",
       "run_eval_case",
       "run_eval_suite",
       "create_eval_suite",
@@ -518,6 +543,7 @@ describe("platform tool registration", () => {
       "set_user_testing_guest_execution",
       "upsert_user_testing_member",
       "rebind_user_testing_scenario",
+      "set_share_mode",
     ]);
     // Destructive AND not safe to repeat — for opposite reasons: the soft
     // deletes 404 on a retry, the rotation mints another link.
@@ -527,6 +553,7 @@ describe("platform tool registration", () => {
       "archive_swarm",
       "remove_user_testing_member",
       "rotate_user_testing_link",
+      "rotate_share_link",
     ]);
     const DESTRUCTIVE_OPS = new Set([
       "delete_eval_suite",
@@ -545,6 +572,7 @@ describe("platform tool registration", () => {
       "unpublish_scenario",
       // Rotating invalidates every copy of the share link that anyone holds.
       "rotate_user_testing_link",
+      "rotate_share_link",
       "remove_user_testing_member",
     ]);
 

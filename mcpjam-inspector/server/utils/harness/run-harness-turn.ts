@@ -46,6 +46,9 @@ import type { HarnessV1PermissionMode } from "@ai-sdk/harness";
 import {
   startHarnessModelBroker,
   revokeHarnessModelBroker,
+  reserveHarnessBox,
+  releaseHarnessBoxReservation,
+  renewHarnessBoxReservation,
   type HarnessBrokerBox,
 } from "./harness-model-broker.js";
 import { harnessBrokerDeliveryEnabled } from "./harness-flags.js";
@@ -327,6 +330,10 @@ const HARNESS_INSTANCE_ID = crypto.randomUUID();
  *  run bound (we heartbeat well within it). */
 const HARNESS_LEASE_TTL_MS = 5 * 60_000;
 const HARNESS_HEARTBEAT_MS = 90_000;
+// The backend reservation TTL is deliberately much longer than this interval.
+// A missed renewal aborts preparation immediately; the longer server-side TTL
+// is the crash-recovery backstop for a worker that disappears altogether.
+const HARNESS_RESERVATION_HEARTBEAT_MS = 60_000;
 // v7: gateway base URL normalization (Anthropic-protocol origin without /v1) —
 // resumed sessions reconnect to a bridge process holding the OLD env, so force
 // fresh sessions to pick up the corrected ANTHROPIC_BASE_URL.
@@ -537,6 +544,22 @@ export async function runHarnessTurn(
   // egress transform; used to revoke + clear the rule on teardown.
   let brokerRunId: string | undefined;
   let brokerRevoked = false;
+  // This turn's claim on the box, held across the preparation window (step 3a)
+  // and given up the moment the lease is recorded — recording it consumes the
+  // claim, and from then on the lease's own per-box fence is what excludes other
+  // turns. True only while the claim is ours to hand back, so onFinishEngine can
+  // free the box on any exit before that point instead of leaving the next turn
+  // to wait out the reservation TTL.
+  let reservationHeld = false;
+  let releaseBoxReservation: (() => Promise<void>) | undefined;
+  let reservationHeartbeatTimer: ReturnType<typeof setInterval> | undefined;
+  let reservationRenewalInFlight = false;
+  const clearReservationHeartbeat = () => {
+    if (reservationHeartbeatTimer !== undefined) {
+      clearInterval(reservationHeartbeatTimer);
+      reservationHeartbeatTimer = undefined;
+    }
+  };
   // Ownership handoff for the claimed continuity lane: false from the moment the
   // lane is claimed until the harness session is established (the point the
   // finalizer/heartbeat take over). While false, ANY failure (sandbox wake,
@@ -1076,16 +1099,126 @@ export async function runHarnessTurn(
         box.kind === "computer" ? box.computerId : undefined;
       tSandbox = Date.now();
 
+      // 3a. RESERVE the box, then start the baseline-preserving broker lease.
+      //
+      // The harness runtime is installed into the sandbox by a bootstrap recipe
+      // that shells `pnpm install` for the agent CLI. The lease keeps the box's
+      // own egress baseline (public internet for members; web-only for guests)
+      // and only adds a header transform on the model-proxy host, so the
+      // in-stream bootstrap can reach the package registry on its own. The
+      // reservation is a concurrency/liveness control — it is NOT an egress
+      // lock — and is kept on its own merits pending an independent removal
+      // gate.
+      //
+      // ONE id for the whole turn: it names this turn's claim on the box, and
+      // the lease consumes that claim by matching it. Deliberately NOT assigned
+      // to `brokerRunId` yet — that variable means "a lease may exist under this
+      // id", and teardown reads it to decide whether to revoke. Setting it here
+      // would make every failed preparation issue a pointless revoke for a lease
+      // that was never minted.
+      const turnRunId = crypto.randomUUID();
+
+      // Claim the box for the whole preparation window. The lease's own per-box
+      // fence starts only once a lease exists, so without this two turns could
+      // interleave wake / bootstrap / broker-start. A refusal here is the same
+      // condition a caller would otherwise meet at broker start, just detected
+      // before we do any work.
+      const reservation = await reserveHarnessBox({
+        box,
+        harnessId: harnessAdapter.id,
+        modelId,
+        runId: turnRunId,
+        bearer: authHeader,
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+      if (!reservation.ok) {
+        throw new Error(reservation.error);
+      }
+      // From here until the lease is minted, ANY exit must hand the box back —
+      // otherwise the next turn waits out the reservation's TTL for nothing.
+      // Cleared once the broker start succeeds, because recording the lease
+      // consumes the claim and the lease's own fence takes over.
+      reservationHeld = true;
+      releaseBoxReservation = async () => {
+        await releaseHarnessBoxReservation({
+          box,
+          harnessId: harnessAdapter.id,
+          modelId,
+          runId: turnRunId,
+          bearer: authHeader,
+          signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+        }).catch(() => {});
+      };
+      reservationHeartbeatTimer = setInterval(() => {
+        if (!reservationHeld || reservationRenewalInFlight) return;
+        reservationRenewalInFlight = true;
+        void renewHarnessBoxReservation({
+          box,
+          harnessId: harnessAdapter.id,
+          modelId,
+          runId: turnRunId,
+          bearer: authHeader,
+          signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
+        })
+          .then((renewed) => {
+            if (!renewed.ok && reservationHeld) {
+              logger.error(
+                "[harness] preparation reservation was lost; aborting the turn"
+              );
+              livenessAbort.abort(new Error("harness box reservation lost"));
+            }
+          })
+          .catch((err) => {
+            if (reservationHeld) {
+              logger.error(
+                "[harness] preparation reservation renewal failed; aborting the turn",
+                err
+              );
+              livenessAbort.abort(new Error("harness box reservation lost"));
+            }
+          })
+          .finally(() => {
+            reservationRenewalInFlight = false;
+          });
+      }, HARNESS_RESERVATION_HEARTBEAT_MS);
+
+      // Root the Shell at the host-configured working directory (COMP-16) — the
+      // same `computer.workdir` the chat bash tool honors — confined under
+      // /home/user, defaulting to the box home. The harness framework nests a
+      // per-session `<workdir>/claude-code-<sessionId>` dir beneath it, so both
+      // planes share one configured root even though the Shell gets its own
+      // session subdir. An escaping value falls back to the default rather than
+      // failing the turn (the UI + bash path already reject escapes loudly).
+      // On the ephemeral path the workdir comes back WITH the box: the control
+      // plane resolved it from the same pinned target spec when it reserved the
+      // row, so it is the authoritative value for THIS box. Falling through to
+      // `computerWorkdir` keeps the personal path identical. Both still go
+      // through `resolveWorkingDirectory`, so neither can escape /home/user.
+      const resolvedHarnessWorkdir = resolveWorkingDirectory(
+        harnessSandboxBinding?.workdir ?? computerWorkdir
+      );
+      const defaultWorkingDirectory =
+        "error" in resolvedHarnessWorkdir
+          ? HOME_ROOT
+          : resolvedHarnessWorkdir.workdir ?? HOME_ROOT;
+      // ONE provider for the turn: the streaming session below attaches to the
+      // box through it. One provider per turn is still the right shape even
+      // without a separate prewarm pass.
+      const sandbox = createE2BHarnessSandboxProvider({
+        sandboxId,
+        defaultWorkingDirectory,
+      });
+
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
-      // known, so have Convex mint the lease, lock the sandbox's egress to the
-      // proxy, and install the lease into E2B's egress transform — the
-      // inspector never sees the lease. Run the CLI with dummy creds pointed
-      // at the returned proxy. Fail-fast on install error (the box is awake
-      // but no real credential exists anywhere).
-      // PRECOMPUTE the run id and record it (+ the computer) BEFORE the POST.
-      // If the backend installs the E2B rule but the response is lost/aborted,
-      // teardown can still revoke by this id (backend keys revoke on runId).
-      brokerRunId = crypto.randomUUID();
+      // known, so have Convex mint the lease, keep the sandbox on its own
+      // egress baseline, and install the lease into E2B's egress transform on
+      // the model-proxy host — the inspector never sees the lease. Run the CLI
+      // with dummy creds pointed at the returned proxy. Fail-fast on install
+      // error (the box is awake but no real credential exists anywhere).
+      // RECORD the run id before the POST: if the backend installs the E2B rule
+      // but the response is lost or aborted, teardown can still revoke by this
+      // id (the backend keys revoke on runId). From here on a lease may exist.
+      brokerRunId = turnRunId;
       const broker = await startHarnessModelBroker({
         // The project and the execution scope are fields of `box`'s COMPUTER
         // arm (set where `box` is built, above), so the ephemeral path has no
@@ -1104,33 +1237,17 @@ export async function runHarnessTurn(
         // lease (brokerRunId set) if the backend installed before a lost response.
         throw new Error(broker.error);
       }
+      // The lease is recorded, which consumed this turn's claim on the box; the
+      // lease's own per-box fence covers the rest of the turn. Releasing now
+      // would free a box that is very much still in use.
+      clearReservationHeartbeat();
+      reservationHeld = false;
       const auth = buildBrokerDummyAuth(harnessAdapter.id, broker.proxyBaseUrl);
       tBroker = Date.now();
 
-      // 4. Assemble the harness over the host's E2B computer. Root the Shell at
-      // the host-configured working directory (COMP-16) — the same
-      // `computer.workdir` the chat bash tool honors — confined under
-      // /home/user, defaulting to the box home. The harness framework nests a
-      // per-session `<workdir>/claude-code-<sessionId>` dir beneath it, so both
-      // planes share one configured root even though the Shell gets its own
-      // session subdir. An escaping value falls back to the default rather than
-      // failing the turn (the UI + bash path already reject escapes loudly).
-      // On the ephemeral path the workdir comes back WITH the box: the control
-      // plane resolved it from the same pinned target spec when it reserved the
-      // row, so it is the authoritative value for THIS box. Falling through to
-      // `computerWorkdir` keeps the personal path identical. Both still go
-      // through `resolveWorkingDirectory`, so neither can escape /home/user.
-      const resolvedHarnessWorkdir = resolveWorkingDirectory(
-        harnessSandboxBinding?.workdir ?? computerWorkdir
-      );
-      const defaultWorkingDirectory =
-        "error" in resolvedHarnessWorkdir
-          ? HOME_ROOT
-          : resolvedHarnessWorkdir.workdir ?? HOME_ROOT;
-      const sandbox = createE2BHarnessSandboxProvider({
-        sandboxId,
-        defaultWorkingDirectory,
-      });
+      // 4. Assemble the harness over the host's E2B computer (the provider and
+      // its working directory were resolved in step 3a, so the streaming session
+      // uses the same one).
       // (permissionMode was computed above, before the runtime fingerprint.)
 
       // The adapter maps the host modelId to the harness's native model and
@@ -2162,7 +2279,9 @@ export async function runHarnessTurn(
         logger.info(
           `[harness][timing] claim=${tClaim - tStart}ms boxWake=${
             tSandbox - tClaim
-          }ms brokerStart=${tBroker - tSandbox}ms sessionConnect=${
+          }ms brokerStart=${
+            tBroker - tSandbox
+          }ms sessionConnect=${
             tConnect - tBroker
           }ms modelStream=${tStream - tConnect}ms total=${
             tStream - tStart
@@ -2341,6 +2460,7 @@ export async function runHarnessTurn(
   // path. See the `createUIMessageStream` call below for why this now runs from
   // `execute`'s finally rather than the SDK's `onFinish`.
   const onFinishEngine = async (receiptWriter?: ChunkWriter) => {
+    clearReservationHeartbeat();
     // Broker teardown runs FIRST — the model stream has ended, so revoke the lease
     // + clear the E2B egress rule before the persistence/cleanup callbacks below,
     // which could hang and would otherwise keep the credential live until TTL/cron.
@@ -2364,6 +2484,15 @@ export async function runHarnessTurn(
         bearer: authHeader,
         signal: AbortSignal.timeout(HARNESS_TEARDOWN_TIMEOUT_MS),
       }).catch(() => {});
+    }
+    // The box was claimed but never leased — preparation failed, or the turn was
+    // aborted during it. Hand the box back now; the reservation's TTL would
+    // otherwise make the next turn wait minutes for a box nobody is using.
+    // Reaching here with the claim still held means no lease exists, so there is
+    // no egress rule to clear and nothing else to undo.
+    if (reservationHeld && releaseBoxReservation) {
+      reservationHeld = false;
+      await releaseBoxReservation();
     }
     if ((runSucceeded || pausedForScopeStepUp) && !aborted && driver) {
       // Stream start (matches the span offset base) so rehydrated traces align
