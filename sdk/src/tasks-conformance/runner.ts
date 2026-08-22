@@ -34,6 +34,11 @@ import {
   isUnrunCheck,
 } from "../conformance-outcome.js";
 import {
+  buildConformanceProfileStamp,
+  conformanceProfile,
+  partitionByProfile,
+} from "../conformance-profile.js";
+import {
   MCP_TASKS_CHECK_IDS,
   MCP_TASKS_CHECK_CATEGORIES,
   type MCPTasksCheckId,
@@ -107,6 +112,48 @@ export const CHECK_METADATA: Record<
     description:
       "Over HTTP, tasks/get is sent with Mcp-Name set to the task id (captured off the fetch seam) and accepted by the server.",
   },
+  "tasks-invalid-task-id-rejected": {
+    id: "tasks-invalid-task-id-rejected",
+    category: "lifecycle",
+    title: "Invalid Task Id Rejected",
+    description:
+      "tasks/get for a task id the server never issued is rejected with -32602 (Invalid params); the same rejection on tasks/update and tasks/cancel is a SHOULD and only warns.",
+  },
+  "tasks-status-payload-shape": {
+    id: "tasks-status-payload-shape",
+    category: "lifecycle",
+    title: "Status Payload Shape",
+    description:
+      "Each observed task status carries the payload its status requires: `result` on completed, `error` on failed, `inputRequests` on input_required.",
+  },
+  "tasks-cancel-ack-shape": {
+    id: "tasks-cancel-ack-shape",
+    category: "lifecycle",
+    title: "Cancel Acknowledged With An Empty Result",
+    description:
+      "tasks/cancel is acknowledged with an empty result rather than a task state, and the task's observable status is allowed to remain non-terminal afterwards.",
+  },
+  "tasks-input-required-update-completes": {
+    id: "tasks-input-required-update-completes",
+    category: "lifecycle",
+    title: "Input Required Round Trip Completes",
+    description:
+      "A task that reports input_required advances past it once tasks/update supplies the requested inputResponses, and reaches a terminal status.",
+  },
+  "tasks-ttl-integer-shape": {
+    id: "tasks-ttl-integer-shape",
+    category: "lifecycle",
+    title: "TTL And Poll Interval Are Integers",
+    description:
+      "ttlMs and pollIntervalMs are integer milliseconds, as the extension's Task interface states.",
+  },
+  "tasks-undeclared-capability-names-requirements": {
+    id: "tasks-undeclared-capability-names-requirements",
+    category: "lifecycle",
+    title: "Undeclared Capability Error Names What Is Missing",
+    description:
+      "A -32021 rejection carries error.data.requiredCapabilities naming the capability the client failed to declare.",
+  },
 };
 
 type MCPListedTool = NonNullable<ListToolsResult["tools"]>[number];
@@ -117,6 +164,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * `error.data.requiredCapabilities` off a JSON-RPC error, if it named any.
+ *
+ * The core schema REQUIRES this member on a `MissingRequiredClientCapabilityError`
+ * — without it, a client that receives the rejection has been told it is
+ * missing something and not told what, which makes the error unactionable.
+ */
+function readRequiredCapabilities(error: unknown): unknown {
+  const data = (error as { data?: unknown } | null)?.data;
+  return isRecord(data) ? data.requiredCapabilities : undefined;
 }
 
 function errorCode(error: unknown): number | undefined {
@@ -501,6 +560,132 @@ export function validateTaskTtlShape(
 }
 
 /**
+ * The status-specific payload each task status is required to carry:
+ *
+ *   "3. If the status is `completed`, the server MUST return a Task object
+ *       with status `completed` and a `result` field …
+ *    5. If the status is `failed`, the server MUST return a Task object with
+ *       status `failed` and the error that occurred during execution."
+ *
+ * and, for `input_required`, an `inputRequests` field that "MUST contain all
+ * outstanding requests … that need to be fulfilled before the task can
+ * proceed".
+ *
+ * Distinct from `tasks-inline-result`, which asks whether a COMPLETED task
+ * exposes its result the era-native way. This asks the same question of every
+ * status, and a server can satisfy one without the other: a task that parks on
+ * `input_required` with no `inputRequests` is unanswerable and the completed
+ * path never runs.
+ *
+ * `cancelled` and `working` require nothing beyond the base fields, so they are
+ * absent here rather than given an empty rule — a rule that asserts nothing
+ * reads as coverage it does not provide.
+ */
+export function validateTaskStatusPayload(task: unknown): ShapeVerdict {
+  if (!isRecord(task)) {
+    return { violations: ["task payload must be an object"], warnings: [] };
+  }
+  const violations: string[] = [];
+  const warnings: string[] = [];
+  const status = String(task.status);
+
+  switch (status) {
+    case "completed":
+      if (task.result === undefined) {
+        violations.push(
+          "a completed task must carry the `result` field with the final result of the request"
+        );
+      }
+      break;
+    case "failed":
+      if (!isRecord(task.error)) {
+        violations.push(
+          "a failed task must carry the `error` field with the JSON-RPC error that occurred"
+        );
+      } else if (typeof task.error.code !== "number") {
+        violations.push("a failed task's `error` must carry a numeric code");
+      }
+      if (task.statusMessage === undefined) {
+        // "SHOULD include a `statusMessage` field with diagnostic information"
+        warnings.push(
+          "a failed task carries no `statusMessage`; the extension recommends one so a human can see why"
+        );
+      }
+      break;
+    case "input_required":
+      if (!isRecord(task.inputRequests)) {
+        violations.push(
+          "an input_required task must carry `inputRequests` naming what the client has to answer; without it the task can never proceed"
+        );
+      } else if (Object.keys(task.inputRequests).length === 0) {
+        violations.push(
+          "an input_required task carries an empty `inputRequests`; it must contain all outstanding requests"
+        );
+      }
+      break;
+    default:
+      break;
+  }
+
+  return { violations, warnings };
+}
+
+/**
+ * The extension's `Task` interface states both durations in INTEGER
+ * milliseconds ("Time-to-live duration from creation in integer milliseconds",
+ * "Suggested polling interval in integer milliseconds"). `schema.json` renders
+ * them as plain `number`, which is why this is separate from
+ * {@link validateTaskTtlShape} — that check asserts the era-native FIELD, and
+ * widening it would re-grade servers already judged by it.
+ *
+ * A NEGATIVE `ttlMs` warns rather than fails: the spec never states a lower
+ * bound, and `null` (not a negative number) is how it spells "unlimited", so a
+ * negative value is nonsensical without being forbidden.
+ */
+export function validateTaskTtlIntegerShape(
+  wire: TasksWire,
+  task: unknown
+): ShapeVerdict {
+  if (!isRecord(task)) {
+    return { violations: ["task payload must be an object"], warnings: [] };
+  }
+  const violations: string[] = [];
+  const warnings: string[] = [];
+
+  const fields =
+    wire === "extension"
+      ? ([
+          ["ttlMs", task.ttlMs],
+          ["pollIntervalMs", task.pollIntervalMs],
+        ] as const)
+      : ([
+          ["ttl", task.ttl],
+          ["pollInterval", task.pollInterval],
+        ] as const);
+
+  for (const [name, value] of fields) {
+    if (value === undefined || value === null) continue;
+    if (typeof value !== "number") {
+      // The era-native TYPE is the other check's subject; here a non-number is
+      // reported for completeness rather than double-counted as a new defect.
+      warnings.push(`${name} is not a number, so its integer shape was not judged`);
+      continue;
+    }
+    if (!Number.isInteger(value)) {
+      violations.push(`${name} is ${value}, which is not an integer`);
+      continue;
+    }
+    if (value < 0) {
+      warnings.push(
+        `${name} is ${value}; the extension states no lower bound, but it spells "unlimited" as null rather than as a negative number`
+      );
+    }
+  }
+
+  return { violations, warnings };
+}
+
+/**
  * Runs `fn` with `globalThis.fetch` instrumented so the headers the transport
  * actually put on the wire can be asserted. The SDK builds its task-routing
  * fetch wrapper inside the transport, so this global seam is the only place a
@@ -549,6 +734,13 @@ const OBSOLETE_MISSING_REQUIRED_CLIENT_CAPABILITY =
   PRE_RENUMBER_DRAFT_ERROR_CODES.MissingRequiredClientCapability;
 /** Method not found: the server does not implement the method at all. */
 const METHOD_NOT_FOUND = -32601;
+/**
+ * The extension's answer for an unknown or invalid `taskId`. Read from the
+ * central table rather than re-spelled: the tasks runner already shipped one
+ * hard-coded error literal that disagreed with it (`-32003` for
+ * MissingRequiredClientCapability), and that bug rejected conforming servers.
+ */
+const INVALID_PARAMS = MCP_ERROR_CODES.InvalidParams;
 /** The client gave up waiting — the server never refused the request. */
 const REQUEST_TIMEOUT = -32001;
 
@@ -584,6 +776,11 @@ export interface UndeclaredProbe {
   outcome: UndeclaredProbeOutcome;
   code?: number;
   message?: string;
+  /**
+   * `error.data.requiredCapabilities` off a `-32021` rejection, when the server
+   * named them. Absent for every other outcome.
+   */
+  requiredCapabilities?: unknown;
   /**
    * Whether an outbound JSON-RPC request for this method was observed on the
    * connection's rpc log. This is what separates "the server misbehaved" from
@@ -659,6 +856,36 @@ export function findRawTaskResponse(
     };
   }
   return undefined;
+}
+
+/**
+ * The LAST raw `tasks/get` task payload for `taskId`, read off the inbound
+ * bytes rather than off the decoded task.
+ *
+ * Raw, and unavoidably so — the same reason `findRawTaskResponse` above is.
+ * The SDK's `taskExtSchema` rejects a `failed` task that carries no `error`
+ * before it ever reaches a check, so a check reading the decoded task can only
+ * ever observe payloads the client already accepted, and would score a server
+ * green on precisely the malformed states it exists to catch. The wire is the
+ * only place those states exist.
+ *
+ * Identified by shape (`taskId` + `status`) rather than by request id: the
+ * runner polls many times and the caller wants the state the task ended in.
+ */
+export function findRawTaskState(
+  messages: unknown[],
+  taskId: string
+): Record<string, unknown> | undefined {
+  let found: Record<string, unknown> | undefined;
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    const result = isRecord(message.result) ? message.result : undefined;
+    if (!result) continue;
+    if (result.taskId !== taskId) continue;
+    if (typeof result.status !== "string") continue;
+    found = result;
+  }
+  return found;
 }
 
 /** The failure a missing/wrong `resultType: "task"` actually causes. */
@@ -765,7 +992,17 @@ async function runUndeclaredProbe(
     const code = errorCode(error);
     const message = errorMessage(error);
     if (code === MISSING_REQUIRED_CLIENT_CAPABILITY) {
-      return { method, outcome: "rejected", code, reachedWire: true };
+      return {
+        method,
+        outcome: "rejected",
+        code,
+        reachedWire: true,
+        // Kept for the sibling check that asks whether the rejection NAMES the
+        // capability. The core schema requires `error.data.requiredCapabilities`
+        // on this error, our own protocol check already asserts it, and nothing
+        // in the tasks suite looked at it.
+        requiredCapabilities: readRequiredCapabilities(error),
+      };
     }
     if (code === METHOD_NOT_FOUND && options?.listenProbe) {
       return {
@@ -799,6 +1036,21 @@ async function runUndeclaredProbe(
     }
     return { method, outcome: "wrong-code", code, message, reachedWire: true };
   }
+}
+
+/** What {@link MCPTasksConformanceTest.runInputRequiredLeg} observed. */
+interface InputRequiredLeg {
+  outcome: "no-responses-configured" | "update-rejected" | "updated";
+  /** Keys the task asked the client to answer. */
+  requested: string[];
+  /** Keys the operator supplied. */
+  answered?: string[];
+  message?: string;
+  code?: number;
+  /** Result members beyond the envelope; a conforming ack has none. */
+  ackExtras?: string[];
+  polled?: { task?: Record<string, unknown>; error?: unknown };
+  finalStatus?: string;
 }
 
 export class MCPTasksConformanceTest {
@@ -1080,9 +1332,36 @@ export class MCPTasksConformanceTest {
             }
           }
 
-          const polled = createdTaskId
-            ? await this.pollToTerminal(manager, serverId, wire, createdTaskId)
+          // FIRST poll stops at `input_required` as well as at a terminal
+          // status: an input-gated task cannot advance without a client answer,
+          // so continuing would only spend `pollTimeoutMs` to reach the state
+          // already in hand.
+          let polled = createdTaskId
+            ? await this.pollToTerminal(manager, serverId, wire, createdTaskId, {
+                stopOnInputRequired: true,
+              })
             : {};
+
+          // The `input_required → tasks/update → completion` leg. Opt-in on
+          // `inputResponses` for the same reason the protocol suite's fixtures
+          // are: what a task asks for is server-defined, and inventing an
+          // answer submits arbitrary content into somebody's workflow.
+          const inputRequiredTask = polled.inputRequired ? polled.task : undefined;
+          let inputLeg: InputRequiredLeg | undefined;
+          if (inputRequiredTask && createdTaskId && wire === "extension") {
+            inputLeg = await this.runInputRequiredLeg(
+              manager,
+              serverId,
+              createdTaskId,
+              inputRequiredTask
+            );
+            if (inputLeg.polled) {
+              // The task moved on, so every downstream check reads the state it
+              // reached rather than the gate it was stuck behind.
+              polled = inputLeg.polled;
+            }
+          }
+
           const finalTask = polled.task;
           // Distinguishes "there was never a task" from "polling the task
           // failed", so no dependent check skips under a message that hides a
@@ -1204,6 +1483,223 @@ export class MCPTasksConformanceTest {
             }
           }
 
+          if (selected.has("tasks-input-required-update-completes")) {
+            const stepStartedAt = Date.now();
+            if (wire !== "extension") {
+              checks.push(
+                notApplicable(
+                  "tasks-input-required-update-completes",
+                  "the input_required round trip is an extension-wire flow"
+                )
+              );
+            } else if (!createdTaskId) {
+              // NO TASK is a gap, not an inapplicability: the obligation went
+              // untested because the run could not provoke a task at all.
+              // `noTask` already draws that distinction (and reports the
+              // no-probe-tool case the way resolution decided).
+              checks.push(noTask("tasks-input-required-update-completes"));
+            } else if (!inputRequiredTask) {
+              // A task that completes without ever asking for anything is the
+              // normal case, and there is genuinely no round trip to grade —
+              // so this one IS an inapplicability.
+              checks.push(
+                notApplicable(
+                  "tasks-input-required-update-completes",
+                  `task ${createdTaskId} never reported input_required, so there was no round trip to complete`
+                )
+              );
+            } else if (!inputLeg || inputLeg.outcome === "no-responses-configured") {
+              checks.push(
+                couldNotRun(
+                  "tasks-input-required-update-completes",
+                  `task requested input for ${JSON.stringify(
+                    inputLeg?.requested ?? []
+                  )} but no inputResponses were configured; supply inputResponses so the tasks/update leg can be exercised`,
+                  { requested: inputLeg?.requested ?? [] }
+                )
+              );
+            } else if (inputLeg.outcome === "update-rejected") {
+              checks.push(
+                failed(
+                  "tasks-input-required-update-completes",
+                  Date.now() - stepStartedAt,
+                  `tasks/update was rejected for a task that reported input_required (${
+                    inputLeg.code ?? "no code"
+                  }: ${inputLeg.message ?? "no message"})`,
+                  { requested: inputLeg.requested, answered: inputLeg.answered }
+                )
+              );
+            } else {
+              const problems: string[] = [];
+              if ((inputLeg.ackExtras?.length ?? 0) > 0) {
+                problems.push(
+                  `tasks/update was acknowledged with ${JSON.stringify(
+                    inputLeg.ackExtras
+                  )} rather than an empty result`
+                );
+              }
+              if (
+                inputLeg.finalStatus === undefined ||
+                !TERMINAL_STATUSES.has(inputLeg.finalStatus)
+              ) {
+                problems.push(
+                  `the task did not reach a terminal status after the update (last observed ${JSON.stringify(
+                    inputLeg.finalStatus ?? null
+                  )} within ${this.config.pollTimeoutMs}ms)`
+                );
+              }
+              checks.push(
+                problems.length === 0
+                  ? passed(
+                      "tasks-input-required-update-completes",
+                      Date.now() - stepStartedAt,
+                      {
+                        requested: inputLeg.requested,
+                        answered: inputLeg.answered,
+                        finalStatus: inputLeg.finalStatus,
+                      }
+                    )
+                  : failed(
+                      "tasks-input-required-update-completes",
+                      Date.now() - stepStartedAt,
+                      `the input_required round trip did not complete: ${problems.join(
+                        "; "
+                      )}`,
+                      {
+                        requested: inputLeg.requested,
+                        answered: inputLeg.answered,
+                        finalStatus: inputLeg.finalStatus,
+                      }
+                    )
+              );
+            }
+          }
+
+          if (selected.has("tasks-status-payload-shape")) {
+            const stepStartedAt = Date.now();
+            // RAW, not the decoded task: the SDK's own payload schema rejects a
+            // `failed` task with no `error` before any check sees it, so
+            // reading the decoded task would score a server green on exactly
+            // the malformed states this check exists to catch.
+            const rawState = createdTaskId
+              ? findRawTaskState(received, createdTaskId)
+              : undefined;
+            if (!rawState) {
+              checks.push(
+                createdTaskId
+                  ? couldNotRun(
+                      "tasks-status-payload-shape",
+                      `no raw tasks/get payload for task ${createdTaskId} was observed, so no status payload could be inspected`
+                    )
+                  : noTask("tasks-status-payload-shape")
+              );
+            } else {
+              const verdict = validateTaskStatusPayload(rawState);
+              checks.push(
+                verdict.violations.length === 0
+                  ? passed(
+                      "tasks-status-payload-shape",
+                      Date.now() - stepStartedAt,
+                      { status: rawState.status },
+                      verdict.warnings
+                    )
+                  : failed(
+                      "tasks-status-payload-shape",
+                      Date.now() - stepStartedAt,
+                      `task status payload is incomplete: ${verdict.violations.join(
+                        "; "
+                      )}`,
+                      { status: rawState.status }
+                    )
+              );
+            }
+          }
+
+          if (selected.has("tasks-ttl-integer-shape")) {
+            const stepStartedAt = Date.now();
+            if (!finalTask) {
+              checks.push(noTask("tasks-ttl-integer-shape"));
+            } else {
+              const verdict = validateTaskTtlIntegerShape(wire, finalTask);
+              checks.push(
+                verdict.violations.length === 0
+                  ? passed(
+                      "tasks-ttl-integer-shape",
+                      Date.now() - stepStartedAt,
+                      undefined,
+                      verdict.warnings
+                    )
+                  : failed(
+                      "tasks-ttl-integer-shape",
+                      Date.now() - stepStartedAt,
+                      `task TTL/poll interval are not integer milliseconds: ${verdict.violations.join(
+                        "; "
+                      )}`,
+                      undefined,
+                      undefined
+                    )
+              );
+            }
+          }
+
+          if (selected.has("tasks-invalid-task-id-rejected")) {
+            const stepStartedAt = Date.now();
+            if (wire !== "extension") {
+              checks.push(
+                notApplicable(
+                  "tasks-invalid-task-id-rejected",
+                  "check applies to the extension wire only"
+                )
+              );
+            } else {
+              const probe = await this.probeUnknownTaskId(manager, serverId);
+              const warnings: string[] = [];
+              // tasks.md:795 — `-32602` is a MUST for `tasks/get` and only a
+              // SHOULD for the two mutating methods, so the same wrong answer
+              // is a failure on one and advice on the others.
+              for (const entry of probe.mutations) {
+                if (entry.outcome === "local-failure") continue;
+                if (entry.code !== INVALID_PARAMS) {
+                  warnings.push(
+                    `${entry.method} answered an unknown task id with ${
+                      entry.outcome === "answered"
+                        ? "a normal result"
+                        : String(entry.code)
+                    } rather than -32602; the extension states that as a SHOULD`
+                  );
+                }
+              }
+              const detail = { probedTaskId: probe.taskId, ...probe.detail };
+              checks.push(
+                probe.get.outcome === "local-failure"
+                  ? couldNotRun(
+                      "tasks-invalid-task-id-rejected",
+                      `tasks/get for an unknown task id produced no JSON-RPC response (${
+                        probe.get.message ?? "no message"
+                      }), so the rejection requirement was not put to the server`,
+                      detail
+                    )
+                  : probe.get.code === INVALID_PARAMS
+                    ? passed(
+                        "tasks-invalid-task-id-rejected",
+                        Date.now() - stepStartedAt,
+                        detail,
+                        warnings
+                      )
+                    : failed(
+                        "tasks-invalid-task-id-rejected",
+                        Date.now() - stepStartedAt,
+                        probe.get.outcome === "answered"
+                          ? `tasks/get for the unknown task id ${JSON.stringify(
+                              probe.taskId
+                            )} was answered instead of rejected; the extension requires -32602 (Invalid params)`
+                          : `tasks/get for an unknown task id was rejected with ${probe.get.code} rather than -32602 (Invalid params)`,
+                        detail
+                      )
+              );
+            }
+          }
+
           if (selected.has("tasks-mcp-name-routing")) {
             const stepStartedAt = Date.now();
             const isHttp = "url" in this.config.serverConfig;
@@ -1264,6 +1760,52 @@ export class MCPTasksConformanceTest {
             }
           }
 
+          // ORDERING: cancellation MUTATES the task, so it sits here with the
+          // other mutating probes rather than beside the read-only lifecycle
+          // checks above — the same rule the comment below states. Cancelling a
+          // task that has already reached a terminal status is a weaker probe
+          // than cancelling one mid-flight, but the assertion holds either way:
+          // the spec requires an EMPTY ack and explicitly allows the status to
+          // stay non-`cancelled` afterwards.
+          if (selected.has("tasks-cancel-ack-shape")) {
+            const stepStartedAt = Date.now();
+            if (wire !== "extension") {
+              checks.push(
+                notApplicable(
+                  "tasks-cancel-ack-shape",
+                  "check applies to the extension wire only"
+                )
+              );
+            } else if (!createdTaskId) {
+              checks.push(noTask("tasks-cancel-ack-shape"));
+            } else {
+              const cancel = await this.probeCancelAck(
+                manager,
+                serverId,
+                createdTaskId
+              );
+              checks.push(
+                cancel.unavailable !== undefined
+                  ? couldNotRun("tasks-cancel-ack-shape", cancel.unavailable)
+                  : cancel.problems.length === 0
+                  ? passed(
+                      "tasks-cancel-ack-shape",
+                      Date.now() - stepStartedAt,
+                      cancel.detail,
+                      cancel.warnings
+                    )
+                  : failed(
+                      "tasks-cancel-ack-shape",
+                      Date.now() - stepStartedAt,
+                      `tasks/cancel was not acknowledged as the extension requires: ${cancel.problems.join(
+                        "; "
+                      )}`,
+                      cancel.detail
+                    )
+              );
+            }
+          }
+
           // ORDERING: the undeclared probes run LAST of the task-touching
           // checks, and deliberately so. `tasks/update` and `tasks/cancel`
           // MUTATE a task, and this check exists precisely because a server
@@ -1274,6 +1816,24 @@ export class MCPTasksConformanceTest {
           // the run depends on its state. Only tasks-declaration-hygiene
           // follows, and it inspects captured outbound traffic (where an
           // undeclared probe is, correctly, no violation at all).
+          // ONE undeclared probe round, shared by the two checks that read it:
+          // whether the rejection HAPPENED, and whether it NAMED the missing
+          // capability. Probing twice would send four more mutating requests to
+          // say the same thing, and let the two checks disagree about what the
+          // server answered.
+          let undeclaredProbes: UndeclaredProbe[] | undefined;
+          const needsUndeclaredProbes =
+            selected.has("tasks-undeclared-capability-rejected") ||
+            selected.has("tasks-undeclared-capability-names-requirements");
+          if (needsUndeclaredProbes && wire === "extension" && createdTaskId) {
+            undeclaredProbes = await this.probeUndeclaredTaskMethods(
+              manager,
+              serverId,
+              createdTaskId,
+              sent
+            );
+          }
+
           if (selected.has("tasks-undeclared-capability-rejected")) {
             const stepStartedAt = Date.now();
             if (wire !== "extension") {
@@ -1286,12 +1846,7 @@ export class MCPTasksConformanceTest {
             } else if (!createdTaskId) {
               checks.push(noTask("tasks-undeclared-capability-rejected"));
             } else {
-              const probes = await this.probeUndeclaredTaskMethods(
-                manager,
-                serverId,
-                createdTaskId,
-                sent
-              );
+              const probes = undeclaredProbes;
               if (probes === undefined) {
                 checks.push(
                   couldNotRun(
@@ -1339,6 +1894,60 @@ export class MCPTasksConformanceTest {
             }
           }
 
+          if (selected.has("tasks-undeclared-capability-names-requirements")) {
+            const stepStartedAt = Date.now();
+            if (wire !== "extension") {
+              checks.push(
+                notApplicable(
+                  "tasks-undeclared-capability-names-requirements",
+                  "check applies to the extension wire only"
+                )
+              );
+            } else if (undeclaredProbes === undefined) {
+              checks.push(
+                couldNotRun(
+                  "tasks-undeclared-capability-names-requirements",
+                  "no -32021 rejection was observed, so there was no error payload to inspect"
+                )
+              );
+            } else {
+              const rejections = undeclaredProbes.filter(
+                (probe) => probe.outcome === "rejected"
+              );
+              const unnamed = rejections.filter(
+                (probe) => probe.requiredCapabilities === undefined
+              );
+              checks.push(
+                rejections.length === 0
+                  ? couldNotRun(
+                      "tasks-undeclared-capability-names-requirements",
+                      "no request was rejected with -32021, so no error payload named a required capability"
+                    )
+                  : unnamed.length === 0
+                    ? passed(
+                        "tasks-undeclared-capability-names-requirements",
+                        Date.now() - stepStartedAt,
+                        {
+                          rejections: rejections.map((probe) => ({
+                            method: probe.method,
+                            requiredCapabilities: probe.requiredCapabilities,
+                          })),
+                        }
+                      )
+                    : failed(
+                        "tasks-undeclared-capability-names-requirements",
+                        Date.now() - stepStartedAt,
+                        `${unnamed.length} -32021 rejection(s) carried no error.data.requiredCapabilities: ${unnamed
+                          .map((probe) => probe.method)
+                          .join(", ")}. A client told it is missing a capability, but not which one, cannot act on the error`,
+                        {
+                          unnamed: unnamed.map((probe) => probe.method),
+                        }
+                      )
+              );
+            }
+          }
+
           if (selected.has("tasks-declaration-hygiene")) {
             const stepStartedAt = Date.now();
             const violations = findDeclarationViolations(wire, sent);
@@ -1358,7 +1967,14 @@ export class MCPTasksConformanceTest {
             );
           }
 
-          const verdict = decideOutcome(checks);
+          // Which of these the `mcp-tasks` profile scores. A check outside the
+          // frozen manifest still ran and still shows its verdict in `checks`,
+          // but it is excluded from the verdict and the score — a scenario
+          // added this week must not retroactively fail a server that was green
+          // last week. Same mechanism as the protocol suite, separate manifest.
+          const profile = conformanceProfile("mcp-tasks");
+          const { scored, pending } = partitionByProfile(checks, profile);
+          const verdict = decideOutcome(scored);
 
           return {
             passed: verdict.outcome === "passed",
@@ -1368,9 +1984,19 @@ export class MCPTasksConformanceTest {
               : {}),
             target: this.config.target,
             checks,
-            summary: buildSummary(checks),
+            summary:
+              pending.length > 0
+                ? `${buildSummary(scored)}, ${pending.length} pending (unscored by profile ${profile.id}@${profile.version})`
+                : buildSummary(scored),
             durationMs: Date.now() - startedAt,
+            // The tally reports EVERYTHING that ran, pending included: a report
+            // that hid them would misstate what the run did.
             categorySummary: summarizeChecks(checks),
+            profile: buildConformanceProfileStamp({
+              profile,
+              checks,
+              ...(protocolVersion ? { protocolVersion } : {}),
+            }),
             discovery: {
               protocolVersion,
               wire,
@@ -1584,12 +2210,253 @@ export class MCPTasksConformanceTest {
    * (a genuine skip) and "the task exists but reading it failed" (which the
    * dependent checks must name, not silently skip past).
    */
+  /**
+   * Drive `input_required → tasks/update → completion`, the one leg of the
+   * task lifecycle a poll-only runner can never reach.
+   *
+   * Returns what happened rather than a verdict, so the check below can tell
+   * "the operator supplied no answers" (a skip) from "the update was rejected"
+   * and from "the update was acknowledged but the task never moved" (both
+   * failures). The ack shape is asserted here because the spec is specific
+   * about it: "On success, the server MUST acknowledge the request with an
+   * empty result."
+   */
+  private async runInputRequiredLeg(
+    manager: MCPClientManager,
+    serverId: string,
+    taskId: string,
+    task: Record<string, unknown>
+  ): Promise<InputRequiredLeg> {
+    const requested = isRecord(task.inputRequests)
+      ? Object.keys(task.inputRequests)
+      : [];
+    const responses = this.config.inputResponses;
+
+    if (!responses || Object.keys(responses).length === 0) {
+      return { outcome: "no-responses-configured", requested };
+    }
+
+    const answered = Object.keys(responses);
+    let ack: unknown;
+    try {
+      ack = await manager.updateTask(
+        serverId,
+        taskId,
+        responses as never
+      );
+    } catch (error) {
+      return {
+        outcome: "update-rejected",
+        requested,
+        answered,
+        message: errorMessage(error),
+        code: errorCode(error),
+      };
+    }
+
+    // "the server MUST acknowledge the request with an empty result". The
+    // envelope member `resultType` and the `_meta` container are part of every
+    // result, so they are not "content" — anything else is the server answering
+    // with state the client is told to re-poll for.
+    const ackExtras = isRecord(ack)
+      ? Object.keys(ack).filter(
+          (key) => key !== "resultType" && key !== "_meta"
+        )
+      : [];
+
+    const polled = await this.pollToTerminal(manager, serverId, "extension", taskId);
+    return {
+      outcome: "updated",
+      requested,
+      answered,
+      ackExtras,
+      polled,
+      finalStatus: polled.task ? String(polled.task.status) : undefined,
+    };
+  }
+
+  /**
+   * Ask for a task the server never issued.
+   *
+   * The id is deliberately fabricated rather than derived from a real one: a
+   * mutated real id could collide with a live task on a busy server, and this
+   * probe must never touch one.
+   *
+   * All three methods are probed, but they are NOT graded alike — the extension
+   * makes `-32602` a MUST for `tasks/get` and only a SHOULD for `tasks/update`
+   * and `tasks/cancel`, so the caller fails on the first and advises on the
+   * others. `tasks/update` carries an EMPTY `inputResponses`, so even a server
+   * that wrongly accepts it cannot advance anything.
+   */
+  private async probeUnknownTaskId(
+    manager: MCPClientManager,
+    serverId: string
+  ): Promise<{
+    taskId: string;
+    get: {
+      outcome: "answered" | "rejected" | "local-failure";
+      code?: number;
+      message?: string;
+    };
+    mutations: Array<{
+      method: string;
+      outcome: "answered" | "rejected" | "local-failure";
+      code?: number;
+      message?: string;
+    }>;
+    detail: Record<string, unknown>;
+  }> {
+    const taskId = `mcpjam-conformance-unknown-task-${Date.now()}`;
+
+    /**
+     * `answered` and `local-failure` are NOT the same nothing. A numeric code is
+     * minted only from a server error response, so its absence means the probe
+     * never got a verdict — grading that as "the server answered an unknown id"
+     * would report a defect we never observed. Same distinction
+     * `runUndeclaredProbe` draws through `reachedWire`.
+     */
+    const observe = async (
+      call: () => Promise<unknown>
+    ): Promise<{
+      outcome: "answered" | "rejected" | "local-failure";
+      code?: number;
+      message?: string;
+    }> => {
+      try {
+        await call();
+        return { outcome: "answered" };
+      } catch (error) {
+        const code = errorCode(error);
+        return code === undefined
+          ? { outcome: "local-failure", message: errorMessage(error) }
+          : { outcome: "rejected", code, message: errorMessage(error) };
+      }
+    };
+
+    const get = await observe(() => manager.getTaskExt(serverId, taskId));
+    const update = await observe(() =>
+      manager.updateTask(serverId, taskId, {} as never)
+    );
+    const cancel = await observe(() => manager.cancelTaskExt(serverId, taskId));
+
+    return {
+      taskId,
+      get,
+      mutations: [
+        { method: "tasks/update", ...update },
+        { method: "tasks/cancel", ...cancel },
+      ],
+      detail: { get, update, cancel },
+    };
+  }
+
+  /**
+   * `tasks/cancel` on a real task.
+   *
+   * Asserts ONLY what the extension states: "On success, the server MUST
+   * acknowledge the request with an empty result." It deliberately does NOT
+   * require the task to become `cancelled` — the spec says cancellation is
+   * eventually consistent, that the status "MAY remain working (or some other
+   * non-terminal status) after the ack", and "MAY ultimately reach a terminal
+   * status other than cancelled if the work finished before cancellation could
+   * take effect". A check that demanded `cancelled` would fail servers for
+   * behavior the spec explicitly permits.
+   */
+  private async probeCancelAck(
+    manager: MCPClientManager,
+    serverId: string,
+    taskId: string
+  ): Promise<{
+    problems: string[];
+    warnings: string[];
+    detail: Record<string, unknown>;
+    /** Set when the probe never produced a server verdict to grade. */
+    unavailable?: string;
+  }> {
+    const problems: string[] = [];
+    const warnings: string[] = [];
+
+    let ack: unknown;
+    try {
+      ack = await manager.cancelTaskExt(serverId, taskId);
+    } catch (error) {
+      const code = errorCode(error);
+      // The same "is this a server verdict?" test `runUndeclaredProbe` makes:
+      // a numeric code is minted only from a server error response, while a
+      // local or transport fault carries none. Grading the latter as a
+      // conformance failure would report a defect we never observed.
+      if (code === undefined) {
+        return {
+          problems: [],
+          warnings: [],
+          detail: { taskId },
+          unavailable: `tasks/cancel produced no JSON-RPC response (${errorMessage(
+            error
+          )}), so the acknowledgement requirement was not put to the server`,
+        };
+      }
+      // A server that has already finished and forgotten the task answers the
+      // unknown-id error, which is a legitimate outcome for a probe that runs
+      // after the task reached a terminal status. Reported, not failed.
+      if (code === INVALID_PARAMS) {
+        return {
+          problems: [],
+          warnings: [
+            `tasks/cancel for the already-terminal task ${taskId} was answered with -32602; the server no longer knows the task, which the extension permits`,
+          ],
+          detail: { taskId, cancelCode: code },
+        };
+      }
+      problems.push(
+        `tasks/cancel raised ${code ?? "no JSON-RPC code"}: ${errorMessage(error)}`
+      );
+      return { problems, warnings, detail: { taskId, cancelCode: code } };
+    }
+
+    if (!isRecord(ack)) {
+      problems.push("tasks/cancel did not return a result object");
+      return { problems, warnings, detail: { taskId, ack } };
+    }
+
+    // `resultType` and `_meta` are envelope members present on every result;
+    // anything else is task state the client is told to re-poll for instead.
+    const extras = Object.keys(ack).filter(
+      (key) => key !== "resultType" && key !== "_meta"
+    );
+    if (extras.length > 0) {
+      problems.push(
+        `the acknowledgement carried ${JSON.stringify(
+          extras
+        )}; the extension requires an empty result and the client re-polls for the new status`
+      );
+    }
+    if (ack.resultType !== undefined && ack.resultType !== "complete") {
+      problems.push(
+        `CancelTaskResult carried resultType ${JSON.stringify(
+          ack.resultType
+        )} rather than "complete"`
+      );
+    }
+
+    return {
+      problems,
+      warnings,
+      detail: { taskId, ackKeys: Object.keys(ack) },
+    };
+  }
+
   private async pollToTerminal(
     manager: MCPClientManager,
     serverId: string,
     wire: TasksWire,
-    taskId: string
-  ): Promise<{ task?: Record<string, unknown>; error?: unknown }> {
+    taskId: string,
+    options?: { stopOnInputRequired?: boolean }
+  ): Promise<{
+    task?: Record<string, unknown>;
+    error?: unknown;
+    /** Set when polling stopped because the task parked on `input_required`. */
+    inputRequired?: boolean;
+  }> {
     const deadline = Date.now() + this.config.pollTimeoutMs;
     let last: Record<string, unknown> | undefined;
 
@@ -1602,6 +2469,19 @@ export class MCPTasksConformanceTest {
         last = isRecord(task) ? task : undefined;
       } catch (error) {
         return { task: last, error };
+      }
+
+      // A task parked on `input_required` cannot advance until the CLIENT
+      // answers, so polling it to the deadline burns `pollTimeoutMs` to arrive
+      // at the state it was already in — and every dependent check then reports
+      // `could-not-run` many seconds later than it had to. Stopping here
+      // returns the same task, sooner.
+      if (
+        options?.stopOnInputRequired === true &&
+        last &&
+        String(last.status) === "input_required"
+      ) {
+        return { task: last, inputRequired: true };
       }
 
       if (last && TERMINAL_STATUSES.has(String(last.status)))

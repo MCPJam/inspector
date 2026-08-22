@@ -44,6 +44,10 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex, utf8ToBytes } from "@noble/hashes/utils.js";
 import { MCP_CHECK_IDS, type MCPCheckId } from "./mcp-conformance/types.js";
+import {
+  MCP_TASKS_CHECK_IDS,
+  type MCPTasksCheckId,
+} from "./tasks-conformance/types.js";
 
 /** Injected by tsup/vitest `define` (see `sdk/tsup.config.ts`). */
 declare const __MCPJAM_SDK_VERSION__: string;
@@ -61,7 +65,7 @@ export const CONFORMANCE_CHECKER_VERSION = __MCPJAM_SDK_VERSION__;
  * independent reasons to move. Pooling them under one id would make a tasks
  * check addition bump the protocol denominator.
  */
-export const CONFORMANCE_PROFILE_IDS = ["mcp-protocol"] as const;
+export const CONFORMANCE_PROFILE_IDS = ["mcp-protocol", "mcp-tasks"] as const;
 
 export type ConformanceProfileId = (typeof CONFORMANCE_PROFILE_IDS)[number];
 
@@ -76,7 +80,7 @@ export interface ConformanceProfile {
    * The frozen manifest: every check id this profile version SCORES. Order is
    * irrelevant to membership but is canonicalized for the digest.
    */
-  scored: readonly MCPCheckId[];
+  scored: readonly string[];
 }
 
 /**
@@ -134,11 +138,43 @@ const MCP_PROTOCOL_PROFILE: ConformanceProfile = {
     "modern-subscription-ack-precedes-notifications",
     "modern-subscription-filter-and-tagging",
     "modern-subscription-graceful-close",
-  ],
+  ] satisfies MCPCheckId[],
+};
+
+/**
+ * `mcp-tasks` v2026-08-22.1 — the eight checks the Tasks suite shipped before
+ * the gap program's scenario depth.
+ *
+ * A SEPARATE profile rather than a section of `mcp-protocol`, which was the
+ * open design question. Two reasons settled it:
+ *
+ *   - The inventories move for unrelated reasons. Adding a tasks scenario would
+ *     otherwise bump the protocol denominator, so a server that never
+ *     implemented the extension would see its protocol score's meaning change
+ *     because we learned something about tasks. That is the exact coupling the
+ *     profile exists to break.
+ *   - The suites already score separately (`scoreFromTasksResult` vs
+ *     `scoreFromProtocolResult`) and pool afterwards. One profile per suite
+ *     matches the arithmetic that already exists rather than fighting it.
+ */
+const MCP_TASKS_PROFILE: ConformanceProfile = {
+  id: "mcp-tasks",
+  version: "2026-08-22.1",
+  scored: [
+    "tasks-wire-resolvable",
+    "tasks-declaration-hygiene",
+    "tasks-result-type-discipline",
+    "tasks-undeclared-creation-refused",
+    "tasks-undeclared-capability-rejected",
+    "tasks-ttl-shape",
+    "tasks-inline-result",
+    "tasks-mcp-name-routing",
+  ] satisfies MCPTasksCheckId[],
 };
 
 const PROFILES: Record<ConformanceProfileId, ConformanceProfile> = {
   "mcp-protocol": MCP_PROTOCOL_PROFILE,
+  "mcp-tasks": MCP_TASKS_PROFILE,
 };
 
 export function conformanceProfile(
@@ -303,8 +339,14 @@ export function buildConformanceProfileStamp(input: {
   };
 }
 
-/** Every check id the inventory can produce that the profile does not score. */
-export function unscoredCheckIds(profile: ConformanceProfile): MCPCheckId[] {
+/** The full inventory a profile is drawn from, for the drift assertions. */
+const INVENTORIES: Record<ConformanceProfileId, readonly string[]> = {
+  "mcp-protocol": MCP_CHECK_IDS,
+  "mcp-tasks": MCP_TASKS_CHECK_IDS,
+};
+
+/** Every check id the profile's inventory can produce that it does not score. */
+export function unscoredCheckIds(profile: ConformanceProfile): string[] {
   const manifest = new Set<string>(profile.scored);
-  return MCP_CHECK_IDS.filter((id) => !manifest.has(id));
+  return INVENTORIES[profile.id].filter((id) => !manifest.has(id));
 }

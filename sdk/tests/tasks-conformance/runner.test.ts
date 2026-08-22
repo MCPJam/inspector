@@ -114,7 +114,20 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
         headers: { "mcp-name": taskId, "mcp-method": "tasks/get" },
         body: "{}",
       });
+      // A conformant server knows exactly the ids it issued and answers -32602
+      // for anything else (tasks.md:795, a MUST for `tasks/get`).
+      if (taskId !== "task-1") throw rpcErrorValue(-32602, "unknown task");
       return task;
+    },
+    // Both mutating methods: an empty ack for the real task, -32602 for an id
+    // the server never issued (a SHOULD there, but the conformant answer).
+    updateTask: async (_serverId: string, taskId: string) => {
+      if (taskId !== "task-1") throw rpcErrorValue(-32602, "unknown task");
+      return { resultType: "complete" };
+    },
+    cancelTaskExt: async (_serverId: string, taskId: string) => {
+      if (taskId !== "task-1") throw rpcErrorValue(-32602, "unknown task");
+      return { resultType: "complete" };
     },
     // A conformant server refuses EVERY undeclared task request with -32021
     // (ext-tasks tasks.md:797-799), including a task-filtered
@@ -127,9 +140,7 @@ function extensionManager(overrides: Record<string, unknown> = {}) {
     // `tasks-ext.ts` uses for the DECLARING calls, minus the declaration.
     getManagedClient: () => ({
       requestWithSchema: async () => {
-        throw Object.assign(new Error("missing capability"), {
-          code: -32021,
-        });
+        throw missingCapabilityError();
       },
     }),
     ...overrides,
@@ -145,8 +156,24 @@ function undeclaredSeam(perMethod: Record<string, () => unknown>) {
     requestWithSchema: async (payload: { method: string }) => {
       const behavior = perMethod[payload.method];
       if (behavior) return behavior();
-      throw Object.assign(new Error("missing capability"), { code: -32021 });
+      throw missingCapabilityError();
     },
+  });
+}
+
+function rpcErrorValue(code: number, message: string) {
+  return Object.assign(new Error(message), { code });
+}
+
+/**
+ * The conformant -32021. It carries `error.data.requiredCapabilities` because
+ * the core schema REQUIRES that member — a rejection that names nothing tells a
+ * client it is missing something without saying what.
+ */
+function missingCapabilityError() {
+  return Object.assign(new Error("missing capability"), {
+    code: -32021,
+    data: { requiredCapabilities: [EXT_ID] },
   });
 }
 
@@ -403,6 +430,20 @@ describe("MCPTasksConformanceTest", () => {
       "tasks-ttl-shape": "passed",
       "tasks-inline-result": "passed",
       "tasks-mcp-name-routing": "passed",
+      // The scenario depth added by the conformance-gap program, all outside
+      // the `mcp-tasks` profile's scored set. The one skip is correct: this
+      // task completes without ever asking for input, so there is no
+      // `input_required` round trip to grade.
+      "tasks-invalid-task-id-rejected": "passed",
+      // Skipped against the FAKE manager by design: it reads raw inbound
+      // frames (the only place a malformed status payload survives the SDK's
+      // own validation), and a fake manager produces none. The fixture-backed
+      // `scenarios.integration.test.ts` is where it is exercised.
+      "tasks-status-payload-shape": "skipped",
+      "tasks-cancel-ack-shape": "passed",
+      "tasks-ttl-integer-shape": "passed",
+      "tasks-undeclared-capability-names-requirements": "passed",
+      "tasks-input-required-update-completes": "skipped",
     });
     expect(result.passed).toBe(true);
     expect(result.discovery).toMatchObject({
@@ -689,7 +730,10 @@ describe("MCPTasksConformanceTest", () => {
       result.checks.filter(
         (c) => c.status === "skipped" && c.skipReason === "could-not-run"
       )
-    ).toHaveLength(6);
+      // Eleven, not six: the gap-program checks that also need a created task
+      // report the same honest gap. The SCORED tally is still six, because they
+      // are pending under `mcp-tasks@2026-08-22.1`.
+    ).toHaveLength(11);
     expect(result.incompleteReason).toContain("--tool-name");
     expect(result.incompleteReason).toContain("long_job");
   });
@@ -793,31 +837,20 @@ describe("undeclared task requests (-32021)", () => {
     );
     const check = undeclaredCheck(result);
     expect(check?.warnings ?? []).toEqual([]);
+    // The conformant rejection also NAMES the capability, which the sibling
+    // check grades; it rides along on the same probe rather than costing a
+    // second undeclared round.
+    const rejected = {
+      outcome: "rejected",
+      code: -32021,
+      reachedWire: true,
+      requiredCapabilities: [EXT_ID],
+    };
     expect(check?.details?.probes).toEqual([
-      {
-        method: "tasks/get",
-        outcome: "rejected",
-        code: -32021,
-        reachedWire: true,
-      },
-      {
-        method: "tasks/update",
-        outcome: "rejected",
-        code: -32021,
-        reachedWire: true,
-      },
-      {
-        method: "subscriptions/listen",
-        outcome: "rejected",
-        code: -32021,
-        reachedWire: true,
-      },
-      {
-        method: "tasks/cancel",
-        outcome: "rejected",
-        code: -32021,
-        reachedWire: true,
-      },
+      { method: "tasks/get", ...rejected },
+      { method: "tasks/update", ...rejected },
+      { method: "subscriptions/listen", ...rejected },
+      { method: "tasks/cancel", ...rejected },
     ]);
   });
 

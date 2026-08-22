@@ -318,4 +318,34 @@ export const TASKS_CHECK_CATALOG = {
     description:
       "Over HTTP, tasks/get is sent with Mcp-Name set to the task id (captured off the fetch seam) and accepted by the server.",
   },
+  "tasks-invalid-task-id-rejected": {
+    title: "Invalid Task Id Rejected",
+    description:
+      "tasks/get for a task id the server never issued is rejected with -32602 (Invalid params); the same rejection on tasks/update and tasks/cancel is a SHOULD and only warns.",
+  },
+  "tasks-status-payload-shape": {
+    title: "Status Payload Shape",
+    description:
+      "Each observed task status carries the payload its status requires: `result` on completed, `error` on failed, `inputRequests` on input_required.",
+  },
+  "tasks-cancel-ack-shape": {
+    title: "Cancel Acknowledged With An Empty Result",
+    description:
+      "tasks/cancel is acknowledged with an empty result rather than a task state, and the task's observable status is allowed to remain non-terminal afterwards.",
+  },
+  "tasks-input-required-update-completes": {
+    title: "Input Required Round Trip Completes",
+    description:
+      "A task that reports input_required advances past it once tasks/update supplies the requested inputResponses, and reaches a terminal status.",
+  },
+  "tasks-ttl-integer-shape": {
+    title: "TTL And Poll Interval Are Integers",
+    description:
+      "ttlMs and pollIntervalMs are integer milliseconds, as the extension's Task interface states.",
+  },
+  "tasks-undeclared-capability-names-requirements": {
+    title: "Undeclared Capability Error Names What Is Missing",
+    description:
+      "A -32021 rejection carries error.data.requiredCapabilities naming the capability the client failed to declare.",
+  },
 } as const satisfies Record<MCPTasksCheckId, ConformanceCheckInfo>;

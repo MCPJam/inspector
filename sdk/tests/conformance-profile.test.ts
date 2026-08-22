@@ -11,6 +11,7 @@ import {
 } from "../src/conformance-profile.js";
 import { computeConformanceScore } from "../src/conformance-score.js";
 import { MCP_CHECK_IDS } from "../src/mcp-conformance/types.js";
+import { MCP_TASKS_CHECK_IDS } from "../src/tasks-conformance/types.js";
 import type { OutcomeCheckLike } from "../src/conformance-outcome.js";
 
 const PROFILE = conformanceProfile("mcp-protocol");
@@ -80,6 +81,38 @@ describe("conformance profile manifest", () => {
     expect(conformanceProfileDigest(edited)).not.toBe(
       conformanceProfileDigest(PROFILE),
     );
+  });
+});
+
+describe("the mcp-tasks profile", () => {
+  const TASKS = conformanceProfile("mcp-tasks");
+
+  it("is a separate profile, not a section of mcp-protocol", () => {
+    // The design decision this encodes: folding tasks into the protocol
+    // manifest would make a tasks addition bump the protocol denominator, so a
+    // server that never implemented the extension would see its protocol
+    // score's meaning change because we learned something about tasks.
+    expect(TASKS.id).toBe("mcp-tasks");
+    expect(TASKS.id).not.toBe(PROFILE.id);
+    expect(conformanceProfileDigest(TASKS)).not.toBe(
+      conformanceProfileDigest(PROFILE),
+    );
+  });
+
+  it("names only tasks check ids the inventory can produce", () => {
+    const inventory = new Set<string>(MCP_TASKS_CHECK_IDS);
+    expect(TASKS.scored.filter((id) => !inventory.has(id))).toEqual([]);
+  });
+
+  it("states exactly which shipped tasks checks it leaves unscored", () => {
+    expect([...unscoredCheckIds(TASKS)].sort()).toEqual([
+      "tasks-cancel-ack-shape",
+      "tasks-input-required-update-completes",
+      "tasks-invalid-task-id-rejected",
+      "tasks-status-payload-shape",
+      "tasks-ttl-integer-shape",
+      "tasks-undeclared-capability-names-requirements",
+    ]);
   });
 });
 

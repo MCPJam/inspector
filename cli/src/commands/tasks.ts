@@ -71,6 +71,15 @@ const TASKS_CHECK_IDS_BY_CATEGORY: Record<
     "tasks-inline-result",
     "tasks-mcp-name-routing",
     "tasks-undeclared-capability-rejected",
+    // Scenario depth from the conformance-gap program. All in `lifecycle`
+    // because that is the category their check metadata declares, and the
+    // suite's own drift test requires every id to be reachable through one.
+    "tasks-invalid-task-id-rejected",
+    "tasks-status-payload-shape",
+    "tasks-cancel-ack-shape",
+    "tasks-input-required-update-completes",
+    "tasks-ttl-integer-shape",
+    "tasks-undeclared-capability-names-requirements",
   ],
 };
 
@@ -86,6 +95,7 @@ export interface TasksConformanceOptions extends SharedServerTargetOptions {
   toolName?: string;
   toolArgs?: string;
   pollTimeout?: number;
+  inputResponses?: string;
 }
 
 function collectInvalidEntries(
@@ -147,6 +157,14 @@ export function buildTasksConformanceConfig(
       ? { toolArguments: parseJsonRecord(options.toolArgs, "--tool-args") }
       : {}),
     ...(options.pollTimeout ? { pollTimeoutMs: options.pollTimeout } : {}),
+    ...(options.inputResponses
+      ? {
+          inputResponses: parseJsonRecord(
+            options.inputResponses,
+            "--input-responses"
+          ),
+        }
+      : {}),
   };
 }
 
@@ -711,6 +729,10 @@ export function registerTasksCommands(program: Command): void {
         "Tool used to provoke a task. Required for servers whose tools carry no task metadata (the extension wire)."
       )
       .option("--tool-args <json>", "Tool arguments as a JSON object")
+      .option(
+        "--input-responses <json>",
+        'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the round-trip check reports what it needs.'
+      )
       .option(
         "--poll-timeout <ms>",
         "How long to poll a created task for a terminal status",

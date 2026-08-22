@@ -60,6 +60,12 @@ test("buildTasksConformanceConfig maps the undeclared-capability checks to their
     "tasks-inline-result",
     "tasks-mcp-name-routing",
     "tasks-undeclared-capability-rejected",
+    "tasks-invalid-task-id-rejected",
+    "tasks-status-payload-shape",
+    "tasks-cancel-ack-shape",
+    "tasks-input-required-update-completes",
+    "tasks-ttl-integer-shape",
+    "tasks-undeclared-capability-names-requirements",
   ]);
 });
 

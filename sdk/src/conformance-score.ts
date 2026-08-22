@@ -304,16 +304,22 @@ export function scoreFromProtocolResult(
 function scoreFromWarningChecks(
   checks: Array<OutcomeCheckLike & { warnings?: string[] }>,
   protocolVersion?: string,
+  profileStamp?: Pick<ConformanceProfileStamp, "pendingCheckIds">,
 ): ConformanceScore {
+  // Warnings on a PENDING check must not cost points either: the check is not
+  // being scored, and letting its advice deduct would move the number a
+  // profile bump is supposed to gate.
+  const { scored } = partitionByStamp(checks, profileStamp);
   return computeConformanceScore(
     checks,
-    checks.flatMap((check) =>
+    scored.flatMap((check) =>
       (check.warnings ?? []).map((_, index) => ({
         id: `${check.id}-warning-${index + 1}`,
         tier: "may" as const,
       })),
     ),
     protocolVersion,
+    profileStamp,
   );
 }
 
@@ -329,6 +335,10 @@ export function scoreFromTasksResult(
   return scoreFromWarningChecks(
     result.checks,
     result.discovery.protocolVersion,
+    // Read off the RESULT, not the current build's manifest, for the same
+    // reason the protocol suite does: a stored report must score the way it did
+    // when it was produced.
+    result.profile,
   );
 }
 
