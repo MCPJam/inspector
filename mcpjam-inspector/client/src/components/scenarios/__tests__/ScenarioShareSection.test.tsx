@@ -1,7 +1,16 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScenarioSettings } from "@/hooks/useScenarios";
 import { ScenarioShareSection } from "../ScenarioShareSection";
+
+const scenarioMutations = vi.hoisted(() => ({
+  setScenarioMode: vi.fn(),
+  updateScenario: vi.fn(),
+  upsertScenarioMember: vi.fn(),
+  removeScenarioMember: vi.fn(),
+  rotateScenarioLink: vi.fn(),
+}));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
@@ -22,18 +31,16 @@ vi.mock("@/hooks/useProfilePicture", () => ({
 }));
 
 vi.mock("@/hooks/useScenarios", () => ({
-  useScenarioMutations: () => ({
-    setScenarioMode: vi.fn(),
-    updateScenario: vi.fn(),
-    upsertScenarioMember: vi.fn(),
-    removeScenarioMember: vi.fn(),
-    rotateScenarioLink: vi.fn(),
-  }),
+  useScenarioMutations: () => scenarioMutations,
 }));
 
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+const toast = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
 }));
+
+vi.mock("sonner", () => ({ toast }));
+vi.mock("@/lib/toast", () => ({ toast }));
 
 function createScenario(overrides: Partial<ScenarioSettings> = {}): ScenarioSettings {
   return {
@@ -61,6 +68,10 @@ function createScenario(overrides: Partial<ScenarioSettings> = {}): ScenarioSett
 }
 
 describe("ScenarioShareSection", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it("renders the same section structure as the project share dialog", () => {
     render(
       <ScenarioShareSection scenario={createScenario()} projectName="Acme" />,
@@ -201,5 +212,56 @@ describe("ScenarioShareSection", () => {
   it("exposes a rotate-link kebab next to copy", () => {
     render(<ScenarioShareSection scenario={createScenario()} />);
     expect(screen.getByTestId("scenario-share-link-menu")).toBeInTheDocument();
+  });
+
+  it("confirms rotate and calls rotateScenarioLink with the scenario id", async () => {
+    const user = userEvent.setup();
+    const next = createScenario({
+      link: {
+        token: "rotated",
+        path: "/c/rotated",
+        url: "https://example.com/c/rotated",
+        rotatedAt: 2,
+        updatedAt: 2,
+      },
+    });
+    scenarioMutations.rotateScenarioLink.mockResolvedValue(next);
+    const onUpdated = vi.fn();
+
+    render(
+      <ScenarioShareSection
+        scenario={createScenario()}
+        onUpdated={onUpdated}
+      />,
+    );
+
+    await user.click(screen.getByTestId("scenario-share-link-menu"));
+    await user.click(screen.getByTestId("share-rotate-link"));
+    expect(scenarioMutations.rotateScenarioLink).not.toHaveBeenCalled();
+    await user.click(screen.getByTestId("scenario-rotate-confirm"));
+    expect(scenarioMutations.rotateScenarioLink).toHaveBeenCalledWith({
+      scenarioId: "cb-1",
+    });
+    expect(onUpdated).toHaveBeenCalledWith(next);
+    expect(screen.getByLabelText("Tester link")).toHaveTextContent(
+      "/user-testing/my-scenario/rotated",
+    );
+  });
+
+  it("surfaces a rejected rotate mutation", async () => {
+    const user = userEvent.setup();
+    scenarioMutations.rotateScenarioLink.mockRejectedValue(
+      new Error("rotate failed"),
+    );
+
+    render(<ScenarioShareSection scenario={createScenario()} />);
+
+    await user.click(screen.getByTestId("scenario-share-link-menu"));
+    await user.click(screen.getByTestId("share-rotate-link"));
+    await user.click(screen.getByTestId("scenario-rotate-confirm"));
+    expect(scenarioMutations.rotateScenarioLink).toHaveBeenCalledWith({
+      scenarioId: "cb-1",
+    });
+    expect(toast.error).toHaveBeenCalledWith("rotate failed");
   });
 });
