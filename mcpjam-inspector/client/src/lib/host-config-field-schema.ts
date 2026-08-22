@@ -345,6 +345,23 @@ function hasTopLevelComma(value: string): boolean {
   return false;
 }
 
+/**
+ * Whether every `(` in the value is closed, and none closes early. Guards the
+ * split in {@link parseLightDarkPair}: `endsWith(")")` says nothing about
+ * whether that paren belongs to the `light-dark(` we opened.
+ */
+function hasBalancedParens(value: string): boolean {
+  let depth = 0;
+  for (const char of value) {
+    if (char === "(") depth += 1;
+    else if (char === ")") {
+      depth -= 1;
+      if (depth < 0) return false;
+    }
+  }
+  return depth === 0;
+}
+
 export function parseLightDarkPair(
   value: string
 ): { light: string; dark: string } | null {
@@ -354,6 +371,12 @@ export function parseLightDarkPair(
     return null;
   }
   const inner = trimmed.slice(prefix.length, -1);
+  // Balance first. Without it the scan below happily splits
+  // `light-dark(#fff, rgb(0,0,0)` — which ends in `)` and has a top-level
+  // comma — into a `dark` of `rgb(0,0,0`, an unclosed function we would then
+  // hand to a swatch. A balanced `inner` also guarantees both halves of the
+  // split are balanced, so neither side needs re-checking.
+  if (!hasBalancedParens(inner)) return null;
   let depth = 0;
   for (let i = 0; i < inner.length; i += 1) {
     const char = inner[i];

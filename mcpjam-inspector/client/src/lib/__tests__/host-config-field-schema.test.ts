@@ -409,6 +409,18 @@ describe("parseLightDarkPair", () => {
     // Malformed: one argument, so there is no pair to report.
     expect(parseLightDarkPair("light-dark(#fff)")).toBeNull();
     expect(parseLightDarkPair("light-dark(#fff, )")).toBeNull();
+    // Three arguments — splitting on the first comma would invent a dark.
+    expect(parseLightDarkPair("light-dark(#fff, #000, #333)")).toBeNull();
+    // Unbalanced: ends in `)`, but that paren closes `rgb(`, not light-dark(.
+    expect(parseLightDarkPair("light-dark(#fff, rgb(0,0,0)")).toBeNull();
+    // Closes early, so the trailing text was never inside the call.
+    expect(parseLightDarkPair("light-dark(#fff), rgb(0,0,0)")).toBeNull();
+    // Three arguments — splitting on the first comma would invent a dark.
+    expect(parseLightDarkPair("light-dark(#fff, #000, #333)")).toBeNull();
+    // Unbalanced: ends in `)`, but that paren closes `rgb(`, not light-dark(.
+    expect(parseLightDarkPair("light-dark(#fff, rgb(0,0,0)")).toBeNull();
+    // Closes early, so the trailing text was never inside the call.
+    expect(parseLightDarkPair("light-dark(#fff), rgb(0,0,0)")).toBeNull();
   });
 });
 
