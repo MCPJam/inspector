@@ -453,9 +453,29 @@ The result includes a per-host `verdict` (`works`, `degraded`, `blocked`, or `un
 
 ---
 
+## MCPJam Cloud commands
+
+All commands under `mcpjam cloud` (and the top-level `login`, `logout`, `whoami`, `tunnel`, `hosts`, `environments`, `images`, `eval`, and `readiness` hosted commands) require an MCPJam Cloud credential — either an `sk_` API key via `--api-key` / `MCPJAM_API_KEY`, or a prior `mcpjam cloud login`. If no credential is configured the command fails immediately with login guidance before making any network call.
+
+### Cloud audience line
+
+Before each Cloud operation, the CLI prints a context line to stderr:
+
+```
+Using MCPJam Cloud as <identity> · <scope> · <api-url>
+```
+
+- **`<identity>`** is your redacted API key (e.g. `sk_…1234`) or OAuth email address.
+- **`<scope>`** describes the resource the operation targets: `account`, `all projects`, `organization <id>`, or `project: <selector>`.
+- **`<api-url>`** is the MCPJam API base URL in use.
+
+This line goes to stderr only and never appears in `--format json` stdout output. Pass `--quiet` to suppress it. The line is not printed for `login`, `logout`, `whoami`, `cloud link`, and `cloud status`.
+
+---
+
 ## `hosts` commands
 
-Manage the hosts saved in your hosted MCPJam projects. All `hosts` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam login`.
+Manage the hosts saved in your hosted MCPJam projects. All `hosts` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
 
 ### Shared platform flags
 
