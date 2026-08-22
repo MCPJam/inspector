@@ -131,3 +131,18 @@ When someone you invited to a paid-seat organization signs up and the automatic 
 - Click **Remove invite** to remove the invite entirely if you no longer want to add that person.
 
 The invited member's organization appears greyed out in their sidebar until the seat is paid.
+
+#### Declined invoice cleanup
+
+If a payment confirmation fails in the browser (for example, a card decline during a 3DS challenge), the notice changes to show that Stripe is closing the declined invoice. While cleanup is in progress:
+
+- **Retry payment** is disabled and shows a spinner. It unlocks automatically once Stripe confirms the invoice is closed.
+- **Remove invite** remains available so you can remove the invite without waiting.
+
+When you click **Cancel** to remove a pending seat payment, the outcome is reflected in the notice:
+
+| Outcome | What it means |
+|---------|---------------|
+| Canceled | The payment was successfully voided. |
+| Deferred | Stripe could not confirm cancellation yet — the payment is still pending. Try again shortly. |
+| Payment completed | The charge went through before cancellation; the member has been added. |
