@@ -160,7 +160,7 @@ export async function startHostedConformanceRun(
       protocolVersion: input.protocolVersion,
       engineVersion: input.engineVersion,
       externalRunId: input.idempotencyKey
-        ? `api:${input.projectId}:${input.idempotencyKey}`
+        ? `api:${input.projectId}:${input.serverId}:${input.idempotencyKey}`
         : undefined,
       onRunStarted: async (runId, meta) => {
         if (settled) return;
@@ -385,7 +385,17 @@ export async function fetchSuiteReports(
           : "The conformance report could not be read from storage.",
       );
     }
-    out.push({ suiteKind: report.suiteKind, report: await response.json() });
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      throw new WebRouteError(
+        502,
+        ErrorCode.INTERNAL_ERROR,
+        "The conformance report could not be read from storage.",
+      );
+    }
+    out.push({ suiteKind: report.suiteKind, report: body });
   }
   return out;
 }

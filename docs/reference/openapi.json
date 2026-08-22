@@ -9189,7 +9189,7 @@
                   "idempotencyKey": {
                     "type": "string",
                     "maxLength": 200,
-                    "description": "Deduplicates a retried POST. Mapped to a namespaced externalRunId; a keyless start always inserts and spends quota."
+                    "description": "Deduplicates a retried POST for the same saved server. Mapped to a namespaced externalRunId (`api:<projectId>:<serverId>:<key>`); a keyless start always inserts and spends quota."
                   },
                   "protocolVersion": {
                     "type": "string"

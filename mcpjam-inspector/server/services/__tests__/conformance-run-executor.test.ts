@@ -70,7 +70,7 @@ describe("executePersistedConformanceRun replay", () => {
       server: SERVER as never,
       source: "api",
       target: { kind: "server", serverId: "s1" },
-      externalRunId: "api:p1:k1",
+      externalRunId: "api:p1:s1:k1",
       onRunStarted,
     });
 
@@ -103,7 +103,7 @@ describe("executePersistedConformanceRun replay", () => {
       server: SERVER as never,
       source: "api",
       target: { kind: "server", serverId: "s1" },
-      externalRunId: "api:p1:k1",
+      externalRunId: "api:p1:s1:k1",
     });
 
     expect(result).toEqual({

@@ -43,7 +43,7 @@ export type ExecutePersistedConformanceArgs = {
   actorLabel?: string;
   /**
    * Route-level idempotency. Mapped by the caller onto a namespaced
-   * `externalRunId` (`api:<projectId>:<key>`). Absent ⇒ every start inserts.
+   * `externalRunId` (`api:<projectId>:<serverId>:<key>`). Absent ⇒ every start inserts.
    */
   externalRunId?: string;
   /**

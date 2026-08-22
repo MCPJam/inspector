@@ -258,8 +258,40 @@ describe("v1 persisted conformance runs", () => {
       expect(res.status).toBe(202);
       expect(executePersistedConformanceRunMock.mock.calls[0]![0]).toMatchObject(
         {
-          externalRunId: "api:p1:k1",
+          externalRunId: "api:p1:s1:k1",
           suites: ["protocol"],
+        },
+      );
+    });
+
+    it("scopes an idempotency key to the saved server", async () => {
+      // The same caller key on two servers must not reuse the first run
+      // and then name the second server on that receipt.
+      const first = await request(
+        "POST",
+        "/api/v1/projects/p1/servers/s1/conformance-runs",
+        { body: { idempotencyKey: "k1" } },
+      );
+      const second = await request(
+        "POST",
+        "/api/v1/projects/p1/servers/s2/conformance-runs",
+        { body: { idempotencyKey: "k1" } },
+      );
+      expect(first.status).toBe(202);
+      expect(second.status).toBe(202);
+      expect(await first.json()).toMatchObject({ serverId: "s1" });
+      expect(await second.json()).toMatchObject({ serverId: "s2" });
+      expect(executePersistedConformanceRunMock).toHaveBeenCalledTimes(2);
+      expect(executePersistedConformanceRunMock.mock.calls[0]![0]).toMatchObject(
+        {
+          externalRunId: "api:p1:s1:k1",
+          target: { kind: "server", serverId: "s1" },
+        },
+      );
+      expect(executePersistedConformanceRunMock.mock.calls[1]![0]).toMatchObject(
+        {
+          externalRunId: "api:p1:s2:k1",
+          target: { kind: "server", serverId: "s2" },
         },
       );
     });
@@ -416,6 +448,53 @@ describe("v1 persisted conformance runs", () => {
         "https://storage.example.com/report.json",
         expect.objectContaining({ signal: expect.any(AbortSignal) }),
       );
+    });
+
+    it("answers 502 when storage returns malformed JSON", async () => {
+      convexQueryMock.mockResolvedValue(RUN_ROW);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(
+          async () =>
+            new Response("not-json", {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+        ),
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/conformance-runs/run_1/report",
+      );
+      expect(res.status).toBe(502);
+    });
+
+    it("answers 502 when the stored-report fetch is rejected", async () => {
+      convexQueryMock.mockResolvedValue(RUN_ROW);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          throw new Error("network");
+        }),
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/conformance-runs/run_1/report",
+      );
+      expect(res.status).toBe(502);
+    });
+
+    it("answers 502 when storage returns a non-404 failure", async () => {
+      convexQueryMock.mockResolvedValue(RUN_ROW);
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => new Response("unavailable", { status: 500 })),
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/conformance-runs/run_1/report",
+      );
+      expect(res.status).toBe(502);
     });
   });
 });
