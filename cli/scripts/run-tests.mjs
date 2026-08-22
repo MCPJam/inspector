@@ -17,7 +17,7 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const testsDir = path.join(root, "tests");
 
-export function discoverCliTestFiles(directory = testsDir): string[] {
+export function discoverCliTestFiles(directory = testsDir) {
   const files = [];
   const entries = readdirSync(directory, { withFileTypes: true });
   for (const entry of entries) {
@@ -33,7 +33,7 @@ export function discoverCliTestFiles(directory = testsDir): string[] {
   return files.sort((left, right) => left.localeCompare(right));
 }
 
-function resolveTsxBinary(): string {
+function resolveTsxBinary() {
   const require = createRequire(import.meta.url);
   try {
     return require.resolve("tsx/cli");
@@ -51,7 +51,7 @@ function resolveTsxBinary(): string {
   );
 }
 
-function main(): void {
+function main() {
   const files = discoverCliTestFiles();
   if (files.length === 0) {
     process.stderr.write("No CLI test files found under tests/.\n");
