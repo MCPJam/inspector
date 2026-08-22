@@ -2423,13 +2423,18 @@ export function registerEvalCommands(program: Command): void {
         ({ client, signal }) =>
           getEvalIterationTraceOperation.execute(
             {
-              project: resolved.project ?? options.project,
               runId: options.run,
               iterationId: options.iteration,
-            },
+              ...(resolved.project === undefined
+                ? {}
+                : { project: resolved.project }),
+            } as Parameters<typeof getEvalIterationTraceOperation.execute>[0],
             { client, signal }
           ),
-        { projectScope: resolved.projectScope }
+        {
+          projectScope: resolved.projectScope,
+          quiet: globalOptions.quiet,
+        }
       );
 
       let shots = extractRenderedScreenshots(result);
@@ -2549,13 +2554,18 @@ export function registerEvalCommands(program: Command): void {
         ({ client, signal }) =>
           getEvalIterationTraceOperation.execute(
             {
-              project: resolved.project ?? options.project,
               runId: options.run,
               iterationId: options.iteration,
-            },
+              ...(resolved.project === undefined
+                ? {}
+                : { project: resolved.project }),
+            } as Parameters<typeof getEvalIterationTraceOperation.execute>[0],
             { client, signal }
           ),
-        { projectScope: resolved.projectScope }
+        {
+          projectScope: resolved.projectScope,
+          quiet: globalOptions.quiet,
+        }
       );
 
       const videoUrl = extractIterationVideoUrl(result);
