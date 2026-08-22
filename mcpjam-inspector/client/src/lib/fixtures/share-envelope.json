@@ -19,6 +19,10 @@
     "shares:removeShareMember": {
       "args": ["resourceType", "resourceId", "memberIdOrEmail"],
       "returns": "ShareSettingsEnvelope"
+    },
+    "shares:revokeAllShares": {
+      "args": ["resourceType", "resourceId"],
+      "returns": "ShareSettingsEnvelope"
     }
   },
   "shareSettingsEnvelope": {
