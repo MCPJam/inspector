@@ -1552,6 +1552,43 @@ Persistently enables anonymous CLI telemetry. If no install ID exists yet, this 
 
 ---
 
+## Cloud command context line
+
+Before making any network call, every `mcpjam cloud` command prints a single context line to stderr:
+
+```
+Using MCPJam Cloud as <identity> · <scope> · <apiUrl>
+```
+
+- **Identity** — a redacted API key (`sk_…last4`) when `--api-key` or `MCPJAM_API_KEY` is used, or the stored OAuth email (else `oauth`) when logged in via `mcpjam cloud login`.
+- **Scope** — `account`, `organization <id>`, `all projects`, or `project: <selector source>` (e.g. `project: automatic (most recently updated)`, `project: flag (my-project)`, `project: input (proj-id)`).
+- **API URL** — the resolved MCPJam API base URL for this call.
+
+`--quiet` suppresses the line. Machine-readable stdout (JSON) is never affected.
+
+The following commands do **not** print the context line: `cloud login`, `cloud logout`, `cloud whoami`, `cloud link`, `cloud status`. Hosted `readiness` commands also do not print it.
+
+### Credential preflight
+
+Cloud commands check for a valid credential before making any network call. If no `sk_` API key and no stored OAuth session is found, the command exits immediately (exit code `1`) with:
+
+```
+Not logged in. Run `mcpjam cloud login`, or pass an sk_ API key via --api-key / MCPJAM_API_KEY.
+```
+
+If `MCPJAM_API_KEY` contains a legacy `mcpjam_` key, the error names the leftover variable and includes the remedy.
+
+### Parsing stderr in scripts
+
+When a Cloud command fails, the structured error JSON object is the **last** JSON line on stderr. The context line (if printed) appears before it. Scripts that parse stderr must locate the final `{…}` line rather than parsing the entire stderr stream as a single JSON document:
+
+```bash
+# Extract the last JSON object from stderr
+error=$(mcpjam cloud eval list --format json 2>&1 >/dev/null | grep '^{' | tail -1)
+```
+
+---
+
 ## `login` / `logout` / `whoami` commands
 
 These commands manage your MCPJam platform session. `login` opens a browser for OAuth and stores the session locally; `logout` removes it; `whoami` shows the account behind the current credentials.
