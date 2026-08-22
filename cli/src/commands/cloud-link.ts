@@ -5,6 +5,7 @@
  * zero-network: credential source, deployment, project selector, and link
  * validity. An invalid link still emits the structured report, then exits 1.
  */
+import { existsSync } from "node:fs";
 import type { Command } from "commander";
 import {
   projectResolutionError,
@@ -122,6 +123,7 @@ export function registerCloudLinkCommands(cloud: Command): void {
       } catch (error) {
         ok = false;
         projectSelectorFailed = true;
+        projectSource = "unresolved";
         warnings.push(error instanceof Error ? error.message : String(error));
       }
 
@@ -214,13 +216,13 @@ export function registerCloudLinkCommands(cloud: Command): void {
         const platform = platformOptionsOf(command);
 
         if (options.remove) {
-          if (project !== undefined && project !== "") {
+          if (project !== undefined) {
             throw usageError("Do not pass a project argument with --remove.");
           }
           const filePath = options.here
             ? projectLinkPathForDir(projectLinkWriteDir({ here: true }))
             : nearestLinkPath();
-          if (!filePath) {
+          if (!filePath || !existsSync(filePath)) {
             throw usageError("No project link found.");
           }
           removeProjectLinkFile(filePath);

@@ -35,8 +35,13 @@ export type DescribeCloudCredentialDependencies = {
 };
 
 export function redactCloudApiKey(key: string): string {
-  const last4 = key.slice(-4);
-  return `sk_…${last4}`;
+  const separator = key.indexOf("_");
+  const prefix = separator > 0 ? key.slice(0, separator + 1) : "";
+  const secret = key.slice(prefix.length);
+  if (secret.length < 8) {
+    return `${prefix}…`;
+  }
+  return `${prefix}…${secret.slice(-4)}`;
 }
 
 function trimmed(value: string | undefined): string | undefined {

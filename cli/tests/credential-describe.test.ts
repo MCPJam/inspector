@@ -18,6 +18,12 @@ test("redactCloudApiKey keeps sk_ prefix and last four characters", () => {
   assert.equal(redactCloudApiKey("sk_live_abcd1234"), "sk_…1234");
 });
 
+test("redactCloudApiKey hides short secrets and does not assume sk_", () => {
+  assert.equal(redactCloudApiKey("sk_ab"), "sk_…");
+  assert.equal(redactCloudApiKey("pk_abcd1234efgh"), "pk_…efgh");
+  assert.equal(redactCloudApiKey("short"), "…");
+});
+
 test("credential precedence is flag, usable env key, oauth, missing", () => {
   const authFilePath = authFile({
     issuer: "https://login.example.com",
