@@ -424,3 +424,33 @@ describe("prompt fixture arguments are validated before they reach the wire", ()
     );
   });
 });
+
+describe("tool fixture arguments share the container rule", () => {
+  const normalize = (args: unknown) =>
+    normalizeMCPConformanceConfig({
+      serverUrl: "https://example.test/mcp",
+      fixtures: {
+        toolCalls: [{ toolName: "echo", arguments: args as never }],
+      },
+    });
+
+  for (const [label, value] of [
+    ["a string", "Ada"],
+    ["a number", 42],
+    ["a boolean", false],
+    ["null", null],
+    ["an array", ["Ada"]],
+  ] as const) {
+    it(`rejects ${label}`, () => {
+      expect(() => normalize(value)).toThrow(/arguments must be an object/);
+    });
+  }
+
+  it("preserves arbitrary JSON VALUES, unlike prompt arguments", () => {
+    // `CallToolRequestParams.arguments` is `{"type":"object","additionalProperties":{}}`
+    // — the container is constrained, the values are not. Applying the prompt
+    // rule here would reject legitimate structured tool input.
+    const args = { count: 2, nested: { a: [1, 2] }, flag: true, none: null };
+    expect(normalize(args).fixtures?.toolCalls?.[0].arguments).toEqual(args);
+  });
+});

@@ -6,10 +6,12 @@ import {
   findDeclarationViolations,
   findRawTaskStates,
   sentRequestIds,
+  validateCompletionAck,
   pickProbeTool,
   resolveProbeTool,
   validateCreateTaskShape,
   validateTaskTtlShape,
+  validateTaskStatusPayload,
 } from "../../src/tasks-conformance/index.js";
 import type { MCPTasksCheckResult } from "../../src/tasks-conformance/index.js";
 import * as operations from "../../src/operations.js";
@@ -289,14 +291,28 @@ describe("findRawTaskStates", () => {
         GETS,
       ),
     ).toEqual([]);
-    // A payload with no `status` is not a task state.
+  });
+
+  it("KEEPS a payload whose status is missing or not a string", () => {
+    // Dropping these turned a violation into a non-observation: the check then
+    // reported `could-not-run` ("we never saw a task state") about a server
+    // that answered `tasks/get` with a malformed Task. A `tasks/get` response
+    // IS a Task, and request-id membership already identifies it as one, so
+    // the status no longer has to be well formed for the frame to be graded.
     expect(
       findRawTaskStates(
         [{ jsonrpc: "2.0", id: 1, result: { taskId: "t1" } }],
         "t1",
         GETS,
       ),
-    ).toEqual([]);
+    ).toHaveLength(1);
+    expect(
+      findRawTaskStates(
+        [{ jsonrpc: "2.0", id: 1, result: { taskId: "t1", status: 42 } }],
+        "t1",
+        GETS,
+      ),
+    ).toHaveLength(1);
   });
 
   it("excludes the tools/call creation frame, which is a bare Task", () => {
@@ -330,6 +346,87 @@ describe("findRawTaskStates", () => {
     // Ids compare as strings: JSON-RPC permits either type, and a run that
     // numbered its requests must not miss a server echoing them as strings.
     expect([...ids].sort()).toEqual(["1", "2"]);
+  });
+});
+
+describe("task status is judged, not coerced", () => {
+  // `Task.status` is REQUIRED and a closed enum of five values. Reading it
+  // through `String(...)` accepted anything and fell through to a silent pass:
+  // `undefined` became "undefined", `42` became "42", and a plausible typo like
+  // "complete" or "in_progress" sailed past the switch's `default`.
+  it("rejects a missing status", () => {
+    const verdict = validateTaskStatusPayload({ taskId: "t1" });
+    expect(verdict.violations[0]).toContain("required `status`");
+  });
+
+  it("rejects a non-string status, naming the type", () => {
+    expect(validateTaskStatusPayload({ taskId: "t1", status: 42 }).violations[0])
+      .toContain("must be a string");
+  });
+
+  it("rejects an unrecognised status, including near-miss typos", () => {
+    for (const status of ["complete", "in_progress", "done", ""]) {
+      const verdict = validateTaskStatusPayload({ taskId: "t1", status });
+      expect(verdict.violations.join(" ")).toContain("must be one of");
+    }
+  });
+
+  it("accepts every member of the enum", () => {
+    for (const status of ["working", "cancelled"]) {
+      expect(
+        validateTaskStatusPayload({ taskId: "t1", status }).violations,
+      ).toEqual([]);
+    }
+    // The three with payload obligations still get them enforced.
+    expect(
+      validateTaskStatusPayload({ taskId: "t1", status: "completed" })
+        .violations[0],
+    ).toContain("`result`");
+  });
+});
+
+describe("completion acknowledgements", () => {
+  it("rejects a non-object ack, which once read as an empty one", () => {
+    // `isRecord(ack) ? keys : []` made `"ok"` produce an empty extras list —
+    // a PASS from the check whose whole job is to confirm the acknowledgement.
+    for (const ack of ["ok", 42, null, true]) {
+      expect(
+        validateCompletionAck(ack, "tasks/update").violations[0],
+      ).toContain("did not return a result object");
+    }
+  });
+
+  it("rejects task state smuggled into the ack", () => {
+    expect(
+      validateCompletionAck(
+        { resultType: "complete", status: "completed" },
+        "tasks/cancel",
+      ).violations[0],
+    ).toContain("status");
+  });
+
+  it("rejects a present-but-wrong resultType, which misdirects the client", () => {
+    expect(
+      validateCompletionAck({ resultType: "task" }, "tasks/update")
+        .violations[0],
+    ).toContain('rather than "complete"');
+  });
+
+  it("only WARNS on an absent resultType, which wire-schema-valid fails", () => {
+    // Grading one schema statement in two suites would double-count it, and
+    // this repo deliberately treats the member as optional client-side.
+    const verdict = validateCompletionAck({}, "tasks/update");
+    expect(verdict.violations).toEqual([]);
+    expect(verdict.warnings[0]).toContain("UpdateTaskResult");
+  });
+
+  it("accepts the conformant ack, envelope members and all", () => {
+    expect(
+      validateCompletionAck(
+        { resultType: "complete", _meta: { trace: "x" } },
+        "tasks/cancel",
+      ),
+    ).toEqual({ violations: [], warnings: [] });
   });
 });
 

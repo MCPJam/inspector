@@ -9,6 +9,7 @@ export {
   resolveProbeTool,
   toolTaskSupport,
   validateCreateTaskShape,
+  validateCompletionAck,
   validateTaskStatusPayload,
   validateTaskTtlIntegerShape,
   validateTaskTtlShape,

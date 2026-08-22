@@ -581,13 +581,116 @@ export function validateTaskTtlShape(
  * absent here rather than given an empty rule — a rule that asserts nothing
  * reads as coverage it does not provide.
  */
+/**
+ * The extension requires `tasks/update` and `tasks/cancel` to be acknowledged
+ * with an EMPTY result — `UpdateTaskResult` and `CancelTaskResult` are both
+ * `Result` plus `resultType: "complete"`, with `resultType` REQUIRED.
+ *
+ * One validator for both, because they state the identical rule and had drifted
+ * apart: the cancel path treated an ABSENT `resultType` as acceptable when the
+ * schema marks it required, and the update path never looked at `resultType` at
+ * all and read a non-object acknowledgement as an empty one — so a server
+ * answering `tasks/update` with a bare string passed the check that exists to
+ * confirm it acknowledged properly.
+ *
+ * `_meta` is an envelope member present on every result, so it is not "content".
+ * Anything else IS content, and the extension tells the client to re-poll for
+ * the new state rather than read it out of the acknowledgement.
+ */
+export function validateCompletionAck(
+  ack: unknown,
+  method: string,
+): ShapeVerdict {
+  // A non-object is not an empty result, it is not a result at all. This was
+  // the hole: the update path read `isRecord(ack) ? keys : []` and an ack of
+  // `"ok"` produced an empty extras list, i.e. a PASS from the check whose job
+  // is to confirm the server acknowledged properly.
+  if (!isRecord(ack)) {
+    return {
+      violations: [
+        `${method} did not return a result object (got ${
+          ack === null ? "null" : typeof ack
+        })`,
+      ],
+      warnings: [],
+    };
+  }
+  const violations: string[] = [];
+  const warnings: string[] = [];
+  const extras = Object.keys(ack).filter(
+    (key) => key !== "resultType" && key !== "_meta"
+  );
+  if (extras.length > 0) {
+    violations.push(
+      `the acknowledgement carried ${JSON.stringify(
+        extras
+      )}; the extension requires an empty result and the client re-polls for the new status`
+    );
+  }
+  if (ack.resultType === undefined) {
+    // `UpdateTaskResult`/`CancelTaskResult` mark `resultType` required, and
+    // `wire-schema-valid` now grades these frames against exactly those
+    // definitions. Failing here too would grade ONE schema statement in two
+    // suites, and would flip a call this repo made deliberately — the SDK's own
+    // ack schema treats the member as optional, and the fixture carries an
+    // `emitTaskResultType` toggle documenting why. Advice here, verdict there.
+    warnings.push(
+      `the acknowledgement omits resultType "complete"; the extension's ${method === "tasks/cancel" ? "CancelTaskResult" : "UpdateTaskResult"} marks it required`
+    );
+  } else if (ack.resultType !== "complete") {
+    // Present but WRONG is a different fact from absent: a client
+    // discriminates on this member, so a wrong value actively misdirects it.
+    violations.push(
+      `the acknowledgement carried resultType ${JSON.stringify(
+        ack.resultType
+      )} rather than "complete"`
+    );
+  }
+  return { violations, warnings };
+}
+
+/**
+ * The extension's `TaskStatus`, verbatim: an `anyOf` of five string constants.
+ * A closed set, so anything outside it is a violation rather than a forward
+ * -compatible unknown.
+ */
+const TASK_STATUSES = new Set([
+  "working",
+  "input_required",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+
 export function validateTaskStatusPayload(task: unknown): ShapeVerdict {
   if (!isRecord(task)) {
     return { violations: ["task payload must be an object"], warnings: [] };
   }
   const violations: string[] = [];
   const warnings: string[] = [];
-  const status = String(task.status);
+
+  // `Task.status` is REQUIRED and a closed enum of five values in the
+  // extension's schema. Reading it through `String(...)` accepted anything:
+  // `undefined` became the string "undefined", `42` became "42", and both fell
+  // through the switch's `default` to a silent pass — as did a plausible-looking
+  // typo like "complete" or "in_progress". A client discriminates on this field,
+  // so a status it cannot recognise is not a cosmetic problem.
+  if (typeof task.status !== "string") {
+    return {
+      violations: [
+        task.status === undefined
+          ? "a task must carry the required `status` field"
+          : `a task's \`status\` must be a string, got ${typeof task.status}`,
+      ],
+      warnings: [],
+    };
+  }
+  const status = task.status;
+  if (!TASK_STATUSES.has(status)) {
+    violations.push(
+      `a task's \`status\` must be one of ${[...TASK_STATUSES].join(", ")}; got ${JSON.stringify(status)}`,
+    );
+  }
 
   switch (status) {
     case "completed":
@@ -903,7 +1006,15 @@ export function findRawTaskStates(
     const result = isRecord(message.result) ? message.result : undefined;
     if (!result) continue;
     if (result.taskId !== taskId) continue;
-    if (typeof result.status !== "string") continue;
+    // Deliberately NOT filtered on `status`. A missing or non-string status is
+    // a VIOLATION of the extension's `Task` (where `status` is required and a
+    // closed enum), and dropping such a frame here turned that violation into a
+    // non-observation: the check then reported `could-not-run` — "we never saw
+    // a task state" — about a server that answered with a malformed one.
+    //
+    // Identification is safe without it: membership in `getRequestIds` below
+    // already establishes that this is a `tasks/get` response, and a
+    // `tasks/get` response IS a Task.
     const id = message.id;
     if (
       (typeof id !== "string" && typeof id !== "number") ||
@@ -1093,7 +1204,7 @@ interface InputRequiredLeg {
   message?: string;
   code?: number;
   /** Result members beyond the envelope; a conforming ack has none. */
-  ackExtras?: string[];
+  ackVerdict?: ShapeVerdict;
   polled?: { task?: Record<string, unknown>; error?: unknown };
   finalStatus?: string;
 }
@@ -1581,14 +1692,10 @@ export class MCPTasksConformanceTest {
                 )
               );
             } else {
-              const problems: string[] = [];
-              if ((inputLeg.ackExtras?.length ?? 0) > 0) {
-                problems.push(
-                  `tasks/update was acknowledged with ${JSON.stringify(
-                    inputLeg.ackExtras
-                  )} rather than an empty result`
-                );
-              }
+              const problems: string[] = [
+                ...(inputLeg.ackVerdict?.violations ?? []),
+              ];
+              const ackWarnings = inputLeg.ackVerdict?.warnings ?? [];
               if (
                 inputLeg.finalStatus === undefined ||
                 !TERMINAL_STATUSES.has(inputLeg.finalStatus)
@@ -1608,7 +1715,8 @@ export class MCPTasksConformanceTest {
                         requested: inputLeg.requested,
                         answered: inputLeg.answered,
                         finalStatus: inputLeg.finalStatus,
-                      }
+                      },
+                      ackWarnings
                     )
                   : failed(
                       "tasks-input-required-update-completes",
@@ -2380,18 +2488,14 @@ export class MCPTasksConformanceTest {
     // envelope member `resultType` and the `_meta` container are part of every
     // result, so they are not "content" — anything else is the server answering
     // with state the client is told to re-poll for.
-    const ackExtras = isRecord(ack)
-      ? Object.keys(ack).filter(
-          (key) => key !== "resultType" && key !== "_meta"
-        )
-      : [];
+    const ackVerdict = validateCompletionAck(ack, "tasks/update");
 
     const polled = await this.pollToTerminal(manager, serverId, "extension", taskId);
     return {
       outcome: "updated",
       requested,
       answered,
-      ackExtras,
+      ackVerdict,
       polled,
       finalStatus: polled.task ? String(polled.task.status) : undefined,
     };
@@ -2535,35 +2639,18 @@ export class MCPTasksConformanceTest {
       return { problems, warnings, detail: { taskId, cancelCode: code } };
     }
 
-    if (!isRecord(ack)) {
-      problems.push("tasks/cancel did not return a result object");
-      return { problems, warnings, detail: { taskId, ack } };
-    }
-
-    // `resultType` and `_meta` are envelope members present on every result;
-    // anything else is task state the client is told to re-poll for instead.
-    const extras = Object.keys(ack).filter(
-      (key) => key !== "resultType" && key !== "_meta"
-    );
-    if (extras.length > 0) {
-      problems.push(
-        `the acknowledgement carried ${JSON.stringify(
-          extras
-        )}; the extension requires an empty result and the client re-polls for the new status`
-      );
-    }
-    if (ack.resultType !== undefined && ack.resultType !== "complete") {
-      problems.push(
-        `CancelTaskResult carried resultType ${JSON.stringify(
-          ack.resultType
-        )} rather than "complete"`
-      );
-    }
+    const ackVerdict = validateCompletionAck(ack, "tasks/cancel");
+    problems.push(...ackVerdict.violations);
+    warnings.push(...ackVerdict.warnings);
 
     return {
       problems,
       warnings,
-      detail: { taskId, ackKeys: Object.keys(ack) },
+      detail: {
+        taskId,
+        ackKeys: isRecord(ack) ? Object.keys(ack) : undefined,
+        ...(isRecord(ack) ? {} : { ack }),
+      },
     };
   }
 

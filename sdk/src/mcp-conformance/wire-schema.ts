@@ -172,6 +172,38 @@ function errorResponseDefinition(
   return undefined;
 }
 
+/** A method's result definition and the `$ref` that resolves it. */
+interface ResultTarget {
+  definition: string;
+  ref: string;
+}
+
+/**
+ * The `method` const of a request definition, wherever it is declared.
+ *
+ * The core documents put it directly under `properties`, but the ext-tasks
+ * document composes each request as `allOf: [{$ref: JSONRPCRequest}, {…}]` and
+ * declares `method` in the second branch. Reading only the top level found NO
+ * method for `tasks/get`, `tasks/update` or `tasks/cancel`, so their results
+ * were never correlated — they fell back to the near-vacuous envelope union and
+ * silently contributed nothing to `correlated`, on the extension whose result
+ * shapes are the least covered elsewhere.
+ */
+function methodConstOf(definition: unknown): string | undefined {
+  if (definition === null || typeof definition !== "object") return undefined;
+  const node = definition as {
+    properties?: { method?: { const?: unknown } };
+    allOf?: unknown[];
+  };
+  const direct = node.properties?.method?.const;
+  if (typeof direct === "string") return direct;
+  for (const branch of node.allOf ?? []) {
+    const nested = methodConstOf(branch);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
 /**
  * Method → result definition name, derived from the document's own request
  * definitions. A method whose request definition has no `…Result` sibling
@@ -181,18 +213,23 @@ function errorResponseDefinition(
  */
 function deriveResultDefinitions(
   document: WireSchemaDocument,
-): Map<string, string> {
-  const { definitions } = definitionsPointer(document);
-  const map = new Map<string, string>();
+  schemaId: string,
+): Map<string, ResultTarget> {
+  const { key, definitions } = definitionsPointer(document);
+  const map = new Map<string, ResultTarget>();
   for (const [name, definition] of Object.entries(definitions)) {
     if (!name.endsWith("Request")) continue;
-    const method = (
-      definition as { properties?: { method?: { const?: unknown } } }
-    )?.properties?.method?.const;
+    const method = methodConstOf(definition);
     if (typeof method !== "string") continue;
     const resultName = `${name.slice(0, -"Request".length)}Result`;
     if (definitions[resultName] !== undefined) {
-      map.set(method, resultName);
+      // The `$ref` travels with the name: an extension declares its methods in
+      // ITS document, so resolving them against the core schema id would either
+      // fail to compile or grade against the wrong definition.
+      map.set(method, {
+        definition: resultName,
+        ref: `${schemaId}#/${key}/${resultName}`,
+      });
     }
   }
   return map;
@@ -220,7 +257,7 @@ function describeError(error: {
 export class WireSchemaValidator {
   private readonly engine: SchemaEngine;
   private readonly defsKey: "definitions" | "$defs";
-  private readonly resultDefinitions: Map<string, string>;
+  private readonly resultDefinitions: Map<string, ResultTarget>;
   private readonly errorResponseDefinition?: string;
   private readonly compiled = new Map<string, ValidateFn>();
   private readonly extensionResultOverrides: Map<string, string[]>;
@@ -238,7 +275,7 @@ export class WireSchemaValidator {
     const core = CORE_WIRE_SCHEMAS[options.protocolVersion];
     this.engine = createEngine(isDraft07(core));
     this.defsKey = definitionsPointer(core).key;
-    this.resultDefinitions = deriveResultDefinitions(core);
+    this.resultDefinitions = deriveResultDefinitions(core, CORE_SCHEMA_ID);
     this.errorResponseDefinition = errorResponseDefinition(core);
     this.engine.addSchema({ ...core, $id: CORE_SCHEMA_ID });
 
@@ -260,6 +297,19 @@ export class WireSchemaValidator {
       this.engine.addSchema({ ...extension, $id: schemaId });
       extensionIds.push(id);
       digestParts.push(`${id}:${stableDigest(extension)}`);
+      // Methods the EXTENSION declares (`tasks/get`, `tasks/update`,
+      // `tasks/cancel`). The core document knows nothing about them, so without
+      // this their results are graded against the near-vacuous envelope union —
+      // no correlation at all, on exactly the surface nothing else covers.
+      // A method the core already declares keeps the core's definition.
+      for (const [method, target] of deriveResultDefinitions(
+        extension,
+        schemaId,
+      )) {
+        if (!this.resultDefinitions.has(method)) {
+          this.resultDefinitions.set(method, target);
+        }
+      }
       if (id === TASKS_EXTENSION_ID) {
         // A task-eligible `tools/call` answers EITHER normally or with a
         // `CreateTaskResult`. Both are conforming; grading only the first
@@ -328,10 +378,10 @@ export class WireSchemaValidator {
     if (isResultResponse && resultDefinition) {
       const method = observation.requestMethod as string;
       const refs = [
-        `${CORE_SCHEMA_ID}#/${this.defsKey}/${resultDefinition}`,
+        resultDefinition.ref,
         ...(this.extensionResultOverrides.get(method) ?? []),
       ];
-      return { definition: resultDefinition, refs };
+      return { definition: resultDefinition.definition, refs };
     }
 
     // JSON-RPC 2.0 REQUIRES `id: null` on an error whose request id could not
@@ -374,8 +424,8 @@ export class WireSchemaValidator {
     for (const observation of observations) {
       const target = this.targetFor(observation);
       const isMethodSpecific =
-        this.resultDefinitions.get(observation.requestMethod ?? "") ===
-        target.definition;
+        this.resultDefinitions.get(observation.requestMethod ?? "")
+          ?.definition === target.definition;
       if (isMethodSpecific) correlated += 1;
 
       // A method-specific target grades the RESULT payload, which is where the

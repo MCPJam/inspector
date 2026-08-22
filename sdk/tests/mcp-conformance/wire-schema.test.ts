@@ -215,3 +215,66 @@ describe("every vendored revision compiles and validates", () => {
     ).not.toBe(MODERN().schemaDigest);
   });
 });
+
+describe("extension request methods correlate", () => {
+  it("maps tasks/* to their own result definitions", () => {
+    // The ext-tasks document composes each request as
+    // `allOf: [{$ref: JSONRPCRequest}, {properties: {method: {const: …}}}]`.
+    // Reading only the top-level `properties` found NO method for tasks/get,
+    // tasks/update or tasks/cancel, so their results silently fell back to the
+    // near-vacuous envelope union — no correlation at all on the extension
+    // whose result shapes nothing else covers.
+    const validator = new WireSchemaValidator({
+      protocolVersion: "2026-07-28",
+      extensionIds: ["io.modelcontextprotocol/tasks"],
+    });
+    const report = validator.validate([
+      {
+        origin: "server",
+        requestMethod: "tasks/get",
+        id: 1,
+        requestIdDeterminable: true,
+        message: {
+          jsonrpc: "2.0",
+          id: 1,
+          result: {
+            // `Result.required` includes `resultType` in the ext-tasks
+            // document, so a conformant tasks/get result carries it.
+            resultType: "complete",
+            taskId: "t1",
+            status: "working",
+            createdAt: "2026-01-01T00:00:00Z",
+            lastUpdatedAt: "2026-01-01T00:00:00Z",
+            ttlMs: 60000,
+          },
+        },
+      },
+    ]);
+    expect(report.correlated).toBe(1);
+    expect(report.violations).toEqual([]);
+  });
+
+  it("now FAILS a tasks/get result the envelope union used to wave through", () => {
+    const validator = new WireSchemaValidator({
+      protocolVersion: "2026-07-28",
+      extensionIds: ["io.modelcontextprotocol/tasks"],
+    });
+    const report = validator.validate([
+      {
+        origin: "server",
+        requestMethod: "tasks/get",
+        id: 1,
+        requestIdDeterminable: true,
+        // `status` outside the closed `TaskStatus` enum, and no `resultType`.
+        message: {
+          jsonrpc: "2.0",
+          id: 1,
+          result: { taskId: "t1", status: "in_progress" },
+        },
+      },
+    ]);
+    expect(report.correlated).toBe(1);
+    expect(report.violations).toHaveLength(1);
+    expect(report.violations[0].definition).toBe("GetTaskResult");
+  });
+});
