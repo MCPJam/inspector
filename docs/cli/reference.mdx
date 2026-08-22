@@ -1572,9 +1572,27 @@ The `MCPJAM_API_URL` environment variable is equivalent to `--api-url`. An inval
 3. The `apiUrl` stored with the OAuth session (only when the stored login is the credential; `sk_` API keys do not inherit the stored URL)
 4. Production default (`https://app.mcpjam.com/api/v1`)
 
+**Login output fields:**
+
+After a successful login, the result includes:
+
+| Field | Description |
+|-------|-------------|
+| `status` | `"logged_in"` |
+| `issuer` | OAuth issuer URL |
+| `apiUrl` | MCPJam API base URL persisted with the session |
+| `authFile` | Path to the stored session file |
+| `email` | Account email address (present when account lookup succeeded) |
+| `plan` | Account plan (present when account lookup succeeded) |
+| `expiresAt` | ISO 8601 access-token expiry (present when the token carries an expiry) |
+
+Account details (`email` and `plan`) are fetched from the platform after the OAuth exchange completes. If the lookup fails, login still succeeds and a warning is printed to stderr (suppressed with `--quiet`).
+
 ### `logout`
 
 No additional flags. Removes the stored MCPJam session.
+
+When `MCPJAM_API_KEY` is set to an active `sk_` key, `logout` prints a warning to stderr (human format only) noting that the CLI remains authenticated via the environment variable even after the stored session is cleared. JSON output is unaffected.
 
 ### `whoami`
 
