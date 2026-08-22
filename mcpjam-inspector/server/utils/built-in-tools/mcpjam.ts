@@ -433,6 +433,16 @@ const APPROVAL_REQUIRED_IDS = new Set([
   // supplied by whoever is talking to the model, this server dials it, and a
   // completed flow adds a server row to the user's project.
   connectProjectServerOperation.name,
+  // create_project_server with different spelling: the caller supplies
+  // `endpointUrl`, and a completed install adds a server row to the user's
+  // project — so it takes the same approval its sibling does.
+  installRegistryDirectoryServerOperation.name,
+  // Installs a registry card whose config was written by another org member;
+  // the completed flow still adds a server row to the user's project.
+  installRegistryServerOperation.name,
+  // Destructive, same as delete_project_server: removes the installed server
+  // row and its connection.
+  uninstallRegistryServerOperation.name,
 ]);
 
 // Surface note appended to each operation's description: in-app, an omitted

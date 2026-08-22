@@ -82,36 +82,53 @@ export interface PlatformCatalogOauthProbe {
   authorizationServerUrl?: string;
 }
 
-/** Scraped directory row — allowlisted; unknown upstream fields are dropped. */
+/**
+ * Scraped directory row — allowlisted; unknown upstream fields are dropped.
+ *
+ * The nullable fields match the wire: the backend DTO
+ * (`mcpjam-backend/convex/publicApi/dtos.ts::toCatalogServerDto`) emits
+ * `null` for an absent value on these, never omits them.
+ */
 export interface PlatformCatalogServer {
   id: string;
   source: string;
   serverName: string;
   displayName?: string;
-  description?: string;
+  description?: string | null;
   rowType?: string;
-  verifiedTier?: string;
-  authPosture?: string;
-  unavailableReason?: string;
+  verifiedTier?: string | null;
+  authPosture?: string | null;
+  unavailableReason?: string | null;
   endpointKind?: string;
   remoteUrl?: string;
   remoteUrlOptions?: string[];
   remoteUrlRegex?: string;
   remoteUrlHint?: string;
-  latestContentHash?: string;
+  latestContentHash?: string | null;
   oauthProbe?: PlatformCatalogOauthProbe;
 }
 
+/**
+ * The directory search page, plus the server's echo of which mode actually
+ * ran: `"search"` when a non-blank `q` selected text search, `"browse"` for
+ * the plain listing. Optional so a tolerant reader survives a backend that
+ * predates the marker.
+ */
+export type PlatformDirectorySearchPage =
+  PlatformPage<PlatformCatalogServer> & {
+    mode?: "search" | "browse";
+  };
+
 export interface PlatformCatalogSourceStatus {
   source: string;
-  lastSyncedAt?: number;
-  liveCount?: number;
-  upstreamFetchedAt?: number;
+  lastSyncedAt?: number | null;
+  liveCount?: number | null;
+  upstreamFetchedAt?: number | null;
 }
 
 export interface PlatformRegistryServerTransport {
   transportType?: string;
-  url?: string;
+  url?: string | null;
   useOAuth?: boolean;
   hasOAuthConfig?: boolean;
   oauthScopes?: string[];
@@ -122,12 +139,12 @@ export interface PlatformRegistryServer {
   scope: "global" | "organization";
   name: string;
   displayName?: string;
-  description?: string;
-  category?: string;
+  description?: string | null;
+  category?: string | null;
   tags?: string[];
-  publisher?: string;
+  publisher?: string | null;
   status?: string;
-  updatedAt?: number;
+  updatedAt?: number | null;
   transport?: PlatformRegistryServerTransport;
 }
 
@@ -135,14 +152,14 @@ export interface PlatformRegistryConnection {
   id: string;
   kind: "registry" | "catalog";
   scope?: "global" | "organization";
-  projectId: string;
+  projectId: string | null;
   serverId: string;
-  serverName?: string;
+  serverName?: string | null;
   registryServerId?: string;
   catalogServerId?: string;
   endpointUrl?: string;
   endpointKind?: string;
-  connectedAt?: number;
+  connectedAt?: number | null;
 }
 
 export interface PlatformRegistryInstall {
@@ -154,6 +171,12 @@ export interface PlatformRegistryInstall {
 export interface PlatformRegistryInstallNextSteps {
   connectionStatusOp: "get_project_server_connection_status";
   connectLinkUrl?: string;
+  /**
+   * Present when an OAuth install could not mint its browser connect-link.
+   * The install itself succeeded; the caller starts connect_project_server
+   * themselves instead of waiting for a link that is not coming.
+   */
+  connectLinkError?: string;
 }
 
 export interface PlatformRegistryInstallResult extends PlatformRegistryInstall {
