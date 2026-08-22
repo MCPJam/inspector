@@ -1617,6 +1617,22 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // honest options here are all-or-nothing.
   search_sessions:
     "Other people's conversations are not the agent's to read. Available on REST/CLI/MCP.",
+  search_registry_directory:
+    "Slack/Discord directory search lands in I4 with the untrusted-content prompt note; wired in follow-up PR.",
+  get_registry_directory_server:
+    "Slack/Discord directory detail lands in I4 with the untrusted-content prompt note; wired in follow-up PR.",
+  list_registry_directory_sources:
+    "Slack/Discord source discovery lands in I4 with the rest of the registry agent partition; wired in follow-up PR.",
+  list_registry_servers:
+    "Slack/Discord card listing lands in I4 with the untrusted-content prompt note on author-written cards; wired in follow-up PR.",
+  list_registry_connections:
+    "Slack/Discord connection listing lands in I4 as a direct read; wired in follow-up PR.",
+  install_registry_directory_server:
+    "Slack/Discord directory install is gated in I4 with a frozen expectedContentHash/endpointUrl proposal; wired in follow-up PR.",
+  install_registry_server:
+    "Slack/Discord card install is gated in I4 with a frozen expectedUpdatedAt proposal; wired in follow-up PR.",
+  uninstall_registry_server:
+    "Agent proposes authoring, never destruction — same rule as delete_project_server. Confirmed in I4; excluded here so I2 can land.",
 };
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(

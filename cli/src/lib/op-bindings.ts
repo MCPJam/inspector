@@ -130,21 +130,20 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   upsert_user_testing_member: { command: "cloud user-testing invite" },
   remove_user_testing_member: { command: "cloud user-testing remove-member" },
   rebind_user_testing_scenario: { command: "cloud user-testing rebind" },
-  // Unified share envelope (scenario / conformance / eval-run). The SDK and
-  // MCP catalog shipped first; a `share` command group that can address all
-  // three resource kinds is the CLI half, and these bind together when it
-  // lands. Scenario-only rotate/invite stay on `user-testing` above.
+  // Unified share. I5 shipped SDK/MCP/agent; there is no `cloud share`
+  // command yet. Exclude until one exists — a binding with no Commander path
+  // fails the tree test.
   get_share_settings: {
     excluded:
-      "No `share` command group yet — reading the unified envelope shipped on the API, MCP catalog, and in-app agent first. Bind the three share verbs together when the CLI can address scenario, conformance, and eval-run resources.",
+      "Share settings are read from the Share dialog; no `cloud share` command exists yet.",
   },
   set_share_mode: {
     excluded:
-      "No `share` command group yet — changing who can open a shared resource is an exposure write that should land with get/rotate, not as a one-off under user-testing.",
+      "Changing who can open a shared resource is confirmed in the Share dialog; no CLI write exists yet.",
   },
   rotate_share_link: {
     excluded:
-      "No `share` command group yet — rotating the unified URL is irreversible across three resource kinds, and the scenario-only path stays on `user-testing rotate-link`.",
+      "Rotating a unified share URL is irreversible and confirmed in the UI; no CLI command exists yet.",
   },
 
   // ── Evals ───────────────────────────────────────────────────────────────
@@ -299,5 +298,37 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_models: {
     excluded:
       "Model choice belongs to whatever runs an eval; the CLI never picks one on the user's behalf.",
+  },
+  search_registry_directory: {
+    excluded:
+      "CLI `mcpjam registry search` is wired in follow-up PR I3 so the Commander tree and this catalog land together.",
+  },
+  get_registry_directory_server: {
+    excluded:
+      "CLI `mcpjam registry show` is wired in follow-up PR I3; adding the op without the command would fail the bindings tree test.",
+  },
+  list_registry_directory_sources: {
+    excluded:
+      "CLI `mcpjam registry sources` is wired in follow-up PR I3 with the rest of the registry group.",
+  },
+  list_registry_servers: {
+    excluded:
+      "CLI `mcpjam registry servers` is wired in follow-up PR I3; card listing stays out of the tree until then.",
+  },
+  list_registry_connections: {
+    excluded:
+      "CLI `mcpjam registry connections` is wired in follow-up PR I3 with the rest of the registry group.",
+  },
+  install_registry_directory_server: {
+    excluded:
+      "CLI `mcpjam registry install` (directory default) is wired in follow-up PR I3, including the flag-qualified dual-op binding.",
+  },
+  install_registry_server: {
+    excluded:
+      "CLI `mcpjam registry install --card` is wired in follow-up PR I3; one Commander path binds two ops.",
+  },
+  uninstall_registry_server: {
+    excluded:
+      "CLI `mcpjam registry uninstall` is wired in follow-up PR I3; card-only, no directory uninstall verb.",
   },
 };
