@@ -591,6 +591,63 @@ export type {
   ConformanceScore,
   ScoredAdvisory,
 } from "./conformance-score.js";
+// The frozen scored-check manifest a score is computed over, plus the identity
+// stamp that says which questions a given number came from.
+export {
+  buildConformanceProfileStamp,
+  conformanceProfile,
+  conformanceProfileDigest,
+  partitionByProfile,
+  partitionByStamp,
+  unscoredCheckIds,
+  CONFORMANCE_CHECKER_VERSION,
+  CONFORMANCE_PROFILE_IDS,
+} from "./conformance-profile.js";
+export type {
+  ConformanceProfile,
+  ConformanceProfileId,
+  ConformanceProfileStamp,
+  ProfileCheckLike,
+} from "./conformance-profile.js";
+
+export {
+  buildConformanceRunReport,
+  CONFORMANCE_RUN_SCHEMA_VERSION,
+  CONFORMANCE_SUITE_KINDS,
+  DEFAULT_CONFORMANCE_SUITES,
+  normalizeConformanceSuites,
+} from "./conformance-run-types.js";
+export type {
+  ConformanceRunReportV1,
+  ConformanceSuiteKind,
+} from "./conformance-run-types.js";
+export { runConformance } from "./conformance-run.js";
+export type {
+  ConformanceRunProgress,
+  RunConformanceConfig,
+} from "./conformance-run.js";
+export {
+  detectConformanceCiMetadata,
+  githubActionExternalRunId,
+} from "./conformance-ci.js";
+export type { ConformanceCiMetadata } from "./conformance-ci.js";
+export {
+  finalizeConformanceRun,
+  heartbeatConformanceRun,
+  isConformanceReportingConfigured,
+  reportConformanceRun,
+  reportConformanceRunSafely,
+  startConformanceRun,
+  uploadConformanceSuiteReport,
+} from "./report-conformance-run.js";
+export type {
+  ConformanceRunSource,
+  ConformanceTargetInput,
+  ReportConformanceRunOptions,
+  ReportConformanceRunOutput,
+} from "./report-conformance-run.js";
+export { createConformanceRunReporter } from "./conformance-run-reporter.js";
+export type { ConformanceRunReporter } from "./conformance-run-reporter.js";
 // Redaction for reports that leave the machine that produced them (a stored,
 // shareable run). Structural drop of raw HTTP evidence plus a credential-shaped
 // key sweep — see the module header for why both layers exist.
@@ -969,6 +1026,25 @@ export {
 export type {
   ConformanceSuiteId,
   ConformanceSupport,
+  MCPConformanceFixtures,
+} from "./mcp-conformance/index.js";
+// Wire-schema validation: the run-wide message record and the validator that
+// grades it against the revision's published JSON Schema. Node-only (Ajv),
+// which is why it is absent from `@mcpjam/sdk/browser`.
+export {
+  WireObservationRecorder,
+  WireSchemaValidator,
+  CORE_WIRE_SCHEMAS,
+  EXTENSION_SCHEMA_REVISIONS,
+  EXTENSION_WIRE_SCHEMAS,
+  TASKS_EXTENSION_ID,
+} from "./mcp-conformance/index.js";
+export type {
+  ObservedRequestId,
+  ObservedWireMessage,
+  WireSchemaDocument,
+  WireSchemaValidationReport,
+  WireSchemaViolation,
 } from "./mcp-conformance/index.js";
 
 // MCP Apps conformance

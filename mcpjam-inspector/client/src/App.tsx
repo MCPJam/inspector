@@ -49,6 +49,12 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
+import {
+  ConformanceHistory,
+  ConformanceRunDetailPage,
+  ConformanceSharedPage,
+} from "./components/conformance/ConformanceHistory";
+import { EvalRunSharedPage } from "./components/evals/EvalRunSharedPage";
 import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
@@ -79,6 +85,7 @@ import {
   useSidebar,
 } from "./components/ui/sidebar";
 import { AgentSidePanelMount } from "./components/mcpjam-agent/AgentSidePanelMount";
+import { AppChromePanel } from "@/components/app-chrome-panel";
 import {
   Alert,
   AlertDescription,
@@ -185,7 +192,7 @@ import {
   readProjectDeepLinkParam,
   resolveProjectDeepLinkAction,
 } from "./lib/project-deep-link";
-import { isHostedHashTabAllowed } from "./lib/hosted-tab-policy";
+import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
@@ -1365,8 +1372,73 @@ export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
 }
 
 export function ConformanceRoute() {
-  const { selectedServerEntry } = useAppRouteContext();
-  return <ConformanceTab server={selectedServerEntry ?? null} />;
+  const { selectedServerEntry, convexProjectId, isAuthenticated } =
+    useAppRouteContext();
+  const { serversByName } = useProjectServers({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
+  const savedServerId = selectedServerEntry?.name
+    ? (serversByName.get(selectedServerEntry.name) ?? null)
+    : null;
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      {convexProjectId ? (
+        <div className="shrink-0 overflow-auto border-b border-border/40 px-4 pt-4 lg:px-6">
+          <ConformanceHistory
+            projectId={convexProjectId}
+            serverId={savedServerId}
+          />
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <ConformanceTab
+          server={selectedServerEntry ?? null}
+          persist={
+            convexProjectId
+              ? { projectId: convexProjectId, serverId: savedServerId }
+              : undefined
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+export function ConformanceRunDetailRoute() {
+  const { convexProjectId } = useAppRouteContext();
+  const params = useParams<{ runId?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.runId ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return (
+    <ConformanceRunDetailPage
+      runId={decodeParam(raw) ?? raw}
+      projectId={convexProjectId}
+    />
+  );
+}
+
+export function ConformanceSharedRoute() {
+  const params = useParams<{ token?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.token ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return <ConformanceSharedPage token={decodeParam(raw) ?? raw} />;
+}
+
+export function EvalRunSharedRoute() {
+  const params = useParams<{ token?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.token ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return <EvalRunSharedPage token={decodeParam(raw) ?? raw} />;
 }
 
 export function CompatibilityRoute() {
@@ -2312,6 +2384,8 @@ export default function App() {
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
+    barePathname.startsWith(`${routePaths.conformanceShared}/`) ||
+    barePathname.startsWith(`${routePaths.evalsShared}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
   // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
   // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
@@ -2358,8 +2432,18 @@ export default function App() {
       ),
     [optimisticallyDeletedOrganizationIds, sortedOrganizations]
   );
+  // Orgs the user may actually open. A `seatPending` org is a paid-seat invite
+  // whose membership hasn't linked yet, so every org-scoped query for it is
+  // denied server-side — making it active crashed the route
+  // (Sentry INSPECTOR-CLIENT-24C). It stays in `effectiveOrganizations` so the
+  // switcher can list it as unavailable, but it must never become the
+  // active org, by route or by fallback.
+  const selectableOrganizations = useMemo(
+    () => effectiveOrganizations.filter((org) => !org.seatPending),
+    [effectiveOrganizations]
+  );
   const hasRouteOrganization = !!routeOrganizationId
-    ? effectiveOrganizations.some((org) => org._id === routeOrganizationId)
+    ? selectableOrganizations.some((org) => org._id === routeOrganizationId)
     : false;
 
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
@@ -2709,9 +2793,9 @@ export default function App() {
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
     currentActorKey: actorKey,
-    hasOrganizations: effectiveOrganizations.length > 0,
+    hasOrganizations: selectableOrganizations.length > 0,
     isLoadingOrganizations,
-    validOrganizations: effectiveOrganizations,
+    validOrganizations: selectableOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
     requestSignIn: () => {
       void signIn();
@@ -3088,7 +3172,7 @@ export default function App() {
   const billingOrganizationId =
     !isLoadingOrganizations &&
     rawBillingOrganizationId &&
-    effectiveOrganizations.some((org) => org._id === rawBillingOrganizationId)
+    selectableOrganizations.some((org) => org._id === rawBillingOrganizationId)
       ? rawBillingOrganizationId
       : null;
   const activeProjectBillingOrganizationId =
@@ -3412,7 +3496,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!HOSTED_MODE || isHostedHashTabAllowed(activeTab)) {
+    if (!HOSTED_MODE || !isHostedTabBlocked(activeTab)) {
       return;
     }
     toast.error(`${activeTab} is not available in hosted mode.`);
@@ -3907,7 +3991,7 @@ export default function App() {
 
     const projectOrgId = activeProject?.organizationId;
     const orgId = resolveCheckoutOrganizationId(
-      effectiveOrganizations,
+      selectableOrganizations,
       activeOrganizationId,
       projectOrgId
     );
@@ -3945,7 +4029,7 @@ export default function App() {
     routeOrganizationId,
     routeOrganizationSection,
     signIn,
-    effectiveOrganizations,
+    selectableOrganizations,
     workOsUser?.id,
   ]);
 
@@ -4096,7 +4180,7 @@ export default function App() {
           : [...currentIds, deletedOrganizationId]
       );
 
-      const remainingOrganizations = effectiveOrganizations.filter(
+      const remainingOrganizations = selectableOrganizations.filter(
         (organization) => organization._id !== deletedOrganizationId
       );
       const fallbackOrganizationId = resolveDeletedOrganizationFallbackId(
@@ -4132,7 +4216,7 @@ export default function App() {
       activeProject?.organizationId,
       clearLocalFallbackProjectSelection,
       clearConvexActiveProjectSelection,
-      effectiveOrganizations,
+      selectableOrganizations,
       navigateToServers,
       routeOrganizationId,
       setActiveOrganizationId,
@@ -4482,7 +4566,7 @@ export default function App() {
   const homeOrganizationId =
     !isLoadingOrganizations &&
     rawHomeOrganizationId &&
-    effectiveOrganizations.some((org) => org._id === rawHomeOrganizationId)
+    selectableOrganizations.some((org) => org._id === rawHomeOrganizationId)
       ? rawHomeOrganizationId
       : null;
 
@@ -4568,6 +4652,11 @@ export default function App() {
     oauthServerModalNonce,
   };
 
+  // Shared by the top bar and the middle panel: the panel's 16px top radius +
+  // shadow are only correct when the bar is above them.
+  const appChromeHeaderHidden =
+    playgroundOnboarding || (activeTab === "home" && !!workOsUser);
+
   const appContent = (
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
@@ -4592,19 +4681,20 @@ export default function App() {
         createProjectDisabledReason={createProjectDisabledReason}
         onBeforeSignOut={disconnectRuntimeServersForAuthExit}
       />
-      <SidebarInset className="flex flex-col min-h-0">
+      {/* The inset is the linen shell: the sidebar and top bar read as one
+          continuous outer chrome and the off-white panel below is the working
+          surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
+      <SidebarInset className="bg-sidebar flex flex-col min-h-0">
         <AppChromeHeader
           // "make nux clean" (#2868) hid this on Home for everyone, but that
           // also hid guests' only Sign in / Create account affordance there
           // (PUR-35). Keep Home clean for signed-in users; show the header
           // for guests so they still get sign-in/sign-up.
-          hidden={
-            playgroundOnboarding || (activeTab === "home" && !!workOsUser)
-          }
+          hidden={appChromeHeaderHidden}
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <AppChromePanel headerHidden={appChromeHeaderHidden}>
           {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
               <Alert>
@@ -4624,7 +4714,7 @@ export default function App() {
               <NoRouterRouteBody activeTab={activeTab} />
             )}
           </AppRouteReactContext.Provider>
-        </div>
+        </AppChromePanel>
       </SidebarInset>
       <AgentSidePanelMount
         projectId={activeProjectId ?? null}
