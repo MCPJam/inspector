@@ -593,7 +593,7 @@ export async function streamWebChatTurn(
       ...(prepare.cloudSkills ? { cloudSkills: prepare.cloudSkills } : {}),
       // Environment-resolved skills outrank the cloud/HOSTED/local chain for the
       // EMULATED engine only. On a harness turn the adapter delivers them
-      // natively, so advertising `listSkills`/`loadSkill` on top would describe
+      // natively, so advertising emulated `loadSkill` (+ file tools) on top would describe
       // a second, different delivery of the same set to the same model.
       ...(prepare.effectiveCapabilities !== undefined && !prepare.harness
         ? {
