@@ -80,6 +80,7 @@ so results respect the caller's project access.
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
+| `ensure_adhoc_environment` | Get or create an unnamed, content-addressed environment for a composed stack (host plus optional model, sandbox image, server group, and pinned skills). Repeating the same stack reuses one row. Promote it with `name_environment` only when the user asks to keep it. | — |
 | `list_sandbox_images` | List the custom Computer sandbox images (blueprints) in a project — the choices for a suite's `environment.computerEnvironment`. | — |
 | `get_sandbox_image` | Show one sandbox image's blueprint, sharing, and latest build status. | — |
 | `list_project_plugins` | List the live Agent Plugins installed in a project: name, display name, enabled state, and active version id. | — |
@@ -197,11 +198,14 @@ environments if the suite has any, otherwise hosts, never a cross product.
 closed server set that an override cannot change — and so are the environment
 and host axes.
 
-Instead of NAMING a target, `compose` builds one: a host plus an optional
-model, sandbox image, server group and pinned skills becomes an unnamed,
-content-addressed environment (the same row `ensure_adhoc_environment`
-returns), which is then APPENDED to the suite so the run stays reproducible
-from the app. Promote such a row to a named environment in place with
+Instead of NAMING a target, `compose` builds one (or several): a host plus
+optional models, sandbox image, server group and pinned skills becomes
+unnamed, content-addressed environment cells (the same rows
+`ensure_adhoc_environment` returns). Default is ephemeral — the cells are
+minted and launched without attaching them to the suite. Pass `saveTargets`
+to append them. `models` replaces the client default; add
+`includeClientDefault` to keep the inherit cell alongside the explicit
+picks. Promote such a row to a named environment in place with
 `name_environment`.
 
 An environment-backed run records the environment and the exact revision it
@@ -210,10 +214,12 @@ confirm *which* configuration produced a result long after the environment has
 been edited. A run that used a saved server selection has no environment to
 record, and reports `environment: null`.
 
-The environment tools other than `set_eval_suite_environments` are read-only.
-Creating, editing, and archiving environments stays CLI-only for now:
-those writes are revision-guarded (`expectedRevision`), and giving an agent a
-safe path through optimistic concurrency is a separate design question.
+`ensure_adhoc_environment` is the one environment WRITE on this surface: it
+mints a content-addressed, unnamed row (the same row `run_eval_suite`'s
+`compose` produces). Creating, renaming, editing, and archiving named
+environments stays CLI-only for now: those writes are revision-guarded
+(`expectedRevision`), and giving an agent a safe path through optimistic
+concurrency is a separate design question.
 
 ## Auth
 
