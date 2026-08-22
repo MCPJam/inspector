@@ -537,4 +537,28 @@ describe("live server operations", () => {
     expect(approval("read_server_resource")).toBe(true);
     expect(approval("list_project_servers")).toBe(false);
   });
+
+  it("requires approval for registry installs and uninstall", () => {
+    // install_registry_directory_server is create_project_server with
+    // different spelling — a caller-supplied endpointUrl that ends as a
+    // server row in the user's project — and uninstall is its
+    // delete_project_server sibling. Skipping the approval gate here would
+    // let a prompt-injected chat add or remove servers silently.
+    const { client } = makeClient({});
+    const approval = (id: string) =>
+      (
+        buildMcpjamTool(id, {
+          ...toolOpts,
+          client,
+          requireToolApproval: true,
+        }) as { needsApproval?: boolean }
+      ).needsApproval;
+
+    expect(approval("install_registry_directory_server")).toBe(true);
+    expect(approval("install_registry_server")).toBe(true);
+    expect(approval("uninstall_registry_server")).toBe(true);
+    // The registry reads stay approval-free.
+    expect(approval("search_registry_directory")).toBe(false);
+    expect(approval("list_registry_connections")).toBe(false);
+  });
 });

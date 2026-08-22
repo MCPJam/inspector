@@ -88,6 +88,7 @@ import type {
   PlatformReadinessStartBody,
   PlatformCatalogServer,
   PlatformCatalogSourceStatus,
+  PlatformDirectorySearchPage,
   PlatformRegistryServer,
   PlatformRegistryConnection,
   PlatformRegistryInstall,
@@ -276,7 +277,7 @@ export class PlatformApiClient {
       limit?: number;
     } = {},
     options?: RequestOptions,
-  ): Promise<PlatformPage<PlatformCatalogServer>> {
+  ): Promise<PlatformDirectorySearchPage> {
     return this.request(
       "GET",
       "/registry/directory-servers",
