@@ -1507,7 +1507,9 @@ Pin the current Git worktree (or `--here` cwd) to a Cloud project by writing `.m
 
 ### `cloud status`
 
-Zero-network. Prints credential source and the project selector that Cloud commands would use (flag / env / link / automatic).
+Zero-network. Prints credential source, deployment URL, and the project selector that Cloud commands would use (flag / env / link / automatic). API keys are redacted.
+
+The report includes `credential.valid` (`true` / `false` / `null`) and `deployment.valid`. `null` means no credential is configured and is a successful informational status. An invalid explicit `--api-key` or `--api-url` still emits the complete JSON report, sets `ok: false`, includes an `error` string, and exits `1`. Other Cloud commands reject those same values with exit `2` and no report.
 
 ### `cloud organizations list`
 

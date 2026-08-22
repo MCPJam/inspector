@@ -1,9 +1,7 @@
 /**
- * Keep user-facing CLI docs on the 4.0 command paths.
+ * Keep user-facing CLI docs and adjacent notes on the 4.0 command paths.
  *
  * `docs/cli/migration.mdx` is the only page allowed to mention 3.x paths.
- * Design notes remain out of scope; public API docs are included because they
- * contain user-facing CLI examples.
  */
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
@@ -15,6 +13,7 @@ const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "../.."
 );
+const CLI_ROOT = path.join(REPO_ROOT, "cli");
 const CLI_DOCS_DIR = path.join(REPO_ROOT, "docs/cli");
 const DOCS_JSON_PATH = path.join(REPO_ROOT, "docs/docs.json");
 
@@ -46,11 +45,16 @@ const EXTRA_DOC_PATHS = [
   "docs/reference/openapi.json",
   "docs/inspector/evals.mdx",
   "docs/inspector/computer.mdx",
+  "docs/inspector/projects.mdx",
   "docs/getting-started.mdx",
   "docs/contributing/evals-architecture.mdx",
+  "docs/hosted/overview.mdx",
   "docs/sandbox-images-ui-cli.md",
+  "docs/code-first-evals-environments-design.md",
   "vitest/README.md",
 ] as const;
+
+const EXTRA_SOURCE_ROOTS = [path.join(CLI_ROOT, "src")] as const;
 
 const STALE_PATTERNS: ReadonlyArray<{ name: string; re: RegExp }> = [
   {
@@ -77,6 +81,24 @@ const STALE_PATTERNS: ReadonlyArray<{ name: string; re: RegExp }> = [
   },
 ];
 
+function listFilesRecursive(
+  directory: string,
+  suffixes: readonly string[]
+): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const child = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...listFilesRecursive(child, suffixes));
+      continue;
+    }
+    if (entry.isFile() && suffixes.some((suffix) => entry.name.endsWith(suffix))) {
+      files.push(child);
+    }
+  }
+  return files;
+}
+
 function listCliGuideDocs(): string[] {
   return readdirSync(CLI_DOCS_DIR)
     .filter((name) => name.endsWith(".mdx") && name !== "migration.mdx")
@@ -100,6 +122,9 @@ test("CLI 4.0 docs do not advertise 3.x Cloud command paths", () => {
   const files = [
     ...listCliGuideDocs(),
     ...EXTRA_DOC_PATHS.map((relative) => path.join(REPO_ROOT, relative)),
+    ...EXTRA_SOURCE_ROOTS.flatMap((directory) =>
+      listFilesRecursive(directory, [".ts", ".md"])
+    ),
   ];
   const findings = files.flatMap((filePath) =>
     findingsIn(filePath, readFileSync(filePath, "utf8"))
@@ -122,6 +147,20 @@ test("CLI reference documents removing a Cloud project link", () => {
     "utf8"
   );
   assert.match(reference, /\| `--remove` \| Remove the nearest project link/);
+});
+
+test("CLI overview documents Local vs Cloud and status validity", () => {
+  const overview = readFileSync(path.join(CLI_DOCS_DIR, "overview.mdx"), "utf8");
+  assert.match(overview, /The `mcpjam` CLI is two invocations/);
+  assert.match(overview, /Local MCP testing stays at the top level/);
+  assert.match(overview, /Account-bound commands live under `mcpjam cloud`/);
+  assert.match(overview, /Credential precedence for Cloud commands/);
+  assert.match(overview, /API URL precedence/);
+  assert.match(overview, /mcpjam cloud link/);
+  assert.match(overview, /mcpjam cloud status/);
+  assert.match(overview, /credential\.valid/);
+  assert.match(overview, /What `--host` means/);
+  assert.doesNotMatch(overview, /The `mcpjam` CLI is a stateless/);
 });
 
 test("docs nav includes the CLI 4.0 migration page after overview", () => {
@@ -148,4 +187,22 @@ test("docs nav includes the CLI 4.0 migration page after overview", () => {
     overviewIndex + 1,
     "cli/migration must follow cli/overview in CLI Guides"
   );
+});
+
+test("CLI test runner discovers every tests/**/*.test.ts file", () => {
+  const expected = listFilesRecursive(path.join(CLI_ROOT, "tests"), [
+    ".test.ts",
+  ]);
+  assert.ok(expected.length > 0, "expected at least one CLI test file");
+  const runner = readFileSync(
+    path.join(CLI_ROOT, "scripts/run-tests.mjs"),
+    "utf8"
+  );
+  assert.match(runner, /function discoverCliTestFiles/);
+  assert.match(runner, /--test/);
+  const pkg = JSON.parse(
+    readFileSync(path.join(CLI_ROOT, "package.json"), "utf8")
+  ) as { scripts?: { test?: string } };
+  assert.equal(pkg.scripts?.test, "node scripts/run-tests.mjs");
+  assert.doesNotMatch(pkg.scripts?.test ?? "", /\*\*/);
 });
