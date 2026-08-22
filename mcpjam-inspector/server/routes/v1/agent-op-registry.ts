@@ -50,6 +50,10 @@ import {
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   generateEvalCasesOperation,
   ensureAdhocEnvironmentOperation,
   getEnvironmentOperation,
@@ -609,6 +613,48 @@ function readinessRunResource(
   };
 }
 
+/**
+ * Resolve a server selector to its stable project server id.
+ *
+ * A name is a pointer: rename or reuse between proposal and approval would
+ * dial a different saved server than the one shown to the approver. Failure
+ * is best-effort — leave the arguments as written so a lookup miss does not
+ * drop the proposal.
+ */
+async function freezeConformanceServer(
+  input: Record<string, unknown>,
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const selector = named(input, "server");
+  if (!selector) return input;
+  const page = await client.listProjectServers({ projectId });
+  const match = page.items.find(
+    (server) =>
+      server.id === selector ||
+      server.name.toLocaleLowerCase() === selector.toLocaleLowerCase(),
+  );
+  if (!match) return input;
+  return { ...input, server: match.id };
+}
+
+export function conformanceRunResource(
+  result: unknown,
+  { projectId }: { projectId: string },
+): ExecutedActionResource | undefined {
+  const runId =
+    readString(result, "run.runId") ??
+    readString(result, "run.id") ??
+    readString(result, "runId");
+  if (!runId) return undefined;
+  return {
+    type: "conformance_run",
+    id: runId,
+    url:
+      `${MCPJAM_HOSTED_ORIGIN}/conformance/runs/${encodeURIComponent(runId)}` +
+      `?project=${encodeURIComponent(projectId)}`,
+  };
+}
+
 function journeyRunResource(
   result: unknown,
   { projectId }: { projectId: string },
@@ -1039,6 +1085,33 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getReadinessRunOperation, tier: "direct" },
   { operation: listReadinessRunsOperation, tier: "direct" },
   { operation: getReadinessReportOperation, tier: "direct" },
+  {
+    operation: startConformanceRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Run conformance suites on ${
+          named(input, "server") ?? "a server"
+        }`,
+      buttonLabel: "Run it",
+      kind: "start",
+      confirmSeverity: () => "none",
+      resource: conformanceRunResource,
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+      normalizeProposalArgs: freezeConformanceServer,
+    },
+    promptNotes: [
+      "- `start_conformance_run` returns a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_conformance_run` and report what it says, never the receipt.",
+      "- A conformance run answers three separate questions and they do not collapse. `status` is whether the run finished; `outcome` is the grade (a `completed` run can be `failed`); `score` is the number. `pending` counts checks this profile reported but did not score — do not treat them as failures.",
+      "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",
+    ],
+  },
+  { operation: getConformanceRunOperation, tier: "direct" },
+  { operation: listConformanceRunsOperation, tier: "direct" },
+  { operation: getConformanceReportOperation, tier: "direct" },
   {
     operation: cancelReadinessRunOperation,
     tier: "direct",

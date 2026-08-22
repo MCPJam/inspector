@@ -13,13 +13,14 @@
  * notes, it stays the place where a prompt change is a visible diff rather than
  * an invisible cache invalidation.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   AGENT_API_GATED_OPERATIONS,
   AGENT_API_OPERATIONS,
   AGENT_OP_PROMPT_NOTES,
   AGENT_OP_REGISTRY,
   EXCLUDED_FROM_AGENT,
+  conformanceRunResource,
   proposalMetaFor,
   WRITE_OPERATION_NAMES,
   gatedEntryFor,
@@ -47,6 +48,7 @@ import {
   runEvalCaseOperation,
   runEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
+  startConformanceRunOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
 } from "@mcpjam/sdk/platform";
@@ -711,6 +713,123 @@ describe("agent op registry", () => {
     ).toEqual(input);
   });
 
+  it("freezes a conformance server NAME to its id at MINT time", async () => {
+    // A name is a pointer. Resolving it only when the approval executes would
+    // let a rename or reuse between mint and click dial a different saved
+    // server than the one shown to the approver.
+    const client = {
+      listProjectServers: async () => ({
+        items: [
+          { id: "srv_1", name: "Acme MCP" },
+          { id: "srv_2", name: "Other" },
+        ],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(startConformanceRunOperation.name).normalizeArgs(
+        { server: "acme mcp", suites: ["protocol"] },
+        { projectId: "p1", client }
+      )
+    ).toEqual({ server: "srv_1", suites: ["protocol"] });
+  });
+
+  it("passes an already-stable conformance server ID through unchanged", async () => {
+    const client = {
+      listProjectServers: async () => ({
+        items: [{ id: "srv_1", name: "Acme MCP" }],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(startConformanceRunOperation.name).normalizeArgs(
+        { server: "srv_1" },
+        { projectId: "p1", client }
+      )
+    ).toEqual({ server: "srv_1" });
+  });
+
+  it("leaves an UNRESOLVABLE conformance server selector alone", async () => {
+    // Freezing is a narrowing. A name that resolves to nothing here may still
+    // resolve on the click, and the operation rejects it with its own message.
+    const client = {
+      listProjectServers: async () => ({ items: [] }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(startConformanceRunOperation.name).normalizeArgs(
+        { server: "Ghost" },
+        { projectId: "p1", client }
+      )
+    ).toEqual({ server: "Ghost" });
+  });
+
+  it("leaves the conformance proposal when the server resolver cannot reach the platform", async () => {
+    const client = {
+      listProjectServers: async () => {
+        throw new Error("platform unreachable");
+      },
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+    const input = { server: "Acme MCP" };
+    expect(
+      await proposalMetaFor(startConformanceRunOperation.name).normalizeArgs(
+        input,
+        { projectId: "p1", client }
+      )
+    ).toEqual(input);
+  });
+
+  it("leaves empty or missing conformance server selectors alone", async () => {
+    // `named()` treats null, empty, and whitespace as absent — there is
+    // nothing to freeze, so the resolver must not be asked.
+    const listProjectServers = vi.fn(async () => ({ items: [] }));
+    const client = { listProjectServers } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    for (const input of [
+      {},
+      { server: "" },
+      { server: "   " },
+      { server: null },
+    ]) {
+      expect(
+        await proposalMetaFor(startConformanceRunOperation.name).normalizeArgs(
+          input,
+          { projectId: "p1", client }
+        )
+      ).toEqual(input);
+    }
+    expect(listProjectServers).not.toHaveBeenCalled();
+  });
+
+  it("does not link a conformance resource when the result has no run id", () => {
+    const entry = gatedEntryFor(startConformanceRunOperation.name);
+    expect(entry?.proposal.resource?.({}, { projectId: "p1" })).toBeUndefined();
+    expect(
+      entry?.proposal.resource?.({ run: {} }, { projectId: "p1" })
+    ).toBeUndefined();
+    expect(
+      entry?.proposal.resource?.({ runId: "" }, { projectId: "p1" })
+    ).toBeUndefined();
+    expect(
+      entry?.proposal.resource?.(null, { projectId: "p1" })
+    ).toBeUndefined();
+    expect(conformanceRunResource(undefined, { projectId: "p1" })).toBeUndefined();
+
+    expect(
+      entry?.proposal.resource?.({ runId: "run_1" }, { projectId: "p1" })
+    ).toMatchObject({ type: "conformance_run", id: "run_1" });
+  });
+
   it("links a GROUP launch to the group, not to one of its runs", () => {
     // The contract carries one resource. Linking the first run would hide a
     // sibling's failure — the one thing an approver of N paid runs needs.
@@ -1166,6 +1285,14 @@ describe("tier derives from operation.risk", () => {
         "the project may talk to your servers. That is a human decision the " +
         "agent should not even propose.",
     },
+    start_conformance_run: {
+      tier: "gated",
+      reason:
+        "risk is none (no spend, no record destroyed) but starting dials a " +
+        "third party's server and persists a project row, so a person still " +
+        "approves the start. confirmSeverity is none so the prompt does not " +
+        "warn about money.",
+    },
   };
 
   const placementOf = (name: string): Placement | "unregistered" => {
@@ -1385,6 +1512,9 @@ const EXPECTED_PROMPT_NOTES = [
   "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
   "- When a readiness run reports `authMode: \"headless\"` and a lane's `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.",
   "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
+  "- `start_conformance_run` returns a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_conformance_run` and report what it says, never the receipt.",
+  "- A conformance run answers three separate questions and they do not collapse. `status` is whether the run finished; `outcome` is the grade (a `completed` run can be `failed`); `score` is the number. `pending` counts checks this profile reported but did not score — do not treat them as failures.",
+  "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",
   "- Cancelling a readiness run STOPS traffic to somebody else's server, so it needs no approval. The run's real terminal state arrives on a later `get_readiness_run` — the cancel response reports the request, not the outcome.",
   "- A scorer whose `definitionChanged` is true was graded by a DIFFERENT definition on each side. Its delta is not a regression — the two runs did not measure the same thing — so do not report it as one.",
   "- To find out why an iteration failed, start with `get_eval_run_steps`: it gives the per-step verdicts and reasons in a fraction of the tokens. Reach for `get_eval_iteration_trace` only when the steps do not explain it — a full trace is the whole message history and can be large enough to crowd out the rest of the turn.",

@@ -289,6 +289,22 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_readiness_runs: { command: "readiness list" },
   cancel_readiness_run: { command: "readiness cancel" },
   get_readiness_report: { command: "readiness report" },
+  start_conformance_run: {
+    excluded:
+      "Hosted conformance runs dial the platform's view of a saved server and persist results for the app; the local `mcpjam conformance` commands grade what this machine reaches without a project row. Different surfaces, and only the hosted run leaves a durable record agents can poll.",
+  },
+  get_conformance_run: {
+    excluded:
+      "No `conformance runs` poll command yet — run history and status live in the hosted app and agent surfaces until a CLI subcommand mirrors list/status against saved servers.",
+  },
+  list_conformance_runs: {
+    excluded:
+      "Listing persisted conformance runs is an app/agent concern today; the CLI's conformance commands are one-shot local runs, not a hosted run ledger.",
+  },
+  get_conformance_report: {
+    excluded:
+      "Report projection for agents is sized for model context on the platform API; the CLI already emits full suite output locally via `mcpjam conformance` and does not need a second report fetch path.",
+  },
 
   // ── Covered by the surrounding session, not a command ────────────────────
   get_me: {
