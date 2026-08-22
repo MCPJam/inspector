@@ -1509,6 +1509,36 @@ Pin the current Git worktree (or `--here` cwd) to a Cloud project by writing `.m
 
 Zero-network. Prints credential source and the project selector that Cloud commands would use (flag / env / link / automatic).
 
+Unlike other Cloud commands, `cloud status` never throws on invalid credentials or API URLs. It always emits a complete JSON report and exits as follows:
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0` | Configuration looks usable (credential present or informatively absent, deployment URL valid) |
+| `1` | Configuration has a problem — `ok: false` in the report, with `credential.error` or `deployment.error` describing it |
+
+**Report fields:**
+
+The `credential` object includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `source` | string | Where the credential came from: `flag`, `env`, `oauth`, or `missing` |
+| `kind` | string | `api-key`, `oauth`, or `none` |
+| `valid` | boolean \| null | `true` when a usable credential is configured; `false` when an explicit credential is invalid (e.g. a legacy `mcpjam_…` key); `null` when no credential is configured (informational — not an error) |
+| `error` | string | Present when `valid` is `false`; describes the problem and how to fix it |
+| `redactedKey` | string | Present for API-key credentials; the key with the middle redacted (e.g. `sk_…efgh`) |
+| `envShadowsOauth` | boolean | Whether a `MCPJAM_API_KEY` env var is shadowing a stored OAuth session |
+| `storedOauthPresent` | boolean | Whether a stored OAuth session exists on disk |
+
+The `deployment` object includes:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `apiUrl` | string | The API URL that would be used (the raw value when invalid) |
+| `source` | string | Where the URL came from: `flag`, `env`, `oauth`, or `default` |
+| `valid` | boolean | `true` when the URL is a valid `http(s)` URL; `false` otherwise |
+| `error` | string | Present when `valid` is `false`; describes the problem |
+
 ### `cloud organizations list`
 
 List organizations and their ids. An `sk_` key sees only its own. Use the id with `mcpjam cloud projects list --org <id>`.
