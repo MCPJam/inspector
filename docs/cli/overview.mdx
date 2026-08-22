@@ -88,7 +88,7 @@ API URL precedence:
 3. The `apiUrl` stored with the OAuth login (only when that login is the credential)
 4. `https://app.mcpjam.com/api/v1`
 
-An explicit `--api-url` or `MCPJAM_API_URL` that is not an `http(s)` URL is a usage error. `mcpjam cloud status` uses the same checks.
+An explicit `--api-url` or `MCPJAM_API_URL` that is not an `http(s)` URL is a usage error (exit `2`) for all Cloud commands except `mcpjam cloud status`. `cloud status` reports invalid credentials and URLs in-band — it always emits a complete JSON report, sets `ok: false`, and exits `1` instead of throwing.
 
 Successful Cloud commands print an audience line to stderr (`Using MCPJam Cloud as … · project: … · <apiUrl>`). `--quiet` suppresses it. Machine-readable JSON stays on stdout.
 
