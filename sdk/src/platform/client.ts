@@ -86,6 +86,10 @@ import type {
   PlatformReadinessRun,
   PlatformReadinessRunReceipt,
   PlatformReadinessStartBody,
+  PlatformConformanceReport,
+  PlatformConformanceRun,
+  PlatformConformanceRunReceipt,
+  PlatformConformanceSuiteKind,
 } from "./types.js";
 
 export const DEFAULT_PLATFORM_API_BASE_URL = "https://app.mcpjam.com/api/v1";
@@ -1446,6 +1450,86 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId,
       )}/readiness-runs/${encodeURIComponent(params.runId)}/report`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Start a persisted conformance run against a saved server.
+   *
+   * The target is the saved server the path names — never a caller URL.
+   * OAuth is not startable here. Returns a receipt; poll `getConformanceRun`.
+   */
+  startConformanceRun(
+    params: {
+      projectId: string;
+      serverId: string;
+      suites?: PlatformConformanceSuiteKind[];
+      idempotencyKey?: string;
+      protocolVersion?: string;
+      engineVersion?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformConformanceRunReceipt> {
+    const { projectId, serverId, suites, idempotencyKey, protocolVersion, engineVersion } =
+      params;
+    const body: Record<string, unknown> = {};
+    if (suites !== undefined) body.suites = suites;
+    if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
+    if (protocolVersion !== undefined) body.protocolVersion = protocolVersion;
+    if (engineVersion !== undefined) body.engineVersion = engineVersion;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId,
+      )}/conformance-runs`,
+      { body },
+      options,
+    );
+  }
+
+  getConformanceRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformConformanceRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/conformance-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options,
+    );
+  }
+
+  listConformanceRuns(
+    params: {
+      projectId: string;
+      serverId?: string;
+      limit?: number;
+      cursor?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformConformanceRun>> {
+    const { projectId, ...query } = params;
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(projectId)}/conformance-runs`,
+      { query },
+      options,
+    );
+  }
+
+  getConformanceReport(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformConformanceReport> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/conformance-runs/${encodeURIComponent(params.runId)}/report`,
       {},
       options,
     );

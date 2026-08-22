@@ -1857,6 +1857,10 @@ describe("operation catalog consistency", () => {
     list_readiness_runs: {},
     cancel_readiness_run: { run: "r" },
     get_readiness_report: { run: "r" },
+    start_conformance_run: { server: "s" },
+    get_conformance_run: { run: "r" },
+    list_conformance_runs: {},
+    get_conformance_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
     run_eval_suite: { suite: "s" },
@@ -2048,6 +2052,7 @@ describe("operation catalog consistency", () => {
       // the opt-in — spends the organization's credits.
       "start_claude_readiness_run",
       "start_openai_readiness_run",
+      "start_conformance_run",
       // Stops one. A write because it changes the row, spending nothing.
       "cancel_readiness_run",
       "run_eval_suite",
