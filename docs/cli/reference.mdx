@@ -882,12 +882,12 @@ mcpjam tunnel http://localhost:9090/mcp --id my-server --project acme
 mcpjam tunnel --id everything --project acme -- npx -y @modelcontextprotocol/server-everything
 ```
 
+Credential flags (`--api-key`, `--api-url`) are inherited from `mcpjam cloud` — see [Cloud credential flags](#cloud-credential-flags).
+
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--id <name>` | Yes | Server name to register in the project. An existing server with this name is pointed at the tunnel: its URL is overwritten, and stdio records are converted to HTTP. |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
-| `--api-key <key>` | No | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
-| `--api-url <url>` | No | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
 | `-e, --env <env...>` | No | Stdio environment assignment in `KEY=VALUE` format (stdio targets only) |
 | `--cwd <path>` | No | Working directory for the stdio MCP server process (stdio targets only) |
 
