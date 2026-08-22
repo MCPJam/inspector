@@ -149,10 +149,18 @@ function formatDetailValue(value: unknown) {
   }
 }
 
+function pendingIdSet(
+  result: { profile?: { pendingCheckIds?: string[] } } | undefined,
+): Set<string> {
+  return new Set(result?.profile?.pendingCheckIds ?? []);
+}
+
 function CheckRow({
   check,
+  pending = false,
 }: {
   check: MCPCheckResult | MCPAppsCheckResult | MCPTasksCheckResult;
+  pending?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
   const detailEntries = Object.entries(check.details ?? {});
@@ -167,6 +175,14 @@ function CheckRow({
         aria-expanded={expanded}
       >
         <StatusIcon status={check.status} />
+        {pending ? (
+          <span
+            title="unscored by this run's profile"
+            className="shrink-0 rounded-sm border border-border/60 px-1 py-px text-[10px] leading-none text-muted-foreground"
+          >
+            unscored
+          </span>
+        ) : null}
         <span className="text-xs flex-1 min-w-0 truncate">{check.title}</span>
         {expanded ? (
           <ChevronDown className="h-3 w-3 text-muted-foreground flex-shrink-0" />
@@ -521,6 +537,8 @@ function ConformanceContent({
     () => protocolCatalog(versionPin),
     [versionPin],
   );
+  const protocolPendingIds = pendingIdSet(protocol.result);
+  const tasksPendingIds = pendingIdSet(tasks.result);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -628,7 +646,11 @@ function ConformanceContent({
                 </div>
               )}
               {protocol.result.checks.map((check) => (
-                <CheckRow key={`${runVersion}-${check.id}`} check={check} />
+                <CheckRow
+                  key={`${runVersion}-${check.id}`}
+                  check={check}
+                  pending={protocolPendingIds.has(check.id)}
+                />
               ))}
             </div>
           ) : null}
@@ -668,7 +690,11 @@ function ConformanceContent({
                 {tasks.result.summary} (wire: {tasks.result.discovery.wire})
               </div>
               {tasks.result.checks.map((check) => (
-                <CheckRow key={`${runVersion}-${check.id}`} check={check} />
+                <CheckRow
+                  key={`${runVersion}-${check.id}`}
+                  check={check}
+                  pending={tasksPendingIds.has(check.id)}
+                />
               ))}
             </div>
           ) : null}
