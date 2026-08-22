@@ -27,6 +27,7 @@ vi.mock("@/hooks/useScenarios", () => ({
     updateScenario: vi.fn(),
     upsertScenarioMember: vi.fn(),
     removeScenarioMember: vi.fn(),
+    rotateScenarioLink: vi.fn(),
   }),
 }));
 
@@ -195,5 +196,10 @@ describe("ScenarioShareSection", () => {
 
     expect(screen.getByText("Invited")).toBeInTheDocument();
     expect(screen.getByText("pending@example.com")).toBeInTheDocument();
+  });
+
+  it("exposes a rotate-link kebab next to copy", () => {
+    render(<ScenarioShareSection scenario={createScenario()} />);
+    expect(screen.getByTestId("scenario-share-link-menu")).toBeInTheDocument();
   });
 });
