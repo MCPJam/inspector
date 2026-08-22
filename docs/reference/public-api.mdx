@@ -649,4 +649,10 @@ stabilize first.
 - **Additive changes** — new endpoints, new optional request fields, new
   response fields, new error codes — are considered non-breaking and can ship
   at any time. Write clients that ignore unknown fields.
+- **Strict write bodies.** The v1 eval-suite, eval-run, and host write routes
+  reject unknown top-level keys with `400 VALIDATION_ERROR`. The error message
+  names the offending field (e.g. `hostIds: Unrecognized key(s) in object`).
+  Callers sending only the documented fields are unaffected. Previously,
+  unknown keys were silently dropped — if you were relying on that behavior,
+  update your request bodies to use only the documented fields.
 - Error **codes** are stable identifiers; error **messages** are not.
