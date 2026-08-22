@@ -31,9 +31,7 @@ function draftWith(patch: Partial<HostConfigInputV2>): HostConfigInputV2 {
 }
 
 function expandTokens() {
-  // By `aria-expanded`, not by name: the header's copy button also matches
-  // /style tokens/i, and only the disclosure carries the expanded state.
-  fireEvent.click(screen.getByRole("button", { expanded: false }));
+  fireEvent.click(screen.getByRole("button", { name: /style tokens/i }));
 }
 
 describe("HostStyleTokens", () => {
@@ -206,59 +204,31 @@ describe("HostStyleTokens", () => {
   });
 });
 
-describe("HostStyleTokens copy-all", () => {
-  it("copies both themes as spec-shaped payloads and confirms in place", async () => {
+describe("HostStyleTokens per-row copy", () => {
+  it("copies var(--token) from the row and confirms on that row alone", async () => {
     render(<HostStyleTokens draft={draftWith({ hostStyle: "claude" })} />);
+    expandTokens();
+
     fireEvent.click(
-      screen.getByRole("button", { name: /copy style tokens as json/i })
+      screen.getByRole("button", { name: "Copy var(--color-text-primary)" })
     );
 
-    await waitFor(() => expect(mockClipboard.writeText).toHaveBeenCalled());
-    const copied = JSON.parse(mockClipboard.writeText.mock.calls[0][0]);
-    const light = CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("light");
-    expect(copied.light.variables["--color-text-primary"]).toBe(
-      light["--color-text-primary"]
+    await waitFor(() =>
+      expect(mockClipboard.writeText).toHaveBeenCalledWith(
+        "var(--color-text-primary)"
+      )
     );
-    expect(copied.dark.variables["--color-text-primary"]).toBe(
-      CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("dark")[
-        "--color-text-primary"
-      ]
-    );
-    // Never the display's synthesized light-dark() form.
-    expect(JSON.stringify(copied)).not.toContain("light-dark(");
-    // The check mark is the confirmation; no toast piles on.
+    // The row's own icon confirms; a toast per copy would be noise down 76 rows.
     expect(toast.success).not.toHaveBeenCalled();
   });
 
-  it("omits a token from the theme that does not send it", async () => {
-    const draft = draftWith({
-      hostStyle: "claude",
-      chatUiOverride: {
-        styleVariables: {
-          light: {},
-          dark: { "--font-mono": "Menlo, monospace" },
-        },
-      },
-    } as Partial<HostConfigInputV2>);
-    render(<HostStyleTokens draft={draft} />);
-    fireEvent.click(
-      screen.getByRole("button", { name: /copy style tokens as json/i })
-    );
+  it("labels every row with the value it puts on the clipboard", () => {
+    render(<HostStyleTokens draft={draftWith({ hostStyle: "claude" })} />);
+    expandTokens();
 
-    await waitFor(() => expect(mockClipboard.writeText).toHaveBeenCalled());
-    const copied = JSON.parse(mockClipboard.writeText.mock.calls[0][0]);
-    expect(copied.dark.variables["--font-mono"]).toBe("Menlo, monospace");
-    expect(copied.light.variables).not.toHaveProperty("--font-mono");
-  });
-
-  it("disables the button when the host sends nothing to copy", () => {
-    const draft = draftWith({
-      hostStyle: "claude",
-      chatUiOverride: { styleVariables: { light: {}, dark: {} }, fontCss: "" },
-    } as Partial<HostConfigInputV2>);
-    render(<HostStyleTokens draft={draft} />);
-    expect(
-      screen.getByRole("button", { name: /copy style tokens as json/i })
-    ).toBeDisabled();
+    // The row IS the button, so its accessible name has to say what clicking
+    // does — the token name alone would announce as an unexplained control.
+    const row = screen.getByText("--font-mono").closest("button");
+    expect(row).toHaveAttribute("aria-label", "Copy var(--font-mono)");
   });
 });

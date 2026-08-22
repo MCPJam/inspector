@@ -225,32 +225,10 @@ export function HostStyleTokens({ draft }: { draft: HostConfigInputV2 }) {
     [rows]
   );
 
-  // The whole payload, keyed by theme. Each half is a real spec-shaped
-  // `styles` object — exactly what a view receives in that theme — so nothing
-  // here is synthesized: a `light-dark(…)` host repeats its one string under
-  // both keys, and a token only one theme sends is simply absent from the
-  // other. (The rows above may render a pair as `light-dark(a, b)` for
-  // reading; writing that into a copied payload would claim the host sends a
-  // notation it does not.)
-  const payload = useMemo(() => {
-    const forTheme = (theme: "light" | "dark") => {
-      const variables: Record<string, string> = {};
-      for (const row of rows) {
-        const value = row[theme];
-        if (value !== undefined) variables[row.name] = value;
-      }
-      return fontCss.trim()
-        ? { css: { fonts: fontCss }, variables }
-        : { variables };
-    };
-    return JSON.stringify(
-      { light: forTheme("light"), dark: forTheme("dark") },
-      null,
-      2
-    );
-  }, [rows, fontCss]);
-
-  const [copiedAll, setCopiedAll] = useState(false);
+  // Which row just copied, so its icon can confirm in place. One name rather
+  // than a set: a second copy supersedes the first, and two rows holding a
+  // check at once would suggest both are on the clipboard.
+  const [copiedToken, setCopiedToken] = useState<string | null>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
     () => () => {
@@ -259,28 +237,17 @@ export function HostStyleTokens({ draft }: { draft: HostConfigInputV2 }) {
     []
   );
 
-  const copyPayload = async () => {
-    try {
-      await navigator.clipboard.writeText(payload);
-      // The check mark IS the confirmation — a toast here would stack on top
-      // of the per-row copy toasts for the same gesture.
-      setCopiedAll(true);
-      if (copiedTimer.current) clearTimeout(copiedTimer.current);
-      copiedTimer.current = setTimeout(() => setCopiedAll(false), 1500);
-    } catch {
-      toast.error("Couldn't copy to clipboard");
-    }
-  };
-
-  const hasPayload = rows.length > 0 || fontCss.trim().length > 0;
-
   // Copying `var(--token)` rather than the bare name or the value: that is
   // the form a widget author pastes into their own stylesheet, and it keeps
   // the widget themed by the host instead of pinned to today's hex.
   const copyToken = async (name: string) => {
     try {
       await navigator.clipboard.writeText(`var(${name})`);
-      toast.success(`Copied var(${name})`);
+      // The row's own check mark is the confirmation — a toast for a gesture
+      // this small, repeated down a list of 76, is noise.
+      setCopiedToken(name);
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+      copiedTimer.current = setTimeout(() => setCopiedToken(null), 1500);
     } catch {
       toast.error("Couldn't copy to clipboard");
     }
@@ -288,53 +255,31 @@ export function HostStyleTokens({ draft }: { draft: HostConfigInputV2 }) {
 
   return (
     <div className="rounded-[10px] border border-border bg-background">
-      {/* Disclosure + a divided trailing control, the same header grammar the
-          two capability matrices above use for their master Switch. The copy
-          button lives OUTSIDE the disclosure button — nesting it would be
-          invalid markup and would make the whole header ambiguous to click. */}
-      <div className="flex items-stretch">
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          aria-expanded={open}
-          aria-controls="apps-extension-style-tokens"
-          className="flex flex-1 items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
-        >
-          <div className="flex flex-col gap-0.5">
-            <span className="text-[12px] font-medium">Style tokens</span>
-            <span className="text-[11px] text-muted-foreground">
-              hostContext.styles — what this host sends views on ui/initialize.
-            </span>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <span className="text-[11px] tabular-nums text-muted-foreground">
-              {rows.length}
-            </span>
-            <ChevronDown
-              className={cn(
-                "h-3.5 w-3.5 text-muted-foreground transition-transform",
-                open && "rotate-180"
-              )}
-            />
-          </div>
-        </button>
-        <div className="flex items-center border-l border-border pl-2 pr-2.5">
-          <button
-            type="button"
-            onClick={() => void copyPayload()}
-            disabled={!hasPayload}
-            aria-label="Copy style tokens as JSON"
-            title="Copy every token, both themes, as JSON"
-            className="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:pointer-events-none disabled:opacity-40"
-          >
-            {copiedAll ? (
-              <Check className="h-3.5 w-3.5 text-foreground" />
-            ) : (
-              <Copy className="h-3.5 w-3.5" />
-            )}
-          </button>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-controls="apps-extension-style-tokens"
+        className="flex w-full items-center justify-between gap-2 px-3.5 py-2.5 text-left hover:bg-muted/40"
+      >
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[12px] font-medium">Style tokens</span>
+          <span className="text-[11px] text-muted-foreground">
+            hostContext.styles — what this host sends views on ui/initialize.
+          </span>
         </div>
-      </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-[11px] tabular-nums text-muted-foreground">
+            {rows.length}
+          </span>
+          <ChevronDown
+            className={cn(
+              "h-3.5 w-3.5 text-muted-foreground transition-transform",
+              open && "rotate-180"
+            )}
+          />
+        </div>
+      </button>
 
       {open ? (
         <div
@@ -353,18 +298,33 @@ export function HostStyleTokens({ draft }: { draft: HostConfigInputV2 }) {
                   {group.label}
                 </div>
                 {group.rows.map((row) => (
+                  // The whole row is the button, with the icon as its
+                  // affordance: a real <button> nested inside another is
+                  // invalid markup, and splitting them would shrink a
+                  // full-width target to 12px and add a second tab stop to
+                  // every one of 76 rows. The icon holds its space while
+                  // hidden so the row doesn't shift on hover.
                   <button
                     key={row.name}
                     type="button"
                     onClick={() => void copyToken(row.name)}
+                    aria-label={`Copy var(${row.name})`}
                     title={`Copy var(${row.name})`}
-                    className="flex items-center gap-2.5 border-b border-border/50 px-3.5 py-1.5 text-left last:border-b-0 hover:bg-muted/40"
+                    className="group flex items-center gap-2.5 border-b border-border/50 px-3.5 py-1.5 text-left last:border-b-0 hover:bg-muted/40"
                   >
                     <StyleTokenPreview row={row} />
                     <code className="font-mono text-[11.5px]">{row.name}</code>
                     <code className="ml-auto truncate font-mono text-[11px] text-muted-foreground">
                       {formatTokenValue(row)}
                     </code>
+                    {copiedToken === row.name ? (
+                      <Check className="h-3 w-3 shrink-0 text-foreground" />
+                    ) : (
+                      <Copy
+                        aria-hidden
+                        className="h-3 w-3 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+                      />
+                    )}
                   </button>
                 ))}
               </div>
