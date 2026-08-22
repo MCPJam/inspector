@@ -116,7 +116,10 @@ The setup section of the install summary lists these names. Values are always pr
 
 ## Where plugin servers run
 
-- **`stdio` components run on the local MCPJam runtime today.** At connect time the bundle is materialized into a local content-addressed cache, `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` are substituted, and the process spawns on your machine. Hosted VM execution for plugin stdio components is coming; the plugin card shows a **Local runtime** badge in the meantime.
+- **`stdio` components** run differently depending on the surface:
+  - **Local runtime** (desktop app, `npx`, Docker) — the bundle is materialized into a local content-addressed cache, `${PLUGIN_ROOT}`/`${PLUGIN_DATA}` are substituted, and the process spawns on your machine.
+  - **Hosted app with a Project Computer** — the child process runs inside your own project computer. MCPJam verifies the bundle, pushes it to the computer, and connects to it as a remote Streamable HTTP server. The plugin card shows a **Computer required** badge when this path applies.
+  - **Hosted app without a Project Computer** — the plugin card shows a **Local runtime** badge; use the desktop app or `npx` to connect.
 - **`streamable-http` and `sse` components** are remote connections and work from any client.
 
 ## Importing a plugin
