@@ -16786,6 +16786,10 @@
           "modelMatrix": {
             "type": "boolean",
             "description": "Environment cells may vary by model on one host (the compare grid)."
+          },
+          "ephemeralEnvironmentLaunch": {
+            "type": "boolean",
+            "description": "`startTestSuiteRun` / the v1 group route accept `ephemeralEnvironment` — a project-scoped env may launch without suite membership. Absent or false on older backends."
           }
         }
       },
