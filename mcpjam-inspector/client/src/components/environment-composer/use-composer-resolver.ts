@@ -9,10 +9,8 @@ import {
 } from "@/components/environment-composer/resolve-stacks";
 import type { EnvironmentComposerState } from "@/components/environment-composer/environment-stack";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
-import {
-  useEnsureAdhocEnvironments,
-  useModelMatrixCapability,
-} from "@/hooks/useProjectEnvironments";
+import { useModelMatrixCapability } from "@/hooks/use-model-matrix-capability";
+import { useEnsureAdhocEnvironments } from "@/hooks/useProjectEnvironments";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 
