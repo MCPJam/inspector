@@ -126,11 +126,22 @@ describe("HostConfigCompareView public mode", () => {
     expect(screen.getByText("Codex")).toBeInTheDocument();
     unmount();
 
+    // Signed in with a project, so the matrix actually renders hosts. With
+    // `projectId={null}` it short-circuits to the sign-in placeholder and the
+    // absence below would hold no matter what the gate did.
     render(
       <MemoryRouter>
-        <HostConfigCompareView projectId={null} isAuthenticated={false} />
+        <HostConfigCompareView projectId="abc123" isAuthenticated />
       </MemoryRouter>
     );
+    // Presets render here at all...
+    expect(
+      screen.getByTestId("host-compare-chip-preset:claude")
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("host-compare-overflow-trigger"));
+    // ...and the overflow menu opened and lists other unranked presets, so
+    // the two absences below are the gate, not an unrendered menu.
+    expect(await screen.findByText("Notion")).toBeInTheDocument();
     expect(screen.queryByText("Claude Code")).not.toBeInTheDocument();
     expect(screen.queryByText("Codex")).not.toBeInTheDocument();
   });
