@@ -343,12 +343,35 @@ Click the mic button (right side of the input) to record your voice. The audio i
 **Context meter** (right side of the input)
 Open it to inspect the token breakdown for the current conversation — input, output, system prompt, and MCP tools usage. Before you send the first message, the popover shows an **MCP Tools (estimated)** row with a pre-request estimate of how many tokens your connected servers' tool descriptions will consume. This estimate is UI-only and is not used in billing or actual session usage math. Once the model responds and the provider reports real input/output token counts, the estimate is replaced by the actual usage. If token counting is not supported for a particular server or model, the popover shows a **Token count unavailable** notice for that server instead.
 
+## Plugins
+
+When your Playground session runs against a [Project Environment](/inspector/projects) that pins plugin versions, a **Plugins** row appears in the environment header above the chat. Each pinned plugin is shown as a chip.
+
+### Narrowing plugins per turn
+
+By default, every plugin the environment pins is active. You can toggle individual plugins off for a single turn by unchecking their chip. The selection is ephemeral — it is never saved, and reloading the page returns to the environment's full set. The server rejects any plugin version the environment does not pin, so the toggle can only narrow, never expand.
+
+When you have deselected at least one plugin, a **Reset to environment** link appears next to the **Plugins** label. Click it to restore the environment's full set.
+
+### Pinned plugins that can't run
+
+If a plugin the environment pins is currently disabled, uninstalled, or otherwise unavailable, it appears in a collapsible **can't run right now** section below the chips rather than as a toggleable chip. Each entry shows the plugin name (or its short ID when the name can't be resolved) and the reason:
+
+| Reason | Meaning |
+|--------|---------|
+| Disabled | The plugin is disabled for this project. Re-enable it in Connect → Plugins. |
+| Uninstalled | The plugin was removed from this project. Re-import it, or unpin the version from the environment. |
+| Not ready | This revision never finished importing and cannot run. |
+| Not found | This revision no longer exists in this project. |
+
+This section also appears when the environment itself fails to resolve — the most common cause is a pinned plugin that can no longer run, and the failed preview cannot name the culprit on its own.
+
 ## Skills
 
 The Playground respects every skill you've configured in the [Skills](/inspector/skills) tab. A skill ends up in a conversation in one of two ways:
 
 - **Inferred** — The model picks a skill based on your prompt, loads its instructions, and runs it against your MCP tools. Useful for observing skill behavior end-to-end.
-- **Explicit** — Type `/` in the input and pick a skill from the **SKILLS** section of the picker. The skill content is front-loaded before your message.
+- **Explicit** — Type `/` in the input and pick a skill from the **SKILLS** section of the picker. The skill content is injected into the turn before your message.
 
 ## Prompts
 
@@ -417,4 +440,5 @@ When a server requires multiple interactions before a tool can run, the notice w
 
 - [Clients](/inspector/clients) — Manage MCP server connections, transports, and OAuth.
 - [Skills](/inspector/skills) — Configure skills that the Playground can use.
+- [Plugins](/inspector/plugins) — Import and manage plugin bundles whose versions environments can pin.
 - [Projects](/inspector/projects) — Organize servers, sessions, and views into shared workspaces.
