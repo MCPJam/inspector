@@ -168,7 +168,8 @@ export function isCredentialBearingPath(
 ): boolean {
   return !!pathname && (
     pathname.startsWith("/results/") ||
-    pathname.startsWith("/conformance/shared/")
+    pathname.startsWith("/conformance/shared/") ||
+    pathname.startsWith("/evals/shared/")
   );
 }
 
