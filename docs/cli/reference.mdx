@@ -1082,10 +1082,12 @@ clearing any override a previous request left on the run.
 
 List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency). Results are paginated.
 
+`--project` is optional. Selection follows `--project` → input selector → `MCPJAM_PROJECT` → nearest project link → automatic newest accessible project.
+
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
-| `--project <id-or-name>` | Yes | Project the run belongs to (name or ID) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--cursor <cursor>` | No | Pagination cursor from a previous response |
 | `--limit <n>` | No | Max iterations per page (1–200) |
 
@@ -1093,11 +1095,13 @@ List per-iteration results for an eval run (pass/fail, tool calls, tokens, laten
 
 Fetch the full trace for one eval iteration (complete message history and spans). Can be large.
 
+`--project` is optional. Selection follows `--project` → input selector → `MCPJAM_PROJECT` → nearest project link → automatic newest accessible project.
+
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
-| `--project <id-or-name>` | Yes | Project the run belongs to (name or ID) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
 ### `cloud eval get`
 
