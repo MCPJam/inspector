@@ -62,10 +62,16 @@ export function ModelsPill({
     [value]
   );
 
+  const replaceSoleChoice = canReplaceSoleChoice(budget);
+
   const toggleDefaults = (checked: boolean) => {
     if (mode === "single") {
       onChange({ includeClientDefaults: checked, explicitModelIds: [] });
       setOpen(false);
+      return;
+    }
+    if (checked && replaceSoleChoice) {
+      onChange({ includeClientDefaults: true, explicitModelIds: [] });
       return;
     }
     onChange({ ...value, includeClientDefaults: checked });
@@ -82,6 +88,13 @@ export function ModelsPill({
     }
     if (checked) {
       if (explicit.includes(modelId)) return;
+      if (replaceSoleChoice) {
+        onChange({
+          includeClientDefaults: false,
+          explicitModelIds: [modelId],
+        });
+        return;
+      }
       onChange({ ...value, explicitModelIds: [...explicit, modelId] });
       return;
     }
@@ -94,11 +107,13 @@ export function ModelsPill({
   const defaultsCapBlocked =
     mode === "multiple" &&
     !includeDefaults &&
-    wouldExceedBudget(budget, { extraChoices: 1 });
+    wouldExceedBudget(budget, { extraChoices: 1 }) &&
+    !replaceSoleChoice;
   const modelCapBlocked = (checked: boolean) =>
     mode === "multiple" &&
     !checked &&
-    wouldExceedBudget(budget, { extraChoices: 1 });
+    wouldExceedBudget(budget, { extraChoices: 1 }) &&
+    !replaceSoleChoice;
 
   return (
     <Popover
@@ -237,4 +252,23 @@ function wouldExceedBudget(
   if (!budget) return false;
   const nextChoices = budget.choiceCount + delta.extraChoices;
   return budget.hostCount * nextChoices > budget.maxTargets;
+}
+
+/**
+ * At the product cap with exactly one current choice, adding any other
+ * option is over budget — but replacing that sole choice stays within
+ * the cap. The live composer commits each checkbox immediately, so
+ * unchecking the current pick first yields zero choices and rolls back.
+ * Offer the replacement as one commit instead of disabling every
+ * alternative.
+ */
+function canReplaceSoleChoice(
+  budget: TargetBudgetContext | undefined
+): boolean {
+  if (!budget) return false;
+  return (
+    budget.choiceCount === 1 &&
+    budget.hostCount <= budget.maxTargets &&
+    budget.hostCount * 2 > budget.maxTargets
+  );
 }
