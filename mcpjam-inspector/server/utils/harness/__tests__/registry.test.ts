@@ -343,14 +343,14 @@ const toUserMessage = (text) => ({
 });
 
 describe("bootstrap recipes are auth-independent", () => {
-  // Load-bearing for the prewarm ordering. A harness turn installs its runtime
-  // BEFORE the broker locks the box's egress, using a runtime built with a
-  // placeholder credential — the real one does not exist yet. The framework
-  // keys the "already installed" marker on a hash of the recipe's file
-  // contents, so if the recipe ever varied with auth, the prewarmed marker
-  // would not match the one the streaming turn looks for. The turn would then
-  // re-run the bootstrap under the egress lock, where it cannot reach the
-  // package registry — the original failure, silently restored.
+  // Load-bearing for the in-stream bootstrap. A harness turn installs its
+  // runtime inside the sandbox after the broker starts, using a runtime built
+  // with dummy broker creds. The framework keys the "already installed" marker
+  // on a hash of the recipe's file contents, so if the recipe ever varied with
+  // auth, a resume would re-run the bootstrap against a different hash. The
+  // recipe must stay auth-independent so the in-stream bootstrap is
+  // attributable to the adapter, not to whichever credential happened to be
+  // present when the files were hashed.
   const auth = (suffix: string) => ({
     anthropic: {
       apiKey: `anthropic-key-${suffix}`,
@@ -390,7 +390,7 @@ describe("bootstrap recipes are auth-independent", () => {
 
   it("claude-code's patched bridge differs from the unpatched one", () => {
     // The other half of the same invariant: the registry rewrites the bridge
-    // asset, so prewarming a bare `createClaudeCode()` would compute a
+    // asset, so bootstrapping a bare `createClaudeCode()` would compute a
     // different hash than the turn does. This test is what makes that
     // divergence visible if anyone reaches for the bare constructor.
     // Dual-`ai` boundary cast, as everywhere else this constructor is used.
