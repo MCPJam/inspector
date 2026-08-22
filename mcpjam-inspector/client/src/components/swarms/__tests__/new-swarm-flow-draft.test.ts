@@ -93,6 +93,37 @@ describe("new swarm flow draft", () => {
     expect(restored?.step).toBe("confirm");
   });
 
+  it("resumes a draft written before the model slot existed", () => {
+    // Same posture as the name field: tolerated in storage, normalized on the
+    // way out. An un-normalized stack reaches the composer's budget line and
+    // throws while rendering, which loses the slate outright.
+    const stale = draft({ step: "confirm" });
+    const {
+      modelSelection: _omitted,
+      ...stackWithoutModels
+    } = stale.targetState.stack;
+    sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({
+        version: 1,
+        savedAt: Date.now(),
+        projectId: "proj-1",
+        draft: {
+          ...stale,
+          targetState: { ...stale.targetState, stack: stackWithoutModels },
+        },
+      })
+    );
+
+    const restored = readNewSwarmFlowDraft("proj-1");
+    expect(restored).not.toBeNull();
+    // Client defaults: exactly what the stack meant before the slot existed.
+    expect(restored?.targetState.stack.modelSelection).toEqual({
+      includeClientDefaults: true,
+      explicitModelIds: [],
+    });
+  });
+
   it.each([
     ["absent", undefined, false],
     ["null", null, false],

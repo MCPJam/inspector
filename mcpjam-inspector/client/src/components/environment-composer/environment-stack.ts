@@ -89,21 +89,35 @@ export function emptyComposerState(): EnvironmentComposerState {
   };
 }
 
-export function modelChoiceCount(selection: ModelSelection): number {
+/**
+ * Selection readers accept `undefined` and read it as the empty selection.
+ *
+ * A stack can genuinely arrive without one: state persisted before this slot
+ * existed (a saved swarm draft) rehydrates into the current shape. Guarding
+ * here rather than at each call site means a missed guard degrades to "client
+ * defaults" instead of throwing while rendering the strip.
+ */
+export function modelChoiceCount(
+  selection: ModelSelection | undefined
+): number {
+  const resolved = selection ?? emptyModelSelection();
   return (
-    (selection.includeClientDefaults ? 1 : 0) + selection.explicitModelIds.length
+    (resolved.includeClientDefaults ? 1 : 0) + resolved.explicitModelIds.length
   );
 }
 
 /** Inherit first, then explicit ids in list order. Host-major mint uses this. */
-export function expandModelChoices(selection: ModelSelection): Array<{
+export function expandModelChoices(
+  selection: ModelSelection | undefined
+): Array<{
   modelId: string | undefined;
 }> {
+  const resolved = selection ?? emptyModelSelection();
   const choices: Array<{ modelId: string | undefined }> = [];
-  if (selection.includeClientDefaults) {
+  if (resolved.includeClientDefaults) {
     choices.push({ modelId: undefined });
   }
-  for (const modelId of selection.explicitModelIds) {
+  for (const modelId of resolved.explicitModelIds) {
     choices.push({ modelId });
   }
   return choices;
