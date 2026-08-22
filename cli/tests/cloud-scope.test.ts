@@ -162,4 +162,11 @@ test("stale-link hint is appended only for project selector failures", () => {
     appendProjectLinkHint('Eval suite "s" was not found.', scope),
     'Eval suite "s" was not found.'
   );
+  assert.equal(
+    appendProjectLinkHint(
+      "Project Alpha has no GitHub organization connected.",
+      scope
+    ),
+    "Project Alpha has no GitHub organization connected."
+  );
 });

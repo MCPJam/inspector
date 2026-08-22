@@ -90,7 +90,7 @@ export type RunPlatformOperationExtras = {
  * READ THIS BEFORE USING `options.x` FOR CREDENTIAL OR PROJECT FLAGS. Each
  * may be declared on a group AND on its subcommands, and Commander does not
  * give the subcommand a copy: whichever command declares a flag NEAREST THE
- * TOP consumes it, wherever it appears on the line. `projects server connect
+ * TOP consumes it, wherever it appears on the line. `projects servers connect
  * --project alpha` stores `alpha` on `servers`, and `connect`'s own
  * `options.project` is `undefined`. Merging here is what makes the typed
  * value reachable.

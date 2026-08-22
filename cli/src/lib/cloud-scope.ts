@@ -150,7 +150,7 @@ export function describeProjectScope(scope: ProjectCloudScope): string {
 
 export function isProjectSelectorFailure(message: string): boolean {
   return (
-    message.startsWith("Project ") ||
+    /^Project ["']/.test(message) ||
     message.startsWith("No accessible MCPJam projects")
   );
 }
