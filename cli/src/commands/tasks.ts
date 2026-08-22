@@ -18,6 +18,7 @@ import {
   renderConformanceForCli,
   resolveConformanceOutputFormatForCli,
 } from "../lib/conformance-output.js";
+import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
 import { withEphemeralManager } from "../lib/ephemeral.js";
 import { parseReporterFormat } from "../lib/reporting.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
@@ -70,6 +71,15 @@ const TASKS_CHECK_IDS_BY_CATEGORY: Record<
     "tasks-inline-result",
     "tasks-mcp-name-routing",
     "tasks-undeclared-capability-rejected",
+    // Scenario depth from the conformance-gap program. All in `lifecycle`
+    // because that is the category their check metadata declares, and the
+    // suite's own drift test requires every id to be reachable through one.
+    "tasks-invalid-task-id-rejected",
+    "tasks-status-payload-shape",
+    "tasks-cancel-ack-shape",
+    "tasks-input-required-update-completes",
+    "tasks-ttl-integer-shape",
+    "tasks-undeclared-capability-names-requirements",
   ],
 };
 
@@ -85,6 +95,7 @@ export interface TasksConformanceOptions extends SharedServerTargetOptions {
   toolName?: string;
   toolArgs?: string;
   pollTimeout?: number;
+  inputResponses?: string;
 }
 
 function collectInvalidEntries(
@@ -146,6 +157,14 @@ export function buildTasksConformanceConfig(
       ? { toolArguments: parseJsonRecord(options.toolArgs, "--tool-args") }
       : {}),
     ...(options.pollTimeout ? { pollTimeoutMs: options.pollTimeout } : {}),
+    ...(options.inputResponses
+      ? {
+          inputResponses: parseJsonRecord(
+            options.inputResponses,
+            "--input-responses"
+          ),
+        }
+      : {}),
   };
 }
 
@@ -711,6 +730,10 @@ export function registerTasksCommands(program: Command): void {
       )
       .option("--tool-args <json>", "Tool arguments as a JSON object")
       .option(
+        "--input-responses <json>",
+        'Responses to submit when the probed task reports input_required, keyed by inputRequests key: {"name":{"result":{"action":"accept","content":{"name":"Ada"}}}}. Without it the run stops as soon as the task parks on input_required, and the round-trip check reports what it needs.'
+      )
+      .option(
         "--poll-timeout <ms>",
         "How long to poll a created task for a terminal status",
         (value: string) => parsePositiveInteger(value, "Poll timeout"),
@@ -719,6 +742,11 @@ export function registerTasksCommands(program: Command): void {
       .option(
         "--reporter <reporter>",
         "Structured reporter output: json-summary or junit-xml"
+      )
+      .option("--upload", "Upload this suite's result into MCPJam run history")
+      .option(
+        "--require-upload",
+        "Fail if reporting is configured but the UI record cannot be written"
       )
   ).action(async (options, command) => {
     const reporter = parseReporterFormat(
@@ -768,6 +796,17 @@ export function registerTasksCommands(program: Command): void {
     }
 
     const exitCode = tasksConformanceExitCode(result);
+    await maybeUploadSingleSuite({
+      suiteKind: "tasks",
+      result,
+      serverUrl:
+        "url" in config && typeof config.url === "string" ? config.url : undefined,
+      upload: Boolean((options as { upload?: boolean }).upload),
+      requireUpload: Boolean(
+        (options as { requireUpload?: boolean }).requireUpload
+      ),
+      command,
+    });
     if (exitCode !== 0) {
       setProcessExitCode(exitCode);
     }
