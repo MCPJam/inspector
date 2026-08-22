@@ -210,6 +210,7 @@ const PLAIN_TOOLS = [
   "upsert_user_testing_member",
   "remove_user_testing_member",
   "rebind_user_testing_scenario",
+  "get_share_settings",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -428,6 +429,7 @@ describe("platform tool registration", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "get_share_settings",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {

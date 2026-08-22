@@ -113,6 +113,7 @@ import {
   getUserTestingSessionOperation,
   getUserTestingMetricsOperation,
   getUserTestingUsageOperation,
+  getShareSettingsOperation,
   listUserTestingFindingsOperation,
   getUserTestingSignalsOperation,
   getUserTestingInsightsOperation,
@@ -297,6 +298,12 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  // The share READ is on the catalog surface; its two writes are excluded
+  // below. Reading who can already open a resource tells a caller nothing it
+  // could not learn by opening the UI, and without it the two exclusions read
+  // as "sharing is invisible here" rather than "sharing is not yours to
+  // change".
+  getShareSettingsOperation,
 ];
 
 /** Every SDK operation not exposed by the generic MCP catalog, with policy. */
@@ -372,6 +379,10 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Computer lifecycle writes are not offered on the unattended catalog surface.",
   delete_sandbox_image:
     "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  set_share_mode:
+    "Share-access writes are not offered on the unattended catalog surface: the operation is `risk: 'exposure'` and `anyone_with_link` widens a resource to every holder of the URL, guests included. The read (get_share_settings) is in the catalog.",
+  rotate_share_link:
+    "Share-access writes are not offered on the unattended catalog surface: the operation is `risk: 'destructive'` and immediately locks out everyone holding the old URL. The read (get_share_settings) is in the catalog.",
 };
 
 const catalogOperationNames = new Set(

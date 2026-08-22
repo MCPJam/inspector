@@ -139,6 +139,7 @@ so results respect the caller's project access.
 | `upsert_user_testing_member` | Grant one person access to a scenario by email. | — |
 | `remove_user_testing_member` | Revoke one person's access. | — |
 | `rebind_user_testing_scenario` | Swap the environment behind a scenario, keeping its link, members and history. | — |
+| `get_share_settings` | Read who can open a shared scenario, conformance run or eval run: mode, link token and invited members. Changing it is not on this surface. | — |
 
 <!-- The rows above are the CATALOG, not a hand-written summary: they are
      checked against `PLATFORM_CATALOG_OPERATIONS` by
