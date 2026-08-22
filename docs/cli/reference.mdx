@@ -971,9 +971,11 @@ Start an eval run of an existing suite (asynchronous).
 | `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
 | `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
-| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Appends** the composed environment to the suite. |
+| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). Default is **ephemeral** — does not attach to the suite. |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
-| `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
+| `--compose-model <id...>` | No | One or more models to run on the composed stack. Each id mints one cell; omit to inherit the host's pinned model. |
+| `--with-client-default` | No | Also launch an inherit cell (the host's pinned model) alongside `--compose-model` |
+| `--save-targets` | No | Attach the composed environments to the suite (append, capped at 10). Default is ephemeral. |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
 
