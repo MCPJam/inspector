@@ -14,13 +14,9 @@ import { useConvexAuth, useQuery } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@mcpjam/design-system/popover";
 import { Textarea } from "@mcpjam/design-system/textarea";
-import { ChevronLeft, Loader2, Plus, X } from "lucide-react";
+import { ChevronLeft, Loader2, X } from "lucide-react";
+import { PersonaPickerPopover } from "@/components/swarms/persona-picker-popover";
 import { ProgressStepper } from "@/components/shared/progress-stepper";
 import { RequiredMark } from "@/components/shared/required-mark";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -1913,73 +1909,27 @@ export function NewSwarmCreateFlow({
               ) : null}
 
               {personaList.length > 0 ? (
-                <Popover
+                // The whole library, as a checklist: this picker is where
+                // Describe both attaches and detaches.
+                <PersonaPickerPopover
+                  personas={personaList}
                   open={personaPickerOpen}
                   onOpenChange={setPersonaPickerOpen}
-                >
-                  <PopoverTrigger asChild>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      className="w-fit"
-                      data-testid="new-swarm-add-existing-personas"
-                    >
-                      <Plus className="mr-1.5 size-4" />
-                      Add existing personas
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-80 p-1">
-                    <div
-                      role="group"
-                      aria-label="Choose personas"
-                      className="max-h-72 space-y-0.5 overflow-y-auto"
-                      data-testid="new-swarm-existing-personas"
-                    >
-                      {personaList.map((persona) => {
-                        const selected = reusedIds.includes(persona._id);
-                        return (
-                          <button
-                            key={persona._id}
-                            type="button"
-                            role="checkbox"
-                            aria-checked={selected}
-                            aria-label={"Include " + persona.name}
-                            onClick={() =>
-                              setReusedIds((ids) =>
-                                selected
-                                  ? ids.filter((id) => id !== persona._id)
-                                  : [...ids, persona._id]
-                              )
-                            }
-                            className={cn(
-                              "flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left text-sm transition-colors",
-                              selected
-                                ? "bg-accent text-foreground"
-                                : "text-muted-foreground hover:bg-accent/60"
-                            )}
-                          >
-                            <PersonaPixelAvatar
-                              seed={persona._id}
-                              shapeIndex={persona.avatarShape}
-                              paletteIndex={persona.avatarPalette}
-                              size="sm"
-                            />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate font-medium text-foreground">
-                                {persona.name}
-                              </span>
-                              {persona.role ? (
-                                <span className="block truncate text-xs text-muted-foreground">
-                                  {persona.role}
-                                </span>
-                              ) : null}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </PopoverContent>
-                </Popover>
+                  groupLabel="Choose personas"
+                  triggerClassName="w-fit"
+                  triggerTestId="new-swarm-add-existing-personas"
+                  listTestId="new-swarm-existing-personas"
+                  mode={{
+                    kind: "toggle",
+                    selectedIds: reusedIds,
+                    onToggle: (personaId) =>
+                      setReusedIds((ids) =>
+                        ids.includes(personaId)
+                          ? ids.filter((id) => id !== personaId)
+                          : [...ids, personaId]
+                      ),
+                  }}
+                />
               ) : null}
             </div>
 

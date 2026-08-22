@@ -666,9 +666,10 @@ describe("UserTestingScenarioCreateFlow — create study (Production Redesign)",
     expect(toastError).toHaveBeenCalledWith(
       expect.stringMatching(/study created, but the per-turn ratings setting/i)
     );
-    expect(toastSuccess).toHaveBeenCalledWith(
-      expect.stringMatching(/study created/i)
-    );
+    // And it is not ALSO reported as a plain success: that error already opens
+    // with "Study created", so a success toast beside it would make the screen
+    // say two things about one outcome.
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 });
 

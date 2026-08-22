@@ -56,7 +56,7 @@ import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { TextareaAutosize } from "@/components/ui/textarea-autosize";
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
 import { PersonaAvatarLookPicker } from "@/components/swarms/persona-avatar-look-picker";
-import { SectionLabel } from "@/components/swarms/new-swarm-confirm-step";
+import { SectionLabel } from "@/components/shared/section-label";
 import { JourneyNetworkBackdrop } from "@/components/swarms/journey-network-backdrop";
 import { SwarmsEmptyHero } from "@/components/swarms/swarms-empty-hero";
 import {
