@@ -748,34 +748,46 @@ function FieldCell({
       // A `light-dark(…)` value is NOT this case: it is decoded upstream into
       // the pair below, so the notation a host happens to use never changes
       // the shape of its cell.
+      // `inline-flex` + `items-start` so the block hugs its content and stays
+      // centered by the cell, while everything INSIDE it shares one left edge:
+      // the theme label sits directly above its swatch and value instead of
+      // being centered away from them by the cell's `text-center`.
       if ("same" in v) {
         return (
-          <span className="inline-flex items-center gap-1.5">
+          <span className="inline-flex max-w-full items-center gap-1.5 text-left">
             {isColor ? <StyleColorSwatch value={v.same} /> : null}
-            <span className="font-mono text-[12px] break-all">{v.same}</span>
+            <span className="min-w-0 font-mono text-[12px] break-all">
+              {v.same}
+            </span>
           </span>
         );
       }
       return (
-        <div className="flex flex-col gap-1" title={v.raw}>
+        <span
+          className="inline-flex max-w-full flex-col items-start gap-1.5 text-left"
+          title={v.raw}
+        >
           {(["light", "dark"] as const).map((theme) => (
-            <div key={theme} className="flex flex-col gap-0.5">
-              <span className="text-[10px] uppercase tracking-wide text-muted-foreground/60">
+            <span
+              key={theme}
+              className="flex max-w-full flex-col items-start gap-0.5"
+            >
+              <span className="text-[10px] uppercase leading-none tracking-wide text-muted-foreground/60">
                 {theme}
               </span>
               {v[theme] === undefined ? (
                 <span className="text-[12px] text-muted-foreground/60">—</span>
               ) : (
-                <span className="inline-flex items-center gap-1.5">
+                <span className="flex max-w-full items-center gap-1.5">
                   {isColor ? <StyleColorSwatch value={v[theme]} /> : null}
-                  <span className="font-mono text-[12px] break-all">
+                  <span className="min-w-0 font-mono text-[12px] break-all">
                     {v[theme]}
                   </span>
                 </span>
               )}
-            </div>
+            </span>
           ))}
-        </div>
+        </span>
       );
     }
 
