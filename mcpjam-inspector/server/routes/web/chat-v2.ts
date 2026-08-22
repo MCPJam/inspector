@@ -785,8 +785,8 @@ chatV2.post("/", async (c) => {
       typeof rawComputerWorkdir === "string" ? rawComputerWorkdir : undefined;
 
     // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
-    // the emulated chat path wires the listSkills/loadSkill tools for any
-    // signed-in member with a project. Gate only on:
+    // the emulated chat path inlines the catalog and wires `loadSkill` (+ file
+    // tools) for any signed-in member with a project that has skills. Gate only on:
     //   - not a guest (a share-link/scenario guest gets no skill tools), and
     //   - the turn will NOT run a real harness runtime — Claude Code delivers
     //     skills via the adapter `skills` param instead (Codex delivers none),
