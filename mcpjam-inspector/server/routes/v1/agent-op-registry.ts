@@ -117,6 +117,8 @@ import {
   upsertUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
   setUserTestingGuestExecutionOperation,
+  getShareSettingsOperation,
+  setShareModeOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
@@ -1348,6 +1350,23 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
     ],
   },
+  { operation: getShareSettingsOperation, tier: "direct" },
+  {
+    operation: setShareModeOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Set ${named(input, "resourceType") ?? "resource"} ${
+          named(input, "resourceId") ?? "(unnamed)"
+        } access to ${named(input, "mode") ?? "the requested mode"}`,
+      buttonLabel: "Apply it",
+      kind: "schedule",
+      confirmSeverity: "external",
+    },
+    promptNotes: [
+      "- `set_share_mode` changes who can open a shared scenario, conformance run, or eval run. `anyone_with_link` includes guests as browser sessions, not verified individuals.",
+    ],
+  },
 ];
 
 /**
@@ -1396,6 +1415,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // to hand it back except by re-inviting them individually.
   rotate_user_testing_link:
     "Immediate and irreversible: every holder of the old link loses access and every live session dies.",
+  rotate_share_link:
+    "Immediate and irreversible: every holder of the old unified share URL loses the ability to redeem it. Same rationale as rotate_user_testing_link.",
   remove_user_testing_member:
     "Revokes a named person's access; the agent proposes authoring, never destruction.",
 
