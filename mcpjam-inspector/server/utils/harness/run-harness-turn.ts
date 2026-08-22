@@ -34,7 +34,6 @@ import {
 import {
   HarnessAgent,
   collectHarnessAgentToolApprovalContinuations,
-  prewarmHarness,
 } from "@ai-sdk/harness/agent";
 import {
   emitTraceSnapshot,
@@ -728,15 +727,11 @@ export async function runHarnessTurn(
       const isApprovalResume = approvalContinuations.length > 0;
 
       // Phase timing — log where a turn spends its wall-clock (claim / box
-      // wake / runtime prewarm / broker start / session connect / model stream /
-      // finalize) so "takes forever" can be attributed instead of guessed.
+      // wake / broker start / session connect / model stream / finalize) so
+      // "takes forever" can be attributed instead of guessed.
       const tStart = Date.now();
       let tClaim = tStart;
       let tSandbox = tStart;
-      // Set at the START of the prewarm phase and again at its end, so a turn
-      // that skips prewarm reports ~0 for it rather than a negative duration
-      // measured back to function entry.
-      let tPrewarm = tStart;
       let tBroker = tStart;
       let tConnect = tStart;
       let resumedSession = false;
@@ -1104,29 +1099,16 @@ export async function runHarnessTurn(
         box.kind === "computer" ? box.computerId : undefined;
       tSandbox = Date.now();
 
-      // 3a. PREPARE the box — while it can still reach the internet.
+      // 3a. RESERVE the box, then start the baseline-preserving broker lease.
       //
       // The harness runtime is installed into the sandbox by a bootstrap recipe
-      // that shells `pnpm install` for the agent CLI. Step 3b below locks this
-      // box's egress to the model proxy alone, so a bootstrap running after it
-      // cannot reach the package registry — it dies, slowly and opaquely, and
-      // the turn never gets as far as a model call. Bootstrapping has to happen
-      // here, in the last moment the box has ordinary egress.
-      //
-      // `prewarmHarness` applies the SAME recipe the agent would apply itself,
-      // keyed by the same content hash, and writes the same marker file. So this
-      // is not extra work: it moves the work earlier, and the in-stream
-      // bootstrap becomes a single marker read. It runs on every turn rather
-      // than only on turns expected to start fresh, because a resume that fails
-      // to reattach falls back to a fresh session — under the lock, where the
-      // bootstrap could not be recovered.
-      //
-      // The runtime handed to prewarm MUST come from the adapter, not from a
-      // bare `createClaudeCode()`: the registry patches the bridge asset inside
-      // the recipe, the recipe's hash covers file contents, and a divergent hash
-      // would leave a marker the real turn ignores — reinstating the deadlock
-      // while looking like it had been fixed. Auth is inert here (the adapter
-      // reads it only when starting a session), so a placeholder is enough.
+      // that shells `pnpm install` for the agent CLI. The lease keeps the box's
+      // own egress baseline (public internet for members; web-only for guests)
+      // and only adds a header transform on the model-proxy host, so the
+      // in-stream bootstrap can reach the package registry on its own. The
+      // reservation is a concurrency/liveness control — it is NOT an egress
+      // lock — and is kept on its own merits pending an independent removal
+      // gate.
       //
       // ONE id for the whole turn: it names this turn's claim on the box, and
       // the lease consumes that claim by matching it. Deliberately NOT assigned
@@ -1138,9 +1120,9 @@ export async function runHarnessTurn(
 
       // Claim the box for the whole preparation window. The lease's own per-box
       // fence starts only once a lease exists, so without this two turns could
-      // interleave — one locking the box's egress while the other is still
-      // installing into it. A refusal here is the same condition a caller would
-      // otherwise meet at broker start, just detected before we do any work.
+      // interleave wake / bootstrap / broker-start. A refusal here is the same
+      // condition a caller would otherwise meet at broker start, just detected
+      // before we do any work.
       const reservation = await reserveHarnessBox({
         box,
         harnessId: harnessAdapter.id,
@@ -1219,47 +1201,20 @@ export async function runHarnessTurn(
         "error" in resolvedHarnessWorkdir
           ? HOME_ROOT
           : resolvedHarnessWorkdir.workdir ?? HOME_ROOT;
-      // ONE provider for the turn: prewarm and the streaming session below both
-      // attach to the same box through it.
+      // ONE provider for the turn: the streaming session below attaches to the
+      // box through it. One provider per turn is still the right shape even
+      // without a separate prewarm pass.
       const sandbox = createE2BHarnessSandboxProvider({
         sandboxId,
         defaultWorkingDirectory,
       });
 
-      tPrewarm = Date.now();
-      if (process.env.HARNESS_PREWARM_DISABLED !== "1") {
-        const prewarmRuntime = harnessAdapter.createHarness({
-          modelId,
-          auth: buildBrokerDummyAuth(
-            harnessAdapter.id,
-            "https://prewarm.invalid"
-          ),
-        });
-        try {
-          await prewarmHarness({
-            harness: prewarmRuntime,
-            sandboxProvider: sandbox,
-            abortSignal: effectiveAbortSignal,
-          });
-        } catch (err) {
-          // An abort is not a failure — rethrow it untouched so the outer catch
-          // still classifies the turn as aborted rather than broken.
-          if (effectiveAbortSignal.aborted || isAbortError(err)) throw err;
-          throw new Error(
-            `Couldn't prepare the ${harnessAdapter.displayName} runtime on the ` +
-              `computer: ${err instanceof Error ? err.message : String(err)}`,
-            { cause: err }
-          );
-        }
-        tPrewarm = Date.now();
-      }
-
       // 3b. BROKER delivery (the only credential path): the sandbox id is now
-      // known, so have Convex mint the lease, lock the sandbox's egress to the
-      // proxy, and install the lease into E2B's egress transform — the
-      // inspector never sees the lease. Run the CLI with dummy creds pointed
-      // at the returned proxy. Fail-fast on install error (the box is awake
-      // but no real credential exists anywhere).
+      // known, so have Convex mint the lease, keep the sandbox on its own
+      // egress baseline, and install the lease into E2B's egress transform on
+      // the model-proxy host — the inspector never sees the lease. Run the CLI
+      // with dummy creds pointed at the returned proxy. Fail-fast on install
+      // error (the box is awake but no real credential exists anywhere).
       // RECORD the run id before the POST: if the backend installs the E2B rule
       // but the response is lost or aborted, teardown can still revoke by this
       // id (the backend keys revoke on runId). From here on a lease may exist.
@@ -1291,8 +1246,8 @@ export async function runHarnessTurn(
       tBroker = Date.now();
 
       // 4. Assemble the harness over the host's E2B computer (the provider and
-      // its working directory were resolved in step 3a, so prewarm and the
-      // streaming session share one).
+      // its working directory were resolved in step 3a, so the streaming session
+      // uses the same one).
       // (permissionMode was computed above, before the runtime fingerprint.)
 
       // The adapter maps the host modelId to the harness's native model and
@@ -2324,8 +2279,8 @@ export async function runHarnessTurn(
         logger.info(
           `[harness][timing] claim=${tClaim - tStart}ms boxWake=${
             tSandbox - tClaim
-          }ms prewarm=${tPrewarm - tSandbox}ms brokerStart=${
-            tBroker - tPrewarm
+          }ms brokerStart=${
+            tBroker - tSandbox
           }ms sessionConnect=${
             tConnect - tBroker
           }ms modelStream=${tStream - tConnect}ms total=${

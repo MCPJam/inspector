@@ -60,6 +60,7 @@ import {
   CheckStoppedByPlan,
   PlanProtocolError,
   PlanUnreachableError,
+  type AttemptAction,
   type AttemptInput,
   type CheckPlanSession,
 } from "./github-checks/check-plan.js";
@@ -68,6 +69,7 @@ import {
   githubChecksServiceEnv,
   postServiceRoute,
 } from "./github-checks/service-route.js";
+import { executePersistedConformanceRun } from "./conformance-run-executor.js";
 
 const POLL_INTERVAL_MS = 15_000;
 const POLL_JITTER_MS = 5_000;
@@ -105,6 +107,14 @@ export type ClaimedGithubCheck = {
    * would be a private repository's check failing rather than the reverse.
    */
   repoPrivate: boolean;
+  /**
+   * Dual-read: absent/false means this trigger is legacy eval-only. The backend
+   * always sends a boolean on new claims; older workers ignore unknown fields.
+   */
+  conformanceEnabled?: boolean;
+  conformanceSuiteKinds?: Array<"protocol" | "apps" | "tasks" | "oauth">;
+  /** Repo-config id for grouping GitHub preview conformance history. */
+  repoConfigId?: string;
 };
 
 export type CheckSummary = {
@@ -565,6 +575,19 @@ export type CheckExecutionDeps = {
      */
     onRunStarted?: (runId: string) => Promise<void>;
   }) => Promise<{ runId: string; result?: string; summary?: CheckSummary }>;
+  /**
+   * Dual-check: run the conformance suites against the same verified preview
+   * server on an INDEPENDENT MCP session. Called only when the backend answers
+   * `run_conformance` after the eval bind. Product failures of eval must not
+   * skip this; sandbox death / launch infra still may.
+   */
+  runConformance: (args: {
+    claimed: ClaimedGithubCheck;
+    bearer: string;
+    serverUrl: string;
+    candidateId: string;
+    onRunStarted?: (runId: string) => Promise<void>;
+  }) => Promise<{ runId: string }>;
   /** The PLANLESS completion. Only reachable when `/plan/begin` gave us none. */
   report: (report: PlanlessCheckReport) => Promise<void>;
   heartbeat: (triggerId: string, claimedBy: string) => Promise<void>;
@@ -1139,6 +1162,49 @@ async function defaultRunEvalSuite(args: {
   }
 }
 
+async function defaultRunConformance(args: {
+  claimed: ClaimedGithubCheck;
+  bearer: string;
+  serverUrl: string;
+  candidateId: string;
+  onRunStarted?: (runId: string) => Promise<void>;
+}): Promise<{ runId: string }> {
+  // The configured snapshot is passed through INTACT, `oauth` included. The
+  // backend refuses to configure OAuth for a check, but a row written before
+  // that refusal existed must not be quietly narrowed here: dropping a
+  // configured suite greens a check that never examined it. The executor
+  // records an OAuth the App cannot perform as an explicit incomplete, which
+  // is a non-green verdict and an honest one.
+  const suites = args.claimed.conformanceSuiteKinds ?? [
+    "protocol",
+    "apps",
+    "tasks",
+  ];
+  const target = args.claimed.repoConfigId
+    ? {
+        kind: "github_repo" as const,
+        githubCheckRepoConfigId: args.claimed.repoConfigId,
+        serverUrl: args.serverUrl,
+      }
+    : {
+        kind: "external" as const,
+        serverRef: args.claimed.repoFullName,
+        serverUrl: args.serverUrl,
+      };
+  const result = await executePersistedConformanceRun({
+    convexToken: args.bearer,
+    projectId: args.claimed.projectId,
+    server: { url: args.serverUrl },
+    suites,
+    source: "github_app",
+    target,
+    githubCheckTriggerId: args.claimed.triggerId,
+    actorLabel: `github-app:${args.claimed.repoFullName}`,
+    onRunStarted: args.onRunStarted,
+  });
+  return { runId: result.runId };
+}
+
 function defaultDeps(): CheckExecutionDeps {
   return {
     beginPlan: (claimed) =>
@@ -1155,6 +1221,7 @@ function defaultDeps(): CheckExecutionDeps {
     deleteEphemeralServer: defaultDeleteEphemeralServer,
     recordServer: recordEphemeralServer,
     runEvalSuite: defaultRunEvalSuite,
+    runConformance: defaultRunConformance,
     report: reportPlanlessOutcome,
     heartbeat: sendHeartbeat,
     heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
@@ -1275,6 +1342,7 @@ export async function executeClaimedCheck(
    */
   const safeComplete = async (input: {
     runId?: string;
+    conformanceRunId?: string;
     summary?: CheckSummary;
     detailsMarkdown?: string;
     terminalAttempt?: AttemptInput;
@@ -1312,8 +1380,12 @@ export async function executeClaimedCheck(
 
   /** The plan's id for the candidate the backend ACCEPTED, once it has one. */
   let acceptedCandidateId: string | null = null;
-  /** Set once the `eval` attempt landed: after that the plan is terminal. */
+  /** Set once the `eval` attempt landed. Dual-check: the plan is NOT terminal. */
   let runBound = false;
+  /** Set once the `conformance` attempt landed. */
+  let conformanceBound = false;
+  /** What the backend said to do after the eval bind. */
+  let afterEvalAction: AttemptAction | undefined;
   /** The in-box diagnostic for an eval that died. DISPLAY text, no authority. */
   let evalFailureDetails: string | undefined;
 
@@ -1445,42 +1517,25 @@ export async function executeClaimedCheck(
         serverName,
         // STEP 9 — the attempt that BINDS the run, posted AT LAUNCH.
         onRunStarted: async (runId) => {
-          await session.attempt({
+          const decision = await session.attempt({
             candidateId: resolved.candidateId,
             phase: "eval",
             ok: true,
             runId,
             durationMs: 0,
           });
-          // The returned action is `complete` (`verdict_established`) and the
-          // plan is now terminal: no further attempt is legal, and none is
-          // sent. We still WAIT for the run — the backend reads the verdict off
-          // the row, and an unfinished one derives `infra_error`, never a pass.
+          afterEvalAction = decision.action;
           runBound = true;
         },
       })
       .catch(async (error: unknown) => {
-        // The PR's server dying mid-run and an outage of ours read identically
-        // in the error text, so the box is asked directly. The answer is
-        // DISPLAY only now — the verdict comes from the BOUND run.
         evalFailureDetails = await describeEvalFailure(
           error,
           runningBox,
           recipe
         );
-        // The diagnostic above talks to the box, so it takes real time — long
-        // enough for the lease to be taken away while it runs. Re-checked here so
-        // a check somebody else has already concluded is abandoned rather than
-        // reported on, which is what every other step boundary does.
         assertLeaseHeld();
 
-        // A LAUNCH that never bound a run is still reportable as an eval
-        // attempt; one that already bound is not, because the plan is terminal.
-        // `sandbox_error` is the honest kind — the launch is OURS — and
-        // `evals_failed` is not worker-reportable at all: that statement about
-        // the pull request comes only from the backend reading the bound run.
-        // A plan-level failure is excluded: the backend either refused us or is
-        // gone, and either way another attempt is not the answer.
         if (
           !runBound &&
           !(error instanceof PlanProtocolError) &&
@@ -1503,16 +1558,61 @@ export async function executeClaimedCheck(
         throw error;
       });
 
-    // The eval is the widest window in this flow — twenty minutes — so the lease
-    // can be taken away while it runs and still resolve normally. The failure path
-    // re-checks; this one has to as well, or a check the backend already concluded
-    // gets a completion posted over the top of it.
     assertLeaseHeld();
 
+    let conformanceRunId: string | undefined;
+    // Dual-check: product failures of eval still run conformance. Infra
+    // throws above skip it so a dead box is not probed twice.
+    if (afterEvalAction === "run_conformance") {
+      try {
+        const conformance = await deps.runConformance({
+          claimed,
+          bearer,
+          serverUrl: started.url,
+          candidateId: resolved.candidateId,
+          onRunStarted: async (boundId) => {
+            await session.attempt({
+              candidateId: resolved.candidateId,
+              phase: "conformance",
+              ok: true,
+              conformanceRunId: boundId,
+              durationMs: 0,
+            });
+            conformanceBound = true;
+          },
+        });
+        conformanceRunId = conformance.runId;
+      } catch (error: unknown) {
+        assertLeaseHeld();
+        if (
+          !conformanceBound &&
+          !(error instanceof PlanProtocolError) &&
+          !(error instanceof PlanUnreachableError)
+        ) {
+          await session
+            .attempt({
+              candidateId: resolved.candidateId,
+              phase: "conformance",
+              ok: false,
+              failureKind: "sandbox_error",
+              durationMs: 0,
+              detailsClamped:
+                error instanceof Error
+                  ? error.message.slice(0, 500)
+                  : String(error).slice(0, 500),
+            })
+            .catch(() => {});
+        }
+        logger.warn("[github-checks] conformance family failed to launch", {
+          ...logContext,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     await safeComplete({
-      // VERIFIED, never adopted: this must equal the run the `eval` attempt
-      // bound, and the backend 409s if it does not.
       runId: run.runId,
+      ...(conformanceRunId ? { conformanceRunId } : {}),
       ...(run.summary ? { summary: run.summary } : {}),
     });
   } catch (error) {
