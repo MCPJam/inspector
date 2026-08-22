@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { afterEach, test } from "node:test";
 import { Command, CommanderError } from "commander";
 import { registerScenariosCommands } from "../src/commands/scenarios.js";
+import { addPlatformOptions } from "../src/lib/platform-command.js";
 
 /**
  * `mcpjam scenarios publish` — the create-time override flags.
@@ -17,7 +18,9 @@ function buildProgram(): Command {
     .name("mcpjam")
     .exitOverride()
     .configureOutput({ writeErr: () => {}, writeOut: () => {} });
-  registerScenariosCommands(program);
+  const cloud = program.command("cloud");
+  addPlatformOptions(cloud);
+  registerScenariosCommands(cloud);
   return program;
 }
 
@@ -38,6 +41,7 @@ test("publish rejects a mode outside the enum without any request", async () => 
   await assert.rejects(
     buildProgram().parseAsync(
       [
+        "cloud",
         "scenarios",
         "publish",
         "--environment",
@@ -106,6 +110,7 @@ test("publish forwards --name, --description and --mode in the PUT body", async 
 
   await buildProgram().parseAsync(
     [
+      "cloud",
       "scenarios",
       "publish",
       "--environment",

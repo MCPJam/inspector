@@ -21,7 +21,6 @@ import {
 import { writeResult } from "../lib/output.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
-  addPlatformOptions,
   buildCloudClientContext,
   platformOptionsOf,
   runPlatformCommand,
@@ -112,8 +111,7 @@ export function registerProjectsCommands(program: Command): void {
       "Operate the MCP servers saved in your hosted MCPJam projects"
     );
 
-  addPlatformOptions(
-    projects
+      projects
       .command("list")
       .description("List the projects you can access")
       // The operation has always taken this filter; the CLI had no way to pass
@@ -126,8 +124,7 @@ export function registerProjectsCommands(program: Command): void {
       .option(
         "--organization-id <id>",
         "Restrict the listing to one organization (see `mcpjam cloud organizations list`)"
-      )
-  ).action(async (_options: PlatformOptions, command) => {
+      ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const rawOrganization = (command.opts() as { organizationId?: string })
       .organizationId;
@@ -159,15 +156,13 @@ export function registerProjectsCommands(program: Command): void {
     }
   });
 
-  addPlatformOptions(
-    projects
+      projects
       .command("create")
       .description("Create a hosted MCPJam project")
       .requiredOption("--name <name>", "Project name")
       .option("--description <text>", "Project description")
       .option("--organization-id <id>", "Organization ID")
-      .option("--visibility <visibility>", "public or private")
-  ).action(
+      .option("--visibility <visibility>", "public or private").action(
     async (
       options: PlatformOptions & {
         name: string;
@@ -200,15 +195,13 @@ export function registerProjectsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    projects
+      projects
       .command("update")
       .description("Update project metadata")
       .requiredOption("--project <id-or-name>", "Project name or ID")
       .option("--name <name>", "New project name")
       .option("--description <text>", "New project description")
-      .option("--visibility <visibility>", "public or private")
-  ).action(
+      .option("--visibility <visibility>", "public or private").action(
     async (
       options: PlatformOptions & {
         name?: string;
@@ -239,12 +232,10 @@ export function registerProjectsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    projects
+      projects
       .command("delete")
       .description("Delete a project and its project-owned resources")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
-  ).action(async (_options: PlatformOptions, command) => {
+      .requiredOption("--project <id-or-name>", "Project name or ID").action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const input = deleteProjectOperation.inputSchema.parse({
@@ -259,12 +250,10 @@ export function registerProjectsCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  const servers = addPlatformOptions(
-    projects
+  const servers =     projects
       .command("servers")
       .alias("server")
-      .description("List and manage the servers saved in a project")
-  ).option(
+      .description("List and manage the servers saved in a project").option(
     "--project <id-or-name>",
     "Project name or ID (defaults to the most recently updated project)"
   );
@@ -296,14 +285,12 @@ export function registerProjectsCommands(program: Command): void {
     return parsed as Record<string, unknown>;
   };
 
-  addPlatformOptions(
-    servers
+      servers
       .command("create")
       .alias("add")
       .description("Create a saved MCP server")
       .option("--project <id-or-name>", "Project name or ID")
-      .requiredOption("--body <json>", "Server JSON body")
-  ).action(async (options: PlatformOptions & { body: string }, command) => {
+      .requiredOption("--body <json>", "Server JSON body").action(async (options: PlatformOptions & { body: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const project = requireProject(command, platformOptions);
@@ -319,13 +306,11 @@ export function registerProjectsCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    servers
+      servers
       .command("get")
       .description("Get one saved MCP server")
       .option("--project <id-or-name>", "Project name or ID")
-      .requiredOption("--server <id>", "Server ID")
-  ).action(async (options: PlatformOptions & { server: string }, command) => {
+      .requiredOption("--server <id>", "Server ID").action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const project = requireProject(command, platformOptions);
@@ -341,14 +326,12 @@ export function registerProjectsCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    servers
+      servers
       .command("update")
       .description("Update one saved MCP server")
       .option("--project <id-or-name>", "Project name or ID")
       .requiredOption("--server <id>", "Server ID")
-      .requiredOption("--body <json>", "Patch JSON body")
-  ).action(
+      .requiredOption("--body <json>", "Patch JSON body").action(
     async (
       options: PlatformOptions & { server: string; body: string },
       command
@@ -373,14 +356,12 @@ export function registerProjectsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    servers
+      servers
       .command("delete")
       .alias("remove")
       .description("Delete one saved MCP server")
       .option("--project <id-or-name>", "Project name or ID")
-      .requiredOption("--server <id>", "Server ID")
-  ).action(async (options: PlatformOptions & { server: string }, command) => {
+      .requiredOption("--server <id>", "Server ID").action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const project = requireProject(command, platformOptions);
@@ -396,8 +377,7 @@ export function registerProjectsCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    servers
+      servers
       .command("connect")
       .description(
         "Connect an MCP server URL to a project, authorizing in a browser if needed"
@@ -411,8 +391,7 @@ export function registerProjectsCommands(program: Command): void {
       .option("--name <name>", "Name for the server, if one is created")
       .option("--reauthorize", "Force a fresh authorization")
       .option("--no-browser", "Print the authorization link instead of opening it")
-      .option("--no-wait", "Return as soon as the request is created")
-  ).action(
+      .option("--no-wait", "Return as soon as the request is created").action(
     async (
       options: PlatformOptions & {
         url: string;
@@ -503,12 +482,10 @@ export function registerProjectsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    servers
+      servers
       .command("connect-status")
       .description("Check a connection request started by `server connect`")
-      .requiredOption("--request <id>", "Connection request id (scr_…)")
-  ).action(
+      .requiredOption("--request <id>", "Connection request id (scr_…)").action(
     async (options: PlatformOptions & { request: string }, command) => {
       const globalOptions = getGlobalOptions(command);
       const input = getProjectServerConnectionStatusOperation.inputSchema.parse({
@@ -527,8 +504,7 @@ export function registerProjectsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    projects
+      projects
       .command("status")
       .description(
         "Health-check every server in a project (hosted doctor per server)"
@@ -536,8 +512,7 @@ export function registerProjectsCommands(program: Command): void {
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
-      )
-  ).action(async (_options: PlatformOptions, command) => {
+      ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const payload = await runPlatformCommand(

@@ -121,7 +121,7 @@ import {
 } from "../lib/reporting.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
 import {
-  addPlatformOptions,
+  platformOptionsOf,
   runPlatformOperation as runPlatformCommand,
   type PlatformOptions,
 } from "../lib/platform-command.js";
@@ -539,12 +539,12 @@ function validateOpInput<TInput>(
 async function executeOp<TInput, TOutput>(
   op: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  options: PlatformOptions,
+  _options: PlatformOptions,
   command: Command
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
   const result = await runPlatformCommand(
-    options,
+    platformOptionsOf(command),
     globalOptions.timeout,
     ({ client, signal }) => op.execute(input, { client, signal })
   );
@@ -788,7 +788,7 @@ async function runEvalGate(
   let report: GateReport;
   try {
     report = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       Math.max(globalOptions.timeout, options.wait ? waitTimeoutMs : 0),
       async ({ client, signal }) => {
         const projects = await client.listProjects({}, { signal });
@@ -944,7 +944,7 @@ async function runEvalCompare(
   let outcome: CompareOutcome;
   try {
     outcome = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       async ({ client, signal }) => {
         const projects = await client.listProjects({}, { signal });
@@ -1135,7 +1135,7 @@ async function runEvalPull(
   };
   try {
     fetched = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       async ({ client, signal }) => {
         const selector = {
@@ -1517,7 +1517,7 @@ async function runEvalExport(
   }
 
   const fetched = await runPlatformCommand(
-    options,
+    platformOptionsOf(command),
     globalOptions.timeout,
     async ({ client, signal }) => {
       const selector = {
@@ -1646,8 +1646,7 @@ export function registerEvalCommands(program: Command): void {
     .command("eval")
     .description("Author and run eval suites in your hosted MCPJam projects");
 
-  addPlatformOptions(
-    evals
+      evals
       .command("create")
       .description(
         "Create a runnable eval suite from authored test cases (does not run it)"
@@ -1676,12 +1675,11 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--server <name...>",
         "Project HTTP server names or IDs (overrides the file)"
-      )
-  ).action(async (options: CreateOptions, command) => {
+      ).action(async (options: CreateOptions, command) => {
     const globalOptions = getGlobalOptions(command);
     const input = loadSuiteDefinition(options);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         createEvalSuiteOperation.execute(input, { client, signal })
@@ -1689,18 +1687,16 @@ export function registerEvalCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    evals
+      evals
       .command("list")
       .description("List the eval suites saved in a project")
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
-      )
-  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+      ).action(async (options: PlatformOptions & { project?: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         listEvalSuitesOperation.execute(
@@ -1711,8 +1707,7 @@ export function registerEvalCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    evals
+      evals
       .command("runs")
       .description("List a suite's run history, newest first")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
@@ -1724,8 +1719,7 @@ export function registerEvalCommands(program: Command): void {
         "--limit <n>",
         "Maximum number of runs to return (1-100)",
         (value) => Number.parseInt(value, 10)
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         suite: string;
@@ -1743,8 +1737,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("run")
       .description("Start an eval run of an existing suite (asynchronous)")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
@@ -1814,8 +1807,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         composeHost?: string;
@@ -1843,7 +1835,7 @@ export function registerEvalCommands(program: Command): void {
       const globalOptions = getGlobalOptions(command);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         (context) => {
           webOrigin = context.webOrigin;
@@ -1893,13 +1885,11 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("status")
       .description("Get the status and summary of an eval run")
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .requiredOption("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project: string; run: string },
       command
@@ -1907,7 +1897,7 @@ export function registerEvalCommands(program: Command): void {
       const globalOptions = getGlobalOptions(command);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         (context) => {
           webOrigin = context.webOrigin;
@@ -1927,15 +1917,13 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("cancel")
       .description(
         "Cancel an in-flight eval run (no-op if already cancelled; errors if it already finished)"
       )
       .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .requiredOption("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project: string; run: string },
       command
@@ -1949,8 +1937,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("judge")
       .description(
         "Grade a finished eval run with LLM as Judge (SPENDS your model budget)"
@@ -1963,8 +1950,7 @@ export function registerEvalCommands(program: Command): void {
         "Grade this run even though the judge was off when it ran"
       )
       .option("--judge-model <id>", "Judge model for this run only")
-      .option("--judge-threshold <0-1>", "Pass threshold for this run only")
-  ).action(
+      .option("--judge-threshold <0-1>", "Pass threshold for this run only").action(
     async (
       options: PlatformOptions & {
         project: string;
@@ -2004,14 +1990,12 @@ export function registerEvalCommands(program: Command): void {
     .command("checks")
     .description("Run an eval suite on a repository's pull requests");
 
-  addPlatformOptions(
-    checks
+      checks
       .command("list")
       .description(
         "List the repositories running an eval suite on their pull requests"
       )
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+      .option("--project <id-or-name>", PROJECT_OPT).action(async (options: PlatformOptions & { project?: string }, command) => {
     await executeOp(
       listEvalCheckReposOperation,
       { project: options.project },
@@ -2020,8 +2004,7 @@ export function registerEvalCommands(program: Command): void {
     );
   });
 
-  addPlatformOptions(
-    checks
+      checks
       .command("connect")
       .description(
         "Run this suite on every pull request to a repository (affects everyone who opens one)"
@@ -2032,8 +2015,7 @@ export function registerEvalCommands(program: Command): void {
         "--outage-policy <fail-open|fail-closed>",
         "What the check reports when MCPJam cannot conclude"
       )
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -2064,8 +2046,7 @@ export function registerEvalCommands(program: Command): void {
   );
 
   // ── Eval run iterations + traces ───────────────────────────────────
-  addPlatformOptions(
-    evals
+      evals
       .command("iterations")
       .description(
         "List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency)"
@@ -2076,8 +2057,7 @@ export function registerEvalCommands(program: Command): void {
         "Project the run belongs to (name or ID)"
       )
       .option("--cursor <cursor>", "Pagination cursor from a previous response")
-      .option("--limit <n>", "Max iterations per page (1–200)")
-  ).action(
+      .option("--limit <n>", "Max iterations per page (1–200)").action(
     async (
       options: PlatformOptions & {
         project: string;
@@ -2099,8 +2079,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("gate")
       .description(
         "Apply a pass/fail policy to a finished eval run and set an exit code (0 pass, 1 eval failure, 2 usage, 3 incomplete)"
@@ -2134,8 +2113,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--wait-timeout <ms>",
         "Give up waiting after this many milliseconds (default 600000)"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions &
         EvalGateOptions & {
@@ -2150,8 +2128,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("compare")
       .description(
         "Compare a finished eval run against a baseline and set an exit code (0 pass, 1 regression, 2 usage, 3 incomplete)"
@@ -2189,8 +2166,7 @@ export function registerEvalCommands(program: Command): void {
         "--reporter <json-summary|junit-xml>",
         "Write a structured report to stdout instead of the default output"
       )
-      .option("--out <path>", "Write the structured report to a JSON file")
-  ).action(
+      .option("--out <path>", "Write the structured report to a JSON file").action(
     async (
       options: PlatformOptions &
         EvalCompareOptions & {
@@ -2219,8 +2195,7 @@ export function registerEvalCommands(program: Command): void {
       runEvalValidate(options, command);
     });
 
-  addPlatformOptions(
-    evals
+      evals
       .command("export")
       .description(
         "Write a hosted eval suite to a local suite file, refusing anything it cannot represent losslessly"
@@ -2237,8 +2212,7 @@ export function registerEvalCommands(program: Command): void {
         "--out <path>",
         "Where to write (default .mcpjam/evals/<suite-id>.yaml)"
       )
-      .option("--force", "Replace an existing file at the output path")
-  ).action(
+      .option("--force", "Replace an existing file at the output path").action(
     async (
       options: PlatformOptions & {
         suite: string;
@@ -2252,8 +2226,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("pull")
       .description(
         "LEGACY: materialize a hosted eval suite into a corpus lock for @mcpjam/vitest — new work should use `eval export` (0 clean, 1 drift under --frozen, 2 usage, 3 incomplete)"
@@ -2274,8 +2247,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--skip-unsupported",
         "Omit cases a local run cannot execute instead of failing"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         suite: string;
@@ -2290,8 +2262,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("trace")
       .description(
         "Fetch the full trace for one eval iteration (large: full message history + spans)"
@@ -2304,8 +2275,7 @@ export function registerEvalCommands(program: Command): void {
       .requiredOption(
         "--project <id-or-name>",
         "Project the run belongs to (name or ID)"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project: string;
@@ -2327,8 +2297,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("steps")
       .description(
         "Per-authored-step results for one eval iteration: status (ok/fail/skipped/pending), reason, and evidence (screenshot/video URLs). The fastest way to see WHICH step failed and why."
@@ -2341,8 +2310,7 @@ export function registerEvalCommands(program: Command): void {
       .requiredOption(
         "--project <id-or-name>",
         "Project the run belongs to (name or ID)"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project: string;
@@ -2364,8 +2332,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("screenshot")
       .description(
         "Show the widget screenshot(s) an eval iteration rendered — inline when the terminal supports it, otherwise the image URL"
@@ -2383,8 +2350,7 @@ export function registerEvalCommands(program: Command): void {
         "--out <path>",
         "Save the PNG(s) to a file or directory instead of rendering inline"
       )
-      .option("--index <n>", "Show only the Nth screenshot (1-based)")
-  ).action(
+      .option("--index <n>", "Show only the Nth screenshot (1-based)").action(
     async (
       options: PlatformOptions & {
         project: string;
@@ -2402,7 +2368,7 @@ export function registerEvalCommands(program: Command): void {
           : undefined;
 
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getEvalIterationTraceOperation.execute(
@@ -2499,8 +2465,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("video")
       .description(
         "Get the Playwright replay video (.webm) an eval iteration recorded — prints the URL, or downloads it with --out"
@@ -2517,8 +2482,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--out <path>",
         "Download the .webm to this file instead of printing the URL"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project: string;
@@ -2530,7 +2494,7 @@ export function registerEvalCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getEvalIterationTraceOperation.execute(
@@ -2585,13 +2549,11 @@ export function registerEvalCommands(program: Command): void {
   );
 
   // ── Suite settings: get / update / delete / schedule ───────────────
-  addPlatformOptions(
-    evals
+      evals
       .command("get")
       .description("Show an eval suite's full settings")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & { project?: string; suite: string },
       command
@@ -2605,8 +2567,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("update")
       .description(
         "Edit an eval suite's settings (only the flags you pass change)"
@@ -2642,8 +2603,7 @@ export function registerEvalCommands(program: Command): void {
         "Turn LLM-as-judge grading on/off (grades every run as it completes)"
       )
       .option("--judge-model <id>", "Judge model id")
-      .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1")
-  ).action(async (options: PlatformOptions & Record<string, any>, command) => {
+      .option("--judge-threshold <0-1>", "Judge pass threshold, 0–1").action(async (options: PlatformOptions & Record<string, any>, command) => {
     const input = validateOpInput(
       updateEvalSuiteOperation,
       buildSuiteUpdateInput(options)
@@ -2651,13 +2611,11 @@ export function registerEvalCommands(program: Command): void {
     await executeOp(updateEvalSuiteOperation, input, options, command);
   });
 
-  addPlatformOptions(
-    evals
+      evals
       .command("delete")
       .description("Permanently delete an eval suite (and its cases and runs)")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & { project?: string; suite: string },
       command
@@ -2671,8 +2629,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    evals
+      evals
       .command("schedule")
       .description("Enable or disable scheduled runs for a suite")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
@@ -2683,8 +2640,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--environment <id-or-name>",
         "Project environment the scheduled runs launch (only with --enable)"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -2722,8 +2678,7 @@ export function registerEvalCommands(program: Command): void {
       "Attach or detach the project environments an eval suite runs against"
     );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("set")
       .description(
         "Replace the suite's attached environments (this sets the whole list)"
@@ -2733,8 +2688,7 @@ export function registerEvalCommands(program: Command): void {
         "--environment <id-or-name...>",
         "Project environments to attach, in order"
       )
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -2756,15 +2710,13 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    environments
+      environments
       .command("clear")
       .description(
         "Detach every environment, reverting the suite to its saved server selection"
       )
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & { project?: string; suite: string },
       command
@@ -2787,13 +2739,11 @@ export function registerEvalCommands(program: Command): void {
     .command("cases")
     .description("List, author, and edit an eval suite's test cases");
 
-  addPlatformOptions(
-    cases
+      cases
       .command("list")
       .description("List a suite's test cases")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & { project?: string; suite: string },
       command
@@ -2807,14 +2757,12 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    cases
+      cases
       .command("get")
       .description("Show one test case")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
       .requiredOption("--case <id-or-title>", "Eval case title or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -2832,8 +2780,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    cases
+      cases
       .command("run")
       .description(
         "Run a single case as a persisted, fully-queryable run (inspect it with `eval iterations` / `eval steps` like any run)"
@@ -2879,8 +2826,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--compose-skill <id...>",
         "Project-shared skill IDs to pin on the composed stack"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         composeHost?: string;
@@ -2922,16 +2868,14 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    cases
+      cases
       .command("create")
       .description("Add a test case to a suite (definition via --file/--json)")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
       .option("--project <id-or-name>", PROJECT_OPT)
       .option("--file <path>", "Case JSON body (or - for stdin)")
       .option("--json <json>", "Inline case JSON (or @file, or -)")
-      .option("--title <title>", "Case title (overrides the body)")
-  ).action(async (options: PlatformOptions & Record<string, any>, command) => {
+      .option("--title <title>", "Case title (overrides the body)").action(async (options: PlatformOptions & Record<string, any>, command) => {
     const input = validateOpInput(
       createEvalCaseOperation,
       buildCaseInput(options, { requireCase: false })
@@ -2939,8 +2883,7 @@ export function registerEvalCommands(program: Command): void {
     await executeOp(createEvalCaseOperation, input, options, command);
   });
 
-  addPlatformOptions(
-    cases
+      cases
       .command("update")
       .description("Edit a test case (definition via --file/--json)")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
@@ -2948,8 +2891,7 @@ export function registerEvalCommands(program: Command): void {
       .option("--project <id-or-name>", PROJECT_OPT)
       .option("--file <path>", "Case JSON body (or - for stdin)")
       .option("--json <json>", "Inline case JSON (or @file, or -)")
-      .option("--title <title>", "Rename the case")
-  ).action(async (options: PlatformOptions & Record<string, any>, command) => {
+      .option("--title <title>", "Rename the case").action(async (options: PlatformOptions & Record<string, any>, command) => {
     const input = validateOpInput(
       updateEvalCaseOperation,
       buildCaseInput(options, { requireCase: true })
@@ -2957,14 +2899,12 @@ export function registerEvalCommands(program: Command): void {
     await executeOp(updateEvalCaseOperation, input, options, command);
   });
 
-  addPlatformOptions(
-    cases
+      cases
       .command("delete")
       .description("Permanently delete a test case")
       .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
       .requiredOption("--case <id-or-title>", "Eval case title or ID")
-      .option("--project <id-or-name>", PROJECT_OPT)
-  ).action(
+      .option("--project <id-or-name>", PROJECT_OPT).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -2982,8 +2922,7 @@ export function registerEvalCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    cases
+      cases
       .command("generate")
       .description(
         "AI-generate test cases from the suite's tools (spends credits)"
@@ -3015,8 +2954,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--idempotency-key <key>",
         "Retry-safety key: repeating the call replays the first attempt's drafts instead of generating (and billing) again"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project?: string;
