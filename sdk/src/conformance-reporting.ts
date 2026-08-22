@@ -264,15 +264,26 @@ function reportCaseFromMcpCheck(
   };
 }
 
-/** Apps and Tasks checks share a result shape, so they share a case mapper. */
+/**
+ * Apps and Tasks checks share a result shape, so they share a case mapper.
+ *
+ * `pendingIds` is threaded here for the same reason it is on the protocol
+ * mapper: JUnit renders a pending case as `<skipped>`, and without it a failing
+ * PENDING Tasks check emitted `<failure>` while the run exited 0 — reopening the
+ * retroactive-failure hole the frozen profile exists to close, on the one
+ * channel most teams gate on. Apps carries no profile yet, so it passes
+ * `undefined` and nothing changes there.
+ */
 function reportCaseFromCheck(
   check: MCPAppsCheckResult | MCPTasksCheckResult,
+  pendingIds?: ReadonlySet<string>,
 ): ConformanceReportCase {
   return {
     id: check.id,
     title: check.title,
     category: check.category,
     status: check.status,
+    ...(pendingIds?.has(check.id) ? { pending: true } : {}),
     ...(check.skipReason ? { skipReason: check.skipReason } : {}),
     durationMs: check.durationMs,
     description: check.description,
@@ -416,6 +427,13 @@ function appsGroupFromResult(
   index: number,
   idPrefix = "apps",
 ): ConformanceReportGroup {
+  // Read off the RESULT rather than passed in: the Tasks runner stamps its own
+  // `mcp-tasks` profile, and reading it here keeps the two from disagreeing
+  // about which checks that run scored.
+  const pendingIds = new Set(
+    (result as { profile?: { pendingCheckIds?: string[] } }).profile
+      ?.pendingCheckIds ?? [],
+  );
   return {
     id: `${idPrefix}-${index + 1}`,
     title,
@@ -423,7 +441,9 @@ function appsGroupFromResult(
     passed: result.passed,
     durationMs: result.durationMs,
     summary: result.summary,
-    cases: result.checks.map(reportCaseFromCheck),
+    cases: result.checks.map((check) =>
+      reportCaseFromCheck(check, pendingIds),
+    ),
   };
 }
 
