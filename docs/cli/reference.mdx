@@ -6,6 +6,8 @@ icon: "book"
 
 Complete flag tables for every `mcpjam` command. For guides and recipes, see the individual command pages.
 
+Account-bound Cloud commands live under `mcpjam cloud`. Local MCP testing stays at the top level (`mcpjam server`, `mcpjam oauth login`, …). Credential flags `--api-key` / `--api-url` are declared on `mcpjam cloud` and work before or after descendants. Hosted `readiness` stays at the root and still takes leaf `--api-key`. See [Migrating to CLI 4.0](/cli/migration).
+
 ## Global flags
 
 | Flag | Default | Description |
