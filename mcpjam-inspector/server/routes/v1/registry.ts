@@ -42,20 +42,16 @@ const DIRECTORY_SEARCH_PARAMS = [
   "limit",
 ] as const;
 
-const installDirectorySchema = z
-  .strictObject({
-    catalogServerId: z.string().trim().min(1),
-    endpointUrl: z.string().trim().min(1).optional(),
-    expectedContentHash: z.string().trim().min(1).optional(),
-  })
-  .strict();
+const installDirectorySchema = z.strictObject({
+  catalogServerId: z.string().trim().min(1),
+  endpointUrl: z.string().trim().min(1).optional(),
+  expectedContentHash: z.string().trim().min(1).optional(),
+});
 
-const installRegistrySchema = z
-  .strictObject({
-    registryServerId: z.string().trim().min(1),
-    expectedUpdatedAt: z.number().finite().optional(),
-  })
-  .strict();
+const installRegistrySchema = z.strictObject({
+  registryServerId: z.string().trim().min(1),
+  expectedUpdatedAt: z.number().finite().optional(),
+});
 
 function forwardQueryParams(
   c: Context,
@@ -227,7 +223,7 @@ registry.get("/registry/directory-servers", (c) =>
 // GET /registry/directory-servers/:idOrName
 registry.get("/registry/directory-servers/:idOrName", (c) =>
   proxyConvexV1Read(c, "/v1/registry/directory-server", (target) => {
-    const idOrName = decodeURIComponent(c.req.param("idOrName"));
+    const idOrName = c.req.param("idOrName");
     const source = c.req.query("source");
     if (source && source.length > 0) {
       target.searchParams.set("name", idOrName);
