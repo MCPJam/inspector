@@ -44,6 +44,7 @@ import {
   createEvalCasesOperation,
   createEvalSuiteOperation,
   diagnoseServerOperation,
+  expandComposeModelChoices,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   getReadinessRunOperation,
@@ -319,16 +320,16 @@ function evalRunResource(
  */
 function describeEvalSuiteRun(input: Record<string, unknown>): string {
   const suite = named(input, "suite") ?? "(unnamed)";
-  // COMPOSE is the one target that also EDITS the suite: it creates an ad-hoc
-  // environment and appends it to the suite's attachments. An approver reading
-  // "Run eval suite smoke" would authorise a persistent change nobody
-  // mentioned, so the line says it.
+  // COMPOSE fans out to N paid runs (client × model choices) and, when
+  // `saveTargets` is set, also edits the suite. Default is ephemeral: mint
+  // and launch without attaching. The spend line must state the multiplier
+  // so a `confirmSeverity: "spend"` proposal does not understate N×, and
+  // must mention an attach when the click would persist one.
   const compose = input.compose;
   if (compose && typeof compose === "object") {
-    const host = named(compose as Record<string, unknown>, "host");
-    return (
-      `Run eval suite ${suite} on a composed setup${host ? ` (${host})` : ""}` +
-      " — one paid run, and the composed environment is attached to the suite"
+    return describeComposeEvalSuiteRun(
+      suite,
+      compose as Record<string, unknown>,
     );
   }
   const targets = [
@@ -348,6 +349,36 @@ function describeEvalSuiteRun(input: Record<string, unknown>): string {
   return single
     ? `Run eval suite ${suite} against ${single}`
     : `Run eval suite ${suite}`;
+}
+
+function describeComposeEvalSuiteRun(
+  suite: string,
+  compose: Record<string, unknown>,
+): string {
+  const host = named(compose, "host");
+  const choices = expandComposeModelChoices({
+    model: named(compose, "model"),
+    models: readStringList(compose, "models"),
+    includeClientDefault: compose.includeClientDefault === true,
+  });
+  const n = choices.length;
+  const attach =
+    compose.saveTargets === true
+      ? n <= 1
+        ? "and the composed environment is attached to the suite"
+        : "and the composed environments are attached to the suite"
+      : n <= 1
+        ? "without attaching it to the suite"
+        : "without attaching them to the suite";
+  if (n <= 1) {
+    return (
+      `Run eval suite ${suite} on a composed setup${host ? ` (${host})` : ""}` +
+      ` — one paid run, ${attach}`
+    );
+  }
+  return (
+    `Start ${n} paid eval runs of suite ${suite}: 1 client × ${n} model choices = ${n} runs, ${attach}`
+  );
 }
 
 /**
@@ -373,6 +404,16 @@ async function freezeEvalRunTargets(
 ): Promise<Record<string, unknown>> {
   const suiteSelector = named(input, "suite");
   if (!suiteSelector) return input;
+  const compose = input.compose;
+  if (compose && typeof compose === "object") {
+    // Compose is its own target kind: freeze it BEFORE the "nothing named"
+    // early return, or a models/includeClientDefault proposal would persist
+    // the model's spelling and a host rename would repoint the spend.
+    return freezeComposeRunTarget(input, compose as Record<string, unknown>, {
+      projectId,
+      client,
+    });
+  }
   const wantsAll = input.allAttached === true;
   const namedEnvironments = readStringList(input, "environments");
   const namedHosts = readStringList(input, "hosts");
@@ -465,6 +506,51 @@ async function freezeEvalRunTargets(
     if (namedEnvironment) next.environment = freeze(namedEnvironment);
   }
   return next;
+}
+
+/**
+ * Freeze a compose proposal: host name → id, scalar `model` into `models`.
+ *
+ * `includeClientDefault` and `saveTargets` stay as written — they are
+ * closed choices, not pointers. Compose itself is kept: dropping it would
+ * turn an approved compose into a default-target launch.
+ */
+async function freezeComposeRunTarget(
+  input: Record<string, unknown>,
+  compose: Record<string, unknown>,
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const nextCompose: Record<string, unknown> = { ...compose };
+  const hostSelector = named(compose, "host");
+  if (hostSelector) {
+    try {
+      const page = await client.listHosts({ projectId });
+      const byId = new Set(page.items.map((host) => host.id));
+      if (!byId.has(hostSelector)) {
+        const byName = new Map(
+          page.items.map((host) => [host.name.toLocaleLowerCase(), host.id]),
+        );
+        nextCompose.host =
+          byName.get(hostSelector.toLocaleLowerCase()) ?? hostSelector;
+      }
+    } catch {
+      // Same posture as the suite lookup: a platform that cannot answer
+      // must not cost the caller the proposal.
+    }
+  }
+
+  const models = [
+    ...new Set([
+      ...readStringList(compose, "models"),
+      ...(named(compose, "model") ? [named(compose, "model")!] : []),
+    ]),
+  ];
+  if (models.length > 0) {
+    nextCompose.models = models;
+    delete nextCompose.model;
+  }
+
+  return { ...input, compose: nextCompose };
 }
 
 /** Read a string array off validated input, dropping non-strings. */

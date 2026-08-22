@@ -255,16 +255,47 @@ describe("agent op registry", () => {
     expect(describeRun({ suite: "smoke", allAttached: true })).toBe(
       "Run eval suite smoke against every attached target — one paid run each"
     );
-    // COMPOSE is the one target that also EDITS the suite, so approving it
-    // authorises a persistent change. A line that said only "Run eval suite
-    // smoke" would get that change approved without mentioning it.
+    // A line that said only "Run eval suite smoke" would approve a
+    // multiplier (or an attach) nobody mentioned.
     const composed = describeRun({
       suite: "smoke",
       compose: { host: "Claude Code" },
     });
     expect(composed).toContain("composed");
     expect(composed).toContain("Claude Code");
-    expect(composed).toContain("attached to the suite");
+    expect(composed).toContain("one paid run");
+    expect(composed).toContain("without attaching it to the suite");
+    expect(composed).not.toContain("attached to the suite");
+
+    expect(
+      describeRun({
+        suite: "smoke",
+        compose: {
+          host: "Claude Code",
+          models: ["anthropic/claude-haiku-4.5", "google/gemini-2.5-flash"],
+        },
+      })
+    ).toBe(
+      "Start 2 paid eval runs of suite smoke: 1 client × 2 model choices = 2 runs, without attaching them to the suite"
+    );
+    expect(
+      describeRun({
+        suite: "smoke",
+        compose: {
+          host: "Claude Code",
+          models: ["anthropic/claude-haiku-4.5", "google/gemini-2.5-flash"],
+          includeClientDefault: true,
+        },
+      })
+    ).toBe(
+      "Start 3 paid eval runs of suite smoke: 1 client × 3 model choices = 3 runs, without attaching them to the suite"
+    );
+    expect(
+      describeRun({
+        suite: "smoke",
+        compose: { host: "Claude Code", saveTargets: true },
+      })
+    ).toContain("attached to the suite");
   });
 
   it("marks both eval-run proposals as SPEND", () => {
@@ -432,6 +463,95 @@ describe("agent op registry", () => {
         { projectId: "p1", client }
       )
     ).toEqual({ suite: "smoke", allAttached: true });
+  });
+
+  it("freezes compose host names and normalizes model into models", async () => {
+    // Compose used to fall through the "nothing named" early return, so a
+    // host rename between proposal and click would repoint the spend, and
+    // a scalar `model` would stay a different spelling from `models`.
+    const client = {
+      listHosts: async () => ({
+        items: [
+          { id: "host_a", name: "Claude Code" },
+          { id: "host_b", name: "ChatGPT" },
+        ],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        {
+          suite: "smoke",
+          compose: {
+            host: "Claude Code",
+            model: "google/gemini-2.5-flash",
+            includeClientDefault: true,
+            saveTargets: true,
+          },
+        },
+        { projectId: "p1", client }
+      )
+    ).toEqual({
+      suite: "smoke",
+      compose: {
+        host: "host_a",
+        models: ["google/gemini-2.5-flash"],
+        includeClientDefault: true,
+        saveTargets: true,
+      },
+    });
+  });
+
+  it("merges compose.model into compose.models and leaves an id host alone", async () => {
+    const client = {
+      listHosts: async () => ({
+        items: [{ id: "host_a", name: "Claude Code" }],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        {
+          suite: "smoke",
+          compose: {
+            host: "host_a",
+            model: "anthropic/claude-haiku-4.5",
+            models: ["google/gemini-2.5-flash"],
+          },
+        },
+        { projectId: "p1", client }
+      )
+    ).toEqual({
+      suite: "smoke",
+      compose: {
+        host: "host_a",
+        models: ["google/gemini-2.5-flash", "anthropic/claude-haiku-4.5"],
+      },
+    });
+  });
+
+  it("leaves a compose host alone when listHosts cannot answer", async () => {
+    const client = {
+      listHosts: async () => {
+        throw new Error("platform unreachable");
+      },
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+    const input = {
+      suite: "smoke",
+      compose: { host: "Claude Code", models: ["google/gemini-2.5-flash"] },
+    };
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(input, {
+        projectId: "p1",
+        client,
+      })
+    ).toEqual(input);
   });
 
   it("freezes a directory install pin and endpoint at mint time", async () => {
