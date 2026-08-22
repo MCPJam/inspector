@@ -45,6 +45,7 @@ test("Cloud command sources follow flag and placeholder conventions", () => {
         "apps.ts",
         "compat.ts",
         "conformance.ts",
+        "conformance-run.ts",
         "inspector.ts",
         "mcp.ts",
         "oauth.ts",
