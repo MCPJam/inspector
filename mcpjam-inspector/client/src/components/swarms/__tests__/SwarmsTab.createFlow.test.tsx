@@ -450,7 +450,7 @@ beforeEach(() => {
 });
 
 describe("SwarmsTab — New swarm create flow", () => {
-  it("reaches the create flow by its own route, and Cancel leaves it", () => {
+  it("reaches the create flow by its own route, and Cancel leaves it with a confirming toast", () => {
     // A linkable route rather than in-page state, so the browser back button
     // exits the flow and a reload doesn't drop the user back on the list.
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
@@ -483,6 +483,10 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
 
     expect(navigateMock).toHaveBeenCalledWith("/swarms");
+    // BB-64: leaving silently read as "did my click even register?". The
+    // toast is the acknowledgement, and it must fire only on a real cancel —
+    // never on a successful launch (that path is onDone, not onCancel).
+    expect(toast.success).toHaveBeenCalledWith("Swarm cancelled");
   });
 
   it("keeps the action disabled until there is something to act on, and says why", () => {
