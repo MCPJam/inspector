@@ -433,7 +433,7 @@ export class WireSchemaValidator {
       const subject = isMethodSpecific
         ? (observation.message as Record<string, unknown>).result
         : target.dropId
-          ? withoutId(observation.message)
+          ? withPlaceholderId(observation.message)
           : observation.message;
 
       const validate = this.compileRef(
@@ -467,11 +467,22 @@ export class WireSchemaValidator {
   }
 }
 
-/** A shallow copy without `id`. See the undeterminable-id case in `targetFor`. */
-function withoutId(message: unknown): unknown {
+/**
+ * A shallow copy whose `id` is a placeholder the schema can accept. See the
+ * undeterminable-id case in `targetFor`.
+ *
+ * Substituting rather than DELETING is load-bearing. `JSONRPCError` requires
+ * `id` through 2025-06-18 (it only became optional when the definition was
+ * renamed `JSONRPCErrorResponse` at 2025-11-25), so dropping the member made
+ * the exemption fail the very responses it exists to protect: a conforming
+ * parse-error answer on a legacy run was reported as
+ * `must have required property 'id'`. A placeholder satisfies both shapes —
+ * `RequestId` is `["string","integer"]` on every revision — and leaves every
+ * other member of the envelope graded.
+ */
+function withPlaceholderId(message: unknown): unknown {
   if (message === null || typeof message !== "object") return message;
-  const { id: _dropped, ...rest } = message as Record<string, unknown>;
-  return rest;
+  return { ...(message as Record<string, unknown>), id: 0 };
 }
 
 /**

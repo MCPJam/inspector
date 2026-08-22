@@ -825,6 +825,14 @@ async function captureTaskRequestHeaders(
 // emitting it fails status validation rather than being silently accepted.
 const TERMINAL_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
+/**
+ * Consecutive `input_required` observations before polling accepts that a task
+ * is PARKED on its gate rather than passing through it. Three is enough to tell
+ * the two apart at any poll interval a server suggests, and still stops an
+ * unanswerable task after a handful of requests instead of at `pollTimeoutMs`.
+ */
+const PARKED_INPUT_REQUIRED_POLLS = 3;
+
 /** Missing Required Client Capability — the only conformant answer here. */
 const MISSING_REQUIRED_CLIENT_CAPABILITY =
   MCP_ERROR_CODES.MissingRequiredClientCapability;
@@ -1497,7 +1505,9 @@ export class MCPTasksConformanceTest {
           // FIRST poll stops at `input_required` as well as at a terminal
           // status: an input-gated task cannot advance without a client answer,
           // so continuing would only spend `pollTimeoutMs` to reach the state
-          // already in hand.
+          // already in hand. `pollToTerminal` requires the gate to be OBSERVED
+          // as parked before it stops — see the note there on why one frame is
+          // not enough.
           let polled = createdTaskId
             ? await this.pollToTerminal(manager, serverId, wire, createdTaskId, {
                 stopOnInputRequired: true,
@@ -1736,6 +1746,14 @@ export class MCPTasksConformanceTest {
 
           if (selected.has("tasks-status-payload-shape")) {
             const stepStartedAt = Date.now();
+            // The payload rules below are the EXTENSION's (`result` inline on
+            // `completed`, `error` on `failed`, `inputRequests` on
+            // `input_required`). The legacy 2025-11-25 wire delivers a
+            // completed task's result through a separate `tasks/result` call,
+            // so grading a legacy payload against them reports a violation the
+            // server never committed. Every sibling check gates on this; this
+            // one did not.
+            //
             // RAW, not the decoded task: the SDK's own payload schema rejects a
             // `failed` task with no `error` before any check sees it, so
             // reading the decoded task would score a server green on exactly
@@ -1745,14 +1763,22 @@ export class MCPTasksConformanceTest {
             // answers an `input_required` gate sees several statuses, and
             // grading only the state the task ended in would let a malformed
             // `input_required` frame pass behind a well-formed `completed` one.
-            const rawStates = createdTaskId
-              ? findRawTaskStates(
-                  received,
-                  createdTaskId,
-                  sentRequestIds(sent, "tasks/get")
+            const rawStates =
+              createdTaskId && wire === "extension"
+                ? findRawTaskStates(
+                    received,
+                    createdTaskId,
+                    sentRequestIds(sent, "tasks/get")
+                  )
+                : [];
+            if (wire !== "extension") {
+              checks.push(
+                notApplicable(
+                  "tasks-status-payload-shape",
+                  "check applies to the extension wire only"
                 )
-              : [];
-            if (rawStates.length === 0) {
+              );
+            } else if (rawStates.length === 0) {
               checks.push(
                 createdTaskId
                   ? couldNotRun(
@@ -1959,52 +1985,6 @@ export class MCPTasksConformanceTest {
             }
           }
 
-          // ORDERING: cancellation MUTATES the task, so it sits here with the
-          // other mutating probes rather than beside the read-only lifecycle
-          // checks above — the same rule the comment below states. Cancelling a
-          // task that has already reached a terminal status is a weaker probe
-          // than cancelling one mid-flight, but the assertion holds either way:
-          // the spec requires an EMPTY ack and explicitly allows the status to
-          // stay non-`cancelled` afterwards.
-          if (selected.has("tasks-cancel-ack-shape")) {
-            const stepStartedAt = Date.now();
-            if (wire !== "extension") {
-              checks.push(
-                notApplicable(
-                  "tasks-cancel-ack-shape",
-                  "check applies to the extension wire only"
-                )
-              );
-            } else if (!createdTaskId) {
-              checks.push(noTask("tasks-cancel-ack-shape"));
-            } else {
-              const cancel = await this.probeCancelAck(
-                manager,
-                serverId,
-                createdTaskId
-              );
-              checks.push(
-                cancel.unavailable !== undefined
-                  ? couldNotRun("tasks-cancel-ack-shape", cancel.unavailable)
-                  : cancel.problems.length === 0
-                  ? passed(
-                      "tasks-cancel-ack-shape",
-                      Date.now() - stepStartedAt,
-                      cancel.detail,
-                      cancel.warnings
-                    )
-                  : failed(
-                      "tasks-cancel-ack-shape",
-                      Date.now() - stepStartedAt,
-                      `tasks/cancel was not acknowledged as the extension requires: ${cancel.problems.join(
-                        "; "
-                      )}`,
-                      cancel.detail
-                    )
-              );
-            }
-          }
-
           // ORDERING: the undeclared probes run LAST of the task-touching
           // checks, and deliberately so. `tasks/update` and `tasks/cancel`
           // MUTATE a task, and this check exists precisely because a server
@@ -2178,6 +2158,64 @@ export class MCPTasksConformanceTest {
             }
           }
 
+          // ORDERING: cancellation MUTATES the task, so it runs AFTER the
+          // undeclared probes, not before them. It used to sit above, and that
+          // let a PENDING check move a SCORED one: a server is allowed to
+          // forget a task once it is cancelled (`probeCancelAck` documents and
+          // tolerates exactly that class), and the undeclared probes reuse the
+          // same task id. Cancel first and those probes are answered `-32602`
+          // "unknown task" instead of `-32021`, which
+          // `tasks-undeclared-capability-rejected` — frozen into `mcp-tasks` —
+          // scores as a wrong-code FAILURE. A conforming server would fail on
+          // probe order alone.
+          //
+          // The reverse exposure is strictly smaller: a server that wrongly
+          // ACCEPTS an undeclared mutation may leave the task altered before
+          // this check reads it, but such a server is already failing the
+          // scored check, and the check it degrades here is pending. Cancelling
+          // a task that already reached a terminal status is a weaker probe
+          // than cancelling one mid-flight, but the assertion holds either way:
+          // the spec requires an EMPTY ack and explicitly allows the status to
+          // stay non-`cancelled` afterwards.
+          if (selected.has("tasks-cancel-ack-shape")) {
+            const stepStartedAt = Date.now();
+            if (wire !== "extension") {
+              checks.push(
+                notApplicable(
+                  "tasks-cancel-ack-shape",
+                  "check applies to the extension wire only"
+                )
+              );
+            } else if (!createdTaskId) {
+              checks.push(noTask("tasks-cancel-ack-shape"));
+            } else {
+              const cancel = await this.probeCancelAck(
+                manager,
+                serverId,
+                createdTaskId
+              );
+              checks.push(
+                cancel.unavailable !== undefined
+                  ? couldNotRun("tasks-cancel-ack-shape", cancel.unavailable)
+                  : cancel.problems.length === 0
+                  ? passed(
+                      "tasks-cancel-ack-shape",
+                      Date.now() - stepStartedAt,
+                      cancel.detail,
+                      cancel.warnings
+                    )
+                  : failed(
+                      "tasks-cancel-ack-shape",
+                      Date.now() - stepStartedAt,
+                      `tasks/cancel was not acknowledged as the extension requires: ${cancel.problems.join(
+                        "; "
+                      )}`,
+                      cancel.detail
+                    )
+              );
+            }
+          }
+
           if (selected.has("tasks-declaration-hygiene")) {
             const stepStartedAt = Date.now();
             const violations = findDeclarationViolations(wire, sent);
@@ -2203,7 +2241,18 @@ export class MCPTasksConformanceTest {
           // added this week must not retroactively fail a server that was green
           // last week. Same mechanism as the protocol suite, separate manifest.
           const { scored, pending } = partitionByProfile(checks, profile);
-          const verdict = decideOutcome(scored);
+          // An empty SCORED set is not the same fact as an empty CHECK set.
+          // `decideOutcome([])` says "no checks were selected", which is the
+          // exact opposite of what happened when every selected check ran and
+          // all of them are pending (`--check-id tasks-cancel-ack-shape`).
+          // Same reasoning, and same shape, as the protocol runner.
+          const verdict =
+            scored.length === 0 && pending.length > 0
+              ? {
+                  outcome: "incomplete" as const,
+                  incompleteReason: `all ${pending.length} selected check(s) ran but are unscored by profile ${profile.id}@${profile.version}, so this run establishes no conformance verdict`,
+                }
+              : decideOutcome(scored);
 
           return {
             passed: verdict.outcome === "passed",
@@ -2668,6 +2717,7 @@ export class MCPTasksConformanceTest {
   }> {
     const deadline = Date.now() + this.config.pollTimeoutMs;
     let last: Record<string, unknown> | undefined;
+    let consecutiveInputRequired = 0;
 
     while (Date.now() < deadline) {
       try {
@@ -2680,17 +2730,35 @@ export class MCPTasksConformanceTest {
         return { task: last, error };
       }
 
-      // A task parked on `input_required` cannot advance until the CLIENT
+      // A task PARKED on `input_required` cannot advance until the CLIENT
       // answers, so polling it to the deadline burns `pollTimeoutMs` to arrive
       // at the state it was already in — and every dependent check then reports
-      // `could-not-run` many seconds later than it had to. Stopping here
-      // returns the same task, sooner.
+      // `could-not-run` many seconds later than it had to. Stopping returns the
+      // same task, sooner.
+      //
+      // But "parked" has to be OBSERVED, not assumed from one frame.
+      // `input_required` is also a state a task can pass THROUGH: a server may
+      // time its own gate out, fail the task, or have the request answered by
+      // something outside this run. Returning on first sight would freeze such
+      // a task mid-flight and report `tasks-inline-result` — a check the
+      // `mcp-tasks` profile SCORES — as could-not-run for a server whose task
+      // would have completed well inside the budget. That is a scored verdict
+      // moving on our polling strategy rather than on the server.
+      //
+      // Requiring consecutive observations distinguishes the two: a genuinely
+      // parked task still stops after a handful of polls, and a transiting one
+      // is allowed to advance.
       if (
         options?.stopOnInputRequired === true &&
         last &&
         String(last.status) === "input_required"
       ) {
-        return { task: last, inputRequired: true };
+        consecutiveInputRequired += 1;
+        if (consecutiveInputRequired >= PARKED_INPUT_REQUIRED_POLLS) {
+          return { task: last, inputRequired: true };
+        }
+      } else {
+        consecutiveInputRequired = 0;
       }
 
       if (last && TERMINAL_STATUSES.has(String(last.status)))

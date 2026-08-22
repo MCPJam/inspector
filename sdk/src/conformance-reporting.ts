@@ -99,6 +99,14 @@ export interface ConformanceReportCase {
    * `"could-not-run"` skip means an obligation went untested.
    */
   skipReason?: ConformanceSkipReason;
+  /**
+   * The active profile does not score this check. It ran and its verdict is
+   * reported verbatim, but it must not turn a build red: the frozen profile
+   * exists so a MUST added this week cannot retroactively fail a server that
+   * was green last week, and a reporter that emitted `<failure>` for it would
+   * reopen exactly that hole on the CI channel while the exit code stayed 0.
+   */
+  pending?: boolean;
   durationMs: number;
   description?: string;
   error?: string;
@@ -231,12 +239,16 @@ function summarizeHttpAttempts(
     .join("\n");
 }
 
-function reportCaseFromMcpCheck(check: MCPCheckResult): ConformanceReportCase {
+function reportCaseFromMcpCheck(
+  check: MCPCheckResult,
+  pendingIds?: ReadonlySet<string>,
+): ConformanceReportCase {
   return {
     id: check.id,
     title: check.title,
     category: check.category,
     status: check.status,
+    ...(pendingIds?.has(check.id) ? { pending: true } : {}),
     ...(check.skipReason ? { skipReason: check.skipReason } : {}),
     durationMs: check.durationMs,
     description: check.description,
@@ -389,7 +401,12 @@ function mcpGroupFromResult(
     passed: result.passed,
     durationMs: result.durationMs,
     summary: result.summary,
-    cases: result.checks.map(reportCaseFromMcpCheck),
+    cases: (() => {
+      const pendingIds = new Set(result.profile?.pendingCheckIds ?? []);
+      return result.checks.map((check) =>
+        reportCaseFromMcpCheck(check, pendingIds),
+      );
+    })(),
   };
 }
 
@@ -1038,6 +1055,18 @@ function renderConformanceTestCase(
     return `    <testcase name="${name}" classname="${escapedClassname}" time="${time}">\n      <skipped/>\n    </testcase>`;
   }
 
+  // A pending check renders as `<skipped>` carrying its real verdict, never as
+  // `<failure>`. The run's exit code already refuses to fail on it; emitting a
+  // failure here would turn the CI job red anyway — the retroactive-failure
+  // hole the frozen profile exists to close, reopened on the one channel most
+  // teams actually gate on.
+  if (testCase.pending) {
+    const note = escapeXml(
+      `unscored by the active profile${testCase.error ? `: ${testCase.error}` : ""}`,
+    );
+    return `    <testcase name="${name}" classname="${escapedClassname}" time="${time}">\n      <skipped message="${note}"/>\n    </testcase>`;
+  }
+
   if (testCase.status === "failed") {
     const message = escapeXml(testCase.error ?? "Check failed");
     const body = testCase.output
@@ -1083,11 +1112,14 @@ function renderConformanceTestSuite(
 ): string {
   const name = escapeXml(group.title);
   const tests = group.cases.length;
+  // The tallies follow what the cases RENDER as, or the attribute would
+  // contradict the elements beneath it: a pending check is emitted as
+  // `<skipped>` regardless of its verdict, so it counts as skipped here.
   const failures = group.cases.filter(
-    (entry) => entry.status === "failed",
+    (entry) => entry.status === "failed" && !entry.pending,
   ).length;
   const skipped = group.cases.filter(
-    (entry) => entry.status === "skipped",
+    (entry) => entry.status === "skipped" || entry.pending,
   ).length;
   const time = (group.durationMs / 1000).toFixed(3);
   const classname = group.target || `mcpjam.${sanitizeToken(group.id)}`;
@@ -1128,14 +1160,21 @@ export function renderConformanceReportJUnitXml(
     (sum, group) => sum + group.cases.length,
     0,
   );
+  // Same rule as the per-suite tallies: pending cases render as `<skipped>`,
+  // so they are counted as skipped and never as failures.
   const failures = redactedReport.groups.reduce(
     (sum, group) =>
-      sum + group.cases.filter((entry) => entry.status === "failed").length,
+      sum +
+      group.cases.filter((entry) => entry.status === "failed" && !entry.pending)
+        .length,
     0,
   );
   const skipped = redactedReport.groups.reduce(
     (sum, group) =>
-      sum + group.cases.filter((entry) => entry.status === "skipped").length,
+      sum +
+      group.cases.filter(
+        (entry) => entry.status === "skipped" || entry.pending,
+      ).length,
     0,
   );
   const time = (redactedReport.durationMs / 1000).toFixed(3);

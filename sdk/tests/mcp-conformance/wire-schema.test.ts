@@ -214,6 +214,57 @@ describe("every vendored revision compiles and validates", () => {
       }).schemaDigest,
     ).not.toBe(MODERN().schemaDigest);
   });
+
+  /**
+   * The undeterminable-id exemption has to hold on EVERY revision, and the two
+   * draft-07 ones are where it is hardest: `JSONRPCError` lists `id` as
+   * REQUIRED through 2025-06-18 (it became optional only when the definition
+   * was renamed `JSONRPCErrorResponse` at 2025-11-25). An implementation that
+   * satisfied the exemption by deleting the member therefore failed exactly the
+   * conforming responses it exists to protect — and the legacy eras are the CLI
+   * default, where readiness deliberately POSTs an unparseable body every run.
+   */
+  it.each(VERSIONS)(
+    "%s accepts a conforming parse-error response whose id could not be read",
+    (version) => {
+      const report = new WireSchemaValidator({
+        protocolVersion: version,
+      }).validate([
+        {
+          direction: "receive",
+          message: {
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32700, message: "Parse error" },
+          },
+          requestIdDeterminable: false,
+        } as ObservedWireMessage,
+      ]);
+      expect(report.violations).toEqual([]);
+    },
+  );
+
+  it.each(VERSIONS)(
+    "%s still fails a server that drops an id it was handed",
+    (version) => {
+      const report = new WireSchemaValidator({
+        protocolVersion: version,
+      }).validate([
+        {
+          direction: "receive",
+          message: {
+            jsonrpc: "2.0",
+            id: null,
+            error: { code: -32602, message: "Invalid params" },
+          },
+          // The request carried a readable id, so `id: null` is the defect the
+          // 2026-07 sweep found on canva — never exempt.
+          requestIdDeterminable: true,
+        } as ObservedWireMessage,
+      ]);
+      expect(report.violations).not.toEqual([]);
+    },
+  );
 });
 
 describe("extension request methods correlate", () => {
