@@ -13,6 +13,7 @@
  *    editor with the typed name seeded.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 
@@ -714,8 +715,11 @@ describe("UserTestingScenarioCreateFlow — ratings turned off", () => {
       });
     });
   });
+});
 
+describe("UserTestingScenarioCreateFlow — org share ceiling", () => {
   it("snaps the access preset down to the org ceiling and greys over-ceiling options", async () => {
+    const user = userEvent.setup();
     sharePolicyState.policy = {
       maxShareMode: "project_members",
       inviteAudience: "anyone",
@@ -726,10 +730,13 @@ describe("UserTestingScenarioCreateFlow — ratings turned off", () => {
     expect(
       screen.getByText("Your organization limits sharing to project members."),
     ).toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-create-access")).toHaveTextContent(
+      "Project members",
+    );
 
-    fireEvent.click(screen.getByTestId("user-testing-create-access"));
+    await user.click(screen.getByTestId("user-testing-create-access"));
     expect(
-      screen.getByRole("menuitemradio", { name: "Anyone with the link" }),
+      await screen.findByRole("menuitemradio", { name: "Anyone with the link" }),
     ).toHaveAttribute("data-disabled");
     expect(
       screen.getByRole("menuitemradio", { name: "Invited users only" }),
