@@ -2,9 +2,9 @@
 /**
  * Exhaustive CLI test runner.
  *
- * Recursively discovers `tests/**/*.test.ts` and invokes the local `tsx`
- * binary. Does not rely on shell glob expansion (`tests/**/*.test.ts` is
- * not expanded by every shell — notably default zsh and Windows cmd).
+ * Recursively discovers every tests/ file ending in .test.ts and invokes
+ * the local tsx binary. Does not rely on shell glob expansion, which is
+ * not performed by every shell (notably default zsh and Windows cmd).
  *
  * `npm test -w @mcpjam/cli` is the authoritative full-suite entrypoint.
  */
