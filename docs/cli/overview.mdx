@@ -1,10 +1,10 @@
 ---
 title: "CLI Overview"
-description: "Stateless MCP server probing, debugging, OAuth, and conformance from your terminal"
+description: "Local MCP testing and mcpjam cloud: probing, debugging, OAuth, conformance, and hosted evals from your terminal"
 icon: "terminal"
 ---
 
-The `mcpjam` CLI is a stateless tool for inspecting, debugging, and testing MCP servers from the command line or CI. It covers the full lifecycle: connectivity checks, OAuth login, MCP Apps validation, tool/resource/prompt exploration, and protocol conformance.
+The `mcpjam` CLI is two invocations. Local MCP testing stays at the top level: a stateless tool for inspecting, debugging, and testing MCP servers from the command line or CI (connectivity, OAuth, MCP Apps, tools/resources/prompts, protocol conformance). Account-bound commands live under `mcpjam cloud`. There are no compatibility aliases for the old Cloud paths — see [Migrating to CLI 4.0](/cli/migration).
 
 ## Recommended: Use with Agent Skills
 
@@ -33,30 +33,46 @@ npx -y @mcpjam/cli@latest --help
 
 ## Command groups
 
+### Local MCP testing
+
+These stay at the program root. They reject `--api-key` / `--api-url` / `--project`.
+
 | Group | Purpose | Key commands |
 |-------|---------|-------------|
 | [`server`](/cli/server-inspection) | Triage connectivity and capabilities | `probe`, `doctor`, `info`, `validate`, `ping`, `capabilities`, `export` |
-| [`xaa`](/cli/xaa) | Run the Cross-App Access (ID-JAG) debugger against an MCP server | `run` |
-| [`oauth`](/cli/oauth-conformance) | Test OAuth flows and conformance | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
-| [`apps`](/cli/apps-conformance) | Validate MCP Apps metadata and resource wiring | `conformance`, `conformance-suite` |
-| [`compat`](/cli/reference#compat-command) | Check whether a server's tools and widgets work on each AI host | `compat` |
-| [`readiness`](/cli/reference#readiness-hosted-commands) | Start, poll, list, cancel, and read hosted directory-readiness runs against a saved server | `start claude`, `start openai`, `status`, `list`, `cancel`, `report` |
-| [`inspector`](/cli/reference#inspector-commands) | Start, open, or stop the local Inspector from the CLI | `open`, `start`, `stop` |
-| [`eval`](/cli/reference#eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
-| [`tunnel`](/cli/reference#tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel <url>`, `tunnel -- <command>` |
 | [`tools`](/cli/tools-resources-prompts) | Exercise the tool surface | `list`, `call` |
 | [`resources`](/cli/tools-resources-prompts) | Read resources and templates | `list`, `read`, `templates` |
 | [`prompts`](/cli/tools-resources-prompts) | Fetch prompts | `list`, `get` |
+| [`subscriptions`](/cli/reference) | Open a long-lived MCP subscription and stream notifications | `listen` |
+| [`tasks`](/cli/tasks) | Drive MCP Tasks and validate the tasks wire | `list`, `get`, `cancel`, `conformance` |
+| [`apps`](/cli/apps-conformance) | Validate MCP Apps metadata and resource wiring | `conformance`, `conformance-suite` |
+| [`oauth`](/cli/oauth-conformance) | Test OAuth flows and conformance against an MCP server | `conformance`, `conformance-suite`, `login`, `metadata`, `proxy` |
 | [`protocol`](/cli/reference) | MCP protocol conformance checks | `conformance`, `conformance-suite` |
-| [`hosts`](/cli/reference#hosts-commands) | Manage hosts in your hosted MCPJam projects | `list`, `get`, `create`, `update`, `delete`, `templates` |
-| [`environments`](/cli/reference#environments-commands) | Manage project environments — the host + servers + pinned skills/plugins bundles eval suites and journeys run against | `list`, `get`, `resolve`, `create`, `update`, `archive`, `restore` |
-| [`images`](/cli/reference#images-commands) | Manage custom Computer sandbox images (blueprints) | `list`, `get`, `create`, `validate`, `edit`, `build`, `logs`, `use`, `reset`, `promote`, `delete` |
+| [`readiness`](/cli/reference#readiness-hosted-commands) | Grade a server against a publisher's directory. Hosted `start` / `status` / `list` / `cancel` / `report` stay here (leaf `--api-key`; no Cloud project link) | `check`, `start claude`, `start openai`, `status`, `list`, `cancel`, `report` |
+| [`xaa`](/cli/xaa) | Run the Cross-App Access (ID-JAG) debugger against an MCP server | `run` |
+| [`compat`](/cli/reference#compat-command) | Check whether a server's tools and widgets work on each AI host | `compat` |
+| [`inspector`](/cli/reference#inspector-commands) | Start, open, or stop the local Inspector from the CLI | `open`, `start`, `stop` |
 | [`mcp`](/cli/mcp-server) | Run MCPJam as a stdio MCP server for agents (Claude Desktop, Claude Code, Cursor, ...) | `mcp` |
 | [`telemetry`](/cli/telemetry) | Inspect and configure anonymous CLI telemetry | `status`, `disable`, `enable` |
 
+### MCPJam Cloud
+
+Account-bound commands. Declare `--api-key` / `--api-url` on `mcpjam cloud` (before or after descendants). `mcpjam oauth login` is MCP-server OAuth; `mcpjam cloud login` is your MCPJam account.
+
+| Group | Purpose | Key commands |
+|-------|---------|-------------|
+| [`cloud`](/cli/reference#cloud-workspace) | Account, project link, and workspace | `login`, `logout`, `whoami`, `link`, `status`, `organizations`, `projects`, `sessions` |
+| [`cloud eval`](/cli/reference#cloud-eval-commands) | Author and run eval suites in your hosted MCPJam projects | `create`, `list`, `run`, `status` |
+| [`cloud tunnel`](/cli/reference#cloud-tunnel) | Expose a local MCP server through a public MCPJam tunnel URL, registered as a server in your project | `tunnel --server <name> <url>`, `tunnel --server <name> -- <command>` |
+| [`cloud hosts`](/cli/reference#cloud-hosts-commands) | Manage hosts in your hosted MCPJam projects | `list`, `get`, `create`, `update`, `delete`, `templates` |
+| [`cloud environments`](/cli/reference#cloud-environments-commands) | Manage project environments — the host + servers + pinned skills/plugins bundles eval suites and journeys run against | `list`, `get`, `resolve`, `create`, `update`, `archive`, `restore` |
+| [`cloud images`](/cli/reference#cloud-images-commands) | Manage custom Computer sandbox images (blueprints) | `list`, `get`, `create`, `validate`, `edit`, `build`, `logs`, `use`, `reset`, `promote`, `delete` |
+
+Also under `mcpjam cloud`: `journeys`, `scenarios`, `personas`, `swarms`, `user-testing`. Full flag tables are in the [command reference](/cli/reference).
+
 ## Global flags
 
-These flags apply to every command.
+These flags apply to every command. Cloud credentials `--api-key` / `--api-url` are declared on `mcpjam cloud`, not the program root.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -202,4 +218,5 @@ Connections to servers under test stay open between tool calls, so agents can al
 - [OAuth login](/cli/oauth-login) — authenticate and debug OAuth flows
 - [MCP Apps conformance](/cli/apps-conformance) — validate `_meta.ui.resourceUri` and `ui://` resource wiring
 - [Tools, resources & prompts](/cli/tools-resources-prompts) — exercise the connected surface
+- [Migrating to CLI 4.0](/cli/migration) — command-path and flag changes under `mcpjam cloud`
 - [Full command reference](/cli/reference) — every flag for every command
