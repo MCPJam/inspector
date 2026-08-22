@@ -27,7 +27,6 @@ import {
   writeStoredAuth,
   type StoredPlatformAuth,
 } from "./auth-store.js";
-import { MISSING_CLOUD_CREDENTIAL_MESSAGE } from "./cloud-context.js";
 import { operationalError, usageError } from "./output.js";
 
 export const DEFAULT_PLATFORM_ORIGIN = "https://app.mcpjam.com";
@@ -37,6 +36,9 @@ const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
 
 export const LEGACY_KEY_REMEDY =
   "Legacy mcpjam_ API keys are not supported by platform commands. Create an sk_ key at https://app.mcpjam.com/settings/api-keys or run `mcpjam cloud login`.";
+
+export const MISSING_CLOUD_CREDENTIAL_MESSAGE =
+  "Not logged in. Run `mcpjam cloud login`, or pass an sk_ API key via --api-key / MCPJAM_API_KEY.";
 
 export interface PlatformCredential {
   kind: "api-key" | "oauth";

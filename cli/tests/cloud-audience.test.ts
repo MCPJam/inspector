@@ -293,3 +293,97 @@ test("bindOperation suppresses the audience line outside mcpjam cloud", () => {
   );
   assert.match(source, /announce:\s*underCloud/);
 });
+
+test("platform-auth does not import cloud-context", () => {
+  const source = readFileSync(
+    path.join(SRC_ROOT, "lib/platform-auth.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(source, /cloud-context/);
+});
+
+test("environments create audience names the JSON body project, not MCPJAM_PROJECT", async () => {
+  const server: Server = createServer((req, res) => {
+    const url = new URL(req.url ?? "/", "http://fixture");
+    res.setHeader("content-type", "application/json");
+    if (url.pathname === "/api/v1/projects") {
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "proj-env",
+              name: "EnvProject",
+              organizationId: "org-1",
+              createdAt: 1,
+              updatedAt: 50,
+            },
+            {
+              id: "proj-file",
+              name: "FileProject",
+              organizationId: "org-1",
+              createdAt: 1,
+              updatedAt: 10,
+            },
+          ],
+        })
+      );
+      return;
+    }
+    if (
+      url.pathname === "/api/v1/projects/proj-file/environments" &&
+      req.method === "POST"
+    ) {
+      res.end(
+        JSON.stringify({
+          id: "env-1",
+          projectId: "proj-file",
+          name: "FromFile",
+          hostId: "host-1",
+          revision: 1,
+        })
+      );
+      return;
+    }
+    res.statusCode = 404;
+    res.end(JSON.stringify({ code: "NOT_FOUND", message: url.pathname }));
+  });
+  await new Promise<void>((resolve) =>
+    server.listen(0, "127.0.0.1", () => resolve())
+  );
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("fixture server has no address");
+  }
+  const baseUrl = `http://127.0.0.1:${address.port}/api/v1`;
+  try {
+    const run = await withEnv(isolatedEnv({ MCPJAM_PROJECT: "proj-env" }), () =>
+      runCli([
+        "cloud",
+        "environments",
+        "create",
+        "--api-key",
+        "sk_test",
+        "--api-url",
+        baseUrl,
+        "--format",
+        "json",
+        "--json",
+        JSON.stringify({
+          project: "proj-file",
+          name: "FromFile",
+          hostId: "host-1",
+        }),
+      ])
+    );
+    assert.equal(run.exitCode, 0, run.stderr);
+    assert.match(
+      run.stderr,
+      /Using MCPJam Cloud as sk_…test · project: input \(proj-file\) · /
+    );
+    assert.doesNotMatch(run.stderr, /project: env \(proj-env\)/);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve()))
+    );
+  }
+});

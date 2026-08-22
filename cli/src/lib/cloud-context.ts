@@ -15,16 +15,16 @@ import {
   describeProjectScope,
   type CloudScope,
 } from "./cloud-scope.js";
+import { MISSING_CLOUD_CREDENTIAL_MESSAGE } from "./platform-auth.js";
 import { operationalError } from "./output.js";
+
+export { MISSING_CLOUD_CREDENTIAL_MESSAGE };
 
 /** Credential flags only — kept local so this module does not import `platform-command`. */
 export type CloudCredentialOptions = {
   apiKey?: string;
   apiUrl?: string;
 };
-
-export const MISSING_CLOUD_CREDENTIAL_MESSAGE =
-  "Not logged in. Run `mcpjam cloud login`, or pass an sk_ API key via --api-key / MCPJAM_API_KEY.";
 
 /**
  * Cloud commands that must not print the audience line. Inner polls, whoami,
