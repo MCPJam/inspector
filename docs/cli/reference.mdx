@@ -1103,20 +1103,20 @@ A partial or wholly failed fan-out **exits 1**. A per-target failure does not
 abort its siblings, so exiting 0 would let a pipeline read "1 of 3 runs never
 started" as a clean launch.
 
-When the run targets an **attached project environment** (`eval environments
+When the run targets an **attached project environment** (`cloud eval environments
 set`), it executes against that environment's resolved host config, closed
 server set, and pinned plugin versions instead of the suite's saved selection.
-Every run records the environment and the exact revision it used, so `eval
+Every run records the environment and the exact revision it used, so `cloud eval
 status` can answer "which configuration did this run actually execute against?"
 long after the environment has been edited.
 
-### `eval status`
+### `cloud eval status`
 
 Get the status and summary of an eval run.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--run <id>` | Yes | Eval run ID (from `cloud eval run`) |
 | `--project <id-or-name>` | Yes | Project name or ID |
 
 The response carries a `judges` block with each advisory grader's state and
@@ -1124,14 +1124,14 @@ per-case grades. `status: null` means that judge was never requested for the
 run — different from a judge that ran and graded nothing. In `--format human`,
 each judge that actually graded gets a one-line summary.
 
-### `eval judge`
+### `cloud eval judge`
 
 Grade a finished eval run with LLM as Judge. **Spends your organization's model
-budget.** Returns a pending receipt; read the grades from `eval status`.
+budget.** Returns a pending receipt; read the grades from `cloud eval status`.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--run <id>` | Yes | Eval run ID (from `cloud eval run`) |
 | `--project <id-or-name>` | Yes | Project name or ID |
 | `--force` | No | Re-grade a run that already has a judge result |
 | `--enable` | No | Grade this run even though the judge was off when it ran |
@@ -1144,28 +1144,28 @@ what grades it, and it changes nothing beyond that run. Passing neither
 `--judge-model` nor `--judge-threshold` grades with the suite's own config,
 clearing any override a previous request left on the run.
 
-### `eval iterations`
+### `cloud eval iterations`
 
 List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency). Results are paginated.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--run <id>` | Yes | Eval run ID (from `cloud eval run`) |
 | `--project <id-or-name>` | Yes | Project the run belongs to (name or ID) |
 | `--cursor <cursor>` | No | Pagination cursor from a previous response |
 | `--limit <n>` | No | Max iterations per page (1–200) |
 
-### `eval trace`
+### `cloud eval trace`
 
 Fetch the full trace for one eval iteration (complete message history and spans). Can be large.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--run <id>` | Yes | Eval run ID (from `eval run`) |
-| `--iteration <id>` | Yes | Iteration ID (from `eval iterations`) |
+| `--run <id>` | Yes | Eval run ID (from `cloud eval run`) |
+| `--iteration <id>` | Yes | Iteration ID (from `cloud eval iterations`) |
 | `--project <id-or-name>` | Yes | Project the run belongs to (name or ID) |
 
-### `eval get`
+### `cloud eval get`
 
 Show an eval suite's full settings.
 
@@ -1174,7 +1174,7 @@ Show an eval suite's full settings.
 | `--suite <id-or-name>` | Yes | Eval suite name or ID |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 
-### `eval validate`
+### `cloud eval validate`
 
 Validate a local eval **suite file** — the versioned declarative document that
 describes a suite, its defaults and its cases (`schemaVersion: "1"`, YAML
