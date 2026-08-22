@@ -130,6 +130,21 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   upsert_user_testing_member: { command: "cloud user-testing invite" },
   remove_user_testing_member: { command: "cloud user-testing remove-member" },
   rebind_user_testing_scenario: { command: "cloud user-testing rebind" },
+  // Unified share. I5 shipped SDK/MCP/agent; there is no `cloud share`
+  // command yet. Exclude until one exists — a binding with no Commander path
+  // fails the tree test.
+  get_share_settings: {
+    excluded:
+      "Share settings are read from the Share dialog; no `cloud share` command exists yet.",
+  },
+  set_share_mode: {
+    excluded:
+      "Changing who can open a shared resource is confirmed in the Share dialog; no CLI write exists yet.",
+  },
+  rotate_share_link: {
+    excluded:
+      "Rotating a unified share URL is irreversible and confirmed in the UI; no CLI command exists yet.",
+  },
 
   // ── Evals ───────────────────────────────────────────────────────────────
   list_eval_suites: { command: "cloud eval list" },
@@ -283,5 +298,37 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_models: {
     excluded:
       "Model choice belongs to whatever runs an eval; the CLI never picks one on the user's behalf.",
+  },
+  search_registry_directory: {
+    excluded:
+      "CLI `mcpjam registry search` is wired in follow-up PR I3 so the Commander tree and this catalog land together.",
+  },
+  get_registry_directory_server: {
+    excluded:
+      "CLI `mcpjam registry show` is wired in follow-up PR I3; adding the op without the command would fail the bindings tree test.",
+  },
+  list_registry_directory_sources: {
+    excluded:
+      "CLI `mcpjam registry sources` is wired in follow-up PR I3 with the rest of the registry group.",
+  },
+  list_registry_servers: {
+    excluded:
+      "CLI `mcpjam registry servers` is wired in follow-up PR I3; card listing stays out of the tree until then.",
+  },
+  list_registry_connections: {
+    excluded:
+      "CLI `mcpjam registry connections` is wired in follow-up PR I3 with the rest of the registry group.",
+  },
+  install_registry_directory_server: {
+    excluded:
+      "CLI `mcpjam registry install` (directory default) is wired in follow-up PR I3, including the flag-qualified dual-op binding.",
+  },
+  install_registry_server: {
+    excluded:
+      "CLI `mcpjam registry install --card` is wired in follow-up PR I3; one Commander path binds two ops.",
+  },
+  uninstall_registry_server: {
+    excluded:
+      "CLI `mcpjam registry uninstall` is wired in follow-up PR I3; card-only, no directory uninstall verb.",
   },
 };

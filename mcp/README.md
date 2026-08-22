@@ -139,6 +139,17 @@ so results respect the caller's project access.
 | `upsert_user_testing_member` | Grant one person access to a scenario by email. | — |
 | `remove_user_testing_member` | Revoke one person's access. | — |
 | `rebind_user_testing_scenario` | Swap the environment behind a scenario, keeping its link, members and history. | — |
+| `get_share_settings` | Read the unified share envelope for a scenario, conformance run, or eval run. | — |
+| `set_share_mode` | Change who can open a shared resource. `anyone_with_link` includes guests as browser sessions. | — |
+| `rotate_share_link` | Mint a new unified share URL and invalidate the old one. Immediate and irreversible. | — |
+| `search_registry_directory` | Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. | — |
+| `get_registry_directory_server` | Fetch one scraped directory row by catalogServerId, or by name (optionally with source). | — |
+| `list_registry_directory_sources` | Discover directory source ids for `search_registry_directory`. Sources are data, not an enum. | — |
+| `list_registry_servers` | List global curated cards and the project's organization registry cards. | — |
+| `list_registry_connections` | List directory and card installs already in a project (provenance rows whose server still exists). | — |
+| `install_registry_directory_server` | Install writes a project `servers` row and provenance and stops — it is not a live connection. | — |
+| `install_registry_server` | Install a curated registry card into a project. Writes a `servers` row and provenance; not a live connection. | — |
+| `uninstall_registry_server` | Remove a curated or org registry-card install from a project. Directory uninstall is `delete_project_server`. | — |
 
 <!-- The rows above are the CATALOG, not a hand-written summary: they are
      checked against `PLATFORM_CATALOG_OPERATIONS` by
