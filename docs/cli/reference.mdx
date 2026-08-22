@@ -830,9 +830,8 @@ Create a runnable eval suite from authored test cases. The suite is persisted an
 Provide the suite definition via `--file` or `--json` (not both). The definition is a JSON object with at minimum `name`, `model`, `servers`, and `cases`. Servers must be HTTP; stdio servers are rejected before any write.
 
 ```bash
-mcpjam eval create \
-  --json '{"name":"smoke","model":"anthropic/claude-haiku-4.5","servers":["My Server"],"cases":[{"title":"echo works","query":"Use the echo tool to say hi","expectedToolCalls":["echo"]}]}' \
-  --api-key $MCPJAM_API_KEY
+mcpjam cloud --api-key $MCPJAM_API_KEY eval create \
+  --json '{"name":"smoke","model":"anthropic/claude-haiku-4.5","servers":["My Server"],"cases":[{"title":"echo works","query":"Use the echo tool to say hi","expectedToolCalls":["echo"]}]}'
 ```
 
 ### `eval list`
