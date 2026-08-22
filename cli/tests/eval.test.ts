@@ -774,6 +774,39 @@ test("eval create rejects an invalid suite definition as a usage error", async (
   }
 });
 
+test("eval create rejects an unknown --json key as a usage error", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "create",
+          "--json",
+          JSON.stringify({
+            project: "proj-alpha",
+            name: "Authored smoke",
+            servers: ["Ready Server"],
+            model: "anthropic/claude-haiku-4.5",
+            cases: [
+              { title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+            ],
+            hostz: [],
+          }),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.match(run.stderr, /USAGE_ERROR/);
+    assert.match(run.stderr, /hostz/);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval create rejects malformed JSON in --json", async () => {
   const fixture = await startEvalFixture();
   try {
@@ -1013,6 +1046,32 @@ test("eval run rejects --environment together with --server before any request",
     // The CLI calls the operation directly, so this guard has to live in the
     // execute body — a schema-only refine would never fire here.
     assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update rejects an unknown --json key as a usage error", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--suite",
+          "suite-1",
+          "--json",
+          JSON.stringify({ hostz: [] }),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.match(run.stderr, /USAGE_ERROR/);
+    assert.match(run.stderr, /hostz/);
   } finally {
     await fixture.close();
   }
