@@ -31,7 +31,9 @@ function draftWith(patch: Partial<HostConfigInputV2>): HostConfigInputV2 {
 }
 
 function expandTokens() {
-  fireEvent.click(screen.getByRole("button", { name: /style tokens/i }));
+  // By `aria-expanded`, not by name: the header's copy button also matches
+  // /style tokens/i, and only the disclosure carries the expanded state.
+  fireEvent.click(screen.getByRole("button", { expanded: false }));
 }
 
 describe("HostStyleTokens", () => {
@@ -201,5 +203,62 @@ describe("HostStyleTokens", () => {
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect(toast.success).not.toHaveBeenCalled();
+  });
+});
+
+describe("HostStyleTokens copy-all", () => {
+  it("copies both themes as spec-shaped payloads and confirms in place", async () => {
+    render(<HostStyleTokens draft={draftWith({ hostStyle: "claude" })} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /copy style tokens as json/i })
+    );
+
+    await waitFor(() => expect(mockClipboard.writeText).toHaveBeenCalled());
+    const copied = JSON.parse(mockClipboard.writeText.mock.calls[0][0]);
+    const light = CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("light");
+    expect(copied.light.variables["--color-text-primary"]).toBe(
+      light["--color-text-primary"]
+    );
+    expect(copied.dark.variables["--color-text-primary"]).toBe(
+      CLAUDE_HOST_STYLE.mcp.resolveStyleVariables("dark")[
+        "--color-text-primary"
+      ]
+    );
+    // Never the display's synthesized light-dark() form.
+    expect(JSON.stringify(copied)).not.toContain("light-dark(");
+    // The check mark is the confirmation; no toast piles on.
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("omits a token from the theme that does not send it", async () => {
+    const draft = draftWith({
+      hostStyle: "claude",
+      chatUiOverride: {
+        styleVariables: {
+          light: {},
+          dark: { "--font-mono": "Menlo, monospace" },
+        },
+      },
+    } as Partial<HostConfigInputV2>);
+    render(<HostStyleTokens draft={draft} />);
+    fireEvent.click(
+      screen.getByRole("button", { name: /copy style tokens as json/i })
+    );
+
+    await waitFor(() => expect(mockClipboard.writeText).toHaveBeenCalled());
+    const copied = JSON.parse(mockClipboard.writeText.mock.calls[0][0]);
+    expect(copied.dark.variables["--font-mono"]).toBe("Menlo, monospace");
+    expect(copied.light.variables).not.toHaveProperty("--font-mono");
+  });
+
+  it("disables the button when the host sends nothing to copy", () => {
+    const draft = draftWith({
+      hostStyle: "claude",
+      chatUiOverride: { styleVariables: { light: {}, dark: {} }, fontCss: "" },
+    } as Partial<HostConfigInputV2>);
+    render(<HostStyleTokens draft={draft} />);
+    expect(
+      screen.getByRole("button", { name: /copy style tokens as json/i })
+    ).toBeDisabled();
   });
 });
