@@ -16,6 +16,7 @@ import {
   expandModelChoices,
   isComposeMode,
   modelChoiceCount,
+  sameOptionalModel,
   stackFieldsEqual,
   targetProductCapReason,
   type EnvironmentComposerState,
@@ -132,13 +133,6 @@ function sharedFields(
  * environment is a strictly different stack — reusing it would silently run
  * pinned plugin versions the user never asked for.
  */
-function sameOptionalModel(
-  left: string | undefined,
-  right: string | undefined
-): boolean {
-  return (left ?? null) === (right ?? null);
-}
-
 function matchingNamedEnvironment(
   hostId: string,
   fields: ReturnType<typeof sharedFields>,

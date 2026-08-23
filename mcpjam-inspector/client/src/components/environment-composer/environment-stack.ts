@@ -472,6 +472,23 @@ export function stackFieldsEqual(
   );
 }
 
+/**
+ * Model equality for environment REUSE, where absent means "inherit the
+ * client's model" and is a real, distinct choice — never a wildcard.
+ *
+ * Deliberately not folded into `stackFieldsEqual`: that predicate also backs
+ * the round-trip checks, which treat the model slot separately. So every site
+ * that reuses an existing row has to pair the two — and this lives here, beside
+ * its partner, because when it existed privately in one resolver the second
+ * matcher simply did not compare models at all.
+ */
+export function sameOptionalModel(
+  left: string | undefined,
+  right: string | undefined
+): boolean {
+  return (left ?? null) === (right ?? null);
+}
+
 /** Shared product-cap copy for both pills (D6). */
 export function targetProductCapReason(
   hostCount: number,

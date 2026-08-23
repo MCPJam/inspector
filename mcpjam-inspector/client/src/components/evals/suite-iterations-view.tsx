@@ -484,12 +484,22 @@ export function SuiteIterationsView({
   // control (header Run all, run-detail rerun/replay, per-case play buttons
   // in both dashboards), so deriving any lower down leaves some of them
   // ungated. Folded into the same disabled-reason channel billing uses.
-  const attachedEnvironments = useProjectEnvironments(
-    (suite.environmentIds?.length ?? 0) > 0 ? (projectId ?? null) : null
+  // Ad-hoc rows INCLUDED, and not gated on the suite having attachments —
+  // both because of what a model matrix is. Every cell it mints is an ad-hoc
+  // row, and a compose-and-run launches without attaching at all, so the
+  // narrower read returned a list with none of the environments the runs below
+  // actually reference: the matrix could not tell two models on one client
+  // apart, and the collision split never had two rows to compare.
+  //
+  // Widening is safe for `evalSuitePinsSandboxImage`, which looks up only the
+  // ids the suite itself lists — a superset cannot make it read true.
+  const projectEnvironments = useProjectEnvironments(
+    projectEnvironmentsEnabled ? (projectId ?? null) : null,
+    { includeAdhoc: true }
   );
   const suitePinsSandboxImage = evalSuitePinsSandboxImage(
     suite,
-    attachedEnvironments ?? undefined
+    projectEnvironments ?? undefined
   );
   const evalRunsDisabledReason =
     evalRunsDisabledReasonProp ??
@@ -892,7 +902,7 @@ export function SuiteIterationsView({
           );
         }}
         hostNamesById={hostNamesById}
-        environments={attachedEnvironments}
+        environments={projectEnvironments}
       />
     ) : undefined;
 
@@ -948,7 +958,7 @@ export function SuiteIterationsView({
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
       hostNamesById={hostNamesById}
-      environments={attachedEnvironments}
+      environments={projectEnvironments}
       {...extra}
     />
   );
@@ -1342,7 +1352,7 @@ export function SuiteIterationsView({
                       isGeneratingTestCases={isGeneratingTestCases}
                       onCreateTestCase={onCreateTestCase}
                       hostNamesById={hostNamesById}
-                      environments={attachedEnvironments}
+                      environments={projectEnvironments}
                     />
                   )}
                 </motion.div>

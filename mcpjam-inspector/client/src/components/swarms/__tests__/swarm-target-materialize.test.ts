@@ -67,6 +67,53 @@ describe("findMatchingLiveEnvironment", () => {
       )?.environmentId
     ).toBe("bare");
   });
+
+  it("never reuses a row carrying a model override", () => {
+    // The swarm strip has no model slot, so its composition always means
+    // "inherit the client's model". Matching a row that pins one on the
+    // strength of the other slots would run the swarm on a model nobody
+    // selected here, under a name that says nothing about it.
+    const live = [
+      env({
+        environmentId: "pinned",
+        hostId: "h1",
+        modelId: "anthropic/claude-haiku-4.5",
+      }),
+      env({ environmentId: "inherit", hostId: "h1" }),
+    ];
+    expect(
+      findMatchingLiveEnvironment(
+        "h1",
+        {
+          serverAttachmentId: null,
+          skillSelection: null,
+          computerEnvironmentId: null,
+        },
+        live
+      )?.environmentId
+    ).toBe("inherit");
+  });
+
+  it("returns nothing when the only same-stack row pins a model", () => {
+    const live = [
+      env({
+        environmentId: "pinned",
+        hostId: "h1",
+        modelId: "google/gemini-2.5-flash",
+      }),
+    ];
+    expect(
+      findMatchingLiveEnvironment(
+        "h1",
+        {
+          serverAttachmentId: null,
+          skillSelection: null,
+          computerEnvironmentId: null,
+        },
+        live
+      )
+    ).toBeUndefined();
+  });
 });
 
 describe("materializeSwarmTargets", () => {

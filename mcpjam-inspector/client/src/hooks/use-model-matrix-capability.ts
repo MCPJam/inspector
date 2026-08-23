@@ -57,20 +57,12 @@ export function useModelMatrixCapability(
           (caps as { modelMatrix?: unknown }).modelMatrix === true;
         if (!cancelled) setState(modelMatrix);
       })
-      .catch((err: unknown) => {
-        if (cancelled) return;
-        const data = (err as { data?: unknown } | null)?.data;
-        const message =
-          typeof data === "string"
-            ? data
-            : err instanceof Error
-              ? err.message
-              : String(err);
-        if (/could not find public function/i.test(message)) {
-          setState(false);
-          return;
-        }
-        setState(false);
+      .catch(() => {
+        // Every failure means the same thing to a caller: do not offer the
+        // models slot, and do not let the resolver send a `modelId`. Skew (the
+        // function is missing) and any other error were previously separate
+        // branches setting the identical value.
+        if (!cancelled) setState(false);
       });
     return () => {
       cancelled = true;
