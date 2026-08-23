@@ -3,21 +3,30 @@ import { Expand, Shrink } from "lucide-react";
 import { Button } from "./ui";
 import { cn } from "../cn";
 
-export const TRACE_TIMELINE_FILTERS = ["all", "llm", "tool", "error"] as const;
+export const TRACE_TIMELINE_FILTERS = [
+  "all",
+  "connection",
+  "discovery",
+  "llm",
+  "tool",
+  "error",
+] as const;
 export type TimelineFilter = (typeof TRACE_TIMELINE_FILTERS)[number];
 
 export function timelineFilterLabel(entry: TimelineFilter): string {
   switch (entry) {
     case "all":
       return "All";
+    case "connection":
+      return "Connect";
+    case "discovery":
+      return "Discovery";
     case "llm":
       return "LLM";
     case "tool":
       return "Tool";
     case "error":
       return "Error";
-    default:
-      return entry;
   }
 }
 

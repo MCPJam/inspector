@@ -1,6 +1,6 @@
 /**
- * `mcpjam personas` / `mcpjam swarms` / the authoring and insight halves of
- * `mcpjam journeys` — the rest of the Swarms product on the command line.
+ * `mcpjam cloud personas` / `mcpjam cloud swarms` / the authoring and insight halves of
+ * `mcpjam cloud journeys` — the rest of the Swarms product on the command line.
  *
  * `commands/journeys.ts` already covers the run loop (list, run, status,
  * sessions, cancel). What it could not do is AUTHOR anything: a journey needs a

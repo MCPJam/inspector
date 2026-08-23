@@ -113,6 +113,17 @@ function makeClient(fixture: Fixture = {}) {
     if (/\/environments$/.test(path)) {
       return Response.json({ items: ENVIRONMENTS });
     }
+    if (/\/environments\/[^/]+$/.test(path) && method === "GET") {
+      const id = path.split("/").pop()!;
+      const match = ENVIRONMENTS.find((item) => item.id === id);
+      if (!match) {
+        return Response.json(
+          { code: "NOT_FOUND", message: "Environment not found" },
+          { status: 404 },
+        );
+      }
+      return Response.json(match);
+    }
     if (/\/eval-runs$/.test(path) && method === "POST") {
       const body = JSON.parse(String(init?.body)) as {
         environmentId?: string;
