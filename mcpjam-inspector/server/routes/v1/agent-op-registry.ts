@@ -352,6 +352,34 @@ function describeEvalSuiteRun(input: Record<string, unknown>): string {
     : `Run eval suite ${suite}`;
 }
 
+/**
+ * The approval line for a single eval CASE run.
+ *
+ * Composing is available here exactly as it is on the suite run, and
+ * `saveTargets` makes it ATTACH the minted cell to the suite — a persistent
+ * edit to shared configuration. A card that said only "Run eval case X" asked
+ * for approval of the run and got approval for the edit too.
+ *
+ * The case run refuses more than one model choice, so the count is always one
+ * paid run and no multiplier is stated.
+ */
+function describeEvalCaseRun(input: Record<string, unknown>): string {
+  const testCase = named(input, "case") ?? "(unnamed)";
+  const compose = input.compose;
+  if (compose && typeof compose === "object") {
+    const composeRecord = compose as Record<string, unknown>;
+    const host =
+      named(composeRecord, "hostLabel") ?? named(composeRecord, "host");
+    const hostNote = host ? ` (${host})` : "";
+    const attach =
+      composeRecord.saveTargets === true
+        ? ", and the composed environment is attached to the suite"
+        : "";
+    return `Run eval case ${testCase} on a composed setup${hostNote} — one paid run${attach}`;
+  }
+  return `Run eval case ${testCase}`;
+}
+
 function describeComposeEvalSuiteRun(
   suite: string,
   compose: Record<string, unknown>,
@@ -520,7 +548,15 @@ async function freezeEvalRunTargets(
 }
 
 /**
- * Freeze a compose proposal: host name → id, scalar `model` into `models`.
+ * Freeze a compose proposal: host and computer names → ids, scalar `model`
+ * into `models`.
+ *
+ * `computer` is frozen for exactly the reason `host` is. It is documented as
+ * "name or ID" and resolved by name at execute time, so an image renamed or
+ * replaced between the proposal and the click repoints which sandbox the
+ * approved run boots — the pointer problem this function exists to close, one
+ * slot over. `serverGroup`, `skills.skillIds` and `pluginVersionIds` are
+ * ID-only by contract and so are not pointers to freeze.
  *
  * `includeClientDefault` and `saveTargets` stay as written — they are
  * closed choices, not pointers. Compose itself is kept: dropping it would
@@ -555,6 +591,24 @@ async function freezeComposeRunTarget(
     } catch {
       // Same posture as the suite lookup: a platform that cannot answer
       // must not cost the caller the proposal.
+    }
+  }
+
+  const computerSelector = named(compose, "computer");
+  if (computerSelector) {
+    try {
+      const page = await client.listImages({ projectId });
+      const match =
+        page.items.find((image) => image.id === computerSelector) ??
+        page.items.find(
+          (image) =>
+            image.name?.toLocaleLowerCase() ===
+            computerSelector.toLocaleLowerCase(),
+        );
+      if (match) nextCompose.computer = match.id;
+    } catch {
+      // Same posture as the host lookup: a platform that cannot answer must
+      // not cost the caller the proposal. Execute still resolves the selector.
     }
   }
 
@@ -1335,13 +1389,19 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: runEvalCaseOperation,
     tier: "gated",
     proposal: {
-      describe: (input) =>
-        `Run eval case ${named(input, "case") ?? "(unnamed)"}`,
+      describe: describeEvalCaseRun,
       buttonLabel: "Run it",
       kind: "start",
       confirmSeverity: "spend",
       resource: evalRunResource,
       target: evalSuiteTarget,
+      // Same freeze as the suite run, and for the same reasons. This operation
+      // takes the full `compose` input, so without it `compose.host` and
+      // `compose.computer` stay names — pointers that can be repointed between
+      // the proposal and the click — and `saveTargets` can additionally ATTACH
+      // the minted cell to the suite, a persistent edit the old one-line
+      // describe never mentioned.
+      normalizeProposalArgs: freezeEvalRunTargets,
     },
   },
   {

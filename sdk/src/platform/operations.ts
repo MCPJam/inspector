@@ -2064,14 +2064,50 @@ export function expandComposeModelChoices(stack: {
 }
 
 /**
+ * What a compose already wrote, as a sentence for an error that came after it.
+ *
+ * ONE formatter, because both places that report this are reporting the same
+ * two facts (which cells exist, whether the suite was edited) and a caller
+ * deciding "did this touch my suite?" must not get a different answer
+ * depending on which step failed.
+ */
+function composedCellsNote(
+  cells: ReadonlyArray<{ id: string; created: boolean; modelId?: string }>,
+  attached: boolean,
+): string {
+  const cellNote = cells
+    .map(
+      (cell) =>
+        `${cell.id}${cell.created ? " (created)" : " (reused)"}${
+          cell.modelId ? ` · ${cell.modelId}` : ""
+        }`,
+    )
+    .join(", ");
+  return `(The composed environment${cells.length === 1 ? "" : "s"} ${
+    cellNote
+  } ${
+    attached ? "were attached to the suite" : "were minted without attaching"
+  }; retrying is safe — it will reuse them.)`;
+}
+
+/**
  * Turn a composed stack into runnable target cells: ensure one ad-hoc
  * environment per model choice (host-major inherit-then-explicit).
  *
  * DEFAULT IS EPHEMERAL — mint and launch without mutating the suite. Attach
  * is opt-in (`saveTargets` / `--save-targets`) because permanently appending
- * on every compose experiment accumulates toward the 10-cap. When attach is
- * requested, the union `|existing ∪ newCells|` is pre-flighted so a product
- * that fits still cannot grow the suite past the cap mid-way.
+ * on every compose experiment accumulates toward the 10-cap.
+ *
+ * When attach is requested, the union `|existing ∪ newCells|` is checked
+ * before the first attach, so the suite is never grown past the cap and never
+ * left half-appended by it. Note what that check CANNOT be: exact before the
+ * cells exist. Ad-hoc ids are content-addressed by the backend, so whether a
+ * cell is new or resolves onto a row the suite already has is not knowable
+ * client-side — an `existing + choices` estimate would reject re-composing a
+ * stack that is already attached, which fits fine. Minting first and checking
+ * the real union keeps the answer exact; the cost is ad-hoc rows that no
+ * suite references, which is the standing posture for them anyway (content-
+ * addressed, hidden from lists, reused on the next identical compose).
  */
 async function composeRunEnvironment(
   client: PlatformApiClient,
@@ -2121,19 +2157,34 @@ async function composeRunEnvironment(
     const union = new Set([...existing, ...cells.map((cell) => cell.id)]);
     if (union.size > 10) {
       throw operationInputError(
-        `Attaching these composed cells would grow the suite to ${union.size} environments (limit 10). Detach some first, or omit --save-targets / saveTargets to launch ephemerally.`,
+        `Attaching these composed cells would grow the suite to ${union.size} environments (limit 10). Detach some first, or omit --save-targets / saveTargets to launch ephemerally. ${composedCellsNote(cells, false)}`,
       );
     }
     for (const cell of cells) {
-      const attachment = await client.attachEvalSuiteEnvironment(
-        {
-          projectId: project.id,
-          suiteId: suite.id,
-          environmentId: cell.id,
-        },
-        { signal },
-      );
-      attached = attached || attachment.attached === true;
+      try {
+        const attachment = await client.attachEvalSuiteEnvironment(
+          {
+            projectId: project.id,
+            suiteId: suite.id,
+            environmentId: cell.id,
+          },
+          { signal },
+        );
+        attached = attached || attachment.attached === true;
+      } catch (error) {
+        // The suite is now PARTIALLY appended, and this loop runs before the
+        // launch — so the annotator that reports compose writes does not exist
+        // yet (it is handed a finished `ComposedRunEnvironment`). Without this
+        // the caller is told the attach failed and never that some of it
+        // landed. Annotated in place so an abort stays an abort.
+        if (error instanceof Error) {
+          error.message = `${error.message} ${composedCellsNote(
+            cells,
+            attached,
+          )}`;
+        }
+        throw error;
+      }
     }
   }
 
@@ -2159,25 +2210,32 @@ async function composeRunEnvironment(
 }
 
 /**
- * Probe whether this deployment accepts `ephemeralEnvironment` on launch.
+ * Probe what this deployment can do with a composed stack, in ONE read.
  *
- * A missing capabilities route (older inspector) or a capabilities payload
- * that omits the flag both mean "do not send the arg" — an unknown field is
- * a hard 400 on a strict schema, not a silently ignored one.
+ * A missing capabilities route (older inspector) or a payload that omits a
+ * flag both mean "do not send it" — an unknown field is a hard 400 on a strict
+ * schema, not a silently ignored one.
+ *
+ * `modelOverrides` rides along rather than getting a second round-trip: both
+ * questions are answered by the same route, and the compose path has to ask
+ * both whenever a model is named.
  */
-async function probeEphemeralEnvironmentLaunch(
+async function probeComposeCapabilities(
   client: PlatformApiClient,
   projectId: string,
   signal: AbortSignal | undefined,
-): Promise<boolean> {
+): Promise<{ ephemeralLaunch: boolean; modelOverrides: boolean }> {
   try {
     const capabilities = await client.getEnvironmentCapabilities(
       { projectId },
       { signal },
     );
-    return capabilities.ephemeralEnvironmentLaunch === true;
+    return {
+      ephemeralLaunch: capabilities.ephemeralEnvironmentLaunch === true,
+      modelOverrides: capabilities.modelOverrides === true,
+    };
   } catch {
-    return false;
+    return { ephemeralLaunch: false, modelOverrides: false };
   }
 }
 
@@ -2194,8 +2252,22 @@ function composeLaunchPolicy(input: {
   choiceCount: number;
   saveTargets: boolean;
   ephemeralOk: boolean;
+  /** Explicit model ids were named (an inherit-only compose names none). */
+  explicitModels: boolean;
+  modelOverridesOk: boolean;
   refreshSnapshot?: boolean;
 }): { attach: boolean; ephemeralLaunch: boolean } {
+  if (input.explicitModels && !input.modelOverridesOk) {
+    // The same preflight `environments create --model` performs, on the path
+    // that actually grew a model axis. Without it a skew deployment answers a
+    // `--compose-model` with the raw validator error from `ensureAdhocEnvironment`
+    // — the opaque failure that guard exists to replace — and the CLI, remote
+    // MCP and in-app agent all take THIS path, so putting it here is what makes
+    // the three agree with the web composer, which already refuses.
+    throw operationInputError(
+      "This MCPJam deployment does not support environment model overrides. Upgrade the platform, or omit --compose-model / compose.models.",
+    );
+  }
   if (input.choiceCount > 1 && input.refreshSnapshot) {
     throw operationInputError(
       "refreshSnapshot cannot be used with a multi-target launch — it PERSISTS one host-config snapshot on the suite, and several runs racing to write it would leave the suite pinned to whichever finished last. Run one target at a time to refresh it.",
@@ -2259,21 +2331,10 @@ async function createEvalRunOrReportCompose<T>(
     return await launch();
   } catch (error) {
     const cells = composed.report.environments ?? [composed.report.environment];
-    const cellNote = cells
-      .map(
-        (cell) =>
-          `${cell.id}${cell.created ? " (created)" : " (reused)"}${
-            cell.modelId ? ` · ${cell.modelId}` : ""
-          }`,
-      )
-      .join(", ");
-    const note = `(The composed environment${cells.length === 1 ? "" : "s"} ${
-      cellNote
-    } ${
-      composed.report.attachment.attached
-        ? "were attached to the suite"
-        : "were minted without attaching"
-    }; retrying is safe — it will reuse them.)`;
+    const note = composedCellsNote(
+      cells,
+      composed.report.attachment.attached === true,
+    );
     if (error instanceof PlatformApiError) {
       throw new PlatformApiError(`${error.message} ${note}`, error.code, {
         status: error.status,
@@ -2761,14 +2822,19 @@ export const runEvalSuiteOperation: PlatformOperation<
     let composeAttach = false;
     let ephemeralLaunch = false;
     if (input.compose) {
+      const capabilities = await probeComposeCapabilities(
+        client,
+        project.id,
+        signal,
+      );
       const policy = composeLaunchPolicy({
         choiceCount: composeChoices.length,
         saveTargets: input.compose.saveTargets === true,
-        ephemeralOk: await probeEphemeralEnvironmentLaunch(
-          client,
-          project.id,
-          signal,
+        ephemeralOk: capabilities.ephemeralLaunch,
+        explicitModels: composeChoices.some(
+          (choice) => choice.modelId !== undefined,
         ),
+        modelOverridesOk: capabilities.modelOverrides,
         ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
       });
       composeAttach = policy.attach;
@@ -3141,14 +3207,19 @@ export const runEvalCaseOperation: PlatformOperation<
     let composeAttach = false;
     let ephemeralLaunch = false;
     if (input.compose) {
+      const capabilities = await probeComposeCapabilities(
+        client,
+        project.id,
+        signal,
+      );
       const policy = composeLaunchPolicy({
         choiceCount: composeChoices.length,
         saveTargets: input.compose.saveTargets === true,
-        ephemeralOk: await probeEphemeralEnvironmentLaunch(
-          client,
-          project.id,
-          signal,
+        ephemeralOk: capabilities.ephemeralLaunch,
+        explicitModels: composeChoices.some(
+          (choice) => choice.modelId !== undefined,
         ),
+        modelOverridesOk: capabilities.modelOverrides,
       });
       composeAttach = policy.attach;
       ephemeralLaunch = policy.ephemeralLaunch;
@@ -3894,14 +3965,52 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
         { projectId: project.id },
         { signal },
       );
-      const resolved = input.environments.map((selector) =>
-        resolveByIdOrName(
-          page.items,
-          selector,
-          "Project environment",
-          `project "${project.name}"`,
-        ),
-      );
+      const resolved: PlatformEnvironment[] = [];
+      for (const selector of input.environments) {
+        try {
+          resolved.push(
+            resolveByIdOrName(
+              page.items,
+              selector,
+              "Project environment",
+              `project "${project.name}"`,
+            ),
+          );
+          continue;
+        } catch (error) {
+          // Ad-hoc rows are list-hidden, so a composed cell is unresolvable
+          // here — and because this is a REPLACE, that also made it impossible
+          // to add one named environment alongside cells a compose attached
+          // without silently detaching them. `GET /environments/:id` serves
+          // them, so an id-shaped selector the listing did not know gets one
+          // direct read before we report it missing.
+          const trimmed = selector.trim();
+          if (!looksLikeEnvironmentId(trimmed)) throw error;
+          if (signal?.aborted || isAbortError(error)) throw error;
+          let byId: PlatformEnvironment;
+          try {
+            byId = await client.getEnvironment(
+              { projectId: project.id, environmentId: trimmed },
+              { signal },
+            );
+          } catch (lookupError) {
+            if (signal?.aborted || isAbortError(lookupError)) {
+              throw lookupError;
+            }
+            // Report the ENUMERATED not-found from the listing, not this
+            // lookup's bare 404 — it is the message that tells the caller what
+            // they could have picked.
+            throw error;
+          }
+          resolved.push({
+            ...byId,
+            name:
+              typeof byId.name === "string" && byId.name.trim().length > 0
+                ? byId.name
+                : byId.id,
+          });
+        }
+      }
       // Duplicates are detected AFTER resolution, because two DIFFERENT
       // selectors (an id and its name) can name the same environment — a
       // pre-resolution string comparison would wave that through and let the

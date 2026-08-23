@@ -77,6 +77,8 @@ interface Fixture {
   alreadyNamed?: boolean;
   /** Omit / lie about ephemeralEnvironmentLaunch (old backend). */
   ephemeralLaunch?: boolean;
+  /** Deployment that predates environment model overrides. */
+  modelOverrides?: boolean;
   /** Suite already has these attached environment ids (union-cap tests). */
   attachedEnvironmentIds?: string[];
 }
@@ -93,8 +95,8 @@ function makeClient(fixture: Fixture = {}) {
     }
     if (/\/environments\/capabilities$/.test(path)) {
       return Response.json({
-        modelOverrides: true,
-        modelMatrix: true,
+        modelOverrides: fixture.modelOverrides !== false,
+        modelMatrix: fixture.modelOverrides !== false,
         ephemeralEnvironmentLaunch: fixture.ephemeralLaunch !== false,
       });
     }
@@ -445,6 +447,42 @@ describe("run_eval_suite compose", () => {
       "ephemeralEnvironmentLaunch",
     );
     expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+
+  it("refuses a named model when the backend lacks model overrides", async () => {
+    // `environments create --model` has always preflighted this. The compose
+    // path — the one that grew a model axis — did not, so a skew deployment
+    // answered --compose-model with the raw validator error from
+    // ensure-adhoc. Refused before any write.
+    const { client, fetchMock } = makeClient({ modelOverrides: false });
+    const error = await runEvalSuiteOperation
+      .execute(
+        {
+          suite: "Smoke",
+          compose: {
+            host: "Claude Code",
+            models: ["anthropic/claude-haiku-4.5"],
+          },
+        },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+    expect((error as PlatformApiError).message).toContain(
+      "does not support environment model overrides",
+    );
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeUndefined();
+  });
+
+  it("still composes an inherit-only stack on a backend without model overrides", async () => {
+    // Nothing sends a modelId here, so the missing capability is irrelevant —
+    // gating on "compose was used" rather than "a model was named" would
+    // break every composed run against an older deployment.
+    const { client, fetchMock } = makeClient({ modelOverrides: false });
+    await runEvalSuiteOperation.execute(
+      { suite: "Smoke", compose: { host: "Claude Code" } },
+      { client },
+    );
+    expect(bodyOf(fetchMock, /ensure-adhoc$/)).toBeDefined();
   });
 
   it("falls back to attach for a single cell on an old backend", async () => {
