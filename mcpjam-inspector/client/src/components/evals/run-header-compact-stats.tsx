@@ -8,6 +8,7 @@ export type RunHeaderCompactStatsOverride = {
   total: number;
   /** Stored like summary: decimal 0–1 or 0–100. */
   passRate: number;
+  policyBlockedIterations?: number;
 };
 
 function normalizePassRatePercent(passRate: number): number {
