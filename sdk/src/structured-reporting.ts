@@ -366,8 +366,42 @@ function sanitizeToken(value: string): string {
   return value.replace(/[^a-zA-Z0-9_.-]/g, "-");
 }
 
+/**
+ * Make a string legal to put inside XML 1.0 at all.
+ *
+ * Entity-escaping is not enough. XML 1.0 forbids most control characters
+ * OUTRIGHT — they cannot even be written as character references — and an
+ * unpaired surrogate is equally fatal. One of either in a `<failure message=…>`
+ * produces a file no JUnit parser will read, and the failure then surfaces
+ * inside the CI runner's parser with nothing pointing back at the report that
+ * caused it.
+ *
+ * This is reachable input, not a theoretical one: an eval case's failure text
+ * is an iteration's `error`, which is model- and server-authored.
+ *
+ * Rendered as a visible `\uXXXX` escape rather than dropped, because the byte
+ * is usually the interesting half of the message.
+ */
+function toXmlSafeText(value: string): string {
+  return (
+    value
+      // C0 controls except tab (\u0009), LF (\u000A) and CR (\u000D), plus DEL.
+      .replace(
+        /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/gu,
+        escapeAsCodePoint
+      )
+      // With the `u` flag a matched surrogate is necessarily an UNPAIRED one:
+      // a valid pair is one code point above the BMP and never enters this class.
+      .replace(/[\uD800-\uDFFF]/gu, escapeAsCodePoint)
+  );
+}
+
+function escapeAsCodePoint(char: string): string {
+  return `\\u${(char.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`;
+}
+
 function escapeXml(value: string): string {
-  return value
+  return toXmlSafeText(value)
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")

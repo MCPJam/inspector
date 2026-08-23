@@ -956,7 +956,9 @@ List the eval suites saved in a project.
 
 Start an eval run of an existing suite, or upload a versioned suite file and run it. Provide **either** `--suite` **or** `--file`, not both.
 
-By default the command prints a launch receipt and returns immediately. `--wait` polls every launched run to a terminal state. This does not introduce verdict-based exit codes: a completed failing run still uses the existing exit behavior, while a partial fan-out remains exit 1. An invalid suite file on this command exits **2** — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
+By default the command prints a launch receipt and returns immediately. `--wait` polls every launched run to a terminal state.
+
+`--wait` does **not** introduce verdict-based exit codes. A run that completes having failed its cases still **exits 0** — read `passed` in the report, or use [`cloud eval gate`](#cloud-eval-gate), which is the command that turns a verdict into an exit code. On this command `1` still means a launch or completion problem (a partial fan-out, a wait that timed out, a report that could not be assembled), never "the evals failed". An invalid suite file exits **2** — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -1177,6 +1179,23 @@ run before evaluating it.
 
 Report files are flushed before gate exit codes are set, including failed and
 incomplete gate outcomes.
+
+**Exit codes.** `eval gate` is the command that fails a build, so it is the one
+that maps a verdict onto an exit code. It keeps four:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Every requested gate passed |
+| `1` | An eval **verdict** failed. Reserved for exactly that |
+| `2` | Usage error — an unknown scorer, or a threshold out of range |
+| `3` | Incomplete: the run was cancelled, the wait timed out, the network failed, or the run is non-gateable (its score evidence did not verify) |
+
+No infrastructure condition ever maps to `1`. A job that fails a release because
+a network call flaked, and reports it as a regression, teaches people to ignore
+the gate — so retry on `3`, and treat `1` as a real finding about the server.
+
+These four are deliberately **not** the same set `eval run --wait` uses; see
+that command above.
 
 ### `cloud eval trace`
 

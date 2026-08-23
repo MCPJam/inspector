@@ -135,6 +135,49 @@ describe("renderStructuredRunJUnitXml", () => {
     expect(xml).toContain('name="validation-passed"');
   });
 
+  it("escapes the characters XML 1.0 forbids outright", () => {
+    // A failing eval case carries an iteration's `error`, which is model- and
+    // server-authored. XML 1.0 rejects most control characters and any
+    // unpaired surrogate OUTRIGHT — they cannot even be written as character
+    // references — so one of them here produces a report no JUnit parser will
+    // read, and the CI job then fails inside the parser with nothing pointing
+    // back at us.
+    const xml = renderStructuredRunJUnitXml({
+      schemaVersion: 1,
+      kind: "eval-run",
+      passed: false,
+      summary: summarizeStructuredCases([]),
+      cases: [
+        {
+          id: "run-1:case-a",
+          title: "Case A",
+          category: "eval",
+          passed: false,
+          error: "tool returned \u0000 then gave up\u001b[0m",
+          details: { tail: "truncated\ud800" },
+        },
+      ],
+      durationMs: 0,
+      metadata: {},
+    });
+
+    // The invariant, asserted directly: nothing illegal survives anywhere in
+    // the document. (`@xmldom/xmldom` is too lenient to serve as the oracle —
+    // it parses a NUL without complaint, where the parsers CI actually runs
+    // do not.)
+    expect(xml).not.toMatch(
+      /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]|[\uD800-\uDFFF]/u
+    );
+    // Escaped, not dropped: the byte is usually the interesting half.
+    expect(xml).toContain("\\u0000");
+    expect(xml).toContain("\\u001b");
+    expect(xml).toContain("\\ud800");
+
+    const parsed = parseJUnitXmlArtifact(xml);
+    expect(parsed).toHaveLength(1);
+    expect(parsed[0].passed).toBe(false);
+  });
+
   it("emits a synthetic failure when an empty run failed overall", () => {
     const xml = renderStructuredRunJUnitXml({
       schemaVersion: 1,
