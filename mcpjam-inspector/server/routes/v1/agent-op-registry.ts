@@ -321,10 +321,11 @@ function evalRunResource(
 function describeEvalSuiteRun(input: Record<string, unknown>): string {
   const suite = named(input, "suite") ?? "(unnamed)";
   // COMPOSE fans out to N paid runs (client × model choices) and, when
-  // `saveTargets` is set, also edits the suite. Default is ephemeral: mint
-  // and launch without attaching. The spend line must state the multiplier
-  // so a `confirmSeverity: "spend"` proposal does not understate N×, and
-  // must mention an attach when the click would persist one.
+  // `saveTargets` is set, also edits the suite. Default is ephemeral on a
+  // capable backend; a single cell still attaches on an older one. The
+  // spend line must state the multiplier so a `confirmSeverity: "spend"`
+  // proposal does not understate N×, and must not promise "without
+  // attaching" when the click can still persist.
   const compose = input.compose;
   if (compose && typeof compose === "object") {
     return describeComposeEvalSuiteRun(
@@ -356,28 +357,35 @@ function describeComposeEvalSuiteRun(
   compose: Record<string, unknown>,
 ): string {
   const host = named(compose, "host");
+  const hostNote = host ? ` (${host})` : "";
   const choices = expandComposeModelChoices({
     model: named(compose, "model"),
     models: readStringList(compose, "models"),
     includeClientDefault: compose.includeClientDefault === true,
   });
   const n = choices.length;
+  // `saveTargets` is the only attach the caller opted into. A single cell
+  // against a backend that cannot launch ephemerally still ATTACHES (the
+  // SDK compat fallback in `composeLaunchPolicy`). This copy must not
+  // promise "without attaching" on that path — describe is sync and cannot
+  // probe capabilities, so inherit-only hedges. Multi-cell refuses rather
+  // than attaching, so that sentence can stay ephemeral.
   const attach =
     compose.saveTargets === true
       ? n <= 1
         ? "and the composed environment is attached to the suite"
         : "and the composed environments are attached to the suite"
       : n <= 1
-        ? "without attaching it to the suite"
+        ? "ephemeral when supported; otherwise attached"
         : "without attaching them to the suite";
   if (n <= 1) {
     return (
-      `Run eval suite ${suite} on a composed setup${host ? ` (${host})` : ""}` +
+      `Run eval suite ${suite} on a composed setup${hostNote}` +
       ` — one paid run, ${attach}`
     );
   }
   return (
-    `Start ${n} paid eval runs of suite ${suite}: 1 client × ${n} model choices = ${n} runs, ${attach}`
+    `Start ${n} paid eval runs of suite ${suite}${hostNote}: 1 client × ${n} model choices = ${n} runs, ${attach}`
   );
 }
 
