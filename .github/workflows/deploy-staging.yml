@@ -127,4 +127,4 @@ jobs:
 
   smoke:
     needs: deploy
-    uses: ./.github/workflows/post-deploy-staging.yml
+    uses: ./.github/workflows/post-deploy-smoke.yml

@@ -1,18 +1,47 @@
-name: Post-Deploy Staging Smoke
+name: Post-Deploy Smoke
+
+# Shared by deploy-staging.yml and deploy-webapp.yml. Every input defaults to
+# staging's previous behavior, so the staging caller stays a bare `uses:` and
+# only the production caller has to say what it wants.
+#
+# Boolean inputs are compared against BOTH `true` and `'true'`: a
+# `workflow_call` caller passes a real boolean, while a manual dispatch of the
+# same input can arrive as a string. `if: inputs.flag` alone is the classic
+# footgun here — the string 'false' is truthy.
 
 on:
   workflow_call:
     inputs:
       base_url:
-        description: "Optional staging base URL override"
+        description: "Base URL to smoke (defaults to staging)"
         required: false
         type: string
+      label:
+        description: "Environment name used in the run summary and artifacts"
+        required: false
+        default: staging
+        type: string
+      run_e2e:
+        description: "Run the Playwright suite against the target"
+        required: false
+        default: true
+        type: boolean
   workflow_dispatch:
     inputs:
       base_url:
-        description: "Optional staging base URL override"
+        description: "Base URL to smoke (defaults to staging)"
         required: false
         type: string
+      label:
+        description: "Environment name used in the run summary and artifacts"
+        required: false
+        default: staging
+        type: string
+      run_e2e:
+        description: "Run the Playwright suite against the target"
+        required: false
+        default: true
+        type: boolean
 
 env:
   NODE_VERSION: "24.14.0"
@@ -23,7 +52,7 @@ jobs:
     outputs:
       base_url: ${{ steps.target.outputs.base_url }}
     steps:
-      - name: Resolve staging URL
+      - name: Resolve target URL
         id: target
         shell: bash
         run: |
@@ -65,14 +94,21 @@ jobs:
       - name: Summarize smoke result
         env:
           BASE_URL: ${{ steps.target.outputs.base_url }}
+          LABEL: ${{ inputs.label || 'staging' }}
         run: |
-          echo "## ✅ Staging HTTP smoke passed" >> "$GITHUB_STEP_SUMMARY"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Target: \`$BASE_URL\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Checked: \`/health\`, \`/api/mcp/health\`, \`/api/apps/health\`, unauthenticated \`/api/web/tools/list\`" >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "## ✅ ${LABEL} HTTP smoke passed"
+            echo ""
+            echo "- Target: \`$BASE_URL\`"
+            echo "- Checked: \`/health\`, \`/api/mcp/health\`, \`/api/apps/health\`, unauthenticated \`/api/web/tools/list\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   e2e:
     needs: smoke
+    # Off by default for production: the suite drives a real browser through
+    # real sign-in and session surfaces, so pointing it at prod writes prod
+    # data. Callers that want it there must opt in deliberately.
+    if: ${{ inputs.run_e2e == true || inputs.run_e2e == 'true' }}
     runs-on: ubuntu-latest
     # Non-gating during the initial soak. deploy-staging.yml calls this workflow
     # and release.yml polls deploy-staging.yml success as the release gate, so a
@@ -100,7 +136,7 @@ jobs:
       - name: Install workspace dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Run Playwright smoke against staging
+      - name: Run Playwright smoke against the deployed target
         # PLAYWRIGHT_BASE_URL makes the config skip the local webServer and drive
         # the deployed URL, so no inspector build is needed here. Sourced from the
         # smoke job's output because step outputs are job-local.
@@ -112,7 +148,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-staging
+          name: playwright-report-${{ inputs.label || 'staging' }}
           path: |
             mcpjam-inspector/playwright-report/
             mcpjam-inspector/test-results/
