@@ -314,6 +314,32 @@ describe("agent op registry", () => {
     ).toContain("attached to the suite");
   });
 
+  it("says when a case run composes, and when composing edits the suite", () => {
+    // "Run eval case checkout" approved a compose (which mints an
+    // environment) and, with saveTargets, a persistent suite attachment —
+    // neither of which the line mentioned.
+    const describeCase = proposalMetaFor(runEvalCaseOperation.name).description;
+    expect(describeCase({ suite: "smoke", case: "checkout" })).toBe(
+      "Run eval case checkout"
+    );
+    const composed = describeCase({
+      suite: "smoke",
+      case: "checkout",
+      compose: { host: "Claude Code" },
+    });
+    expect(composed).toContain("composed setup");
+    expect(composed).toContain("Claude Code");
+    expect(composed).toContain("one paid run");
+    expect(composed).not.toContain("attached to the suite");
+    expect(
+      describeCase({
+        suite: "smoke",
+        case: "checkout",
+        compose: { host: "Claude Code", saveTargets: true },
+      })
+    ).toContain("attached to the suite");
+  });
+
   it("marks both eval-run proposals as SPEND", () => {
     // Every eval run consumes credits, and a fan-out consumes them N times —
     // the host's default confirmation copy does not say so.
@@ -516,6 +542,81 @@ describe("agent op registry", () => {
         hostLabel: "Claude Code",
         models: ["google/gemini-2.5-flash"],
         includeClientDefault: true,
+        saveTargets: true,
+      },
+    });
+  });
+
+  it("freezes compose.computer, which is a name-or-id pointer like the host", async () => {
+    // `computer` is documented as "name or ID" and resolved by name at execute
+    // time, so an image renamed or replaced between the proposal and the click
+    // repoints which sandbox the approved run boots.
+    const client = {
+      listHosts: async () => ({
+        items: [{ id: "host_a", name: "Claude Code" }],
+      }),
+      listImages: async () => ({
+        items: [
+          { id: "img_a", name: "playwright-base" },
+          { id: "img_b", name: "node-22" },
+        ],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        {
+          suite: "smoke",
+          compose: { host: "Claude Code", computer: "playwright-base" },
+        },
+        { projectId: "p1", client }
+      )
+    ).toEqual({
+      suite: "smoke",
+      compose: {
+        host: "host_a",
+        hostLabel: "Claude Code",
+        computer: "img_a",
+      },
+    });
+  });
+
+  it("freezes a case run's compose the same way the suite run's is frozen", async () => {
+    // run_eval_case takes the full compose input — including `saveTargets`,
+    // which ATTACHES the minted cell to the suite. Without normalization its
+    // proposal stored repointable names and the approval covered a persistent
+    // edit it never mentioned.
+    const client = {
+      listHosts: async () => ({
+        items: [{ id: "host_a", name: "Claude Code" }],
+      }),
+      listImages: async () => ({ items: [] }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalCaseOperation.name).normalizeArgs(
+        {
+          suite: "smoke",
+          case: "checkout",
+          compose: {
+            host: "Claude Code",
+            model: "google/gemini-2.5-flash",
+            saveTargets: true,
+          },
+        },
+        { projectId: "p1", client }
+      )
+    ).toEqual({
+      suite: "smoke",
+      case: "checkout",
+      compose: {
+        host: "host_a",
+        hostLabel: "Claude Code",
+        models: ["google/gemini-2.5-flash"],
         saveTargets: true,
       },
     });
