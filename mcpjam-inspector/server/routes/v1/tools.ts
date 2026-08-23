@@ -53,7 +53,12 @@ tools.post("/projects/:projectId/servers/:serverId/tools/call", async (c) =>
       // Additive sibling on the MCP CallToolResult. `v1Resource` returns the
       // object verbatim, so agents can read latency without a second hop.
       if (result && typeof result === "object" && !Array.isArray(result)) {
-        return { ...(result as Record<string, unknown>), durationMs };
+        const record = result as Record<string, unknown>;
+        // Never shadow the server's own field. `CallToolResult` allows extra
+        // keys, so a server may already report a `durationMs` of its own —
+        // overwriting it would destroy upstream data to report our copy of
+        // roughly the same number.
+        return "durationMs" in record ? record : { ...record, durationMs };
       }
       return result;
     },

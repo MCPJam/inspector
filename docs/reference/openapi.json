@@ -11555,7 +11555,7 @@
           "durationMs": {
             "type": "integer",
             "minimum": 0,
-            "description": "Wall-clock milliseconds spent in `executeTool` on this request. Additive MCPJam field; not part of the MCP `CallToolResult` spec."
+            "description": "Wall-clock milliseconds spent in `executeTool` on this request. Additive MCPJam field; not part of the MCP `CallToolResult` spec. A server that already returns its own top-level `durationMs` keeps it — MCPJam never overwrites the field — so this value is MCPJam's measurement only when the server did not report one."
           }
         },
         "additionalProperties": true

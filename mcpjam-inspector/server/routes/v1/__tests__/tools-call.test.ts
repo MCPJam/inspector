@@ -111,6 +111,25 @@ describe("POST /v1/projects/:projectId/servers/:serverId/tools/call", () => {
     expect(await res.json()).toEqual(result);
   });
 
+  it("never overwrites a durationMs the server reported itself", async () => {
+    stubConnection(
+      vi.fn().mockResolvedValue({
+        content: [{ type: "text", text: "ok" }],
+        durationMs: 7,
+      })
+    );
+
+    const res = await postToolsCall();
+
+    expect(res.status).toBe(200);
+    // `CallToolResult` allows extra keys. Reporting our own number by
+    // destroying the server's is worse than not reporting one.
+    expect(await res.json()).toEqual({
+      content: [{ type: "text", text: "ok" }],
+      durationMs: 7,
+    });
+  });
+
   it.each([
     ["taskOptions", { taskOptions: { ttl: 1_000 } }],
     ["allowTaskResult", { allowTaskResult: true }],
