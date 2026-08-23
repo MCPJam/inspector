@@ -42,10 +42,22 @@ export type ExecutePersistedConformanceArgs = {
   githubCheckTriggerId?: string;
   actorLabel?: string;
   /**
+   * Route-level idempotency. Mapped by the caller onto a namespaced
+   * `externalRunId` (`api:<projectId>:<serverId>:<key>`). Absent ⇒ every start inserts.
+   */
+  externalRunId?: string;
+  /**
    * Called with the run id THE MOMENT IT EXISTS, before suites execute. That
    * call is what posts the `conformance` attempt and binds the run.
+   *
+   * `meta` is how a start-and-detach surface learns whether this was a
+   * replay: the mutation returns `reused` only here, and the receipt must
+   * report the run's real status rather than a decorative `queued`.
    */
-  onRunStarted?: (runId: string) => Promise<void>;
+  onRunStarted?: (
+    runId: string,
+    meta?: { reused?: boolean; status?: string },
+  ) => Promise<void>;
 };
 
 export type ExecutePersistedConformanceResult = {
@@ -129,6 +141,7 @@ export async function executePersistedConformanceRun(
       engineVersion: args.engineVersion,
       actorLabel: args.actorLabel,
       githubCheckTriggerId: args.githubCheckTriggerId,
+      ...(args.externalRunId ? { externalRunId: args.externalRunId } : {}),
     } as never
   )) as {
     runId: string;
@@ -137,9 +150,16 @@ export async function executePersistedConformanceRun(
     outcome?: string | null;
   };
 
-  await args.onRunStarted?.(started.runId);
+  await args.onRunStarted?.(started.runId, {
+    reused: started.reused === true,
+    status: started.status,
+  });
 
-  if (started.reused && started.status && started.status !== "queued") {
+  // A reused row already has an owner — the request that inserted it.
+  // Re-entering `runConformance` for a still-`queued` replay would dial the
+  // target twice and write conflicting reports for one run id. Recovery for a
+  // dead owner is heartbeat + sweep, never a second execute.
+  if (started.reused) {
     return {
       runId: started.runId,
       reused: true,
