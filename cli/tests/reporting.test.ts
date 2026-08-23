@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -12,6 +12,7 @@ import {
   parseReporterFormat,
   writeEvalDecisionSummary,
   writeJsonArtifact,
+  writeReporterArtifact,
   writeReporterResult,
 } from "../src/lib/reporting.js";
 
@@ -240,4 +241,36 @@ test("writeJsonArtifact keeps planted credentials out of an exported run", async
   const raw = await readFile(writtenPath, "utf8");
 
   assert.equal(raw.includes(canary), false);
+});
+
+test("writeReporterArtifact writes redacted junit atomically", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-reporting-"));
+  const artifactPath = path.join(directory, "report.xml");
+  const report = makeReport();
+  report.passed = false;
+  report.summary = {
+    total: 1,
+    passed: 0,
+    failed: 1,
+    byCategory: {
+      protocol: { total: 1, passed: 0, failed: 1 },
+    },
+  };
+  report.cases[0] = {
+    ...report.cases[0],
+    passed: false,
+    error: "Authorization: Bearer top-secret",
+  };
+
+  const writtenPath = await writeReporterArtifact(
+    artifactPath,
+    "junit-xml",
+    report
+  );
+  const raw = await readFile(writtenPath, "utf8");
+
+  assert.match(raw, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+  assert.match(raw, /<failure message="Authorization: \[REDACTED\]"/);
+  assert.equal(raw.includes("top-secret"), false);
+  assert.deepEqual(await readdir(directory), ["report.xml"]);
 });

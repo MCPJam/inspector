@@ -1,4 +1,3 @@
-import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   formatEvalDecisionSummary,
@@ -6,6 +5,7 @@ import {
   renderStructuredRunJUnitXml,
   type StructuredRunReport,
 } from "@mcpjam/sdk";
+import { writeFileAtomic } from "./atomic-write.js";
 import { operationalError, usageError, writeResult } from "./output.js";
 import { redactForTelemetry } from "./redaction.js";
 
@@ -65,11 +65,10 @@ export async function writeJsonArtifact(
   const resolvedPath = path.resolve(process.cwd(), outputPath);
 
   try {
-    await mkdir(path.dirname(resolvedPath), { recursive: true });
-    await writeFile(
+    return await writeFileAtomic(
       resolvedPath,
       `${JSON.stringify(redactForTelemetry(payload), null, 2)}\n`,
-      "utf8",
+      { createParents: true }
     );
   } catch (error) {
     throw operationalError(
@@ -79,6 +78,27 @@ export async function writeJsonArtifact(
       },
     );
   }
+}
 
-  return resolvedPath;
+export async function writeReporterArtifact(
+  outputPath: string,
+  reporter: ReporterFormat,
+  report: StructuredRunReport
+): Promise<string> {
+  const resolvedPath = path.resolve(process.cwd(), outputPath);
+  const body =
+    reporter === "junit-xml"
+      ? renderStructuredRunJUnitXml(report)
+      : `${JSON.stringify(renderStructuredRunJson(report), null, 2)}\n`;
+
+  try {
+    return await writeFileAtomic(resolvedPath, body, { createParents: true });
+  } catch (error) {
+    throw operationalError(
+      `Failed to write ${reporter} report to "${resolvedPath}".`,
+      {
+        source: error instanceof Error ? error.message : String(error),
+      }
+    );
+  }
 }
