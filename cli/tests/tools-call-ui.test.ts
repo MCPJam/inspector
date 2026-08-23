@@ -505,7 +505,14 @@ test("tools call without --ui preserves raw output and does not contact Inspecto
     ]);
 
     assert.equal(result.exitCode, 0, result.stderr);
-    assert.deepEqual(JSON.parse(result.stdout), toolResult);
+    const payload = JSON.parse(result.stdout) as {
+      content?: unknown;
+      _durationMs?: unknown;
+    };
+    const { _durationMs, ...raw } = payload;
+    assert.deepEqual(raw, toolResult);
+    assert.equal(typeof _durationMs, "number");
+    assert.ok(Number.isFinite(_durationMs) && (_durationMs as number) >= 0);
     assert.equal(
       server.requests.some((entry) => entry.url?.startsWith("/api/")),
       false,
