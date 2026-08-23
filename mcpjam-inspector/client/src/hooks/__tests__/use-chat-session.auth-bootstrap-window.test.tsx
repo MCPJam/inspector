@@ -203,4 +203,24 @@ describe("useChatSession — request-time chat Authorization", () => {
       expect(transport.headers?.Authorization).toBeUndefined();
     }
   });
+
+  it("propagates bearer lookup failures without restoring cached Authorization", async () => {
+    const error = new Error("bearer lookup failed");
+    mockState.authFetch.mockRejectedValueOnce(error);
+
+    renderHook(() =>
+      useChatSession({ selectedServers: ["server-1"] } as never)
+    );
+    await waitFor(() =>
+      expect(mockState.transportOptions.length).toBeGreaterThan(0)
+    );
+
+    const transport = mockState.transportOptions.at(-1)!;
+    await expect(
+      transport.fetch?.("/api/mcp/chat-v2", { method: "POST" })
+    ).rejects.toBe(error);
+    for (const option of mockState.transportOptions) {
+      expect(option.headers?.Authorization).toBeUndefined();
+    }
+  });
 });

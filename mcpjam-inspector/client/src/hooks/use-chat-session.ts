@@ -3732,10 +3732,7 @@ export function useChatSession(
         // name. Only on the web-engine path, and only when the surface provided
         // a resolver (Playground). On failure, fail the send CLOSED with a
         // visible toast (callers fire-and-forget, so don't reject).
-        const usesWebEngine =
-          HOSTED_MODE ||
-          selectedModelUsesOrgRuntime ||
-          hostedRequiresWebChatApi;
+        const usesWebEngine = shouldUseOrgAwareChatApi;
         // Snapshot the selection ONCE: the resolved ids must ride with the
         // names they were resolved from, even if the user edits the selection
         // while the preflight is in flight.
@@ -3824,8 +3821,7 @@ export function useChatSession(
       hostedEnsureServerIds,
       hostedEnvironmentId,
       selectedServers,
-      selectedModelUsesOrgRuntime,
-      hostedRequiresWebChatApi,
+      shouldUseOrgAwareChatApi,
     ]
   );
 

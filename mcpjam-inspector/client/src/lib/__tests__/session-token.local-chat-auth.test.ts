@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { getApiAuthorizationHeader } = vi.hoisted(() => ({
-  getApiAuthorizationHeader: vi.fn(async () => "Bearer workos-jwt"),
+  getApiAuthorizationHeader: vi.fn(
+    async (): Promise<string | null> => "Bearer workos-jwt"
+  ),
 }));
 
 vi.mock("@/lib/config", () => ({ HOSTED_MODE: false }));
@@ -41,5 +43,28 @@ describe("authFetch local chat bearer", () => {
         Authorization: "Bearer workos-jwt",
       },
     });
+  });
+
+  it("omits Authorization when bearer resolution returns empty", async () => {
+    getApiAuthorizationHeader.mockResolvedValueOnce(null);
+
+    await authFetch("/api/mcp/chat-v2", { method: "POST" });
+
+    expect(global.fetch).toHaveBeenCalledWith("/api/mcp/chat-v2", {
+      method: "POST",
+      headers: {
+        "X-MCP-Session-Auth": "Bearer local-session",
+      },
+    });
+  });
+
+  it("does not send when bearer resolution rejects", async () => {
+    const error = new Error("bearer lookup failed");
+    getApiAuthorizationHeader.mockRejectedValueOnce(error);
+
+    await expect(
+      authFetch("/api/mcp/chat-v2", { method: "POST" })
+    ).rejects.toBe(error);
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 });
