@@ -5,7 +5,7 @@ import { registerScenariosCommands } from "../src/commands/scenarios.js";
 import { addPlatformOptions } from "../src/lib/platform-command.js";
 
 /**
- * `mcpjam scenarios publish` — the create-time override flags.
+ * `mcpjam cloud scenarios publish` — the create-time override flags.
  *
  * What these pin: `--mode` is validated against the enum LOCALLY, so a typo is
  * a usage error and not a server round trip; and the accepted flags reach the
