@@ -707,10 +707,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
 
   if (observer) {
     const signals = observer.buildSignals();
-    const theirsFailure =
-      signals?.connection?.attribution === "theirs" ||
-      signals?.discovery?.attribution === "theirs";
-    if (theirsFailure) {
+    if (signals?.connection?.attribution === "theirs") {
       await observer.ensureEgressCanary();
     }
   }

@@ -375,7 +375,10 @@ export function createRunSetupObserver(
     const discovery = foldPhase(expected, lists, toolsListSpanId);
     if (!connection && !discovery) return undefined;
 
-    const attachCanary = (
+    // Canary is connection-only. A completed initialize is the egress
+    // evidence for discovery; stamping a failed control-plane GET onto a
+    // tools/list miss would lie about whether we reached their host.
+    const attachConnectionCanary = (
       signal: StageSetupPhaseSignal | undefined
     ): StageSetupPhaseSignal | undefined => {
       if (!signal || signal.outcome !== "failed") return signal;
@@ -387,8 +390,8 @@ export function createRunSetupObserver(
     };
 
     return {
-      ...(connection ? { connection: attachCanary(connection) } : {}),
-      ...(discovery ? { discovery: attachCanary(discovery) } : {}),
+      ...(connection ? { connection: attachConnectionCanary(connection) } : {}),
+      ...(discovery ? { discovery } : {}),
     };
   };
 

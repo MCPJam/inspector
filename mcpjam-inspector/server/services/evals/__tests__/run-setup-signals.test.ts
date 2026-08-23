@@ -261,6 +261,31 @@ describe("createRunSetupObserver canary + spans", () => {
     expect(JSON.stringify(audit).length).toBeLessThanOrEqual(2048);
   });
 
+  it("does not attach a failed canary to a theirs discovery after connect ok", async () => {
+    const canary = vi.fn(async () => false);
+    const observer = createRunSetupObserver({
+      expectedServerIds: ["srv"],
+      canary,
+    });
+    observer.recordConnect("srv", {
+      outcome: "ok",
+      startedAt: 0,
+      endedAt: 1,
+    });
+    observer.recordToolsList("srv", {
+      outcome: "failed",
+      error: nodeError("ECONNREFUSED"),
+      startedAt: 1,
+      endedAt: 2,
+    });
+    expect(observer.buildSignals()).toMatchObject({
+      connection: { outcome: "ok" },
+      discovery: { outcome: "failed", attribution: "theirs" },
+    });
+    expect(observer.buildSignals()?.discovery?.egressVerified).toBeUndefined();
+    expect(canary).not.toHaveBeenCalled();
+  });
+
   it("shares one canary promise instead of polling", async () => {
     let resolveCanary!: (ok: boolean) => void;
     const canary = vi.fn(

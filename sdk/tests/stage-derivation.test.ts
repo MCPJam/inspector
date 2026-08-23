@@ -419,6 +419,27 @@ describe("connection & discovery", () => {
     expect(failureCategory).toBe("setup");
   });
 
+  test("discovery failed + reached + theirs ignores a failed canary stamp", () => {
+    const { stageResults } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        setupSignals: {
+          connection: { outcome: "ok" },
+          discovery: {
+            outcome: "failed",
+            attribution: "theirs",
+            egressVerified: false,
+          },
+        },
+      },
+      iteration: { status: "failed" },
+    });
+    expect(stateOf(stageResults, "discovery")).toMatchObject({
+      state: "failed",
+      reason: "toolsListFailed",
+    });
+  });
+
   test("discovery failed + reached + unknown ⇒ notMeasured", () => {
     const { stageResults, firstFailedStage } = deriveStageResults({
       authored: modelDrivenCase,
