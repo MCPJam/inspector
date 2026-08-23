@@ -45,19 +45,30 @@ so results respect the caller's project access.
 | `list_server_resources` | List the resources a saved MCP server exposes: uris, names, and mime types. | — |
 | `read_server_resource` | Read one resource from a saved MCP server by uri and return its contents. | — |
 | `check_host_compatibility` | Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). | — |
+| `start_claude_readiness_run` | Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; poll for the verdict. | — |
+| `start_openai_readiness_run` | Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit submission mode; starts a durable run and returns its id. | — |
+| `get_readiness_run` | Read one readiness run: whether it finished, what it graded, and whether the optional model pass ran. | — |
+| `list_readiness_runs` | List a project's readiness runs, newest first, optionally narrowed to one publisher or server. | — |
+| `cancel_readiness_run` | Stop a readiness run that is still going. | — |
+| `get_readiness_report` | Read a finished readiness run's findings, ordered most-consequential-first and capped. | — |
+| `start_conformance_run` | Run protocol/apps/tasks conformance on a saved HTTP server. Starts a durable run and returns its id; poll for the verdict. | — |
+| `get_conformance_run` | Read one conformance run: whether it finished, the outcome, score, and pending count. | — |
+| `list_conformance_runs` | List a project's conformance runs, newest first, optionally narrowed to one saved server. | — |
+| `get_conformance_report` | Read a finished conformance run's failing checks, capped, with per-suite profile stamps. | — |
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
 | `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
-| `run_eval_suite` | Start an asynchronous rerun of an existing eval suite. | — |
+| `run_eval_suite` | Start an asynchronous rerun of an existing eval suite, against one target or several. Fan-out is explicit: a suite with several attached targets refuses with TARGET_REQUIRED unless you name targets or pass allAttached, and each target is one PAID run. | — |
 | `create_eval_suite` | Create a runnable eval suite from authored test cases. | — |
-| `get_eval_suite` | Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge, schedule. | — |
-| `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge. | — |
+| `get_eval_suite` | Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule. | — |
+| `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge (`autoRun` is what makes grading happen; `enabled` alone only makes the judge available). | — |
 | `delete_eval_suite` | Permanently delete an eval suite and all its cases and runs. | — |
 | `set_eval_suite_schedule` | Enable or disable automatic scheduled runs for a suite, and set the interval. | — |
 | `set_eval_suite_environments` | Attach project environments to an eval suite, replacing whatever it had. | — |
 | `list_eval_cases` | List the test cases in an eval suite, with their ids and configuration. | — |
 | `get_eval_case` | Fetch one eval test case's full definition. | — |
 | `create_eval_case` | Add one test case to an eval suite. | — |
+| `create_eval_cases` | Add several test cases to an eval suite in one call. | — |
 | `update_eval_case` | Edit an eval test case. | — |
 | `delete_eval_case` | Permanently delete one test case from an eval suite. | — |
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
@@ -67,9 +78,15 @@ so results respect the caller's project access.
 | `get_eval_iteration_trace` | Fetch the full trace for one eval iteration: the complete message history plus expected-vs-actual tool-call analysis. | — |
 | `get_eval_run_steps` | Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). | — |
 | `cancel_eval_run` | Cancel an in-flight eval run. | — |
+| `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
+| `list_eval_check_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
+| `connect_eval_check_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
+| `ensure_adhoc_environment` | Get or create an unnamed, content-addressed environment for a composed stack (host plus optional model, sandbox image, server group, and pinned skills). Repeating the same stack reuses one row. Promote it with `name_environment` only when the user asks to keep it. | — |
+| `list_sandbox_images` | List the custom Computer sandbox images (blueprints) in a project — the choices for a suite's `environment.computerEnvironment`. | — |
+| `get_sandbox_image` | Show one sandbox image's blueprint, sharing, and latest build status. | — |
 | `list_project_plugins` | List the live Agent Plugins installed in a project: name, display name, enabled state, and active version id. | — |
 | `get_plugin_version` | Show one imported plugin version: status, component counts, and per-component summaries (servers with placement and auth timing, skills with their namespaced refs). | — |
 | `list_scenarios` | List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
@@ -127,6 +144,14 @@ so results respect the caller's project access.
 | `upsert_user_testing_member` | Grant one person access to a scenario by email. | — |
 | `remove_user_testing_member` | Revoke one person's access. | — |
 | `rebind_user_testing_scenario` | Swap the environment behind a scenario, keeping its link, members and history. | — |
+| `search_registry_directory` | Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. | — |
+| `get_registry_directory_server` | Fetch one scraped directory row by catalogServerId, or by name (optionally with source). | — |
+| `list_registry_directory_sources` | Discover directory source ids for `search_registry_directory`. Sources are data, not an enum. | — |
+| `list_registry_servers` | List global curated cards and the project's organization registry cards. | — |
+| `list_registry_connections` | List directory and card installs already in a project (provenance rows whose server still exists). | — |
+| `install_registry_directory_server` | Install writes a project `servers` row and provenance and stops — it is not a live connection. | — |
+| `install_registry_server` | Install a curated registry card into a project. Writes a `servers` row and provenance; not a live connection. | — |
+| `uninstall_registry_server` | Remove a curated or org registry-card install from a project. Directory uninstall is `delete_project_server`. | — |
 
 <!-- The rows above are the CATALOG, not a hand-written summary: they are
      checked against `PLATFORM_CATALOG_OPERATIONS` by
@@ -176,9 +201,24 @@ can run against instead of a loose server selection. Attach them to a suite
 with `set_eval_suite_environments`; from then on `run_eval_suite` /
 `run_eval_case` take an `environment` (name or ID) naming which one to use.
 A suite with exactly one attached environment uses it automatically; a suite
-with several requires the argument, and the error names the candidates.
+with several refuses with `TARGET_REQUIRED` and names every candidate, rather
+than guessing how much to spend. `run_eval_suite` also takes `environments`
+(several, one paid run each), `host`/`hosts` for a suite with attached hosts,
+and `allAttached` to fan out across every attached target on ONE axis —
+environments if the suite has any, otherwise hosts, never a cross product.
 `environment` and `servers` are mutually exclusive — an environment supplies a
-closed server set that an override cannot change.
+closed server set that an override cannot change — and so are the environment
+and host axes.
+
+Instead of NAMING a target, `compose` builds one (or several): a host plus
+optional models, sandbox image, server group and pinned skills becomes
+unnamed, content-addressed environment cells (the same rows
+`ensure_adhoc_environment` returns). Default is ephemeral — the cells are
+minted and launched without attaching them to the suite. Pass `saveTargets`
+to append them. `models` replaces the client default; add
+`includeClientDefault` to keep the inherit cell alongside the explicit
+picks. Promote such a row to a named environment in place with
+`name_environment`.
 
 An environment-backed run records the environment and the exact revision it
 executed against, and `get_eval_run` reports that triple — so an agent can
@@ -186,10 +226,12 @@ confirm *which* configuration produced a result long after the environment has
 been edited. A run that used a saved server selection has no environment to
 record, and reports `environment: null`.
 
-The environment tools other than `set_eval_suite_environments` are read-only.
-Creating, editing, and archiving environments stays CLI-only for now:
-those writes are revision-guarded (`expectedRevision`), and giving an agent a
-safe path through optimistic concurrency is a separate design question.
+`ensure_adhoc_environment` is the one environment WRITE on this surface: it
+mints a content-addressed, unnamed row (the same row `run_eval_suite`'s
+`compose` produces). Creating, renaming, editing, and archiving named
+environments stays CLI-only for now: those writes are revision-guarded
+(`expectedRevision`), and giving an agent a safe path through optimistic
+concurrency is a separate design question.
 
 ## Auth
 

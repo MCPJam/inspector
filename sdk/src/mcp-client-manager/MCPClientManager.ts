@@ -401,6 +401,8 @@ export class MCPClientManager {
   private readonly defaultLogJsonRpc: boolean;
   private readonly defaultRpcLogger?: RpcLogger;
   private readonly defaultHttpLogger?: HttpExchangeLogger;
+  /** See `baseFetch` on `MCPClientManagerOptions`. */
+  private readonly defaultBaseFetch?: typeof fetch;
   private readonly defaultProgressHandler?: ProgressHandler;
   private readonly cacheEventLogger?: CacheEventLogger;
   /**
@@ -441,6 +443,7 @@ export class MCPClientManager {
     this.defaultLogJsonRpc = options.defaultLogJsonRpc ?? false;
     this.defaultRpcLogger = options.rpcLogger;
     this.defaultHttpLogger = options.httpLogger;
+    this.defaultBaseFetch = options.baseFetch;
     this.defaultProgressHandler = options.progressHandler;
     this.cacheEventLogger = options.cacheEventLogger;
     this.traceContextProvider = options.traceContextProvider;
@@ -1791,7 +1794,7 @@ export class MCPClientManager {
     options?: ClientRequestOptions
   ) {
     // Legacy-form reads carry no per-request extension declaration, so a
-    // conforming extension server MUST answer `-32003`: refuse locally instead
+    // conforming extension server MUST answer `-32021`: refuse locally instead
     // and send nothing (callers dispatch on `getTasksWire`).
     this.assertLegacyTasksReadWire(serverId, "tasks/get");
     return this.runRetryableReadOperation(serverId, options, (client) =>
@@ -1956,7 +1959,7 @@ export class MCPClientManager {
   /**
    * Opens a task-filtered `subscriptions/listen` carrying the extension's
    * per-request eligibility declaration (SEP-2663). A non-declaring
-   * task-filtered listen MUST be answered `-32003`, so this is the ONLY way a
+   * task-filtered listen MUST be answered `-32021`, so this is the ONLY way a
    * `taskIds` filter may reach the wire.
    *
    * Port contract: on `SubscriptionClientPort`, availability is expressed by
@@ -2384,7 +2387,7 @@ export class MCPClientManager {
       //
       // A pin absent from the list is left alone: it would put a version on
       // the wire the client never claimed to speak. `canonicalizeMcpProfile`
-      // rejects that combination for stateful pins anyway, so this only
+      // rejects that combination for stateful host pins anyway, so this only
       // guards hand-built configs.
       const supportedProtocolVersions =
         !wantsStateless &&
@@ -3641,10 +3644,15 @@ export class MCPClientManager {
     config: MCPServerConfig
   ): typeof fetch {
     const httpLogger = this.resolveHttpLogger(config);
+    // `baseFetch` is the INNERMOST layer, under the logger: the guard has to
+    // see the request that actually leaves, including the routing headers
+    // added above it, and the logger has to record the bytes that guard sent.
+    // Absent ⇒ both wrappers fall back to `globalThis.fetch` exactly as before.
+    const baseFetch = config.baseFetch ?? this.defaultBaseFetch;
     return wrapFetchForTaskRouting(
       httpLogger
-        ? wrapFetchForHttpLogging(serverId, httpLogger)
-        : undefined
+        ? wrapFetchForHttpLogging(serverId, httpLogger, baseFetch)
+        : baseFetch
     );
   }
 

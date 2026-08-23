@@ -341,3 +341,71 @@ const toUserMessage = (text) => ({
     });
   });
 });
+
+describe("bootstrap recipes are auth-independent", () => {
+  // Load-bearing for the in-stream bootstrap. A harness turn installs its
+  // runtime inside the sandbox after the broker starts, using a runtime built
+  // with dummy broker creds. The framework keys the "already installed" marker
+  // on a hash of the recipe's file contents, so if the recipe ever varied with
+  // auth, a resume would re-run the bootstrap against a different hash. The
+  // recipe must stay auth-independent so the in-stream bootstrap is
+  // attributable to the adapter, not to whichever credential happened to be
+  // present when the files were hashed.
+  const auth = (suffix: string) => ({
+    anthropic: {
+      apiKey: `anthropic-key-${suffix}`,
+      authToken: `anthropic-token-${suffix}`,
+      baseUrl: `https://${suffix}.invalid`,
+    },
+    openaiCompatible: {
+      apiKey: `openai-key-${suffix}`,
+      baseUrl: `https://${suffix}.invalid`,
+    },
+  });
+
+  for (const id of ["claude-code", "codex"] as const) {
+    it(`${id}: two different credentials produce byte-identical files`, async () => {
+      const adapter = getHarnessAdapter(id);
+      const a = adapter.createHarness({
+        modelId:
+          id === "codex" ? "openai/gpt-5-nano" : "anthropic/claude-haiku-4.5",
+        auth: auth("one"),
+      });
+      const b = adapter.createHarness({
+        modelId:
+          id === "codex" ? "openai/gpt-5-nano" : "anthropic/claude-haiku-4.5",
+        auth: auth("two"),
+      });
+
+      const ra = await a.getBootstrap!();
+      const rb = await b.getBootstrap!();
+
+      // `hashBootstrap` is not exported, so compare exactly what it hashes.
+      expect(rb.harnessId).toBe(ra.harnessId);
+      expect(rb.bootstrapDir).toBe(ra.bootstrapDir);
+      expect(rb.commands).toEqual(ra.commands);
+      expect(rb.files).toEqual(ra.files);
+    });
+  }
+
+  it("claude-code's patched bridge differs from the unpatched one", () => {
+    // The other half of the same invariant: the registry rewrites the bridge
+    // asset, so bootstrapping a bare `createClaudeCode()` would compute a
+    // different hash than the turn does. This test is what makes that
+    // divergence visible if anyone reaches for the bare constructor.
+    // Dual-`ai` boundary cast, as everywhere else this constructor is used.
+    const patched = getHarnessAdapter("claude-code").createHarness({
+      modelId: "anthropic/claude-haiku-4.5",
+      auth: auth("patched"),
+    });
+    return Promise.all([
+      patched.getBootstrap!(),
+      createClaudeCode().getBootstrap!(),
+    ]).then(([p, bare]) => {
+      const bridgeOf = (r: {
+        files: readonly { path: string; content: string }[];
+      }) => r.files.find((f) => f.path.endsWith("/bridge.mjs"))!.content;
+      expect(bridgeOf(p)).not.toBe(bridgeOf(bare));
+    });
+  });
+});

@@ -46,6 +46,7 @@
           "installation",
           "hosted/overview",
           "hosted/slack",
+          "hosted/sso",
           "troubleshooting/common-errors",
           "troubleshooting/error-codes",
           "changelog/overview"
@@ -116,6 +117,7 @@
             "icon": "map",
             "pages": [
               "cli/overview",
+              "cli/migration",
               "cli/mcp-server",
               "cli/server-inspection",
               "cli/oauth-conformance",

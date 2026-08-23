@@ -24,6 +24,12 @@ vi.mock("convex/react", () => ({
   useAction: () => saveAction,
 }));
 
+// A settled, fully bootstrapped session: the attachment pickers are live, so
+// the new-suite requirement applies rather than being waived as pending.
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
+}));
+
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
     serverAttachments: [{ _id: "attachment-1" }],

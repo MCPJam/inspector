@@ -70,6 +70,16 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   { path: "skills", kind: "screen", surfaceId: "skills" },
   { path: "learning", kind: "screen", surfaceId: "learning" },
   { path: "conformance", kind: "screen", surfaceId: "conformance" },
+  {
+    path: "conformance/runs/:runId",
+    kind: "screen",
+    surfaceId: "conformance",
+  },
+  {
+    path: "conformance/shared/:token",
+    kind: "special",
+    note: "Read-only shared conformance run. Redeem-based (guest session or WorkOS). Legacy HMAC tokens read as invalid on this page; /api/web/conformance-shared still serves them until I6.",
+  },
   { path: "compatibility", kind: "screen", surfaceId: "compatibility" },
   { path: "oauth-flow", kind: "screen", surfaceId: "oauth-flow" },
   { path: "xaa-flow", kind: "screen", surfaceId: "xaa-flow" },
@@ -123,6 +133,13 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     surfaceId: "settings",
   },
   {
+    // Where GitHub sends the browser back — the App's setup URL and its OAuth
+    // callback both point here, told apart by which query parameters arrived.
+    path: "settings/integrations/github/callback",
+    kind: "screen",
+    surfaceId: "settings",
+  },
+  {
     path: "settings/github-checks",
     kind: "redirect",
     note: "Legacy: the page moved under Integrations; redirects to /settings/integrations/github.",
@@ -168,6 +185,11 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     path: "organizations/:orgId/discord",
     kind: "screen",
     surfaceId: "organizations",
+  },
+  {
+    path: "evals/shared/:token",
+    kind: "special",
+    note: "Read-only shared eval run. Redeem-based (guest session or WorkOS). Chrome-less.",
   },
   { path: "evals", kind: "screen", surfaceId: "evals" },
   { path: "evals/create", kind: "screen", surfaceId: "evals" },
@@ -232,6 +254,14 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     path: "billing",
     kind: "special",
     note: "Post-checkout landing; renders Servers.",
+  },
+  {
+    // WorkOS Initiate Login URL for IdP-initiated SSO (the Okta app tile).
+    // Not a destination anyone navigates to: it starts a fresh, app-originated
+    // sign-in so authkit-js writes the PKCE verifier `/callback` needs.
+    path: "login",
+    kind: "special",
+    note: "WorkOS Initiate Login URL for IdP-initiated SSO; starts a fresh app-originated sign-in.",
   },
   {
     path: "callback",

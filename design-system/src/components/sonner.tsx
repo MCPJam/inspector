@@ -1,8 +1,34 @@
-import { useTheme } from "next-themes";
+import { useSyncExternalStore } from "react";
 import { Toaster as Sonner, ToasterProps } from "sonner";
 
+/**
+ * The theme, read from the `.dark` class this design system scopes its own dark
+ * tokens under (see tokens.css) — not from next-themes, which nothing in the app
+ * provides. With no provider its `useTheme()` fell back to "system", so Sonner
+ * resolved the OS setting instead: on a dark-mode machine viewing the light app
+ * it stamped `data-sonner-theme="dark"` and coloured the description
+ * `hsl(0 0% 91%)`, near-white on the white background our own vars supplied.
+ */
+function subscribeToDocumentTheme(onChange: () => void) {
+  if (typeof MutationObserver === "undefined") return () => {};
+  const observer = new MutationObserver(onChange);
+  observer.observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ["class"],
+  });
+  return () => observer.disconnect();
+}
+
+function getDocumentTheme(): "dark" | "light" {
+  return document.documentElement.classList.contains("dark") ? "dark" : "light";
+}
+
 const Toaster = ({ ...props }: ToasterProps) => {
-  const { theme = "system" } = useTheme();
+  const theme = useSyncExternalStore(
+    subscribeToDocumentTheme,
+    getDocumentTheme,
+    () => "light" as const
+  );
 
   return (
     <Sonner

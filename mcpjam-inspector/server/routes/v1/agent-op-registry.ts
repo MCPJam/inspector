@@ -37,11 +37,28 @@
 import {
   callServerToolOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   createEvalCaseOperation,
+  createEvalCasesOperation,
   createEvalSuiteOperation,
   diagnoseServerOperation,
+  expandComposeModelChoices,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   generateEvalCasesOperation,
+  ensureAdhocEnvironmentOperation,
   getEnvironmentOperation,
+  nameEnvironmentOperation,
   getEvalCaseOperation,
   getEvalIterationTraceOperation,
   compareEvalRunOperation,
@@ -58,6 +75,13 @@ import {
   listHostsOperation,
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
   listProjectServersOperation,
   listServerPromptsOperation,
   listServerResourcesOperation,
@@ -105,6 +129,8 @@ import {
   upsertUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
   setUserTestingGuestExecutionOperation,
+  getShareSettingsOperation,
+  setShareModeOperation,
   setEvalSuiteScheduleOperation,
   updateEvalCaseOperation,
   updateEvalSuiteOperation,
@@ -116,7 +142,9 @@ import type {
   ProposedActionSeverity,
   ProposedActionTarget,
 } from "@mcpjam/sdk/public-api";
+import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { MCPJAM_HOSTED_ORIGIN } from "../../config.js";
+import { logger } from "../../utils/logger.js";
 
 /** Any catalog operation, input type erased — the registry is heterogeneous. */
 export type AnyPlatformOperation = PlatformOperation<any, unknown>;
@@ -175,6 +203,45 @@ export interface GatedProposalMeta {
    * must treat as match-unknown.
    */
   target?(input: Record<string, unknown>): ProposedActionTarget | undefined;
+  /**
+   * FREEZE the arguments at PROPOSAL-MINT time, resolving anything whose
+   * meaning could change before a human clicks.
+   *
+   * A proposal is a contract about a specific action, and the approval route
+   * executes exactly the arguments stored with it. That is safe only while the
+   * stored arguments MEAN the same thing later — and `allAttached: true` does
+   * not: attaching a fourth environment between the proposal and the click
+   * silently widens an approved 3-run spend to 4. Resolving it to an explicit
+   * ID list here makes the approved set the frozen set, so a later attachment
+   * edit can add nothing to it.
+   *
+   * The ONE async hook in an otherwise synchronous registry, because resolving
+   * names to ids needs the platform. It runs best-effort at the call site: a
+   * failure leaves the arguments as the model wrote them rather than losing the
+   * proposal, so the worst case is today's behaviour and not a dropped action —
+   * UNLESS the entry declares `requiredFrozenKeys`, which makes the freeze
+   * mandatory.
+   */
+  normalizeProposalArgs?(
+    input: Record<string, unknown>,
+    context: { projectId: string; client: PlatformApiClient },
+  ): Promise<Record<string, unknown>>;
+  /**
+   * Keys `normalizeProposalArgs` MUST have pinned before the proposal may be
+   * persisted at all.
+   *
+   * The freeze above is best-effort by default because for most operations the
+   * frozen form merely narrows arguments that were already safe to store. For
+   * an INSTALL the pin IS what the human approves: an unpinned proposal reads
+   * "install cs_1" with no endpoint, and a click up to an hour later would
+   * install whatever the registry row resolves to THEN. Declaring keys here
+   * makes the freeze fail-CLOSED — a normalizer failure, or a frozen input
+   * still missing one of these keys, REFUSES to mint the proposal (the model
+   * gets a tool error) instead of persisting an unpinned one — and the
+   * approval-execute route refuses a stored input missing them, as defense in
+   * depth against rows minted before this contract existed.
+   */
+  requiredFrozenKeys?: readonly string[];
 }
 
 /** Read a string off an unknown result, at a dotted path. */
@@ -210,19 +277,488 @@ function evalRunResource(
   result: unknown,
   { projectId }: { projectId: string },
 ): ExecutedActionResource | undefined {
-  const runId = readString(result, "runId");
   const suiteId =
     readString(result, "suite.id") ?? readString(result, "suiteId");
-  if (!runId || !suiteId) return undefined;
+  if (!suiteId) return undefined;
+  const suiteUrl = `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(
+    suiteId,
+  )}`;
+
+  // A GROUPED launch links to the group, not to one of its runs. The contract
+  // carries a single resource, and linking to the first run would hide the
+  // fact that a sibling failed — the one thing the approver most needs to see
+  // after approving N paid runs.
+  const runGroupId = readString(result, "runGroupId");
+  if (runGroupId) {
+    return {
+      type: "eval_run_group",
+      id: runGroupId,
+      url: `${suiteUrl}?view=runs&project=${encodeURIComponent(projectId)}`,
+    };
+  }
+
+  const runId = readString(result, "runId");
+  if (!runId) return undefined;
   return {
     type: "eval_run",
     id: runId,
     url:
-      `${MCPJAM_HOSTED_ORIGIN}/evals/suite/${encodeURIComponent(suiteId)}` +
-      `/runs/${encodeURIComponent(runId)}?project=${encodeURIComponent(
-        projectId,
-      )}`,
+      `${suiteUrl}/runs/${encodeURIComponent(runId)}` +
+      `?project=${encodeURIComponent(projectId)}`,
   };
+}
+
+/**
+ * The approval line for an eval-suite run, which must say HOW MANY paid runs a
+ * click starts.
+ *
+ * The count is honest because `freezeEvalRunTargets` has already resolved
+ * `allAttached` into an explicit list by the time this renders — so this is
+ * reading a decided set, not estimating one. When normalization could not run
+ * (an offline platform), the copy says the run fans out without claiming a
+ * number it does not have.
+ */
+function describeEvalSuiteRun(input: Record<string, unknown>): string {
+  const suite = named(input, "suite") ?? "(unnamed)";
+  // COMPOSE fans out to N paid runs (client × model choices) and, when
+  // `saveTargets` is set, also edits the suite. Default is ephemeral on a
+  // capable backend; a single cell still attaches on an older one. The
+  // spend line must state the multiplier so a `confirmSeverity: "spend"`
+  // proposal does not understate N×, and must not promise "without
+  // attaching" when the click can still persist.
+  const compose = input.compose;
+  if (compose && typeof compose === "object") {
+    return describeComposeEvalSuiteRun(
+      suite,
+      compose as Record<string, unknown>,
+    );
+  }
+  const targets = [
+    ...readStringList(input, "environments"),
+    ...readStringList(input, "hosts"),
+  ];
+  if (targets.length > 1) {
+    return `Start ${
+      targets.length
+    } paid eval runs of suite ${suite}: ${targets.join(", ")}`;
+  }
+  const single =
+    targets[0] ?? named(input, "environment") ?? named(input, "host");
+  if (input.allAttached === true) {
+    return `Run eval suite ${suite} against every attached target — one paid run each`;
+  }
+  return single
+    ? `Run eval suite ${suite} against ${single}`
+    : `Run eval suite ${suite}`;
+}
+
+/**
+ * The approval line for a single eval CASE run.
+ *
+ * Composing is available here exactly as it is on the suite run, and
+ * `saveTargets` makes it ATTACH the minted cell to the suite — a persistent
+ * edit to shared configuration. A card that said only "Run eval case X" asked
+ * for approval of the run and got approval for the edit too.
+ *
+ * The case run refuses more than one model choice, so the count is always one
+ * paid run and no multiplier is stated.
+ */
+function describeEvalCaseRun(input: Record<string, unknown>): string {
+  const testCase = named(input, "case") ?? "(unnamed)";
+  const compose = input.compose;
+  if (compose && typeof compose === "object") {
+    const composeRecord = compose as Record<string, unknown>;
+    const host =
+      named(composeRecord, "hostLabel") ?? named(composeRecord, "host");
+    const hostNote = host ? ` (${host})` : "";
+    const attach =
+      composeRecord.saveTargets === true
+        ? ", and the composed environment is attached to the suite"
+        : "";
+    return `Run eval case ${testCase} on a composed setup${hostNote} — one paid run${attach}`;
+  }
+  return `Run eval case ${testCase}`;
+}
+
+function describeComposeEvalSuiteRun(
+  suite: string,
+  compose: Record<string, unknown>,
+): string {
+  // Prefer the freeze-time display name. `host` is rewritten to an id so
+  // approval executes the same client; without `hostLabel` the card would
+  // read `suite smoke (host_a)` after a successful `listHosts`.
+  const host = named(compose, "hostLabel") ?? named(compose, "host");
+  const hostNote = host ? ` (${host})` : "";
+  const choices = expandComposeModelChoices({
+    model: named(compose, "model"),
+    models: readStringList(compose, "models"),
+    includeClientDefault: compose.includeClientDefault === true,
+  });
+  const n = choices.length;
+  // `saveTargets` is the only attach the caller opted into. A single cell
+  // against a backend that cannot launch ephemerally still ATTACHES (the
+  // SDK compat fallback in `composeLaunchPolicy`). This copy must not
+  // promise "without attaching" on that path — describe is sync and cannot
+  // probe capabilities, so inherit-only hedges. Multi-cell refuses rather
+  // than attaching, so that sentence can stay ephemeral.
+  const attach =
+    compose.saveTargets === true
+      ? n <= 1
+        ? "and the composed environment is attached to the suite"
+        : "and the composed environments are attached to the suite"
+      : n <= 1
+        ? "ephemeral when supported; otherwise attached"
+        : "without attaching them to the suite";
+  if (n <= 1) {
+    return (
+      `Run eval suite ${suite} on a composed setup${hostNote}` +
+      ` — one paid run, ${attach}`
+    );
+  }
+  return (
+    `Start ${n} paid eval runs of suite ${suite}${hostNote}: 1 client × ${n} model choices = ${n} runs, ${attach}`
+  );
+}
+
+/**
+ * Resolve a run proposal's targets to explicit IDs, so approval executes the
+ * set that was approved.
+ *
+ * `allAttached` is the whole reason this exists: it means "every target
+ * attached RIGHT NOW", and "right now" moves between the proposal and the
+ * click. Storing it verbatim would let an attachment edit widen an approved
+ * 3-run spend to 4 with nobody approving the fourth. Resolved here into an
+ * `environments`/`hosts` id list, and `allAttached` is DROPPED — leaving it
+ * would let the re-expansion happen anyway.
+ *
+ * Name selectors are resolved for the same reason: a name is a pointer, and
+ * the row it points at can be renamed or replaced. Every spelling of them —
+ * `environment`/`environments` and `host`/`hosts` — because a rename repoints
+ * a single target exactly as readily as it repoints several, and a guarantee
+ * that depended on which form the caller used would be no guarantee.
+ */
+async function freezeEvalRunTargets(
+  input: Record<string, unknown>,
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const suiteSelector = named(input, "suite");
+  if (!suiteSelector) return input;
+  const compose = input.compose;
+  if (compose && typeof compose === "object") {
+    // Compose is its own target kind: freeze it BEFORE the "nothing named"
+    // early return, or a models/includeClientDefault proposal would persist
+    // the model's spelling and a host rename would repoint the spend.
+    return freezeComposeRunTarget(input, compose as Record<string, unknown>, {
+      projectId,
+      client,
+    });
+  }
+  const wantsAll = input.allAttached === true;
+  const namedEnvironments = readStringList(input, "environments");
+  const namedHosts = readStringList(input, "hosts");
+  const namedEnvironment = named(input, "environment");
+  const namedHost = named(input, "host");
+  if (
+    !wantsAll &&
+    namedEnvironments.length === 0 &&
+    namedHosts.length === 0 &&
+    !namedEnvironment &&
+    !namedHost
+  ) {
+    // Nothing to freeze: no target named at all.
+    return input;
+  }
+
+  const suites = await client.listEvalSuites({ projectId });
+  const suite = suites.items.find(
+    (candidate) =>
+      candidate.id === suiteSelector ||
+      candidate.name?.toLocaleLowerCase() === suiteSelector.toLocaleLowerCase(),
+  );
+  if (!suite) return input;
+  const detail = await client.getEvalSuite({ projectId, suiteId: suite.id });
+
+  const { allAttached: _dropped, ...rest } = input;
+  if (wantsAll) {
+    // ONE axis, environments first — the same precedence the operation itself
+    // applies, so the frozen set is the set that would have run.
+    const environmentIds = detail.environmentIds ?? [];
+    if (environmentIds.length > 0) {
+      return { ...rest, environments: environmentIds };
+    }
+    const hostIds = (detail.hosts ?? []).map((host) => host.id);
+    // Nothing attached: there is no set to freeze. Returning `rest` here would
+    // strip `allAttached` and leave a proposal that no longer says what the
+    // describer announced, so leave the request exactly as written.
+    return hostIds.length > 0 ? { ...rest, hosts: hostIds } : input;
+  }
+
+  const next: Record<string, unknown> = { ...rest };
+  if (namedHosts.length > 0 || namedHost) {
+    const byName = new Map(
+      (detail.hosts ?? []).map((host) => [
+        host.name.toLocaleLowerCase(),
+        host.id,
+      ]),
+    );
+    const freeze = (selector: string) =>
+      byName.get(selector.toLocaleLowerCase()) ?? selector;
+    // Singular and plural alike. A rename repoints ONE target just as readily
+    // as it repoints several — the count is unchanged, but the run is not the
+    // run that was approved — so the guarantee cannot depend on which spelling
+    // the model happened to emit.
+    if (namedHosts.length > 0) next.hosts = namedHosts.map(freeze);
+    if (namedHost) next.host = freeze(namedHost);
+  }
+  if (namedEnvironments.length > 0 || namedEnvironment) {
+    // Same reason as hosts, one axis over: an environment name is a pointer,
+    // and the row it points at can be renamed or replaced between the proposal
+    // and the click. Narrowed to the suite's ATTACHED environments, so a name
+    // that matches some other environment in the project cannot be frozen into
+    // a target the suite could not have run anyway. Ids pass through untouched,
+    // and an unresolvable selector is left as-is for the operation to reject
+    // with its own (better) message.
+    const attached = new Set(detail.environmentIds ?? []);
+    let byName = new Map<string, string>();
+    try {
+      const environments = await client.listEnvironments({ projectId });
+      byName = new Map(
+        environments.items
+          .filter((environment) => attached.has(environment.id))
+          .map((environment) => [
+            (environment.name ?? "").toLocaleLowerCase(),
+            environment.id,
+          ]),
+      );
+    } catch {
+      // Same posture as the suite lookup above: freezing is a narrowing, and a
+      // platform that cannot answer must not cost the caller the proposal. The
+      // operation still resolves and validates these selectors on the click.
+    }
+    const freeze = (selector: string) =>
+      (attached.has(selector) ? selector : undefined) ??
+      byName.get(selector.toLocaleLowerCase()) ??
+      selector;
+    if (namedEnvironments.length > 0) {
+      next.environments = namedEnvironments.map(freeze);
+    }
+    if (namedEnvironment) next.environment = freeze(namedEnvironment);
+  }
+  return next;
+}
+
+/**
+ * Freeze a compose proposal: host and computer names → ids, scalar `model`
+ * into `models`.
+ *
+ * `computer` is frozen for exactly the reason `host` is. It is documented as
+ * "name or ID" and resolved by name at execute time, so an image renamed or
+ * replaced between the proposal and the click repoints which sandbox the
+ * approved run boots — the pointer problem this function exists to close, one
+ * slot over. `serverGroup`, `skills.skillIds` and `pluginVersionIds` are
+ * ID-only by contract and so are not pointers to freeze.
+ *
+ * `includeClientDefault` and `saveTargets` stay as written — they are
+ * closed choices, not pointers. Compose itself is kept: dropping it would
+ * turn an approved compose into a default-target launch.
+ *
+ * `hostLabel` is describe-only: the approval card needs the human name
+ * after `host` is rewritten to an id. Execute ignores unknown compose
+ * fields (zod strips them). A caller-supplied label is dropped unless
+ * `listHosts` confirms it, so a spoofed label cannot outlive a resolved id.
+ */
+async function freezeComposeRunTarget(
+  input: Record<string, unknown>,
+  compose: Record<string, unknown>,
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const nextCompose: Record<string, unknown> = { ...compose };
+  delete nextCompose.hostLabel;
+  const hostSelector = named(compose, "host");
+  if (hostSelector) {
+    try {
+      const page = await client.listHosts({ projectId });
+      const match =
+        page.items.find((host) => host.id === hostSelector) ??
+        page.items.find(
+          (host) =>
+            host.name.toLocaleLowerCase() === hostSelector.toLocaleLowerCase(),
+        );
+      if (match) {
+        nextCompose.host = match.id;
+        nextCompose.hostLabel = match.name;
+      }
+    } catch {
+      // Same posture as the suite lookup: a platform that cannot answer
+      // must not cost the caller the proposal.
+    }
+  }
+
+  const computerSelector = named(compose, "computer");
+  if (computerSelector) {
+    try {
+      const page = await client.listImages({ projectId });
+      const match =
+        page.items.find((image) => image.id === computerSelector) ??
+        page.items.find(
+          (image) =>
+            image.name?.toLocaleLowerCase() ===
+            computerSelector.toLocaleLowerCase(),
+        );
+      if (match) nextCompose.computer = match.id;
+    } catch {
+      // Same posture as the host lookup: a platform that cannot answer must
+      // not cost the caller the proposal. Execute still resolves the selector.
+    }
+  }
+
+  const models = [
+    ...new Set([
+      ...readStringList(compose, "models"),
+      ...(named(compose, "model") ? [named(compose, "model")!] : []),
+    ]),
+  ];
+  if (models.length > 0) {
+    nextCompose.models = models;
+    delete nextCompose.model;
+  }
+
+  return { ...input, compose: nextCompose };
+}
+
+/**
+ * Drop describe-only compose fields before hashing a proposal identity.
+ *
+ * `hostLabel` is a display name captured at freeze time. A host rename
+ * between Slack redeliveries would otherwise change the normalized input,
+ * mint a second action id, and leave two approval controls for the same
+ * paid run. The stored row still keeps the label so the card can render it.
+ */
+export function proposalInputForIdempotency(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const compose = input.compose;
+  if (!compose || typeof compose !== "object" || Array.isArray(compose)) {
+    return input;
+  }
+  const { hostLabel: _dropped, ...restCompose } = compose as Record<
+    string,
+    unknown
+  >;
+  return { ...input, compose: restCompose };
+}
+
+/** Read a string array off validated input, dropping non-strings. */
+function readStringList(input: Record<string, unknown>, key: string): string[] {
+  const value = input[key];
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string")
+    : [];
+}
+
+function readOptionalString(
+  input: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = input[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function readOptionalNumber(
+  input: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = input[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Freeze a directory install at proposal time.
+ *
+ * The mutation-side pin (`expectedContentHash` + resolved `endpointUrl`) is
+ * what makes a later click TOCTOU-safe. If we stored only the catalog id, a
+ * row that changed between propose and click would install a different
+ * endpoint than the one the approver saw.
+ *
+ * FAIL-CLOSED: a row that cannot be pinned is a proposal that must not exist.
+ * Every throw here reaches `persistProposal`, which refuses the mint (see
+ * `requiredFrozenKeys`) — degrading to the unpinned input would persist an
+ * approval whose click installs whatever the row resolves to an hour later.
+ * A caller-supplied pin/endpoint is kept over the row's (the model may have
+ * read the row already, and a stale pin fails the mutation, not the user).
+ */
+export async function freezeDirectoryInstallArgs(
+  input: Record<string, unknown>,
+  context: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const catalogServerId = named(input, "catalogServerId");
+  if (!catalogServerId) {
+    // Validated input requires it; reachable only through an upstream bug.
+    throw new Error("directory install carries no catalogServerId to pin");
+  }
+  const row = await context.client.getRegistryDirectoryServer({
+    catalogServerId,
+  });
+  const endpointUrl =
+    readOptionalString(input, "endpointUrl") ?? row.remoteUrl;
+  const expectedContentHash =
+    readOptionalString(input, "expectedContentHash") ?? row.latestContentHash;
+  if (!endpointUrl || !expectedContentHash) {
+    throw new Error(
+      `directory row ${catalogServerId} cannot be pinned — missing ` +
+        `${endpointUrl ? "content hash" : "endpoint"}`,
+    );
+  }
+  return { ...input, endpointUrl, expectedContentHash };
+}
+
+/**
+ * Freeze a card install at proposal time (`expectedUpdatedAt` vs
+ * `registryServers.updatedAt`). Same TOCTOU reason — and the same fail-closed
+ * contract — as the directory pin above.
+ */
+export async function freezeCardInstallArgs(
+  input: Record<string, unknown>,
+  context: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const registryServerId = named(input, "registryServerId");
+  if (!registryServerId) {
+    throw new Error("card install carries no registryServerId to pin");
+  }
+  // No get-by-id route exists for registry cards, so this reads the list and
+  // matches locally. `/registry/servers` is unpaginated today — neither the
+  // SDK method nor the route takes a cursor or limit — and if the backend
+  // ever caps the page, a real card beyond the cap surfaces HERE as a refusal
+  // to mint, never as a silently unpinned install.
+  const page = await context.client.listRegistryServers({
+    projectId: context.projectId,
+    scope: "all",
+  });
+  const card = page.items.find((item) => item.id === registryServerId);
+  if (!card) {
+    throw new Error(
+      `registry card ${registryServerId} is not visible to this project`,
+    );
+  }
+  const expectedUpdatedAt =
+    readOptionalNumber(input, "expectedUpdatedAt") ?? card.updatedAt;
+  if (expectedUpdatedAt === undefined) {
+    throw new Error(
+      `registry card ${registryServerId} carries no updatedAt to pin against`,
+    );
+  }
+  // The endpoint shown to the approver is the CARD'S own, never the model's:
+  // `install_registry_server` ignores any caller-supplied URL and installs
+  // the card's transport, so a model-authored `endpointUrl` here could only
+  // ever make the approval read differently from what the click does.
+  const next: Record<string, unknown> = { ...input, expectedUpdatedAt };
+  const endpointUrl = card.transport?.url;
+  if (endpointUrl) {
+    next.endpointUrl = endpointUrl;
+  } else {
+    delete next.endpointUrl;
+  }
+  return next;
 }
 
 /**
@@ -233,6 +769,73 @@ function evalRunResource(
  * each operation's result shape, and would silently link to nothing the moment
  * one changed.
  */
+/**
+ * The /conformance section a finished readiness run is read on.
+ *
+ * The EXACT run id travels in the link, not just the page. The section can
+ * rediscover "the newest run for this server" when it has nothing better, but
+ * that is the wrong run for somebody following a link about a specific one —
+ * two runs started minutes apart would send an approver to the other one's
+ * verdict.
+ */
+function readinessRunResource(
+  result: unknown,
+  { projectId }: { projectId: string },
+): ExecutedActionResource | undefined {
+  const runId = readString(result, "run.runId") ?? readString(result, "run.id");
+  if (!runId) return undefined;
+  return {
+    type: "readiness_run",
+    id: runId,
+    url:
+      `${MCPJAM_HOSTED_ORIGIN}/conformance` +
+      `?project=${encodeURIComponent(projectId)}` +
+      `&readinessRun=${encodeURIComponent(runId)}`,
+  };
+}
+
+/**
+ * Resolve a server selector to its stable project server id.
+ *
+ * A name is a pointer: rename or reuse between proposal and approval would
+ * dial a different saved server than the one shown to the approver. Failure
+ * is best-effort — leave the arguments as written so a lookup miss does not
+ * drop the proposal.
+ */
+async function freezeConformanceServer(
+  input: Record<string, unknown>,
+  { projectId, client }: { projectId: string; client: PlatformApiClient },
+): Promise<Record<string, unknown>> {
+  const selector = named(input, "server");
+  if (!selector) return input;
+  const page = await client.listProjectServers({ projectId });
+  const match = page.items.find(
+    (server) =>
+      server.id === selector ||
+      server.name.toLocaleLowerCase() === selector.toLocaleLowerCase(),
+  );
+  if (!match) return input;
+  return { ...input, server: match.id };
+}
+
+export function conformanceRunResource(
+  result: unknown,
+  { projectId }: { projectId: string },
+): ExecutedActionResource | undefined {
+  const runId =
+    readString(result, "run.runId") ??
+    readString(result, "run.id") ??
+    readString(result, "runId");
+  if (!runId) return undefined;
+  return {
+    type: "conformance_run",
+    id: runId,
+    url:
+      `${MCPJAM_HOSTED_ORIGIN}/conformance/runs/${encodeURIComponent(runId)}` +
+      `?project=${encodeURIComponent(projectId)}`,
+  };
+}
+
 function journeyRunResource(
   result: unknown,
   { projectId }: { projectId: string },
@@ -300,6 +903,22 @@ function named(
 ): string | undefined {
   const value = input[key];
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+/**
+ * The PARSED host of a URL, for approval copy. Never the raw string: a
+ * scraped `https://mcp.linear.app@evil.tld/mcp` reads as Linear while dialing
+ * evil.tld, and the parsed host is the one part userinfo cannot spoof.
+ * `undefined` on a parse failure, so callers render an explicit
+ * "(unparseable url)" instead of the spoofable text.
+ */
+function describableHost(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    return new URL(url).host || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 // ── Parameter preview ────────────────────────────────────────────────
@@ -489,13 +1108,7 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     tier: "gated",
     proposal: {
       describe: (input) => {
-        const url = named(input, "url");
-        let host: string | undefined;
-        try {
-          host = url ? new URL(url).host : undefined;
-        } catch {
-          host = undefined;
-        }
+        const host = describableHost(named(input, "url"));
         const project = named(input, "project");
         return `Connect MCP server ${host ?? "(unparseable url)"}${
           project ? ` to project ${project}` : ""
@@ -511,11 +1124,180 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   { operation: getProjectServerConnectionStatusOperation, tier: "direct" },
+  // Registry directory + cards. Agent ops self-dispatch with the delegated
+  // user JWT, not the slk_/dsc_ service token, so there is no
+  // surface-allowed-paths.ts delta — the base /agent + proposal-execute
+  // entries already cover the flow.
+  {
+    operation: searchRegistryDirectoryOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  {
+    operation: getRegistryDirectoryServerOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  { operation: listRegistryDirectorySourcesOperation, tier: "direct" },
+  {
+    operation: listRegistryServersOperation,
+    tier: "direct",
+    promptNotes: [UNTRUSTED_SERVER_CONTENT_NOTE],
+  },
+  { operation: listRegistryConnectionsOperation, tier: "direct" },
+  {
+    operation: installRegistryDirectoryServerOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const id = named(input, "catalogServerId") ?? "(unnamed)";
+        const endpoint = named(input, "endpointUrl");
+        // The PARSED host, same as connect_project_server: a scraped
+        // `remoteUrl` with userinfo would otherwise read as a trusted vendor
+        // on the approval button while dialing somewhere else.
+        const host = describableHost(endpoint);
+        return `Install directory server ${id}${
+          endpoint ? ` at ${host ?? "(unparseable url)"}` : ""
+        }`;
+      },
+      buttonLabel: "Install it",
+      kind: "external",
+      confirmSeverity: "external",
+      normalizeProposalArgs: freezeDirectoryInstallArgs,
+      // The freeze is the security property of this entry — see
+      // `requiredFrozenKeys` on GatedProposalMeta. An unpinned directory
+      // install refuses to mint rather than degrading.
+      requiredFrozenKeys: ["endpointUrl", "expectedContentHash"],
+    },
+    promptNotes: [
+      "- `install_registry_directory_server` writes a project servers row and stops — it is NOT a live connection. Calling it PROPOSES the install; a person approves it. After approval, follow with `get_project_server_connection_status`. OAuth servers need the browser connect-link; never write that URL into a shared channel.",
+    ],
+  },
+  {
+    operation: installRegistryServerOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const id = named(input, "registryServerId") ?? "(unnamed)";
+        const endpoint = named(input, "endpointUrl");
+        const host = describableHost(endpoint);
+        return `Install registry card ${id}${
+          endpoint ? ` at ${host ?? "(unparseable url)"}` : ""
+        }`;
+      },
+      buttonLabel: "Install it",
+      kind: "external",
+      // Same severity as connect_project_server: both add a live external
+      // endpoint. Org cards are not a softer hazard.
+      confirmSeverity: "external",
+      normalizeProposalArgs: freezeCardInstallArgs,
+      // `endpointUrl` is deliberately NOT required: a card without a remote
+      // transport has no endpoint to show, and the updatedAt pin alone is
+      // what stops the row moving between propose and click. When the card
+      // HAS one, the freeze always sets it (from the card, never the model).
+      requiredFrozenKeys: ["expectedUpdatedAt"],
+    },
+    promptNotes: [
+      "- `install_registry_server` writes a project servers row and stops — it is NOT a live connection. Calling it PROPOSES the install; a person approves it. After approval, follow with `get_project_server_connection_status`. OAuth servers need the browser connect-link; never write that URL into a shared channel.",
+    ],
+  },
   {
     operation: diagnoseServerOperation,
     tier: "direct",
     promptNotes: [
       "- When a server is erroring, won't connect, or behaves unexpectedly, run `diagnose_server` on it before guessing. It probes the URL, connects, initializes, and reports exactly what failed — which is usually the whole answer.",
+    ],
+  },
+  {
+    operation: startClaudeReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade ${
+          named(input, "server") ?? "a server"
+        } against Anthropic's connector directory`,
+      buttonLabel: "Run it",
+      kind: "start",
+      // A FUNCTION because the hazard is in the input. The deterministic grade
+      // is free; only the opt-in model pass spends. Static `"spend"` would
+      // warn about money on every free run, and `"none"` would stay silent on
+      // the one run that costs something.
+      confirmSeverity: (input) =>
+        (input as { includeLlmObservations?: boolean }).includeLlmObservations
+          ? "spend"
+          : "none",
+      resource: readinessRunResource,
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `start_claude_readiness_run` and `start_openai_readiness_run` return a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_readiness_run` and report what it says, never the receipt.",
+      "- A readiness run answers three separate questions and they do not collapse. `status` is whether the run finished; `overallStatus` is the grade (a `completed` run can be `not-ready`, which is a finished run that failed the grade); `llmObservations` is whether the optional paid pass ran. A run whose observations were `billing-blocked` is still a complete, valid grade — say the observations were skipped for credit, never that the server has a problem.",
+      "- A run that FAILED produced no grade at all. Report it as a run that could not finish, and never as a verdict about the server.",
+      "- When a readiness run reports `authMode: \"headless\"` and a lane's `missingInputs` names `authorizationRequests`, the server is auth-walled and the run carried no token. That is not a defect — challenging correctly earns the server green marks. Tell the user to connect the server with OAuth in the app (server menu), then start a NEW run: the platform uses the saved token automatically, and the not-evaluated checks will grade.",
+    ],
+  },
+  {
+    operation: startOpenAIReadinessRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Grade ${
+          named(input, "server") ?? "a server"
+        } against OpenAI's app directory`,
+      buttonLabel: "Run it",
+      kind: "start",
+      confirmSeverity: (input) =>
+        (input as { includeLlmObservations?: boolean }).includeLlmObservations
+          ? "spend"
+          : "none",
+      resource: readinessRunResource,
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+    },
+    promptNotes: [
+      "- `start_openai_readiness_run` needs `submissionMode` and it is NEVER inferred: guessing turns a missing input into a clean bill of health. Ask which shape is being submitted. The two package shapes are not available here — they need a package on the user's machine, so point them at `mcpjam readiness check`.",
+    ],
+  },
+  { operation: getReadinessRunOperation, tier: "direct" },
+  { operation: listReadinessRunsOperation, tier: "direct" },
+  { operation: getReadinessReportOperation, tier: "direct" },
+  {
+    operation: startConformanceRunOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Run conformance suites on ${
+          named(input, "server") ?? "a server"
+        }`,
+      buttonLabel: "Run it",
+      kind: "start",
+      confirmSeverity: () => "none",
+      resource: conformanceRunResource,
+      target: (input) => {
+        const server = named(input, "server");
+        return server ? { type: "server", selector: server } : undefined;
+      },
+      normalizeProposalArgs: freezeConformanceServer,
+    },
+    promptNotes: [
+      "- `start_conformance_run` returns a RECEIPT, not a verdict. The run dials the target and takes minutes; poll `get_conformance_run` and report what it says, never the receipt.",
+      "- A conformance run answers three separate questions and they do not collapse. `status` is whether the run finished; `outcome` is the grade (a `completed` run can be `failed`); `score` is the number. `pending` counts checks this profile reported but did not score — do not treat them as failures.",
+      "- OAuth is not startable here. There is no cancel op. A dead process is recovered by heartbeat + sweep, never re-queued.",
+    ],
+  },
+  { operation: getConformanceRunOperation, tier: "direct" },
+  { operation: listConformanceRunsOperation, tier: "direct" },
+  { operation: getConformanceReportOperation, tier: "direct" },
+  {
+    operation: cancelReadinessRunOperation,
+    tier: "direct",
+    promptNotes: [
+      "- Cancelling a readiness run STOPS traffic to somebody else's server, so it needs no approval. The run's real terminal state arrives on a later `get_readiness_run` — the cancel response reports the request, not the outcome.",
     ],
   },
   { operation: listServerToolsOperation, tier: "direct" },
@@ -563,8 +1345,17 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
 
   // ── WRITE — persists, but spends nothing. Every one is picked up by the
   // derived idempotency set below and echoed in the response envelope.
+  {
+    operation: ensureAdhocEnvironmentOperation,
+    tier: "direct",
+    promptNotes: [
+      "- To run an eval suite against a specific client/model/computer/skills combination, compose it with `ensure_adhoc_environment` (or `run_eval_suite`'s `compose`) rather than `create_project_environment`. A composed environment is unnamed and deduplicated by content, so repeating the same stack reuses one row instead of littering the project's environment list with throwaway entries. Promote one with `name_environment` only when the user asks to keep it.",
+    ],
+  },
+  { operation: nameEnvironmentOperation, tier: "direct" },
   { operation: createEvalSuiteOperation, tier: "direct" },
   { operation: createEvalCaseOperation, tier: "direct" },
+  { operation: createEvalCasesOperation, tier: "direct" },
   { operation: updateEvalCaseOperation, tier: "direct" },
   { operation: updateEvalSuiteOperation, tier: "direct" },
 
@@ -580,24 +1371,37 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     operation: runEvalSuiteOperation,
     tier: "gated",
     proposal: {
-      describe: (input) =>
-        `Run eval suite ${named(input, "suite") ?? "(unnamed)"}`,
+      describe: describeEvalSuiteRun,
       buttonLabel: "Run it",
       kind: "start",
+      // Every eval run consumes credits, and a fan-out consumes them N times.
+      // Stated here rather than derived from the operation's `risk` facet:
+      // severity is not a function of risk (`external` has no risk value, and
+      // the schedule entry below decides per argument), so the two are
+      // deliberately separate fields that happen to agree here.
+      confirmSeverity: "spend",
       resource: evalRunResource,
       target: evalSuiteTarget,
+      normalizeProposalArgs: freezeEvalRunTargets,
     },
   },
   {
     operation: runEvalCaseOperation,
     tier: "gated",
     proposal: {
-      describe: (input) =>
-        `Run eval case ${named(input, "case") ?? "(unnamed)"}`,
+      describe: describeEvalCaseRun,
       buttonLabel: "Run it",
       kind: "start",
+      confirmSeverity: "spend",
       resource: evalRunResource,
       target: evalSuiteTarget,
+      // Same freeze as the suite run, and for the same reasons. This operation
+      // takes the full `compose` input, so without it `compose.host` and
+      // `compose.computer` stay names — pointers that can be repointed between
+      // the proposal and the click — and `saveTargets` can additionally ATTACH
+      // the minted cell to the suite, a persistent edit the old one-line
+      // describe never mentioned.
+      normalizeProposalArgs: freezeEvalRunTargets,
     },
   },
   {
@@ -608,6 +1412,11 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
         `Generate eval cases for ${named(input, "suite") ?? "(unnamed)"}`,
       buttonLabel: "Generate them",
       kind: "generate",
+      // Generation calls the authoring model, so it spends credits exactly
+      // like the two run operations above. Without this the Slack and Discord
+      // approval cards omit the spend warning for the one operation whose
+      // cost is least obvious from its name.
+      confirmSeverity: "spend",
     },
   },
   {
@@ -618,6 +1427,65 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       buttonLabel: "Cancel the run",
       kind: "cancel",
     },
+  },
+  // GATED because it SPENDS. `kind: "generate"` matches the other
+  // request-an-analysis ops: nothing starts running that a person is waiting
+  // on, an advisory result is authored in the background.
+  {
+    operation: requestEvalRunJudgeOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const run = named(input, "runId") ?? "(unnamed)";
+        // `force` re-grades a run that already has a result — the same spend
+        // a second time. An approval button that said only "Grade run X"
+        // would hide the fact that X was already graded.
+        const again = input.force === true ? " again" : "";
+        // `enable` is the reason a run recorded with the judge off can be
+        // graded at all, and it is exactly the case where a reader would
+        // otherwise expect the click to do nothing.
+        const despite =
+          input.enable === true ? " (judge was off when it ran)" : "";
+        return `Grade run ${run}${again} with LLM as Judge${despite}`;
+      },
+      buttonLabel: "Grade it",
+      kind: "generate",
+    },
+    promptNotes: [
+      "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
+    ],
+  },
+
+  // ── GitHub Checks. The read is free and is what makes the write
+  // answerable: `connectable` names the repositories the App can actually
+  // reach, so a proposal can quote a real one instead of a guess.
+  { operation: listEvalCheckReposOperation, tier: "direct" },
+  // GATED for REACH, not spend. Connecting changes what happens in a SHARED
+  // repository for everyone who opens a pull request against it, and with
+  // `fail_closed` it can block their merges. `kind: "external"` is the honest
+  // one: the effect lands on GitHub, where MCPJam cannot describe or undo it.
+  {
+    operation: connectEvalCheckRepoOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const repo = named(input, "repo") ?? "(unnamed repository)";
+        const suite = named(input, "suite") ?? "(unnamed)";
+        // The policy is the half of this decision that outlives the click, so
+        // it is in the sentence rather than buried in the arguments.
+        const policy =
+          input.outagePolicy === "fail_closed"
+            ? " (failing checks closed when MCPJam cannot conclude)"
+            : " (passing checks open when MCPJam cannot conclude)";
+        return `Run eval suite ${suite} on every pull request to ${repo}${policy}`;
+      },
+      buttonLabel: "Connect the repository",
+      kind: "external",
+      confirmSeverity: "external",
+    },
+    promptNotes: [
+      "- `connect_eval_check_repo` affects everyone who opens a pull request on that repository, and `outagePolicy: fail_closed` can block their merges. Ask which policy the user wants — never pick one for them — and check `list_eval_check_repos` first: a repository missing from `connectable` needs the MCPJam GitHub App installed on it, which no tool here can do.",
+    ],
   },
 
   // ── GATED because the spend RECURS.
@@ -959,6 +1827,23 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
       "- `set_user_testing_guest_execution` REPLACES every cap at once, so send all of them: read the current values first, or you will silently reset a limit someone set deliberately.",
     ],
   },
+  { operation: getShareSettingsOperation, tier: "direct" },
+  {
+    operation: setShareModeOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Set ${named(input, "resourceType") ?? "resource"} ${
+          named(input, "resourceId") ?? "(unnamed)"
+        } access to ${named(input, "mode") ?? "the requested mode"}`,
+      buttonLabel: "Apply it",
+      kind: "schedule",
+      confirmSeverity: "external",
+    },
+    promptNotes: [
+      "- `set_share_mode` changes who can open a shared scenario, conformance run, or eval run. `anyone_with_link` includes guests as browser sessions, not verified individuals.",
+    ],
+  },
 ];
 
 /**
@@ -1007,6 +1892,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // to hand it back except by re-inviting them individually.
   rotate_user_testing_link:
     "Immediate and irreversible: every holder of the old link loses access and every live session dies.",
+  rotate_share_link:
+    "Immediate and irreversible: every holder of the old unified share URL loses the ability to redeem it. Same rationale as rotate_user_testing_link.",
   remove_user_testing_member:
     "Revokes a named person's access; the agent proposes authoring, never destruction.",
 
@@ -1121,6 +2008,8 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
   // honest options here are all-or-nothing.
   search_sessions:
     "Other people's conversations are not the agent's to read. Available on REST/CLI/MCP.",
+  uninstall_registry_server:
+    "Agent proposes authoring, never destruction — same rule as delete_project_server.",
 };
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(
@@ -1199,6 +2088,27 @@ export function proposalMetaFor(operationName: string): {
   targetFor: (
     input: Record<string, unknown>,
   ) => ProposedActionTarget | undefined;
+  /**
+   * Freeze the arguments before they are persisted, or return them unchanged.
+   *
+   * BEST-EFFORT BY CONSTRUCTION for most operations: a normalizer that throws
+   * leaves the arguments as the model wrote them, which is exactly today's
+   * behaviour — a failed resolution must not cost the user the proposal
+   * itself. The exception is an entry with `requiredFrozenKeys`, where the
+   * pin IS the approval: there a failure propagates so `persistProposal`
+   * refuses the mint instead of persisting an unpinned proposal.
+   */
+  normalizeArgs: (
+    input: Record<string, unknown>,
+    context: { projectId: string; client: PlatformApiClient },
+  ) => Promise<Record<string, unknown>>;
+  /**
+   * Canonicalize frozen input for the proposal action-id hash.
+   * Display-only fields (compose.hostLabel) must not remint a spend control.
+   */
+  hashInput: (input: Record<string, unknown>) => Record<string, unknown>;
+  /** Keys the frozen input must carry, or the proposal is refused. */
+  requiredFrozenKeys: readonly string[];
 } {
   const entry = GATED_BY_NAME.get(operationName);
   if (!entry) {
@@ -1208,6 +2118,9 @@ export function proposalMetaFor(operationName: string): {
       kind: "start",
       severityFor: () => undefined,
       targetFor: () => undefined,
+      normalizeArgs: async (input) => input,
+      hashInput: proposalInputForIdempotency,
+      requiredFrozenKeys: [],
     };
   }
   const severity = entry.proposal.confirmSeverity;
@@ -1229,6 +2142,26 @@ export function proposalMetaFor(operationName: string): {
       ),
     buttonLabel: entry.proposal.buttonLabel,
     kind: entry.proposal.kind,
+    normalizeArgs: async (input, context) => {
+      const normalize = entry.proposal.normalizeProposalArgs;
+      if (!normalize) return input;
+      try {
+        return await normalize(input, context);
+      } catch (error) {
+        logger.warn("[v1/agent] could not normalize proposal arguments", {
+          operation: operationName,
+          error: error instanceof Error ? error.message : String(error),
+        });
+        // Degrading to the raw input is fine when freezing merely NARROWS
+        // (an eval fan-out stays exactly today's behaviour), and is the
+        // vulnerability when the pin is the thing being approved — those
+        // entries declare `requiredFrozenKeys` and the failure propagates.
+        if ((entry.proposal.requiredFrozenKeys?.length ?? 0) > 0) throw error;
+        return input;
+      }
+    },
+    hashInput: proposalInputForIdempotency,
+    requiredFrozenKeys: entry.proposal.requiredFrozenKeys ?? [],
   };
 }
 

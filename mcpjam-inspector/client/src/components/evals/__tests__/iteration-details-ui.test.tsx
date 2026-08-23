@@ -27,6 +27,9 @@ const actualToolCalls = [
 vi.mock("convex/react", () => ({
   useAction: () => mockGetBlob,
   useQuery: () => undefined,
+  // No Convex identity: nothing to wait on, so `useActorCanQuery` lets the
+  // suite-config read through exactly as it did before it was gated.
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
 vi.mock("@/components/ui/json-editor", () => ({

@@ -30,6 +30,10 @@
  *   - {@link opaqueIdSchema} / {@link mintCaseId} — declared, opaque identity.
  *   - {@link USER_VALUE_STAGES} and the other chain enums — the shared
  *     vocabulary the reporting and import surfaces mirror.
+ *   - {@link deriveStageResults} — the pure, versioned derivation that turns
+ *     one iteration's authored case plus captured evidence into those stages'
+ *     states, and {@link stageDerivationSchema}, the validator every write
+ *     boundary checks a reported derivation against.
  */
 
 export type {
@@ -136,6 +140,36 @@ export {
   userValueStageSchema,
 } from "./chain.js";
 
+// ── deriving a stage's state from a run ──────────────────────────────────────
+export type {
+  StageAuthoredCase,
+  StageDerivation,
+  StageDerivationInput,
+  StageEvidence,
+  StageEvidenceRefs,
+  StagePredicateResultLike,
+  StagePromptSummaryLike,
+  StageReason,
+  StageRenderObservationLike,
+  StageResultRow,
+  StageSetupPhaseSignal,
+  StageSetupSignals,
+  StageSpanLike,
+  StageToolErrorLike,
+} from "./stage-derivation.js";
+export {
+  MAX_EVIDENCE_REASONS,
+  MAX_EVIDENCE_REASON_CHARS,
+  STAGE_ANALYZER_VERSION,
+  STAGE_METADATA_KEYS,
+  STAGE_REASONS,
+  deriveStageResults,
+  stageDerivationSchema,
+  stageDerivationToMetadata,
+  stageReasonSchema,
+  stageResultRowSchema,
+} from "./stage-derivation.js";
+
 // ── the authored step union ──────────────────────────────────────────────────
 export type {
   AssertStep,
@@ -188,6 +222,7 @@ export type {
 export {
   EVAL_SUITE_SCHEMA_ID,
   EVAL_SUITE_SCHEMA_VERSION,
+  MAX_BATCH_CREATE_CASES,
   MAX_CASE_ASSERTIONS,
   MAX_REPETITIONS,
   MAX_SUITE_FILE_CASES,

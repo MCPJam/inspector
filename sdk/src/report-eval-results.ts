@@ -67,6 +67,7 @@ type BackendEnvelope<T> = {
 type NormalizedReportingError = {
   message: string;
   isBillingLimitReached: boolean;
+  isReportingBackendIncompatible: boolean;
 };
 
 type EvalArtifactUploadUrlResponse = {
@@ -210,13 +211,14 @@ function toEvalReportingError(
   }
 
   const rawMessage = error instanceof Error ? error.message : String(error);
-  const { message, isBillingLimitReached } =
+  const { message, isBillingLimitReached, isReportingBackendIncompatible } =
     normalizeReportingErrorMessage(rawMessage);
   return new EvalReportingError(message, {
     attemptCount,
     cause: error,
     endpoint,
     isBillingLimitReached,
+    isReportingBackendIncompatible,
     statusCode,
   });
 }
@@ -327,6 +329,102 @@ function normalizeBillingLimitMessage(
 }
 
 /**
+ * Fields this SDK sends that a reporting backend older than the minimum
+ * contract will not recognize. `caseId` (declared case identity) is the first
+ * and, for now, only one.
+ */
+const REQUIRED_BACKEND_FIELDS = ["caseId"] as const;
+
+/**
+ * Prefix that marks a message as ALREADY rewritten by
+ * {@link describeIncompatibleReportingBackend}. The rewrite quotes the backend
+ * verbatim at the end, so without a sentinel a second normalization pass would
+ * match its own output and nest the explanation inside itself.
+ */
+const INCOMPATIBLE_BACKEND_PREFIX =
+  "This reporting backend is older than this SDK requires";
+
+/** Phrasings that come BEFORE the field: "extra field `caseId`". */
+const UNKNOWN_FIELD_BEFORE =
+  "(?:extra|unknown|unexpected|unrecognized|additional)\\s+(?:field|argument|propert\\w*|key)|no such (?:field|argument)";
+/** Phrasings that come AFTER it: "`caseId` is not allowed". */
+const UNKNOWN_FIELD_AFTER =
+  "(?:is\\s+)?not\\s+(?:in the validator|allowed|permitted|a\\s+(?:valid|known|recognized)\\s+(?:field|argument|propert\\w*))";
+
+/**
+ * An "I do not know this field" rejection, as opposed to "this field's value is
+ * wrong".
+ *
+ * The distinction is the whole point. A backend that understands `caseId` also
+ * rejects bad ones — an unusable charset, an id that disagrees with
+ * `externalCaseId` — and those messages are written for the author and must
+ * reach them as written. What is matched here is the other thing: a strict
+ * argument validator refusing a field it has never heard of, which says nothing
+ * about the payload and everything about the destination.
+ *
+ * Phrasings are matched loosely because they are not ours to pin down. Convex
+ * says "Object contains extra field `caseId` that is not in the validator"; a
+ * caller-supplied `baseUrl` reimplementing the ingest contract will say
+ * something else.
+ *
+ * The field name must be ADJACENT to the phrasing, not merely present in the
+ * message. A validator that refuses some other unknown field echoes the whole
+ * rejected object back, and that echo contains `caseId` — so "mentions caseId
+ * somewhere AND complains about an unknown field" matches a rejection that has
+ * nothing to do with declared ids, and would answer it with upgrade advice for
+ * the wrong field while suppressing the retry it might deserve. Adjacency is
+ * what separates the sentence from the payload dump that follows it.
+ */
+function rejectsFieldAsUnknown(message: string, field: string): boolean {
+  // Only quoting and punctuation may sit between the phrase and the name —
+  // "extra field `caseId`", never "extra field `metadata` … {caseId: …}".
+  const phraseThenField = new RegExp(
+    `(?:${UNKNOWN_FIELD_BEFORE})[\\s:='"\`]{0,4}${field}\\b`,
+    "i"
+  );
+  // The mirror image, bounded to one line so it cannot reach into the dump.
+  const fieldThenPhrase = new RegExp(
+    `\\b${field}["'\`]?[^\\n]{0,24}?(?:${UNKNOWN_FIELD_AFTER})`,
+    "i"
+  );
+  return phraseThenField.test(message) || fieldThenPhrase.test(message);
+}
+
+function isUnknownFieldRejection(rawMessage: string): boolean {
+  if (rawMessage.startsWith(INCOMPATIBLE_BACKEND_PREFIX)) return false;
+  return REQUIRED_BACKEND_FIELDS.some((field) =>
+    rejectsFieldAsUnknown(rawMessage, field)
+  );
+}
+
+/**
+ * Turn a strict-validator refusal into the sentence the author can act on.
+ *
+ * The public SDK reports to a caller-supplied `baseUrl`, so we cannot prove
+ * every destination is current — what we can do is not make somebody read a
+ * validator dump to learn that their deployment needs an upgrade. Three facts
+ * the raw message never carries: NOTHING was filed (argument validation is
+ * strict, so the whole upload is refused rather than the field stripped), the
+ * run itself is fine, and the fix is on the destination rather than in the
+ * suite.
+ *
+ * The backend's own words are kept at the end. They name which field and which
+ * endpoint, and a rewrite that discarded them would be harder to debug than the
+ * dump it replaced.
+ */
+function describeIncompatibleReportingBackend(rawMessage: string): string {
+  return (
+    `${INCOMPATIBLE_BACKEND_PREFIX}: it rejected \`caseId\`, the declared case ` +
+    `identity @mcpjam/sdk sends on every result. Argument validation is strict, ` +
+    `so the WHOLE report was refused rather than the field ignored — no results ` +
+    `were filed, and this is a reporting failure, not an eval verdict. Upgrade ` +
+    `the reporting backend to one that accepts declared case ids (MCPJam-hosted ` +
+    `app.mcpjam.com does), or point \`baseUrl\` at one that is. Backend said: ` +
+    rawMessage
+  );
+}
+
+/**
  * Every ingest failure message the backend hands back funnels through here on
  * its way into an `EvalReportingError`, and from there into both stderr and
  * Sentry's exception value. The string is server-controlled, and the ingest
@@ -343,9 +441,17 @@ function normalizeReportingErrorMessage(
   rawMessage: string
 ): NormalizedReportingError {
   if (!rawMessage.includes("billing_limit_reached")) {
+    // Redact FIRST, then explain: the compatibility rewrite quotes the backend
+    // verbatim, and the dump a Convex validator echoes is the ingest body —
+    // the one that carries `accessToken`/`refreshToken`/`clientSecret`.
+    const redacted = redactTelemetryString(rawMessage);
+    const incompatible = isUnknownFieldRejection(redacted);
     return {
-      message: redactTelemetryString(rawMessage),
+      message: incompatible
+        ? describeIncompatibleReportingBackend(redacted)
+        : redacted,
       isBillingLimitReached: false,
+      isReportingBackendIncompatible: incompatible,
     };
   }
 
@@ -356,6 +462,7 @@ function normalizeReportingErrorMessage(
       ? redactTelemetryString(billingMessage)
       : "Billing limit reached.",
     isBillingLimitReached: true,
+    isReportingBackendIncompatible: false,
   };
 }
 
@@ -370,6 +477,25 @@ function isBillingLimitReachedError(error: unknown): boolean {
     error.message.startsWith("Eval iteration limit reached.") ||
     normalizeReportingErrorMessage(error.message).isBillingLimitReached
   );
+}
+
+/**
+ * A rejection no retry can fix. Mirrors {@link isBillingLimitReachedError}: the
+ * destination's validator will refuse the identical payload every time, so the
+ * three backoff attempts only delay the message the author needs to read.
+ */
+function isReportingBackendIncompatibleError(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  if (
+    error instanceof EvalReportingError &&
+    error.isReportingBackendIncompatible
+  ) {
+    return true;
+  }
+  return normalizeReportingErrorMessage(error.message)
+    .isReportingBackendIncompatible;
 }
 
 function generateExternalRunId(): string {
@@ -478,12 +604,16 @@ async function requestWithRetry<T>(
             responseBody.error ??
             responseBody.message ??
             "Unknown SDK evals error";
-          const { message, isBillingLimitReached } =
-            normalizeReportingErrorMessage(rawMessage);
+          const {
+            message,
+            isBillingLimitReached,
+            isReportingBackendIncompatible,
+          } = normalizeReportingErrorMessage(rawMessage);
           throw new EvalReportingError(message, {
             attemptCount: attempt + 1,
             endpoint: path,
             isBillingLimitReached,
+            isReportingBackendIncompatible,
             statusCode: response.status,
           });
         }
@@ -494,10 +624,11 @@ async function requestWithRetry<T>(
         responseBody?.error ??
         responseBody?.message ??
         `Request failed with status ${response.status}: ${response.statusText}`;
-      const { message, isBillingLimitReached } =
+      const { message, isBillingLimitReached, isReportingBackendIncompatible } =
         normalizeReportingErrorMessage(rawMessage);
       if (
         !isBillingLimitReached &&
+        !isReportingBackendIncompatible &&
         isRetryableStatus(response.status) &&
         attempt < config.retryDelaysMs.length
       ) {
@@ -509,6 +640,7 @@ async function requestWithRetry<T>(
         attemptCount: attempt + 1,
         endpoint: path,
         isBillingLimitReached,
+        isReportingBackendIncompatible,
         statusCode: response.status,
       });
     } catch (error) {
@@ -521,6 +653,7 @@ async function requestWithRetry<T>(
         error instanceof EvalReportingError ? error.statusCode : undefined;
       const shouldRetry =
         !isBillingLimitReachedError(error) &&
+        !isReportingBackendIncompatibleError(error) &&
         (isAbortError ||
           error instanceof TypeError ||
           (typeof errorStatusCode === "number" &&

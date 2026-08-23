@@ -34,7 +34,7 @@ describe("CaniuseCapabilityPage", () => {
     expect(screen.getByText("/capabilities/sampling")).toBeInTheDocument();
     expect(screen.getByText("ChatGPT")).toBeInTheDocument();
     expect(screen.getByText("Claude")).toBeInTheDocument();
-    expect(screen.getAllByText("2026-07-07").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("2026-08-14").length).toBeGreaterThan(0);
     expect(
       screen.getAllByText(/Supported|Partial|Not supported/).length,
     ).toBeGreaterThan(0);
@@ -45,6 +45,15 @@ describe("CaniuseCapabilityPage", () => {
       "href",
       "/embed/host-compare",
     );
+  });
+
+  it("shows the flag-gated hosts — the flags gate creation, not this page", () => {
+    // `useFeatureFlagEnabled` is mocked false above: the anonymous-visitor
+    // case, and the one that used to hide these two from caniuse entirely.
+    render(<CaniuseCapabilityPage capabilitySlug="sampling" />);
+
+    expect(screen.getByText("Claude Code")).toBeInTheDocument();
+    expect(screen.getByText("Codex")).toBeInTheDocument();
   });
 
   it("renders a not-found state for unknown capability slugs", () => {

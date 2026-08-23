@@ -17,6 +17,12 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
+import { isTerminalRunStatus } from "../../services/evals/run-status.js";
+import {
+  checkEvalExecutionAdmission,
+  checkEvalHarnessAdmission,
+  harnessOfHostConfig,
+} from "../../services/evals/harness-admission";
 import {
   applyVisibilityPolicyAndCountSignals,
   extractHostExecutionPolicy,
@@ -36,6 +42,12 @@ import {
   type TestCaseType,
 } from "@/shared/probe-config";
 import { deriveItemIdempotencyKey } from "../../utils/idempotency.js";
+import {
+  createEvalCasesInBatches,
+  partialResultOf,
+  withMintedCaseIds,
+  type EvalCaseBatchItem,
+} from "./eval-case-batch.js";
 import { logger } from "../../utils/logger";
 import { ErrorCode, WebRouteError } from "../web/errors.js";
 import {
@@ -61,6 +73,8 @@ import {
   runNeedsEffectiveSkillSurface,
   type RunPinnedSkill,
 } from "../../services/evals/run-plugin-snapshot.js";
+import { runPinnedSkillsToHarnessArtifacts } from "../../services/evals/run-pinned-harness-skills.js";
+import type { PinnedSkillArtifact } from "@/shared/skill-types";
 import {
   countModelSteps,
   isModelFree,
@@ -340,6 +354,16 @@ export const RunEvalsRequestSchema = z.object({
    */
   idempotencyKey: z.string().min(1).max(256).optional(),
   /**
+   * SHA-256 hex of the suite-file bytes that launched this run. Lowercase,
+   * 64 characters. Forwarded to Convex `startTestSuiteRun.sourceHash` so a
+   * file-owned run records the exact bytes it ran. Absent on UI / API
+   * launches that did not come from a file.
+   */
+  sourceHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/, "sourceHash must be a 64-character lowercase SHA-256 hex digest")
+    .optional(),
+  /**
    * Project-environment launch (one per attached env on a Run-all fan-out;
    * always sent explicitly, even single-env). `prepareEvalRun` resolves the
    * environment's closed server set via
@@ -352,6 +376,13 @@ export const RunEvalsRequestSchema = z.object({
    * unknown keys are stripped silently.
    */
   environmentId: z.string().optional(),
+  /**
+   * Compose-and-run opt-in: accept a project-scoped, non-archived environment
+   * that is NOT a suite member. Never mutates the suite. Absent / false keeps
+   * today's membership check. Older backends reject the unknown arg; clients
+   * probe `ephemeralEnvironmentLaunch` before sending it.
+   */
+  ephemeralEnvironment: z.boolean().optional(),
   /**
    * The "without skills" arm of an A/B compare (INS-5). `'exclude'` runs this
    * suite with skills DELIBERATELY off: the backend pins nothing from ANY of
@@ -972,14 +1003,58 @@ export type PreparedEvalRun = {
   };
   recorder: SuiteRunRecorder;
   /**
+   * This "start" REPLAYED an existing run rather than creating one — an
+   * idempotency-key hit, or the keyless fingerprint window. Undefined against a
+   * backend that predates the signal.
+   *
+   * Read it through {@link shouldSkipExecution}; a bare truthiness check here
+   * is the wrong question, because a replay of a run still in flight is not the
+   * same as a replay of one that finished.
+   */
+  deduped?: boolean;
+  /** The run's status as the platform holds it. `running` for a fresh start;
+   *  on a replay, whatever the existing run actually is. */
+  status?: string;
+  /**
    * Execute the prepared run to completion. `runEvalSuiteWithAiSdk` owns
    * terminal run status (completed/failed/cancelled); callers that detach
    * this (the async /api/v1 route) should still catch and defensively
    * finalize via `recorder` for errors thrown outside the runner's own
    * try.
+   *
+   * DO NOT call this unconditionally on a prepared run — see
+   * {@link shouldSkipExecution}. A replay of a finished run must not execute:
+   * the suite would run a second time and bill a second time, against a run
+   * whose results are already recorded.
    */
   execute: () => Promise<void>;
 };
+
+/**
+ * Whether a prepared run has already been run and must NOT be executed again.
+ *
+ * TRUE for exactly one case: the platform replayed an existing run AND that run
+ * is terminal. Executing then would re-run every case and bill for it, writing
+ * over results that are already final — which is the double-spend an
+ * idempotency key is sent to prevent.
+ *
+ * FALSE for a replay of a NON-terminal run, deliberately. Two situations are
+ * indistinguishable from here — a run genuinely in flight, and one abandoned
+ * when its process died mid-execution — and they want opposite treatments. The
+ * conservative answer preserves the behaviour that predates this check, so a
+ * crashed run can still be driven to completion by a retry the way it always
+ * has been. Deciding that case needs a liveness signal (a lease or heartbeat on
+ * the run), not a guess made here.
+ *
+ * FALSE against a backend with no `deduped` field, for the same reason: unknown
+ * is not a licence to change behaviour.
+ */
+export function shouldSkipExecution(prepared: {
+  deduped?: boolean;
+  status?: string;
+}): boolean {
+  return prepared.deduped === true && isTerminalRunStatus(prepared.status);
+}
 
 /**
  * A probe's identity is title + server + tool: every probe shares query ""
@@ -1048,6 +1123,192 @@ function resolveAuthoringSteps(test: {
     return legacyProbeConfigToSteps(test.probeConfig);
   }
   return undefined;
+}
+
+/**
+ * Project one entry of the upsert map onto a `createTestCases` batch item.
+ *
+ * `judgeRequirement` is deliberately absent. The map type declares it but
+ * nothing ever assigns it, so every create so far has sent `undefined` — which
+ * Convex drops — and the backend's case validators have no such field. The
+ * batch item validator is CLOSED, so forwarding the dead key would turn every
+ * case into a rejected item rather than a silent no-op.
+ */
+function toCaseBatchItem(
+  testCaseData: {
+    title: string;
+    query: string;
+    runs: number;
+    models: Array<{ model: string; provider: string }>;
+    expectedToolCalls: any[];
+    isNegativeTest?: boolean;
+    scenario?: string;
+    expectedOutput?: string;
+    steps?: TestStep[];
+    advancedConfig?: any;
+    matchOptions?: import("@/shared/eval-matching").MatchOptionsDTO;
+    predicates?: import("@/shared/eval-matching").CasePredicates;
+  },
+  opts: { idempotencyKey?: string }
+): EvalCaseBatchItem {
+  return {
+    title: testCaseData.title,
+    query: testCaseData.query,
+    models: testCaseData.models,
+    runs: testCaseData.runs,
+    expectedToolCalls: sanitizeForConvexTransport(
+      testCaseData.expectedToolCalls
+    ),
+    isNegativeTest: testCaseData.isNegativeTest,
+    scenario: testCaseData.scenario,
+    expectedOutput: testCaseData.expectedOutput,
+    steps: sanitizeForConvexTransport(testCaseData.steps),
+    advancedConfig: sanitizeForConvexTransport(testCaseData.advancedConfig),
+    matchOptions: testCaseData.matchOptions,
+    predicates: testCaseData.predicates,
+    ...(opts.idempotencyKey ? { idempotencyKey: opts.idempotencyKey } : {}),
+  };
+}
+
+/**
+ * One case's upsert outcome, held in its ORIGINAL position.
+ *
+ * Creates are now deferred to a batch that runs after the whole map has been
+ * walked, so appending outcomes as they happen would reorder the response —
+ * every updated case ahead of every created one. Callers render these lists to
+ * a human next to the tests they submitted, so the slot is kept and filled.
+ */
+type CaseUpsertOutcome =
+  | { kind: "committed"; id?: string; name: string }
+  | { kind: "failed"; id?: string; name: string; error: string };
+
+/**
+ * Author the deferred creates through `createTestCases` and fill their slots.
+ *
+ * A whole-call throw is turned back into one failure per pending case. The
+ * batch mutation rejects an entire call for a caller-level mistake — an
+ * unauthorized actor, a suite that vanished — and before batching, that same
+ * condition threw once per `createTestCase` and filed every case as failed.
+ * Preserving that is what keeps this function's partial-failure contract (and
+ * the empty-new-suite rollback below, which reads "nothing committed") true.
+ */
+async function commitPendingCaseCreates(args: {
+  convexClient: ReturnType<typeof createConvexClients>["convexClient"];
+  suiteId: string;
+  pending: Array<{ slot: number; title: string; item: EvalCaseBatchItem }>;
+  outcomes: Array<CaseUpsertOutcome | undefined>;
+}): Promise<void> {
+  const { convexClient, suiteId, pending, outcomes } = args;
+  if (pending.length === 0) return;
+
+  // Mint here rather than at the map walk: an id is only meaningful for a row
+  // that is actually being created, and an update keeps whatever identity the
+  // stored case already has.
+  const cases = withMintedCaseIds(pending.map((p) => p.item));
+
+  let result: Awaited<ReturnType<typeof createEvalCasesInBatches>>;
+  let rejection: string | undefined;
+  try {
+    result = await createEvalCasesInBatches(convexClient, { suiteId, cases });
+  } catch (error) {
+    // A rejection carries whatever earlier chunks committed. Those rows exist;
+    // reporting them as failures would send the caller into a retry that
+    // authors them twice.
+    result = partialResultOf(error);
+    rejection = error instanceof Error ? error.message : String(error);
+    logger.warn("[evals] Batch case create rejected the whole call", {
+      suiteId,
+      cases: pending.length,
+      committedBeforeRejection: result.committed.length,
+      error: rejection,
+    });
+  }
+
+  for (const entry of result.committed) {
+    const slotted = pending[entry.index];
+    if (!slotted) {
+      logger.warn("[evals] Batch result named a case index we never sent", {
+        suiteId,
+        index: entry.index,
+        sent: pending.length,
+      });
+      continue;
+    }
+    outcomes[slotted.slot] = {
+      kind: "committed",
+      id: String(entry.testCaseId),
+      name: slotted.title,
+    };
+  }
+  for (const entry of result.failed) {
+    const slotted = pending[entry.index];
+    if (!slotted) {
+      logger.warn("[evals] Batch result named a case index we never sent", {
+        suiteId,
+        index: entry.index,
+        sent: pending.length,
+      });
+      continue;
+    }
+    outcomes[slotted.slot] = {
+      kind: "failed",
+      name: slotted.title,
+      // The code is the stable half; the message is what a human reads.
+      error: `${entry.code}: ${entry.message}`,
+    };
+    logger.warn("[evals] Failed to create test case", {
+      suiteId,
+      title: slotted.title,
+      code: entry.code,
+      error: entry.message,
+    });
+  }
+
+  // Warnings are the audit half of the batch contract — a policy coercion, a
+  // replay that kept a different id. This surface renders `{id?, name}` and has
+  // nowhere to put them, so they are logged rather than dropped.
+  // Everything the rejected call never reached. Filled last so a case the
+  // partial result already accounted for keeps its real outcome.
+  if (rejection !== undefined) {
+    for (const { slot, title } of pending) {
+      if (outcomes[slot] === undefined) {
+        outcomes[slot] = { kind: "failed", name: title, error: rejection };
+      }
+    }
+  }
+
+  const entryWarnings = result.committed.flatMap((entry) =>
+    (entry.warnings ?? []).map((w) => ({ title: entry.title, ...w }))
+  );
+  if (result.warnings.length > 0 || entryWarnings.length > 0) {
+    logger.info("[evals] Batch case create returned warnings", {
+      suiteId,
+      warnings: [...result.warnings, ...entryWarnings],
+    });
+  }
+}
+
+/** Drain positional outcomes into the response's two flat lists, in order. */
+function flushCaseOutcomes(
+  outcomes: Array<CaseUpsertOutcome | undefined>,
+  committedCases: Array<{ id?: string; name: string }>,
+  failedCases: Array<{ id?: string; name: string; error: string }>
+): void {
+  for (const outcome of outcomes) {
+    if (!outcome) continue;
+    if (outcome.kind === "committed") {
+      committedCases.push({
+        ...(outcome.id ? { id: outcome.id } : {}),
+        name: outcome.name,
+      });
+    } else {
+      failedCases.push({
+        ...(outcome.id ? { id: outcome.id } : {}),
+        name: outcome.name,
+        error: outcome.error,
+      });
+    }
+  }
 }
 
 /**
@@ -1195,7 +1456,19 @@ export async function authorEvalSuite(args: {
         { suiteId: resolvedSuiteId }
       );
 
+      // Updates still go one at a time — `updateTestCase` is a different
+      // mutation with no batch form, and a rerun-time edit is not the bulk
+      // authoring path W0.3 exists for. Only the CREATES are deferred.
+      const outcomes: Array<CaseUpsertOutcome | undefined> = [];
+      const pendingCreates: Array<{
+        slot: number;
+        title: string;
+        item: EvalCaseBatchItem;
+      }> = [];
+
       for (const [caseDedupeKey, testCaseData] of testCaseMap.entries()) {
+        const slot = outcomes.length;
+        outcomes.push(undefined);
         const testCaseStepsKey = JSON.stringify(
           normalizeForComparison(testCaseData.steps || [])
         );
@@ -1302,47 +1575,31 @@ export async function authorEvalSuite(args: {
                 predicates: testCaseData.predicates,
               });
             }
-            committedCases.push({
+            outcomes[slot] = {
+              kind: "committed",
               id: String(existingTestCase._id),
               name: testCaseData.title,
-            });
+            };
           } else {
-            await convexClient.mutation("testSuites:createTestCase" as any, {
-              suiteId: resolvedSuiteId,
+            pendingCreates.push({
+              slot,
               title: testCaseData.title,
-              query: testCaseData.query,
-              models: testCaseData.models,
-              runs: testCaseData.runs,
-              expectedToolCalls: sanitizeForConvexTransport(
-                testCaseData.expectedToolCalls
-              ),
-              isNegativeTest: testCaseData.isNegativeTest,
-              scenario: testCaseData.scenario,
-              expectedOutput: testCaseData.expectedOutput,
-              steps: sanitizeForConvexTransport(testCaseData.steps),
-              judgeRequirement: testCaseData.judgeRequirement,
-              advancedConfig: sanitizeForConvexTransport(
-                testCaseData.advancedConfig
-              ),
-              matchOptions: testCaseData.matchOptions,
-              predicates: testCaseData.predicates,
-              ...(idempotencyKey
-                ? {
-                    idempotencyKey: deriveItemIdempotencyKey(
-                      idempotencyKey,
-                      caseDedupeKey
-                    ),
-                  }
-                : {}),
+              item: toCaseBatchItem(testCaseData, {
+                // Discriminated by the case's dedupe key, not its index: a
+                // retry whose case ORDER differs must still match.
+                idempotencyKey: idempotencyKey
+                  ? deriveItemIdempotencyKey(idempotencyKey, caseDedupeKey)
+                  : undefined,
+              }),
             });
-            committedCases.push({ name: testCaseData.title });
           }
         } catch (error) {
-          failedCases.push({
+          outcomes[slot] = {
+            kind: "failed",
             id: existingTestCase ? String(existingTestCase._id) : undefined,
             name: testCaseData.title,
             error: error instanceof Error ? error.message : String(error),
-          });
+          };
           logger.warn("[evals] Failed to upsert test case", {
             suiteId: resolvedSuiteId,
             title: testCaseData.title,
@@ -1350,6 +1607,14 @@ export async function authorEvalSuite(args: {
           });
         }
       }
+
+      await commitPendingCaseCreates({
+        convexClient,
+        suiteId: resolvedSuiteId,
+        pending: pendingCreates,
+        outcomes,
+      });
+      flushCaseOutcomes(outcomes, committedCases, failedCases);
     }
   } else {
     const createdSuite = await convexClient.mutation(
@@ -1370,49 +1635,31 @@ export async function authorEvalSuite(args: {
 
     resolvedSuiteId = createdSuite._id as string;
 
+    const outcomes: Array<CaseUpsertOutcome | undefined> = [];
+    const pendingCreates: Array<{
+      slot: number;
+      title: string;
+      item: EvalCaseBatchItem;
+    }> = [];
     for (const [caseDedupeKey, testCaseData] of testCaseMap.entries()) {
-      try {
-        await convexClient.mutation("testSuites:createTestCase" as any, {
-          suiteId: resolvedSuiteId,
-          title: testCaseData.title,
-          query: testCaseData.query,
-          models: testCaseData.models,
-          runs: testCaseData.runs,
-          expectedToolCalls: sanitizeForConvexTransport(
-            testCaseData.expectedToolCalls
-          ),
-          isNegativeTest: testCaseData.isNegativeTest,
-          scenario: testCaseData.scenario,
-          expectedOutput: testCaseData.expectedOutput,
-          steps: sanitizeForConvexTransport(testCaseData.steps),
-          judgeRequirement: testCaseData.judgeRequirement,
-          advancedConfig: sanitizeForConvexTransport(
-            testCaseData.advancedConfig
-          ),
-          matchOptions: testCaseData.matchOptions,
-          predicates: testCaseData.predicates,
-          ...(idempotencyKey
-            ? {
-                idempotencyKey: deriveItemIdempotencyKey(
-                  idempotencyKey,
-                  caseDedupeKey
-                ),
-              }
-            : {}),
-        });
-        committedCases.push({ name: testCaseData.title });
-      } catch (error) {
-        failedCases.push({
-          name: testCaseData.title,
-          error: error instanceof Error ? error.message : String(error),
-        });
-        logger.warn("[evals] Failed to create test case", {
-          suiteId: resolvedSuiteId,
-          title: testCaseData.title,
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      pendingCreates.push({
+        slot: outcomes.length,
+        title: testCaseData.title,
+        item: toCaseBatchItem(testCaseData, {
+          idempotencyKey: idempotencyKey
+            ? deriveItemIdempotencyKey(idempotencyKey, caseDedupeKey)
+            : undefined,
+        }),
+      });
+      outcomes.push(undefined);
     }
+    await commitPendingCaseCreates({
+      convexClient,
+      suiteId: resolvedSuiteId,
+      pending: pendingCreates,
+      outcomes,
+    });
+    flushCaseOutcomes(outcomes, committedCases, failedCases);
 
     // New-suite path only: if every case create failed, the freshly-made
     // suite has zero cases. Leaving it would orphan an empty suite and (on the
@@ -1520,6 +1767,86 @@ export async function fetchRunPinnedSkillsWithRetry(
 }
 
 /**
+ * Titles of the run's cases that assert `widgetRendered`.
+ *
+ * Only relevant to a harness run, where the inspector's widget manager never
+ * sees the tool call — the harness reaches MCP through the signed proxy — so
+ * the assertion has nothing to observe. Collected here rather than inside the
+ * gate because the gate is deliberately shape-agnostic about cases; this is the
+ * one place that already knows the run's own step model.
+ */
+function casesAssertingWidgetRender(
+  tests: ReadonlyArray<Record<string, any>>
+): string[] {
+  const titles = new Set<string>();
+  for (const test of tests) {
+    const steps = Array.isArray(test.steps) ? test.steps : [];
+    const asserts =
+      steps.some(
+        (step: any) =>
+          step?.kind === "assert" && step?.assertion?.type === "widgetRendered"
+      ) ||
+      (Array.isArray(test.successPredicates) &&
+        test.successPredicates.some(
+          (predicate: any) => predicate?.type === "widgetRendered"
+        ));
+    if (asserts) titles.add(String(test.title ?? "(untitled case)"));
+  }
+  return [...titles];
+}
+
+/**
+ * Terminally fail a run that has a row but has not executed anything.
+ *
+ * `startSuiteRunWithRecorder` creates the run AND precreates its iteration
+ * rows, so finalizing only the run leaves every attempt stuck pending — the
+ * shape an operator sees as a run that never ends. Both writes are best-effort
+ * and their failures are LOGGED, never rethrown: the caller is already
+ * reporting a real cause, and masking it with a cleanup error costs the reason
+ * the run failed.
+ *
+ * Shared by the pinned-skill setup abort and the harness admission gate: they
+ * fail at the same point in the lifecycle and must leave the same wreckage
+ * behind, which is exactly the invariant a second hand-written copy loses.
+ */
+async function failRunBeforeExecution(
+  convexClient: ConvexHttpClient,
+  recorder: SuiteRunRecorder,
+  runId: string,
+  { reason }: { reason: string }
+): Promise<void> {
+  const cause = reason.slice(0, 500);
+  await convexClient
+    .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
+      runId,
+      error: cause,
+    })
+    .catch((cleanupError: unknown) =>
+      logger.warn(
+        "[evals] Failed to fail pending iterations after setup abort",
+        {
+          runId,
+          error:
+            cleanupError instanceof Error
+              ? cleanupError.message
+              : String(cleanupError),
+        }
+      )
+    );
+  await recorder
+    .finalize({ status: "failed", notes: cause })
+    .catch((finalizeError: unknown) =>
+      logger.warn("[evals] Failed to finalize run after setup abort", {
+        runId,
+        error:
+          finalizeError instanceof Error
+            ? finalizeError.message
+            : String(finalizeError),
+      })
+    );
+}
+
+/**
  * Prepare phase of a suite run: validate, upsert suite + cases, create the
  * run record (status 'running'), store replay configs, and resolve model
  * credentials. Returns an `execute` closure over `runEvalSuiteWithAiSdk` so
@@ -1559,7 +1886,9 @@ export async function prepareEvalRun(
     resolvedEnvironment,
     source,
     idempotencyKey,
+    sourceHash,
     skillsOverride,
+    ephemeralEnvironment,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -1720,6 +2049,8 @@ export async function prepareEvalRun(
     runId,
     config,
     recorder,
+    deduped: runWasDeduped,
+    status: existingRunStatus,
     hostConfig: runHostConfigSnapshot,
     pluginVersions: runEnvironmentPluginVersions = [],
   } = await startSuiteRunWithRecorder({
@@ -1750,11 +2081,141 @@ export async function prepareEvalRun(
       : undefined,
     source,
     idempotencyKey,
+    ...(sourceHash ? { sourceHash } : {}),
     skillsOverride,
+    ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
     (await loadSuiteHostConfig(convexClient, resolvedSuiteId, namedHostId));
+
+  // For reruns, projectId may not be in the request — derive it from the
+  // suite record so org BYOK keeps working.
+  let projectIdForOrgConfig: string | undefined = projectId;
+  // "We asked and the suite has none" and "we could not ask" are different
+  // facts, and the harness gate below reads an absent project as the FORMER.
+  // Kept apart so a transient Convex failure is never reported as "this suite
+  // is org-level", which would send the author to change a setting that was
+  // never wrong.
+  let suiteProjectLookupFailed = false;
+  if (!projectIdForOrgConfig && resolvedSuiteId) {
+    try {
+      const suite = await convexClient.query("testSuites:getTestSuite" as any, {
+        suiteId: resolvedSuiteId,
+      });
+      if (suite?.projectId) {
+        projectIdForOrgConfig = String(suite.projectId);
+      }
+    } catch (error) {
+      suiteProjectLookupFailed = true;
+      logger.warn("[evals] Failed to load suite for projectId fallback", {
+        suiteId: resolvedSuiteId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  // Only a HARNESS run turns an unresolved project into a refusal — an
+  // emulated run merely loses its org-BYOK fallback, which is the behavior
+  // this lookup has always had on failure.
+  if (
+    !projectIdForOrgConfig &&
+    suiteProjectLookupFailed &&
+    harnessOfHostConfig(suiteHostConfig)
+  ) {
+    const reason =
+      "this run could not look up the suite's project, so the computer its " +
+      "harness iterations run on cannot be provisioned or billed. This is " +
+      "usually transient — retry the run.";
+    await failRunBeforeExecution(convexClient, recorder, runId, { reason });
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, reason, {
+      reason: "HARNESS_UNAVAILABLE",
+    });
+  }
+
+  // GENERAL EXECUTION GATE — every eval run, harness or emulated.
+  //
+  // `resolveHostTools` warn-and-SKIPS a computer-backed built-in when no
+  // computer is attached, so a `bash` host with no pinned image runs with the
+  // tool silently absent: cases that needed a shell fail as if the model chose
+  // badly, and a suite that did not need one reports green for a host
+  // configuration that never existed. A server log is not a result.
+  //
+  // Deliberately NOT inside the harness checks below: those return admitted on
+  // their first line when no harness is selected, which is exactly the runs
+  // this rule is about.
+  const executionAdmission = checkEvalExecutionAdmission({
+    hostConfig: suiteHostConfig ?? null,
+    pinnedComputerImageId:
+      (config.environment as { computerEnvironmentId?: string } | undefined)
+        ?.computerEnvironmentId ?? null,
+  });
+  if (!executionAdmission.ok) {
+    await failRunBeforeExecution(convexClient, recorder, runId, {
+      reason: executionAdmission.reason,
+    });
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      executionAdmission.reason,
+      { reason: "EVAL_EXECUTION_UNAVAILABLE" }
+    );
+  }
+
+  // HARNESS HONESTY GATE. A host config carrying `harness` runs the REAL
+  // runtime in chat and swarms; eval runs used to forward the selector into
+  // `prepareChatV2` and then quietly execute on the emulated engine, reporting
+  // green for a runtime that never ran. Decided HERE — after the run's host
+  // config is known, before the runner touches a model — so a refusal costs
+  // nothing and names the reason the shared gate gave.
+  //
+  // The run row already exists (`startSuiteRunWithRecorder` created it and
+  // precreated its iterations), so a refusal has to finalize it rather than
+  // throw and strand it running forever. Same cleanup the setup phase below
+  // performs, for the same reason.
+  const harnessAdmission = checkEvalHarnessAdmission({
+    hostConfig: suiteHostConfig ?? null,
+    // Already includes the servers the environment's pinned plugin versions
+    // contribute (`environmentServerIds` projects the effective set), so the
+    // gate's plugin-servers-count rule is satisfied without a second read.
+    serverIds: resolvedServerIds,
+    // The run's OWN snapshotted cases (`config.tests`), not the request's
+    // inline tests: a bare rerun has none of the latter, and the snapshot is
+    // what actually executes.
+    cases: config.tests as Array<{
+      title?: string;
+      model?: string;
+      provider?: string;
+    }>,
+    widgetAssertingCaseTitles: casesAssertingWidgetRender(config.tests),
+    // Explicitly `null` when the suite is org-level. `runHarnessTurn` needs a
+    // project to resolve the box and throws without one — mid-iteration, after
+    // the box was booted and paid for. This makes it a pre-flight refusal.
+    projectId: projectIdForOrgConfig ?? null,
+    // NO pinned image is passed, and none is required: a harness run boots a
+    // box either way — the run's frozen image when it pins one, the
+    // deployment-default template when it doesn't. What it must never do is
+    // borrow the acting member's personal computer, and that is prevented by
+    // always provisioning, not by demanding an image.
+  });
+  if (!harnessAdmission.ok) {
+    await failRunBeforeExecution(convexClient, recorder, runId, {
+      reason: harnessAdmission.reason,
+    });
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      harnessAdmission.reason,
+      { reason: "HARNESS_UNAVAILABLE", harness: harnessAdmission.harness }
+    );
+  }
+  // ATTRIBUTION is stamped by the platform, not here: `startTestSuiteRun`
+  // derives `configSnapshot.executionEngine` from the run's own
+  // `hostConfigId`, so the record cannot disagree with the config the run
+  // executed under and no client can claim an engine it did not use. This
+  // gate's job is to make sure the two agree in the first place — an admitted
+  // harness run reaches a harness, and a refused one reaches nothing.
+
   const suiteInjectOpenAiCompat =
     resolveOpenAiCompatForHostConfig(suiteHostConfig);
   const suiteHostPolicy = extractHostExecutionPolicy(
@@ -1780,28 +2241,13 @@ export async function prepareEvalRun(
 
   // Resolve org model config: prefer client-sent keys, fall back to org config.
   // Treat an empty client-provided map as "no keys" so org fallback still runs.
-  // For reruns, projectId may not be in the request — derive it from the
-  // suite record so org BYOK keeps working.
   const hasClientKeys = !!modelApiKeys && Object.keys(modelApiKeys).length > 0;
   const resolvedModelApiKeys = hasClientKeys ? modelApiKeys : undefined;
   let resolvedOrgModelConfig = orgModelConfig;
   let resolvedOrgModelConfigTarget: { projectId: string } | undefined;
-  let projectIdForOrgConfig: string | undefined = projectId;
-  if (!projectIdForOrgConfig && resolvedSuiteId) {
-    try {
-      const suite = await convexClient.query("testSuites:getTestSuite" as any, {
-        suiteId: resolvedSuiteId,
-      });
-      if (suite?.projectId) {
-        projectIdForOrgConfig = String(suite.projectId);
-      }
-    } catch (error) {
-      logger.warn("[evals] Failed to load suite for projectId fallback", {
-        suiteId: resolvedSuiteId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
+  // `projectIdForOrgConfig` is resolved ABOVE, before the admission gates —
+  // the harness gate needs it to refuse an org-level suite before a box is
+  // booted, and resolving it twice could disagree.
   const orgConfigTarget = projectIdForOrgConfig
     ? { projectId: projectIdForOrgConfig }
     : undefined;
@@ -1840,6 +2286,19 @@ export async function prepareEvalRun(
   // setup failure must precede model execution and name the component that
   // caused it.
   let pinnedSkillSource: EvalPinnedSkillSource | undefined;
+  /**
+   * The run's frozen skills in HARNESS shape (materialized on box), built here
+   * rather than per iteration because the supporting-file download is I/O that
+   * belongs in run preparation — where a failure fails the run cleanly, before
+   * any model call, naming the skill and path.
+   *
+   * Set for EVERY runId-bearing run, empty included. The harness selects its
+   * pinned source by PRESENCE, so `[]` says "this run delivers no skills" while
+   * `undefined` falls through to a live project-wide fetch of whatever the
+   * project holds right now — which would unfreeze a frozen run, and would hand
+   * the `skillsOverride: "exclude"` arm every skill in the project.
+   */
+  let pinnedHarnessSkills: PinnedSkillArtifact[] | undefined;
   if (runId) {
     // The run row already exists (startSuiteRunWithRecorder created it), so a
     // persistent setup failure would otherwise strand the run as
@@ -1873,11 +2332,21 @@ export async function prepareEvalRun(
         }
       );
 
+      // A pinned supporting file whose blob is gone fails the run BEFORE the
+      // model runs, attributed to the skill and the path. `url: null` is an
+      // unreachable blob, never "no file" — see the assertion's own note.
+      // Hoisted above the `length` guard so it also runs ahead of the harness
+      // adaptation below, which downloads those same blobs: an unreachable one
+      // should report through this assertion's wording, not a fetch failure's.
+      assertPinnedSkillFilesReachable(runPinnedSkills ?? []);
+
+      // Empty is a real answer for the harness (see `pinnedHarnessSkills`), so
+      // this is assigned outside the `length` guard below.
+      pinnedHarnessSkills = await runPinnedSkillsToHarnessArtifacts(
+        runPinnedSkills ?? []
+      );
+
       if (runPinnedSkills?.length) {
-        // A pinned supporting file whose blob is gone fails the run BEFORE the
-        // model runs, attributed to the skill and the path. `url: null` is an
-        // unreachable blob, never "no file" — see the assertion's own note.
-        assertPinnedSkillFilesReachable(runPinnedSkills);
         pinnedSkillSource = runNeedsEffectiveSkillSurface(runPinnedSkills)
           ? {
               kind: "pinned-effective",
@@ -1898,43 +2367,12 @@ export async function prepareEvalRun(
           : { kind: "pinned", skills: runPinnedSkills };
       }
     } catch (error) {
-      const cause = (
-        error instanceof Error ? error.message : String(error)
-      ).slice(0, 500);
-      // startSuiteRunWithRecorder already precreated the iteration rows, so
-      // finalizing only the run leaves every attempt stuck pending. Mirror the
-      // precreate-failure cleanup: fail the pending iterations, then the run.
-      // Log cleanup failures (but never let them mask the original pin-fetch
-      // error): if either call fails the run can stay stranded pending, and an
-      // operator needs a breadcrumb to find and repair it.
-      await convexClient
-        .mutation("testSuites:markSetupPendingIterationsFailed" as any, {
-          runId,
-          error: cause,
-        })
-        .catch((cleanupError: unknown) =>
-          logger.warn(
-            "[evals] Failed to fail pending iterations after setup abort",
-            {
-              runId,
-              error:
-                cleanupError instanceof Error
-                  ? cleanupError.message
-                  : String(cleanupError),
-            }
-          )
-        );
-      await recorder
-        .finalize({ status: "failed", notes: cause })
-        .catch((finalizeError: unknown) =>
-          logger.warn("[evals] Failed to finalize run after setup abort", {
-            runId,
-            error:
-              finalizeError instanceof Error
-                ? finalizeError.message
-                : String(finalizeError),
-          })
-        );
+      await failRunBeforeExecution(convexClient, recorder, runId, {
+        reason: (error instanceof Error ? error.message : String(error)).slice(
+          0,
+          500
+        ),
+      });
       throw error;
     }
   }
@@ -1960,6 +2398,9 @@ export async function prepareEvalRun(
       // is the POLICY subset extracted upstream; this is the rest.
       suiteHostConfig,
       ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
+      // Presence is meaningful (empty ⇒ "no skills", absent ⇒ live fetch), so
+      // this checks for undefined rather than truthiness.
+      ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
     });
   };
 
@@ -1971,6 +2412,8 @@ export async function prepareEvalRun(
       failed: failedCases,
     },
     recorder,
+    deduped: runWasDeduped,
+    status: existingRunStatus,
     execute,
   };
 }
@@ -2059,6 +2502,29 @@ export async function runEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
+
+  // The same honesty gate the suite path applies, with the surface named: a
+  // single-case run passes `runId: null`, and both sandbox-provisioning sites
+  // require `runId !== null`, so no box is ever booted for it. A host granting
+  // a computer-backed built-in would therefore execute with the tool silently
+  // skipped by `resolveHostTools`. Refused instead — and the message points at
+  // running the case inside a suite rather than at pinning an image, which
+  // would change nothing here.
+  const singleCaseAdmission = checkEvalExecutionAdmission({
+    hostConfig:
+      (hostConfigOverride as Record<string, unknown> | undefined) ??
+      suiteHostConfig ??
+      null,
+    surface: "single-case",
+  });
+  if (!singleCaseAdmission.ok) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      singleCaseAdmission.reason,
+      { reason: "EVAL_EXECUTION_UNAVAILABLE" }
+    );
+  }
   const suiteEnvironment = await loadSuiteEnvironment(
     convexClient,
     testCase.evalTestSuiteId
@@ -2441,6 +2907,29 @@ export async function streamEvalTestCaseWithManager(
     suiteHostConfig,
     namedHostId
   );
+
+  // The same honesty gate the suite path applies, with the surface named: a
+  // single-case run passes `runId: null`, and both sandbox-provisioning sites
+  // require `runId !== null`, so no box is ever booted for it. A host granting
+  // a computer-backed built-in would therefore execute with the tool silently
+  // skipped by `resolveHostTools`. Refused instead — and the message points at
+  // running the case inside a suite rather than at pinning an image, which
+  // would change nothing here.
+  const singleCaseAdmission = checkEvalExecutionAdmission({
+    hostConfig:
+      (hostConfigOverride as Record<string, unknown> | undefined) ??
+      suiteHostConfig ??
+      null,
+    surface: "single-case",
+  });
+  if (!singleCaseAdmission.ok) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      singleCaseAdmission.reason,
+      { reason: "EVAL_EXECUTION_UNAVAILABLE" }
+    );
+  }
   const suiteEnvironment = await loadSuiteEnvironment(
     convexClient,
     testCase.evalTestSuiteId
