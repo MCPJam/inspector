@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { main } from "../src/index.js";
 
@@ -194,6 +197,9 @@ interface EvalFixtureOptions {
   };
   /** Target ids the grouped-launch endpoint should report as failures. */
   groupFailures?: Record<string, { code: string; message: string }>;
+  runCaseResult?: "passed" | "failed";
+  runCaseIterationFetchError?: boolean;
+  runOneResult?: "passed" | "failed";
 }
 
 async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
@@ -540,17 +546,140 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       return;
     }
     if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-case" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      const result = options.runCaseResult ?? "passed";
+      res.end(
+        JSON.stringify({
+          id: "run-case",
+          suiteId: "suite-1",
+          runNumber: 4,
+          status: "completed",
+          result,
+          summary:
+            result === "passed"
+              ? { total: 1, passed: 1, failed: 0, passRate: 1 }
+              : { total: 1, passed: 0, failed: 1, passRate: 0 },
+          source: "api",
+          notes: null,
+          createdAt: 10,
+          completedAt: 20,
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-case/iterations" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      if (options.runCaseIterationFetchError) {
+        res.statusCode = 500;
+        res.end(
+          JSON.stringify({
+            code: "ITERATIONS_FETCH_FAILED",
+            message: "iteration results unavailable",
+          }),
+        );
+        return;
+      }
+      const result = options.runCaseResult ?? "passed";
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "iter-case",
+              testCaseId: "case-1",
+              title: "echo works",
+              iterationNumber: 1,
+              status: "completed",
+              result,
+              model: null,
+              provider: null,
+              startedAt: 10,
+              durationMs: 10,
+              tokensUsed: null,
+              usage: null,
+              actualToolCalls: [],
+              expectedToolCalls: [],
+              error:
+                result === "failed"
+                  ? "Authorization: Bearer top-secret"
+                  : null,
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-group-1" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          id: "run-group-1",
+          suiteId: "suite-1",
+          runNumber: 5,
+          status: "completed",
+          result: "passed",
+          summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+          source: "api",
+          notes: null,
+          createdAt: 10,
+          completedAt: 20,
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-group-1/iterations" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "iter-group-1",
+              testCaseId: "case-1",
+              title: "echo works",
+              iterationNumber: 1,
+              status: "completed",
+              result: "passed",
+              model: null,
+              provider: null,
+              startedAt: 10,
+              durationMs: 10,
+              tokensUsed: null,
+              usage: null,
+              actualToolCalls: [],
+              expectedToolCalls: [],
+              error: null,
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    if (
       url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1" &&
       (req.method ?? "GET") === "GET"
     ) {
+      const result = options.runOneResult ?? "passed";
       res.end(
         JSON.stringify({
           id: "run-1",
           suiteId: "suite-1",
           runNumber: 3,
           status: "completed",
-          result: "passed",
-          summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
+          result,
+          summary:
+            result === "passed"
+              ? { total: 2, passed: 2, failed: 0, passRate: 1 }
+              : { total: 2, passed: 1, failed: 1, passRate: 0.5 },
           source: "api",
           notes: null,
           createdAt: 1,
@@ -616,6 +745,37 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           createdAt: 1,
           completedAt: 2,
           judges: {},
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-1/iterations" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      const result = options.runOneResult ?? "passed";
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "iter-1",
+              testCaseId: "case-1",
+              title: "echo works",
+              iterationNumber: 1,
+              status: "completed",
+              result,
+              model: null,
+              provider: null,
+              startedAt: 1,
+              durationMs: 1,
+              tokensUsed: null,
+              usage: null,
+              actualToolCalls: [],
+              expectedToolCalls: [],
+              error: result === "failed" ? "goal completion failed" : null,
+            },
+          ],
         }),
       );
       return;
@@ -1614,6 +1774,226 @@ test("--format json output stays byte-identical — no View line", async () => {
       assert.doesNotThrow(() => JSON.parse(run.stdout));
       assert.ok(!run.stdout.includes("View:"));
     }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --wait writes failed JSON and JUnit reports before returning", async () => {
+  const fixture = await startEvalFixture({ runCaseResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  const junitPath = path.join(directory, "report.xml");
+  try {
+    const jsonRun = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--reporter",
+          "json-summary",
+          "--out",
+          jsonPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const jsonRaw = await readFile(jsonPath, "utf8");
+    const json = JSON.parse(jsonRaw);
+
+    assert.equal(jsonRun.result.exitCode, 0);
+    assert.deepEqual(
+      {
+        schemaVersion: json.schemaVersion,
+        kind: json.kind,
+        passed: json.passed,
+        summary: json.summary,
+        caseCount: json.cases.length,
+      },
+      {
+        schemaVersion: 1,
+        kind: "eval-run",
+        passed: false,
+        summary: {
+          total: 1,
+          passed: 0,
+          failed: 1,
+          byCategory: {
+            eval: { total: 1, passed: 0, failed: 1 },
+          },
+        },
+        caseCount: 1,
+      },
+    );
+    assert.equal(json.cases[0].error, "Authorization: [REDACTED]");
+    assert.equal(jsonRaw.includes("top-secret"), false);
+
+    const junitRun = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--reporter",
+          "junit-xml",
+          "--out",
+          junitPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const junit = await readFile(junitPath, "utf8");
+
+    assert.equal(junitRun.result.exitCode, 0);
+    assert.match(junit, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+    assert.equal(junit.match(/<testcase /g)?.length, 1);
+    assert.match(junit, /tests="1"/);
+    assert.match(junit, /failures="1"/);
+    assert.match(junit, /<failure message="Authorization: \[REDACTED\]"/);
+    assert.equal(junit.includes("top-secret"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run writes an error report after a completed-run reporting failure", async () => {
+  const fixture = await startEvalFixture({
+    runCaseIterationFetchError: true,
+  });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--out",
+          jsonPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const report = JSON.parse(await readFile(jsonPath, "utf8"));
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.equal(report.passed, false);
+    assert.equal(report.cases.length, 1);
+    assert.partialDeepStrictEqual(report.cases[0], {
+      id: "run-case:iterations",
+      category: "reporting",
+      passed: false,
+    });
+    assert.match(report.cases[0].error, /iteration results unavailable/);
+    assert.equal(report.metadata.runs[0].status, "completed");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run writes completed cases and launch failures before a partial exit", async () => {
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      hosts: [
+        { id: "host-claude", name: "Claude Code" },
+        { id: "host-chatgpt", name: "ChatGPT" },
+      ],
+    },
+    groupFailures: {
+      "host-chatgpt": { code: "HOST_OFFLINE", message: "host unavailable" },
+    },
+  });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--all-targets",
+          "--wait",
+          "--out",
+          jsonPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const report = JSON.parse(await readFile(jsonPath, "utf8"));
+
+    assert.equal(run.result.exitCode, 1);
+    assert.equal(report.passed, false);
+    assert.deepEqual(
+      report.cases
+        .map(
+          (entry: { category: string; passed: boolean; error?: string }) => ({
+            category: entry.category,
+            passed: entry.passed,
+            ...(entry.error ? { error: entry.error } : {}),
+          }),
+        )
+        .sort((left: { category: string }, right: { category: string }) =>
+          left.category.localeCompare(right.category),
+        ),
+      [
+        { category: "eval", passed: true },
+        { category: "launch", passed: false, error: "host unavailable" },
+      ],
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate writes its JUnit report before a gate-failure exit", async () => {
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-gate-"));
+  const junitPath = path.join(directory, "report.xml");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--min-pass-rate-percent",
+          "100",
+          "--reporter",
+          "junit-xml",
+          "--out",
+          junitPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const junit = await readFile(junitPath, "utf8");
+
+    assert.equal(run.result.exitCode, 1);
+    assert.match(junit, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+    assert.match(junit, /<failure message="1\/2 iterations passed"/);
+    assert.match(junit, /goal completion failed/);
   } finally {
     await fixture.close();
   }

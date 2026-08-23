@@ -54,6 +54,7 @@ import {
 import {
   buildCorpus,
   buildEvalDecisionSummaryFromIterations,
+  buildEvalRunReport,
   buildRunCompareReport,
   calculateLatencyStats,
   detectFlakyCases,
@@ -69,12 +70,17 @@ import {
   type GateReport,
   type LoadedCorpus,
   type PublicMatchOptions,
+  type StructuredCaseResult,
+  type StructuredEvalRunInput,
   type StructuredRunReport,
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
 import type {
   PlatformEvalCase,
   PlatformEvalIteration,
+  PlatformEvalRun,
+  PlatformApiClient,
+  RunEvalSuiteResult,
   PlatformRunCompare,
 } from "@mcpjam/sdk/platform";
 import { writeFileAtomic } from "../lib/atomic-write.js";
@@ -123,6 +129,7 @@ import {
   parseReporterFormat,
   writeEvalDecisionSummary,
   writeJsonArtifact,
+  writeReporterArtifact,
   writeReporterResult,
 } from "../lib/reporting.js";
 import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
@@ -850,6 +857,68 @@ function collectRepeatable(value: string, previous: string[]): string[] {
   return [...previous, value];
 }
 
+const DEFAULT_RUN_WAIT_TIMEOUT_MS = 600_000;
+const RUN_POLL_INTERVAL_MS = 3000;
+
+async function waitForEvalRun(
+  client: Pick<PlatformApiClient, "getEvalRun">,
+  signal: AbortSignal,
+  projectId: string,
+  runId: string,
+  deadline: number
+) {
+  let run = await client.getEvalRun({ projectId, runId }, { signal });
+  while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+    if (Date.now() >= deadline) {
+      throw operationalError(
+        `Eval run "${runId}" is still ${run.status} after waiting for completion.`
+      );
+    }
+    await new Promise((resolve) => setTimeout(resolve, RUN_POLL_INTERVAL_MS));
+    run = await client.getEvalRun({ projectId, runId }, { signal });
+  }
+  return run;
+}
+
+function launchFailureCases(
+  result: RunEvalSuiteResult
+): StructuredCaseResult[] {
+  return result.targets.flatMap((target, index) => {
+    if (target.status !== "failed") return [];
+    const targetName =
+      target.environment?.name ?? target.host?.name ?? `target ${index + 1}`;
+    return [
+      {
+        id: `launch:${index + 1}`,
+        title: `${targetName}: launch`,
+        category: "launch",
+        passed: false,
+        error: target.error.message,
+        details: { code: target.error.code },
+      },
+    ];
+  });
+}
+
+function gateReportCase(report: GateReport): StructuredCaseResult {
+  const passed = report.outcome === "passed";
+  return {
+    id: "gate",
+    title: "Eval gate",
+    category: "gate",
+    passed,
+    ...(passed
+      ? {}
+      : {
+          error: report.verdicts
+            .filter((verdict) => verdict.status !== "passed")
+            .map((verdict) => verdict.message)
+            .join("; "),
+        }),
+    details: report,
+  };
+}
+
 const DEFAULT_GATE_WAIT_TIMEOUT_MS = 600_000;
 
 async function runEvalGate(
@@ -859,6 +928,8 @@ async function runEvalGate(
       run: string;
       wait?: boolean;
       waitTimeout?: string;
+      reporter?: string;
+      out?: string;
       /**
        * Commander models `--no-gating-score-errors` as the NEGATION of an
        * implicit `--gating-score-errors`, so the field is `gatingScoreErrors`
@@ -870,6 +941,8 @@ async function runEvalGate(
   command: Command
 ): Promise<void> {
   const globalOptions = getGlobalOptions(command);
+  const reporter = parseReporterFormat(options.reporter);
+  const needsReport = reporter !== undefined || options.out !== undefined;
   const policy = policyFromOptions({
     ...options,
     noGatingScoreErrors: options.gatingScoreErrors === false,
@@ -880,12 +953,18 @@ async function runEvalGate(
       : DEFAULT_GATE_WAIT_TIMEOUT_MS;
   const resolved = resolveCloudProjectArgs(options);
 
-  let report: GateReport;
   let decisionSummary:
     | ReturnType<typeof buildEvalDecisionSummaryFromIterations>
     | undefined;
+  let outcome: {
+    report: GateReport;
+    run?: PlatformEvalRun;
+    iterations?: PlatformEvalIteration[];
+    iterationsComplete?: boolean;
+    iterationError?: string;
+  };
   try {
-    report = await runPlatformCommand(
+    outcome = await runPlatformCommand(
       platformOptionsOf(command),
       Math.max(globalOptions.timeout, options.wait ? waitTimeoutMs : 0),
       async ({ client, signal }) => {
@@ -909,15 +988,17 @@ async function runEvalGate(
             // its PARTIAL summary — a confident verdict about an unfinished
             // run. Undecidable, not failed.
             return {
-              outcome: "incomplete" as const,
-              scoreIntegrity: "unknown" as const,
-              verdicts: [
-                {
-                  gate: "run",
-                  status: "non_gateable" as const,
-                  message: `run is ${run.status}; pass --wait, or gate it once it finishes`,
-                },
-              ],
+              report: {
+                outcome: "incomplete" as const,
+                scoreIntegrity: "unknown" as const,
+                verdicts: [
+                  {
+                    gate: "run",
+                    status: "non_gateable" as const,
+                    message: `run is ${run.status}; pass --wait, or gate it once it finishes`,
+                  },
+                ],
+              },
             };
           }
           if (Date.now() >= deadline) {
@@ -925,15 +1006,17 @@ async function runEvalGate(
             // pass. Reported as incomplete so it can never read as a
             // regression.
             return {
-              outcome: "incomplete" as const,
-              scoreIntegrity: "unknown" as const,
-              verdicts: [
-                {
-                  gate: "wait",
-                  status: "non_gateable" as const,
-                  message: `run still ${run.status} after ${waitTimeoutMs}ms`,
-                },
-              ],
+              report: {
+                outcome: "incomplete" as const,
+                scoreIntegrity: "unknown" as const,
+                verdicts: [
+                  {
+                    gate: "wait",
+                    status: "non_gateable" as const,
+                    message: `run still ${run.status} after ${waitTimeoutMs}ms`,
+                  },
+                ],
+              },
             };
           }
           await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -943,25 +1026,46 @@ async function runEvalGate(
           );
         }
 
+        let iterations:
+          | Awaited<ReturnType<typeof fetchAllIterations>>
+          | undefined;
+        let iterationError: string | undefined;
+        if (needsReport || policyNeedsIterations(policy)) {
+          try {
+            iterations = await fetchAllIterations(
+              client,
+              signal,
+              project.id,
+              options.run
+            );
+          } catch (error) {
+            iterationError =
+              error instanceof Error ? error.message : String(error);
+          }
+        }
+
         if (isNonVerdictRunStatus(run.status)) {
           // Cancelled / timed out: the run has not told us the server
           // regressed, it has told us nothing.
           return {
-            outcome: "incomplete" as const,
-            scoreIntegrity: "unknown" as const,
-            verdicts: [
-              {
-                gate: "run",
-                status: "non_gateable" as const,
-                message: `run is ${run.status}; no verdict was established`,
-              },
-            ],
+            report: {
+              outcome: "incomplete" as const,
+              scoreIntegrity: "unknown" as const,
+              verdicts: [
+                {
+                  gate: "run",
+                  status: "non_gateable" as const,
+                  message: `run is ${run.status}; no verdict was established`,
+                },
+              ],
+            },
+            run,
+            iterations: iterations?.items ?? [],
+            iterationsComplete: iterations?.complete ?? false,
+            ...(iterationError ? { iterationError } : {}),
           };
         }
 
-        const iterations = policyNeedsIterations(policy)
-          ? await fetchAllIterations(client, signal, project.id, options.run)
-          : undefined;
         if (iterations) {
           decisionSummary = buildEvalDecisionSummaryFromIterations(
             iterations.items,
@@ -973,7 +1077,36 @@ async function runEvalGate(
             }
           );
         }
-        return reportForRun(run, iterations, policy);
+        if (iterationError) {
+          return {
+            report: {
+              outcome: "incomplete" as const,
+              scoreIntegrity: "unknown" as const,
+              verdicts: [
+                {
+                  gate: "fetch",
+                  status: "non_gateable" as const,
+                  message: `could not read the run: ${iterationError}`,
+                },
+              ],
+            },
+            run,
+            iterations: [],
+            iterationsComplete: false,
+            iterationError,
+          };
+        }
+
+        return {
+          report: reportForRun(
+            run,
+            policyNeedsIterations(policy) ? iterations : undefined,
+            policy
+          ),
+          run,
+          iterations: iterations?.items ?? [],
+          iterationsComplete: iterations?.complete ?? !needsReport,
+        };
       }
     );
   } catch (error) {
@@ -1011,10 +1144,41 @@ async function runEvalGate(
     return;
   }
 
-  const exitCode = evalGateExitCode(report);
-  writeResult({ gate: report, exitCode }, globalOptions.format);
-  if (globalOptions.format === "human") {
-    process.stderr.write(`${formatGateReport(report)}\n`);
+  const exitCode = evalGateExitCode(outcome.report);
+  const structured = needsReport
+    ? buildEvalRunReport(
+        outcome.run
+          ? [
+              {
+                run: outcome.run,
+                iterations: outcome.iterations ?? [],
+                iterationsComplete: outcome.iterationsComplete ?? false,
+                ...(outcome.iterationError
+                  ? { iterationError: outcome.iterationError }
+                  : {}),
+              },
+            ]
+          : [],
+        {
+          cases: [gateReportCase(outcome.report)],
+          ...(decisionSummary ? { decisionSummary } : {}),
+        }
+      )
+    : undefined;
+  if (options.out && structured) {
+    await writeReporterArtifact(
+      options.out,
+      reporter ?? "json-summary",
+      structured
+    );
+  }
+  if (reporter && structured) {
+    writeReporterResult(reporter, structured);
+  } else {
+    writeResult({ gate: outcome.report, exitCode }, globalOptions.format);
+  }
+  if (globalOptions.format === "human" && !reporter) {
+    process.stderr.write(`${formatGateReport(outcome.report)}\n`);
     writeEvalDecisionSummary(
       globalOptions.format,
       decisionSummary,
@@ -1949,6 +2113,19 @@ export function registerEvalCommands(program: Command): void {
         "--idempotency-key <key>",
         "Retry-safety key: repeating the call returns the run it already started"
       )
+      .option("--wait", "Wait for every started run to reach a terminal status")
+      .option(
+        "--wait-timeout <ms>",
+        "Maximum time to wait for completion (default: 600000)"
+      )
+      .option(
+        "--reporter <json-summary|junit-xml>",
+        "Render the completed run report to stdout"
+      )
+      .option(
+        "--out <path>",
+        "Atomically write the completed report selected by --reporter (default: json-summary)"
+      )
       .option(
         "--compose-host <id-or-name>",
         "Compose a stack to run instead of naming a saved environment: the host it runs as. Default is EPHEMERAL (does not attach to the suite)."
@@ -2001,6 +2178,10 @@ export function registerEvalCommands(program: Command): void {
         minPassRate?: number;
         matchOptions?: string;
         idempotencyKey?: string;
+        wait?: boolean;
+        waitTimeout?: string;
+        reporter?: string;
+        out?: string;
       },
       command
     ) => {
@@ -2010,7 +2191,21 @@ export function registerEvalCommands(program: Command): void {
       if (!options.file && !options.suite) {
         throw usageError("Provide --suite <id-or-name> or --file <path>.");
       }
+      if (
+        (options.reporter !== undefined || options.out !== undefined) &&
+        !options.wait
+      ) {
+        throw usageError("--reporter and --out require --wait.");
+      }
+      if (options.waitTimeout !== undefined && !options.wait) {
+        throw usageError("--wait-timeout requires --wait.");
+      }
       const globalOptions = getGlobalOptions(command);
+      const reporter = parseReporterFormat(options.reporter);
+      const waitTimeoutMs =
+        options.waitTimeout !== undefined
+          ? parsePositiveInteger(options.waitTimeout, "--wait-timeout")
+          : DEFAULT_RUN_WAIT_TIMEOUT_MS;
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       const resolved = resolveCloudProjectArgs(options);
       const result = await runPlatformCommand(
@@ -2095,10 +2290,150 @@ export function registerEvalCommands(program: Command): void {
       // EXACTLY ONE JSON document on `--format json`: the receipt already
       // carries every run, so appending human lines to it would make the
       // stream unparseable for the CI callers that read it.
-      writeResult(result, globalOptions.format);
-      writeRunGroupSummary(globalOptions.format, webOrigin, result);
-      // A partial or wholly failed fan-out is not a success. Exiting 0 would
-      // let a pipeline treat "1 of 3 runs never started" as a clean launch.
+      if (!options.wait) {
+        writeResult(result, globalOptions.format);
+        writeRunGroupSummary(globalOptions.format, webOrigin, result);
+        // A partial or wholly failed fan-out is not a success. Exiting 0 would
+        // let a pipeline treat "1 of 3 runs never started" as a clean launch.
+        if (result.outcome !== "started") {
+          setProcessExitCode(1);
+        }
+        return;
+      }
+
+      const needsReport = reporter !== undefined || options.out !== undefined;
+      const completion = await runPlatformCommand(
+        platformOptionsOf(command),
+        Math.max(globalOptions.timeout, waitTimeoutMs),
+        async ({ client, signal }) => {
+          const deadline = Date.now() + waitTimeoutMs;
+          const waited = await Promise.all(
+            result.targets
+              .filter((target) => target.status === "started")
+              .map(async (target) => {
+                try {
+                  return {
+                    ok: true as const,
+                    run: await waitForEvalRun(
+                      client,
+                      signal,
+                      result.project.id,
+                      target.runId,
+                      deadline
+                    )
+                  };
+                } catch (error) {
+                  return {
+                    ok: false as const,
+                    runId: target.runId,
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                  };
+                }
+              })
+          );
+          const runs = waited.flatMap((entry) => (entry.ok ? [entry.run] : []));
+          const waitErrors = waited.flatMap((entry) =>
+            !entry.ok
+              ? [{ runId: entry.runId, error: entry.error }]
+              : []
+          );
+
+          if (!needsReport) {
+            if (waitErrors.length > 0) {
+              throw operationalError(
+                waitErrors.map((entry) => entry.error).join("; ")
+              );
+            }
+            return {
+              runs,
+              waitErrors,
+              reportInputs: [] as StructuredEvalRunInput[],
+            };
+          }
+
+          const reportInputs = await Promise.all(
+            runs.map(async (run): Promise<StructuredEvalRunInput> => {
+              try {
+                const iterations = await fetchAllIterations(
+                  client,
+                  signal,
+                  result.project.id,
+                  run.id
+                );
+                return {
+                  run,
+                  iterations: iterations.items,
+                  iterationsComplete: iterations.complete,
+                };
+              } catch (error) {
+                return {
+                  run,
+                  iterations: [],
+                  iterationsComplete: false,
+                  iterationError:
+                    error instanceof Error ? error.message : String(error),
+                };
+              }
+            })
+          );
+          return { runs, waitErrors, reportInputs };
+        },
+        {
+          projectScope: resolved.projectScope,
+          quiet: true,
+        },
+      );
+
+      const report = needsReport
+        ? buildEvalRunReport(completion.reportInputs, {
+            cases: [
+              ...launchFailureCases(result),
+              ...completion.waitErrors.map((entry) => ({
+                id: `${entry.runId}:wait`,
+                title: `${entry.runId}: completion`,
+                category: "reporting",
+                passed: false,
+                error: entry.error,
+              })),
+            ],
+            metadata: {
+              project: result.project,
+              suite: result.suite,
+              ...(result.runGroupId ? { runGroupId: result.runGroupId } : {}),
+            },
+          })
+        : undefined;
+
+      if (options.out && report) {
+        await writeReporterArtifact(
+          options.out,
+          reporter ?? "json-summary",
+          report
+        );
+      }
+      if (reporter && report) {
+        writeReporterResult(reporter, report);
+      } else {
+        writeResult(
+          { launch: result, runs: completion.runs },
+          globalOptions.format
+        );
+        writeRunGroupSummary(globalOptions.format, webOrigin, result);
+      }
+
+      const reportingErrors = completion.reportInputs.filter(
+        (input) => !input.iterationsComplete || input.iterationError
+      );
+      if (reportingErrors.length > 0 || completion.waitErrors.length > 0) {
+        throw operationalError(
+          `Completed eval run report is incomplete for: ${[
+            ...reportingErrors.map((input) => input.run.id),
+            ...completion.waitErrors.map((entry) => entry.runId),
+          ].join(", ")}.`
+        );
+      }
+
       if (result.outcome !== "started") {
         setProcessExitCode(1);
       }
@@ -2398,6 +2733,14 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--wait-timeout <ms>",
         "Give up waiting after this many milliseconds (default 600000)"
+      )
+      .option(
+        "--reporter <json-summary|junit-xml>",
+        "Write a structured report to stdout instead of the default output"
+      )
+      .option(
+        "--out <path>",
+        "Atomically write the structured report selected by --reporter (default: json-summary)"
       ).action(
     async (
       options: PlatformOptions &
@@ -2406,6 +2749,8 @@ export function registerEvalCommands(program: Command): void {
           run: string;
           wait?: boolean;
           waitTimeout?: string;
+          reporter?: string;
+          out?: string;
         },
       command
     ) => {

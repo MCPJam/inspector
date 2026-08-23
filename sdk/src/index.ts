@@ -415,6 +415,7 @@ export type {
   AuthMethod,
 } from "./registration.js";
 export {
+  buildEvalRunReport,
   summarizeStructuredCases,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
@@ -435,6 +436,7 @@ export type {
   StageChainStatus,
 } from "./eval-decision-summary.js";
 export type {
+  StructuredEvalRunInput,
   StructuredCaseClassification,
   StructuredCaseResult,
   StructuredSummaryBucket,
