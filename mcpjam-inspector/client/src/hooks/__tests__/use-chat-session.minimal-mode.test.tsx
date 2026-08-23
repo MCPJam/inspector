@@ -311,9 +311,13 @@ describe("useChatSession minimal mode parity", () => {
     mockGetAccessToken.mockResolvedValue(null);
     mockGetGuestBearerToken.mockReset();
     mockGetGuestBearerToken.mockResolvedValue("guest-token");
-    mockAuthFetch.mockResolvedValue(new Response(null, { status: 200 }));
     mockWindowFetch.mockReset();
     mockWindowFetch.mockResolvedValue(new Response(null, { status: 200 }));
+    mockAuthFetch.mockReset();
+    mockAuthFetch.mockImplementation(
+      (input: RequestInfo | URL, init?: RequestInit) =>
+        mockWindowFetch(input, init)
+    );
     vi.stubGlobal("fetch", mockWindowFetch);
     useMCPJamLimitDialogStore.setState({
       authStatus: "guest",
@@ -609,7 +613,7 @@ describe("useChatSession minimal mode parity", () => {
     warnSpy.mockRestore();
   });
 
-  it("keeps non-hosted chat off authFetch while using modal-aware fetch", async () => {
+  it("uses request-time authFetch for non-hosted chat", async () => {
     const selectedServers = ["server-1"];
     const { result } = renderHook(() =>
       useChatSession({
@@ -628,9 +632,9 @@ describe("useChatSession minimal mode parity", () => {
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
     expect(latestTransport.options.fetch).toEqual(expect.any(Function));
-    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
-      Authorization: "Bearer guest-token",
-    });
+    expect(
+      await resolveConfig(latestTransport.options.headers)
+    ).toBeUndefined();
 
     act(() => {
       result.current.sendMessage({ text: "hello" });
@@ -644,14 +648,14 @@ describe("useChatSession minimal mode parity", () => {
       ).toBe(true);
     });
     expect(getUsedTransport().options.api).toBe("/api/mcp/chat-v2");
-    expect(mockWindowFetch).toHaveBeenCalledWith(
+    expect(mockAuthFetch).toHaveBeenCalledWith(
       "/api/mcp/chat-v2",
       expect.objectContaining({
         method: "POST",
-        headers: { Authorization: "Bearer guest-token" },
       })
     );
-    expect(mockAuthFetch).not.toHaveBeenCalled();
+    const requestInit = mockAuthFetch.mock.calls.at(-1)?.[1] as RequestInit;
+    expect(new Headers(requestInit.headers).has("Authorization")).toBe(false);
   });
 
   it("attaches widget model context to the next request only", async () => {
@@ -743,7 +747,7 @@ describe("useChatSession minimal mode parity", () => {
     await waitFor(() => {
       expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(true);
     });
-    expect(mockAuthFetch).not.toHaveBeenCalled();
+    expect(mockAuthFetch).toHaveBeenCalledTimes(1);
   });
 
   it("opens the mcpjam-limit dialog for chat-v2 stream limit errors", async () => {
@@ -902,9 +906,9 @@ describe("useChatSession minimal mode parity", () => {
 
     const latestTransport = mockTransportInstances.at(-1)!;
     expect(latestTransport.options.api).toBe("/api/mcp/chat-v2");
-    expect(await resolveConfig(latestTransport.options.headers)).toEqual({
-      Authorization: "Bearer guest-token",
-    });
+    expect(
+      await resolveConfig(latestTransport.options.headers)
+    ).toBeUndefined();
     expect(result.current.disableForAuthentication).toBe(false);
     expect(result.current.availableModels.map((model) => model.id)).toEqual([
       "gpt-4",
@@ -972,16 +976,18 @@ describe("useChatSession minimal mode parity", () => {
       accessScope: "chat_v2",
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
-    expect(mockWindowFetch).toHaveBeenCalledWith(
+    expect(mockAuthFetch).toHaveBeenCalledWith(
       "/api/web/chat-v2",
-      expect.objectContaining({
-        headers: { Authorization: "Bearer guest-token" },
-      })
+      expect.objectContaining({ method: "POST" })
     );
-    expect(mockAuthFetch).not.toHaveBeenCalled();
+    const requestInit = mockAuthFetch.mock.calls.at(-1)?.[1] as RequestInit;
+    expect(new Headers(requestInit.headers).has("Authorization")).toBe(false);
   });
 
   it("uses the local MCP route for org BYOK when a selected server is local-only", async () => {
+    const ensureServerIds = vi.fn(async () => [
+      { serverId: "hosted-server-id" },
+    ]);
     mockModelState.selectedModelId = orgAnthropicModel.id;
     mockGetAccessToken.mockResolvedValue(null);
     mockSharedAppState.servers = {
@@ -1005,6 +1011,7 @@ describe("useChatSession minimal mode parity", () => {
         hostedContext: {
           projectId: "project-1",
           selectedServerIds: [],
+          ensureServerIds,
         },
       })
     );
@@ -1029,13 +1036,11 @@ describe("useChatSession minimal mode parity", () => {
     });
     expect(transport.requests[0]).not.toHaveProperty("apiKey");
     expect(transport.requests[0]).not.toHaveProperty("selectedServerIds");
-    expect(mockWindowFetch).toHaveBeenCalledWith(
+    expect(mockAuthFetch).toHaveBeenCalledWith(
       "/api/mcp/chat-v2",
-      expect.objectContaining({
-        headers: { Authorization: "Bearer guest-token" },
-      })
+      expect.objectContaining({ method: "POST" })
     );
-    expect(mockAuthFetch).not.toHaveBeenCalled();
+    expect(ensureServerIds).not.toHaveBeenCalled();
   });
 
   it("fails closed to the local MCP route when a selected server's config is unresolved", async () => {
