@@ -44,6 +44,12 @@ vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// `useEnvironmentLabelContext` always calls `useAvailableModels`, which
+// requires AppStateProvider. These cases only assert the pin select.
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
+}));
+
 import { ScheduleEditor } from "../schedule-editor";
 
 describe("ScheduleEditor environment pin", () => {

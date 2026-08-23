@@ -1,5 +1,5 @@
 /**
- * Hosted OAuth bridge for `mcpjam login` (`/api/cli/auth/*`).
+ * Hosted OAuth bridge for `mcpjam cloud login` (`/api/cli/auth/*`).
  *
  * AuthKit redirect URIs are registered statically, but the CLI listens on an
  * ephemeral loopback port — so the CLI sends users here instead:
@@ -192,7 +192,7 @@ cliAuth.get("/callback", (c) => {
   if (!payload) {
     return badRequest(
       c,
-      "Invalid or expired login state. Run `mcpjam login` again."
+      "Invalid or expired login state. Run `mcpjam cloud login` again."
     );
   }
 
