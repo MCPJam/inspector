@@ -25,7 +25,10 @@
  * remount is what would create a SECOND persona and journey per proposal on the
  * retry — the gap the in-memory refs called out and could not close.
  */
-import type { EnvironmentComposerState } from "@/components/environment-composer/environment-stack";
+import {
+  emptyModelSelection,
+  type EnvironmentComposerState,
+} from "@/components/environment-composer/environment-stack";
 import type {
   LaunchTarget,
   ProposedPersona,
@@ -179,6 +182,31 @@ function isComposerState(value: unknown): value is EnvironmentComposerState {
   return isRecord(stack) && isStringArray(stack.hostIds);
 }
 
+/**
+ * Fill in a model selection the stored draft predates.
+ *
+ * The shape is tolerated rather than required, like `name` above — a draft
+ * written before the model slot existed is still resumable, and its stack is
+ * exactly what a client-defaults selection means. Normalizing on the way out
+ * keeps every reader working on a complete stack.
+ */
+function withModelSelection(
+  state: EnvironmentComposerState
+): EnvironmentComposerState {
+  const selection = (state.stack as { modelSelection?: unknown }).modelSelection;
+  if (
+    isRecord(selection) &&
+    typeof selection.includeClientDefaults === "boolean" &&
+    isStringArray(selection.explicitModelIds)
+  ) {
+    return state;
+  }
+  return {
+    ...state,
+    stack: { ...state.stack, modelSelection: emptyModelSelection() },
+  };
+}
+
 function isEnvironmentArray(value: unknown): value is ProjectEnvironmentView[] {
   return (
     Array.isArray(value) &&
@@ -251,7 +279,7 @@ function parseDraft(value: unknown): NewSwarmFlowDraft | null {
     name,
     nameEdited,
     description: value.description,
-    targetState: value.targetState,
+    targetState: withModelSelection(value.targetState),
     resolvedEnvironmentIds: value.resolvedEnvironmentIds,
     resolvedEnvironments: value.resolvedEnvironments,
     createdEnvOverlay: value.createdEnvOverlay,
