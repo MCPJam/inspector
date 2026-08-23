@@ -27,6 +27,7 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  resolveEnvironmentOperation,
   resolveProject,
   runEvalCaseOperation,
   runEvalSuiteOperation,
@@ -76,12 +77,13 @@ import {
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
 import type {
+  PlatformApiClient,
+  PlatformEnvironmentResolved,
   PlatformEvalCase,
   PlatformEvalIteration,
   PlatformEvalRun,
-  PlatformApiClient,
-  RunEvalSuiteResult,
   PlatformRunCompare,
+  RunEvalSuiteResult,
 } from "@mcpjam/sdk/platform";
 import { writeFileAtomic } from "../lib/atomic-write.js";
 import {
@@ -1852,7 +1854,24 @@ async function runEvalExport(
         );
       }
 
-      return { detail, cases: page.items };
+      let environment: PlatformEnvironmentResolved | undefined;
+      const environmentIds = detail.environmentIds ?? [];
+      const legacyServers = detail.environment?.servers ?? [];
+      if (environmentIds.length === 1 && legacyServers.length === 0) {
+        environment = await resolveEnvironmentOperation.execute(
+          {
+            project: detail.projectId ?? resolved.project,
+            environment: environmentIds[0]!,
+          },
+          { client, signal }
+        );
+      }
+
+      return {
+        detail,
+        cases: page.items,
+        ...(environment ? { environment } : {}),
+      };
     },
     { projectScope: resolved.projectScope }
   );

@@ -532,8 +532,8 @@ const syncFileOwnedSuiteSchema = z
     defaultConfig: z
       .object({
         modelId: z.string(),
-        systemPrompt: z.string(),
-        temperature: z.number(),
+        systemPrompt: z.string().optional(),
+        temperature: z.number().optional(),
       })
       .optional(),
     minIterations: z.number().int().min(1).max(10).optional(),

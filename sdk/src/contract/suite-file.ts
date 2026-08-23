@@ -152,13 +152,47 @@ export const evalSuiteFileServerSchema = z
   .strict();
 export type EvalSuiteFileServer = z.infer<typeof evalSuiteFileServerSchema>;
 
-export const evalSuiteFileTargetSchema = z
+/**
+ * One hosted client attachment.
+ *
+ * `id` wins over `name`, matching server references. `servers` is the closed
+ * server set attached to this host; an empty set is meaningful and preserved.
+ */
+export const evalSuiteFileHostSchema = z
   .object({
-    servers: z.array(evalSuiteFileServerSchema).min(1),
-    /** Named run environment; the loader resolves what it means. */
-    environment: z.string().min(1).optional(),
+    name: z.string().min(1).max(MAX_SUITE_FILE_TITLE_CHARS),
+    id: opaqueIdSchema.optional(),
+    servers: z.array(evalSuiteFileServerSchema).optional(),
   })
   .strict();
+export type EvalSuiteFileHost = z.infer<typeof evalSuiteFileHostSchema>;
+
+const targetHostFields = {
+  hosts: z.array(evalSuiteFileHostSchema).min(1).optional(),
+};
+
+/**
+ * A target always names at least one legacy server or one project environment.
+ * Host attachments augment that target; hosts alone are not a runnable target.
+ */
+export const evalSuiteFileTargetSchema = z.union([
+  z
+    .object({
+      servers: z.array(evalSuiteFileServerSchema).min(1),
+      /** Named run environment; the loader resolves what it means. */
+      environment: z.string().min(1).optional(),
+      ...targetHostFields,
+    })
+    .strict(),
+  z
+    .object({
+      servers: z.array(evalSuiteFileServerSchema).min(1).optional(),
+      /** Named run environment; the loader resolves what it means. */
+      environment: z.string().min(1),
+      ...targetHostFields,
+    })
+    .strict(),
+]);
 export type EvalSuiteFileTarget = z.infer<typeof evalSuiteFileTargetSchema>;
 
 // ── defaults ─────────────────────────────────────────────────────────────────
@@ -211,6 +245,10 @@ export const evalSuiteFileDefaultsSchema = z
     model: z.string().min(1),
     /** Optional provider hint when the model id alone is ambiguous. */
     provider: z.string().min(1).optional(),
+    /** Suite execution instructions. Omitted means use the platform default. */
+    systemPrompt: z.string().optional(),
+    /** Suite execution temperature. Omitted means use the platform default. */
+    temperature: z.number().optional(),
     /** Iterations per case unless the case overrides `repetitions`. */
     repetitions: repetitionsSchema,
     /** Fraction of iterations a case must pass to pass. Never a percent. */
