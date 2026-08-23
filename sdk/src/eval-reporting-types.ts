@@ -15,7 +15,13 @@ export type EvalCiMetadata = {
   commitSha?: string;
 };
 
-export type EvalTraceSpanCategory = "step" | "llm" | "tool" | "error";
+export type EvalTraceSpanCategory =
+  | "step"
+  | "llm"
+  | "tool"
+  | "error"
+  | "connection"
+  | "discovery";
 export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpanInput = {
