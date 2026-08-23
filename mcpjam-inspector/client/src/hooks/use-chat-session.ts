@@ -79,7 +79,6 @@ import type { SerializedModelRequestTool } from "@/shared/model-request-payload"
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import {
   authFetch,
-  getAuthHeaders as getSessionAuthHeaders,
 } from "@/lib/session-token";
 import {
   classifyScenarioAccessResponse,
@@ -2688,10 +2687,16 @@ export function useChatSession(
       apiKey = getToken(selectedModel.provider as keyof ProviderTokens);
     }
 
-    // Authorization is resolved by authFetch at request time. Keep only the
-    // local session header and any local-computer consent capability here.
-    const sessionHeaders = getSessionAuthHeaders();
-    const mergedHeaders = { ...sessionHeaders } as Record<string, string>;
+    // NEITHER credential is snapshotted here. authFetch calls the very same
+    // `getAuthHeaders()` at request time, and `buildAuthFetchInit` merges
+    // `init.headers` LAST — so a copy taken when this memo ran would override
+    // the fresh one. That is not theoretical: the local dev server mints a new
+    // session token on every restart, and this memo (which no longer depends
+    // on `authHeaders`) can outlive several of them, so the stale copy won the
+    // merge and the route answered 401 "Invalid session token". authFetch's
+    // own 401 session-recovery could not rescue it either — its retry rebuilds
+    // from the same `init`, re-applying the same stale header.
+    const mergedHeaders = {} as Record<string, string>;
     // Consent capability for the local computer engine — a header, never the
     // body, so it can't land in a persisted transcript. Only on a direct
     // (non-scenario) turn whose resolved engine is local; the server re-checks
@@ -2713,9 +2718,8 @@ export function useChatSession(
     if (sendLocalEngine && localConsentToken) {
       mergedHeaders[LOCAL_CONSENT_HEADER] = localConsentToken;
     }
-    // authFetch owns Authorization for every chat route. A transport-level
-    // bearer would override its freshly resolved value because init headers
-    // are merged last.
+    // Only the local-computer consent capability rides the transport, because
+    // it is not a credential authFetch knows how to resolve.
     const transportHeaders =
       Object.keys(mergedHeaders).length > 0 ? mergedHeaders : undefined;
 
