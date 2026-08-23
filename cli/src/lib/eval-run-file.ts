@@ -196,6 +196,17 @@ export async function syncFileOwnedCases(
     projectId: string;
     suiteId: string;
     cases: ResolvedEvalSuiteFileCase[];
+    /**
+     * Every case id the file DECLARES, enabled or not.
+     *
+     * The deletion guard reads this, never `cases`. A `disabled: true` case is
+     * still declared — the contract calls it "the loader skips this case (it
+     * stays in the file)" — so deleting it would destroy the case's hosted
+     * history the moment somebody parks a flaky test, and re-enabling it a day
+     * later would not bring the iterations back. Disabled cases are excluded
+     * from the RUN instead, which `enabledCaseIds` already does.
+     */
+    declaredCaseIds: ReadonlySet<string>;
     signal?: AbortSignal;
   },
 ): Promise<{
@@ -214,7 +225,6 @@ export async function syncFileOwnedCases(
     if (row.declaredId) byDeclaredId.set(row.declaredId, row);
   }
 
-  const enabledDeclaredIds = new Set(params.cases.map((testCase) => testCase.id));
   const toCreate: ResolvedEvalSuiteFileCase[] = [];
   const toUpdate: Array<{
     row: PlatformEvalCase;
@@ -227,7 +237,10 @@ export async function syncFileOwnedCases(
     else toCreate.push(testCase);
   }
   for (const row of existing.items) {
-    if (!row.declaredId || !enabledDeclaredIds.has(row.declaredId)) {
+    // Stale means "the file no longer declares this case" — NOT "the file does
+    // not run it right now". A row the file still declares as `disabled` is
+    // kept, with its history, and simply left out of `enabledCaseIds`.
+    if (!row.declaredId || !params.declaredCaseIds.has(row.declaredId)) {
       toDelete.push(row);
     }
   }
@@ -502,6 +515,9 @@ export async function executeEvalRunFromFile(
     projectId: project.id,
     suiteId: synced.suite.id,
     cases: loaded.resolved.enabledCases,
+    declaredCaseIds: new Set(
+      loaded.resolved.cases.map((testCase) => testCase.id),
+    ),
     signal: context.signal,
   });
 

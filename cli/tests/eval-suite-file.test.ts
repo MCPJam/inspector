@@ -1921,6 +1921,44 @@ describe("eval run --file", () => {
     }
   });
 
+  test("a disabled case keeps its hosted history and simply does not run", async () => {
+    // `disabled: true` means "the loader skips this case (it stays in the
+    // file)". Deleting the hosted row would destroy the case's iterations the
+    // moment somebody parks a flaky test, and re-enabling it tomorrow would
+    // not bring them back. Declared-but-disabled is kept; only cases the file
+    // no longer declares AT ALL are stale.
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+        { id: "row_c_parked", declaredId: "c_parked", title: "Parked" },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          `${VALID_SUITE_FILE}  - id: c_parked\n    title: Parked\n    disabled: true\n    steps:\n      - id: step-1\n        kind: prompt\n        prompt: Parked for now.\n`,
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        // Kept — not deleted.
+        assert.deepEqual(fixture.deletedCaseIds, []);
+        // And not run: the launch names only the enabled case.
+        const launched = fixture.runBodies[0] as { caseIds: string[] };
+        assert.deepEqual(launched.caseIds, ["row_c_refund"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
   test("updating a file-owned case clears removed negative and check fields", async () => {
     const fixture = await startFileRunFixture({
       existingCases: [
