@@ -529,13 +529,13 @@ describe("useEnsureDbUser", () => {
     });
   });
 
-  it("does not retry unrelated ensureUser errors", async () => {
+  it("reports the failure immediately, before any recovery retry", async () => {
     const consoleError = vi
       .spyOn(console, "error")
       .mockImplementation(() => {});
     mockState.ensureUser.mockRejectedValueOnce(new Error("boom"));
 
-    renderHook(() => useEnsureDbUser());
+    const { result } = renderHook(() => useEnsureDbUser());
 
     await waitFor(() => {
       expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
@@ -544,5 +544,121 @@ describe("useEnsureDbUser", () => {
         expect.any(Error)
       );
     });
+    expect(result.current.isUserReady).toBe(false);
+    // Still "ensuring": App renders "Could not finish setup" as soon as this
+    // clears for a user with no row, so a queued retry must keep it set.
+    expect(result.current.isEnsuringUser).toBe(true);
+  });
+
+  it("keeps setup in progress until the retries are exhausted", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    mockState.ensureUser.mockRejectedValue(new Error("boom"));
+
+    const { result } = renderHook(() => useEnsureDbUser());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Across every gap between attempts, setup still reads as in progress.
+    for (const delayMs of [1_000, 5_000, 15_000]) {
+      expect(result.current.isEnsuringUser).toBe(true);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(delayMs);
+      });
+    }
+
+    // Budget spent: setup is genuinely finished and failed, so the error
+    // screen is now the right thing to show.
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(4);
+    expect(result.current.isEnsuringUser).toBe(false);
+    expect(result.current.isUserReady).toBe(false);
+  });
+
+  // A failed run used to be terminal: nothing re-ran the effect, so every
+  // readiness-gated query stayed skipped until the user reloaded the tab.
+  it("recovers from a non-conflict failure on a spaced retry", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    mockState.ensureUser
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValue(undefined);
+
+    const { result } = renderHook(() => useEnsureDbUser());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+    expect(result.current.isUserReady).toBe(false);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(2);
+    // `waitFor` polls on real timers, which never advance here — flush the
+    // retry's own microtasks instead.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(result.current.isUserReady).toBe(true);
+  });
+
+  it("gives up after the spaced retries are exhausted", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    mockState.ensureUser.mockRejectedValue(new Error("boom"));
+
+    renderHook(() => useEnsureDbUser());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+
+    // 1s, 5s, then 15s — four attempts in total.
+    for (const delayMs of [1_000, 5_000, 15_000]) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(delayMs);
+      });
+    }
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(4);
+
+    // Budget spent: no further attempt, however long the tab stays open.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(4);
+  });
+
+  it("drops a pending recovery retry when the identity changes", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    mockState.ensureUser
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValue(undefined);
+
+    const { rerender } = renderHook(() => useEnsureDbUser());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(1);
+
+    // The new identity ensures itself right away; the queued retry for the
+    // old one must not fire on top of it.
+    mockState.actorKey = "guest-2";
+    rerender();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(30_000);
+    });
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(2);
   });
 });
