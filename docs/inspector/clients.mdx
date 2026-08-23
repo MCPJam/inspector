@@ -178,6 +178,8 @@ Clients are scoped to the project, like servers and views. Every member of a sha
 
 The **Compare** view lets you see how multiple host configurations stack up side by side — useful for spotting differences in capabilities, sandbox policies, or protocol settings before you ship to a specific host.
 
+Style variable rows in the compare matrix normalize how each host encodes its values: hosts that send a single `light-dark(a, b)` string and hosts that send a resolved value per theme both render as the same stacked LIGHT / DARK pair, so you can read down a column without the notation getting in the way. The literal value the host actually sends is preserved and shown on hover. Color rows include a split light/dark swatch over a checkerboard so two hex values are comparable at a glance and a fully transparent token is distinguishable from an opaque one.
+
 ### Opening Compare
 
 Compare is the third tab in the Connect section of the sidebar (`Servers | Client | Compare`). Click **Compare** from any Connect view to open it. The `/host-compare` route is preserved, so any existing bookmarks or links continue to work.
