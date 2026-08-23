@@ -1,6 +1,6 @@
 /**
  * Adapt a run comparison into the shared `StructuredRunReport`, so
- * `mcpjam eval compare` gets JSON and JUnit output for free.
+ * `mcpjam cloud eval compare` gets JSON and JUnit output for free.
  *
  * Mirrors `buildServerDiffReport` (`server-diff.ts`) deliberately: the CLI's
  * `--reporter` / `--out` plumbing already speaks `StructuredRunReport`, and a
