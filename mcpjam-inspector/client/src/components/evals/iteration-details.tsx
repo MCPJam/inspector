@@ -1,4 +1,5 @@
 import { useAction, useQuery } from "convex/react";
+import { useActorCanQuery } from "@/hooks/use-actor-can-query";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { EvalIteration, EvalCase } from "./types";
 import {
@@ -304,9 +305,13 @@ export function IterationDetails({
   // config and gate the policy by model visibility, then hand it to the trace
   // `Thread`. Without this, eval result traces always fall back to the default
   // "inline" placement and ignore the suite's collapse/hide setting.
+  // `canQuerySuiteConfig` keeps this off the wire until the actor's `users`
+  // row exists (direct guests, which never get one, keep reading) — the same
+  // gate the suite list upstream uses.
+  const canQuerySuiteConfig = useActorCanQuery();
   const suiteHostConfigDto = useQuery(
     "hostConfigsV2:getSuiteConfig" as any,
-    testCase?.testSuiteId
+    canQuerySuiteConfig && testCase?.testSuiteId
       ? ({ suiteId: testCase.testSuiteId } as any)
       : "skip",
   ) as HostConfigDtoV2 | null | undefined;

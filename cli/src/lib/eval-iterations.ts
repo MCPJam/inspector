@@ -1,6 +1,6 @@
 /**
- * Paginated iteration fetch, shared by `mcpjam eval gate` and
- * `mcpjam eval compare`.
+ * Paginated iteration fetch, shared by `mcpjam cloud eval gate` and
+ * `mcpjam cloud eval compare`.
  *
  * Extracted VERBATIM from `commands/eval.ts` — same bound, same
  * `complete` semantics — because both commands need the same "did we see the

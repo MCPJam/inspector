@@ -84,6 +84,10 @@ import {
   type SuiteExportFinding,
 } from "../lib/eval-suite-export.js";
 import {
+  executeEvalRunFromFile,
+  looksLikeVersionedSuiteFile,
+} from "../lib/eval-run-file.js";
+import {
   CORPUS_DRIFT_EXIT_CODE,
   CORPUS_INCOMPLETE_EXIT_CODE,
   CORPUS_USAGE_EXIT_CODE,
@@ -175,23 +179,34 @@ function selectorField(
 function composeField(options: {
   composeHost?: string;
   composeComputer?: string;
-  composeModel?: string;
+  composeModel?: string | string[];
   composeServerGroup?: string;
   composeSkill?: string[];
+  withClientDefault?: boolean;
+  saveTargets?: boolean;
 }): {
   compose?: {
     host: string;
     serverGroup?: string;
-    model?: string;
+    models?: string[];
+    includeClientDefault?: boolean;
+    saveTargets?: boolean;
     computer?: string;
     skills?: { mode: "explicit"; skillIds: string[] };
   };
 } {
+  const models = Array.isArray(options.composeModel)
+    ? options.composeModel
+    : options.composeModel
+      ? [options.composeModel]
+      : undefined;
   const refinements =
     options.composeComputer !== undefined ||
-    options.composeModel !== undefined ||
+    models !== undefined ||
     options.composeServerGroup !== undefined ||
-    (options.composeSkill?.length ?? 0) > 0;
+    (options.composeSkill?.length ?? 0) > 0 ||
+    options.withClientDefault === true ||
+    options.saveTargets === true;
   if (!options.composeHost) {
     if (refinements) {
       throw usageError(
@@ -206,9 +221,11 @@ function composeField(options: {
       ...(options.composeServerGroup !== undefined
         ? { serverGroup: options.composeServerGroup }
         : {}),
-      ...(options.composeModel !== undefined
-        ? { model: options.composeModel }
+      ...(models !== undefined ? { models } : {}),
+      ...(options.withClientDefault === true
+        ? { includeClientDefault: true }
         : {}),
+      ...(options.saveTargets === true ? { saveTargets: true } : {}),
       ...(options.composeComputer !== undefined
         ? { computer: options.composeComputer }
         : {}),
@@ -222,6 +239,12 @@ function composeField(options: {
         : {}),
     },
   };
+}
+
+function composeModelTail(modelId: string | undefined): string {
+  if (!modelId) return "default";
+  const slash = modelId.lastIndexOf("/");
+  return slash >= 0 ? modelId.slice(slash + 1) : modelId;
 }
 
 /**
@@ -294,6 +317,10 @@ function writeRunGroupSummary(
     startedCount: number;
     failedCount: number;
     runGroupId?: string;
+    composed?: {
+      environments?: Array<{ id: string; modelId?: string }>;
+      environment?: { id: string; modelId?: string };
+    };
     targets: Array<
       | {
           status: "started";
@@ -329,12 +356,20 @@ function writeRunGroupSummary(
   }
   for (const target of result.targets) {
     if (target.status !== "failed") continue;
-    const label =
+    const cell = (
+      result.composed?.environments ??
+      (result.composed?.environment ? [result.composed.environment] : [])
+    ).find((entry) => entry.id === target.environment?.id);
+    const base =
       target.host?.name ??
       target.host?.id ??
       target.environment?.name ??
       target.environment?.id ??
       "target";
+    const label =
+      cell || result.composed
+        ? `${base} · ${composeModelTail(cell?.modelId)}`
+        : base;
     process.stderr.write(
       `Failed: ${label} — ${target.error.code}: ${target.error.message}\n`
     );
@@ -457,6 +492,11 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     if (text.trim() === "") {
       throw usageError("--file input is empty.");
     }
+    if (looksLikeVersionedSuiteFile(text)) {
+      throw usageError(
+        "That looks like a versioned suite file. Use `eval run --file` to upload and run it."
+      );
+    }
     try {
       base = JSON.parse(text);
     } catch (error) {
@@ -473,6 +513,11 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
   }
   if (typeof base !== "object" || Array.isArray(base)) {
     throw usageError("Suite definition must be a JSON object.");
+  }
+  if ("schemaVersion" in (base as Record<string, unknown>)) {
+    throw usageError(
+      "That looks like a versioned suite file. Use `eval run --file` to upload and run it."
+    );
   }
 
   const merged = {
@@ -580,11 +625,16 @@ async function executeOp<TInput, TOutput>(
       ? (input as { project: string }).project
       : undefined;
   const resolved = resolveCloudProjectArgs(options, { inputProject });
-  const filled = { ...input, project: resolved.project } as TInput;
+  const filled = { ...(input as TInput & { project?: string }) };
+  delete filled.project;
+  if (resolved.project !== undefined) {
+    filled.project = resolved.project;
+  }
   const result = await runPlatformCommand(
     platformOptionsOf(command),
     globalOptions.timeout,
-    ({ client, signal }) => op.execute(filled, { client, signal }),
+    ({ client, signal }) =>
+      op.execute(filled as TInput, { client, signal }),
     {
       projectScope: resolved.projectScope,
       quiet: globalOptions.quiet,
@@ -956,7 +1006,7 @@ async function runEvalGate(
 }
 
 /**
- * `mcpjam eval compare` — this run against a baseline.
+ * `mcpjam cloud eval compare` — this run against a baseline.
  *
  * Deliberately has NO `--wait`. A comparison against a run that has not
  * finished compares against a partial population, and the honest answer is
@@ -1146,7 +1196,7 @@ async function runEvalCompare(
 }
 
 /**
- * `mcpjam eval pull` — materialize a hosted suite into a local corpus lock.
+ * `mcpjam cloud eval pull` — materialize a hosted suite into a local corpus lock.
  *
  * Two modes, one code path. The default fetches and WRITES the lock; `--frozen`
  * fetches and only COMPARES, never writing. Sharing the fetch and
@@ -1440,10 +1490,18 @@ const SUITE_FILE_USAGE_EXIT_CODE = 2;
  * the buffer's length travels with the text rather than being re-derived from
  * it.
  */
-function readSuiteFileInput(value: string): { text: string; bytes: number } {
+function readSuiteFileInput(value: string): {
+  text: string;
+  bytes: number;
+  buffer: Buffer;
+} {
   try {
     const buffer = value === "-" ? readFileSync(0) : readFileSync(value);
-    return { text: buffer.toString("utf8"), bytes: buffer.byteLength };
+    return {
+      text: buffer.toString("utf8"),
+      bytes: buffer.byteLength,
+      buffer,
+    };
   } catch (error) {
     throw usageError(
       value === "-"
@@ -1713,7 +1771,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--file <path>",
-        "Path to a suite definition JSON file (or - for stdin)"
+        "Path to a create-API JSON body (or - for stdin). A versioned suite file belongs on `eval run --file`"
       )
       .option(
         "--json <json>",
@@ -1802,8 +1860,14 @@ export function registerEvalCommands(program: Command): void {
 
       evals
       .command("run")
-      .description("Start an eval run of an existing suite (asynchronous)")
-      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .description(
+        "Start an eval run of an existing suite, or upload a versioned suite file and run it"
+      )
+      .option("--suite <id-or-name>", "Eval suite name or ID")
+      .option(
+        "--file <path>",
+        "Versioned suite file to upload and run (.yaml or .json, or - for stdin)"
+      )
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
@@ -1853,15 +1917,23 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--compose-host <id-or-name>",
-        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+        "Compose a stack to run instead of naming a saved environment: the host it runs as. Default is EPHEMERAL (does not attach to the suite)."
       )
       .option(
         "--compose-computer <id-or-name>",
         "Sandbox image to pin on the composed stack"
       )
       .option(
-        "--compose-model <id>",
-        "Model to run on the composed stack, instead of the host's"
+        "--compose-model <id...>",
+        "Model(s) to run on the composed stack. Replaces the client default unless --with-client-default is set."
+      )
+      .option(
+        "--with-client-default",
+        "Also launch an inherit cell that uses each client's pinned model, alongside --compose-model"
+      )
+      .option(
+        "--save-targets",
+        "Attach the composed environments to the suite (append, capped at 10). Default is ephemeral."
       )
       .option(
         "--compose-server-group <id>",
@@ -1875,11 +1947,14 @@ export function registerEvalCommands(program: Command): void {
       options: PlatformOptions & {
         composeHost?: string;
         composeComputer?: string;
-        composeModel?: string;
+        composeModel?: string[];
+        withClientDefault?: boolean;
+        saveTargets?: boolean;
         composeServerGroup?: string;
         composeSkill?: string[];
         project?: string;
-        suite: string;
+        suite?: string;
+        file?: string;
         server?: string[];
         environment?: string[];
         host?: string[];
@@ -1895,6 +1970,12 @@ export function registerEvalCommands(program: Command): void {
       },
       command
     ) => {
+      if (options.file && options.suite) {
+        throw usageError("Provide either --file or --suite, not both.");
+      }
+      if (!options.file && !options.suite) {
+        throw usageError("Provide --suite <id-or-name> or --file <path>.");
+      }
       const globalOptions = getGlobalOptions(command);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       const resolved = resolveCloudProjectArgs(options);
@@ -1903,10 +1984,50 @@ export function registerEvalCommands(program: Command): void {
         globalOptions.timeout,
         (context) => {
           webOrigin = context.webOrigin;
+          if (options.file) {
+            const source = readSuiteFileInput(options.file);
+            return executeEvalRunFromFile(
+              { client: context.client, signal: context.signal },
+              {
+                source,
+                label: options.file === "-" ? "<stdin>" : options.file,
+                projectSelector: resolved.project ?? options.project,
+                knobs: {
+                  ...(options.server ? { server: options.server } : {}),
+                  ...(options.environment
+                    ? { environment: options.environment }
+                    : {}),
+                  ...(options.host ? { host: options.host } : {}),
+                  ...(options.allTargets ? { allTargets: true } : {}),
+                  ...(options.iterations !== undefined
+                    ? { iterations: options.iterations }
+                    : {}),
+                  ...(options.case?.length ? { case: options.case } : {}),
+                  ...(options.excludeSkills ? { excludeSkills: true } : {}),
+                  ...(options.refreshSnapshot ? { refreshSnapshot: true } : {}),
+                  ...(options.notes !== undefined ? { notes: options.notes } : {}),
+                  ...(options.minPassRate !== undefined
+                    ? { minPassRate: options.minPassRate }
+                    : {}),
+                  ...(options.matchOptions
+                    ? {
+                        matchOptions: parseMatchOptionsOption(
+                          options.matchOptions
+                        ),
+                      }
+                    : {}),
+                  ...(options.idempotencyKey
+                    ? { idempotencyKey: options.idempotencyKey }
+                    : {}),
+                  ...composeField(options),
+                },
+              }
+            );
+          }
           return runEvalSuiteOperation.execute(
             {
               project: resolved.project ?? options.project,
-              suite: options.suite,
+              suite: options.suite!,
               ...(options.server ? { servers: options.server } : {}),
               // ONE value maps to the singular field, several to the plural:
               // the op rejects sending both, and the singular carries the
@@ -2908,7 +3029,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--compose-host <id-or-name>",
-        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+        "Compose a stack to run this case instead of naming a saved environment. Default is EPHEMERAL."
       )
       .option(
         "--compose-computer <id-or-name>",
@@ -2916,7 +3037,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--compose-model <id>",
-        "Model to run on the composed stack, instead of the host's"
+        "One model to run this case on. A matrix of models is suite-level (`eval run`) only."
       )
       .option(
         "--compose-server-group <id>",
