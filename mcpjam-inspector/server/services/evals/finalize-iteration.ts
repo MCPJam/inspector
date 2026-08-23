@@ -26,6 +26,11 @@ import {
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  deriveStageResults,
+  stageDerivationToMetadata,
+  type StageAuthoredCase,
+} from "@mcpjam/sdk/contract";
+import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
@@ -33,6 +38,110 @@ import {
 type IterationStatus = "completed" | "failed" | "cancelled";
 
 type ToolCallRecord = { toolName: string; arguments: Record<string, any> };
+
+/**
+ * Adapt what the runner captured into the analyzer's evidence shape.
+ *
+ * The only subtle part is the two "we have no spans" flags, which are NOT
+ * interchangeable and which the analyzer reports differently:
+ *
+ *   - `traceAbsent` — nothing was captured at all. The row exists (a setup
+ *     failure, a lifecycle stop) and carries no transcript.
+ *   - `traceLacksSpanChannel` — a transcript exists (messages and/or per-turn
+ *     summaries) but no spans. That is the caller-supplied `HostExecutor`
+ *     signature: the run DID happen and this executor simply never reports
+ *     what happened. Collapsing it into "nothing happened" is precisely how a
+ *     run with every tool call failing passes vacuously.
+ */
+function buildStageEvidence(args: {
+  spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
+  messages?: ModelMessage[];
+  predicateResults?: unknown[];
+  widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  /**
+   * Pinned (model-free) tool-call failures. These never enter the trace — the
+   * same blind spot `buildEvalIterationVerdict` compensates for when it applies
+   * `failOnToolError` to them explicitly — so without them a pinned tool
+   * failure would leave `call`/`response` looking unmeasured.
+   */
+  toolErrors?: unknown[];
+  toolSignals?: ToolExposureSignals;
+}) {
+  const hasSpans = (args.spans?.length ?? 0) > 0;
+  const hasPrompts = (args.prompts?.length ?? 0) > 0;
+  const hasMessages = (args.messages?.length ?? 0) > 0;
+  return {
+    ...(hasSpans ? { spans: args.spans } : {}),
+    ...(hasPrompts ? { prompts: args.prompts } : {}),
+    ...(args.predicateResults?.length
+      ? {
+          predicateResults: args.predicateResults as ReadonlyArray<{
+            passed?: boolean;
+            reason?: string;
+          }>,
+        }
+      : {}),
+    ...(args.widgetRenderObservations?.length
+      ? { renderObservations: args.widgetRenderObservations }
+      : {}),
+    ...(args.toolErrors?.length
+      ? {
+          toolErrors: args.toolErrors as ReadonlyArray<{
+            kind?: string;
+            toolName?: string;
+          }>,
+        }
+      : {}),
+    ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
+    traceAbsent: !hasSpans && !hasPrompts && !hasMessages,
+    traceLacksSpanChannel: !hasSpans && (hasPrompts || hasMessages),
+  };
+}
+
+/**
+ * Derive one iteration's user-value chain metadata, or `{}` when the caller
+ * cannot say what the case authored.
+ *
+ * Exported because a SETUP ABORT never reaches `buildIterationFinishParams`:
+ * `persistSetupFailedIteration` writes its own minimal row for an iteration
+ * that threw before the prompt loop started. That is exactly the shape the
+ * chain has a dedicated verdict for — every applicable stage `notMeasured` for
+ * `setupAborted`, `failureCategory: "setup"` — so leaving that path out would
+ * file a case that demonstrably died in setup as having no chain at all, which
+ * reads identically to an old SDK that reports no chain. Both callers derive
+ * through here so the two cannot drift.
+ */
+export function buildStageMetadata(args: {
+  stageCase?: StageAuthoredCase;
+  spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
+  messages?: ModelMessage[];
+  predicateResults?: unknown[];
+  widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  stageToolErrors?: unknown[];
+  toolSignals?: ToolExposureSignals;
+  status: "completed" | "failed";
+  error?: string;
+}): Record<string, unknown> {
+  const { stageCase, status, error } = args;
+  if (!stageCase) return {};
+  return stageDerivationToMetadata(
+    deriveStageResults({
+      authored: stageCase,
+      evidence: buildStageEvidence({
+        spans: args.spans,
+        prompts: args.prompts,
+        messages: args.messages,
+        predicateResults: args.predicateResults,
+        widgetRenderObservations: args.widgetRenderObservations,
+        toolErrors: args.stageToolErrors,
+        toolSignals: args.toolSignals,
+      }),
+      iteration: { status, ...(error ? { error } : {}) },
+    }),
+  );
+}
 
 /**
  * Builds the `finishParams` object every runner passes to
@@ -78,6 +187,30 @@ export function buildIterationFinishParams(args: {
    * `predicates` rows lack `stepId` and interact failures aren't otherwise saved.
    */
   stepResults?: unknown[];
+  /**
+   * The authored case's stage-applicability inputs, from
+   * `buildStageAuthoredCase`.
+   *
+   * PRESENT ⇒ this iteration gets a derived user-value chain under
+   * `metadata.stageResults` (+ `firstFailedStage` / `failureCategory` /
+   * `stageAnalyzerVersion`). ABSENT ⇒ no stage keys are written at all, which
+   * is the honest default for a caller that cannot say what the case authored:
+   * without the authored case there is no way to tell `notApplicable` from
+   * `notMeasured`, and guessing would report a stage the case never exercised
+   * as an evidence gap.
+   *
+   * Threaded as its own argument rather than folded into
+   * `iterationMetadataBase` because `buildIterationMetadata` is typed
+   * scalar-only (`Record<string, string | number | boolean>`) and
+   * `stageResults` is an array of rows.
+   */
+  stageCase?: StageAuthoredCase;
+  /**
+   * Pinned tool-call failures, for the stage derivation only (the verdict
+   * gates on them separately). Never enter the trace, so the chain is blind to
+   * them unless they are threaded here.
+   */
+  stageToolErrors?: unknown[];
   iterationMetadataBase: Record<string, string | number | boolean>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
@@ -103,11 +236,25 @@ export function buildIterationFinishParams(args: {
     predicateResults,
     skippedSteps,
     stepResults,
+    stageCase,
+    stageToolErrors,
     iterationMetadataBase,
     hostPolicy,
     toolSignals,
     injectOpenAiCompat,
   } = args;
+  const stageMetadata = buildStageMetadata({
+    ...(stageCase ? { stageCase } : {}),
+    spans,
+    prompts,
+    messages,
+    predicateResults,
+    widgetRenderObservations,
+    stageToolErrors,
+    toolSignals,
+    status,
+    ...(error ? { error } : {}),
+  });
   return {
     iterationId,
     passed,
@@ -132,6 +279,7 @@ export function buildIterationFinishParams(args: {
       ...(predicateResults?.length ? { predicates: predicateResults } : {}),
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),
+      ...stageMetadata,
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
             hostPolicy,
