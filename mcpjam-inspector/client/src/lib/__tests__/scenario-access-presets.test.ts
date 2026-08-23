@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyShareCeilingToScenarioOptions,
+  clampScenarioAccessPreset,
+  SCENARIO_ACCESS_OPTIONS,
   scenarioAccessPresetFromSettings,
   settingsFromScenarioAccessPreset,
+  shareModeForScenarioPreset,
 } from "../scenario-access-presets";
 
 describe("scenarioAccessPresetFromSettings", () => {
@@ -47,6 +51,12 @@ describe("settingsFromScenarioAccessPreset", () => {
     });
   });
 
+  it("translates presets onto the share-mode rank scale", () => {
+    expect(shareModeForScenarioPreset("project")).toBe("project_members");
+    expect(shareModeForScenarioPreset("invited_only")).toBe("invited_only");
+    expect(shareModeForScenarioPreset("link_guests")).toBe("anyone_with_link");
+  });
+
   it("round-trips with fromSettings for normal cases", () => {
     const presets = ["project", "invited_only", "link_guests"] as const;
     for (const preset of presets) {
@@ -55,5 +65,32 @@ describe("settingsFromScenarioAccessPreset", () => {
         preset,
       );
     }
+  });
+});
+
+describe("scenario access ceiling", () => {
+  it("never disables the project preset", () => {
+    const options = applyShareCeilingToScenarioOptions(
+      SCENARIO_ACCESS_OPTIONS,
+      "project_members",
+    );
+    expect(options.find((o) => o.value === "project")?.disabled).toBeUndefined();
+    expect(options.find((o) => o.value === "invited_only")?.disabled).toBe(true);
+    expect(options.find((o) => o.value === "link_guests")?.disabled).toBe(true);
+  });
+
+  it("treats an undefined ceiling as fully permissive", () => {
+    const options = applyShareCeilingToScenarioOptions(SCENARIO_ACCESS_OPTIONS);
+    expect(options.every((o) => !o.disabled)).toBe(true);
+  });
+
+  it("snaps an over-ceiling create-flow choice down", () => {
+    expect(clampScenarioAccessPreset("link_guests", "invited_only")).toBe(
+      "invited_only",
+    );
+    expect(clampScenarioAccessPreset("invited_only", "project_members")).toBe(
+      "project",
+    );
+    expect(clampScenarioAccessPreset("invited_only")).toBe("invited_only");
   });
 });

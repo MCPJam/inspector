@@ -26,6 +26,8 @@ export type ShareSettingsEnvelope = {
   workspaceId?: string;
   projectId?: string;
   mode: ShareMode;
+  /** Org ceiling; absent ⇒ no ceiling (legacy inspector / backend rollback). */
+  maxShareMode?: ShareMode;
   policyVersion: number;
   inviteEpoch?: number;
   linkGrantEpoch?: number;
@@ -47,6 +49,8 @@ export type ShareAccessOption = {
   value: string;
   label: string;
   description: string;
+  disabled?: boolean;
+  disabledReason?: string;
 };
 
 export type ShareSectionCopy = {

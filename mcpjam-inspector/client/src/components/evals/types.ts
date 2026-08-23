@@ -636,6 +636,13 @@ export type EvalSuiteRun = {
    * rows. Set client-side at fan-out and persisted on `testSuiteRun`.
    */
   runGroupId?: string;
+  /**
+   * Model the run actually executed with, persisted at launch (Phase 1).
+   * Absent on pre-attribution rows — fall back to the env join.
+   */
+  effectiveModelId?: string;
+  /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
+  modelSource?: "client_default" | "override";
   _creationTime?: number;
   runInsightsJobId?: number;
   runInsightsStatus?: "pending" | "completed" | "failed";

@@ -215,6 +215,7 @@ export {
   isInsufficientScopeError,
   extractInsufficientScopeChallenge,
   unwrapEraNegotiationCause,
+  classifyNegotiationFailureClass,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
@@ -664,7 +665,7 @@ export type {
   OAuthLoginResult,
 } from "./oauth-login.js";
 // Loopback authorization-code capture + PKCE primitives, reused by the CLI's
-// platform login (`mcpjam login`) in addition to OAuth conformance runs.
+// platform login (`mcpjam cloud login`) in addition to OAuth conformance runs.
 export {
   createInteractiveAuthorizationSession,
   openUrlInBrowser,
@@ -1233,7 +1234,7 @@ export type {
 } from "./scorers/index.js";
 
 // The gate engine. ONE evaluator behind `assertGate` (code-first) and
-// `mcpjam eval gate` (hosted), so a CI gate cannot be green on one path and
+// `mcpjam cloud eval gate` (hosted), so a CI gate cannot be green on one path and
 // red on the other.
 export {
   GateError,
