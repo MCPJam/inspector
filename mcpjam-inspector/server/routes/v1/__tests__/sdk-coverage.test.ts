@@ -355,6 +355,10 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Share member upsert stays REST-only for now.",
   "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}":
     "Share member removal stays REST-only for now.",
+  "get /chat-sessions/{sessionId}":
+    "Session detail is the pair of the agent turn POST. Shipping a client method without sendChatMessage would let callers poll a session they have no way to continue; both land together.",
+  "get /chat-sessions/{sessionId}/trace":
+    "Incremental traces are only useful after a turn writes them. The SDK exposes this next to sendChatMessage so a caller cannot fetch spans for a session they cannot create.",
 };
 
 describe("/api/v1 -> SDK coverage", () => {

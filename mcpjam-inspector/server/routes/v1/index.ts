@@ -42,6 +42,7 @@ import conformanceIngest from "./conformance-ingest.js";
 import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
+import chatSessions from "./chat-sessions.js";
 import catalog from "./catalog.js";
 import registry from "./registry.js";
 import organizations from "./organizations.js";
@@ -171,6 +172,11 @@ v1.route("/", agent);
 // GUEST_ALLOWED_V1_RULES entry) — every approved action spends.
 v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
+// Chat-session DETAIL + incremental trace. Mounted BEFORE the catalog
+// proxy so `GET /chat-sessions/:sessionId` cannot be swallowed by a later
+// `/chat-sessions` catch-all, and so the gateway — not Convex HTTP —
+// is the thing that fetches `messagesBlobUrl` / `spansBlobUrl`.
+v1.route("/", chatSessions);
 v1.route("/", catalog);
 // Registry — directory search/detail/sources (guest-allowed reads) plus
 // project-scoped card/connection reads and install/uninstall writes. Mounted

@@ -4030,6 +4030,170 @@
         }
       }
     },
+    "/chat-sessions/{sessionId}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/sessionId"
+        }
+      ],
+      "get": {
+        "operationId": "getChatSession",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Get a chat session",
+        "description": "One session's metadata plus a paged, scrubbed transcript. Tool payloads and blobs are dropped, and the stored blob URL is never returned.\n\nCheck `transcriptUnavailable` before trusting `messageCount`: an unreadable transcript reports `null`, never `0`.\n\nOptional `projectId` is a filter, not an owning scope. A session that exists but belongs to a different project reads as `404 NOT_FOUND` — never `403`.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "description": "When set, a session whose `projectId` does not match reads as `404 NOT_FOUND`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1–200. Defaults to 50.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Offset returned as `nextCursor` by a previous page. Must be a non-negative integer.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The session and one page of messages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatSessionDetail"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
+    "/chat-sessions/{sessionId}/trace": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/sessionId"
+        }
+      ],
+      "get": {
+        "operationId": "getChatSessionTrace",
+        "tags": [
+          "Catalog"
+        ],
+        "summary": "Get incremental chat-session traces",
+        "description": "Per-turn traces with spans inlined. The stored `spansBlobUrl` is never returned: the gateway fetches each blob itself (bounded, timed out).\n\nPass `afterPromptIndex` (or the previous page's `nextCursor` as `cursor`) to receive only unseen turns. `cursor` wins when both are present.\n\nA session the caller cannot see, or a `projectId` that does not match, reads as `404 NOT_FOUND` — never `403`.",
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "description": "When set, a session whose `projectId` does not match reads as `404 NOT_FOUND`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "afterPromptIndex",
+            "in": "query",
+            "required": false,
+            "description": "Return turns whose `promptIndex` is strictly greater than this value. Ignored when `cursor` is also present.",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The previous page's `nextCursor` (a `promptIndex`). Wins over `afterPromptIndex`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size, 1–50. Defaults to 20.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Unseen turns, oldest first, with spans inlined.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatSessionTrace"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/scenarios": {
       "get": {
         "operationId": "listScenarios",
@@ -15112,6 +15276,307 @@
           "nextCursor": {
             "type": "string",
             "description": "Pass as `before` to fetch the next page. Omitted on the last page."
+          }
+        }
+      },
+      "ChatSessionResumePins": {
+        "type": "object",
+        "description": "First-turn pins persisted on the session. Continuations cannot rewrite these.",
+        "properties": {
+          "modelId": {
+            "type": "string"
+          },
+          "toolMode": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "auto"
+            ]
+          },
+          "environmentId": {
+            "type": "string"
+          },
+          "serverIds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ChatSessionDetail": {
+        "type": "object",
+        "description": "A session's metadata plus a paged, scrubbed transcript. The stored blob URL is NEVER returned.",
+        "required": [
+          "id",
+          "chatSessionId",
+          "projectId",
+          "title",
+          "status",
+          "origin",
+          "sourceType",
+          "version",
+          "modelId",
+          "startedAt",
+          "lastActivityAt",
+          "messageCount",
+          "messages"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "chatSessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "projectId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "modelId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "lastActivityAt": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "description": "Epoch milliseconds."
+          },
+          "resumeConfig": {
+            "$ref": "#/components/schemas/ChatSessionResumePins"
+          },
+          "messageCount": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "`null` — never `0` — when the transcript could not be read. Zero would be a claim the visitor said nothing."
+          },
+          "transcriptUnavailable": {
+            "type": "boolean",
+            "description": "True when the stored conversation could not be read. Distinct from an empty `messages` array."
+          },
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TranscriptMessage"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Pass as `cursor` to fetch the next page. Omitted on the last page."
+          }
+        }
+      },
+      "ChatSessionTurnTrace": {
+        "type": "object",
+        "required": [
+          "turnId",
+          "promptIndex",
+          "startedAt",
+          "endedAt",
+          "spanCount",
+          "spans"
+        ],
+        "properties": {
+          "turnId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "promptIndex": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "endedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "finishReason": {
+            "type": "string"
+          },
+          "usage": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "spanCount": {
+            "type": "integer"
+          },
+          "modelId": {
+            "type": "string"
+          },
+          "pluginVersionsAtTurn": {
+            "description": "Absent on turns that recorded no plugin pins."
+          },
+          "spans": {
+            "type": "array",
+            "description": "Inlined span objects from the stored blob. Empty when `spansUnavailable` is true.",
+            "items": {
+              "type": "object",
+              "additionalProperties": true
+            }
+          },
+          "spansUnavailable": {
+            "type": "boolean",
+            "description": "True when the stored span blob could not be read."
+          }
+        }
+      },
+      "ChatSessionTrace": {
+        "type": "object",
+        "description": "Incremental per-turn traces. The stored `spansBlobUrl` is NEVER returned.",
+        "required": [
+          "id",
+          "chatSessionId",
+          "projectId",
+          "title",
+          "status",
+          "origin",
+          "sourceType",
+          "version",
+          "modelId",
+          "startedAt",
+          "lastActivityAt",
+          "turnCount",
+          "turns"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "chatSessionId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "projectId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "origin": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "sourceType": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "version": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "modelId": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "startedAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "lastActivityAt": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "resumeConfig": {
+            "$ref": "#/components/schemas/ChatSessionResumePins"
+          },
+          "turnCount": {
+            "type": "integer",
+            "description": "Unseen turns remaining after `afterPromptIndex` / `cursor`, not just this page."
+          },
+          "turns": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatSessionTurnTrace"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "The last `promptIndex` on this page. Pass as `cursor` (or `afterPromptIndex`) to fetch the next page. Omitted on the last page."
           }
         }
       },

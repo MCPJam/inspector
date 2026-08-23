@@ -31,6 +31,11 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   // Mounted before the auth middleware (fully public), so this rule is
   // defense-in-depth for guests if the mount order ever changes; GET-only.
   { pattern: /^\/host-catalog$/, methods: ["GET"] },
+  // EXACT MATCH. `/chat-sessions/:id` and `/chat-sessions/:id/trace`
+  // stay guest-DENIED: they return a scrubbed transcript and per-turn
+  // spans, which is a larger disclosure than the list, and they wait
+  // for their own guest security review. Widening this pattern would
+  // hand those reads to every minted guest token for free.
   { pattern: /^\/chat-sessions$/ },
   // The unified sessions feed, reachable by the `search_sessions` platform
   // tool. The allowlist's stated contract is "exactly the platform MCP tool
