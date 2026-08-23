@@ -66,6 +66,7 @@ function composeState(
       serverAttachmentId: null,
       skillSelection: null,
       computerEnvironmentId: null,
+      modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
       ...stack,
     },
     customized: false,

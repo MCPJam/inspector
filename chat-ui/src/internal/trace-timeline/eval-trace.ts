@@ -9,7 +9,13 @@
 // Keep these field names in lockstep with the inspector type; a drift here only
 // affects what the timeline can read, never what is persisted.
 
-export type TraceSpanCategory = "step" | "llm" | "tool" | "error";
+export type TraceSpanCategory =
+  | "step"
+  | "llm"
+  | "tool"
+  | "error"
+  | "connection"
+  | "discovery";
 export type TraceSpanStatus = "ok" | "error";
 
 export type TraceSpan = {
