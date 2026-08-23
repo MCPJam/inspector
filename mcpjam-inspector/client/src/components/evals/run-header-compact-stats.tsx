@@ -86,13 +86,20 @@ export function RunHeaderCompactStats({
 
   const pct = normalizePassRatePercent(summary.passRate);
   const countsLine = `${summary.passed.toLocaleString()} passed · ${summary.failed.toLocaleString()} failed`;
+  const policyBlockedLine =
+    summary.policyBlockedIterations && summary.policyBlockedIterations > 0
+      ? `${summary.policyBlockedIterations.toLocaleString()} iteration(s) had calls blocked by policy`
+      : null;
 
   return (
-    <p className={cn("text-xs text-muted-foreground tabular-nums", className)}>
-      {variant === "operational"
-        ? countsLine
-        : `${countsLine} · ${pct}%`}
-      {durationText !== "—" ? ` · ${durationText}` : ""}
-    </p>
+    <div
+      className={cn("text-xs text-muted-foreground tabular-nums", className)}
+    >
+      <p>
+        {variant === "operational" ? countsLine : `${countsLine} · ${pct}%`}
+        {durationText !== "—" ? ` · ${durationText}` : ""}
+      </p>
+      {policyBlockedLine ? <p>{policyBlockedLine}</p> : null}
+    </div>
   );
 }

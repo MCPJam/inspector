@@ -232,6 +232,8 @@ export function buildIterationFinishParams(args: {
   stageToolErrors?: unknown[];
   /** Execution-layer policy blocks; persisted as metadata, never a failure. */
   policyBlocks?: PolicyBlockRecord[];
+  /** Non-fatal policy configuration warnings, persisted for run consumers. */
+  policyWarnings?: string[];
   iterationMetadataBase: Record<string, string | number | boolean>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
@@ -274,6 +276,7 @@ export function buildIterationFinishParams(args: {
     stageCase,
     stageToolErrors,
     policyBlocks,
+    policyWarnings,
     iterationMetadataBase,
     hostPolicy,
     toolSignals,
@@ -297,7 +300,11 @@ export function buildIterationFinishParams(args: {
     toolSignals,
     setupSignals,
     policy:
-      policyBlocks && policyBlocks.length > 0
+      policyBlocks &&
+      policyBlocks.length > 0 &&
+      passed &&
+      !error &&
+      !(stageToolErrors && stageToolErrors.length > 0)
         ? {
             blocked: true,
             reason: getIterationPolicyReason(policyBlocks),
@@ -336,6 +343,7 @@ export function buildIterationFinishParams(args: {
             policyBlockCount: policyBlocks.length,
           }
         : {}),
+      ...(policyWarnings?.length ? { policyWarnings } : {}),
       ...stageMetadata,
       ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals

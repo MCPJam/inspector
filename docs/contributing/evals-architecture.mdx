@@ -177,6 +177,16 @@ Destructive and contradictory or malformed annotations are not treated as
 safe. Explicit name-based denies also apply to MCPJam internal tools; mode
 derived rules apply only to MCP-server tools.
 
+`allow` in `mode: "default"` is an override, not an allowlist: it does not
+restrict the set of tools available to the model. In `readOnly` mode, the
+mode-derived rule does not restrain the sandbox `bash` tool or skills because
+those internal tools do not carry `_serverId`. Runs selecting `readOnly` with a
+sandbox-enabled suite emit a launch warning for this limitation.
+
+Harness evals with `toolPolicy` are refused at launch because their MCP calls
+run out of process and cannot reach this execution gate. Harness enforcement is
+deferred to D4b. Policy blocks remain separate from eval failures.
+
 Hosted platform-authored suites currently lack the backend field required to
 carry this policy. The hosted CLI therefore continues to refuse authored
 `defaults.toolPolicy` rather than running without enforcement.

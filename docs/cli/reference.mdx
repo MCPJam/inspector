@@ -1073,7 +1073,9 @@ are checked. Authored
 hosted CLI launch (`TOOL_POLICY_UNSUPPORTED` / the corresponding validity
 refusal). Hosted platform-authored suites do not currently have a backend
 tool-policy field or enforcement path, so the CLI does not upload a suite that
-would claim those guarantees. File `defaults.repetitions` is
+would claim those guarantees. When supported by an eval runner, `toolPolicy`
+is enforced at execution time with denied tools kept visible but blocked;
+server annotations are advisory and **UNTRUSTED**. File `defaults.repetitions` is
 inherited per case and is not uploaded as a suite `minIterations` floor.
 `target.environment` is attached to the suite before launch.
 

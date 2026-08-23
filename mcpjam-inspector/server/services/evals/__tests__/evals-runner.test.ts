@@ -123,6 +123,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     listTools: vi.fn(),
     getConnectionStatus: vi.fn(),
     listServers: vi.fn(),
+    getAllToolAnnotations: vi.fn(),
     // PR 3 of the engine consolidation: the engine that
     // `runIterationViaBackend` now drives calls
     // `getAllToolsMetadata(serverId)` during message scrubbing
@@ -147,6 +148,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     convexClient.action.mockResolvedValue(undefined);
     mcpClientManager.getToolsForAiSdk.mockResolvedValue({});
     mcpClientManager.listTools.mockResolvedValue({ tools: [] });
+    mcpClientManager.getAllToolAnnotations.mockReturnValue({});
     mcpClientManager.getConnectionStatus.mockReturnValue("connected");
     mcpClientManager.listServers.mockReturnValue(["srv-1"]);
     mcpClientManager.executeTool.mockResolvedValue({
@@ -289,7 +291,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
   async function runPolicyTool(
     policy: { mode: "default" | "readOnly"; allow?: string[]; deny?: string[] },
-    annotations?: Record<string, unknown>
+    annotations?: Record<string, unknown>,
+    expectedToolCall = false
   ) {
     const originalExecute = vi.fn(async () =>
       mcpClientManager.executeTool("srv-1", "write", {})
@@ -305,13 +308,30 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         },
       ],
     });
+    mcpClientManager.getAllToolAnnotations.mockReturnValue({
+      write: annotations,
+    });
     streamTextMock.mockImplementationOnce((options: any) => ({
       consumeStream: async () => {
         await options.tools.write.execute({}, { toolCallId: "policy-call" });
       },
       response: Promise.resolve({
         modelId: "gpt-4-turbo",
-        messages: [{ role: "assistant", content: "Done" }],
+        messages: [
+          {
+            role: "assistant",
+            content: expectedToolCall
+              ? [
+                  {
+                    type: "tool-call",
+                    toolName: "write",
+                    toolCallId: "policy-call",
+                    input: {},
+                  },
+                ]
+              : "Done",
+          },
+        ],
       }),
       steps: Promise.resolve([]),
       totalUsage: Promise.resolve({
@@ -322,8 +342,18 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       finishReason: Promise.resolve("stop"),
     }));
 
+    const runConfig = buildQuickRunConfig();
+    if (expectedToolCall) {
+      const testConfig = runConfig.config.tests[0];
+      testConfig.expectedToolCalls = [
+        { toolName: "write", arguments: {} },
+      ];
+      testConfig.promptTurns[0].expectedToolCalls = [
+        { toolName: "write", arguments: {} },
+      ];
+    }
     await runEvalSuiteWithAiSdk({
-      ...buildQuickRunConfig(),
+      ...runConfig,
       toolPolicy: policy,
     } as any);
 
@@ -376,6 +406,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       )
     );
     expect(applicableStages.some((row) => row.state === "failed")).toBe(false);
+  });
+
+  it("does not let a blocked tool call satisfy expectedToolCalls", async () => {
+    const { payload } = await runPolicyTool(
+      { mode: "default" },
+      { destructiveHint: true },
+      true
+    );
+    expect(payload.result).toBe("failed");
+    expect(payload.metadata?.policyBlockCount).toBe(1);
   });
 
   it("allows an explicitly allowed destructive MCP tool through the runner", async () => {

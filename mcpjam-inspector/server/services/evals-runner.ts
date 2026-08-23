@@ -428,6 +428,7 @@ export type RunEvalSuiteOptions = {
 export type EvalIterationOutcome = {
   evaluation: EvaluationResult;
   iterationId?: string;
+  policyBlockCount?: number;
 };
 
 /**
@@ -959,7 +960,10 @@ function extractToolCallsFromConversation(params: {
           toolsCalled.push({
             toolName: call.toolName ?? call.name,
             arguments: call.args ?? call.input ?? {},
-          });
+            ...(typeof call.toolCallId === "string"
+              ? { toolCallId: call.toolCallId }
+              : {}),
+          } as ToolCall);
         }
       }
     }
@@ -983,7 +987,10 @@ function extractToolCallsFromConversation(params: {
               toolsCalled.push({
                 toolName: name,
                 arguments: argumentsValue,
-              });
+                ...(typeof item.toolCallId === "string"
+                  ? { toolCallId: item.toolCallId }
+                  : {}),
+              } as ToolCall);
             }
           }
         }
@@ -1005,7 +1012,10 @@ function extractToolCallsFromConversation(params: {
             toolsCalled.push({
               toolName,
               arguments: argumentsValue,
-            });
+              ...(typeof call.toolCallId === "string"
+                ? { toolCallId: call.toolCallId }
+                : {}),
+            } as ToolCall);
           }
         }
       }
@@ -1013,6 +1023,22 @@ function extractToolCallsFromConversation(params: {
   }
 
   return toolsCalled;
+}
+
+function extractToolCallsExcludingPolicyBlocks(
+  params: {
+    steps?: ReadonlyArray<any>;
+    messages: ModelMessage[];
+  },
+  blockedToolCallIds: ReadonlySet<string>
+): ToolCall[] {
+  return extractToolCallsFromConversation(params).filter((toolCall) => {
+    const toolCallId = (toolCall as ToolCall & { toolCallId?: unknown })
+      .toolCallId;
+    return (
+      typeof toolCallId !== "string" || !blockedToolCallIds.has(toolCallId)
+    );
+  });
 }
 
 function toolCallIdentity(toolCall: ToolCall): string {
@@ -2248,6 +2274,18 @@ export const runEvalSuiteWithAiSdk = async ({
     throw new Error("No tests supplied for eval run");
   }
 
+  if (
+    toolPolicy?.mode === "readOnly" &&
+    typeof (
+      config.environment as { computerEnvironmentId?: unknown } | undefined
+    )?.computerEnvironmentId === "string"
+  ) {
+    logger.warn(
+      "[evals] readOnly tool policy does not restrict the sandbox bash tool",
+      { suiteId }
+    );
+  }
+
   // For quick runs (runId === null), we don't need a recorder
   const recorder =
     runId === null
@@ -2263,6 +2301,7 @@ export const runEvalSuiteWithAiSdk = async ({
     total: 0,
     passed: 0,
     failed: 0,
+    policyBlockedIterations: 0,
   };
 
   // Create AbortController to cancel in-flight requests. Created BEFORE the
@@ -2317,17 +2356,13 @@ export const runEvalSuiteWithAiSdk = async ({
     });
     const toolAnnotations: ToolAnnotationsLookup = new Map();
     if (toolPolicy) {
-      const listedTools = await Promise.all(
-        serverIds.map(async (serverId) => ({
-          serverId,
-          tools: (await mcpClientManager.listTools(serverId)).tools,
-        }))
-      );
-      for (const { serverId, tools: serverTools } of listedTools) {
-        for (const tool of serverTools) {
+      for (const serverId of serverIds) {
+        for (const [toolName, annotations] of Object.entries(
+          mcpClientManager.getAllToolAnnotations(serverId)
+        )) {
           toolAnnotations.set(
-            toolAnnotationsKey(serverId, tool.name),
-            (tool as { annotations?: Record<string, unknown> }).annotations
+            toolAnnotationsKey(serverId, toolName),
+            annotations
           );
         }
       }
@@ -2578,6 +2613,9 @@ export const runEvalSuiteWithAiSdk = async ({
             summary.failed += 1;
           }
         }
+        summary.policyBlockedIterations += outcomes.filter(
+          (outcome) => (outcome.policyBlockCount ?? 0) > 0
+        ).length;
         if (runId === null) {
           quickRunOutcomes.push(...outcomes);
         }
@@ -2601,6 +2639,9 @@ export const runEvalSuiteWithAiSdk = async ({
           passed: summary.passed,
           failed: summary.failed,
           passRate,
+          ...(summary.policyBlockedIterations > 0
+            ? { policyBlockedIterations: summary.policyBlockedIterations }
+            : {}),
         },
       });
     }
@@ -3100,9 +3141,6 @@ const runLocalIteration = async ({
           sandboxId: evalSandbox.value.sandboxId,
         });
       }
-      if (toolPolicyGate) {
-        prepared.allTools = toolPolicyGate.wrap(prepared.allTools);
-      }
 
       if (
         toolChoice &&
@@ -3259,7 +3297,16 @@ const runLocalIteration = async ({
       testCaseId,
       abortSignal,
       toolChoice,
-      extractToolCalls: extractToolCallsFromConversation,
+      toolPolicyGate,
+      extractToolCalls: (params) =>
+        extractToolCallsExcludingPolicyBlocks(
+          params,
+          new Set(
+            (toolPolicyGate?.blocks ?? [])
+              .map((block) => block.toolCallId)
+              .filter((id): id is string => typeof id === "string")
+          )
+        ),
       // Per-turn streaming play-by-play (headless in batch).
       buildSinks: makeSinks,
     });
@@ -3430,6 +3477,9 @@ const runLocalIteration = async ({
       ...(toolPolicyGate?.blocks.length
         ? { policyBlocks: toolPolicyGate.blocks }
         : {}),
+      ...(toolPolicyGate?.warnings.length
+        ? { policyWarnings: toolPolicyGate.warnings }
+        : {}),
       ...(stepSkippedSteps.length ? { skippedSteps: stepSkippedSteps } : {}),
       ...(stepResults.length ? { stepResults } : {}),
       stageCase: buildStageAuthoredCase({
@@ -3463,6 +3513,9 @@ const runLocalIteration = async ({
     return {
       evaluation,
       iterationId: iterationId ?? undefined,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
@@ -3608,6 +3661,9 @@ const runLocalIteration = async ({
       ...(toolPolicyGate?.blocks.length
         ? { policyBlocks: toolPolicyGate.blocks }
         : {}),
+      ...(toolPolicyGate?.warnings.length
+        ? { policyWarnings: toolPolicyGate.warnings }
+        : {}),
       ...(errorMessage ? { error: errorMessage } : {}),
       ...(errorDetails ? { errorDetails } : {}),
       stageCase: buildStageAuthoredCase({
@@ -3640,6 +3696,9 @@ const runLocalIteration = async ({
     return {
       evaluation,
       iterationId: iterationId ?? undefined,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   } finally {
     // Tear down the per-iteration eval sandbox (idempotent; GC reaps any miss).
@@ -4014,9 +4073,6 @@ const runHostedIterationWithBrowser = async (
         sandboxId: evalSandbox.value.sandboxId,
       });
     }
-    if (toolPolicyGate) {
-      prepared.allTools = toolPolicyGate.wrap(prepared.allTools);
-    }
   } catch (error) {
     // Release any sandbox provisioned before a later line in the try threw.
     await releaseEvalSandboxIfAny();
@@ -4066,6 +4122,9 @@ const runHostedIterationWithBrowser = async (
     return {
       evaluation: failedEvaluation,
       iterationId,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlockCount: toolPolicyGate.blocks.length }
+        : {}),
     };
   }
 
@@ -4123,7 +4182,14 @@ const runHostedIterationWithBrowser = async (
         accumulatedUsage,
         withSystemPrefix,
         extractToolCalls: (messages) =>
-          extractToolCallsFromConversation({ messages }),
+          extractToolCallsExcludingPolicyBlocks(
+            { messages },
+            new Set(
+              (toolPolicyGate?.blocks ?? [])
+                .map((block) => block.toolCallId)
+                .filter((id): id is string => typeof id === "string")
+            )
+          ),
         buildTraceSnapshotEvent,
       })
     : undefined;
@@ -4150,6 +4216,7 @@ const runHostedIterationWithBrowser = async (
     endpointPath,
     extraBodyFields,
     toolChoice,
+    toolPolicyGate,
     abortSignal,
     maxSteps: MAX_STEPS,
     runStartedAt,
@@ -4192,7 +4259,14 @@ const runHostedIterationWithBrowser = async (
       : {}),
     logSuffix: emit ? " (stream)" : "",
     extractToolCalls: (messages) =>
-      extractToolCallsFromConversation({ messages }),
+      extractToolCallsExcludingPolicyBlocks(
+        { messages },
+        new Set(
+          (toolPolicyGate?.blocks ?? [])
+            .map((block) => block.toolCallId)
+            .filter((id): id is string => typeof id === "string")
+        )
+      ),
     acc: {
       messageHistory,
       capturedSpans,
@@ -4368,6 +4442,9 @@ const runHostedIterationWithBrowser = async (
     ...(toolPolicyGate?.blocks.length
       ? { policyBlocks: toolPolicyGate.blocks }
       : {}),
+    ...(toolPolicyGate?.warnings.length
+      ? { policyWarnings: toolPolicyGate.warnings }
+      : {}),
     ...(hostedStepSkippedSteps.length
       ? { skippedSteps: hostedStepSkippedSteps }
       : {}),
@@ -4400,6 +4477,9 @@ const runHostedIterationWithBrowser = async (
   return {
     evaluation,
     iterationId: iterationId ?? undefined,
+    ...(toolPolicyGate?.blocks.length
+      ? { policyBlockCount: toolPolicyGate.blocks.length }
+      : {}),
   };
 };
 

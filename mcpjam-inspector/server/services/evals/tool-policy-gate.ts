@@ -13,12 +13,33 @@ export type ToolPolicyBlock = {
   reason: ToolPolicyDecision["reason"];
   classification: ToolSafetyClassification;
   at: number;
+  toolCallId?: string;
 };
 
 export type ToolAnnotationsLookup = Map<
   string,
   Record<string, unknown> | undefined
 >;
+
+export type ToolPolicyGate = {
+  policy: EvalSuiteFileToolPolicy;
+  annotations: ToolAnnotationsLookup;
+  blocks: ToolPolicyBlock[];
+  warnings: string[];
+  recordBlock: (block: Omit<ToolPolicyBlock, "at">) => void;
+  wrap: (tools: ToolSet) => ToolSet;
+};
+
+export class UnmatchedToolPolicyNameError extends Error {
+  constructor(names: string[]) {
+    super(
+      `Tool policy deny name(s) did not match any available tool: ${names.join(
+        ", "
+      )}`
+    );
+    this.name = "UnmatchedToolPolicyNameError";
+  }
+}
 
 export function toolAnnotationsKey(serverId: string, toolName: string): string {
   return `${serverId}:${toolName}`;
@@ -33,22 +54,47 @@ export function toolAnnotationsKey(serverId: string, toolName: string): string {
  * not subject to mode-derived denial. An explicit deny still blocks any tool
  * by name because an operator naming a tool means it.
  *
- * The gate is intentionally applied before eval trace wrapping. A blocked
- * result carries a machine-readable marker, and trace wrappers must recognize
- * that marker and emit no tool span: a policy block is not an MCP call or
- * tool error.
+ * Each driver applies this gate exactly once to its final merged tool map,
+ * before applying the eval trace wrapper. A blocked result carries a
+ * machine-readable marker, and trace wrappers must recognize that marker and
+ * emit no tool span: a policy block is not an MCP call or tool error.
  */
 export function createToolPolicyGate(args: {
   policy: EvalSuiteFileToolPolicy;
   annotations: ToolAnnotationsLookup;
-}): {
-  blocks: ToolPolicyBlock[];
-  wrap: (tools: ToolSet) => ToolSet;
-} {
+}): ToolPolicyGate {
   const blocks: ToolPolicyBlock[] = [];
+  const warnings: string[] = [];
+  let namesValidated = false;
   return {
+    policy: args.policy,
+    annotations: args.annotations,
     blocks,
+    warnings,
+    recordBlock(block) {
+      blocks.push({ ...block, at: Date.now() });
+    },
     wrap(tools) {
+      if (!namesValidated) {
+        namesValidated = true;
+        const availableNames = new Set(Object.keys(tools));
+        const unmatchedDeny = (args.policy.deny ?? []).filter(
+          (name) => !availableNames.has(name)
+        );
+        if (unmatchedDeny.length > 0) {
+          throw new UnmatchedToolPolicyNameError(unmatchedDeny);
+        }
+        const unmatchedAllow = (args.policy.allow ?? []).filter(
+          (name) => !availableNames.has(name)
+        );
+        if (unmatchedAllow.length > 0) {
+          warnings.push(
+            `Tool policy allow name(s) did not match any available tool: ${unmatchedAllow.join(
+              ", "
+            )}`
+          );
+        }
+      }
       const wrapped: ToolSet = { ...tools };
       for (const [toolName, tool] of Object.entries(tools)) {
         const serverId =
@@ -65,16 +111,22 @@ export function createToolPolicyGate(args: {
             : undefined,
           policy: args.policy,
         });
-        if (decision.allowed || typeof tool.execute !== "function") continue;
+        if (decision.allowed) continue;
         wrapped[toolName] = {
           ...tool,
-          execute: async () => {
-            blocks.push({
+          execute: async (
+            _input: unknown,
+            options?: { toolCallId?: string }
+          ) => {
+            const block = {
               toolName,
               reason: decision.reason,
               classification: decision.classification,
-              at: Date.now(),
-            });
+              ...(options?.toolCallId
+                ? { toolCallId: options.toolCallId }
+                : {}),
+            } satisfies Omit<ToolPolicyBlock, "at">;
+            this.recordBlock(block);
             return {
               content: [
                 {

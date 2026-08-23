@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createToolPolicyGate, toolAnnotationsKey } from "../tool-policy-gate";
+import {
+  createToolPolicyGate,
+  toolAnnotationsKey,
+  UnmatchedToolPolicyNameError,
+} from "../tool-policy-gate";
 
 describe("createToolPolicyGate", () => {
   it("blocks without executing and returns a normal marked result", async () => {
@@ -99,5 +103,42 @@ describe("createToolPolicyGate", () => {
       ],
     });
     expect(gate.blocks).toHaveLength(1);
+  });
+
+  it("injects a block execute for denied tools without a local execute", async () => {
+    const gate = createToolPolicyGate({
+      policy: { mode: "default", deny: ["ui_save"] },
+      annotations: new Map(),
+    });
+    const wrapped = gate.wrap({
+      ui_save: { description: "client fulfilled tool" },
+    } as any);
+
+    const result = await wrapped.ui_save.execute!({}, {
+      toolCallId: "blocked-ui-call",
+    } as any);
+    expect(result).toMatchObject({ mcpjamPolicyBlock: true });
+    expect(gate.blocks).toMatchObject([
+      { toolName: "ui_save", toolCallId: "blocked-ui-call" },
+    ]);
+  });
+
+  it("refuses unmatched deny names and warns for unmatched allow names", () => {
+    const denyGate = createToolPolicyGate({
+      policy: { mode: "default", deny: ["missing"] },
+      annotations: new Map(),
+    });
+    expect(() => denyGate.wrap({ present: {} } as any)).toThrow(
+      UnmatchedToolPolicyNameError
+    );
+
+    const allowGate = createToolPolicyGate({
+      policy: { mode: "default", allow: ["missing"] },
+      annotations: new Map(),
+    });
+    allowGate.wrap({ present: {} } as any);
+    expect(allowGate.warnings).toEqual([
+      "Tool policy allow name(s) did not match any available tool: missing",
+    ]);
   });
 });
