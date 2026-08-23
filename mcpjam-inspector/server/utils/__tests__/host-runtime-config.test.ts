@@ -69,6 +69,31 @@ describe("fetchHostRuntimeConfig", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
+  it("forwards a token that merely STARTS with the letters Bearer", async () => {
+    // Regression: a `^Bearer\s*` strip (zero-or-more) mangled an opaque token
+    // like `Bearerabc123` into `abc123` — a different credential.
+    let auth = "";
+    mockFetch((_url, init) => {
+      auth = (init.headers as Record<string, string>).authorization;
+      return Response.json({ ok: true, config: { hostId: "h1" } });
+    });
+    await fetchHostRuntimeConfig({ hostId: "h1", bearer: "Bearerabc123" });
+    expect(auth).toBe("Bearer Bearerabc123");
+  });
+
+  it("answers a blank bearer as 401 even when the endpoint is unconfigured", async () => {
+    // The caller being unauthenticated is a 401, and must not inherit the 500
+    // that missing CONVEX_HTTP_URL returns.
+    delete process.env.CONVEX_HTTP_URL;
+    const fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const result = await fetchHostRuntimeConfig({ hostId: "h1", bearer: "" });
+
+    expect(result).toMatchObject({ ok: false, status: 401 });
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("does not double-prefix an already-Bearer token", async () => {
     let auth = "";
     mockFetch((_url, init) => {
