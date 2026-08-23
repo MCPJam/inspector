@@ -1069,8 +1069,11 @@ existing cases by declared id and creates new ones. An enabled case that
 overrides `passThreshold` is refused: hosted grading is suite-wide. A
 disabled case with the same override is ignored, matching how repetitions
 are checked. Authored
-`defaults.toolPolicy` and non-empty `defaults.validity` gates are refused —
-the hosted runner cannot enforce them. File `defaults.repetitions` is
+`defaults.toolPolicy` and non-empty `defaults.validity` gates are refused at
+hosted CLI launch (`TOOL_POLICY_UNSUPPORTED` / the corresponding validity
+refusal). Hosted platform-authored suites do not currently have a backend
+tool-policy field or enforcement path, so the CLI does not upload a suite that
+would claim those guarantees. File `defaults.repetitions` is
 inherited per case and is not uploaded as a suite `minIterations` floor.
 `target.environment` is attached to the suite before launch.
 

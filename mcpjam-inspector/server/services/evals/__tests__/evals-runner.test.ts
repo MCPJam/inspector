@@ -3,6 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const generateTextMock = vi.hoisted(() => vi.fn());
 const streamTextMock = vi.hoisted(() => vi.fn());
 const fetchMock = vi.hoisted(() => vi.fn());
+const preparedToolsOverride = vi.hoisted(() => ({
+  current: undefined as Record<string, any> | undefined,
+}));
 const createLlmModelMock = vi.hoisted(() =>
   vi.fn(
     (
@@ -89,7 +92,7 @@ vi.mock("@/shared/http-tool-calls", () => ({
 
 vi.mock("../../../utils/chat-v2-orchestration", () => ({
   prepareChatV2: vi.fn(async (options: any) => ({
-    allTools: {},
+    allTools: preparedToolsOverride.current ?? {},
     enhancedSystemPrompt: options?.systemPrompt ?? "",
     resolvedTemperature: options?.temperature,
     scrubMessages: (msgs: unknown[]) => msgs,
@@ -162,6 +165,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       },
     });
     streamTextMock.mockReset();
+    preparedToolsOverride.current = undefined;
     // PR 4b of the engine consolidation: `runIterationWithAiSdk` now
     // drives `runDirectChatTurn` (which calls `streamText`). Provide a
     // default streamText return shape so suite-style tests using
@@ -281,6 +285,118 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     ).rejects.toThrow(
       'Could not start eval because "Asana" is not connected. Reconnect the server and try again.'
     );
+  });
+
+  async function runPolicyTool(
+    policy: { mode: "default" | "readOnly"; allow?: string[]; deny?: string[] },
+    annotations?: Record<string, unknown>,
+  ) {
+    const originalExecute = vi.fn(async () =>
+      mcpClientManager.executeTool("srv-1", "write", {}),
+    );
+    preparedToolsOverride.current = {
+      write: { _serverId: "srv-1", execute: originalExecute },
+    };
+    mcpClientManager.listTools.mockResolvedValueOnce({
+      tools: [
+        {
+          name: "write",
+          ...(annotations !== undefined ? { annotations } : {}),
+        },
+      ],
+    });
+    streamTextMock.mockImplementationOnce((options: any) => ({
+      consumeStream: async () => {
+        await options.tools.write.execute({}, { toolCallId: "policy-call" });
+      },
+      response: Promise.resolve({
+        modelId: "gpt-4-turbo",
+        messages: [{ role: "assistant", content: "Done" }],
+      }),
+      steps: Promise.resolve([]),
+      totalUsage: Promise.resolve({
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+      }),
+      finishReason: Promise.resolve("stop"),
+    }));
+
+    await runEvalSuiteWithAiSdk({
+      ...buildQuickRunConfig(),
+      toolPolicy: policy,
+    } as any);
+
+    const updateCall = convexClient.action.mock.calls.find(
+      (call) => call[0] === "testSuites:updateTestIteration",
+    );
+    return {
+      originalExecute,
+      payload: updateCall?.[1] as {
+        result?: string;
+        status?: string;
+        metadata?: Record<string, any>;
+      },
+    };
+  }
+
+  it("blocks destructive MCP execution and records a non-failing policy block", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default" },
+      { destructiveHint: true },
+    );
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
+    expect(payload.result).toBe("passed");
+    expect(payload.status).toBe("completed");
+    expect(payload.metadata?.policyBlockCount).toBe(1);
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      {
+        toolName: "write",
+        reason: "destructiveDefaultDeny",
+        classification: "destructive",
+      },
+    ]);
+    expect(payload.metadata?.failureCategory).toBeUndefined();
+    const applicableStages = (
+      (payload.metadata?.stageResults as Array<{
+        state: string;
+        reason?: string;
+      }>) ?? []
+    ).filter((row) => row.state !== "notApplicable");
+    expect(applicableStages.length).toBeGreaterThan(0);
+    expect(applicableStages).toEqual(
+      expect.arrayContaining(
+        applicableStages.map((row) =>
+          expect.objectContaining({
+            state: "notMeasured",
+            reason: "blockedByPolicy",
+          }),
+        ),
+      ),
+    );
+    expect(applicableStages.some((row) => row.state === "failed")).toBe(false);
+  });
+
+  it("allows an explicitly allowed destructive MCP tool through the runner", async () => {
+    const { originalExecute, payload } = await runPolicyTool(
+      { mode: "default", allow: ["write"] },
+      { destructiveHint: true },
+    );
+    expect(originalExecute).toHaveBeenCalledTimes(1);
+    expect(mcpClientManager.executeTool).toHaveBeenCalledTimes(1);
+    expect(payload.metadata?.policyBlockCount).toBeUndefined();
+  });
+
+  it("blocks an unannotated MCP tool in readOnly mode through the runner", async () => {
+    const { originalExecute, payload } = await runPolicyTool({
+      mode: "readOnly",
+    });
+    expect(originalExecute).not.toHaveBeenCalled();
+    expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
+    expect(payload.metadata?.policyBlocks).toMatchObject([
+      { reason: "readOnlyModeUnclassified", classification: "unknown" },
+    ]);
   });
 
   it("surfaces a clear error when the selected server fails tools/list", async () => {

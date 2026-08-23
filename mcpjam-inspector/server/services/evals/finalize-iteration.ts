@@ -125,6 +125,7 @@ export function buildStageMetadata(args: {
   stageToolErrors?: unknown[];
   toolSignals?: ToolExposureSignals;
   setupSignals?: StageSetupSignals;
+  policy?: { blocked: boolean; reason?: string };
   status: "completed" | "failed";
   error?: string;
 }): Record<string, unknown> {
@@ -144,6 +145,7 @@ export function buildStageMetadata(args: {
         setupSignals: args.setupSignals,
       }),
       iteration: { status, ...(error ? { error } : {}) },
+      policy: args.policy,
     }),
   );
 }
@@ -216,6 +218,8 @@ export function buildIterationFinishParams(args: {
    * them unless they are threaded here.
    */
   stageToolErrors?: unknown[];
+  /** Execution-layer policy blocks; persisted as metadata, never a failure. */
+  policyBlocks?: unknown[];
   iterationMetadataBase: Record<string, string | number | boolean>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
@@ -257,6 +261,7 @@ export function buildIterationFinishParams(args: {
     stepResults,
     stageCase,
     stageToolErrors,
+    policyBlocks,
     iterationMetadataBase,
     hostPolicy,
     toolSignals,
@@ -279,6 +284,19 @@ export function buildIterationFinishParams(args: {
     stageToolErrors,
     toolSignals,
     setupSignals,
+    policy:
+      policyBlocks && policyBlocks.length > 0
+        ? {
+            blocked: true,
+            reason:
+              typeof policyBlocks[0] === "object" &&
+              policyBlocks[0] !== null &&
+              typeof (policyBlocks[0] as { reason?: unknown }).reason ===
+                "string"
+                ? (policyBlocks[0] as { reason: string }).reason
+                : undefined,
+          }
+        : undefined,
     status,
     ...(error ? { error } : {}),
   });
@@ -306,6 +324,12 @@ export function buildIterationFinishParams(args: {
       ...(predicateResults?.length ? { predicates: predicateResults } : {}),
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),
+      ...(policyBlocks?.length
+        ? {
+            policyBlocks,
+            policyBlockCount: policyBlocks.length,
+          }
+        : {}),
       ...stageMetadata,
       ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals

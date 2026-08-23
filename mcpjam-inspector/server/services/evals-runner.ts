@@ -117,10 +117,7 @@ import type {
 } from "./evals/drive-local-eval-turn.js";
 import { sanitizeForConvexTransport } from "./evals/convex-sanitize.js";
 import { emitPinnedTurnSse } from "./evals/pinned-turn-sse.js";
-import {
-  emitPinnedTurnSse,
-  type PinnedTurnSsePayload,
-} from "./evals/pinned-turn-sse.js";
+import { type PinnedTurnSsePayload } from "./evals/pinned-turn-sse.js";
 import {
   buildIterationFinishParams,
   buildStageMetadata,
@@ -128,7 +125,13 @@ import {
 import type {
   StageAuthoredCase,
   StageSetupSignals,
+  EvalSuiteFileToolPolicy,
 } from "@mcpjam/sdk/contract";
+import {
+  createToolPolicyGate,
+  toolAnnotationsKey,
+  type ToolAnnotationsLookup,
+} from "./evals/tool-policy-gate.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
 import {
   createRunSetupObserver,
@@ -418,6 +421,7 @@ export type RunEvalSuiteOptions = {
    * this for every runId-bearing run, empty included.
    */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  toolPolicy?: EvalSuiteFileToolPolicy;
 };
 
 /** One executed iteration inside a suite/quick run (evaluation + optional persisted iteration id). */
@@ -1428,6 +1432,8 @@ type RunIterationBaseParams = {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
   toolSignals?: ToolExposureSignals;
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  toolAnnotations?: ToolAnnotationsLookup;
   /** Folded run-level connect / tools-list evidence (D6). */
   setupSignals?: StageSetupSignals;
   /** Synthetic connection/discovery spans (timeline only). */
@@ -1835,6 +1841,8 @@ const executeTestCase = async (params: {
   /** The run's frozen skills in harness shape (see
    *  RunEvalSuiteOptions.pinnedHarnessSkills). */
   pinnedHarnessSkills?: PinnedSkillArtifact[];
+  toolPolicy?: EvalSuiteFileToolPolicy;
+  toolAnnotations?: ToolAnnotationsLookup;
 }) => {
   const {
     test,
@@ -1865,6 +1873,8 @@ const executeTestCase = async (params: {
     environment,
     pinnedSkillSource,
     pinnedHarnessSkills,
+    toolPolicy,
+    toolAnnotations,
   } = params;
   const testCaseId = test.testCaseId || parentTestCaseId;
   const streaming = emit != null;
@@ -1951,6 +1961,7 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
+        ...(toolPolicy ? { toolPolicy, toolAnnotations } : {}),
       };
       outcomes.push(
         await runSingleIteration(
@@ -2078,6 +2089,7 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
+        ...(toolPolicy ? { toolPolicy, toolAnnotations } : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2130,6 +2142,7 @@ const executeTestCase = async (params: {
         environment,
         pinnedSkillSource,
         pinnedHarnessSkills,
+        ...(toolPolicy ? { toolPolicy, toolAnnotations } : {}),
       };
       const iterationOutcome = await runSingleIteration(
         () =>
@@ -2179,6 +2192,7 @@ const executeTestCase = async (params: {
       convexAuthToken,
       pinnedSkillSource,
       pinnedHarnessSkills,
+      ...(toolPolicy ? { toolPolicy, toolAnnotations } : {}),
     };
     const iterationOutcome = await runSingleIteration(
       () =>
@@ -2221,6 +2235,7 @@ export const runEvalSuiteWithAiSdk = async ({
   suiteHostConfig,
   pinnedSkillSource,
   pinnedHarnessSkills,
+  toolPolicy,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
@@ -2300,6 +2315,23 @@ export const runEvalSuiteWithAiSdk = async ({
       environment: config.environment,
       setupObserver,
     });
+    const toolAnnotations: ToolAnnotationsLookup = new Map();
+    if (toolPolicy) {
+      const listedTools = await Promise.all(
+        serverIds.map(async (serverId) => ({
+          serverId,
+          tools: (await mcpClientManager.listTools(serverId)).tools,
+        })),
+      );
+      for (const { serverId, tools: serverTools } of listedTools) {
+        for (const tool of serverTools) {
+          toolAnnotations.set(
+            toolAnnotationsKey(serverId, tool.name),
+            (tool as { annotations?: Record<string, unknown> }).annotations,
+          );
+        }
+      }
+    }
 
     // Apply visibility filtering when a host policy is present. The filter
     // mutates `tools` in place (same as prepareChatV2) so downstream iteration
@@ -2379,6 +2411,7 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(resolvedSetupAudit ? { setupAudit: resolvedSetupAudit } : {}),
         suiteHostConfig,
         environment: config.environment,
+        ...(toolPolicy ? { toolPolicy, toolAnnotations } : {}),
         // BOTH frozen-skill channels, from one place — see
         // `runFrozenSkillOptions`. Forwarding only the emulated one used to
         // leave the harness path falling through to a live project-wide fetch.
@@ -2696,12 +2729,20 @@ const runLocalIteration = async ({
   environment,
   convexAuthToken,
   pinnedSkillSource,
+  toolPolicy,
+  toolAnnotations,
 }: RunIterationAiSdkParams & {
   emit?: StreamEmit;
 }): Promise<EvalIterationOutcome> => {
   const resolvedTest = resolveEvalTestCase(test);
   // Eval runs NEVER use local-FS skills (decision 10): always explicit.
   const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
+  const toolPolicyGate = toolPolicy
+    ? createToolPolicyGate({
+        policy: toolPolicy,
+        annotations: toolAnnotations ?? new Map(),
+      })
+    : null;
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -3059,6 +3100,9 @@ const runLocalIteration = async ({
           sandboxId: evalSandbox.value.sandboxId,
         });
       }
+      if (toolPolicyGate) {
+        prepared.allTools = toolPolicyGate.wrap(prepared.allTools);
+      }
 
       if (
         toolChoice &&
@@ -3383,6 +3427,9 @@ const runLocalIteration = async ({
         ? { errorDetails: acc.iterationErrorDetails }
         : {}),
       predicateResults,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlocks: toolPolicyGate.blocks }
+        : {}),
       ...(stepSkippedSteps.length ? { skippedSteps: stepSkippedSteps } : {}),
       ...(stepResults.length ? { stepResults } : {}),
       stageCase: buildStageAuthoredCase({
@@ -3558,6 +3605,9 @@ const runLocalIteration = async ({
       browserInteractionSteps: browser.browserInteractionSteps,
       status: "failed",
       startedAt: runStartedAt,
+      ...(toolPolicyGate?.blocks.length
+        ? { policyBlocks: toolPolicyGate.blocks }
+        : {}),
       ...(errorMessage ? { error: errorMessage } : {}),
       ...(errorDetails ? { errorDetails } : {}),
       stageCase: buildStageAuthoredCase({
@@ -3651,6 +3701,8 @@ const runHostedIterationWithBrowser = async (
     environment,
     pinnedSkillSource,
     pinnedHarnessSkills,
+    toolPolicy,
+    toolAnnotations,
   }: RunIterationBackendParams & {
     emit?: StreamEmit;
   },
@@ -3659,6 +3711,12 @@ const runHostedIterationWithBrowser = async (
   const resolvedTest = resolveEvalTestCase(test);
   // Eval runs NEVER use local-FS skills (decision 10): always explicit.
   const skillsSource = pinnedSkillSource ?? ({ kind: "none" } as const);
+  const toolPolicyGate = toolPolicy
+    ? createToolPolicyGate({
+        policy: toolPolicy,
+        annotations: toolAnnotations ?? new Map(),
+      })
+    : null;
 
   // Check if run was cancelled before starting iteration
   if (runId !== null) {
@@ -3955,6 +4013,9 @@ const runHostedIterationWithBrowser = async (
       prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
         sandboxId: evalSandbox.value.sandboxId,
       });
+    }
+    if (toolPolicyGate) {
+      prepared.allTools = toolPolicyGate.wrap(prepared.allTools);
     }
   } catch (error) {
     // Release any sandbox provisioned before a later line in the try threw.
@@ -4304,6 +4365,9 @@ const runHostedIterationWithBrowser = async (
     ...(iterationError ? { error: iterationError } : {}),
     ...(iterationErrorDetails ? { errorDetails: iterationErrorDetails } : {}),
     predicateResults,
+    ...(toolPolicyGate?.blocks.length
+      ? { policyBlocks: toolPolicyGate.blocks }
+      : {}),
     ...(hostedStepSkippedSteps.length
       ? { skippedSteps: hostedStepSkippedSteps }
       : {}),

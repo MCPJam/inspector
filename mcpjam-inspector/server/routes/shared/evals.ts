@@ -1,6 +1,9 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
+import {
+  evalSuiteFileToolPolicySchema,
+} from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";
@@ -187,6 +190,7 @@ export const RunEvalsRequestSchema = z.object({
   suiteId: z.string().optional(),
   suiteName: z.string().optional(),
   suiteDescription: z.string().optional(),
+  toolPolicy: evalSuiteFileToolPolicySchema.optional(),
   tests: z.array(
     z
       .object({
@@ -1889,6 +1893,7 @@ export async function prepareEvalRun(
     sourceHash,
     skillsOverride,
     ephemeralEnvironment,
+    toolPolicy,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -2401,6 +2406,7 @@ export async function prepareEvalRun(
       // Presence is meaningful (empty ⇒ "no skills", absent ⇒ live fetch), so
       // this checks for undefined rather than truthiness.
       ...(pinnedHarnessSkills !== undefined ? { pinnedHarnessSkills } : {}),
+      ...(toolPolicy ? { toolPolicy } : {}),
     });
   };
 
