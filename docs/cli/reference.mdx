@@ -997,6 +997,8 @@ Any `--compose-*` flag alongside `--environment`, `--host`, `--server` or
 `--all-targets` is a usage error: compose builds the stack the run uses, so
 naming a target alongside it describes two different runs.
 
+`--compose-model` is checked against the deployment's capabilities before any environment is minted or attached. On a deployment that does not support model overrides, the command fails immediately with a clear error rather than letting the write proceed and failing inside `ensure-adhoc`. Inherit-only compose (no `--compose-model`) still works on those deployments.
+
 #### Which target runs
 
 **Fan-out is explicit and never inferred.** Choosing for you would be choosing
