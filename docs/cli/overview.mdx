@@ -88,9 +88,9 @@ API URL precedence:
 3. The `apiUrl` stored with the OAuth login (only when that login is the credential)
 4. `https://app.mcpjam.com/api/v1`
 
-An explicit `--api-url` or `MCPJAM_API_URL` that is not an `http(s)` URL is a usage error. `mcpjam cloud status` uses the same checks.
+An explicit `--api-url` or `MCPJAM_API_URL` that is not an `http(s)` URL is a usage error for commands that talk to the network (exit `2`). `mcpjam cloud status` uses the same checks but stays network-free: it still emits the complete JSON report, sets `ok: false`, includes `credential.valid` / `deployment.valid` plus an `error` string, and exits `1`. Missing credentials are informational (`credential.valid: null`) and successful.
 
-Successful Cloud commands print an audience line to stderr (`Using MCPJam Cloud as … · project: … · <apiUrl>`). `--quiet` suppresses it. Machine-readable JSON stays on stdout.
+Successful Cloud commands print an audience line to stderr (`Using MCPJam Cloud as … · project: … · <apiUrl>`). `--quiet` suppresses it. Machine-readable JSON stays on stdout. `cloud status` redacts API keys.
 
 ## Cloud project scope
 
@@ -112,7 +112,7 @@ mcpjam cloud eval list             # uses the link
 mcpjam cloud link --remove
 ```
 
-`mcpjam cloud sessions list` follows the same rule. `--all-projects` restores a cross-project listing and cannot be combined with `--project`. Hosted `readiness` never reads the project link.
+`mcpjam cloud eval` run-inspection commands (`status`, `cancel`, `judge`, `iterations`, `gate`, `compare`, `trace`, `steps`, `screenshot`, `video`) follow the same rule — `--project` is optional. `mcpjam cloud sessions list` does too; `--all-projects` restores a cross-project listing and cannot be combined with `--project`. Hosted `readiness` never reads the project link.
 
 ## What `--host` means
 

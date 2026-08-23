@@ -8,6 +8,7 @@ import {
   type ShareResourceType,
 } from "@/hooks/useShares";
 import { ShareSection } from "./ShareSection";
+import { applyShareCeilingToOptions } from "@/lib/share-mode-ceiling";
 import type {
   ShareAccessOption,
   ShareMode,
@@ -83,6 +84,10 @@ export function ResourceSharePanel({
   const displayLink = shareUrl?.replace(/^https?:\/\//, "") ?? null;
   const currentPreset: ShareMode = envelope?.mode ?? "project_members";
   const members = useMemo(() => envelope?.members ?? [], [envelope?.members]);
+  const presets = useMemo(
+    () => applyShareCeilingToOptions(RUN_PRESETS, envelope?.maxShareMode),
+    [envelope?.maxShareMode],
+  );
 
   if (!envelope) {
     // `getShareSettings` returns null — not undefined — for a resource the
@@ -115,7 +120,7 @@ export function ResourceSharePanel({
       shareUrl={shareUrl}
       displayLink={displayLink}
       currentPreset={currentPreset}
-      presets={RUN_PRESETS}
+      presets={presets}
       disabledReason={disabledReason}
       footerSlot={footerSlot}
       copy={{

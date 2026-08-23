@@ -21,14 +21,17 @@ const SUITE_TITLES: Record<string, string> = {
 
 /**
  * The same sentence the SDK's `describeConformanceScore` produces, rebuilt
- * from the stored counts.
+ * from the stored counts plus the pending count derived from each suite
+ * report's `profile.pendingCheckIds` (same intersection as `partitionByStamp`).
  *
- * The stored row carries `advisoryCount` rather than the advisory objects the
- * SDK helper wants, and re-deriving the number here would be worse: the score
- * was computed once, at run time, by the engine that owns the arithmetic. This
- * only re-renders what was already decided.
+ * Advice wording is a count only: the stored row carries `advisoryCount`,
+ * not `advicePointsLost`, so the SDK's `(−N)` deduction cannot be
+ * reconstructed honestly and is left off. Pending is derived from the
+ * report blob (already stored) rather than a flat summary field — adding
+ * `pending` to `ScoreSummary`/`summarySchema` is a backend follow-up for
+ * surfaces that list summaries without reports.
  */
-function describeStoredScore(summary: ScoreSummary): string {
+function describeStoredScore(summary: ScoreSummary, pending = 0): string {
   if (summary.score === null) {
     return `not scored — 0 applicable checks (${summary.notApplicable} not applicable)`;
   }
@@ -44,6 +47,9 @@ function describeStoredScore(summary: ScoreSummary): string {
         summary.advisoryCount === 1 ? "y" : "ies"
       }`
     );
+  }
+  if (pending > 0) {
+    parts.push(`${pending} pending (unscored by this profile)`);
   }
   const version = summary.protocolVersion
     ? ` [${summary.protocolVersion}]`
@@ -67,6 +73,7 @@ interface ReportCheck {
   status?: string;
   error?: { message?: string };
   skipReason?: string;
+  pending?: boolean;
 }
 
 /**
@@ -84,6 +91,20 @@ function collectChecks(suite: unknown): ReportCheck[] {
     ? record.steps
     : [];
   return items as ReportCheck[];
+}
+
+/**
+ * Pending ids stamped on a suite report. An absent `profile` (legacy stored
+ * runs, and suites that have no stamp yet) yields an empty set — those
+ * pages render exactly as they did before profiles existed.
+ */
+function pendingIdsFromSuite(suite: unknown): Set<string> {
+  const record = suite as
+    | { profile?: { pendingCheckIds?: unknown } }
+    | undefined;
+  const ids = record?.profile?.pendingCheckIds;
+  if (!Array.isArray(ids)) return new Set();
+  return new Set(ids.filter((id): id is string => typeof id === "string"));
 }
 
 export function ScoreResultsPage() {
@@ -122,13 +143,25 @@ export function ScoreResultsPage() {
   const suites = useMemo(() => {
     if (!run) return [];
     return (["protocol", "apps", "tasks", "oauth"] as const)
-      .map((suiteId) => ({
-        suiteId,
-        summary: run.suiteSummaries.find((s) => s.suiteId === suiteId),
-        checks: collectChecks(run.report[suiteId]),
-      }))
+      .map((suiteId) => {
+        const report = run.report[suiteId];
+        const pendingIds = pendingIdsFromSuite(report);
+        const checks = collectChecks(report).map((check) => ({
+          ...check,
+          pending: Boolean(check.id && pendingIds.has(check.id)),
+        }));
+        return {
+          suiteId,
+          summary: run.suiteSummaries.find((s) => s.suiteId === suiteId),
+          checks,
+          // Same derivation as `partitionByStamp`: |checks ∩ pendingIds|.
+          pending: checks.filter((check) => check.pending).length,
+        };
+      })
       .filter((entry) => entry.summary || entry.checks.length > 0);
   }, [run]);
+
+  const pendingTotal = suites.reduce((total, suite) => total + suite.pending, 0);
 
   if (notFound) {
     return (
@@ -189,7 +222,7 @@ export function ScoreResultsPage() {
                 : "Fully conformant"}
             </div>
             <div className="text-xs text-muted-foreground">
-              {describeStoredScore(run)}
+              {describeStoredScore(run, pendingTotal)}
               {run.notApplicable > 0
                 ? ` · ${run.notApplicable} not applicable`
                 : ""}
@@ -199,7 +232,7 @@ export function ScoreResultsPage() {
       )}
 
       <div className="space-y-4">
-        {suites.map(({ suiteId, summary, checks }) => (
+        {suites.map(({ suiteId, summary, checks, pending }) => (
           <section
             key={suiteId}
             className="overflow-hidden rounded-md border border-border/50"
@@ -211,7 +244,7 @@ export function ScoreResultsPage() {
                 </div>
                 {summary && (
                   <div className="truncate text-[11px] text-muted-foreground">
-                    {describeStoredScore(summary)}
+                    {describeStoredScore(summary, pending)}
                   </div>
                 )}
               </div>
@@ -232,6 +265,14 @@ export function ScoreResultsPage() {
                     className="flex items-start gap-2 border-b border-border/30 px-4 py-2 last:border-b-0"
                   >
                     <CheckIcon status={check.status ?? "skipped"} />
+                    {check.pending ? (
+                      <span
+                        title="unscored by this run's profile"
+                        className="mt-0.5 shrink-0 rounded-sm border border-border/60 px-1 py-px text-[10px] leading-none text-muted-foreground"
+                      >
+                        unscored
+                      </span>
+                    ) : null}
                     <div className="min-w-0">
                       <div className="text-xs">
                         {check.title ?? check.id ?? "check"}

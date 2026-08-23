@@ -716,7 +716,7 @@ describe("evaluateGates — comparative fields fail closed", () => {
       const verdict = report.verdicts.find((row) => row.gate === label);
       expect(verdict?.status).toBe("usage_error");
       // Points at the surface that CAN answer it.
-      expect(verdict?.message).toContain("mcpjam eval compare");
+      expect(verdict?.message).toContain("mcpjam cloud eval compare");
     }
   );
 
