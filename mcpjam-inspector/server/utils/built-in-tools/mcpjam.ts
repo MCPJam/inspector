@@ -65,6 +65,10 @@ import {
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getCapabilitiesOperation,
@@ -96,6 +100,14 @@ import {
   getUserTestingInsightsOperation,
   dismissUserTestingFindingOperation,
   undismissUserTestingFindingOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
   type PlatformApiClient,
   type PlatformOperation,
 } from "@mcpjam/sdk/platform";
@@ -127,6 +139,10 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,
@@ -198,6 +214,14 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getUserTestingInsightsOperation,
   dismissUserTestingFindingOperation,
   undismissUserTestingFindingOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
 ];
 
 /**
@@ -417,6 +441,16 @@ const APPROVAL_REQUIRED_IDS = new Set([
   // supplied by whoever is talking to the model, this server dials it, and a
   // completed flow adds a server row to the user's project.
   connectProjectServerOperation.name,
+  // create_project_server with different spelling: the caller supplies
+  // `endpointUrl`, and a completed install adds a server row to the user's
+  // project — so it takes the same approval its sibling does.
+  installRegistryDirectoryServerOperation.name,
+  // Installs a registry card whose config was written by another org member;
+  // the completed flow still adds a server row to the user's project.
+  installRegistryServerOperation.name,
+  // Destructive, same as delete_project_server: removes the installed server
+  // row and its connection.
+  uninstallRegistryServerOperation.name,
 ]);
 
 // Surface note appended to each operation's description: in-app, an omitted
