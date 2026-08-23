@@ -1064,8 +1064,10 @@ not destroy its past results and re-enabling it later resumes the same case.
 The run is scoped to the enabled cases either way. A file with no enabled
 cases is refused (`NO_ENABLED_CASES`) rather than launching the whole
 persisted suite. `--case` may only name an enabled case. A later run updates
-existing cases by declared id and creates new ones. A case that overrides
-`passThreshold` is refused: hosted grading is suite-wide. Authored
+existing cases by declared id and creates new ones. An enabled case that
+overrides `passThreshold` is refused: hosted grading is suite-wide. A
+disabled case with the same override is ignored, matching how repetitions
+are checked. Authored
 `defaults.toolPolicy` and non-empty `defaults.validity` gates are refused —
 the hosted runner cannot enforce them. File `defaults.repetitions` is
 inherited per case and is not uploaded as a suite `minIterations` floor.

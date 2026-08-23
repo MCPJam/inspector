@@ -178,11 +178,11 @@ function refuseUnsupportedHostedSemantics(loaded: {
 function refusePerCasePassThreshold(loaded: {
   resolved: {
     defaults: { passThreshold: number };
-    cases: ResolvedEvalSuiteFileCase[];
+    enabledCases: ResolvedEvalSuiteFileCase[];
   };
 }): void {
   const suiteThreshold = loaded.resolved.defaults.passThreshold;
-  for (const testCase of loaded.resolved.cases) {
+  for (const testCase of loaded.resolved.enabledCases) {
     if (testCase.passThreshold !== suiteThreshold) {
       throw cliError(
         "CASE_PASS_THRESHOLD",
@@ -293,6 +293,7 @@ export async function syncFileOwnedCases(
   }
 
   let batches = 0;
+  let updatedCount = 0;
   const failed: Array<{
     index: number;
     declaredId?: string;
@@ -356,6 +357,7 @@ export async function syncFileOwnedCases(
         },
         { signal: params.signal },
       );
+      updatedCount += 1;
     } catch (error) {
       failed.push({
         index: -1,
@@ -373,8 +375,8 @@ export async function syncFileOwnedCases(
       SUITE_FILE_RUN_INVALID_EXIT_CODE,
       {
         failed,
-        created: toCreate.length,
-        updated: toUpdate.length,
+        created: createdCases.length,
+        updated: updatedCount,
         deleted: 0,
         batches,
       },
@@ -408,8 +410,8 @@ export async function syncFileOwnedCases(
       SUITE_FILE_RUN_INVALID_EXIT_CODE,
       {
         failed,
-        created: toCreate.length,
-        updated: toUpdate.length,
+        created: createdCases.length,
+        updated: updatedCount,
         deleted: toDelete.length - failed.length,
         batches,
       },

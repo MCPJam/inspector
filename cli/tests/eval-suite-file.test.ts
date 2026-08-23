@@ -1392,6 +1392,12 @@ ${cases}
 
 async function startFileRunFixture(options?: {
   existingCases?: Array<{ id: string; declaredId: string; title: string }>;
+  /**
+   * Batch-create indexes to put in `failed` instead of `created`. Used to
+   * assert CASE_SYNC_FAILED reports landed writes, not attempted totals.
+   */
+  failCreateIndexes?: readonly number[];
+  failUpdates?: boolean;
 }): Promise<{
   baseUrl: string;
   authHeaders: string[];
@@ -1497,26 +1503,49 @@ async function startFileRunFixture(options?: {
     ) {
       const body = raw ? JSON.parse(raw) : {};
       batchBodies.push(body);
-      const created = (body.cases as Array<{ id?: string; title: string }>).map(
+      const created: Array<{
+        index: number;
+        id: string;
+        declaredId: string;
+        title: string;
+        replayed: boolean;
+      }> = [];
+      const failed: Array<{
+        index: number;
+        declaredId: string;
+        code: string;
+        message: string;
+      }> = [];
+      const failCreate = new Set(options?.failCreateIndexes ?? []);
+      (body.cases as Array<{ id?: string; title: string }>).forEach(
         (testCase, index) => {
           const declaredId = testCase.id ?? `minted_${index}`;
+          if (failCreate.has(index)) {
+            failed.push({
+              index,
+              declaredId,
+              code: "CREATE_FAILED",
+              message: `fixture refused ${declaredId}`,
+            });
+            return;
+          }
           const id = `row_${declaredId}`;
           casesByDeclaredId.set(declaredId, {
             id,
             declaredId,
             title: testCase.title,
           });
-          return {
+          created.push({
             index,
             id,
             declaredId,
             title: testCase.title,
             replayed: false,
-          };
+          });
         }
       );
       res.statusCode = 201;
-      res.end(JSON.stringify({ created, failed: [], duplicatePolicy: "block" }));
+      res.end(JSON.stringify({ created, failed, duplicatePolicy: "block" }));
       return;
     }
 
@@ -1527,6 +1556,11 @@ async function startFileRunFixture(options?: {
       method === "PATCH"
     ) {
       updateBodies.push(raw ? JSON.parse(raw) : {});
+      if (options?.failUpdates) {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ error: { code: "UPDATE_FAILED", message: "fixture update failed" } }));
+        return;
+      }
       res.end(JSON.stringify({ id: "row_c_refund", title: "updated" }));
       return;
     }
@@ -1908,6 +1942,104 @@ describe("eval run --file", () => {
         assert.equal(run.result.exitCode, 2, run.stderr);
         assert.match(run.stderr, /eval create --file/);
         assert.equal(fixture.fromFileBodies.length, 0);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a disabled case with a passThreshold override does not refuse the run", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+        { id: "row_c_parked", declaredId: "c_parked", title: "Parked" },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          `${VALID_SUITE_FILE}  - id: c_parked\n    title: Parked\n    disabled: true\n    passThreshold: 0.95\n    steps:\n      - id: step-1\n        kind: prompt\n        prompt: Parked for now.\n`,
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.runBodies.length, 1);
+        const launched = fixture.runBodies[0] as { caseIds: string[] };
+        assert.deepEqual(launched.caseIds, ["row_c_refund"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("CASE_SYNC_FAILED reports landed writes, not attempted totals", async () => {
+    const fixture = await startFileRunFixture({
+      failCreateIndexes: [1],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, suiteFileWithCases(2), "utf8");
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.match(run.stderr, /CASE_SYNC_FAILED/);
+        const jsonLine = run.stderr
+          .split("\n")
+          .reverse()
+          .find((line) => line.startsWith("{"));
+        assert.ok(jsonLine, run.stderr);
+        const payload = JSON.parse(jsonLine) as {
+          error: { details: { created: number; updated: number; deleted: number } };
+        };
+        assert.equal(payload.error.details.created, 1);
+        assert.equal(payload.error.details.updated, 0);
+        assert.equal(payload.error.details.deleted, 0);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("CASE_SYNC_FAILED counts only updates that landed", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+      ],
+      failUpdates: true,
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.match(run.stderr, /CASE_SYNC_FAILED/);
+        const jsonLine = run.stderr
+          .split("\n")
+          .reverse()
+          .find((line) => line.startsWith("{"));
+        assert.ok(jsonLine, run.stderr);
+        const payload = JSON.parse(jsonLine) as {
+          error: { details: { created: number; updated: number } };
+        };
+        assert.equal(payload.error.details.created, 0);
+        assert.equal(payload.error.details.updated, 0);
         assert.equal(fixture.runBodies.length, 0);
       });
     } finally {
