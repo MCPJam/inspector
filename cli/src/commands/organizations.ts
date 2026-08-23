@@ -1,5 +1,5 @@
 /**
- * `mcpjam organizations` — the read half, which is the whole group.
+ * `mcpjam cloud organizations` — the read half, which is the whole group.
  *
  * It exists because an `organizationId` had nowhere to come from. `projects
  * list --org` and `projects create --org` both take one, and until now the

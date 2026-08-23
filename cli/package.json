@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "tsup",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "node scripts/run-tests.mjs",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
   },

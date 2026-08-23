@@ -28,12 +28,41 @@ const {
   mockClaimProvenInstallation,
   mockRedirectToGithub,
   mockNavigate,
+  mockAuth,
+  mockUserReady,
+  mockWorkosAuth,
 } = vi.hoisted(() => ({
   mockCompleteInstallSetup: vi.fn(),
   mockCompleteUserAuthorization: vi.fn(),
   mockClaimProvenInstallation: vi.fn(),
   mockRedirectToGithub: vi.fn(),
   mockNavigate: vi.fn(),
+  // Both legs are `signedInAction`s reached by a FULL PAGE LOAD from GitHub,
+  // so auth state is a real input to this page and not scaffolding: the
+  // default here is the settled, signed-in case, and the tests that matter
+  // move it.
+  mockAuth: vi.fn(() => ({ isLoading: false, isAuthenticated: true })),
+  mockUserReady: vi.fn(() => true),
+  // The WORKOS user, which is the one that decides. Convex reports guests as
+  // authenticated on purpose (`unified-convex-auth` gives them a token and a
+  // placeholder user), so this mock is not a duplicate of `mockAuth` — it is
+  // the only thing that tells a member from a guest.
+  mockWorkosAuth: vi.fn(() => ({
+    user: { id: "user_workos" } as unknown,
+    isLoading: false,
+  })),
+}));
+
+vi.mock("convex/react", () => ({
+  useConvexAuth: () => mockAuth(),
+}));
+
+vi.mock("@workos-inc/authkit-react", () => ({
+  useAuth: () => mockWorkosAuth(),
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => mockUserReady(),
 }));
 
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
@@ -88,6 +117,124 @@ function renderCallback(query: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockAuth.mockReturnValue({ isLoading: false, isAuthenticated: true });
+  mockUserReady.mockReturnValue(true);
+  mockWorkosAuth.mockReturnValue({
+    user: { id: "user_workos" },
+    isLoading: false,
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AUTH MUST LAND BEFORE EITHER LEG IS CALLED
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// This page is reached by a full page load from GitHub's redirect, so the
+// Convex client has NOT attached a token when the effect first runs. Calling a
+// `signedInAction` in that window throws `Authentication required` — a plain
+// `Error`, which the production mask turns into a bare `Server Error` — and
+// leaves the one-time state unconsumed with the flow dead.
+//
+// This shipped and broke every bind in production. A `useQuery` would have
+// survived it by re-running once auth arrived; a one-shot effect does not,
+// which is precisely why the gate has to be explicit here.
+describe("waiting for authentication", () => {
+  it("calls neither leg while auth is still resolving", async () => {
+    mockAuth.mockReturnValue({ isLoading: true, isAuthenticated: false });
+    renderCallback("?code=gh-code&state=raw-oauth-state");
+
+    await waitFor(() => expect(screen.getByRole("status")).toBeTruthy());
+    expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
+    expect(mockCompleteInstallSetup).not.toHaveBeenCalled();
+    // Still "working" — an unresolved session is not a refusal.
+    expect(screen.getByRole("status").textContent).toContain("Finishing up");
+  });
+
+  it("calls neither leg while the Convex user row is still being provisioned", async () => {
+    // Authenticated with WorkOS is not the same as resolvable to a Convex user,
+    // and the actions resolve the second.
+    mockUserReady.mockReturnValue(false);
+    renderCallback("?code=gh-code&state=raw-oauth-state");
+
+    await waitFor(() => expect(screen.getByRole("status")).toBeTruthy());
+    expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
+  });
+
+  it("runs the leg once auth arrives, without a remount", async () => {
+    mockAuth.mockReturnValue({ isLoading: true, isAuthenticated: false });
+    mockWorkosAuth.mockReturnValue({ user: null, isLoading: true });
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "bound",
+      accountLogin: "acme",
+    });
+    const { rerender } = renderCallback("?code=gh-code&state=raw-oauth-state");
+    expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
+
+    // The token lands. The guard must not have burned itself while waiting.
+    mockAuth.mockReturnValue({ isLoading: false, isAuthenticated: true });
+    mockWorkosAuth.mockReturnValue({
+      user: { id: "user_workos" },
+      isLoading: false,
+    });
+    rerender(
+      <StrictMode>
+        <MemoryRouter
+          initialEntries={[`${PATH}?code=gh-code&state=raw-oauth-state`]}
+        >
+          <Routes>
+            <Route path={PATH} element={<GithubInstallCallbackRoute />} />
+          </Routes>
+        </MemoryRouter>
+      </StrictMode>
+    );
+
+    await waitFor(() =>
+      expect(mockCompleteUserAuthorization).toHaveBeenCalledTimes(1)
+    );
+    expect(mockCompleteUserAuthorization).toHaveBeenCalledWith({
+      code: "gh-code",
+      state: "raw-oauth-state",
+    });
+  });
+
+  it("calls neither leg while the WorkOS session is still resolving", async () => {
+    // Convex can already say "authenticated" here — a guest token satisfies it.
+    mockWorkosAuth.mockReturnValue({ user: null, isLoading: true });
+    renderCallback("?code=gh-code&state=raw-oauth-state");
+
+    await waitFor(() => expect(screen.getByRole("status")).toBeTruthy());
+    expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
+    expect(screen.getByRole("status").textContent).toContain("Finishing up");
+  });
+
+  it("refuses a GUEST with the sign-in message, and calls no action", async () => {
+    // THE CASE `useConvexAuth` ALONE CANNOT SEE. `unified-convex-auth` gives a
+    // guest a real Convex token and a placeholder user, so `isAuthenticated` is
+    // true and `useEnsureDbUser` marks them ready — a gate built on those two
+    // would send a guest into a member-only `signedInAction` and surface the
+    // generic binding failure, and the sign-in branch would never fire.
+    mockAuth.mockReturnValue({ isLoading: false, isAuthenticated: true });
+    mockUserReady.mockReturnValue(true);
+    mockWorkosAuth.mockReturnValue({ user: null, isLoading: false });
+    renderCallback("?code=gh-code&state=raw-oauth-state");
+
+    await waitFor(() =>
+      expect(screen.getByText(/not signed in to MCPJam/i)).toBeTruthy()
+    );
+    expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
+    expect(mockCompleteInstallSetup).not.toHaveBeenCalled();
+  });
+
+  it("says so plainly when auth resolves to signed out", async () => {
+    mockAuth.mockReturnValue({ isLoading: false, isAuthenticated: false });
+    mockWorkosAuth.mockReturnValue({ user: null, isLoading: false });
+    renderCallback("?code=gh-code&state=raw-oauth-state");
+
+    await waitFor(() =>
+      expect(screen.getByText(/not signed in to MCPJam/i)).toBeTruthy()
+    );
+    expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
+  });
 });
 
 describe("the setup leg", () => {

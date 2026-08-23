@@ -1,7 +1,7 @@
 /**
  * `@mcpjam/sdk/predicates` — state-based predicate library for deterministic
  * eval gating. Browser-safe (reuses the `../matchers` argument engine), shared
- * by the inspector GUI runner and the `mcpjam eval` CLI.
+ * by the inspector GUI runner and the `mcpjam cloud eval` CLI.
  */
 
 export {

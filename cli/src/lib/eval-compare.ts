@@ -1,5 +1,5 @@
 /**
- * Flag parsing and input assembly for `mcpjam eval compare`.
+ * Flag parsing and input assembly for `mcpjam cloud eval compare`.
  *
  * Mirrors `eval-gate.ts`: kept out of `commands/eval.ts` so the parsing rules —
  * especially the percent→fraction boundary — are unit-testable without booting
