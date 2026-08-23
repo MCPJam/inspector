@@ -239,6 +239,12 @@ describe("SessionsPanel — rows and detail", () => {
         origin: "future_surface",
         title: "Unknown origin",
       }),
+      makeRow({
+        chatSessionId: "cs_proto",
+        sourceType: "direct",
+        origin: "constructor",
+        title: "Inherited key",
+      }),
     ]);
     render(<SessionsPanel projectId="p1" />);
 
@@ -248,6 +254,11 @@ describe("SessionsPanel — rows and detail", () => {
     const future = within(screen.getByTestId("session-row-cs_future"));
     expect(future.getByTestId("session-origin-chip")).toHaveTextContent(
       "future_surface"
+    );
+
+    const proto = within(screen.getByTestId("session-row-cs_proto"));
+    expect(proto.getByTestId("session-origin-chip")).toHaveTextContent(
+      "constructor"
     );
   });
 

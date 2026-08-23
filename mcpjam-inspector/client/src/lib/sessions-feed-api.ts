@@ -126,7 +126,11 @@ export function sessionOriginChipLabel(
   origin: string | null | undefined
 ): string | null {
   if (!origin) return null;
-  return SESSION_ORIGIN_LABELS[origin] ?? origin;
+  // Own-key only: "constructor" / "toString" / "__proto__" are inherited
+  // and must render as the raw origin, not a Function or Object.
+  return Object.hasOwn(SESSION_ORIGIN_LABELS, origin)
+    ? SESSION_ORIGIN_LABELS[origin]
+    : origin;
 }
 
 /**
