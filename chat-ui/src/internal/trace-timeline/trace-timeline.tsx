@@ -211,6 +211,10 @@ export type TraceRevealSelection = {
 
 function categoryRank(category: EvalTraceSpanCategory): number {
   switch (category) {
+    case "connection":
+      return -2;
+    case "discovery":
+      return -1;
     case "step":
       return 0;
     case "llm":
@@ -219,8 +223,6 @@ function categoryRank(category: EvalTraceSpanCategory): number {
       return 2;
     case "error":
       return 3;
-    default:
-      return 9;
   }
 }
 
@@ -559,11 +561,11 @@ function getWaterfallBarClass(
     case "tool":
       return "trace-waterfall-bar-tool";
     case "step":
+    case "connection":
+    case "discovery":
       return "trace-waterfall-bar-step";
     case "error":
       return "trace-waterfall-bar-error";
-    default:
-      return "trace-waterfall-bar-step";
   }
 }
 
@@ -581,8 +583,9 @@ function getCategoryIconClass(
       return "trace-waterfall-glyph-tool";
     case "error":
       return "trace-waterfall-glyph-error";
-    default:
-      return "text-muted-foreground";
+    case "connection":
+    case "discovery":
+      return "trace-waterfall-glyph-step";
   }
 }
 
@@ -602,9 +605,9 @@ function getRowBorderAccentClass(
     case "error":
       return "trace-waterfall-row-accent-error";
     case "step":
+    case "connection":
+    case "discovery":
       return "trace-waterfall-row-accent-step";
-    default:
-      return "border-l-muted-foreground";
   }
 }
 
@@ -668,6 +671,8 @@ export function buildPromptGroups(spans: EvalTraceSpan[]): PromptGroup[] {
         llm: 0,
         tool: 0,
         error: 0,
+        connection: 0,
+        discovery: 0,
       };
       for (const span of promptSpans) {
         if (span.category in counts) {
@@ -1065,8 +1070,9 @@ function CategoryGlyph({
       return <Wrench className={iconClass} aria-hidden />;
     case "error":
       return <AlertCircle className={iconClass} aria-hidden />;
+    case "connection":
+    case "discovery":
     case "step":
-    default:
       return <ListTree className={iconClass} aria-hidden />;
   }
 }
@@ -2262,6 +2268,8 @@ export function TraceTimeline({
             {(
               [
                 { label: "User", cls: "trace-waterfall-bar-prompt" },
+                { label: "Connect", cls: "trace-waterfall-bar-step" },
+                { label: "Discovery", cls: "trace-waterfall-bar-step" },
                 { label: "LLM",  cls: "trace-waterfall-bar-llm" },
                 { label: "Tool", cls: "trace-waterfall-bar-tool" },
                 { label: "Step", cls: "trace-waterfall-bar-step" },

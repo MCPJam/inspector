@@ -6,6 +6,7 @@ import {
   finalizeAiSdkTraceOnFailure,
   patchAiSdkRecordedSpansMessageRangesFromSteps,
   pushAiSdkTrailingErrorSpan,
+  pushRunSetupSpans,
   pushBackendStepLlmFailureSpans,
   pushBackendStepSuccessSpans,
   pushBackendStepToolFailureSpans,
@@ -331,6 +332,31 @@ describe("eval-trace-capture", () => {
     const spans: EvalTraceSpan[] = [];
     pushAiSdkTrailingErrorSpan(spans, runAt, runAt + 10, runAt + 10);
     expect(spans[0]!.endMs).toBeGreaterThan(spans[0]!.startMs);
+  });
+
+  it("unshifts synthetic run-setup spans ahead of captured spans", () => {
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-1",
+        name: "tool.search",
+        category: "tool",
+        startMs: 5,
+        endMs: 9,
+        status: "ok",
+      },
+    ];
+    pushRunSetupSpans(spans, [
+      {
+        id: "run-connect-s1",
+        name: "connect",
+        category: "connection",
+        startMs: 0,
+        endMs: 12,
+        status: "error",
+        serverId: "s1",
+      },
+    ]);
+    expect(spans.map((s) => s.id)).toEqual(["run-connect-s1", "tool-1"]);
   });
 
   it("backend wrapped tools emit per-call spans with tool metadata", async () => {

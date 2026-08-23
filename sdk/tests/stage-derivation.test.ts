@@ -16,6 +16,7 @@ import {
   MAX_EVIDENCE_REASONS,
   MAX_EVIDENCE_REASON_CHARS,
   STAGE_ANALYZER_VERSION,
+  STAGE_REASONS,
   USER_VALUE_STAGES,
   deriveStageResults,
   stageDerivationSchema,
@@ -221,7 +222,7 @@ describe("connection & discovery", () => {
     });
   });
 
-  test("no spans and no signals is `noSpanChannel`, not a failure", () => {
+  test("no spans and no signals is `noEvidenceCaptured`, not a failure", () => {
     const { stageResults } = deriveStageResults({
       authored: modelDrivenCase,
       evidence: { traceLacksSpanChannel: true },
@@ -229,7 +230,224 @@ describe("connection & discovery", () => {
     });
     expect(stateOf(stageResults, "connection")).toMatchObject({
       state: "notMeasured",
-      reason: "noSpanChannel",
+      reason: "noEvidenceCaptured",
+    });
+    expect(stateOf(stageResults, "discovery")).toMatchObject({
+      state: "notMeasured",
+      reason: "noEvidenceCaptured",
+    });
+  });
+
+  test("`noSpanChannel` stays in the vocabulary for old producers", () => {
+    expect(STAGE_REASONS).toContain("noSpanChannel");
+  });
+
+  test("signal ok ⇒ connection passed/observed", () => {
+    const { stageResults } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        setupSignals: { connection: { outcome: "ok" } },
+      },
+      iteration: { status: "completed" },
+    });
+    expect(stateOf(stageResults, "connection")).toMatchObject({
+      state: "passed",
+      reason: "observed",
+    });
+  });
+
+  test("failed + theirs + egressVerified ⇒ connection failed/connectFailed", () => {
+    const { stageResults, firstFailedStage, failureCategory } =
+      deriveStageResults({
+        authored: modelDrivenCase,
+        evidence: {
+          setupSignals: {
+            connection: {
+              outcome: "failed",
+              attribution: "theirs",
+              egressVerified: true,
+              spanIds: ["run-connect-s1"],
+            },
+          },
+        },
+        iteration: { status: "failed" },
+      });
+    expect(stateOf(stageResults, "connection")).toMatchObject({
+      state: "failed",
+      reason: "connectFailed",
+      evidence: { spanIds: ["run-connect-s1"] },
+    });
+    expect(firstFailedStage).toBe("connection");
+    expect(failureCategory).toBe("setup");
+  });
+
+  test("failed + theirs without canary ⇒ notMeasured/egressUnverified", () => {
+    const { stageResults, firstFailedStage } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        setupSignals: {
+          connection: {
+            outcome: "failed",
+            attribution: "theirs",
+          },
+        },
+      },
+      iteration: { status: "failed" },
+    });
+    expect(stateOf(stageResults, "connection")).toMatchObject({
+      state: "notMeasured",
+      reason: "egressUnverified",
+    });
+    expect(firstFailedStage).toBeUndefined();
+  });
+
+  test("unknown attribution ⇒ notMeasured/egressUnverified", () => {
+    const { stageResults } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        setupSignals: {
+          connection: { outcome: "failed", attribution: "unknown" },
+        },
+      },
+      iteration: { status: "failed" },
+    });
+    expect(stateOf(stageResults, "connection")).toMatchObject({
+      state: "notMeasured",
+      reason: "egressUnverified",
+    });
+  });
+
+  test("ours attribution ⇒ notMeasured/setupAborted", () => {
+    const { stageResults, failureCategory } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        setupSignals: {
+          connection: { outcome: "failed", attribution: "ours" },
+        },
+      },
+      iteration: { status: "failed" },
+    });
+    expect(stateOf(stageResults, "connection")).toMatchObject({
+      state: "notMeasured",
+      reason: "setupAborted",
+    });
+    expect(failureCategory).toBe("setup");
+  });
+
+  test("later tool spans outrank a contradictory failed classification", () => {
+    const { stageResults } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        spans: [toolSpan()],
+        setupSignals: {
+          connection: {
+            outcome: "failed",
+            attribution: "theirs",
+            egressVerified: true,
+          },
+        },
+      },
+      iteration: { status: "completed" },
+    });
+    expect(stateOf(stageResults, "connection")).toMatchObject({
+      state: "passed",
+      reason: "impliedByLaterEvidence",
+    });
+  });
+
+  test("toolsTotalBefore outranks a failed classification", () => {
+    const { stageResults } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        toolSignals: { toolsTotalBefore: 3 },
+        setupSignals: {
+          connection: {
+            outcome: "failed",
+            attribution: "theirs",
+            egressVerified: true,
+          },
+        },
+      },
+      iteration: { status: "completed" },
+    });
+    expect(stateOf(stageResults, "connection")).toMatchObject({
+      state: "passed",
+      reason: "impliedByLaterEvidence",
+    });
+  });
+
+  test("discovery signal ok ⇒ passed/observed", () => {
+    const { stageResults } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        setupSignals: {
+          connection: { outcome: "ok" },
+          discovery: { outcome: "ok" },
+        },
+      },
+      iteration: { status: "completed" },
+    });
+    expect(stateOf(stageResults, "discovery")).toMatchObject({
+      state: "passed",
+      reason: "observed",
+    });
+  });
+
+  test("discovery failed + reached + not ours ⇒ failed/toolsListFailed", () => {
+    const { stageResults, firstFailedStage, failureCategory } =
+      deriveStageResults({
+        authored: modelDrivenCase,
+        evidence: {
+          setupSignals: {
+            connection: { outcome: "ok" },
+            discovery: {
+              outcome: "failed",
+              attribution: "theirs",
+              spanIds: ["run-toolslist-s1"],
+            },
+          },
+        },
+        iteration: { status: "failed" },
+      });
+    expect(stateOf(stageResults, "discovery")).toMatchObject({
+      state: "failed",
+      reason: "toolsListFailed",
+      evidence: { spanIds: ["run-toolslist-s1"] },
+    });
+    expect(firstFailedStage).toBe("discovery");
+    expect(failureCategory).toBe("setup");
+  });
+
+  test("discovery failed + ours ⇒ notMeasured/setupAborted", () => {
+    const { stageResults } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        setupSignals: {
+          connection: { outcome: "ok" },
+          discovery: { outcome: "failed", attribution: "ours" },
+        },
+      },
+      iteration: { status: "failed" },
+    });
+    expect(stateOf(stageResults, "discovery")).toMatchObject({
+      state: "notMeasured",
+      reason: "setupAborted",
+    });
+  });
+
+  test("discovery failed without a reached connection ⇒ egressUnverified", () => {
+    const { stageResults } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        setupSignals: {
+          discovery: { outcome: "failed", attribution: "theirs" },
+        },
+      },
+      iteration: { status: "failed" },
+    });
+    expect(stateOf(stageResults, "discovery")).toMatchObject({
+      state: "notMeasured",
+      reason: "egressUnverified",
     });
   });
 
@@ -661,6 +879,59 @@ describe("honest degradation for rows that never produced a verdict", () => {
       expect(failureCategory).toBe("setup");
     }
   );
+
+  test("no-signals failed+traceAbsent is byte-identical to v1 (modulo version)", () => {
+    const { stageResults, firstFailedStage, failureCategory, stageAnalyzerVersion } =
+      deriveStageResults({
+        authored: modelDrivenCase,
+        evidence: { traceAbsent: true },
+        iteration: { status: "failed", error: "server not connected" },
+      });
+    expect(stageAnalyzerVersion).toBe(2);
+    const applicable = stageResults.filter((r) => r.state !== "notApplicable");
+    expect(applicable.map((r) => ({ stage: r.stage, state: r.state, reason: r.reason }))).toEqual(
+      applicable.map((r) => ({
+        stage: r.stage,
+        state: "notMeasured",
+        reason: "setupAborted",
+      }))
+    );
+    expect(firstFailedStage).toBeUndefined();
+    expect(failureCategory).toBe("setup");
+  });
+
+  test("failed+traceAbsent WITH signals measures the top two stages", () => {
+    const { stageResults, firstFailedStage, failureCategory } =
+      deriveStageResults({
+        authored: modelDrivenCase,
+        evidence: {
+          traceAbsent: true,
+          setupSignals: {
+            connection: {
+              outcome: "failed",
+              attribution: "theirs",
+              egressVerified: true,
+              spanIds: ["run-connect-s1"],
+            },
+          },
+        },
+        iteration: { status: "failed", error: "connection refused" },
+      });
+    expect(stateOf(stageResults, "connection")).toMatchObject({
+      state: "failed",
+      reason: "connectFailed",
+    });
+    expect(stateOf(stageResults, "discovery")).toMatchObject({
+      state: "notReached",
+      reason: "earlierStageFailed",
+    });
+    expect(stateOf(stageResults, "selection")).toMatchObject({
+      state: "notReached",
+      reason: "earlierStageFailed",
+    });
+    expect(firstFailedStage).toBe("connection");
+    expect(failureCategory).toBe("setup");
+  });
 
   test("a `failed` row with no trace is read as a setup abort", () => {
     // `persistSetupFailedIteration` writes status "failed" because the update
