@@ -932,6 +932,12 @@ export function registerToolsCommands(program: Command): void {
     let result: unknown;
     let commandError: unknown;
     const startedAt = Date.now();
+    // The TOOL CALL only — not connect, not the host visibility probe. This is
+    // what `_durationMs` reports, so it means the same thing as `durationMs` on
+    // `POST /v1/.../tools/call`; two fields that near-share a name must not
+    // measure different windows. The reporter keeps the end-to-end clock below,
+    // which is what a JUnit case duration is expected to cover.
+    let toolCallDurationMs = 0;
 
     try {
       result = await withEphemeralManager(
@@ -939,16 +945,21 @@ export function registerToolsCommands(program: Command): void {
         async (manager, serverId) => {
           // As a host: an app-only tool isn't callable by that host's model.
           if (host) await assertToolVisibleToHost(manager, serverId, toolName, host);
-          return manager.executeTool(
-            serverId,
-            toolName,
-            params,
-            // Caller-supplied headers WIN over the mirrored ones (the seam in
-            // `MCPClientManager`), which is the whole point of `--mcp-header`:
-            // sending a deliberately wrong value is how you exercise a
-            // server's -32020.
-            mcpHeaders ? { headers: mcpHeaders } : undefined,
-          );
+          const toolStartedAt = Date.now();
+          try {
+            return await manager.executeTool(
+              serverId,
+              toolName,
+              params,
+              // Caller-supplied headers WIN over the mirrored ones (the seam in
+              // `MCPClientManager`), which is the whole point of `--mcp-header`:
+              // sending a deliberately wrong value is how you exercise a
+              // server's -32020.
+              mcpHeaders ? { headers: mcpHeaders } : undefined,
+            );
+          } finally {
+            toolCallDurationMs = Math.max(0, Date.now() - toolStartedAt);
+          }
         },
         {
           timeout: globalOptions.timeout,
@@ -961,8 +972,9 @@ export function registerToolsCommands(program: Command): void {
     } catch (error) {
       commandError = error;
     }
-    // Stop the clock at tool-call completion so `_durationMs` / reporter
-    // `durationMs` do not include validation, Inspector render, or debug I/O.
+    // Stop the clock at tool-call completion so the reporter's `durationMs`
+    // does not include validation, Inspector render, or debug I/O. This one is
+    // end-to-end (connect + call); `toolCallDurationMs` above is the call.
     const durationMs = Math.max(0, Date.now() - startedAt);
 
     if (commandError) {
@@ -1010,7 +1022,7 @@ export function registerToolsCommands(program: Command): void {
       validationResult && !validationResult.passed,
     );
     const toolResultError = isCallToolResultError(result);
-    const resultWithDuration = attachCliDurationMs(result, durationMs);
+    const resultWithDuration = attachCliDurationMs(result, toolCallDurationMs);
 
     let outputPayload = resultWithDuration;
     let debugOutputPayload: unknown = outputPayload;

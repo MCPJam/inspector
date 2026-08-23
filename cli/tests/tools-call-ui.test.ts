@@ -118,6 +118,8 @@ async function startMockServer(options: {
   hasActiveClient?: boolean;
   serveFrontend?: boolean;
   toolResult?: unknown;
+  /** Stall the `initialize` handshake so connect time is separable from the call. */
+  initializeDelayMs?: number;
   toolRpcError?: { code: number; message: string };
   failRender?: boolean;
   commandDelays?: Partial<Record<string, number>>;
@@ -168,6 +170,11 @@ async function startMockServer(options: {
       const id = body.id;
 
       if (method === "initialize") {
+        if (options.initializeDelayMs) {
+          await new Promise((resolve) =>
+            setTimeout(resolve, options.initializeDelayMs),
+          );
+        }
         response.writeHead(200, { "Content-Type": "application/json" });
         response.end(
           JSON.stringify({
@@ -493,6 +500,50 @@ test("tools call --ui --frontend-url uses the explicit browser URL without probi
     assert.equal(
       server.requests.some((entry) => entry.method === "GET" && entry.url === "/"),
       false,
+    );
+  } finally {
+    await server.stop();
+  }
+});
+
+test("tools call _durationMs measures the call, not connection setup", async () => {
+  const connectDelayMs = 500;
+  const server = await startMockServer({
+    toolResult: { content: [{ type: "text", text: "fast" }] },
+    initializeDelayMs: connectDelayMs,
+  });
+
+  try {
+    const startedAt = Date.now();
+    const result = await runCli([
+      "--format",
+      "json",
+      "tools",
+      "call",
+      "--url",
+      `http://127.0.0.1:${server.port}/mcp`,
+      "--tool-name",
+      "create_view",
+      "--tool-args",
+      "{}",
+    ]);
+    const wallClockMs = Date.now() - startedAt;
+
+    assert.equal(result.exitCode, 0, result.stderr);
+    const { _durationMs } = JSON.parse(result.stdout) as {
+      _durationMs?: number;
+    };
+
+    // The command really did wait on the stalled handshake...
+    assert.ok(
+      wallClockMs >= connectDelayMs,
+      `expected the run to include the ${connectDelayMs}ms handshake, took ${wallClockMs}ms`,
+    );
+    // ...but the reported number is the tool call alone, so it stays
+    // comparable with `durationMs` from POST /v1/.../tools/call.
+    assert.ok(
+      typeof _durationMs === "number" && _durationMs < connectDelayMs / 2,
+      `expected _durationMs to exclude the ${connectDelayMs}ms connect, got ${_durationMs}`,
     );
   } finally {
     await server.stop();
