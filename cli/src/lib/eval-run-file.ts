@@ -652,7 +652,7 @@ export async function executeEvalRunFromFile(
     !hasExplicitTarget && !fileEnvironment
       ? authored.target.hosts?.map((host) => host.id ?? host.name)
       : undefined;
-  if (authored.target.hosts) {
+  if (!hasExplicitTarget && authored.target.hosts) {
     await updateEvalSuiteOperation.execute(
       {
         project: project.id,

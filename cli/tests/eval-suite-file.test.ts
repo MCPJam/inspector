@@ -1477,6 +1477,12 @@ ${cases}
 
 async function startFileRunFixture(options?: {
   existingCases?: Array<{ id: string; declaredId: string; title: string }>;
+  existingHosts?: Array<{
+    id: string;
+    name: string;
+    servers?: string[];
+  }>;
+  environmentName?: string;
   /**
    * Batch-create indexes to put in `failed` instead of `created`. Used to
    * assert CASE_SYNC_FAILED reports landed writes, not attempted totals.
@@ -1502,7 +1508,9 @@ async function startFileRunFixture(options?: {
   const suitePatches: unknown[] = [];
   const runBodies: unknown[] = [];
   let environmentIds: string[] = [];
-  let hosts: Array<{ id: string; name: string; servers?: string[] }> = [];
+  let hosts: Array<{ id: string; name: string; servers?: string[] }> = [
+    ...(options?.existingHosts ?? []),
+  ];
   const casesByDeclaredId = new Map<
     string,
     { id: string; declaredId: string; title: string }
@@ -1726,7 +1734,7 @@ async function startFileRunFixture(options?: {
           items: [
             {
               id: "env-prod",
-              name: "prod",
+              name: options?.environmentName ?? "prod",
               archived: false,
             },
           ],
@@ -1938,6 +1946,44 @@ describe("eval run --file", () => {
         assert.equal(
           (fixture.runBodies[0] as { namedHostId?: string }).namedHostId,
           "h1"
+        );
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("an explicit host target does not replace the file's host attachments", async () => {
+    const fixture = await startFileRunFixture({
+      existingHosts: [{ id: "h-existing", name: "Existing Host" }],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        const configured = VALID_SUITE_FILE.replace(
+          "target:\n  servers:\n    - name: billing\n",
+          "target:\n  servers:\n    - name: billing\n  hosts:\n    - id: h-file\n      name: File Host\n"
+        );
+        await writeFile(file, configured, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--host",
+              "h-existing"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.deepEqual(fixture.suitePatches, []);
+        assert.equal(
+          (fixture.runBodies[0] as { namedHostId?: string }).namedHostId,
+          "h-existing"
         );
       });
     } finally {
@@ -2528,23 +2574,34 @@ describe("eval run --file", () => {
     }
   });
 
-  test("target.environment is attached before the run starts", async () => {
-    const fixture = await startFileRunFixture();
-    try {
-      await withTempDir(async (dir) => {
-        const file = path.join(dir, "suite.yaml");
-        await writeFile(
-          file,
-          VALID_SUITE_FILE.replace(
-            "target:\n  servers:\n    - name: billing\n",
-            "target:\n  environment: prod\n"
-          ),
-          "utf8"
-        );
+  test("an exported environment-only file runs with zero legacy servers", async () => {
+    await withTempDir(async () => {
+      const exported = await runExport(
+        {
+          detail: {
+            environment: { servers: [], computerEnvironment: null },
+            environmentIds: ["env-a"],
+          },
+        },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(exported.exitCode, 0, exported.stderr);
+      const fixture = await startFileRunFixture({
+        environmentName: "Production",
+      });
+      try {
         const run = await captureProcessOutput(() =>
-          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
-            telemetry: telemetryDisabled,
-          })
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              JSON.parse(exported.stdout).path,
+              "--project",
+              "Alpha"
+            ),
+            { telemetry: telemetryDisabled }
+          )
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
         assert.equal(fixture.suitePatches.length, 1);
@@ -2563,10 +2620,10 @@ describe("eval run --file", () => {
         );
         const launched = fixture.runBodies[0] as { environmentId?: string };
         assert.equal(launched.environmentId, "env-prod");
-      });
-    } finally {
-      await fixture.close();
-    }
+      } finally {
+        await fixture.close();
+      }
+    });
   });
 });
 
