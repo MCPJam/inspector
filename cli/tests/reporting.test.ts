@@ -5,7 +5,12 @@ import path from "node:path";
 import test from "node:test";
 import type { StructuredRunReport } from "@mcpjam/sdk";
 import {
+  buildEvalDecisionSummary,
+  formatEvalDecisionSummary,
+} from "@mcpjam/sdk";
+import {
   parseReporterFormat,
+  writeEvalDecisionSummary,
   writeJsonArtifact,
   writeReporterResult,
 } from "../src/lib/reporting.js";
@@ -52,6 +57,87 @@ test("parseReporterFormat validates supported reporters", () => {
   assert.equal(parseReporterFormat("json-summary"), "json-summary");
   assert.equal(parseReporterFormat("junit-xml"), "junit-xml");
   assert.throws(() => parseReporterFormat("html"), /Invalid reporter/);
+});
+
+test("writes decision summaries only for human output", () => {
+  const summary = buildEvalDecisionSummary({
+    total: 1,
+    passed: 0,
+    failed: 1,
+    iterationWalkComplete: true,
+    cases: [
+      {
+        id: "iteration-1",
+        title: "Setup abort",
+        iterationNumber: 1,
+        result: "failed",
+        failureCategory: "setup",
+        stageResults: [
+          { stage: "connection", state: "notMeasured" },
+          { stage: "discovery", state: "notMeasured" },
+          { stage: "selection", state: "notMeasured" },
+          { stage: "call", state: "notMeasured" },
+          { stage: "response", state: "notMeasured" },
+          { stage: "userValue", state: "notMeasured" },
+        ],
+        stageAnalyzerVersion: 2,
+      },
+    ],
+  });
+  assert.equal(formatEvalDecisionSummary(summary).includes("failure category setup"), true);
+  const original = process.stdout.write;
+  let output = "";
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    if (typeof chunk === "string") output += chunk;
+    return true;
+  }) as typeof process.stdout.write;
+  try {
+    writeEvalDecisionSummary("human", summary, process.stdout);
+    assert.match(output, /did not reach the server's stages/);
+    output = "";
+    writeEvalDecisionSummary("json", summary, process.stdout);
+    assert.equal(output, "");
+  } finally {
+    process.stdout.write = original;
+  }
+});
+
+test("writes decision summaries to the supplied destination", () => {
+  const summary = buildEvalDecisionSummary({
+    total: 1,
+    passed: 0,
+    failed: 1,
+    iterationWalkComplete: true,
+    cases: [
+      {
+        id: "iteration-1",
+        title: "Setup abort",
+        iterationNumber: 1,
+        result: "failed",
+        failureCategory: "setup",
+        stageResults: [
+          { stage: "connection", state: "notMeasured" },
+          { stage: "discovery", state: "notMeasured" },
+          { stage: "selection", state: "notMeasured" },
+          { stage: "call", state: "notMeasured" },
+          { stage: "response", state: "notMeasured" },
+          { stage: "userValue", state: "notMeasured" },
+        ],
+        stageAnalyzerVersion: 2,
+      },
+    ],
+  });
+  let stderr = "";
+  const destination = {
+    write(chunk: string | Uint8Array) {
+      stderr += String(chunk);
+      return true;
+    },
+  };
+
+  writeEvalDecisionSummary("human", summary, destination);
+
+  assert.match(stderr, /Decision summary: failed/);
 });
 
 test("writeReporterResult emits redacted json-summary output", () => {

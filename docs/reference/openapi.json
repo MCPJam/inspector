@@ -14038,6 +14038,133 @@
               "score_integrity_invalid",
               null
             ]
+          },
+          "stageResults": {
+            "type": "array",
+            "description": "Verified D1 user-value chain rows, in chain order.",
+            "items": {
+              "$ref": "#/components/schemas/StageResultRow"
+            }
+          },
+          "firstFailedStage": {
+            "type": "string",
+            "enum": [
+              "connection",
+              "discovery",
+              "selection",
+              "call",
+              "response",
+              "userValue"
+            ]
+          },
+          "failureCategory": {
+            "type": "string",
+            "enum": [
+              "setup",
+              "metadata",
+              "selection",
+              "arguments",
+              "serverData",
+              "userValue",
+              "evaluator"
+            ]
+          },
+          "stageAnalyzerVersion": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "stageResultsUnverified": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          }
+        }
+      },
+      "StageResultRow": {
+        "type": "object",
+        "description": "One verified D1 user-value stage verdict, in chain order.",
+        "required": [
+          "stage",
+          "state"
+        ],
+        "properties": {
+          "stage": {
+            "type": "string",
+            "enum": [
+              "connection",
+              "discovery",
+              "selection",
+              "call",
+              "response",
+              "userValue"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "passed",
+              "failed",
+              "notReached",
+              "notMeasured",
+              "notApplicable"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "noSpanChannel",
+              "noEvidenceCaptured",
+              "matchVerdictUnavailable",
+              "traceAbsent",
+              "executorEmitsNoSpans",
+              "blockedByPolicy",
+              "evaluatorError",
+              "setupAborted",
+              "connectFailed",
+              "toolsListFailed",
+              "egressUnverified",
+              "lifecycleStopped",
+              "notAuthored",
+              "earlierStageFailed",
+              "missingToolCall",
+              "unexpectedToolCall",
+              "argumentMismatch",
+              "toolError",
+              "protocolError",
+              "renderFailed",
+              "predicateFailed",
+              "observed",
+              "impliedByLaterEvidence"
+            ]
+          },
+          "evidence": {
+            "type": "object",
+            "properties": {
+              "spanIds": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 5
+              },
+              "promptIndexes": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "maxItems": 5
+              },
+              "predicateReasons": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "maxLength": 500
+                },
+                "maxItems": 5
+              }
+            },
+            "additionalProperties": false
           }
         }
       },

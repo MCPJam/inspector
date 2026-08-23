@@ -133,6 +133,53 @@ const TRACE = {
   browserInteractionSteps: [],
 };
 
+const FAILED_ITERATION = {
+  id: "iter-failed",
+  testCaseId: "case-1",
+  title: "Fetch order",
+  iterationNumber: 1,
+  status: "completed",
+  result: "failed",
+  model: null,
+  provider: null,
+  startedAt: 1,
+  durationMs: 10,
+  tokensUsed: null,
+  usage: null,
+  actualToolCalls: [{ toolName: "fetch_order" }],
+  expectedToolCalls: [{ toolName: "fetch_order" }],
+  error: "server rejected arguments",
+  stageResults: [
+    { stage: "connection", state: "passed", reason: "observed" },
+    { stage: "discovery", state: "passed", reason: "observed" },
+    { stage: "selection", state: "passed", reason: "observed" },
+    { stage: "call", state: "failed", reason: "argumentMismatch" },
+    { stage: "response", state: "notReached", reason: "earlierStageFailed" },
+    { stage: "userValue", state: "notReached", reason: "earlierStageFailed" },
+  ],
+  firstFailedStage: "call",
+  failureCategory: "arguments",
+  stageAnalyzerVersion: 2,
+};
+
+const SETUP_ABORT_ITERATION = {
+  ...FAILED_ITERATION,
+  id: "iter-setup",
+  title: "Setup abort",
+  error: "could not connect",
+  actualToolCalls: [],
+  stageResults: [
+    { stage: "connection", state: "notMeasured", reason: "setupAborted" },
+    { stage: "discovery", state: "notMeasured", reason: "setupAborted" },
+    { stage: "selection", state: "notMeasured", reason: "setupAborted" },
+    { stage: "call", state: "notMeasured", reason: "setupAborted" },
+    { stage: "response", state: "notMeasured", reason: "setupAborted" },
+    { stage: "userValue", state: "notMeasured", reason: "setupAborted" },
+  ],
+  firstFailedStage: undefined,
+  failureCategory: "setup",
+};
+
 /**
  * How the fixture's suite presents itself to the run ops, which read the suite
  * DETAIL to decide what a run targets.
@@ -354,6 +401,22 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       return;
     }
     if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-failed/iterations" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(JSON.stringify({ items: [FAILED_ITERATION] }));
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-setup/iterations" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(JSON.stringify({ items: [SETUP_ABORT_ITERATION] }));
+      return;
+    }
+    if (
       url.pathname === "/api/v1/projects/proj-alpha/eval-suites" &&
       (req.method ?? "GET") === "GET"
     ) {
@@ -528,6 +591,31 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               cases: [],
             },
           },
+        }),
+      );
+      return;
+    }
+    if (
+      (url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-failed" ||
+        url.pathname ===
+          "/api/v1/projects/proj-alpha/eval-runs/run-setup") &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      const setup = url.pathname.endsWith("run-setup");
+      res.end(
+        JSON.stringify({
+          id: setup ? "run-setup" : "run-failed",
+          suiteId: "suite-1",
+          runNumber: 4,
+          status: "failed",
+          result: "failed",
+          summary: { total: 1, passed: 0, failed: 1, passRate: 0 },
+          source: "api",
+          notes: null,
+          createdAt: 1,
+          completedAt: 2,
+          judges: {},
         }),
       );
       return;
@@ -1441,6 +1529,67 @@ test("eval status appends a View link in human format", async () => {
         new URL(fixture.baseUrl).port +
         "/evals/suite/suite-1/runs/run-1?project=proj-alpha",
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval status renders an actionable decision summary for failed runs", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "status",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-failed",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(run.stdout, /Decision summary: failed — 0\/1 cases passed/);
+    assert.match(run.stdout, /first failed stage call/);
+    assert.match(run.stdout, /next action: review the authored arguments/);
+    assert.match(run.stdout, /View: /);
+    assert.equal(run.stderr.includes("Decision summary:"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval status does not invent a stage for a setup abort", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "status",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-setup",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(run.stdout, /no first failed stage — did not reach the server's stages/);
+    assert.doesNotMatch(run.stdout, /first failed stage (connection|discovery|selection|call|response|userValue)/);
   } finally {
     await fixture.close();
   }

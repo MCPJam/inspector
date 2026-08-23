@@ -63,6 +63,39 @@ describe("renderStructuredRunJson", () => {
       },
     });
   });
+
+  it("carries an optional decision summary through telemetry redaction", () => {
+    const decisionSummary = {
+      verdict: "failed" as const,
+      passRate: { total: 1, passed: 0, failed: 1, percent: 0 },
+      iterationWalkComplete: true,
+      cases: [],
+    };
+    const report: StructuredRunReport = {
+      schemaVersion: 1,
+      kind: "eval",
+      passed: false,
+      summary: summarizeStructuredCases([]),
+      cases: [],
+      durationMs: 0,
+      metadata: {},
+      decisionSummary,
+    };
+    expect(renderStructuredRunJson(report)).toEqual(report);
+  });
+
+  it("keeps reports without a decision summary unchanged", () => {
+    const report: StructuredRunReport = {
+      schemaVersion: 1,
+      kind: "eval",
+      passed: true,
+      summary: summarizeStructuredCases([]),
+      cases: [],
+      durationMs: 0,
+      metadata: {},
+    };
+    expect(renderStructuredRunJson(report)).toEqual(report);
+  });
 });
 
 describe("renderStructuredRunJUnitXml", () => {
