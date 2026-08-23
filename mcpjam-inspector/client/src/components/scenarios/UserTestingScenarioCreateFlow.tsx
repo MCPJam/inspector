@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useConvexAuth } from "convex/react";
 import { ArrowLeft, ChevronDown, Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
+import { Switch } from "@mcpjam/design-system/switch";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -25,14 +26,27 @@ import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { saveEnvironmentDraftSeed } from "@/lib/environment-draft-seed";
 import { environmentLabel } from "@/lib/environment-label";
+import { useEffectiveSharePolicy } from "@/hooks/useOrgSharePolicy";
 import {
+  applyShareCeilingToScenarioOptions,
+  clampScenarioAccessPreset,
   SCENARIO_ACCESS_OPTIONS as ACCESS_OPTIONS,
   settingsFromScenarioAccessPreset,
   type ScenarioAccessPreset,
 } from "@/lib/scenario-access-presets";
 import type { ScenarioMode } from "@/hooks/useScenarios";
+import type { ScenarioPerTurnFeedbackStyle } from "@/types/chatUi";
 import { toast } from "@/lib/toast";
 import { cn } from "@/lib/utils";
+
+/** Rating widget styles, in the frame's order and wording. */
+const RATING_STYLE_OPTIONS: ReadonlyArray<{
+  value: ScenarioPerTurnFeedbackStyle;
+  label: string;
+}> = [
+  { value: "stars", label: "1-5 Star Ratings" },
+  { value: "thumbs", label: "Thumbs-Up/Down Ratings" },
+];
 
 /**
  * `/user-testing/new` — create a scenario by publishing an ENVIRONMENT behind
@@ -106,6 +120,20 @@ interface UserTestingScenarioCreateFlowProps {
     name: string;
     mode: ScenarioMode;
   }) => Promise<{ scenarioId: string; created: boolean }>;
+  /**
+   * Applies the per-turn ratings choice to the study just created (BB-126).
+   *
+   * A SECOND write, unlike name and access: `publishEnvironmentScenario` takes
+   * no `chatUi`, so setting this in the same transaction would mean a backend
+   * change in the other repo. Two writes are safe here in a way they would not
+   * be for access — an initially-unrated study exposes nothing and costs
+   * nothing, and the link has not been handed out yet. A failure is reported
+   * without discarding the study, which exists either way.
+   */
+  onSetPerTurnFeedback: (
+    scenarioId: string,
+    settings: { enabled: boolean; style: ScenarioPerTurnFeedbackStyle }
+  ) => Promise<void>;
 }
 
 export function UserTestingScenarioCreateFlow({
@@ -113,6 +141,7 @@ export function UserTestingScenarioCreateFlow({
   onCancel,
   onCreateEnvironment,
   onCreateScenario,
+  onSetPerTurnFeedback,
 }: UserTestingScenarioCreateFlowProps) {
   const computersEnabled = useComputersEnabled();
   const environmentsEnabled = useProjectEnvironmentsEnabled();
@@ -123,6 +152,7 @@ export function UserTestingScenarioCreateFlow({
   // rather than a prop, like `ClientsPill` right below in the same strip.
   const { isAuthenticated } = useConvexAuth();
   const { hosts } = useHostList({ isAuthenticated, projectId });
+  const { policy: effectiveSharePolicy } = useEffectiveSharePolicy(projectId);
   const [target, setTarget] = useState<EnvironmentComposerState>(
     emptyComposerState
   );
@@ -132,6 +162,26 @@ export function UserTestingScenarioCreateFlow({
   // its author expected is the failure that costs something.
   const [accessPreset, setAccessPreset] =
     useState<ScenarioAccessPreset>("invited_only");
+  const accessCeiling = effectiveSharePolicy?.maxShareMode;
+  const accessOptions = useMemo(
+    () => applyShareCeilingToScenarioOptions(ACCESS_OPTIONS, accessCeiling),
+    [accessCeiling],
+  );
+
+  useEffect(() => {
+    setAccessPreset((prev) => clampScenarioAccessPreset(prev, accessCeiling));
+  }, [accessCeiling]);
+  /**
+   * Per-turn ratings, on by default to match the frame.
+   *
+   * Safe as a default in a way the access mode is not: it changes what testers
+   * are ASKED, not who can open the study or whose credits pay for it, and the
+   * creator is looking at the switch when they press Create. The style default
+   * mirrors the backend normalizer, where an absent style reads as stars.
+   */
+  const [perTurnRatings, setPerTurnRatings] = useState(true);
+  const [ratingStyle, setRatingStyle] =
+    useState<ScenarioPerTurnFeedbackStyle>("stars");
   const [isSaving, setIsSaving] = useState(false);
   // Synchronous guard: a double-click must not publish twice before React
   // commits `isSaving`.
@@ -213,33 +263,64 @@ export function UserTestingScenarioCreateFlow({
         : environmentId;
       if (!resolved) throw new Error("Could not resolve this setup.");
 
-      const { created } = await onCreateScenario({
+      const { scenarioId, created } = await onCreateScenario({
         environmentId: resolved,
         name: effectiveName,
         mode: settingsFromScenarioAccessPreset(accessPreset).mode,
       });
-      toast.success(
-        created
-          ? "Scenario created"
-          : // Publishing is idempotent per environment, and composing makes a
-            // collision likelier: an identical setup resolves to the SAME row,
-            // whose scenario keeps its own name and access.
-            "This setup is already published — opening its scenario, with the name and access it already has",
-      );
+
+      // Only for a study this call actually created. Publishing is idempotent
+      // per environment, so on a collision the existing study keeps its own
+      // settings — silently rewriting its rating widget would be this screen
+      // reconfiguring someone else's study.
+      let ratingsFailed = false;
+      if (created) {
+        try {
+          await onSetPerTurnFeedback(scenarioId, {
+            enabled: perTurnRatings,
+            style: ratingStyle,
+          });
+        } catch {
+          // The study exists; only the ratings setting did not land. Say which
+          // half failed and where to fix it, rather than reporting a failed
+          // creation the user can see succeeded.
+          ratingsFailed = true;
+          toast.error(
+            "Study created, but the per-turn ratings setting didn't save. Turn it on from the study's settings."
+          );
+        }
+      }
+
+      // The error above already opens with "Study created" — pairing it with a
+      // bare success toast makes the screen say two things about one outcome
+      // and reads like one of them is stale.
+      if (!ratingsFailed) {
+        toast.success(
+          created
+            ? "Study created"
+            : // Publishing is idempotent per environment, and composing makes a
+              // collision likelier: an identical setup resolves to the SAME row,
+              // whose scenario keeps its own name and access.
+              "This setup is already published — opening its study, with the name and access it already has",
+        );
+      }
     } catch (err) {
       // Surface the backend's copy verbatim: publishing is project-admin
       // gated, and "you need admin" is a different problem than "it failed".
       // `ComposerResolveError` is an Error too, and its message already tells a
       // user on an older backend to pick a saved environment instead.
       toast.error(
-        err instanceof Error ? err.message : "Failed to create the scenario",
+        err instanceof Error ? err.message : "Failed to create the study",
       );
       savingRef.current = false;
       setIsSaving(false);
     }
   };
 
-  const accessLabel = ACCESS_OPTIONS.find((o) => o.value === accessPreset);
+  const accessLabel = accessOptions.find((o) => o.value === accessPreset);
+  const accessCeilingNote = accessOptions.find(
+    (option) => option.disabled,
+  )?.disabledReason;
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto">
@@ -254,26 +335,50 @@ export function UserTestingScenarioCreateFlow({
           )}
         >
           <ArrowLeft className="size-3.5" />
-          User Testing
+          Acceptance Testing
         </button>
 
-        <h1 className="mt-3 text-xl font-bold tracking-tight text-foreground">
-          New scenario
+        <h1 className="mt-3 text-2xl font-semibold tracking-[-0.02em] text-foreground">
+          Create a new study
         </h1>
-        <p className="mt-1.5 text-sm text-muted-foreground">
-          {environmentsEnabled
-            ? "Publish one of your environments behind a link you can hand to a real person, then read what happened in their sessions."
-            : "Publish a client and the servers it can reach behind a link you can hand to a real person, then read what happened in their sessions."}
+        <p className="mt-1.5 text-sm font-medium leading-relaxed text-foreground">
+          Publish one of your environments, hand them to users, then read what
+          happened in their sessions.
         </p>
 
         <div className="mt-6 space-y-5">
           <div className="space-y-2">
+            <Label htmlFor="user-testing-create-name">
+              Study name
+              <RequiredMark />
+            </Label>
+            <Input
+              id="user-testing-create-name"
+              data-testid="user-testing-create-name"
+              aria-required
+              value={name}
+              disabled={isSaving}
+              placeholder={
+                selected ? environmentLabel(selected) : "Checkout flow"
+              }
+              onChange={(e) => {
+                userEditedNameRef.current = true;
+                setName(e.target.value);
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              What you&apos;ll recognize this study by. Renaming the environment
+              later won&apos;t rename it.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            {/* "Where it runs" either way, the words Swarm's identical strip
+                uses (BB-126). Naming it "Environment" flag-on pointed at a
+                picker that flag-off is not there, and made one control read as
+                two different things depending on a flag. */}
             <Label>
-              {/* Flag-off there is no environment CONTROL in the strip — just
-                  a client and a server group — so naming the section after the
-                  thing it composes would point at a picker that isn't there.
-                  Same words Swarms uses for the same strip. */}
-              {environmentsEnabled ? "Environment" : "Where it runs"}
+              Where it runs
               <RequiredMark />
             </Label>
             {/* No empty state any more: a project with zero environments is not
@@ -333,31 +438,6 @@ export function UserTestingScenarioCreateFlow({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="user-testing-create-name">
-              Scenario name
-              <RequiredMark />
-            </Label>
-            <Input
-              id="user-testing-create-name"
-              data-testid="user-testing-create-name"
-              aria-required
-              value={name}
-              disabled={isSaving}
-              placeholder={
-                selected ? environmentLabel(selected) : "Checkout flow"
-              }
-              onChange={(e) => {
-                userEditedNameRef.current = true;
-                setName(e.target.value);
-              }}
-            />
-            <p className="text-xs text-muted-foreground">
-              What you&apos;ll recognize this run of testing by. Renaming the
-              environment later won&apos;t rename it.
-            </p>
-          </div>
-
-          <div className="space-y-2">
             <Label>Who can open it</Label>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -379,14 +459,18 @@ export function UserTestingScenarioCreateFlow({
               >
                 <DropdownMenuRadioGroup
                   value={accessPreset}
-                  onValueChange={(v) =>
-                    setAccessPreset(v as ScenarioAccessPreset)
-                  }
+                  onValueChange={(v) => {
+                    const next = v as ScenarioAccessPreset;
+                    const option = accessOptions.find((o) => o.value === next);
+                    if (option?.disabled) return;
+                    setAccessPreset(clampScenarioAccessPreset(next, accessCeiling));
+                  }}
                 >
-                  {ACCESS_OPTIONS.map((option) => (
+                  {accessOptions.map((option) => (
                     <DropdownMenuRadioItem
                       key={option.value}
                       value={option.value}
+                      disabled={option.disabled}
                     >
                       {option.label}
                     </DropdownMenuRadioItem>
@@ -398,6 +482,71 @@ export function UserTestingScenarioCreateFlow({
               <p className="text-xs text-muted-foreground">
                 {accessLabel.description}
               </p>
+            ) : null}
+            {accessCeilingNote ? (
+              <p className="text-xs text-muted-foreground">
+                {accessCeilingNote}
+              </p>
+            ) : null}
+          </div>
+
+          {/* Per-turn ratings, asked here rather than only after the fact
+              (BB-126). It is a decision about the study being published, and
+              finding it in a settings screen afterwards means the first
+              testers were never asked. */}
+          <div className="space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <Label
+                htmlFor="user-testing-create-ratings"
+                className="text-sm font-semibold"
+              >
+                Turn on user ratings for every turn
+              </Label>
+              <Switch
+                id="user-testing-create-ratings"
+                checked={perTurnRatings}
+                disabled={isSaving}
+                onCheckedChange={setPerTurnRatings}
+                data-testid="user-testing-create-ratings"
+              />
+            </div>
+            <p className="text-[13px] leading-relaxed text-foreground">
+              Testers will be able to rate each response and leave a comment.
+              Ratings will appear in the Sessions tab.
+            </p>
+            {/* Only while the switch is on: a widget style is a question about
+                a widget nobody is being shown otherwise. Same rule the
+                post-create toggle follows. */}
+            {perTurnRatings ? (
+              <div
+                role="radiogroup"
+                aria-label="Rating widget style"
+                className="inline-flex rounded-lg bg-muted/50 p-0.5"
+                data-testid="user-testing-create-rating-style"
+              >
+                {RATING_STYLE_OPTIONS.map((option) => {
+                  const active = ratingStyle === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={active}
+                      disabled={isSaving}
+                      onClick={() => setRatingStyle(option.value)}
+                      data-testid={`user-testing-create-rating-style-${option.value}`}
+                      className={cn(
+                        "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+                        active
+                          ? "bg-background text-foreground shadow-sm"
+                          : "text-muted-foreground hover:text-foreground"
+                      )}
+                    >
+                      {option.label}
+                    </button>
+                  );
+                })}
+              </div>
             ) : null}
           </div>
         </div>
@@ -417,7 +566,7 @@ export function UserTestingScenarioCreateFlow({
                 Creating…
               </>
             ) : (
-              "Create scenario"
+              "Create study"
             )}
           </Button>
         </div>

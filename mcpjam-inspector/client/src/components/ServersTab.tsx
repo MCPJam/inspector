@@ -70,6 +70,14 @@ import {
   type EnrichedRegistryServer,
 } from "@/hooks/useRegistryServers";
 import { formatRegistryStarCount } from "@/lib/format-registry-star-count";
+import {
+  useOrgRegistryServers,
+  type OrgRegistrySubmission,
+} from "@/hooks/useOrgRegistryServers";
+import {
+  OrgRegistryServerDialog,
+  type OrgRegistryDialogSeed,
+} from "./registry/OrgRegistryServerDialog";
 import { track } from "@/lib/analytics";
 import { reportCaught } from "@/lib/error-reporting";
 import {
@@ -78,6 +86,7 @@ import {
   HoverCardTrigger,
 } from "@mcpjam/design-system/hover-card";
 import { BILLING_GATES, useProjectBillingGate } from "@/lib/billing-gates";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -454,6 +463,7 @@ function SortableServerCard({
   moveTargets,
   onMoveToProject,
   isMovingToProject,
+  onShareToOrgRegistry,
 }: {
   id: string;
   dndDisabled: boolean;
@@ -480,6 +490,7 @@ function SortableServerCard({
     targetProjectId: string
   ) => void | Promise<void>;
   isMovingToProject?: boolean;
+  onShareToOrgRegistry?: (server: ServerWithName) => void;
 }) {
   const { listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id, disabled: dndDisabled });
@@ -514,6 +525,7 @@ function SortableServerCard({
       moveTargets={moveTargets}
       onMoveToProject={onMoveToProject}
       isMovingToProject={isMovingToProject}
+      onShareToOrgRegistry={onShareToOrgRegistry}
     />
   );
 
@@ -599,7 +611,9 @@ export function ServersTab({
   isRegistryEnabled = false,
   onNavigateToRegistry,
 }: ServersTabProps) {
-  const hostsConnectAddServerSlot = useContext(HostsConnectAddServerSlotContext);
+  const hostsConnectAddServerSlot = useContext(
+    HostsConnectAddServerSlotContext
+  );
   const viewPhase = useHostsConnectViewPhase();
   const { isAuthenticated } = useConvexAuth();
   const { user: signedInUser } = useAuth();
@@ -723,9 +737,10 @@ export function ServersTab({
     isAuthenticated,
     projectId: sharedProjectIdForHostScope,
   });
+  const isUserReady = useDbUserReady();
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as any,
-    sharedProjectIdForHostScope && isAuthenticated
+    sharedProjectIdForHostScope && isAuthenticated && isUserReady
       ? ({ projectId: sharedProjectIdForHostScope } as any)
       : "skip"
   ) as ProjectServerConfigDto | null | undefined;
@@ -863,7 +878,9 @@ export function ServersTab({
     isLoading: isRegistryCatalogLoading,
     connect: connectRegistryServer,
   } = useRegistryServers({
-    enabled: isRegistryEnabled,
+    // The hand-curated catalog is retired. Keep the hook mounted so
+    // connection helpers stay imported, but do not fetch those cards.
+    enabled: false,
     projectId: registryProjectId,
     isAuthenticated,
     liveServers: projectServers,
@@ -1185,6 +1202,80 @@ export function ServersTab({
       isAuthenticated,
     }
   );
+
+  /**
+   * PROMOTE: share a server that is already connected here on the
+   * organization's shelf.
+   *
+   * NO PROBE. The facts are already in this browser — `initializationInfo`
+   * holds what the server said during initialize, which is the same handshake
+   * the paste flow's probe performs. Asking the server again would be slower
+   * and no more true.
+   *
+   * `sourceServerId` is what makes the source project show the new entry as
+   * connected: the mutation writes a provenance row pointing at THIS server,
+   * so the card joins through the record rather than through the display name
+   * it happens to share.
+   */
+  const orgRegistry = useOrgRegistryServers({
+    // The SYNCED project id, not `activeProjectId`. The latter is this app's
+    // own project key, which for an unsynced or local-mode project is not a
+    // Convex document id at all — sending it to a Convex query (or to the
+    // derive route, which forwards it to one) is not a lookup that can
+    // succeed.
+    projectId: sharedProjectIdForHostScope,
+    enabled: isRegistryEnabled,
+    isAuthenticated,
+    onConnect: () => {
+      /* promote never connects — the server is already here */
+    },
+  });
+  const [orgRegistrySeed, setOrgRegistrySeed] =
+    useState<OrgRegistryDialogSeed | null>(null);
+
+  const handleShareToOrgRegistry = useCallback(
+    (server: ServerWithName) => {
+      const remote = sharedProjectServersRecord[server.name];
+      // No Convex row means no `sourceServerId`, and the dialog reads that
+      // field to decide it is a PROMOTE at all — without it the user asked to
+      // share the server in front of them and would instead get a blank-slate
+      // add with an unlocked URL and no provenance, so the source project
+      // would never show the entry as connected. Say why instead.
+      if (!remote?._id) {
+        toast.error(
+          `"${server.name}" hasn't finished syncing yet. Try again in a moment.`
+        );
+        return;
+      }
+      const info = server.initializationInfo as
+        | { serverInfo?: { name?: string; version?: string; title?: string } }
+        | undefined;
+      setOrgRegistrySeed({
+        displayName:
+          info?.serverInfo?.title ?? info?.serverInfo?.name ?? server.name,
+        url: server.config?.url ? String(server.config.url) : "",
+        useOAuth: server.useOAuth,
+        derived: {
+          probedAt: Date.now(),
+          endpointUrl: server.config?.url ? String(server.config.url) : "",
+          serverName: info?.serverInfo?.name,
+          serverVersion: info?.serverInfo?.version,
+          authRequired: server.useOAuth === true,
+        },
+        sourceServerId: remote._id,
+      });
+    },
+    [sharedProjectServersRecord]
+  );
+
+  const handleOrgRegistrySubmit = useCallback(
+    async (submission: OrgRegistrySubmission) => {
+      await orgRegistry.add(submission);
+      toast.success("Added to your organization's registry");
+    },
+    [orgRegistry]
+  );
+
   const detailModalHostedServerId = detailModalServer
     ? sharedProjectServersRecord[detailModalServer.name]?._id
     : undefined;
@@ -1948,6 +2039,11 @@ export function ServersTab({
                       moveTargets={moveTargets}
                       onMoveToProject={handleMoveServerToProject}
                       isMovingToProject={movingServerName === name}
+                      onShareToOrgRegistry={
+                        isRegistryEnabled && orgRegistry.canAdd
+                          ? handleShareToOrgRegistry
+                          : undefined
+                      }
                     />
                   );
                 })}
@@ -2115,112 +2211,127 @@ export function ServersTab({
     // hostDefaultMcpProtocolVersion prop (prop wins; see the modal's
     // resolution comment) — the provider is additive, not a replacement.
     <ActiveMcpProfileProvider value={previewedHost?.config?.mcpProfile}>
-    <div className="h-full flex flex-col">
-      {isAuthHydrating ||
-      isBillingContextPending ||
-      isLoadingProjects ||
-      !areServersHydrated
-        ? renderLoadingContent()
-        : !selectedProject
-        ? shouldQueryProjectId(activeProjectId)
+      <div className="h-full flex flex-col">
+        {isAuthHydrating ||
+        isBillingContextPending ||
+        isLoadingProjects ||
+        !areServersHydrated
           ? renderLoadingContent()
-          : renderNoProjectContent()
-        : hasAnyServers
-        ? renderConnectedContent()
-        : renderEmptyContent()}
+          : !selectedProject
+          ? shouldQueryProjectId(activeProjectId)
+            ? renderLoadingContent()
+            : renderNoProjectContent()
+          : hasAnyServers
+          ? renderConnectedContent()
+          : renderEmptyContent()}
 
-      {/* Add Server Modal */}
-      <AddServerModal
-        isOpen={isAddingServer}
-        initialData={prefilledServerDraft}
-        onClose={() => {
-          setIsAddingServer(false);
-          setPrefilledServerDraft(undefined);
-        }}
-        onSubmit={(formData) => {
-          track("connecting_server", {
-            location: "servers_tab",
-          });
-          // The wire-version pin can't be written until the hosted server
-          // row exists — stash it and let the watcher effect apply it once
-          // the Convex sync surfaces the row, then reconnect with the pin.
-          if (formData.mcpProtocolVersionOverride) {
-            setPendingAddProtocolPin({
-              serverName: formData.name,
-              version: formData.mcpProtocolVersionOverride,
+        {/* Add Server Modal */}
+        <AddServerModal
+          isOpen={isAddingServer}
+          initialData={prefilledServerDraft}
+          onClose={() => {
+            setIsAddingServer(false);
+            setPrefilledServerDraft(undefined);
+          }}
+          onSubmit={(formData) => {
+            track("connecting_server", {
+              location: "servers_tab",
             });
-          }
-          handleConnectServer(formData);
-        }}
-        projectClientConfig={selectedProject?.clientConfig}
-        organizationId={selectedProject?.organizationId ?? null}
-        isSignedIn={Boolean(signedInUser)}
-        projectXaaDefaultIdentity={
-          selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
-        }
-        projectId={sharedProjectIdForHostScope}
-      />
-
-      {/* JSON Import Modal */}
-      <JsonImportModal
-        isOpen={isImportingJson}
-        onClose={() => setIsImportingJson(false)}
-        onImport={handleJsonImport}
-      />
-
-      {/* Add Plugin Modal. Mounted (not conditionally rendered) while the
-          flag is on so an import in flight — or a preview awaiting a
-          decision — survives closing the dialog and resumes on reopen. */}
-      {isPluginsEnabled ? (
-        <AddPluginModal
-          isOpen={isAddingPlugin}
-          onClose={() => setIsAddingPlugin(false)}
-          projectId={sharedProjectIdForHostScope}
-        />
-      ) : null}
-
-      {detailModalServer && (
-        <ServerDetailModal
-          key={detailModalState.sessionKey}
-          isOpen={detailModalState.isOpen}
-          onClose={handleCloseDetailModal}
-          server={detailModalServer}
-          needsReconnect={reconnectWarningByServerName[detailModalServer.name]}
-          defaultTab={detailModalState.defaultTab}
-          onSubmit={handleSubmitDetailModal}
-          onDisconnect={onDisconnect}
-          onReconnect={handleReconnectServer}
-          existingServerNames={Object.keys(projectServers)}
+            // The wire-version pin can't be written until the hosted server
+            // row exists — stash it and let the watcher effect apply it once
+            // the Convex sync surfaces the row, then reconnect with the pin.
+            if (formData.mcpProtocolVersionOverride) {
+              setPendingAddProtocolPin({
+                serverName: formData.name,
+                version: formData.mcpProtocolVersionOverride,
+              });
+            }
+            handleConnectServer(formData);
+          }}
           projectClientConfig={selectedProject?.clientConfig}
-          projectId={hostedProjectId}
-          hostedServerId={detailModalHostedServerId}
           organizationId={selectedProject?.organizationId ?? null}
           isSignedIn={Boolean(signedInUser)}
-          // The tab now mounts under ActiveMcpProfileProvider (see the
-          // root wrapper), which is the source for general host-profile
-          // reads (e.g. the auth section's enterprise-policy guidance).
-          // The protocol chip stays PROP-FIRST: this explicit value wins
-          // over the provider (see the modal's resolution comment), so
-          // its source attribution is unchanged.
-          hostDefaultMcpProtocolVersion={
-            previewedHost?.config?.mcpProfile?.mcpProtocolVersion
-          }
           projectXaaDefaultIdentity={
             selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
           }
+          projectId={sharedProjectIdForHostScope}
         />
-      )}
 
-      {showServerActionsInHostsHeader && hostsConnectAddServerSlot
-        ? createPortal(
-            <>
-              {renderAutoConnectToggle()}
-              {renderServerActionsMenu()}
-            </>,
-            hostsConnectAddServerSlot
-          )
-        : null}
-    </div>
+        {/* Promote a connected server onto the organization's registry. */}
+        {orgRegistrySeed && (
+          <OrgRegistryServerDialog
+            open
+            onOpenChange={(open) => {
+              if (!open) setOrgRegistrySeed(null);
+            }}
+            projectId={sharedProjectIdForHostScope}
+            seed={orgRegistrySeed}
+            onSubmit={handleOrgRegistrySubmit}
+          />
+        )}
+
+        {/* JSON Import Modal */}
+        <JsonImportModal
+          isOpen={isImportingJson}
+          onClose={() => setIsImportingJson(false)}
+          onImport={handleJsonImport}
+        />
+
+        {/* Add Plugin Modal. Mounted (not conditionally rendered) while the
+          flag is on so an import in flight — or a preview awaiting a
+          decision — survives closing the dialog and resumes on reopen. */}
+        {isPluginsEnabled ? (
+          <AddPluginModal
+            isOpen={isAddingPlugin}
+            onClose={() => setIsAddingPlugin(false)}
+            projectId={sharedProjectIdForHostScope}
+          />
+        ) : null}
+
+        {detailModalServer && (
+          <ServerDetailModal
+            key={detailModalState.sessionKey}
+            isOpen={detailModalState.isOpen}
+            onClose={handleCloseDetailModal}
+            server={detailModalServer}
+            needsReconnect={
+              reconnectWarningByServerName[detailModalServer.name]
+            }
+            defaultTab={detailModalState.defaultTab}
+            onSubmit={handleSubmitDetailModal}
+            onDisconnect={onDisconnect}
+            onReconnect={handleReconnectServer}
+            existingServerNames={Object.keys(projectServers)}
+            projectClientConfig={selectedProject?.clientConfig}
+            projectId={hostedProjectId}
+            hostedServerId={detailModalHostedServerId}
+            organizationId={selectedProject?.organizationId ?? null}
+            isSignedIn={Boolean(signedInUser)}
+            // The tab now mounts under ActiveMcpProfileProvider (see the
+            // root wrapper), which is the source for general host-profile
+            // reads (e.g. the auth section's enterprise-policy guidance).
+            // The protocol chip stays PROP-FIRST: this explicit value wins
+            // over the provider (see the modal's resolution comment), so
+            // its source attribution is unchanged.
+            hostDefaultMcpProtocolVersion={
+              previewedHost?.config?.mcpProfile?.mcpProtocolVersion
+            }
+            projectXaaDefaultIdentity={
+              selectedProject?.xaaTestDefaults?.defaultIdentity ?? null
+            }
+          />
+        )}
+
+        {showServerActionsInHostsHeader && hostsConnectAddServerSlot
+          ? createPortal(
+              <>
+                {renderAutoConnectToggle()}
+                {renderServerActionsMenu()}
+              </>,
+              hostsConnectAddServerSlot
+            )
+          : null}
+      </div>
     </ActiveMcpProfileProvider>
   );
 }

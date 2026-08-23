@@ -13,6 +13,7 @@
  *    editor with the typed name seeded.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 
@@ -66,6 +67,23 @@ vi.mock("@/components/hosts/ServerGroupPicker", () => ({
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
+}));
+
+const sharePolicyState = vi.hoisted(() => ({
+  policy: undefined as
+    | {
+        maxShareMode: "project_members" | "invited_only" | "anyone_with_link";
+        inviteAudience: "anyone" | "org_members";
+        updatedAt: number | null;
+      }
+    | undefined,
+}));
+
+vi.mock("@/hooks/useOrgSharePolicy", () => ({
+  useEffectiveSharePolicy: () => ({
+    policy: sharePolicyState.policy,
+    isLoading: false,
+  }),
 }));
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
@@ -122,6 +140,7 @@ function renderFlow(
     created: true,
   }),
   onCreateEnvironment = vi.fn(),
+  onSetPerTurnFeedback = vi.fn().mockResolvedValue(undefined),
 ) {
   render(
     <UserTestingScenarioCreateFlow
@@ -129,13 +148,15 @@ function renderFlow(
       onCancel={vi.fn()}
       onCreateEnvironment={onCreateEnvironment}
       onCreateScenario={onCreateScenario}
+      onSetPerTurnFeedback={onSetPerTurnFeedback}
     />,
   );
-  return { onCreateScenario, onCreateEnvironment };
+  return { onCreateScenario, onCreateEnvironment, onSetPerTurnFeedback };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sharePolicyState.policy = undefined;
   flagState.environments = true;
   ensureAdhocMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
@@ -157,6 +178,10 @@ beforeEach(() => {
 });
 
 describe("UserTestingScenarioCreateFlow", () => {
+  beforeEach(() => {
+    sharePolicyState.policy = undefined;
+  });
+
   it("writes nothing until Save, then publishes in ONE call", async () => {
     const { onCreateScenario } = renderFlow();
 
@@ -537,5 +562,197 @@ describe("UserTestingScenarioCreateFlow — without Project Environments", () =>
     expect(
       screen.getByTestId("user-testing-create-environment-required"),
     ).toHaveTextContent(/pick the client a tester will see/i);
+  });
+});
+
+/**
+ * BB-126: create-study copy, and the per-turn ratings choice moved forward from
+ * post-create settings into the screen that publishes the study.
+ */
+describe("UserTestingScenarioCreateFlow — create study (Production Redesign)", () => {
+  it("uses the frame's chrome and study language", () => {
+    renderFlow();
+
+    expect(
+      screen.getByRole("heading", { name: /create a new study/i })
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /publish one of your environments, hand them to users, then read what happened in their sessions/i
+      )
+    ).toBeVisible();
+    expect(screen.getByTestId("user-testing-create-back")).toHaveTextContent(
+      "Acceptance Testing"
+    );
+    expect(screen.getByLabelText(/^study name/i)).toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-create-save")).toHaveTextContent(
+      "Create study"
+    );
+  });
+
+  it("names the target strip the same thing Swarm does, flag on or off", () => {
+    // It used to read "Environment" flag-on and "Where it runs" flag-off, which
+    // made one control two different things depending on a flag.
+    renderFlow();
+    expect(screen.getByText("Where it runs")).toBeVisible();
+
+    flagState.environments = false;
+    render(
+      <UserTestingScenarioCreateFlow
+        projectId="p1"
+        onCancel={vi.fn()}
+        onCreateEnvironment={vi.fn()}
+        onCreateScenario={vi.fn()}
+        onSetPerTurnFeedback={vi.fn()}
+      />
+    );
+    expect(screen.getAllByText("Where it runs")).toHaveLength(2);
+  });
+
+  it("offers per-turn ratings on by default, with stars selected", () => {
+    renderFlow();
+
+    const toggle = screen.getByTestId("user-testing-create-ratings");
+    expect(toggle).toBeChecked();
+    expect(
+      screen.getByText(/testers will be able to rate each response/i)
+    ).toBeVisible();
+    expect(
+      screen.getByRole("radio", { name: "1-5 Star Ratings" })
+    ).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("radio", { name: "Thumbs-Up/Down Ratings" })
+    ).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("hides the style choice while ratings are off", () => {
+    // A widget style is a question about a widget nobody is being shown.
+    renderFlow();
+
+    fireEvent.click(screen.getByTestId("user-testing-create-ratings"));
+    expect(
+      screen.queryByTestId("user-testing-create-rating-style")
+    ).not.toBeInTheDocument();
+  });
+
+  it("applies the ratings choice to the study it just created", async () => {
+    const { onSetPerTurnFeedback } = renderFlow();
+
+    fireEvent.click(screen.getByRole("radio", { name: /thumbs/i }));
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => {
+      expect(onSetPerTurnFeedback).toHaveBeenCalledWith("cb-1", {
+        enabled: true,
+        style: "thumbs",
+      });
+    });
+  });
+
+  it("leaves an already-published study's ratings alone", async () => {
+    // Publishing is idempotent per environment, so a collision opens someone
+    // else's study — rewriting its rating widget from here would reconfigure it.
+    const { onSetPerTurnFeedback } = renderFlow(
+      vi.fn().mockResolvedValue({ scenarioId: "cb-existing", created: false })
+    );
+
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => {
+      expect(toastSuccess).toHaveBeenCalled();
+    });
+    expect(onSetPerTurnFeedback).not.toHaveBeenCalled();
+  });
+
+  it("keeps the study when only the ratings write fails, and says which half", async () => {
+    const { onSetPerTurnFeedback } = renderFlow(
+      undefined,
+      undefined,
+      vi.fn().mockRejectedValue(new Error("nope"))
+    );
+
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => {
+      expect(onSetPerTurnFeedback).toHaveBeenCalled();
+    });
+    // The study exists, so this is not reported as a failed creation.
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringMatching(/study created, but the per-turn ratings setting/i)
+    );
+    // And it is not ALSO reported as a plain success: that error already opens
+    // with "Study created", so a success toast beside it would make the screen
+    // say two things about one outcome.
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+});
+
+describe("UserTestingScenarioCreateFlow — ratings turned off", () => {
+  it("persists the disabled setting rather than leaving it to the backend default", async () => {
+    // The backend default is already `false`, but writing it explicitly is what
+    // makes the study's setting a statement the creator made, not an absence.
+    const { onSetPerTurnFeedback } = renderFlow();
+
+    fireEvent.click(screen.getByTestId("user-testing-create-ratings"));
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => {
+      expect(onSetPerTurnFeedback).toHaveBeenCalledWith("cb-1", {
+        enabled: false,
+        style: "stars",
+      });
+    });
+  });
+});
+
+describe("UserTestingScenarioCreateFlow — org share ceiling", () => {
+  it("snaps the access preset down to the org ceiling and greys over-ceiling options", async () => {
+    const user = userEvent.setup();
+    sharePolicyState.policy = {
+      maxShareMode: "project_members",
+      inviteAudience: "anyone",
+      updatedAt: 1,
+    };
+    const { onCreateScenario } = renderFlow();
+
+    expect(
+      screen.getByText("Your organization limits sharing to project members."),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-create-access")).toHaveTextContent(
+      "Project members",
+    );
+
+    await user.click(screen.getByTestId("user-testing-create-access"));
+    expect(
+      await screen.findByRole("menuitemradio", { name: "Anyone with the link" }),
+    ).toHaveAttribute("data-disabled");
+    expect(
+      screen.getByRole("menuitemradio", { name: "Invited users only" }),
+    ).toHaveAttribute("data-disabled");
+
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => {
+      expect(onCreateScenario).toHaveBeenCalledWith({
+        environmentId: "env-1",
+        name: "Checkout flow",
+        mode: "project_members",
+      });
+    });
   });
 });

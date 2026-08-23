@@ -91,6 +91,12 @@ const KNOWN_UNDOCUMENTED = new Set([
   // contract — documenting it would invite external callers to depend on the
   // shape of an internal list that changes with every tool we add.
   "get /agent-ops",
+  // Unified share control plane — REST ships in I2; OpenAPI + SDK in I5.
+  "get /projects/{projectId}/shares/{resourceType}/{resourceId}",
+  "patch /projects/{projectId}/shares/{resourceType}/{resourceId}",
+  "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link",
+  "put /projects/{projectId}/shares/{resourceType}/{resourceId}/members",
+  "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}",
 ]);
 
 /**
@@ -115,6 +121,9 @@ const KNOWN_UNDOCUMENTED = new Set([
  * catalog default, share-link previews — work at all.
  */
 const PUBLIC_OPERATIONS = new Set(["get /host-catalog", "get /models"]);
+// Registry directory reads are guest-allowed (minted guest bearer) but stay
+// OUT of this set: they declare bearerAuth. Anonymous MCP callers arrive
+// with a guest token, not with no token. Do not add them here.
 
 /** Hono `:param` + the `/api/v1` mount prefix -> OpenAPI `{param}`, unprefixed. */
 function normalizePath(path: string): string {

@@ -262,6 +262,13 @@ export const ANALYTICS_EVENTS = {
   mcpjam_agent_tour_launched: { source: "client" },
   move_server_to_project_clicked: { source: "client" },
   /**
+   * A connected server was offered to the organization's registry from the
+   * server card's menu. Fires on the CLICK, before the eligibility refusal —
+   * how often people reach for it and are told a header-authed server cannot
+   * be shared is the thing worth knowing.
+   */
+  share_server_to_org_registry_clicked: { source: "client" },
+  /**
    * A callback arrived with a pending server name but no stored flow session,
    * so it could not be completed and the user was asked to reauthorize.
    *
@@ -389,6 +396,16 @@ export const ANALYTICS_EVENTS = {
   ui_navigation_rejected: { source: "client" },
   ui_tool_call_completed: { source: "client" },
   ui_tool_call_started: { source: "client" },
+
+  // --- Home: shared Slack Connect channel card ---
+  // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),
+  // state (none | provisioning | invite_sent | pending_admin_approval |
+  // active | invite_declined | invite_expired | error).
+  home_shared_slack_card_viewed: { source: "client" },
+  home_shared_slack_provision_clicked: { source: "client" },
+  home_shared_slack_invite_opened: { source: "client" },
+  home_shared_slack_retry_clicked: { source: "client" },
+  home_shared_slack_channel_opened: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;

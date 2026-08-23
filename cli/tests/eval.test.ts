@@ -226,6 +226,19 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       res.end(JSON.stringify({ items: SERVERS }));
       return;
     }
+    if (
+      url.pathname ===
+      "/api/v1/projects/proj-alpha/environments/capabilities"
+    ) {
+      res.end(
+        JSON.stringify({
+          modelOverrides: true,
+          modelMatrix: true,
+          ephemeralEnvironmentLaunch: true,
+        }),
+      );
+      return;
+    }
     if (url.pathname === "/api/v1/projects/proj-alpha/environments") {
       res.end(JSON.stringify({ items: ENVIRONMENTS }));
       return;
@@ -249,15 +262,22 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
         "/api/v1/projects/proj-alpha/environments/ensure-adhoc" &&
       req.method === "POST"
     ) {
-      composeBodies.push(raw ? JSON.parse(raw) : {});
+      const body = raw ? JSON.parse(raw) : {};
+      composeBodies.push(body);
+      const modelId =
+        typeof body.modelId === "string" ? body.modelId : undefined;
+      const id = modelId
+        ? `env-adhoc-${modelId.replace(/[^a-z0-9]+/gi, "-")}`
+        : "env-adhoc";
       res.end(
         JSON.stringify({
           environment: {
-            id: "env-adhoc",
+            id,
             projectId: "proj-alpha",
             name: null,
             adhoc: true,
             hostId: "host-claude",
+            ...(modelId ? { modelId } : {}),
             revision: 1,
             archived: false,
             createdAt: 1,
@@ -579,6 +599,7 @@ function evalArgv(fixtureUrl: string, ...args: string[]): string[] {
   return [
     "node",
     "mcpjam",
+    "cloud",
     "eval",
     ...args,
     "--api-key",
@@ -751,6 +772,33 @@ test("eval create rejects stdio servers before any write", async () => {
   }
 });
 
+test("eval create --json with schemaVersion points at eval run --file", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "create",
+          "--json",
+          JSON.stringify({
+            schemaVersion: "1",
+            mode: "agentWorkflow",
+            suite: { id: "s_billing", name: "Billing" },
+          }),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.match(run.stderr, /eval run --file/);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval create rejects an invalid suite definition as a usage error", async () => {
   const fixture = await startEvalFixture();
   try {
@@ -769,6 +817,39 @@ test("eval create rejects an invalid suite definition as a usage error", async (
     assert.equal(run.result.exitCode, 2);
     assert.equal(fixture.createBodies.length, 0);
     assert.match(run.stderr, /USAGE_ERROR/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval create rejects an unknown --json key as a usage error", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "create",
+          "--json",
+          JSON.stringify({
+            project: "proj-alpha",
+            name: "Authored smoke",
+            servers: ["Ready Server"],
+            model: "anthropic/claude-haiku-4.5",
+            cases: [
+              { title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+            ],
+            hostz: [],
+          }),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.match(run.stderr, /USAGE_ERROR/);
+    assert.match(run.stderr, /hostz/);
   } finally {
     await fixture.close();
   }
@@ -1013,6 +1094,32 @@ test("eval run rejects --environment together with --server before any request",
     // The CLI calls the operation directly, so this guard has to live in the
     // execute body — a schema-only refine would never fire here.
     assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update rejects an unknown --json key as a usage error", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--suite",
+          "suite-1",
+          "--json",
+          JSON.stringify({ hostz: [] }),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.match(run.stderr, /USAGE_ERROR/);
+    assert.match(run.stderr, /hostz/);
   } finally {
     await fixture.close();
   }
@@ -1488,6 +1595,61 @@ test("eval judge rejects a blank --judge-threshold before any request", async ()
       );
     }
     assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval judge rejects a blank --judge-model before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "judge",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--judge-model",
+          "   ",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2, run.stderr);
+    assert.match(run.stderr, /Invalid input:.*model/);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval iterations rejects a bad --limit before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    for (const value of ["abc", "0", "201", "-1"]) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "iterations",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--limit",
+            value,
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      );
+      assert.equal(run.result.exitCode, 2, `accepted --limit ${JSON.stringify(value)}: ${run.stderr}`);
+      assert.match(run.stderr, /Invalid input:.*limit/);
+    }
+    assert.equal(fixture.authHeaders.length, 0);
   } finally {
     await fixture.close();
   }
@@ -2163,7 +2325,7 @@ test("eval cases run forwards --host, --iterations and --idempotency-key", async
   }
 });
 
-test("eval run --compose-* ensures a stack, attaches it, and pins the run", async () => {
+test("eval run --compose-* mints ephemerally and does not attach", async () => {
   const fixture = await startEvalFixture();
   try {
     const run = await captureProcessOutput(() =>
@@ -2191,27 +2353,107 @@ test("eval run --compose-* ensures a stack, attaches it, and pins the run", asyn
     );
 
     assert.equal(run.result.exitCode, 0);
-    // Selectors resolve to ids before the platform sees them.
     assert.deepEqual(fixture.composeBodies.at(-1), {
       hostId: "host-claude",
       sandboxImageId: "img-default",
       modelId: "anthropic/claude-haiku-4.5",
     });
-    // The composed environment is APPENDED to the suite — the deliberate,
-    // documented side effect that makes the run reproducible from the app.
-    assert.deepEqual(fixture.attachBodies.at(-1), {
-      environmentId: "env-adhoc",
-    });
-    // …and the launch takes the ordinary environment path.
+    assert.equal(fixture.attachBodies.length, 0);
     assert.deepEqual(fixture.runBodies.at(-1), {
       suiteId: "suite-1",
-      environmentId: "env-adhoc",
+      environmentId: "env-adhoc-anthropic-claude-haiku-4-5",
+      ephemeralEnvironment: true,
     });
     const payload = JSON.parse(run.stdout) as {
       composed: { environment: { created: boolean }; attachment: unknown };
     };
     assert.equal(payload.composed.environment.created, true);
-    assert.deepEqual(payload.composed.attachment, { attached: true });
+    assert.deepEqual(payload.composed.attachment, { attached: false });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-model variadic launches one group without attaching", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-model",
+            "anthropic/claude-haiku-4.5",
+            "google/gemini-2.5-flash",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(fixture.composeBodies.length, 2);
+    assert.equal(fixture.attachBodies.length, 0);
+    assert.deepEqual(fixture.groupBodies.at(-1), {
+      suiteId: "suite-1",
+      ephemeralEnvironment: true,
+      targets: [
+        { environmentId: "env-adhoc-anthropic-claude-haiku-4-5" },
+        { environmentId: "env-adhoc-google-gemini-2-5-flash" },
+      ],
+    });
+    const payload = JSON.parse(run.stdout) as {
+      runGroupId?: string;
+      startedCount: number;
+    };
+    assert.equal(payload.runGroupId, "grp-1");
+    assert.equal(payload.startedCount, 2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --save-targets attaches the composed cell", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--save-targets",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.attachBodies.at(-1), {
+      environmentId: "env-adhoc",
+    });
+    assert.deepEqual(fixture.runBodies.at(-1), {
+      suiteId: "suite-1",
+      environmentId: "env-adhoc",
+    });
   } finally {
     await fixture.close();
   }
