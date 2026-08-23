@@ -112,6 +112,23 @@ export const SESSION_SOURCE_TYPE_LABELS: Record<SessionFeedSourceType, string> =
     swarm: "Swarm",
   };
 
+/** Product-surface labels. Unknown origins render as the raw string (spike 6). */
+export const SESSION_ORIGIN_LABELS: Record<string, string> = {
+  playground: "Playground",
+  mcpjam_agent: "Agent",
+  scenario: "User Testing",
+  eval: "Eval",
+  swarm: "Swarm",
+  api: "API",
+};
+
+export function sessionOriginChipLabel(
+  origin: string | null | undefined
+): string | null {
+  if (!origin) return null;
+  return SESSION_ORIGIN_LABELS[origin] ?? origin;
+}
+
 /**
  * The parent chip for a row. Falls back to naming the run kind when the
  * parent's own label is gone, and calls out Quick Runs (which genuinely have

@@ -222,7 +222,10 @@ export type ChatOrigin =
   | "mcpjam_agent"
   | "scenario"
   | "eval"
-  | "swarm";
+  | "swarm"
+  // Agent Playground turn route. Validator ships with backend PR 4; this
+  // mirror must exist before anything emits `"api"`.
+  | "api";
 
 interface PersistChatSessionOptions {
   chatSessionId: string;
