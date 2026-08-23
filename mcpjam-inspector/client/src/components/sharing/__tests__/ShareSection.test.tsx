@@ -255,6 +255,40 @@ describe("ShareSection", () => {
     expect(onUpdated).toHaveBeenCalled();
   });
 
+  it("greys over-ceiling presets and does not call onSetPreset", async () => {
+    const user = userEvent.setup();
+    const onSetPreset = vi.fn();
+    const ceilingPresets = [
+      {
+        value: "invited_only",
+        label: "Invited users only",
+        description: "Invitees",
+      },
+      {
+        value: "link_guests",
+        label: "Anyone with the link",
+        description: "Open link",
+        disabled: true,
+        disabledReason: "Your organization limits sharing to invited users only.",
+      },
+      { value: "project", label: "Acme", description: "Project members" },
+    ];
+
+    renderShare({ presets: ceilingPresets, onSetPreset });
+
+    expect(
+      screen.getByText("Your organization limits sharing to invited users only."),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Invited users only/i }));
+    const linkOption = screen.getByRole("menuitemradio", {
+      name: /Anyone with the link/i,
+    });
+    expect(linkOption).toHaveAttribute("data-disabled");
+    await user.click(linkOption);
+    expect(onSetPreset).not.toHaveBeenCalled();
+  });
+
   it("exposes revoke-all without requiring rotate", async () => {
     const user = userEvent.setup();
     const onRevokeAll = vi.fn(async () =>

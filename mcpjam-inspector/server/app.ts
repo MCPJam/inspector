@@ -338,7 +338,7 @@ export async function createHonoApp() {
     app.route("/user_management", workosAuthkitRoutes);
   }
 
-  // CLI OAuth bridge (mcpjam login). Public front-channel routes — no session
+  // CLI OAuth bridge (mcpjam cloud login). Public front-channel routes — no session
   // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
   // disabled (501) unless CLI_AUTH_STATE_SECRET + CLI_AUTH_PUBLIC_ORIGIN are
   // set. Mirror of the mount in server/index.ts — both production entries
