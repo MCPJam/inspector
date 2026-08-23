@@ -62,6 +62,8 @@ export interface ScenarioSettings {
   requireToolApproval: boolean;
   allowGuestAccess: boolean;
   mode: ScenarioMode;
+  /** Org sharing ceiling from the legacy settings envelope. Absent ⇒ no ceiling. */
+  maxShareMode?: ScenarioMode;
   /** Chat UI config envelope: welcome / feedback dialog surfaces (and future surfaces / branding). */
   chatUi?: ChatUiSettings | null;
   servers: ScenarioServerSettings[];
