@@ -41,6 +41,9 @@ import {
   percentToFraction,
 } from "../src/lib/eval-suite-export.js";
 import {
+  deriveFileRunIdempotencyKey,
+  fileCaseToCreateBody,
+  fileCaseToUpdateBody,
   looksLikeCreateEvalApiJson,
   looksLikeVersionedSuiteFile,
   sha256HexOfBuffer,
@@ -1387,12 +1390,15 @@ ${cases}
 `;
 }
 
-async function startFileRunFixture(): Promise<{
+async function startFileRunFixture(options?: {
+  existingCases?: Array<{ id: string; declaredId: string; title: string }>;
+}): Promise<{
   baseUrl: string;
   authHeaders: string[];
   fromFileBodies: unknown[];
   batchBodies: unknown[];
   updateBodies: unknown[];
+  deletedCaseIds: string[];
   runBodies: unknown[];
   close: () => Promise<void>;
 }> {
@@ -1400,11 +1406,15 @@ async function startFileRunFixture(): Promise<{
   const fromFileBodies: unknown[] = [];
   const batchBodies: unknown[] = [];
   const updateBodies: unknown[] = [];
+  const deletedCaseIds: string[] = [];
   const runBodies: unknown[] = [];
   const casesByDeclaredId = new Map<
     string,
     { id: string; declaredId: string; title: string }
   >();
+  for (const row of options?.existingCases ?? []) {
+    casesByDeclaredId.set(row.declaredId, row);
+  }
   const runsByKey = new Map<string, string>();
   let runCounter = 0;
 
@@ -1519,6 +1529,25 @@ async function startFileRunFixture(): Promise<{
     }
 
     if (
+      url.pathname.startsWith(
+        "/api/v1/projects/proj-alpha/eval-suites/suite-file-1/cases/"
+      ) &&
+      method === "DELETE"
+    ) {
+      const caseId = url.pathname.split("/").pop() ?? "";
+      deletedCaseIds.push(caseId);
+      for (const [declaredId, row] of casesByDeclaredId) {
+        if (row.id === caseId) {
+          casesByDeclaredId.delete(declaredId);
+          break;
+        }
+      }
+      res.statusCode = 200;
+      res.end(JSON.stringify({ id: caseId, deleted: true }));
+      return;
+    }
+
+    if (
       url.pathname === "/api/v1/projects/proj-alpha/eval-suites" &&
       method === "GET"
     ) {
@@ -1608,6 +1637,7 @@ async function startFileRunFixture(): Promise<{
     fromFileBodies,
     batchBodies,
     updateBodies,
+    deletedCaseIds,
     runBodies,
     close: () =>
       new Promise<void>((resolve, reject) =>
@@ -1668,6 +1698,7 @@ describe("eval run --file", () => {
         assert.equal(launched.suiteId, "suite-file-1");
         assert.equal(launched.sourceHash, expectedHash);
         assert.equal(typeof launched.idempotencyKey, "string");
+        assert.deepEqual(launched.caseIds, ["row_c_refund"]);
         const payload = JSON.parse(run.stdout);
         assert.equal(payload.outcome, "started");
         assert.equal(payload.runId, "run-file-1");
@@ -1825,5 +1856,187 @@ describe("eval run --file", () => {
     } finally {
       await fixture.close();
     }
+  });
+
+  test("a per-case passThreshold override is refused, not silently dropped", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          VALID_SUITE_FILE.replace(
+            "    title: Refunds a duplicate charge",
+            "    passThreshold: 0.95\n    title: Refunds a duplicate charge"
+          ),
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.match(run.stderr, /CASE_PASS_THRESHOLD/);
+        assert.match(run.stderr, /c_refund/);
+        assert.equal(fixture.fromFileBodies.length, 0);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a later file deletes a case that is no longer enabled", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+        { id: "row_c_stale", declaredId: "c_stale", title: "Removed" },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.deepEqual(fixture.deletedCaseIds, ["row_c_stale"]);
+        assert.equal(fixture.batchBodies.length, 0);
+        assert.equal(fixture.updateBodies.length, 1);
+        const launched = fixture.runBodies[0] as { caseIds: string[] };
+        assert.deepEqual(launched.caseIds, ["row_c_refund"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("updating a file-owned case clears removed negative and check fields", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        {
+          id: "row_c_refund",
+          declaredId: "c_refund",
+          title: "Refunds a duplicate charge",
+        },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.updateBodies.length, 1);
+        const body = fixture.updateBodies[0] as Record<string, unknown>;
+        assert.equal(body.isNegative, false);
+        assert.equal(body.checks, null);
+        assert.equal(body.expectedOutput, "");
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("the same file with different --iterations is not treated as a retry", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const first = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--iterations",
+              "1"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        const second = await captureProcessOutput(() =>
+          main(
+            runFileArgv(
+              fixture.baseUrl,
+              "--file",
+              file,
+              "--project",
+              "Alpha",
+              "--iterations",
+              "10"
+            ),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(first.result.exitCode, 0, first.stderr);
+        assert.equal(second.result.exitCode, 0, second.stderr);
+        const keys = fixture.runBodies.map(
+          (body) => (body as { idempotencyKey: string }).idempotencyKey
+        );
+        assert.equal(keys.length, 2);
+        assert.notEqual(keys[0], keys[1]);
+        const ids = [first, second].map(
+          (entry) => JSON.parse(entry.stdout).runId
+        );
+        assert.deepEqual(ids, ["run-file-1", "run-file-2"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+});
+
+describe("file-owned case bodies and idempotency", () => {
+  test("an update body clears isNegative and checks when the file dropped them", () => {
+    const loaded = loadEvalSuiteFile(VALID_SUITE_FILE);
+    assert.equal(loaded.ok, true);
+    if (!loaded.ok) return;
+    const testCase = loaded.resolved.enabledCases[0];
+    const created = fileCaseToCreateBody(testCase);
+    assert.equal("isNegative" in created, false);
+    assert.equal("checks" in created, false);
+    const updated = fileCaseToUpdateBody(testCase);
+    assert.equal(updated.isNegative, false);
+    assert.equal(updated.checks, null);
+    assert.equal(updated.expectedOutput, "");
+  });
+
+  test("derived idempotency keys differ when run knobs differ", () => {
+    const shared = {
+      sourceHash: "a".repeat(64),
+      declaredSuiteId: "s_billing",
+      projectId: "proj-alpha",
+      target: { servers: [{ name: "billing" }] },
+    };
+    const one = deriveFileRunIdempotencyKey({
+      ...shared,
+      knobs: { iterations: 1 },
+    });
+    const ten = deriveFileRunIdempotencyKey({
+      ...shared,
+      knobs: { iterations: 10 },
+    });
+    const env = deriveFileRunIdempotencyKey({
+      ...shared,
+      knobs: { environment: ["prod"] },
+    });
+    assert.notEqual(one, ten);
+    assert.notEqual(one, env);
+    assert.equal(
+      deriveFileRunIdempotencyKey({ ...shared, knobs: { iterations: 1 } }),
+      one
+    );
   });
 });
