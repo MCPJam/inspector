@@ -2044,6 +2044,7 @@ describe("operation catalog consistency", () => {
     },
     get_chat_session: { sessionId: "cs_1" },
     get_chat_session_trace: { sessionId: "cs_1" },
+    render_server_widget: { server: "srv", toolName: "show_map" },
     delete_sandbox_image: { image: "i" },
     search_registry_directory: {},
     get_registry_directory_server: { catalogServerId: "cs" },
@@ -2214,6 +2215,9 @@ describe("operation catalog consistency", () => {
       "install_registry_directory_server",
       "install_registry_server",
       "uninstall_registry_server",
+      // Executes the tool, then renders its widget. A write for the same
+      // reason `call_server_tool` is: the tool runs.
+      "render_server_widget",
       // One agent Playground turn. A write because it appends to a durable
       // transcript, and `risk: "spend"` because it runs a model — the two
       // reads beside it (get_chat_session, get_chat_session_trace) stay reads.
@@ -2233,6 +2237,9 @@ describe("operation catalog consistency", () => {
     const destructive = new Set([
       "call_server_tool",
       "archive_project_environment",
+      // It IS a tool call — the render is what happens afterwards — so it
+      // inherits `call_server_tool`'s unknowability exactly.
+      "render_server_widget",
       // Under `toolMode: "auto"` this executes arbitrary third-party tools,
       // which is `call_server_tool`'s unknowability with a model choosing the
       // arguments. Softening the destructive default would claim a safety the

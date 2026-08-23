@@ -184,6 +184,76 @@ export interface ScriptedStepResult {
   note?: string;
 }
 
+/**
+ * One interactive element the caller can address, in the SAME vocabulary
+ * `runScriptedStep` accepts.
+ *
+ * The point is that a snapshot is ACTIONABLE, not merely descriptive: an
+ * agent reads `{role: {role: "button", name: "Submit"}}` here and posts it
+ * straight back as a step target. A snapshot that described the DOM in some
+ * other vocabulary would still leave the caller guessing which locator this
+ * harness would accept.
+ */
+export interface SnapshotElement {
+  role?: { role: string; name?: string };
+  testId?: string;
+  /** Visible text, when neither an accessible name nor a test id is available. */
+  text?: string;
+  /** True when more than one element matched — pass `nth` to disambiguate. */
+  ambiguous?: true;
+}
+
+/**
+ * A text view of the mounted widget, for callers that cannot see pixels.
+ *
+ * WHY THIS EXISTS. Every other way to drive a widget here is COORDINATE-based
+ * (`executeAction` takes `[x, y]`), which silently assumes a multimodal
+ * caller: a text-only model can be handed a screenshot and still have nothing
+ * to click. Chrome DevTools MCP hit the same wall and solved it the same way —
+ * pair the pixels with an accessibility tree carrying addressable handles.
+ * Without this, half the agents that could debug an MCP App cannot reach it.
+ */
+export interface WidgetSnapshot {
+  mode: "a11y";
+  /** Playwright ARIA snapshot (YAML-ish) of the widget frame. */
+  tree: string;
+  /** Interactive elements, ready to use as `runScriptedStep` targets. */
+  elements: SnapshotElement[];
+  /** The tree hit the character ceiling and was clipped. */
+  truncated?: true;
+  capturedAt: number;
+  /** `"no_rendered_widget"` when nothing is mounted. */
+  note?: string;
+}
+
+/**
+ * Ceiling on a captured tree.
+ *
+ * A snapshot is handed to a model, so its cost is tokens. A deeply nested
+ * widget can produce an enormous tree, and an unbounded one would blow the
+ * caller's context on the one call that was supposed to make the widget
+ * legible.
+ */
+const SNAPSHOT_MAX_CHARS = 32_000;
+/** How many addressable elements to list. Beyond this the tree is the answer. */
+const SNAPSHOT_MAX_ELEMENTS = 100;
+/** Roles worth listing: the ones a scripted step can actually act on. */
+const SNAPSHOT_INTERACTIVE_ROLES = [
+  "button",
+  "link",
+  "textbox",
+  "checkbox",
+  "radio",
+  "combobox",
+  "slider",
+  "switch",
+  "tab",
+  "menuitem",
+  "option",
+  "searchbox",
+  "spinbutton",
+] as const;
+
 export interface HarnessBudgets {
   /** Per-rendered-widget cap on `executeAction` calls before forced dismiss. */
   maxBrowserStepsPerWidget: number;
@@ -1439,6 +1509,127 @@ export class McpAppBrowserHarness {
       `screenshot exceeds byte budget after re-encoding ` +
         `(${jpeg.byteLength} > ${this.budgets.screenshotMaxBytes} bytes)`
     );
+  }
+
+  /**
+   * Capture a TEXT view of the mounted widget: its accessibility tree plus
+   * the interactive elements a scripted step can target.
+   *
+   * Read-only and cheap — it does not count against `maxBrowserStepsPerWidget`,
+   * because looking is not acting and a caller forced to spend its interaction
+   * budget on looking would interact blind to save steps.
+   *
+   * Failure returns a snapshot with a `note`, never a throw. A snapshot is
+   * diagnostic; making it able to fail an interaction session would let the
+   * observability break the thing it observes.
+   */
+  async captureSnapshot(toolCallId?: string): Promise<WidgetSnapshot> {
+    const capturedAt = Date.now();
+    const mounted =
+      toolCallId !== undefined
+        ? this.mounted.get(toolCallId)
+        : this.mounted.size > 0;
+    if (!mounted || !this.page) {
+      return {
+        mode: "a11y",
+        tree: "",
+        elements: [],
+        capturedAt,
+        note: "no_rendered_widget",
+      };
+    }
+    const frame = this.widgetFrame();
+    let tree = "";
+    let truncated = false;
+    try {
+      tree = await frame
+        .locator("body")
+        .ariaSnapshot({ timeout: SCRIPTED_STEP_TIMEOUT_MS });
+    } catch (error) {
+      return {
+        mode: "a11y",
+        tree: "",
+        elements: [],
+        capturedAt,
+        note: `snapshot_failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+    }
+    if (tree.length > SNAPSHOT_MAX_CHARS) {
+      // Clipped VISIBLY and flagged. A silently shortened tree would read as a
+      // complete description of a smaller widget, and the caller would conclude
+      // the control it wanted does not exist.
+      tree = `${tree.slice(0, SNAPSHOT_MAX_CHARS)}\n… [truncated]`;
+      truncated = true;
+    }
+
+    const elements: SnapshotElement[] = [];
+    for (const role of SNAPSHOT_INTERACTIVE_ROLES) {
+      if (elements.length >= SNAPSHOT_MAX_ELEMENTS) break;
+      let handles: Locator[];
+      try {
+        handles = await frame
+          .getByRole(role as Parameters<FrameLocator["getByRole"]>[0])
+          .all();
+      } catch {
+        continue;
+      }
+      // Count per accessible NAME, not per role: `nth` in a scripted-step
+      // target disambiguates within a (role, name) pair, so that is the pair
+      // whose multiplicity the caller needs told about.
+      const seen = new Map<string, number>();
+      for (const handle of handles) {
+        if (elements.length >= SNAPSHOT_MAX_ELEMENTS) break;
+        let name = "";
+        let testId: string | undefined;
+        try {
+          name = (
+            await handle.getAttribute("aria-label", {
+              timeout: SCRIPTED_STEP_TIMEOUT_MS,
+            })
+          )?.trim() ??
+            (await handle.innerText({ timeout: SCRIPTED_STEP_TIMEOUT_MS }))
+              .trim();
+          testId =
+            (await handle.getAttribute("data-testid", {
+              timeout: SCRIPTED_STEP_TIMEOUT_MS,
+            })) ?? undefined;
+        } catch {
+          // An element that detached mid-walk is simply not listed. It cannot
+          // be targeted either, so omitting it is the honest answer.
+          continue;
+        }
+        const key = `${role}\u0000${name}`;
+        const index = seen.get(key) ?? 0;
+        seen.set(key, index + 1);
+        elements.push({
+          role: { role, ...(name ? { name } : {}) },
+          ...(testId ? { testId } : {}),
+          ...(index > 0 ? { ambiguous: true as const } : {}),
+        });
+      }
+      // Retro-flag the FIRST of a duplicated (role, name): the caller needs to
+      // know the target is ambiguous before it uses it, and only the second
+      // sighting proves it.
+      for (const [key, count] of seen) {
+        if (count <= 1) continue;
+        const [dupRole, dupName] = key.split("\u0000");
+        const first = elements.find(
+          (entry) =>
+            entry.role?.role === dupRole && (entry.role?.name ?? "") === dupName
+        );
+        if (first) first.ambiguous = true;
+      }
+    }
+
+    return {
+      mode: "a11y",
+      tree,
+      elements,
+      ...(truncated ? { truncated: true as const } : {}),
+      capturedAt,
+    };
   }
 
   /**

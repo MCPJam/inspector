@@ -260,6 +260,11 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Spends against the organization's shared daily insights budget. The Swarms tab has the button, next to the wave it applies to.",
   cancel_wave_insights:
     "Paired with the request above; offering the cancel without the request is an odd half-surface.",
+  // Launches a browser and executes the caller's tool. The Apps tab renders
+  // the same widget interactively, with the console and network panes beside
+  // it — a chat tool would hand back a verdict with none of that context.
+  render_server_widget:
+    "The Apps tab renders the widget interactively, with the console and network evidence beside it. Available on REST/CLI/MCP.",
   // Agent Playground. `send_chat_message` runs an assistant turn, and this
   // toolset IS an assistant turn — offering it here lets a chat turn spawn
   // chat turns, which is recursive spend with no natural floor. The two reads

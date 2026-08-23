@@ -9,6 +9,7 @@
  */
 import {
   callServerToolOperation,
+  renderServerWidgetOperation,
   checkHostCompatibilityOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
@@ -189,6 +190,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
+  renderServerWidgetOperation,
   listServerPromptsOperation,
   getServerPromptOperation,
   listServerResourcesOperation,
@@ -502,6 +504,13 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
  * just handed back.
  */
 const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
+  // A widget render EXECUTES the caller's tool first, and nobody can promise
+  // that running a third party's tool twice is safe. It reaches this list
+  // rather than `call_server_tool`'s absent-hints branch because its
+  // `risk: "destructive"` classification takes precedence above — which lands
+  // it STRICTER than the bare tool call (explicitly destructive, explicitly
+  // not retryable), never looser.
+  renderServerWidgetOperation.name,
   deletePersonaOperation.name,
   archiveJourneyOperation.name,
   archiveSwarmOperation.name,

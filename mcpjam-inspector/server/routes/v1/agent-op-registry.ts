@@ -36,6 +36,7 @@
  */
 import {
   callServerToolOperation,
+  renderServerWidgetOperation,
   getChatSessionOperation,
   getChatSessionTraceOperation,
   sendChatMessageOperation,
@@ -1649,6 +1650,31 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     promptNotes: [
       "- `call_server_tool` runs a real tool on the user's MCP server, as them, with effects MCPJam cannot undo. Calling it PROPOSES the call; a person approves it. Read the tool's schema from `list_server_tools` first and pass exactly the arguments you mean — the arguments you send are shown to the approver and are what will run, so a placeholder is a lie they will act on. Never call a tool to 'test' or 'see what happens'.",
       UNTRUSTED_SERVER_CONTENT_NOTE,
+    ],
+  },
+
+  // Rendering a widget RUNS THE TOOL first — the browser is what happens
+  // afterwards. So it inherits `call_server_tool`'s approval exactly, with the
+  // same argument preview: an approver deciding whether to let a tool run
+  // needs to see which tool and with what.
+  {
+    operation: renderServerWidgetOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) => {
+        const toolName = named(input, "toolName") ?? "(unnamed tool)";
+        const server = named(input, "server");
+        const preview = previewToolCall(toolName, input.parameters);
+        return server
+          ? `Render the widget for ${preview} on ${server}`
+          : `Render the widget for ${preview}`;
+      },
+      buttonLabel: "Render it",
+      kind: "external",
+      confirmSeverity: "external",
+    },
+    promptNotes: [
+      "- `render_server_widget` EXECUTES the tool and then mounts its widget in a browser. It is not a read: use it to find out whether an MCP App actually renders, what it logs, and what it was blocked from fetching — never to 'look at' a tool whose side effects you have not read.",
     ],
   },
 

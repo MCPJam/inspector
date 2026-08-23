@@ -246,6 +246,10 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "`tools call` connects to the server directly, so it works without a project or an API key.",
   },
+  render_server_widget: {
+    excluded:
+      "`apps render` connects to the server directly and mounts the widget in the developer's OWN Chromium, so it works without a project or an API key — and spends no hosted browser to answer a question the local command already answers.",
+  },
   list_server_prompts: {
     excluded:
       "`prompts list` connects to the server directly, so it works without a project or an API key.",

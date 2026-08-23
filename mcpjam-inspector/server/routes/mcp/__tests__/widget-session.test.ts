@@ -29,6 +29,20 @@ const harnessState = vi.hoisted(() => ({
     ],
     elapsedMs: 3,
   } as Record<string, unknown>,
+  snapshot: {
+    mode: "a11y",
+    tree: "- button \"Reserve\"",
+    elements: [{ role: { role: "button", name: "Reserve" } }],
+    capturedAt: 1,
+  } as Record<string, unknown>,
+  stepResult: {
+    ok: true,
+    widgetToolCalls: [
+      { name: "reserve", args: { seat: 12 }, ok: true, elapsedMs: 1 },
+    ],
+    followUps: [],
+    elapsedMs: 4,
+  } as Record<string, unknown>,
   disposeCalls: 0,
   /** When set, dispose() awaits it — lets a test hold a teardown open. */
   disposeGate: null as Promise<void> | null,
@@ -44,6 +58,20 @@ const harnessState = vi.hoisted(() => ({
         { name: "reserve", args: { seat: 12 }, ok: true, elapsedMs: 1 },
       ],
       elapsedMs: 3,
+    };
+    this.snapshot = {
+      mode: "a11y",
+      tree: "- button \"Reserve\"",
+      elements: [{ role: { role: "button", name: "Reserve" } }],
+      capturedAt: 1,
+    };
+    this.stepResult = {
+      ok: true,
+      widgetToolCalls: [
+        { name: "reserve", args: { seat: 12 }, ok: true, elapsedMs: 1 },
+      ],
+      followUps: [],
+      elapsedMs: 4,
     };
     this.disposeCalls = 0;
     this.disposeGate = null;
@@ -68,6 +96,12 @@ vi.mock("../../../utils/mcp-app-browser-harness", async () => {
     }
     async executeAction(input: { action: unknown }) {
       return { action: input.action, ...harnessState.actionResult };
+    }
+    async captureSnapshot() {
+      return harnessState.snapshot;
+    }
+    async runScriptedStep(input: { step: unknown }) {
+      return { step: input.step, ...harnessState.stepResult };
     }
     async dispose() {
       harnessState.disposeCalls += 1;
@@ -301,6 +335,119 @@ describe("widget-session route", () => {
         );
         expect(res.status, JSON.stringify(action)).toBe(400);
       }
+    });
+  });
+
+  describe("snapshot + scripted-step (the text-only driving path)", () => {
+    async function openSession(): Promise<string> {
+      const started = await startSession(app);
+      return (await started.json()).sessionId as string;
+    }
+
+    it("returns the widget as an addressable tree", async () => {
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/snapshot`,
+      );
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.snapshot.mode).toBe("a11y");
+      // The elements come back in the SAME vocabulary a scripted step takes,
+      // which is the whole point: an agent reads one and posts it straight back
+      // rather than translating between two locator languages.
+      expect(body.snapshot.elements[0]).toEqual({
+        role: { role: "button", name: "Reserve" },
+      });
+      expect(typeof body.expiresAt).toBe("number");
+    });
+
+    it("drives the widget by role instead of by coordinate", async () => {
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/scripted-step`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            step: {
+              kind: "click",
+              target: { role: { role: "button", name: "Reserve" } },
+            },
+          }),
+        },
+      );
+      const body = await response.json();
+      expect(response.status).toBe(200);
+      expect(body.ok).toBe(true);
+      // The tool calls the widget fired IN RESPONSE are the evidence an agent
+      // is actually here for — "the button fired the wrong tool" is the bug
+      // this loop exists to find.
+      expect(body.widgetToolCalls).toEqual([
+        { name: "reserve", args: { seat: 12 }, ok: true, elapsedMs: 1 },
+      ]);
+    });
+
+    it("rejects a malformed step rather than half-running it", async () => {
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/scripted-step`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ step: { kind: "click" } }),
+        },
+      );
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toMatch(/step is invalid/);
+    });
+
+    it("404s both new routes on an unknown session", async () => {
+      expect(
+        (await app.request("/api/mcp/widget-session/nope/snapshot")).status,
+      ).toBe(404);
+      const step = await app.request(
+        "/api/mcp/widget-session/nope/scripted-step",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            step: { kind: "key", key: "Enter" },
+          }),
+        },
+      );
+      expect(step.status).toBe(404);
+    });
+
+    it("reports a failed assertion as a 200 with ok:false", async () => {
+      // A failed assertion is an ANSWER, not a transport error: the widget was
+      // driven successfully and did not do the thing. Returning 500 would make
+      // a caller retry a step that will keep failing.
+      harnessState.stepResult = {
+        ok: false,
+        reason: "expected tool `reserve` to have been called",
+        widgetToolCalls: [],
+        followUps: [],
+        elapsedMs: 2,
+      };
+      const sessionId = await openSession();
+      const response = await app.request(
+        `/api/mcp/widget-session/${sessionId}/scripted-step`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            step: {
+              kind: "assert",
+              assertion: { type: "widgetToolCalled", toolName: "reserve" },
+            },
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        ok: false,
+        reason: "expected tool `reserve` to have been called",
+      });
     });
   });
 
