@@ -1,5 +1,5 @@
 /**
- * Flag parsing and run-fetching for `mcpjam eval gate`.
+ * Flag parsing and run-fetching for `mcpjam cloud eval gate`.
  *
  * Kept out of `commands/eval.ts` so the parsing rules — especially the
  * percent→fraction boundary — are unit-testable without booting commander.

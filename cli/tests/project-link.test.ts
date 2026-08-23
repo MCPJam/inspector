@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -25,6 +25,10 @@ function writeLink(directory: string, body: unknown): string {
   mkdirSync(path.dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(body, null, 2)}\n`);
   return filePath;
+}
+
+function assertSamePath(left: string, right: string): void {
+  assert.equal(realpathSync(left), realpathSync(right));
 }
 
 test("parseProjectLink accepts version 1 with canonical http(s) apiUrl", () => {
@@ -99,10 +103,10 @@ test("inside Git, lookup walks to the worktree root inclusive", async () => {
     apiUrl: "https://app.mcpjam.com/api/v1",
   });
 
-  assert.equal(findGitWorktreeRoot(nested), root);
-  assert.equal(findNearestProjectLinkPath({ cwd: nested }), filePath);
-  assert.equal(projectLinkWriteDir({ cwd: nested }), root);
-  assert.equal(projectLinkWriteDir({ cwd: nested, here: true }), nested);
+  assertSamePath(findGitWorktreeRoot(nested) ?? "", root);
+  assertSamePath(findNearestProjectLinkPath({ cwd: nested }) ?? "", filePath);
+  assertSamePath(projectLinkWriteDir({ cwd: nested }), root);
+  assertSamePath(projectLinkWriteDir({ cwd: nested, here: true }), nested);
 });
 
 test("nearest link wins over a parent link in the same worktree", async () => {
@@ -124,7 +128,7 @@ test("nearest link wins over a parent link in the same worktree", async () => {
   const inspection = inspectProjectLink({ cwd: nested });
   assert.equal(inspection.status, "valid");
   if (inspection.status === "valid") {
-    assert.equal(inspection.path, nestedPath);
+    assertSamePath(inspection.path, nestedPath);
     assert.equal(inspection.link.project.id, "nested-proj");
   }
 });

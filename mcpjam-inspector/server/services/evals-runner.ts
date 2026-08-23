@@ -121,7 +121,20 @@ import {
   emitPinnedTurnSse,
   type PinnedTurnSsePayload,
 } from "./evals/pinned-turn-sse.js";
-import { buildIterationFinishParams } from "./evals/finalize-iteration.js";
+import {
+  buildIterationFinishParams,
+  buildStageMetadata,
+} from "./evals/finalize-iteration.js";
+import type {
+  StageAuthoredCase,
+  StageSetupSignals,
+} from "@mcpjam/sdk/contract";
+import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
+import {
+  createRunSetupObserver,
+  type RunSetupObserver,
+  type SetupPhase,
+} from "./evals/run-setup-signals.js";
 import {
   dispatchEvalIterationFinalize,
   finalizeWithBrowserArtifacts,
@@ -518,6 +531,58 @@ function isMissingRuntimeServerError(error: unknown): boolean {
   );
 }
 
+class EvalSetupPhaseError extends WebRouteError {
+  readonly serverId: string;
+  readonly phase: SetupPhase;
+
+  constructor(args: {
+    status: number;
+    code: ErrorCode;
+    message: string;
+    serverId: string;
+    phase: SetupPhase;
+    details?: Record<string, unknown>;
+  }) {
+    super(args.status, args.code, args.message, {
+      ...args.details,
+      serverId: args.serverId,
+      phase: args.phase,
+    });
+    this.name = "EvalSetupPhaseError";
+    this.serverId = args.serverId;
+    this.phase = args.phase;
+  }
+}
+
+function throwSetupPhaseError(args: {
+  serverId: string;
+  phase: SetupPhase;
+  error: unknown;
+  environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+}): never {
+  const serverLabel = getServerLabelForEvalError(args.serverId, args.environment);
+  if (isMissingRuntimeServerError(args.error) || args.phase === "connection") {
+    throw new EvalSetupPhaseError({
+      status: 409,
+      code: ErrorCode.SERVER_UNREACHABLE,
+      message: `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
+      serverId: args.serverId,
+      phase: args.phase,
+      details: { serverId: args.serverId, serverName: serverLabel },
+    });
+  }
+  const cause =
+    args.error instanceof Error ? args.error.message : String(args.error);
+  throw new EvalSetupPhaseError({
+    status: 502,
+    code: ErrorCode.SERVER_UNREACHABLE,
+    message: `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
+    serverId: args.serverId,
+    phase: args.phase,
+    details: { serverId: args.serverId, serverName: serverLabel, cause },
+  });
+}
+
 async function getEvalToolsForAiSdkOrThrow(args: {
   mcpClientManager: MCPClientManager;
   serverIds: string[];
@@ -530,6 +595,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
    */
   tasks?: ToolTaskSeamOptions;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
+  setupObserver?: RunSetupObserver;
 }): Promise<ToolSet> {
   const hasModelVisiblePolicy = args.modelVisibleMcpToolResults !== undefined;
   const toolOptions =
@@ -543,42 +609,107 @@ async function getEvalToolsForAiSdkOrThrow(args: {
         }
       : undefined;
 
-  const perServerTools = await Promise.all(
+  const now = () => Date.now();
+  const observer = args.setupObserver;
+  const firstError: { error: unknown; serverId: string; phase: SetupPhase }[] =
+    [];
+
+  // ONE round trip per server. `getToolsForAiSdk` already ensures the
+  // session before it lists, so probing connect separately would make every
+  // lazily-connected run hit the customer's server twice for no new
+  // information. `Promise.allSettled` does not abort in-flight siblings, so
+  // this single barrier is what keeps folding race-free: every expected
+  // target has settled before `buildSignals` runs, and a discovery failure
+  // can never be folded while another server's connect is still open.
+  const perServerTools = await Promise.allSettled(
     args.serverIds.map(async (serverId) => {
+      const startedAt = now();
+      const alreadyConnected =
+        args.mcpClientManager.getConnectionStatus(serverId) === "connected";
+      // One call cannot time the two phases apart. An already-connected
+      // server spent the whole call listing; a lazily-connected one is
+      // credited to connect, with the list window closing at the same
+      // instant. Neither phase ever claims more than the call took.
+      const splitAt = (endedAt: number) =>
+        alreadyConnected ? startedAt : endedAt;
       try {
-        return toolOptions
+        const tools = toolOptions
           ? await args.mcpClientManager.getToolsForAiSdk(
               [serverId],
               toolOptions
             )
           : await args.mcpClientManager.getToolsForAiSdk([serverId]);
+        const endedAt = now();
+        observer?.recordConnect(serverId, {
+          outcome: "ok",
+          startedAt,
+          endedAt: splitAt(endedAt),
+        });
+        observer?.recordToolsList(serverId, {
+          outcome: "ok",
+          startedAt: splitAt(endedAt),
+          endedAt,
+        });
+        return tools;
       } catch (error) {
-        const serverLabel = getServerLabelForEvalError(
-          serverId,
-          args.environment
-        );
-        if (isMissingRuntimeServerError(error)) {
-          throw new WebRouteError(
-            409,
-            ErrorCode.SERVER_UNREACHABLE,
-            `Could not start eval because "${serverLabel}" is not connected. Reconnect the server and try again.`,
-            { serverId, serverName: serverLabel }
-          );
+        const endedAt = now();
+        const connected =
+          args.mcpClientManager.getConnectionStatus(serverId) === "connected";
+        if (!connected || isMissingRuntimeServerError(error)) {
+          // A connect miss: tools/list never ran for this server, so it
+          // gets NO discovery observation. `foldPhase` reads that absence
+          // as "the phase never executed" rather than as a failed list.
+          observer?.recordConnect(serverId, {
+            outcome: "failed",
+            error,
+            startedAt,
+            endedAt,
+          });
+          firstError.push({ error, serverId, phase: "connection" });
+          return null;
         }
-        const cause = error instanceof Error ? error.message : String(error);
-        throw new WebRouteError(
-          502,
-          ErrorCode.SERVER_UNREACHABLE,
-          `Could not start eval because "${serverLabel}" failed to list tools. Reconnect the server and try again.`,
-          { serverId, serverName: serverLabel, cause }
-        );
+        observer?.recordConnect(serverId, {
+          outcome: "ok",
+          startedAt,
+          endedAt: splitAt(endedAt),
+        });
+        observer?.recordToolsList(serverId, {
+          outcome: "failed",
+          error,
+          startedAt: splitAt(endedAt),
+          endedAt,
+        });
+        firstError.push({ error, serverId, phase: "discovery" });
+        return null;
       }
     })
   );
 
+  if (observer) {
+    const signals = observer.buildSignals();
+    if (signals?.connection?.attribution === "theirs") {
+      await observer.ensureEgressCanary();
+    }
+  }
+
+  if (firstError.length > 0) {
+    // Connection failures dominate: a mixed bag must never earn
+    // `connection: failed` from a later discovery throw.
+    const connectFail = firstError.find((row) => row.phase === "connection");
+    const chosen = connectFail ?? firstError[0]!;
+    throwSetupPhaseError({
+      serverId: chosen.serverId,
+      phase: chosen.phase,
+      error: chosen.error,
+      environment: args.environment,
+    });
+  }
+
   const flattened: ToolSet = {};
-  for (const toolset of perServerTools) {
-    Object.assign(flattened, toolset);
+  for (const result of perServerTools) {
+    if (result.status === "fulfilled" && result.value) {
+      Object.assign(flattened, result.value);
+    }
   }
   return flattened;
 }
@@ -1060,6 +1191,19 @@ async function persistSetupFailedIteration(args: {
   runStartedAt: number;
   errorMessage: string;
   iterationMetadataBase: Record<string, string | number | boolean>;
+  /**
+   * The authored case's stage inputs (`buildStageAuthoredCase`).
+   *
+   * A setup abort is the one iteration shape that finalizes without ever
+   * entering the prompt loop, and the chain has a dedicated verdict for it:
+   * every applicable stage `notMeasured` for `setupAborted`, with
+   * `failureCategory: "setup"`. Omitted ⇒ no stage keys, which is how a caller
+   * that cannot say what the case authored stays honest.
+   */
+  stageCase?: StageAuthoredCase;
+  setupSignals?: StageSetupSignals;
+  setupSpans?: EvalTraceSpan[];
+  setupAudit?: Record<string, unknown>;
   recorder: SuiteRunRecorder | null;
   convexClient: ConvexHttpClient;
 }): Promise<void> {
@@ -1073,13 +1217,147 @@ async function persistSetupFailedIteration(args: {
     startedAt: args.runStartedAt,
     error: args.errorMessage,
     resultSource: "reported" as const,
-    metadata: { ...args.iterationMetadataBase },
+    metadata: {
+      ...args.iterationMetadataBase,
+      ...buildStageMetadata({
+        ...(args.stageCase ? { stageCase: args.stageCase } : {}),
+        // No real spans/prompts/messages: the analyzer reads that as
+        // `traceAbsent`. When setupSignals are present it measures the top
+        // two stages instead of blanking the whole chain.
+        ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
+        status: "failed",
+        error: args.errorMessage,
+      }),
+      ...(args.setupAudit ?? {}),
+    },
+    ...(args.setupSpans?.length ? { spans: args.setupSpans } : {}),
   };
   await dispatchEvalIterationFinalize({
     recorder: args.recorder,
     convexClient: args.convexClient,
     finishParams: failParams,
   });
+}
+
+/**
+ * Un-strand a run that died at run-level connect / tools-list.
+ *
+ * Pre-created iterations sit `pending` and `blockTerminal` would otherwise
+ * soft-block the terminal transition. Each evidence-carrying write is
+ * acknowledged: we re-read the run details after the batch and retry any
+ * residual still-pending rows once before the `markSetupPendingIterationsFailed`
+ * sweep, so the sweep can never silently strip stage metadata from a row
+ * whose write failed.
+ */
+async function persistRunSetupFailure(args: {
+  runId: string;
+  convexClient: ConvexHttpClient;
+  recorder: SuiteRunRecorder | null;
+  observer: RunSetupObserver;
+  errorMessage: string;
+  tests: EvalTestCase[];
+  runStartedAt: number;
+}): Promise<void> {
+  const setupSignals = args.observer.buildSignals();
+  const setupSpans = args.observer.buildSyntheticSpans(args.runStartedAt);
+  const setupAudit = args.observer.buildAuditMetadata();
+
+  const listPending = async (): Promise<Array<Record<string, unknown>> | null> => {
+    try {
+      const details = (await args.convexClient.query(
+        "testSuites:getTestSuiteRunDetails" as any,
+        { runId: args.runId }
+      )) as { iterations?: Array<Record<string, unknown>> } | null;
+      return (details?.iterations ?? []).filter(
+        (row) => row.status === "pending"
+      );
+    } catch (readError) {
+      logger.warn("[evals] Failed to read pending setup iterations", {
+        runId: args.runId,
+        error:
+          readError instanceof Error ? readError.message : String(readError),
+      });
+      return null;
+    }
+  };
+
+  const persistPending = async (
+    pending: Array<Record<string, unknown>>
+  ) => {
+    await Promise.allSettled(
+      pending.map(async (row) => {
+        const iterationId =
+          typeof row._id === "string"
+            ? row._id
+            : typeof row.iterationId === "string"
+              ? row.iterationId
+              : undefined;
+        const test = args.tests.find(
+          (candidate) =>
+            candidate.testCaseId && candidate.testCaseId === row.testCaseId
+        );
+        const snapshot = row.testCaseSnapshot as
+          | { query?: string; expectedToolCalls?: unknown[] }
+          | undefined;
+        await persistSetupFailedIteration({
+          iterationId,
+          runStartedAt: args.runStartedAt,
+          errorMessage: args.errorMessage,
+          iterationMetadataBase: {},
+          ...(test
+            ? {
+                stageCase: buildStageAuthoredCase({
+                  test,
+                  turns: test.promptTurns,
+                  caseNeedsModel: true,
+                }),
+              }
+            : snapshot
+              ? {
+                  stageCase: buildStageAuthoredCase({
+                    test: {
+                      query: snapshot.query,
+                      expectedToolCalls: snapshot.expectedToolCalls,
+                    } as EvalTestCase,
+                    caseNeedsModel: true,
+                  }),
+                }
+              : {}),
+          ...(setupSignals ? { setupSignals } : {}),
+          ...(setupSpans.length ? { setupSpans } : {}),
+          ...(setupAudit ? { setupAudit } : {}),
+          recorder: args.recorder,
+          convexClient: args.convexClient,
+        });
+      })
+    );
+  };
+
+  const first = await listPending();
+  if (first) {
+    await persistPending(first);
+  }
+  const afterFirst = await listPending();
+  if (afterFirst && afterFirst.length > 0) {
+    await persistPending(afterFirst);
+  }
+  const residual = await listPending();
+  if (residual === null || residual.length > 0) {
+    try {
+      await args.convexClient.mutation(
+        "testSuites:markSetupPendingIterationsFailed" as any,
+        { runId: args.runId, error: args.errorMessage }
+      );
+    } catch (cleanupError) {
+      logger.warn("[evals] Failed to mark residual setup iterations failed", {
+        runId: args.runId,
+        error:
+          cleanupError instanceof Error
+            ? cleanupError.message
+            : String(cleanupError),
+      });
+    }
+  }
 }
 
 /**
@@ -1150,6 +1428,12 @@ type RunIterationBaseParams = {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for this run (set by runEvalSuiteWithAiSdk). */
   toolSignals?: ToolExposureSignals;
+  /** Folded run-level connect / tools-list evidence (D6). */
+  setupSignals?: StageSetupSignals;
+  /** Synthetic connection/discovery spans (timeline only). */
+  setupSpans?: EvalTraceSpan[];
+  /** Bounded producer-owned setup audit record. */
+  setupAudit?: Record<string, unknown>;
   /**
    * Raw suite hostConfig record — the same one the route layer feeds
    * to `extractHostExecutionPolicy` for the `hostPolicy` field above.
@@ -1534,6 +1818,9 @@ const executeTestCase = async (params: {
   hostPolicy?: HostExecutionPolicy;
   /** Pre-computed tool exposure signals for metadata stamping. */
   toolSignals?: ToolExposureSignals;
+  setupSignals?: StageSetupSignals;
+  setupSpans?: EvalTraceSpan[];
+  setupAudit?: Record<string, unknown>;
   /** Raw suite hostConfig record. PR 4d — see RunIterationBaseParams. */
   suiteHostConfig?: Record<string, unknown> | null;
   /**
@@ -1571,6 +1858,9 @@ const executeTestCase = async (params: {
     injectOpenAiCompat,
     hostPolicy,
     toolSignals,
+    setupSignals,
+    setupSpans,
+    setupAudit,
     suiteHostConfig,
     environment,
     pinnedSkillSource,
@@ -1654,6 +1944,9 @@ const executeTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        setupSignals,
+        setupSpans,
+        setupAudit,
         suiteHostConfig,
         environment,
         pinnedSkillSource,
@@ -1778,6 +2071,9 @@ const executeTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        setupSignals,
+        setupSpans,
+        setupAudit,
         suiteHostConfig,
         environment,
         pinnedSkillSource,
@@ -1827,6 +2123,9 @@ const executeTestCase = async (params: {
         injectOpenAiCompat,
         hostPolicy,
         toolSignals,
+        setupSignals,
+        setupSpans,
+        setupAudit,
         suiteHostConfig,
         environment,
         pinnedSkillSource,
@@ -1870,6 +2169,9 @@ const executeTestCase = async (params: {
       injectOpenAiCompat,
       hostPolicy,
       toolSignals,
+      setupSignals,
+      setupSpans,
+      setupAudit,
       suiteHostConfig,
       // `environment` resolves a pinned turn's server (local hybrids); harmless
       // for prompt-only cases.
@@ -1972,6 +2274,12 @@ export const runEvalSuiteWithAiSdk = async ({
     await: { signal: abortController.signal },
   });
 
+  const runSetupStartedAt = Date.now();
+  const setupObserver = createRunSetupObserver({
+    expectedServerIds: serverIds,
+    convexHttpUrl,
+  });
+
   try {
     // When a host policy is present we need the full tool set (including
     // app-only) so `applyVisibilityPolicyAndCountSignals` can:
@@ -1990,6 +2298,7 @@ export const runEvalSuiteWithAiSdk = async ({
       // be able to switch tasks on for a suite whose host said off.
       ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
       environment: config.environment,
+      setupObserver,
     });
 
     // Apply visibility filtering when a host policy is present. The filter
@@ -2002,6 +2311,10 @@ export const runEvalSuiteWithAiSdk = async ({
           hostExecutionPolicy
         )
       : undefined;
+    const resolvedSetupSignals = setupObserver.buildSignals();
+    const resolvedSetupSpans =
+      setupObserver.buildSyntheticSpans(runSetupStartedAt);
+    const resolvedSetupAudit = setupObserver.buildAuditMetadata();
 
     // Note: Iterations are now pre-created in startSuiteRunWithRecorder
     // This code is no longer needed as precreateIterationsForRun is called there
@@ -2059,6 +2372,11 @@ export const runEvalSuiteWithAiSdk = async ({
         injectOpenAiCompat,
         hostPolicy: hostExecutionPolicy,
         toolSignals: resolvedToolSignals,
+        ...(resolvedSetupSignals ? { setupSignals: resolvedSetupSignals } : {}),
+        ...(resolvedSetupSpans.length
+          ? { setupSpans: resolvedSetupSpans }
+          : {}),
+        ...(resolvedSetupAudit ? { setupAudit: resolvedSetupAudit } : {}),
         suiteHostConfig,
         environment: config.environment,
         // BOTH frozen-skill channels, from one place — see
@@ -2260,6 +2578,32 @@ export const runEvalSuiteWithAiSdk = async ({
     return undefined;
   } catch (error) {
     const passRate = summary.total > 0 ? summary.passed / summary.total : 0;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+
+    // Persist evidence onto every still-pending row BEFORE finalize so
+    // `blockTerminal` cannot strand the run, and so the sweep cannot strip
+    // stage metadata from a row whose write failed.
+    if (runId !== null) {
+      try {
+        await persistRunSetupFailure({
+          runId,
+          convexClient,
+          recorder,
+          observer: setupObserver,
+          errorMessage,
+          tests,
+          runStartedAt: runSetupStartedAt,
+        });
+      } catch (setupPersistError) {
+        logger.warn("[evals] Failed to persist run-setup failure evidence", {
+          runId,
+          error:
+            setupPersistError instanceof Error
+              ? setupPersistError.message
+              : String(setupPersistError),
+        });
+      }
+    }
 
     // Only finalize if we have a recorder (suite runs, not quick runs)
     if (recorder) {
@@ -2345,6 +2689,9 @@ const runLocalIteration = async ({
   injectOpenAiCompat,
   hostPolicy,
   toolSignals,
+  setupSignals,
+  setupSpans,
+  setupAudit,
   suiteHostConfig,
   environment,
   convexAuthToken,
@@ -3038,9 +3385,24 @@ const runLocalIteration = async ({
       predicateResults,
       ...(stepSkippedSteps.length ? { skippedSteps: stepSkippedSteps } : {}),
       ...(stepResults.length ? { stepResults } : {}),
+      stageCase: buildStageAuthoredCase({
+        test,
+        // The RESOLVED steps, not `test.steps`: `resolveSteps` bridges legacy
+        // `promptTurns`/probe cases into steps, and a legacy case carries no
+        // `steps` of its own. Reading the raw field would drop every authored
+        // assert step from `assertionCount` and report a widget-asserting case
+        // as asserting nothing.
+        ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
+        turns: resolvedTest.promptTurns,
+        caseNeedsModel,
+      }),
+      stageToolErrors: acc.pinnedToolErrors,
       iterationMetadataBase,
       ...(hostPolicy ? { hostPolicy } : {}),
       ...(toolSignals ? { toolSignals } : {}),
+      ...(setupSignals ? { setupSignals } : {}),
+      ...(setupSpans?.length ? { setupSpans } : {}),
+      ...(setupAudit ? { setupAudit } : {}),
       injectOpenAiCompat,
     });
 
@@ -3198,9 +3560,24 @@ const runLocalIteration = async ({
       startedAt: runStartedAt,
       ...(errorMessage ? { error: errorMessage } : {}),
       ...(errorDetails ? { errorDetails } : {}),
+      stageCase: buildStageAuthoredCase({
+        test,
+        // The RESOLVED steps, not `test.steps`: `resolveSteps` bridges legacy
+        // `promptTurns`/probe cases into steps, and a legacy case carries no
+        // `steps` of its own. Reading the raw field would drop every authored
+        // assert step from `assertionCount` and report a widget-asserting case
+        // as asserting nothing.
+        ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
+        turns: resolvedTest.promptTurns,
+        caseNeedsModel,
+      }),
+      stageToolErrors: acc.pinnedToolErrors,
       iterationMetadataBase,
       ...(hostPolicy ? { hostPolicy } : {}),
       ...(toolSignals ? { toolSignals } : {}),
+      ...(setupSignals ? { setupSignals } : {}),
+      ...(setupSpans?.length ? { setupSpans } : {}),
+      ...(setupAudit ? { setupAudit } : {}),
       injectOpenAiCompat,
     });
 
@@ -3263,6 +3640,9 @@ const runHostedIterationWithBrowser = async (
     injectOpenAiCompat,
     hostPolicy,
     toolSignals,
+    setupSignals,
+    setupSpans,
+    setupAudit,
     suiteHostConfig,
     orgModelConfigTarget,
     // Pinned reproducible-env id lives on the run environment; drives per-
@@ -3586,6 +3966,19 @@ const runHostedIterationWithBrowser = async (
       runStartedAt,
       errorMessage,
       iterationMetadataBase,
+      // Same authored-case inputs the success path builds further down; this
+      // runner is never reached by a model-free case.
+      stageCase: buildStageAuthoredCase({
+        test,
+        ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
+        turns: resolvedTest.promptTurns,
+        caseNeedsModel: true,
+      }),
+      // Classify the error but never guess a culprit span: prepareChatV2's
+      // getToolsForAiSdk rethrow does not identify the failing server.
+      ...(setupSignals ? { setupSignals } : {}),
+      ...(setupSpans?.length ? { setupSpans } : {}),
+      ...(setupAudit ? { setupAudit } : {}),
       recorder,
       convexClient,
     });
@@ -3915,9 +4308,21 @@ const runHostedIterationWithBrowser = async (
       ? { skippedSteps: hostedStepSkippedSteps }
       : {}),
     ...(hostedStepResults.length ? { stepResults: hostedStepResults } : {}),
+    // This runner is never reached by a model-free case (those dispatch to the
+    // local runner), so the case always has a model turn that could select.
+    stageCase: buildStageAuthoredCase({
+      test,
+      ...(resolvedSteps.length ? { steps: resolvedSteps } : {}),
+      turns: resolvedTest.promptTurns,
+      caseNeedsModel: true,
+    }),
+    stageToolErrors: pinnedToolErrors,
     iterationMetadataBase,
     ...(hostPolicy ? { hostPolicy } : {}),
     ...(toolSignals ? { toolSignals } : {}),
+    ...(setupSignals ? { setupSignals } : {}),
+    ...(setupSpans?.length ? { setupSpans } : {}),
+    ...(setupAudit ? { setupAudit } : {}),
     injectOpenAiCompat,
   });
 

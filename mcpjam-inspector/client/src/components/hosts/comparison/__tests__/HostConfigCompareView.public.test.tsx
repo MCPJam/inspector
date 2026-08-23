@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -103,6 +103,47 @@ describe("HostConfigCompareView public mode", () => {
       value: originalMatchMedia,
     });
     document.documentElement.classList.remove("dark");
+  });
+
+  it("offers the flag-gated hosts in public mode but not in the signed-in matrix", async () => {
+    // `useFeatureFlagEnabled` is mocked false above — the anonymous-visitor
+    // case, and the one that used to drop these two from caniuse entirely.
+    // They sit past the 6-chip inline limit, so assert them where they live:
+    // the More menu. Public caniuse is reference data and lists every catalog
+    // host; the signed-in matrix sits beside hosts you can actually create,
+    // so it keeps the rollout gate. Pinned together so the split can't drift.
+    const { unmount } = render(
+      <MemoryRouter>
+        <HostConfigCompareView
+          projectId={null}
+          isAuthenticated={false}
+          presetOnly
+        />
+      </MemoryRouter>
+    );
+    fireEvent.click(screen.getByTestId("host-compare-overflow-trigger"));
+    expect(await screen.findByText("Claude Code")).toBeInTheDocument();
+    expect(screen.getByText("Codex")).toBeInTheDocument();
+    unmount();
+
+    // Signed in with a project, so the matrix actually renders hosts. With
+    // `projectId={null}` it short-circuits to the sign-in placeholder and the
+    // absence below would hold no matter what the gate did.
+    render(
+      <MemoryRouter>
+        <HostConfigCompareView projectId="abc123" isAuthenticated />
+      </MemoryRouter>
+    );
+    // Presets render here at all...
+    expect(
+      screen.getByTestId("host-compare-chip-preset:claude")
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("host-compare-overflow-trigger"));
+    // ...and the overflow menu opened and lists other unranked presets, so
+    // the two absences below are the gate, not an unrendered menu.
+    expect(await screen.findByText("Notion")).toBeInTheDocument();
+    expect(screen.queryByText("Claude Code")).not.toBeInTheDocument();
+    expect(screen.queryByText("Codex")).not.toBeInTheDocument();
   });
 
   it("renders preset compare content without requiring sign-in or a project", async () => {
