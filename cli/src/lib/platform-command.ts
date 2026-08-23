@@ -270,7 +270,41 @@ function commandHasProjectOption(command: Command): boolean {
   return command.options.some((option) => option.long === "--project");
 }
 
-export function bindOperation<TOptions extends PlatformOptions, TInput>(
+export type BindOperationExtras<TOutput> = {
+  /**
+   * Print the Cloud audience line. Defaults to "only under `mcpjam cloud`";
+   * root-level Cloud groups (`registry`) opt in so a user can see which
+   * deployment and project a command hit, while hosted `readiness` stays
+   * silent by convention.
+   */
+  announce?: boolean;
+  /**
+   * Audience scope for commands that are not project-scoped (no `--project`
+   * option). Without it a directory read would announce an inferred project
+   * selector it never uses.
+   */
+  cloudScope?: CloudScope;
+  /**
+   * Apply the ambient project precedence (flag > MCPJAM_PROJECT > repo link >
+   * automatic) to a root-level command that declares `--project`. Under
+   * `mcpjam cloud` it always applies; outside it a group must opt in, because
+   * hosted `readiness` deliberately takes no ambient Cloud project context
+   * (pinned in cloud-link-status.test.ts) while `registry` — a group of
+   * project writes — must resolve exactly like `cloud projects …`.
+   */
+  ambientProject?: boolean;
+  /**
+   * Human rendering for `--format human`. Other formats always go through
+   * `writeResult`, so JSON output stays machine-shaped.
+   */
+  formatHuman?: (result: TOutput) => string;
+};
+
+export function bindOperation<
+  TOptions extends PlatformOptions,
+  TInput,
+  TOutput = unknown,
+>(
   command: Command,
   operation: {
     execute: (
@@ -279,18 +313,31 @@ export function bindOperation<TOptions extends PlatformOptions, TInput>(
         client: ReturnType<typeof buildPlatformClient>["client"];
         signal: AbortSignal;
       }
-    ) => Promise<unknown>;
+    ) => Promise<TOutput>;
   },
-  buildInput: (options: TOptions) => TInput
+  buildInput: (
+    options: TOptions,
+    ...positionals: (string | undefined)[]
+  ) => TInput,
+  bindExtras: BindOperationExtras<TOutput> = {}
 ): void {
   if (!hasCloudAncestor(command)) {
     addPlatformOptions(command);
   }
-  command.action(async (options: TOptions, invoked: Command) => {
+  command.action(async (...invocation: unknown[]) => {
+    const invoked = invocation[invocation.length - 1] as Command;
+    const options = invocation[invocation.length - 2] as TOptions;
+    const positionals = invocation.slice(0, -2) as (string | undefined)[];
     const globalOptions = getGlobalOptions(invoked);
     const merged = platformOptionsOf<TOptions & { project?: string }>(invoked);
     const underCloud = hasCloudAncestor(invoked);
-    const applyAmbient = underCloud && commandHasProjectOption(invoked);
+    // Gating ambient resolution on the parent being named `cloud` alone
+    // silently sent root-level writes (`registry install`) to the most
+    // recently updated project even inside a repo linked to a specific one —
+    // hence the explicit `ambientProject` opt-in for root-level groups.
+    const applyAmbient =
+      (underCloud || bindExtras.ambientProject === true) &&
+      commandHasProjectOption(invoked);
     const resolved = applyAmbient
       ? resolveCloudProjectArgs({ project: merged.project })
       : undefined;
@@ -301,18 +348,27 @@ export function bindOperation<TOptions extends PlatformOptions, TInput>(
       platformOptionsOf<TOptions>(invoked),
       globalOptions.timeout,
       ({ client, signal }) =>
-        operation.execute(buildInput(inputOptions), { client, signal }),
+        operation.execute(buildInput(inputOptions, ...positionals), {
+          client,
+          signal,
+        }),
       {
-        announce: underCloud,
+        announce: bindExtras.announce ?? underCloud,
         quiet: globalOptions.quiet,
         ...(resolved
           ? {
               projectScope: resolved.projectScope,
               cloudScope: resolved.projectScope,
             }
-          : {}),
+          : bindExtras.cloudScope
+            ? { cloudScope: bindExtras.cloudScope }
+            : {}),
       }
     );
+    if (bindExtras.formatHuman && globalOptions.format === "human") {
+      process.stdout.write(`${bindExtras.formatHuman(result)}\n`);
+      return;
+    }
     writeResult(result, globalOptions.format);
   });
 }
