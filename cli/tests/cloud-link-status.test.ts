@@ -174,16 +174,52 @@ test("cloud status reports missing credentials and automatic project offline", a
   assert.equal(run.exitCode, 0, run.stderr);
   const payload = JSON.parse(run.stdout) as {
     ok: boolean;
-    credential: { source: string };
+    credential: { source: string; valid: boolean | null };
+    deployment: { valid: boolean };
     project: { source: string; description: string };
     link: { valid: boolean | null };
   };
   assert.equal(payload.ok, true);
   assert.equal(payload.credential.source, "missing");
+  assert.equal(payload.credential.valid, null);
+  assert.equal(payload.deployment.valid, true);
   assert.equal(payload.project.source, "automatic");
   assert.equal(payload.project.description, "automatic (most recently updated)");
   assert.equal(payload.link.valid, null);
   assert.doesNotMatch(run.stdout, /project: default/i);
+});
+
+test("cloud status reports a valid configuration without leaking the key", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-status-ok-"));
+  const run = await withEnv(isolatedEnv(), () =>
+    withCwd(cwd, () =>
+      runCli([
+        "cloud",
+        "status",
+        "--api-key",
+        "sk_live_abcd1234efgh",
+        "--format",
+        "json",
+      ])
+    )
+  );
+  assert.equal(run.exitCode, 0, run.stderr);
+  const payload = JSON.parse(run.stdout) as {
+    ok: boolean;
+    credential: {
+      source: string;
+      valid: boolean | null;
+      redactedKey?: string;
+    };
+    deployment: { valid: boolean; source: string };
+  };
+  assert.equal(payload.ok, true);
+  assert.equal(payload.credential.source, "flag");
+  assert.equal(payload.credential.valid, true);
+  assert.equal(payload.credential.redactedKey, "sk_…efgh");
+  assert.equal(payload.deployment.valid, true);
+  assert.doesNotMatch(run.stdout, /sk_live_abcd1234efgh/);
+  assert.doesNotMatch(run.stderr, /sk_live_abcd1234efgh/);
 });
 
 test("cloud status names MCPJAM_PROJECT_ID as eval-reporting only", async () => {
@@ -242,11 +278,73 @@ test("cloud status warns when link apiUrl does not match the active deployment",
   );
 });
 
-test("cloud status rejects a legacy --api-key like other Cloud commands", async () => {
+test("cloud status reports a legacy --api-key in JSON and exits 1", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-status-legacy-"));
+  const run = await withEnv(isolatedEnv(), () =>
+    withCwd(cwd, () =>
+      runCli([
+        "cloud",
+        "status",
+        "--api-key",
+        "mcpjam_legacy_secret",
+        "--format",
+        "json",
+      ])
+    )
+  );
+  assert.equal(run.exitCode, 1, run.stderr);
+  const payload = JSON.parse(run.stdout) as {
+    ok: boolean;
+    credential: {
+      valid: boolean | null;
+      error?: string;
+      redactedKey?: string;
+    };
+  };
+  assert.equal(payload.ok, false);
+  assert.equal(payload.credential.valid, false);
+  assert.match(payload.credential.error ?? "", /Legacy mcpjam_ API keys/);
+  assert.equal(payload.credential.redactedKey, "mcpjam_…cret");
+  assert.doesNotMatch(run.stdout, /mcpjam_legacy_secret/);
+});
+
+test("cloud status reports an invalid --api-url in JSON and exits 1", async () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-status-badurl-"));
+  const run = await withEnv(isolatedEnv(), () =>
+    withCwd(cwd, () =>
+      runCli([
+        "cloud",
+        "status",
+        "--api-key",
+        "sk_test_xxxxYYYY",
+        "--api-url",
+        "not-a-url",
+        "--format",
+        "json",
+      ])
+    )
+  );
+  assert.equal(run.exitCode, 1, run.stderr);
+  const payload = JSON.parse(run.stdout) as {
+    ok: boolean;
+    credential: { valid: boolean | null; redactedKey?: string };
+    deployment: { valid: boolean; error?: string; apiUrl: string };
+  };
+  assert.equal(payload.ok, false);
+  assert.equal(payload.credential.valid, true);
+  assert.equal(payload.credential.redactedKey, "sk_…YYYY");
+  assert.equal(payload.deployment.valid, false);
+  assert.equal(payload.deployment.apiUrl, "not-a-url");
+  assert.match(payload.deployment.error ?? "", /Invalid --api-url/);
+  assert.doesNotMatch(run.stdout, /sk_test_xxxxYYYY/);
+});
+
+test("other Cloud commands still reject a legacy --api-key with exit 2", async () => {
   const run = await withEnv(isolatedEnv(), () =>
     runCli([
       "cloud",
-      "status",
+      "eval",
+      "list",
       "--api-key",
       "mcpjam_legacy",
       "--format",
@@ -262,11 +360,12 @@ test("cloud status rejects a legacy --api-key like other Cloud commands", async 
   assert.match(payload.error?.message ?? "", /Legacy mcpjam_ API keys/);
 });
 
-test("cloud status rejects an invalid --api-url like other Cloud commands", async () => {
+test("other Cloud commands still reject an invalid --api-url with exit 2", async () => {
   const run = await withEnv(isolatedEnv(), () =>
     runCli([
       "cloud",
-      "status",
+      "eval",
+      "list",
       "--api-key",
       "sk_test",
       "--api-url",

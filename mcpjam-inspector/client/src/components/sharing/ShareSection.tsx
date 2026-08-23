@@ -129,8 +129,13 @@ export function ShareSection<TEnvelope>({
     onUpdated?.(next);
   };
 
+  const ceilingNote = presets.find((option) => option.disabled)?.disabledReason;
+
   const handlePresetChange = async (preset: string) => {
     if (preset === currentPreset) return;
+    if (presets.some((option) => option.value === preset && option.disabled)) {
+      return;
+    }
     setIsModeBusy(true);
     try {
       updateSettings(await onSetPreset(preset));
@@ -373,6 +378,7 @@ export function ShareSection<TEnvelope>({
                 <DropdownMenuRadioItem
                   key={option.value}
                   value={option.value}
+                  disabled={option.disabled}
                   className="items-start"
                 >
                   <div>
@@ -397,6 +403,11 @@ export function ShareSection<TEnvelope>({
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
+        {ceilingNote ? (
+          <p className="text-xs leading-relaxed text-muted-foreground">
+            {ceilingNote}
+          </p>
+        ) : null}
         {activeNote}
       </div>
 

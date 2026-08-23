@@ -390,6 +390,13 @@ export {
   registerClient,
   selectResourceURL,
   startAuthorization,
+  // The `refresh_token` grant, already used internally by `auth()`. Exported so
+  // a caller doing a non-interactive refresh reuses it — same client-
+  // authentication selection, same resource handling, and it already preserves
+  // the caller's refresh token when the authorization server omits one — rather
+  // than hand-rolling a provider and a second `fetchToken` call that have to
+  // re-derive all of it.
+  refreshAuthorization,
 } from "./oauth/browser-auth.js";
 export {
   canonicalizeResourceUrl,
