@@ -544,8 +544,35 @@ describe("useEnsureDbUser", () => {
         expect.any(Error)
       );
     });
-    // Not ready, and not still "ensuring" — the retry below is a background
-    // recovery, not a state the UI blocks on.
+    expect(result.current.isUserReady).toBe(false);
+    // Still "ensuring": App renders "Could not finish setup" as soon as this
+    // clears for a user with no row, so a queued retry must keep it set.
+    expect(result.current.isEnsuringUser).toBe(true);
+  });
+
+  it("keeps setup in progress until the retries are exhausted", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    vi.useFakeTimers();
+    mockState.ensureUser.mockRejectedValue(new Error("boom"));
+
+    const { result } = renderHook(() => useEnsureDbUser());
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Across every gap between attempts, setup still reads as in progress.
+    for (const delayMs of [1_000, 5_000, 15_000]) {
+      expect(result.current.isEnsuringUser).toBe(true);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(delayMs);
+      });
+    }
+
+    // Budget spent: setup is genuinely finished and failed, so the error
+    // screen is now the right thing to show.
+    expect(mockState.ensureUser).toHaveBeenCalledTimes(4);
+    expect(result.current.isEnsuringUser).toBe(false);
     expect(result.current.isUserReady).toBe(false);
   });
 

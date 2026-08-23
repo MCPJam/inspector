@@ -268,19 +268,21 @@ export function useEnsureDbUser() {
 
     // Re-arm the effect after a failed run, spacing attempts out and stopping
     // once the budget for this identity is spent. Nothing else re-triggers it:
-    // the deps are all stable once auth settles.
+    // the deps are all stable once auth settles. Returns whether a retry is
+    // now queued, which is what keeps `isEnsuringUser` honest below.
     const scheduleRecovery = () => {
       const attempts =
         recoveryStateRef.current?.identityKey === identityKey
           ? recoveryStateRef.current.attempts
           : 0;
       const delayMs = ENSURE_USER_RECOVERY_DELAYS_MS[attempts];
-      if (delayMs === undefined) return;
+      if (delayMs === undefined) return false;
       recoveryStateRef.current = { identityKey, attempts: attempts + 1 };
       recoveryTimerRef.current = window.setTimeout(() => {
         recoveryTimerRef.current = null;
         setEnsureRecoveryToken((token) => token + 1);
       }, delayMs);
+      return true;
     };
 
     const run = async () => {
@@ -383,8 +385,13 @@ export function useEnsureDbUser() {
           console.error("[auth] ensureUser failed", err);
           lastEnsuredIdentityRef.current = null;
           setEnsuredIdentityKey(null);
-          setIsEnsuringUser(false);
-          scheduleRecovery();
+          // Setup is only FINISHED once no retry is left. A user with no row
+          // yet is shown `UserSetupError` the moment `isEnsuringUser` clears,
+          // so dropping it here flashes "Could not finish setup" in the gap
+          // between attempts, for a session that goes on to recover.
+          if (!scheduleRecovery()) {
+            setIsEnsuringUser(false);
+          }
         }
         return;
       }
