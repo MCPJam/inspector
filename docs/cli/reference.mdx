@@ -1589,6 +1589,63 @@ List Playground chat sessions in the selected project. Same project-selection ru
 | `--status <status>` | Filter by session status |
 | `--limit <n>` | Maximum sessions to return (1–200) |
 
+### `cloud sessions send`
+
+Send one message to a project's MCP servers and print the reply plus the raw tool calls, per-call latency and token usage — the telemetry a participant in the conversation cannot see.
+
+**This spends model credits on every call.**
+
+`--idempotency-key` is required and must be **stable for the intent**, not regenerated per attempt. It is what makes a retry safe: with the same key, a turn that already completed is replayed rather than re-run and re-billed. A fresh key per attempt deduplicates nothing.
+
+Omit `--session` to start a conversation; pass the `sessionId` the command returns to continue one. Configuration is fixed at the first turn, so `--model`, `--environment`, `--server`, `--system-prompt` and `--tool-mode` are refused alongside `--session` rather than silently repinning the session.
+
+| Flag | Description |
+|------|-------------|
+| `--message <text>` | The message to send, as the user (required) |
+| `--idempotency-key <key>` | Stable key for this turn's intent (required). Reuse it when retrying. |
+| `--session <sessionId>` | Continue this session instead of starting one |
+| `--model <modelId>` | Provider-prefixed model id, e.g. `anthropic/claude-sonnet-5`. Required to start a session. A bare id is rejected rather than guessed — unprefixed ids are indistinguishable from local Ollama models. |
+| `--environment <environmentId>` | Target this environment's servers. Conflicts with `--server`. |
+| `--server <serverId...>` | Target these project servers. Conflicts with `--environment`. |
+| `--system-prompt <text>` | System prompt for the session |
+| `--tool-mode <mode>` | `read_only` (default) advertises only tools annotated `readOnlyHint: true`. `auto` advertises everything and **may cause real side effects**. |
+| `--max-steps <n>` | Maximum engine steps this turn (1–16) |
+| `--max-tool-calls <n>` | Cap the tool calls this turn may make. `0` answers without tools. |
+| `--temperature <n>` | Sampling temperature (0–2) |
+| `--project <id-or-name>` | Project name or ID (required to start a session) |
+
+`read_only` filters on a hint the SERVER asserts, so it is a policy this host applies rather than a guarantee it can verify. A server is free to annotate a mutating tool as read-only.
+
+### `cloud sessions show`
+
+Print a session's metadata and a window of its raw messages. Message `index` values are **absolute transcript positions** — the same indices `cloud sessions trace` spans reference, so the two outputs join on that number.
+
+A transcript that could not be read reports `transcriptUnavailable: true` and a `null` `messageCount` — never `0`, which would claim the conversation is empty.
+
+| Flag | Description |
+|------|-------------|
+| `--session <sessionId>` | The session to read (required) |
+| `--after-message <index>` | Start the window at this absolute transcript index |
+| `--limit <n>` | Messages to return (1–200) |
+| `--project <id-or-name>` | Optional project scope; a session in another project answers not-found |
+
+### `cloud sessions trace`
+
+Print a session's per-turn execution spans: per-tool-call latency, token usage, and indices into the transcript.
+
+Returns the **latest turn** by default rather than the whole session — a session's spans are the largest thing the API emits, and the turn you just took is the one you are debugging.
+
+A turn whose spans could not be read reports `spansUnavailable: true` rather than an empty `spans` array: "made no calls" and "could not fetch" are opposite conclusions.
+
+| Flag | Description |
+|------|-------------|
+| `--session <sessionId>` | The session to trace (required) |
+| `--turn <turnId>` | Return exactly this turn. Conflicts with `--after-turn`. |
+| `--after-turn <promptIndex>` | Page forward from this turn index |
+| `--limit <n>` | Turns to return (1–20). Defaults to 1. |
+| `--no-spans` | Per-turn summaries without span payloads |
+| `--project <id-or-name>` | Optional project scope |
+
 ---
 
 ## `cloud login` / `logout` / `whoami`

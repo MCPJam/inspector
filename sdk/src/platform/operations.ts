@@ -37,6 +37,9 @@ import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
   PlatformChatSession,
+  PlatformChatTurn,
+  PlatformChatSessionTrace,
+  PlatformChatSessionDetail,
   PlatformDoctorReport,
   PlatformReadinessLaneCoverage,
   PlatformReadinessObservationState,
@@ -5387,6 +5390,285 @@ export const listChatSessionsOperation: PlatformOperation<
   },
 };
 
+// ── Agent Playground ────────────────────────────────────────────────────────
+//
+// The one place a machine caller can DRIVE a conversation against a project's
+// MCP servers rather than launching a run and reading the result afterwards.
+// `send_chat_message` is the turn; the two reads resolve what it produced.
+//
+// The reads are DIRECT-tier while `list_chat_sessions` / `search_sessions`
+// stay excluded from the agent surface, and that is not an inconsistency.
+// Those two ENUMERATE other people's conversations. These take an id the
+// caller either produced themselves or was handed by a human, which is a
+// different claim: "show me the session I just created" is not "show me what
+// everyone in this org has been talking about".
+
+const sendChatMessageInput = z.object({
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .describe(
+      "REQUIRED, and must be STABLE for the intent behind this turn — not a fresh id per attempt. This call spends model credits; with a stable key a timed-out retry replays the completed turn instead of running and billing it again.",
+    ),
+  message: z
+    .string()
+    .min(1)
+    .max(8000)
+    .describe("The message to send, as the user."),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Project name or ID. Required to START a session; ignored when continuing one, which takes its project from the session.",
+    ),
+  sessionId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Continue this session. Omit to start a new one. Use the sessionId a previous turn returned.",
+    ),
+  modelId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      'Provider-prefixed model id, e.g. "anthropic/claude-sonnet-5". Required on a first turn. A bare id is REJECTED rather than guessed, because an unprefixed id is indistinguishable from a local Ollama model.',
+    ),
+  environmentId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Run against this project environment's servers. Mutually exclusive with serverIds. First turn only.",
+    ),
+  serverIds: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .max(20)
+    .optional()
+    .describe(
+      "Run against these project servers. Mutually exclusive with environmentId. First turn only.",
+    ),
+  systemPrompt: z.string().max(8000).optional().describe("First turn only."),
+  temperature: z.number().min(0).max(2).optional(),
+  maxSteps: z
+    .number()
+    .int()
+    .min(1)
+    .max(16)
+    .optional()
+    .describe("Maximum engine steps for this turn."),
+  toolMode: z
+    .enum(["read_only", "auto"])
+    .optional()
+    .describe(
+      'Default "read_only": only tools the server annotated readOnlyHint:true are advertised. "auto" advertises everything and MAY CAUSE REAL SIDE EFFECTS through arbitrary third-party tools. The hint is server-asserted, so read_only is a policy, not a guarantee. First turn only.',
+    ),
+  allowedServerIds: z
+    .array(z.string().trim().min(1))
+    .max(20)
+    .optional()
+    .describe("Narrow the target to this subset of its servers."),
+  allowedTools: z
+    .array(z.string().trim().min(1))
+    .max(100)
+    .optional()
+    .describe("Advertise only these tool names."),
+  maxToolCalls: z
+    .number()
+    .int()
+    .min(0)
+    .max(16)
+    .optional()
+    .describe("Cap the tool calls this turn may make. 0 answers without tools."),
+});
+
+export type SendChatMessageInput = z.infer<typeof sendChatMessageInput>;
+
+export const sendChatMessageOperation: PlatformOperation<
+  SendChatMessageInput,
+  PlatformChatTurn
+> = {
+  name: "send_chat_message",
+  title: "Send one agent Playground message",
+  description:
+    "Send one message to a project's MCP servers and get the model's reply PLUS the telemetry a participant could not see: which tools ran, with what arguments, what each returned, per-call latency, and token usage. Pass the returned sessionId back to continue the conversation. SPENDS model credits per call. Configuration (model, target, system prompt, tool mode) pins on the first turn; a continuation that resends it is refused. Tools default to read_only; toolMode:'auto' may cause real external side effects.",
+  readOnly: false,
+  // Unknowable upstream of the call in the SAME sense `call_server_tool` is:
+  // under `auto` this executes arbitrary third-party tools, and softening the
+  // destructive default would claim a safety the host cannot verify.
+  mayBeDestructive: true,
+  risk: "spend",
+  inputSchema: sendChatMessageInput,
+  async execute(input, { client, signal }) {
+    const projectSelector = input.project?.trim();
+    // A continuation takes its project from the session — resolving one here
+    // would make an unnecessary call and let a caller name a project the
+    // session is not in.
+    const projectId =
+      !input.sessionId && projectSelector
+        ? (await resolveProjectOrThrow(client, projectSelector, signal)).project
+            .id
+        : undefined;
+    return client.sendChatMessage(
+      {
+        idempotencyKey: input.idempotencyKey,
+        message: input.message,
+        ...(projectId ? { projectId } : {}),
+        ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+        ...(input.modelId ? { modelId: input.modelId } : {}),
+        ...(input.environmentId ? { environmentId: input.environmentId } : {}),
+        ...(input.serverIds ? { serverIds: input.serverIds } : {}),
+        ...(input.systemPrompt ? { systemPrompt: input.systemPrompt } : {}),
+        ...(input.temperature !== undefined
+          ? { temperature: input.temperature }
+          : {}),
+        ...(input.maxSteps !== undefined ? { maxSteps: input.maxSteps } : {}),
+        ...(input.toolMode ? { toolMode: input.toolMode } : {}),
+        ...(input.allowedServerIds
+          ? { allowedServerIds: input.allowedServerIds }
+          : {}),
+        ...(input.allowedTools ? { allowedTools: input.allowedTools } : {}),
+        ...(input.maxToolCalls !== undefined
+          ? { maxToolCalls: input.maxToolCalls }
+          : {}),
+      },
+      { signal },
+    );
+  },
+};
+
+const getChatSessionInput = z.object({
+  sessionId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("The session id returned by send_chat_message or list_chat_sessions."),
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Optional project scope. When given, a session in another project answers as not found.",
+    ),
+  afterMessageIndex: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Start the window at this ABSOLUTE transcript index — the same index trace spans reference.",
+    ),
+  limit: z.number().int().min(1).max(200).optional(),
+});
+
+export type GetChatSessionInput = z.infer<typeof getChatSessionInput>;
+
+export const getChatSessionOperation: PlatformOperation<
+  GetChatSessionInput,
+  PlatformChatSessionDetail
+> = {
+  name: "get_chat_session",
+  title: "Read a chat session's messages",
+  description:
+    "Return a session's metadata plus a bounded window of its raw messages, indexed by ABSOLUTE transcript position. The companion to get_chat_session_trace: spans reference messages by index, so resolving a span to the payload that produced it needs both. A transcript that could not be read reports transcriptUnavailable and a null messageCount rather than an empty conversation.",
+  readOnly: true,
+  inputSchema: getChatSessionInput,
+  async execute(input, { client, signal }) {
+    const projectSelector = input.project?.trim();
+    const projectId = projectSelector
+      ? (await resolveProjectOrThrow(client, projectSelector, signal)).project.id
+      : undefined;
+    return client.getChatSession(
+      {
+        sessionId: input.sessionId,
+        ...(projectId ? { projectId } : {}),
+        ...(input.afterMessageIndex !== undefined
+          ? { afterMessageIndex: input.afterMessageIndex }
+          : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal },
+    );
+  },
+};
+
+const getChatSessionTraceInput = z.object({
+  sessionId: z.string().trim().min(1).describe("The session id to trace."),
+  project: z.string().trim().min(1).optional(),
+  turnId: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Return exactly this turn. Mutually exclusive with afterPromptIndex."),
+  afterPromptIndex: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Page forward from this turn index. Mutually exclusive with turnId.",
+    ),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(20)
+    .optional()
+    .describe("How many turns to return. Defaults to 1 — the latest."),
+  includeSpans: z
+    .boolean()
+    .optional()
+    .describe(
+      "Set false for cheap per-turn summaries (no span payloads) when deciding which turn to pull.",
+    ),
+});
+
+export type GetChatSessionTraceInput = z.infer<typeof getChatSessionTraceInput>;
+
+export const getChatSessionTraceOperation: PlatformOperation<
+  GetChatSessionTraceInput,
+  PlatformChatSessionTrace
+> = {
+  name: "get_chat_session_trace",
+  title: "Read a chat session's execution trace",
+  description:
+    "Return per-turn execution spans for a session: per-tool-call latency, token usage, and indices into the transcript. INCREMENTAL — returns the LATEST turn by default, not the whole session; use turnId or afterPromptIndex for older turns and includeSpans:false for summaries. A turn whose spans could not be read reports spansUnavailable rather than an empty span list, because 'made no calls' and 'could not fetch' are opposite conclusions.",
+  readOnly: true,
+  inputSchema: getChatSessionTraceInput,
+  async execute(input, { client, signal }) {
+    const projectSelector = input.project?.trim();
+    const projectId = projectSelector
+      ? (await resolveProjectOrThrow(client, projectSelector, signal)).project.id
+      : undefined;
+    return client.getChatSessionTrace(
+      {
+        sessionId: input.sessionId,
+        ...(projectId ? { projectId } : {}),
+        ...(input.turnId ? { turnId: input.turnId } : {}),
+        ...(input.afterPromptIndex !== undefined
+          ? { afterPromptIndex: input.afterPromptIndex }
+          : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+        ...(input.includeSpans !== undefined
+          ? { includeSpans: input.includeSpans }
+          : {}),
+      },
+      { signal },
+    );
+  },
+};
+
 const SESSION_SOURCE_TYPES = ["direct", "scenario", "eval", "swarm"] as const;
 
 const searchSessionsInput = z.object({
@@ -10389,6 +10671,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getScenarioOperation,
   listChatSessionsOperation,
   searchSessionsOperation,
+  sendChatMessageOperation,
+  getChatSessionOperation,
+  getChatSessionTraceOperation,
   listJourneysOperation,
   listJourneyRunsOperation,
   getJourneyRunOperation,

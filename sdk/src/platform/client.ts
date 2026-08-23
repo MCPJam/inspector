@@ -3,6 +3,10 @@ import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
   PlatformChatSession,
+  PlatformChatSessionDetail,
+  PlatformChatSessionTrace,
+  PlatformChatTurn,
+  PlatformToolMode,
   PlatformDoctorReport,
   PlatformEvalIteration,
   PlatformEvalRun,
@@ -590,6 +594,114 @@ export class PlatformApiClient {
           status: params.status,
           limit: params.limit,
           before: params.before,
+        },
+      },
+      options,
+    );
+  }
+
+  /**
+   * Send ONE message to a project's MCP servers and get the model's reply plus
+   * the telemetry a participant in the conversation could not see: which tools
+   * were called, with what arguments, what came back, and what it cost.
+   *
+   * Omit `sessionId` to start a session; pass the one this returns to
+   * continue it. Configuration (model, target, system prompt, tool mode) pins
+   * on the FIRST turn — a continuation that resends any of it is refused
+   * rather than silently repinning.
+   *
+   * `idempotencyKey` is REQUIRED and must be stable for the triggering intent,
+   * NOT freshly minted per HTTP attempt. This call spends model credits, and a
+   * per-attempt key deduplicates nothing: a timeout-and-retry would run and
+   * bill the turn twice. With a stable key, a retry replays the completed
+   * turn instead.
+   */
+  sendChatMessage(
+    params: {
+      idempotencyKey: string;
+      message: string;
+      projectId?: string;
+      sessionId?: string;
+      modelId?: string;
+      environmentId?: string;
+      serverIds?: string[];
+      systemPrompt?: string;
+      temperature?: number;
+      maxSteps?: number;
+      toolMode?: PlatformToolMode;
+      allowedServerIds?: string[];
+      allowedTools?: string[];
+      maxToolCalls?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformChatTurn> {
+    return this.request("POST", "/chat-sessions/messages", { body: params }, options);
+  }
+
+  /**
+   * Session metadata plus a bounded window of raw transcript messages.
+   *
+   * The companion to {@link getChatSessionTrace}: spans reference messages by
+   * absolute index, so resolving a span to the payload that produced it needs
+   * both reads.
+   */
+  getChatSession(
+    params: {
+      sessionId: string;
+      projectId?: string;
+      afterMessageIndex?: number;
+      limit?: number;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformChatSessionDetail> {
+    return this.request(
+      "GET",
+      `/chat-sessions/${encodeURIComponent(params.sessionId)}`,
+      {
+        query: {
+          projectId: params.projectId,
+          afterMessageIndex: params.afterMessageIndex,
+          limit: params.limit,
+        },
+      },
+      options,
+    );
+  }
+
+  /**
+   * Per-turn execution spans: tool latency, token usage, message indices.
+   *
+   * INCREMENTAL BY DEFAULT — returns the LATEST turn, not the whole session.
+   * Reach older turns with `turnId` or `afterPromptIndex`, and use
+   * `includeSpans: false` for cheap summaries when deciding which turn to pull.
+   */
+  getChatSessionTrace(
+    params: {
+      sessionId: string;
+      projectId?: string;
+      turnId?: string;
+      afterPromptIndex?: number;
+      limit?: number;
+      includeSpans?: boolean;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformChatSessionTrace> {
+    return this.request(
+      "GET",
+      `/chat-sessions/${encodeURIComponent(params.sessionId)}/trace`,
+      {
+        query: {
+          projectId: params.projectId,
+          turnId: params.turnId,
+          afterPromptIndex: params.afterPromptIndex,
+          limit: params.limit,
+          // Serialized explicitly: the query builder takes string|number, and
+          // `false` is the value that MATTERS here (it selects the cheap
+          // summary), so it must not be dropped as falsy.
+          includeSpans:
+            params.includeSpans === undefined
+              ? undefined
+              : String(params.includeSpans),
         },
       },
       options,

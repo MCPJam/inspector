@@ -36,6 +36,9 @@
  */
 import {
   callServerToolOperation,
+  getChatSessionOperation,
+  getChatSessionTraceOperation,
+  sendChatMessageOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
@@ -252,6 +255,62 @@ function readString(source: unknown, path: string): string | undefined {
     node = (node as Record<string, unknown>)[key];
   }
   return typeof node === "string" && node ? node : undefined;
+}
+
+/**
+ * What an approver is agreeing to when they let the agent send a message.
+ *
+ * The MESSAGE ITSELF is the thing being approved, so it leads — a prompt that
+ * said only "send a message to your servers" would ask for consent to
+ * something the approver cannot see. `toolMode` rides along because `auto` is
+ * the difference between reading a server and mutating whatever it fronts,
+ * and `model` because that is who gets paid.
+ */
+function describeChatMessage(input: Record<string, unknown>): string {
+  const message =
+    typeof input.message === "string" ? input.message.trim() : "";
+  // Truncated for a chat control, and marked so — an elided preview that
+  // looked complete would understate what is being sent.
+  const preview =
+    message.length > 200 ? `${message.slice(0, 200)}…` : message || "(empty)";
+  const target =
+    named(input, "environment") ??
+    (Array.isArray(input.serverIds)
+      ? `${input.serverIds.length} server(s)`
+      : undefined);
+  const toolMode =
+    input.toolMode === "auto"
+      ? "tools: AUTO (may cause real side effects on your servers)"
+      : "tools: read-only";
+  const model = typeof input.modelId === "string" ? input.modelId : undefined;
+  const continuing =
+    typeof input.sessionId === "string"
+      ? "Continue the conversation"
+      : "Start a conversation";
+  return [
+    `${continuing}${target ? ` against ${target}` : ""}`,
+    model ? `model: ${model}` : undefined,
+    toolMode,
+    `message: "${preview}"`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** The session a turn produced, as a linkable resource. */
+function chatSessionResource(
+  result: unknown,
+  { projectId }: { projectId: string },
+): ExecutedActionResource | undefined {
+  const sessionId = readString(result, "sessionId");
+  if (!sessionId) return undefined;
+  return {
+    type: "chat_session",
+    id: sessionId,
+    url: `${MCPJAM_HOSTED_ORIGIN}/sessions/${encodeURIComponent(
+      sessionId,
+    )}?project=${encodeURIComponent(projectId)}`,
+  };
 }
 
 /**
@@ -1367,6 +1426,40 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   // at all. Destructive ops (`delete_*`, `use_sandbox_image`, `reset_computer`)
   // stay excluded entirely: a proposal makes spend deliberate, but it does not
   // make an irreversible deletion recoverable.
+  // ── Agent Playground ────────────────────────────────────────────────────
+  //
+  // DOCTRINE, because this sits beside two DELIBERATE exclusions and the
+  // difference is easy to lose: `list_chat_sessions` and `search_sessions`
+  // stay excluded because they ENUMERATE other people's conversations. These
+  // three take an id the agent either produced on this surface or was handed
+  // by the person it is talking to, which is a different claim — "show me the
+  // session I just created" is not "show me what everyone has been saying".
+  // The reads are therefore direct; widening them into enumeration would
+  // reopen the exclusion by another door.
+  {
+    operation: sendChatMessageOperation,
+    tier: "gated",
+    proposal: {
+      describe: describeChatMessage,
+      buttonLabel: "Send it",
+      kind: "start",
+      // Every turn runs a model on the organization's account. Under
+      // `toolMode: "auto"` it can also mutate whatever the target servers
+      // front — but the severity vocabulary speaks to MONEY, and the
+      // side-effect warning is carried in the describe line where the
+      // approver actually reads it.
+      confirmSeverity: "spend",
+      resource: chatSessionResource,
+    },
+  },
+  {
+    operation: getChatSessionOperation,
+    tier: "direct",
+  },
+  {
+    operation: getChatSessionTraceOperation,
+    tier: "direct",
+  },
   {
     operation: runEvalSuiteOperation,
     tier: "gated",
