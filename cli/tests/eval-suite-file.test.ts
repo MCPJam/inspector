@@ -395,7 +395,11 @@ describe("fractionToPercent", () => {
     for (const fraction of [
       Number.NaN,
       Number.POSITIVE_INFINITY,
-      0.1 + 0.2,
+      // More significant digits than a double keeps after the two-place
+      // left-shift. `0.1 + 0.2` is the refuse case the OTHER direction
+      // (`percentToFraction`); shifting it left lands on a representable
+      // percent, so it is not a loss here.
+      Number("0.123456789012345678"),
     ]) {
       assert.equal(fractionToPercent(fraction), null, String(fraction));
     }

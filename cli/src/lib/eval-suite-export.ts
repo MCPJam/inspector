@@ -164,19 +164,26 @@ export function fractionToPercent(fraction: number): number | null {
   const digits = `${whole}${decimals}`;
   const newPoint = whole.length + 2;
   const padded = digits.padEnd(newPoint, "0");
+  // Always keep a decimal point so the trailing-zero strip only eats the
+  // FRACTIONAL side. Without it, a left-shift that lands on an integer
+  // (`0.8` → `080`) would have `\.?0+$` turn `80` into `8`.
   const shifted =
     newPoint >= padded.length
-      ? padded
+      ? `${padded}.0`
       : `${padded.slice(0, newPoint)}.${padded.slice(newPoint)}`;
-  const normalized = `${sign}${shifted}`
+  const stripped = `${sign}${shifted}`
     .replace(/^(-?)0+(?=\d)/, "$1")
     .replace(/\.?0+$/, "");
-  const value = Number(
-    normalized === "" || normalized === "-" ? "0" : normalized
-  );
+  const normalized = stripped === "" || stripped === "-" ? "0" : stripped;
+  const value = Number(normalized);
 
   if (!Number.isFinite(value)) return null;
-  return plainDecimal(value) === normalized ? value : null;
+  if (plainDecimal(value) !== normalized) return null;
+  // Close the inverse: this percent must convert back to the same fraction.
+  // A left-shift that Number can hold is still refused when it is not the
+  // image of {@link percentToFraction} (the dashboard would grade a
+  // different threshold).
+  return percentToFraction(value) === fraction ? value : null;
 }
 
 /**
