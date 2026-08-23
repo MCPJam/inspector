@@ -180,14 +180,14 @@ function parsePositiveLimit(
 ): number {
   if (raw === undefined) return fallback;
   const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
       `limit must be an integer between 1 and ${max}`
     );
   }
-  return Math.min(Math.floor(parsed), max);
+  return Math.min(parsed, max);
 }
 
 function parseNonNegativeIntQuery(

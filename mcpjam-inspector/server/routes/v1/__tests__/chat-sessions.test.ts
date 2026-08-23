@@ -218,8 +218,8 @@ describe("session detail", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("400s a zero or unparseable limit", async () => {
-    for (const limit of ["0", "oops"]) {
+  it("400s a zero, fractional, or unparseable limit", async () => {
+    for (const limit of ["0", "1.5", "oops"]) {
       const res = await call("GET", `${BASE}?limit=${limit}`);
       expect(res.status).toBe(400);
     }
@@ -385,8 +385,8 @@ describe("incremental trace", () => {
     expect(body.turns[0]?.spans).toEqual([]);
   });
 
-  it("400s a zero or unparseable trace limit", async () => {
-    for (const limit of ["0", "oops"]) {
+  it("400s a zero, fractional, or unparseable trace limit", async () => {
+    for (const limit of ["0", "1.5", "oops"]) {
       const res = await call("GET", `${BASE}/trace?limit=${limit}`);
       expect(res.status).toBe(400);
     }
@@ -412,5 +412,65 @@ describe("incremental trace", () => {
     expect(body.turns).toHaveLength(50);
     expect(body.turnCount).toBe(60);
     expect(body.nextCursor).toBe("49");
+  });
+
+  it("treats a missing or non-array trace list as empty", async () => {
+    for (const traces of [[], { nope: true }, null]) {
+      answerQueries({
+        getSession: sessionRow(),
+        getSessionTurnTraces: traces,
+      });
+      const res = await call("GET", `${BASE}/trace`);
+      const body = (await res.json()) as {
+        turns: unknown[];
+        turnCount: number;
+      };
+      expect(body.turns).toEqual([]);
+      expect(body.turnCount).toBe(0);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("marks spansUnavailable when the blob is not a JSON array", async () => {
+    answerQueries({
+      getSession: sessionRow(),
+      getSessionTurnTraces: [turn(0)],
+    });
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ spans: [] }), { status: 200 })
+    );
+    const res = await call("GET", `${BASE}/trace`);
+    const body = (await res.json()) as {
+      turns: Array<{ spansUnavailable?: boolean; spans: unknown[] }>;
+    };
+    expect(body.turns[0]?.spansUnavailable).toBe(true);
+    expect(body.turns[0]?.spans).toEqual([]);
+  });
+
+  it("fetches at most four span blobs at once", async () => {
+    answerQueries({
+      getSession: sessionRow(),
+      getSessionTurnTraces: Array.from({ length: 8 }, (_, index) =>
+        turn(index)
+      ),
+    });
+    let inFlight = 0;
+    let maxInFlight = 0;
+    fetchMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          setTimeout(() => {
+            inFlight -= 1;
+            resolve(new Response(JSON.stringify([]), { status: 200 }));
+          }, 20);
+        })
+    );
+    const res = await call("GET", `${BASE}/trace?limit=8`);
+    expect(res.status).toBe(200);
+    expect(maxInFlight).toBeLessThanOrEqual(4);
+    expect(maxInFlight).toBe(4);
+    expect(fetchMock).toHaveBeenCalledTimes(8);
   });
 });
