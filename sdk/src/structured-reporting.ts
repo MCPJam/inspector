@@ -1,4 +1,5 @@
 import { redactForTelemetry } from "./telemetry-redaction.js";
+import type { EvalDecisionSummary } from "./eval-decision-summary.js";
 
 export type StructuredCaseClassification =
   | "breaking"
@@ -38,6 +39,7 @@ export interface StructuredRunReport {
   cases: StructuredCaseResult[];
   durationMs: number;
   metadata: Record<string, unknown>;
+  decisionSummary?: EvalDecisionSummary;
 }
 
 export function summarizeStructuredCases(

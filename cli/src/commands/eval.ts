@@ -53,6 +53,7 @@ import {
 } from "../lib/output.js";
 import {
   buildCorpus,
+  buildEvalDecisionSummaryFromIterations,
   buildRunCompareReport,
   calculateLatencyStats,
   detectFlakyCases,
@@ -120,6 +121,7 @@ import {
 } from "../lib/eval-compare.js";
 import {
   parseReporterFormat,
+  writeEvalDecisionSummary,
   writeJsonArtifact,
   writeReporterResult,
 } from "../lib/reporting.js";
@@ -879,6 +881,9 @@ async function runEvalGate(
   const resolved = resolveCloudProjectArgs(options);
 
   let report: GateReport;
+  let decisionSummary:
+    | ReturnType<typeof buildEvalDecisionSummaryFromIterations>
+    | undefined;
   try {
     report = await runPlatformCommand(
       platformOptionsOf(command),
@@ -957,6 +962,17 @@ async function runEvalGate(
         const iterations = policyNeedsIterations(policy)
           ? await fetchAllIterations(client, signal, project.id, options.run)
           : undefined;
+        if (iterations) {
+          decisionSummary = buildEvalDecisionSummaryFromIterations(
+            iterations.items,
+            {
+              total: run.summary?.total,
+              passed: run.summary?.passed,
+              failed: run.summary?.failed,
+              iterationWalkComplete: iterations.complete,
+            }
+          );
+        }
         return reportForRun(run, iterations, policy);
       }
     );
@@ -999,6 +1015,7 @@ async function runEvalGate(
   writeResult({ gate: report, exitCode }, globalOptions.format);
   if (globalOptions.format === "human") {
     process.stderr.write(`${formatGateReport(report)}\n`);
+    writeEvalDecisionSummary(globalOptions.format, decisionSummary);
   }
   if (exitCode !== 0) {
     setProcessExitCode(exitCode);
@@ -1035,6 +1052,7 @@ async function runEvalCompare(
     report: GateReport;
     compare?: PlatformRunCompare;
     flakyCases?: FlakyCase[];
+    decisionSummary?: ReturnType<typeof buildEvalDecisionSummaryFromIterations>;
   };
 
   let outcome: CompareOutcome;
@@ -1126,6 +1144,17 @@ async function runEvalCompare(
         return {
           report: evaluateCompareGates(input, policy),
           compare,
+          decisionSummary: compareIterations
+            ? buildEvalDecisionSummaryFromIterations(
+                compareIterations.items,
+                {
+                  total: compare.compareRun.summary?.total,
+                  passed: compare.compareRun.summary?.passed,
+                  failed: compare.compareRun.summary?.failed,
+                  iterationWalkComplete: compareIterations.complete,
+                }
+              )
+            : undefined,
           // Reported, NEVER gated. See `detectFlakyCases`.
           flakyCases: compareIterations?.complete
             ? detectFlakyCases(flakyInputFrom(compareIterations.items))
@@ -1184,6 +1213,7 @@ async function runEvalCompare(
     outcome.compare
       ? buildRunCompareReport(outcome.compare, outcome.report, {
           flakyCases: outcome.flakyCases,
+          decisionSummary: outcome.decisionSummary,
         })
       : undefined
   );
@@ -2083,13 +2113,16 @@ export function registerEvalCommands(program: Command): void {
     ) => {
       const globalOptions = getGlobalOptions(command);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
+      let decisionSummary:
+        | ReturnType<typeof buildEvalDecisionSummaryFromIterations>
+        | undefined;
       const resolved = resolveCloudProjectArgs(options);
       const result = await runPlatformCommand(
         platformOptionsOf(command),
         globalOptions.timeout,
-        (context) => {
+        async (context) => {
           webOrigin = context.webOrigin;
-          return getEvalRunOperation.execute(
+          const result = await getEvalRunOperation.execute(
             {
               runId: options.run,
               ...(resolved.project === undefined
@@ -2098,6 +2131,33 @@ export function registerEvalCommands(program: Command): void {
             } as { project: string; runId: string },
             { client: context.client, signal: context.signal }
           );
+          if (
+            globalOptions.format === "human" &&
+            TERMINAL_RUN_STATUSES.has(result.run.status) &&
+            result.run.result === "failed"
+          ) {
+            try {
+              const iterations = await fetchAllIterations(
+                context.client,
+                context.signal,
+                result.project.id,
+                result.run.id
+              );
+              decisionSummary = buildEvalDecisionSummaryFromIterations(
+                iterations.items,
+                {
+                  total: result.run.summary?.total,
+                  passed: result.run.summary?.passed,
+                  failed: result.run.summary?.failed,
+                  iterationWalkComplete: iterations.complete,
+                }
+              );
+            } catch {
+              // The status result is already useful; an optional diagnostic
+              // read must never turn a successful status request into a failure.
+            }
+          }
+          return result;
         },
         {
           projectScope: resolved.projectScope,
@@ -2111,6 +2171,7 @@ export function registerEvalCommands(program: Command): void {
         suiteId: result.run.suiteId,
         runId: result.run.id,
       });
+      writeEvalDecisionSummary(globalOptions.format, decisionSummary);
     }
   );
 

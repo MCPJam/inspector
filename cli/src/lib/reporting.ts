@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  formatEvalDecisionSummary,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
   type StructuredRunReport,
@@ -36,6 +37,15 @@ export function writeReporterResult(
   }
 
   writeResult(renderStructuredRunJson(report), "json");
+}
+
+/** Human-only prose, kept separate so `--format json` remains one document. */
+export function writeEvalDecisionSummary(
+  format: string,
+  summary: Parameters<typeof formatEvalDecisionSummary>[0] | undefined,
+): void {
+  if (format !== "human" || !summary) return;
+  process.stdout.write(`${formatEvalDecisionSummary(summary)}\n`);
 }
 
 /**
