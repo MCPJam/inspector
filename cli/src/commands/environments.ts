@@ -25,12 +25,12 @@ import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
- * `mcpjam environments` — the Project Environment surface.
+ * `mcpjam cloud environments` — the Project Environment surface.
  *
  * A project environment is a named execution bundle (one host, optionally a
  * standalone server group, pinned skills, and pinned plugin versions) that eval
  * suites and journeys run against. It is NOT a Computer sandbox image — those
- * are `mcpjam images`.
+ * are `mcpjam cloud images`.
  *
  * Environments are revisioned: `update`, `archive`, and `restore` all require
  * `--expected-revision`, the revision you last read with `get`. If someone else

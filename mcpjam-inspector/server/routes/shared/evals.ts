@@ -354,6 +354,16 @@ export const RunEvalsRequestSchema = z.object({
    */
   idempotencyKey: z.string().min(1).max(256).optional(),
   /**
+   * SHA-256 hex of the suite-file bytes that launched this run. Lowercase,
+   * 64 characters. Forwarded to Convex `startTestSuiteRun.sourceHash` so a
+   * file-owned run records the exact bytes it ran. Absent on UI / API
+   * launches that did not come from a file.
+   */
+  sourceHash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/, "sourceHash must be a 64-character lowercase SHA-256 hex digest")
+    .optional(),
+  /**
    * Project-environment launch (one per attached env on a Run-all fan-out;
    * always sent explicitly, even single-env). `prepareEvalRun` resolves the
    * environment's closed server set via
@@ -366,6 +376,13 @@ export const RunEvalsRequestSchema = z.object({
    * unknown keys are stripped silently.
    */
   environmentId: z.string().optional(),
+  /**
+   * Compose-and-run opt-in: accept a project-scoped, non-archived environment
+   * that is NOT a suite member. Never mutates the suite. Absent / false keeps
+   * today's membership check. Older backends reject the unknown arg; clients
+   * probe `ephemeralEnvironmentLaunch` before sending it.
+   */
+  ephemeralEnvironment: z.boolean().optional(),
   /**
    * The "without skills" arm of an A/B compare (INS-5). `'exclude'` runs this
    * suite with skills DELIBERATELY off: the backend pins nothing from ANY of
@@ -1869,7 +1886,9 @@ export async function prepareEvalRun(
     resolvedEnvironment,
     source,
     idempotencyKey,
+    sourceHash,
     skillsOverride,
+    ephemeralEnvironment,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -2062,7 +2081,9 @@ export async function prepareEvalRun(
       : undefined,
     source,
     idempotencyKey,
+    ...(sourceHash ? { sourceHash } : {}),
     skillsOverride,
+    ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??
