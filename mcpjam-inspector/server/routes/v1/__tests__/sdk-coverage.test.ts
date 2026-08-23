@@ -112,6 +112,14 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "post /projects/{projectId}/readiness-runs/{runId}/cancel":
     "cancelReadinessRun",
 
+  // Persisted conformance runs
+  "post /projects/{projectId}/servers/{serverId}/conformance-runs":
+    "startConformanceRun",
+  "get /projects/{projectId}/conformance-runs": "listConformanceRuns",
+  "get /projects/{projectId}/conformance-runs/{runId}": "getConformanceRun",
+  "get /projects/{projectId}/conformance-runs/{runId}/report":
+    "getConformanceReport",
+
   // Hosts
   "get /projects/{projectId}/hosts": "listHosts",
   "post /projects/{projectId}/hosts": "createHost",
@@ -161,6 +169,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/sessions": "listSessions",
   "get /projects/{projectId}/eval-suites": "listEvalSuites",
   "post /projects/{projectId}/eval-suites": "createEvalSuite",
+  "post /projects/{projectId}/eval-suites/from-file": "syncFileOwnedEvalSuite",
   "get /projects/{projectId}/eval-suites/{suiteId}": "getEvalSuite",
   "patch /projects/{projectId}/eval-suites/{suiteId}": "updateEvalSuite",
   "delete /projects/{projectId}/eval-suites/{suiteId}": "deleteEvalSuite",

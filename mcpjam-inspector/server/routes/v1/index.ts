@@ -52,6 +52,7 @@ import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
 import tunnels from "./tunnels.js";
 import readiness from "./readiness.js";
+import conformanceRuns from "./conformance-runs.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
 const v1 = new Hono();
@@ -110,6 +111,7 @@ v1.route("/", resources);
 v1.route("/", exporter);
 v1.route("/", evals);
 v1.route("/", readiness);
+v1.route("/", conformanceRuns);
 v1.route("/", hosts);
 v1.route("/", harness);
 // Project Environments (named execution bundles for suites and journeys) stay

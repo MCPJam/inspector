@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
+import { useAuth } from "@workos-inc/authkit-react";
+import { useConvexAuth } from "convex/react";
 import { Github } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { toast } from "@/lib/toast";
 import { redirectToGithub } from "@/lib/github-external-redirect";
@@ -9,6 +12,7 @@ import {
   githubChecksWriteErrorMessage,
   GITHUB_BINDING_FAILED_MESSAGE,
   GITHUB_CALLBACK_INCOMPLETE_MESSAGE,
+  GITHUB_SIGNED_OUT_MESSAGE,
 } from "@/lib/github-checks-errors";
 import {
   useGithubInstallCallbacks,
@@ -69,6 +73,37 @@ export function GithubInstallCallbackRoute() {
   const [phase, setPhase] = useState<Phase>({ kind: "working" });
   const [claiming, setClaiming] = useState<number | null>(null);
 
+  // BOTH legs call `signedInAction`s, and this page is reached by a FULL PAGE
+  // LOAD from GitHub's redirect — so the Convex client has not attached a token
+  // yet when the effect below first runs. Calling either action in that window
+  // throws `Authentication required`, which is a plain `Error` and therefore
+  // reaches the user as a bare `Server Error` through the production mask, with
+  // the one-time state left unconsumed and the flow dead.
+  //
+  // Every other surface in this app gates its reads the same way
+  // (`useGithubChecksSettings`'s `canQuery`); this one has to gate a one-shot
+  // effect rather than a resubscribing query, which is exactly why it was easy
+  // to miss: a `useQuery` simply re-runs once auth lands, an action does not.
+  // THE WORKOS USER IS THE ONE THAT DECIDES, and `useConvexAuth` alone will not
+  // do. Guests are authenticated to Convex on purpose: `unified-convex-auth`
+  // hands the provider a guest token and a `GUEST_USER_PLACEHOLDER` so guests
+  // travel the same provider chain as members, and `useEnsureDbUser` marks them
+  // ready too. So `isAuthenticated && isUserReady` is TRUE for a guest, who
+  // would then call a `signedInAction` and get the generic binding failure —
+  // while the signed-out branch below never fired at all.
+  //
+  // GitHub Checks is member-only, and the sibling surface already reads it this
+  // way (`useGithubChecksSettings`: `isAuthenticated && user && isUserReady`).
+  // This is the same rule, not a guest special case.
+  const { user: workosUser, isLoading: isWorkosLoading } = useAuth();
+  const { isLoading: isConvexAuthLoading, isAuthenticated } = useConvexAuth();
+  const isUserReady = useDbUserReady();
+  const isAuthSettling = isWorkosLoading || isConvexAuthLoading;
+  // `isUserReady` matters as well: the actions resolve the WorkOS identity to a
+  // Convex user row, which does not exist until the bootstrap that provisions
+  // it has finished.
+  const canCall = Boolean(isAuthenticated && workosUser && isUserReady);
+
   // GitHub's redirect is a full page load, but React 18 StrictMode runs effects
   // twice in development — and both legs CONSUME a one-time state, so a second
   // run would burn it and land the user on "we could not finish connecting"
@@ -93,6 +128,20 @@ export function GithubInstallCallbackRoute() {
 
   useEffect(() => {
     if (startedRef.current) return;
+
+    // Wait, rather than fail, while auth is still settling. `startedRef` is
+    // deliberately NOT set on this path: the effect must be free to run again
+    // when the token lands, which is the whole point of waiting.
+    if (isAuthSettling || !canCall) {
+      // No WorkOS user once auth has settled — signed out, or a guest, which
+      // for a member-only surface is the same answer and the same instruction.
+      // Say it instead of spinning forever on "Finishing up with GitHub…".
+      if (!isAuthSettling && !workosUser) {
+        setPhase({ kind: "failed", message: GITHUB_SIGNED_OUT_MESSAGE });
+      }
+      return;
+    }
+
     startedRef.current = true;
 
     // The SETUP leg. `installation_id` is a claim; we forward it and let the
@@ -149,12 +198,15 @@ export function GithubInstallCallbackRoute() {
     setPhase({ kind: "failed", message: GITHUB_CALLBACK_INCOMPLETE_MESSAGE });
   }, [
     appNavigate,
+    canCall,
     code,
     completeInstallSetup,
     completeUserAuthorization,
     fail,
     installationId,
+    isAuthSettling,
     state,
+    workosUser,
   ]);
 
   const handleClaim = async (

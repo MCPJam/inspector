@@ -6,6 +6,7 @@ import {
 } from "./suite-insights-collapsible";
 import { SuiteMetricStrip } from "./suite-metric-strip";
 import { TestCasesOverview } from "./test-cases-overview";
+import type { CrossHostEnvironment } from "./cross-host/use-cross-host-data";
 import { SuiteResultsSplit } from "./suite-results-split";
 import { buildHostNamesById } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
@@ -82,6 +83,12 @@ export interface SuiteDashboardProps {
    * environment-backed run. Falls back to attachment names alone when omitted.
    */
   hostNamesById?: Map<string, string | null>;
+  /**
+   * The suite's project environments, owned by the parent like `hostNamesById`.
+   * Without them the matrix can only place a run by its resolved host, so two
+   * model cells on one client share a column.
+   */
+  environments?: readonly CrossHostEnvironment[];
   /** Forwarded to the per-case credit estimate (quick-run iteration override). */
   quickRunIterationOverride?: number;
 }
@@ -121,6 +128,7 @@ export function SuiteDashboard({
   runDetailPane,
   onExitRun,
   hostNamesById: hostNamesByIdProp,
+  environments,
   quickRunIterationOverride,
 }: SuiteDashboardProps) {
   const hasRuns = runs.length > 0;
@@ -173,6 +181,7 @@ export function SuiteDashboard({
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
       hostNamesById={hostNamesById}
+      environments={environments}
     />
   );
 
@@ -236,6 +245,7 @@ export function SuiteDashboard({
         runs={runs}
         allIterations={allIterations}
         hostNamesById={hostNamesById}
+        environments={environments}
         allRunsPane={caseLibrary}
         onTestCaseClick={onTestCaseClick}
         onOpenCaseIteration={onOpenCaseIteration}

@@ -219,6 +219,7 @@ describe("registerHostBridgeHandlers — sendToolCancelled matrix gating", () =>
   // rejection, which the hosted app reports as a client crash.
   it("swallows a send failure when the bridge is already disconnected", async () => {
     const bridge = makeStubBridge();
+    const toolError = new Error("boom");
     // Assert on the very promise the handler receives ("this rejection was
     // handled") rather than on the runtime staying quiet: an unhandled
     // rejection is reported by the browser, not by vitest's jsdom worker.
@@ -226,7 +227,7 @@ describe("registerHostBridgeHandlers — sendToolCancelled matrix gating", () =>
     const handled = vi.spyOn(sendResult, "catch");
     bridge.sendToolCancelled.mockReturnValue(sendResult);
     register(bridge, {
-      callbacks: { onCallTool: vi.fn().mockRejectedValue(new Error("boom")) },
+      callbacks: { onCallTool: vi.fn().mockRejectedValue(toolError) },
     });
 
     // The tool error still reaches the app through the response path.
@@ -235,7 +236,7 @@ describe("registerHostBridgeHandlers — sendToolCancelled matrix gating", () =>
         { name: "go", arguments: {} },
         {},
       ),
-    ).rejects.toThrow("boom");
+    ).rejects.toBe(toolError);
 
     expect(bridge.sendToolCancelled).toHaveBeenCalledWith({ reason: "boom" });
     expect(handled).toHaveBeenCalled();

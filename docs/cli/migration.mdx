@@ -47,7 +47,7 @@ mcpjam cloud tunnel --server dev -- npm start           # local target, Cloud re
 | `--api-key` / `--api-url` on each Cloud leaf | Declared on `mcpjam cloud`; work before or after descendants |
 | `projects list --organization-id` | `mcpjam cloud projects list --org` |
 | `tunnel --id <name>` | `mcpjam cloud tunnel --server <name>` (`--id` still works, hidden) |
-| `eval status --project` required | Optional. Same precedence as other Cloud commands |
+| `eval status|cancel|judge|iterations|gate|compare|trace|steps|screenshot|video --project` required | Optional. Same precedence as other Cloud commands |
 | `sessions list` with no `--project` | Project-scoped (link / env / automatic). Pass `--all-projects` for the old all-projects listing |
 
 Project-selection precedence: `--project` > explicit `project` in `--file`/`--json` > `MCPJAM_PROJECT` > nearest `.mcpjam/project.json` > automatic (most recently updated). `MCPJAM_PROJECT_ID` does not select a Cloud CLI project.

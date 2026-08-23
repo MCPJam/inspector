@@ -22,6 +22,7 @@ import type {
   PlatformEvalCasesGenerated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
+  PlatformFileOwnedEvalSuiteSynced,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
   PlatformEvalStepResult,
@@ -86,6 +87,10 @@ import type {
   PlatformReadinessRun,
   PlatformReadinessRunReceipt,
   PlatformReadinessStartBody,
+  PlatformConformanceReport,
+  PlatformConformanceRun,
+  PlatformConformanceRunReceipt,
+  PlatformConformanceSuiteKind,
   PlatformCatalogServer,
   PlatformCatalogSourceStatus,
   PlatformDirectorySearchPage,
@@ -1283,6 +1288,24 @@ export class PlatformApiClient {
     );
   }
 
+  /**
+   * `POST /projects/{p}/eval-suites/from-file` — resolve or create a
+   * file-owned suite by declared id. Lookup is by declared id within the
+   * project, never by name. A UI-authored suite has no declared id and
+   * cannot be claimed.
+   */
+  syncFileOwnedEvalSuite(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<PlatformFileOwnedEvalSuiteSynced> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/eval-suites/from-file`,
+      { body: params.body },
+      options,
+    );
+  }
+
   getEvalRun(
     params: { projectId: string; runId: string },
     options?: RequestOptions,
@@ -1599,6 +1622,86 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId,
       )}/readiness-runs/${encodeURIComponent(params.runId)}/report`,
+      {},
+      options,
+    );
+  }
+
+  /**
+   * Start a persisted conformance run against a saved server.
+   *
+   * The target is the saved server the path names — never a caller URL.
+   * OAuth is not startable here. Returns a receipt; poll `getConformanceRun`.
+   */
+  startConformanceRun(
+    params: {
+      projectId: string;
+      serverId: string;
+      suites?: PlatformConformanceSuiteKind[];
+      idempotencyKey?: string;
+      protocolVersion?: string;
+      engineVersion?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformConformanceRunReceipt> {
+    const { projectId, serverId, suites, idempotencyKey, protocolVersion, engineVersion } =
+      params;
+    const body: Record<string, unknown> = {};
+    if (suites !== undefined) body.suites = suites;
+    if (idempotencyKey !== undefined) body.idempotencyKey = idempotencyKey;
+    if (protocolVersion !== undefined) body.protocolVersion = protocolVersion;
+    if (engineVersion !== undefined) body.engineVersion = engineVersion;
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(projectId)}/servers/${encodeURIComponent(
+        serverId,
+      )}/conformance-runs`,
+      { body },
+      options,
+    );
+  }
+
+  getConformanceRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformConformanceRun> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/conformance-runs/${encodeURIComponent(params.runId)}`,
+      {},
+      options,
+    );
+  }
+
+  listConformanceRuns(
+    params: {
+      projectId: string;
+      serverId?: string;
+      limit?: number;
+      cursor?: string;
+    },
+    options?: RequestOptions,
+  ): Promise<PlatformPage<PlatformConformanceRun>> {
+    const { projectId, ...query } = params;
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(projectId)}/conformance-runs`,
+      { query },
+      options,
+    );
+  }
+
+  getConformanceReport(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions,
+  ): Promise<PlatformConformanceReport> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId,
+      )}/conformance-runs/${encodeURIComponent(params.runId)}/report`,
       {},
       options,
     );
