@@ -772,6 +772,33 @@ test("eval create rejects stdio servers before any write", async () => {
   }
 });
 
+test("eval create --json with schemaVersion points at eval run --file", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "create",
+          "--json",
+          JSON.stringify({
+            schemaVersion: "1",
+            mode: "agentWorkflow",
+            suite: { id: "s_billing", name: "Billing" },
+          }),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.match(run.stderr, /eval run --file/);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval create rejects an invalid suite definition as a usage error", async () => {
   const fixture = await startEvalFixture();
   try {

@@ -115,6 +115,7 @@ export type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformFileOwnedEvalSuiteSynced,
   PlatformEvalSuiteHost,
   PlatformEvalSuiteSchedule,
   PlatformEvalSuiteSettings,

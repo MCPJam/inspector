@@ -169,6 +169,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/sessions": "listSessions",
   "get /projects/{projectId}/eval-suites": "listEvalSuites",
   "post /projects/{projectId}/eval-suites": "createEvalSuite",
+  "post /projects/{projectId}/eval-suites/from-file": "syncFileOwnedEvalSuite",
   "get /projects/{projectId}/eval-suites/{suiteId}": "getEvalSuite",
   "patch /projects/{projectId}/eval-suites/{suiteId}": "updateEvalSuite",
   "delete /projects/{projectId}/eval-suites/{suiteId}": "deleteEvalSuite",

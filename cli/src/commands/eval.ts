@@ -84,6 +84,10 @@ import {
   type SuiteExportFinding,
 } from "../lib/eval-suite-export.js";
 import {
+  executeEvalRunFromFile,
+  looksLikeVersionedSuiteFile,
+} from "../lib/eval-run-file.js";
+import {
   CORPUS_DRIFT_EXIT_CODE,
   CORPUS_INCOMPLETE_EXIT_CODE,
   CORPUS_USAGE_EXIT_CODE,
@@ -488,6 +492,11 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     if (text.trim() === "") {
       throw usageError("--file input is empty.");
     }
+    if (looksLikeVersionedSuiteFile(text)) {
+      throw usageError(
+        "That looks like a versioned suite file. Use `eval run --file` to upload and run it."
+      );
+    }
     try {
       base = JSON.parse(text);
     } catch (error) {
@@ -504,6 +513,11 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
   }
   if (typeof base !== "object" || Array.isArray(base)) {
     throw usageError("Suite definition must be a JSON object.");
+  }
+  if ("schemaVersion" in (base as Record<string, unknown>)) {
+    throw usageError(
+      "That looks like a versioned suite file. Use `eval run --file` to upload and run it."
+    );
   }
 
   const merged = {
@@ -1476,10 +1490,18 @@ const SUITE_FILE_USAGE_EXIT_CODE = 2;
  * the buffer's length travels with the text rather than being re-derived from
  * it.
  */
-function readSuiteFileInput(value: string): { text: string; bytes: number } {
+function readSuiteFileInput(value: string): {
+  text: string;
+  bytes: number;
+  buffer: Buffer;
+} {
   try {
     const buffer = value === "-" ? readFileSync(0) : readFileSync(value);
-    return { text: buffer.toString("utf8"), bytes: buffer.byteLength };
+    return {
+      text: buffer.toString("utf8"),
+      bytes: buffer.byteLength,
+      buffer,
+    };
   } catch (error) {
     throw usageError(
       value === "-"
@@ -1749,7 +1771,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--file <path>",
-        "Path to a suite definition JSON file (or - for stdin)"
+        "Path to a create-API JSON body (or - for stdin). A versioned suite file belongs on `eval run --file`"
       )
       .option(
         "--json <json>",
@@ -1838,8 +1860,14 @@ export function registerEvalCommands(program: Command): void {
 
       evals
       .command("run")
-      .description("Start an eval run of an existing suite (asynchronous)")
-      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .description(
+        "Start an eval run of an existing suite, or upload a versioned suite file and run it"
+      )
+      .option("--suite <id-or-name>", "Eval suite name or ID")
+      .option(
+        "--file <path>",
+        "Versioned suite file to upload and run (.yaml or .json, or - for stdin)"
+      )
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
@@ -1925,7 +1953,8 @@ export function registerEvalCommands(program: Command): void {
         composeServerGroup?: string;
         composeSkill?: string[];
         project?: string;
-        suite: string;
+        suite?: string;
+        file?: string;
         server?: string[];
         environment?: string[];
         host?: string[];
@@ -1941,6 +1970,12 @@ export function registerEvalCommands(program: Command): void {
       },
       command
     ) => {
+      if (options.file && options.suite) {
+        throw usageError("Provide either --file or --suite, not both.");
+      }
+      if (!options.file && !options.suite) {
+        throw usageError("Provide --suite <id-or-name> or --file <path>.");
+      }
       const globalOptions = getGlobalOptions(command);
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       const resolved = resolveCloudProjectArgs(options);
@@ -1949,10 +1984,50 @@ export function registerEvalCommands(program: Command): void {
         globalOptions.timeout,
         (context) => {
           webOrigin = context.webOrigin;
+          if (options.file) {
+            const source = readSuiteFileInput(options.file);
+            return executeEvalRunFromFile(
+              { client: context.client, signal: context.signal },
+              {
+                source,
+                label: options.file === "-" ? "<stdin>" : options.file,
+                projectSelector: resolved.project ?? options.project,
+                knobs: {
+                  ...(options.server ? { server: options.server } : {}),
+                  ...(options.environment
+                    ? { environment: options.environment }
+                    : {}),
+                  ...(options.host ? { host: options.host } : {}),
+                  ...(options.allTargets ? { allTargets: true } : {}),
+                  ...(options.iterations !== undefined
+                    ? { iterations: options.iterations }
+                    : {}),
+                  ...(options.case?.length ? { case: options.case } : {}),
+                  ...(options.excludeSkills ? { excludeSkills: true } : {}),
+                  ...(options.refreshSnapshot ? { refreshSnapshot: true } : {}),
+                  ...(options.notes !== undefined ? { notes: options.notes } : {}),
+                  ...(options.minPassRate !== undefined
+                    ? { minPassRate: options.minPassRate }
+                    : {}),
+                  ...(options.matchOptions
+                    ? {
+                        matchOptions: parseMatchOptionsOption(
+                          options.matchOptions
+                        ),
+                      }
+                    : {}),
+                  ...(options.idempotencyKey
+                    ? { idempotencyKey: options.idempotencyKey }
+                    : {}),
+                  ...composeField(options),
+                },
+              }
+            );
+          }
           return runEvalSuiteOperation.execute(
             {
               project: resolved.project ?? options.project,
-              suite: options.suite,
+              suite: options.suite!,
               ...(options.server ? { servers: options.server } : {}),
               // ONE value maps to the singular field, several to the plural:
               // the op rejects sending both, and the singular carries the

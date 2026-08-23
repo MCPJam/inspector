@@ -358,6 +358,7 @@ export const startSuiteRunWithRecorder = async ({
   expectedEnvironmentServerIds,
   source,
   idempotencyKey,
+  sourceHash,
   skillsOverride,
   ephemeralEnvironment,
 }: {
@@ -459,6 +460,12 @@ export const startSuiteRunWithRecorder = async ({
    */
   idempotencyKey?: string;
   /**
+   * SHA-256 hex of the suite-file bytes that launched this run. Forwarded to
+   * Convex `startTestSuiteRun.sourceHash` so a file-owned run records the
+   * exact bytes it ran.
+   */
+  sourceHash?: string;
+  /**
    * The A/B "without skills" arm. `'exclude'` tells `startTestSuiteRun` to pin
    * NO skills from any channel and to mark the run `skillsExcluded`, so the
    * comparison arm is labelled rather than merely empty. See the wire schema
@@ -501,6 +508,7 @@ export const startSuiteRunWithRecorder = async ({
           : {}),
         ...(source ? { source } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
+        ...(sourceHash ? { sourceHash } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
         ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
         runnerCapabilities: RUNNER_CAPABILITIES,

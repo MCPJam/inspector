@@ -2000,6 +2000,7 @@ function runKnobBody(
     matchOptions?: z.infer<typeof publicMatchOptionsSchema>;
     excludeSkills?: boolean;
     idempotencyKey?: string;
+    sourceHash?: string;
   },
   caseIds: string[] | undefined,
 ): Record<string, unknown> {
@@ -2015,6 +2016,7 @@ function runKnobBody(
       ? { passCriteria: { minimumPassRate: input.minPassRate } }
       : {}),
     ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+    ...(input.sourceHash ? { sourceHash: input.sourceHash } : {}),
   };
 }
 
@@ -2618,6 +2620,16 @@ const RUN_KNOB_FIELDS = {
     .optional()
     .describe(
       "Retry-safety key. Repeating a call with the same key returns the run it already started instead of starting (and billing) a second one. On a multi-target launch the key covers the whole group: a retry returns the same group and the same runs.",
+    ),
+  sourceHash: z
+    .string()
+    .regex(
+      /^[a-f0-9]{64}$/,
+      "sourceHash must be a 64-character lowercase SHA-256 hex digest",
+    )
+    .optional()
+    .describe(
+      "SHA-256 hex of the suite-file bytes that launched this run. Set by `eval run --file`; a UI or API launch that did not come from a file omits it.",
     ),
 } as const;
 

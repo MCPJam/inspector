@@ -713,6 +713,12 @@ export interface PlatformEvalSuiteSchedule {
  */
 export interface PlatformEvalSuiteDetail {
   id: string;
+  /**
+   * The suite's declared file identity (`suite.id` in a suite file). Present
+   * on file-owned suites; absent on UI-authored suites, which have no
+   * declared id and cannot be claimed by `eval run --file`.
+   */
+  declaredId?: string;
   name: string | null;
   description: string | null;
   projectId: string | null;
@@ -746,6 +752,16 @@ export interface PlatformEvalSuiteDetail {
   schedule: PlatformEvalSuiteSchedule;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/**
+ * `POST /eval-suites/from-file` — resolve or create a file-owned suite by
+ * declared id. `created` is true on the first upload of that id in the
+ * project; later uploads update the same suite.
+ */
+export interface PlatformFileOwnedEvalSuiteSynced {
+  created: boolean;
+  suite: PlatformEvalSuiteDetail;
 }
 
 export interface PlatformEvalCaseModel {
