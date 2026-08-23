@@ -38,7 +38,10 @@ import {
   trimOptional,
 } from "../lib/inspector-render.js";
 import { parseReporterFormat, writeReporterResult } from "../lib/reporting.js";
-import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
+import {
+  attachCliDurationMs,
+  createCliRpcLogCollector,
+} from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
 import { normalizeInspectorFrontendUrl } from "../lib/inspector-api.js";
 import {
@@ -1183,7 +1186,11 @@ export function registerToolsCommands(program: Command): void {
       );
     } else {
       writeResult(
-        withRpcLogsIfRequested(outputPayload, primaryCollector, globalOptions),
+        withRpcLogsIfRequested(
+          attachCliDurationMs(outputPayload, Date.now() - startedAt),
+          primaryCollector,
+          globalOptions,
+        ),
         globalOptions.format,
       );
     }
