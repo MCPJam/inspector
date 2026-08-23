@@ -1,9 +1,7 @@
 import { ConvexHttpClient } from "convex/browser";
 import type { MCPClientManager, MCPServerReplayConfig } from "@mcpjam/sdk";
 import { readTasksPolicy } from "@mcpjam/sdk";
-import {
-  evalSuiteFileToolPolicySchema,
-} from "@mcpjam/sdk/contract";
+import { evalSuiteFileToolPolicySchema } from "@mcpjam/sdk/contract";
 import { resolveToolTaskSeam } from "../../utils/task-seam.js";
 import { z } from "zod";
 import { generateTestCases } from "../../services/eval-agent";

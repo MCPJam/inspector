@@ -156,7 +156,7 @@ describe("eval-trace-capture", () => {
           execute: async () => "ok",
         },
       },
-      ctx,
+      ctx
     ) as any;
 
     wall = runAt + 50;

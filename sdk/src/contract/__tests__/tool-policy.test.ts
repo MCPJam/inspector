@@ -17,7 +17,7 @@ describe("tool policy precedence", () => {
         toolName: "write",
         annotations: { destructiveHint: true },
         policy: policy({ allow: ["write"], deny: ["write"] }),
-      }),
+      })
     ).toMatchObject({
       allowed: false,
       reason: "denyList",
@@ -31,7 +31,7 @@ describe("tool policy precedence", () => {
         toolName: "write",
         annotations: { destructiveHint: true },
         policy: policy(),
-      }),
+      })
     ).toMatchObject({ allowed: false, reason: "destructiveDefaultDeny" });
   });
 
@@ -41,7 +41,7 @@ describe("tool policy precedence", () => {
         toolName: "write",
         annotations: { destructiveHint: true },
         policy: policy({ allow: ["write"] }),
-      }),
+      })
     ).toMatchObject({ allowed: true, reason: "allowList" });
   });
 
@@ -50,7 +50,7 @@ describe("tool policy precedence", () => {
       decideToolPolicy({
         toolName: "unknown",
         policy: policy({ mode: "readOnly" }),
-      }),
+      })
     ).toMatchObject({
       allowed: false,
       reason: "readOnlyModeUnclassified",
@@ -64,10 +64,10 @@ describe("tool policy precedence", () => {
         toolName: "read",
         annotations: { readOnlyHint: true },
         policy: policy({ mode: "readOnly" }),
-      }),
+      })
     ).toMatchObject({
       allowed: true,
-      reason: "readOnlyModeUnclassified",
+      reason: "readOnlyModeClassified",
       classification: "readOnly",
     });
   });
@@ -80,14 +80,14 @@ describe("tool policy precedence", () => {
         toolName: "contradictory",
         annotations,
         policy: policy({ mode: "readOnly" }),
-      }),
+      })
     ).toMatchObject({ allowed: false, reason: "destructiveDefaultDeny" });
     expect(
       decideToolPolicy({
         toolName: "contradictory",
         annotations,
         policy: policy(),
-      }),
+      })
     ).toMatchObject({
       allowed: false,
       reason: "destructiveDefaultDeny",
@@ -100,7 +100,7 @@ describe("tool policy precedence", () => {
       decideToolPolicy({
         toolName: "unknown",
         policy: policy(),
-      }),
+      })
     ).toMatchObject({ allowed: true, reason: "modeDefault" });
   });
 

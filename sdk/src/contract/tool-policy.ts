@@ -1,14 +1,12 @@
 import type { EvalSuiteFileToolPolicy } from "./suite-file.js";
 
-export type ToolSafetyClassification =
-  | "readOnly"
-  | "destructive"
-  | "unknown";
+export type ToolSafetyClassification = "readOnly" | "destructive" | "unknown";
 
 export type ToolPolicyDecisionReason =
   | "denyList"
   | "allowList"
   | "destructiveDefaultDeny"
+  | "readOnlyModeClassified"
   | "readOnlyModeUnclassified"
   | "modeDefault";
 
@@ -24,7 +22,7 @@ export type ToolPolicyDecision = {
  * safe to run.
  */
 export function classifyToolSafety(
-  annotations: Record<string, unknown> | undefined,
+  annotations: Record<string, unknown> | undefined
 ): ToolSafetyClassification {
   const readOnlyHint = annotations?.readOnlyHint;
   const destructiveHint = annotations?.destructiveHint;
@@ -59,7 +57,10 @@ export function decideToolPolicy(args: {
   if (policy.mode === "readOnly") {
     return {
       allowed: classification === "readOnly",
-      reason: "readOnlyModeUnclassified",
+      reason:
+        classification === "readOnly"
+          ? "readOnlyModeClassified"
+          : "readOnlyModeUnclassified",
       classification,
     };
   }

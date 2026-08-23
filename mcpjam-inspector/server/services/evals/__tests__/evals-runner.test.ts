@@ -289,10 +289,10 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
 
   async function runPolicyTool(
     policy: { mode: "default" | "readOnly"; allow?: string[]; deny?: string[] },
-    annotations?: Record<string, unknown>,
+    annotations?: Record<string, unknown>
   ) {
     const originalExecute = vi.fn(async () =>
-      mcpClientManager.executeTool("srv-1", "write", {}),
+      mcpClientManager.executeTool("srv-1", "write", {})
     );
     preparedToolsOverride.current = {
       write: { _serverId: "srv-1", execute: originalExecute },
@@ -328,7 +328,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     } as any);
 
     const updateCall = convexClient.action.mock.calls.find(
-      (call) => call[0] === "testSuites:updateTestIteration",
+      (call) => call[0] === "testSuites:updateTestIteration"
     );
     return {
       originalExecute,
@@ -343,7 +343,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   it("blocks destructive MCP execution and records a non-failing policy block", async () => {
     const { originalExecute, payload } = await runPolicyTool(
       { mode: "default" },
-      { destructiveHint: true },
+      { destructiveHint: true }
     );
     expect(originalExecute).not.toHaveBeenCalled();
     expect(mcpClientManager.executeTool).not.toHaveBeenCalled();
@@ -371,9 +371,9 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           expect.objectContaining({
             state: "notMeasured",
             reason: "blockedByPolicy",
-          }),
-        ),
-      ),
+          })
+        )
+      )
     );
     expect(applicableStages.some((row) => row.state === "failed")).toBe(false);
   });

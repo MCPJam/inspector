@@ -2321,13 +2321,13 @@ export const runEvalSuiteWithAiSdk = async ({
         serverIds.map(async (serverId) => ({
           serverId,
           tools: (await mcpClientManager.listTools(serverId)).tools,
-        })),
+        }))
       );
       for (const { serverId, tools: serverTools } of listedTools) {
         for (const tool of serverTools) {
           toolAnnotations.set(
             toolAnnotationsKey(serverId, tool.name),
-            (tool as { annotations?: Record<string, unknown> }).annotations,
+            (tool as { annotations?: Record<string, unknown> }).annotations
           );
         }
       }

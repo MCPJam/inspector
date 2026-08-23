@@ -39,6 +39,18 @@ import {
 type IterationStatus = "completed" | "failed" | "cancelled";
 
 type ToolCallRecord = { toolName: string; arguments: Record<string, any> };
+type PolicyBlockRecord = { reason?: unknown };
+
+/**
+ * Stage derivation uses the first recorded block as the stable iteration
+ * summary reason when multiple policy blocks occur.
+ */
+function getIterationPolicyReason(
+  policyBlocks: ReadonlyArray<PolicyBlockRecord>
+): string | undefined {
+  const reason = policyBlocks[0]?.reason;
+  return typeof reason === "string" ? reason : undefined;
+}
 
 /**
  * Adapt what the runner captured into the analyzer's evidence shape.
@@ -219,7 +231,7 @@ export function buildIterationFinishParams(args: {
    */
   stageToolErrors?: unknown[];
   /** Execution-layer policy blocks; persisted as metadata, never a failure. */
-  policyBlocks?: unknown[];
+  policyBlocks?: PolicyBlockRecord[];
   iterationMetadataBase: Record<string, string | number | boolean>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
@@ -288,13 +300,7 @@ export function buildIterationFinishParams(args: {
       policyBlocks && policyBlocks.length > 0
         ? {
             blocked: true,
-            reason:
-              typeof policyBlocks[0] === "object" &&
-              policyBlocks[0] !== null &&
-              typeof (policyBlocks[0] as { reason?: unknown }).reason ===
-                "string"
-                ? (policyBlocks[0] as { reason: string }).reason
-                : undefined,
+            reason: getIterationPolicyReason(policyBlocks),
           }
         : undefined,
     status,

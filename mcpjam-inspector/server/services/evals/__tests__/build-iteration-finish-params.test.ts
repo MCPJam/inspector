@@ -173,11 +173,11 @@ describe("buildIterationFinishParams — stage derivation", () => {
     expect(metadata.failureCategory).toBeUndefined();
     expect(metadata.firstFailedStage).toBeUndefined();
     const applicable = rowsOf(params).filter(
-      (row) => row.state !== "notApplicable",
+      (row) => row.state !== "notApplicable"
     );
     expect(applicable.every((row) => row.state === "notMeasured")).toBe(true);
     expect(applicable.every((row) => row.reason === "blockedByPolicy")).toBe(
-      true,
+      true
     );
   });
 });
