@@ -61,7 +61,7 @@ import {
  * reason `sessionReadiness` stamps `READINESS_ANALYZER_VERSION` on every
  * record it writes.
  */
-export const STAGE_ANALYZER_VERSION = 1;
+export const STAGE_ANALYZER_VERSION = 2;
 
 /**
  * Why a stage landed where it did.
@@ -94,6 +94,21 @@ export const STAGE_REASONS = [
   "evaluatorError",
   /** The harness never got to the test (setup abort). */
   "setupAborted",
+  /**
+   * The run reached the configured server's host and initialize failed
+   * there (attribution `theirs`, egress canary verified).
+   */
+  "connectFailed",
+  /**
+   * Initialize succeeded but tools/list failed on a reached server. A
+   * completed initialize is itself the egress evidence.
+   */
+  "toolsListFailed",
+  /**
+   * A connection/discovery failure without positive evidence our own
+   * egress works. Never `connection: failed`.
+   */
+  "egressUnverified",
   /** The run was stopped mid-flight (cancel / timeout). */
   "lifecycleStopped",
   // ── the stage does not apply ──
@@ -232,6 +247,26 @@ export type StageAuthoredCase = {
   assertionCount?: number;
 };
 
+/**
+ * One run-level setup phase (connect or tools/list), folded across every
+ * configured target. Connect and tools-list happen once per run above the
+ * iteration boundary, so this is the derivation input — not spans.
+ */
+export type StageSetupPhaseSignal = {
+  outcome: "ok" | "failed";
+  /** Present on a failure only. */
+  attribution?: "ours" | "theirs" | "unknown";
+  /** Positive canary evidence that our own egress works. */
+  egressVerified?: boolean;
+  /** Culprit synthetic-span ids (`run-connect-<id>` / `run-toolslist-<id>`). */
+  spanIds?: string[];
+};
+
+export type StageSetupSignals = {
+  connection?: StageSetupPhaseSignal;
+  discovery?: StageSetupPhaseSignal;
+};
+
 /** Everything the run actually captured. */
 export type StageEvidence = {
   spans?: readonly StageSpanLike[];
@@ -250,6 +285,12 @@ export type StageEvidence = {
   renderObservations?: readonly StageRenderObservationLike[];
   /** `tools_total_before` / `tools_exposed` — the one direct discovery signal. */
   toolSignals?: { toolsTotalBefore?: number; toolsExposed?: number };
+  /**
+   * Structured connect / tools-list evidence, threaded per-iteration
+   * (precedent: `toolSignals`). Synthetic `connection`/`discovery` spans
+   * are persistence/timeline-only and never enter this field.
+   */
+  setupSignals?: StageSetupSignals;
   /** The grader threw. Never folded into a server-side category. */
   evaluatorErrored?: boolean;
 };
@@ -356,45 +397,110 @@ function applicability(
 
 // ── per-stage evaluators ─────────────────────────────────────────────────────
 
-function deriveConnection(e: StageEvidence): StageResultRow {
-  const tools = (e.spans ?? []).filter(isToolSpan);
-  // A tool span that is not a transport-local failure proves we reached the
-  // server. This is retroactive, and it is the ONLY positive signal available:
-  // there is no `connection` span category anywhere in the span contract.
-  const reached = tools.filter(
+function nonTransportLocalToolSpans(
+  e: StageEvidence
+): StageSpanLike[] {
+  return (e.spans ?? []).filter(
     (s) =>
+      isToolSpan(s) &&
       !(
         typeof s.mcpErrorCode === "number" &&
         TRANSPORT_LOCAL_MCP_CODES.has(s.mcpErrorCode)
       )
   );
+}
+
+function signalEvidence(signal: StageSetupPhaseSignal): StageEvidenceRefs {
+  return signal.spanIds?.length
+    ? { spanIds: signal.spanIds.slice(0, 5) }
+    : {};
+}
+
+function deriveConnection(e: StageEvidence): StageResultRow {
+  const signal = e.setupSignals?.connection;
+  // (1) Structured signal says every expected target connected.
+  if (signal?.outcome === "ok") {
+    return row("connection", "passed", "observed", signalEvidence(signal));
+  }
+  // (2) A tool span that is not a transport-local failure proves we reached
+  // the server. Measured later evidence outranks a contradictory classification.
+  const reached = nonTransportLocalToolSpans(e);
   if (reached.length > 0) {
     return row("connection", "passed", "impliedByLaterEvidence", {
       spanIds: spanIds(reached).slice(0, 5),
     });
   }
+  // (3) A tools-list count is the same retroactive proof.
   if ((e.toolSignals?.toolsTotalBefore ?? 0) > 0) {
     return row("connection", "passed", "impliedByLaterEvidence");
   }
+  if (signal?.outcome === "failed") {
+    const refs = signalEvidence(signal);
+    // (4) Theirs + positive canary ⇒ the only honest `connection: failed`.
+    if (signal.attribution === "theirs" && signal.egressVerified === true) {
+      return row("connection", "failed", "connectFailed", refs);
+    }
+    // (5) Theirs without a canary, or (6) unknown: we cannot name their server.
+    if (
+      signal.attribution === "theirs" ||
+      signal.attribution === "unknown" ||
+      signal.attribution === undefined
+    ) {
+      return row("connection", "notMeasured", "egressUnverified", refs);
+    }
+    // (7) Ours (DNS, blocked egress, 401/403, transport-local MCP codes).
+    return row("connection", "notMeasured", "setupAborted", refs);
+  }
+  // (8)
   if (e.traceAbsent) return row("connection", "notMeasured", "traceAbsent");
-  // Not `noEvidenceCaptured`: there is no channel to capture on, so no amount
-  // of instrumentation on the current contract would have decided this.
-  return row("connection", "notMeasured", "noSpanChannel");
+  // (9) v2 fallthrough. `noSpanChannel` stays in the vocabulary (old
+  // producers still emit it) but this analyzer no longer does.
+  return row("connection", "notMeasured", "noEvidenceCaptured");
+}
+
+function connectionPositivelyReached(e: StageEvidence): boolean {
+  if (e.setupSignals?.connection?.outcome === "ok") return true;
+  if ((e.toolSignals?.toolsTotalBefore ?? 0) > 0) return true;
+  if (nonTransportLocalToolSpans(e).length > 0) return true;
+  // A discovery *signal* is not enough: foldPhase emits one for an
+  // unobserved target too. Only a completed initialize (connection ok)
+  // or later tool evidence proves we reached their host.
+  return false;
 }
 
 function deriveDiscovery(e: StageEvidence): StageResultRow {
+  const signal = e.setupSignals?.discovery;
+  if (signal?.outcome === "ok") {
+    return row("discovery", "passed", "observed", signalEvidence(signal));
+  }
   if ((e.toolSignals?.toolsTotalBefore ?? 0) > 0) {
     return row("discovery", "passed", "observed");
   }
   const tools = (e.spans ?? []).filter(isToolSpan);
   if (tools.length > 0) {
-    // We called a tool, so it must have been discovered.
     return row("discovery", "passed", "impliedByLaterEvidence", {
       spanIds: spanIds(tools).slice(0, 5),
     });
   }
+  if (signal?.outcome === "failed") {
+    const refs = signalEvidence(signal);
+    // Failed + initialize completed + theirs ⇒ measured discovery miss.
+    // A completed initialize is the egress evidence; no canary needed.
+    // Unknown (unobserved tools/list) stays notMeasured — incomplete
+    // observation is not a server failure.
+    if (
+      connectionPositivelyReached(e) &&
+      signal.attribution === "theirs"
+    ) {
+      return row("discovery", "failed", "toolsListFailed", refs);
+    }
+    if (signal.attribution === "ours") {
+      return row("discovery", "notMeasured", "setupAborted", refs);
+    }
+    return row("discovery", "notMeasured", "egressUnverified", refs);
+  }
   if (e.traceAbsent) return row("discovery", "notMeasured", "traceAbsent");
-  return row("discovery", "notMeasured", "noSpanChannel");
+  return row("discovery", "notMeasured", "noEvidenceCaptured");
 }
 
 const promptIndexes = (prompts: readonly StagePromptSummaryLike[]): number[] =>
@@ -673,15 +779,41 @@ export function deriveStageResults(
     evidence.traceAbsent &&
     noEvidenceAtAll
   ) {
-    return finalize(
-      USER_VALUE_STAGES.map((stage) =>
-        applies[stage]
-          ? row(stage, "notMeasured", "setupAborted")
-          : inapplicable(stage)
-      ),
-      evidence,
-      "setup"
+    const hasSetupSignals =
+      evidence.setupSignals?.connection !== undefined ||
+      evidence.setupSignals?.discovery !== undefined;
+    // No signals ⇒ byte-identical to the v1 chain (modulo analyzer version).
+    if (!hasSetupSignals) {
+      return finalize(
+        USER_VALUE_STAGES.map((stage) =>
+          applies[stage]
+            ? row(stage, "notMeasured", "setupAborted")
+            : inapplicable(stage)
+        ),
+        evidence,
+        "setup"
+      );
+    }
+    // Signals present ⇒ measure the top two stages. Remaining stages are
+    // `notReached` after a measured failure, else `notMeasured/setupAborted`.
+    // `failureCategory` stays `setup` (no honest `server` bucket; rates
+    // filter on `firstFailedStage`).
+    const connection = deriveConnection(evidence);
+    const discoveryRaw = deriveDiscovery(evidence);
+    const discovery =
+      connection.state === "failed" && discoveryRaw.state === "notMeasured"
+        ? row("discovery", "notReached", "earlierStageFailed")
+        : discoveryRaw;
+    const topFailed =
+      connection.state === "failed" || discovery.state === "failed";
+    const rest = USER_VALUE_STAGES.slice(2).map((stage) =>
+      applies[stage]
+        ? topFailed
+          ? row(stage, "notReached", "earlierStageFailed")
+          : row(stage, "notMeasured", "setupAborted")
+        : inapplicable(stage)
     );
+    return finalize([connection, discovery, ...rest], evidence, "setup");
   }
 
   const derived: StageResultRow[] = USER_VALUE_STAGES.map((stage) => {

@@ -29,6 +29,7 @@ import {
   deriveStageResults,
   stageDerivationToMetadata,
   type StageAuthoredCase,
+  type StageSetupSignals,
 } from "@mcpjam/sdk/contract";
 import {
   lockEvalSessionAfterUpdate,
@@ -67,6 +68,7 @@ function buildStageEvidence(args: {
    */
   toolErrors?: unknown[];
   toolSignals?: ToolExposureSignals;
+  setupSignals?: StageSetupSignals;
 }) {
   const hasSpans = (args.spans?.length ?? 0) > 0;
   const hasPrompts = (args.prompts?.length ?? 0) > 0;
@@ -94,6 +96,7 @@ function buildStageEvidence(args: {
         }
       : {}),
     ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
+    ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
     traceAbsent: !hasSpans && !hasPrompts && !hasMessages,
     traceLacksSpanChannel: !hasSpans && (hasPrompts || hasMessages),
   };
@@ -121,6 +124,7 @@ export function buildStageMetadata(args: {
   widgetRenderObservations?: RunnerWidgetRenderObservation[];
   stageToolErrors?: unknown[];
   toolSignals?: ToolExposureSignals;
+  setupSignals?: StageSetupSignals;
   status: "completed" | "failed";
   error?: string;
 }): Record<string, unknown> {
@@ -137,6 +141,7 @@ export function buildStageMetadata(args: {
         widgetRenderObservations: args.widgetRenderObservations,
         toolErrors: args.stageToolErrors,
         toolSignals: args.toolSignals,
+        setupSignals: args.setupSignals,
       }),
       iteration: { status, ...(error ? { error } : {}) },
     }),
@@ -214,6 +219,20 @@ export function buildIterationFinishParams(args: {
   iterationMetadataBase: Record<string, string | number | boolean>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
+  /**
+   * Folded run-level connect / tools-list evidence. Threaded into the
+   * analyzer; the same signals are also persisted under
+   * `metadata.stageSetupAudit.signals` (see `setupAudit`) so a v2 verdict
+   * can be audited or recomputed.
+   */
+  setupSignals?: StageSetupSignals;
+  /**
+   * Synthetic connection/discovery spans. Persisted on the trace (timeline)
+   * but never enter stage-derivation evidence.
+   */
+  setupSpans?: EvalTraceSpan[];
+  /** Bounded canary/audit extras from the run-setup observer. */
+  setupAudit?: Record<string, unknown>;
   injectOpenAiCompat?: boolean;
 }): Omit<FinalizeEvalIterationParams, "convexClient" | "videoBytes"> {
   const {
@@ -241,8 +260,15 @@ export function buildIterationFinishParams(args: {
     iterationMetadataBase,
     hostPolicy,
     toolSignals,
+    setupSignals,
+    setupSpans,
+    setupAudit,
     injectOpenAiCompat,
   } = args;
+  const persistedSpans = [
+    ...(setupSpans ?? []),
+    ...(spans ?? []),
+  ];
   const stageMetadata = buildStageMetadata({
     ...(stageCase ? { stageCase } : {}),
     spans,
@@ -252,6 +278,7 @@ export function buildIterationFinishParams(args: {
     widgetRenderObservations,
     stageToolErrors,
     toolSignals,
+    setupSignals,
     status,
     ...(error ? { error } : {}),
   });
@@ -263,7 +290,7 @@ export function buildIterationFinishParams(args: {
     messages,
     ...(modelId ? { modelId } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
-    ...(spans?.length ? { spans } : {}),
+    ...(persistedSpans.length ? { spans: persistedSpans } : {}),
     ...(prompts?.length ? { prompts } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     ...(widgetRenderObservations?.length ? { widgetRenderObservations } : {}),
@@ -280,6 +307,7 @@ export function buildIterationFinishParams(args: {
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),
       ...stageMetadata,
+      ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
             hostPolicy,

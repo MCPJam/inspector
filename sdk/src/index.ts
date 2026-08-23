@@ -215,6 +215,7 @@ export {
   isInsufficientScopeError,
   extractInsufficientScopeChallenge,
   unwrapEraNegotiationCause,
+  classifyNegotiationFailureClass,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";

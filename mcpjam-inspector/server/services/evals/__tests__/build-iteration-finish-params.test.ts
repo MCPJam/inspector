@@ -80,7 +80,7 @@ describe("buildIterationFinishParams — stage derivation", () => {
   test("writes a full chain when the authored case is supplied", () => {
     const params = build({ stageCase: authoredCase, spans: [okToolSpan] });
     const metadata = params.metadata as Record<string, unknown>;
-    expect(metadata.stageAnalyzerVersion).toBe(1);
+    expect(metadata.stageAnalyzerVersion).toBe(2);
     expect(rowsOf(params)).toHaveLength(6);
     expect(stage(params, "call").state).toBe("passed");
   });
@@ -177,7 +177,7 @@ describe("buildStageMetadata — the seam a setup abort finalizes through", () =
     expect(applicable.every((r) => r.state === "notMeasured")).toBe(true);
     expect(applicable.every((r) => r.reason === "setupAborted")).toBe(true);
     expect(metadata.failureCategory).toBe("setup");
-    expect(metadata.stageAnalyzerVersion).toBe(1);
+    expect(metadata.stageAnalyzerVersion).toBe(2);
     // Never a fabricated failure: nothing was measured, so nothing "failed".
     expect(metadata.firstFailedStage).toBeUndefined();
   });
@@ -200,5 +200,44 @@ describe("buildStageMetadata — the seam a setup abort finalizes through", () =
     }).metadata as Record<string, unknown>;
     expect(viaHelper.stageResults).toEqual(viaFinishParams.stageResults);
     expect(viaHelper.failureCategory).toBe(viaFinishParams.failureCategory);
+  });
+
+  test("synthetic setup spans persist on the trace and stay out of evidence", () => {
+    const setupSpan = {
+      id: "run-connect-s1",
+      name: "connect",
+      category: "connection",
+      startMs: 0,
+      endMs: 12,
+      status: "error",
+      serverId: "s1",
+    } as unknown as EvalTraceSpan;
+    const params = build({
+      stageCase: authoredCase,
+      status: "failed",
+      error: "connection refused",
+      messages: [],
+      setupSpans: [setupSpan],
+      setupSignals: {
+        connection: {
+          outcome: "failed",
+          attribution: "theirs",
+          egressVerified: true,
+          spanIds: ["run-connect-s1"],
+        },
+      },
+    });
+    expect(params.spans).toEqual([setupSpan]);
+    expect(stage(params, "connection")).toMatchObject({
+      state: "failed",
+      reason: "connectFailed",
+      evidence: { spanIds: ["run-connect-s1"] },
+    });
+    // The analyzer's `traceAbsent` fallback still fired — synthetic spans
+    // never entered evidence — so later stages stay notReached, not implied.
+    expect(stage(params, "selection")).toMatchObject({
+      state: "notReached",
+      reason: "earlierStageFailed",
+    });
   });
 });
