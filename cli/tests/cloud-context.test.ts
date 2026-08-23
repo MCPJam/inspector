@@ -85,6 +85,40 @@ test("preflightCloudCredentials uses the shared login guidance", () => {
   );
 });
 
+test("preflightCloudCredentials rejects a legacy --api-key as a usage error", () => {
+  assert.throws(
+    () =>
+      preflightCloudCredentials(
+        { apiKey: "mcpjam_legacy" },
+        { env: {}, authFilePath: path.join(tmpdir(), "no-auth.json") }
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, "USAGE_ERROR");
+      assert.equal(error.exitCode, 2);
+      assert.match(error.message, /Legacy mcpjam_ API keys/);
+      return true;
+    }
+  );
+});
+
+test("preflightCloudCredentials rejects an invalid --api-url as a usage error", () => {
+  assert.throws(
+    () =>
+      preflightCloudCredentials(
+        { apiKey: "sk_test", apiUrl: "not-a-url" },
+        { env: {}, authFilePath: path.join(tmpdir(), "no-auth.json") }
+      ),
+    (error: unknown) => {
+      assert.ok(error instanceof CliError);
+      assert.equal(error.code, "USAGE_ERROR");
+      assert.equal(error.exitCode, 2);
+      assert.match(error.message, /Invalid --api-url/);
+      return true;
+    }
+  );
+});
+
 test("preflightCloudCredentials names a leftover legacy MCPJAM_API_KEY", () => {
   assert.throws(
     () =>

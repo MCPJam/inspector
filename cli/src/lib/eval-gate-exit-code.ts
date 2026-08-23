@@ -1,7 +1,7 @@
 import type { GateReport } from "@mcpjam/sdk";
 
 /**
- * Exit code for `mcpjam eval gate`.
+ * Exit code for `mcpjam cloud eval gate`.
  *
  * Copies the `conformance-exit-code.ts` idiom, and for the same reason: "the
  * evals regressed" and "we never established anything" are different failures
