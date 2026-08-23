@@ -896,7 +896,13 @@ function launchFailureCases(
         category: "launch",
         passed: false,
         error: target.error.message,
-        details: { code: target.error.code },
+        // `errorCode`, not `code`: the telemetry redactor treats any key
+        // normalizing to "code" as a possible OAuth authorization code and
+        // keeps only SCREAMING_SNAKE values. The v1 API's launch failures are
+        // lowercase snake_case (`billing_limit_reached`, `rate_limited`), so
+        // under the shorter name every one of them reached the CI artifact as
+        // "[REDACTED]" — the out-of-credits case included.
+        details: { errorCode: target.error.code },
       },
     ];
   });
@@ -2359,11 +2365,14 @@ export function registerEvalCommands(program: Command): void {
           );
 
           if (!needsReport) {
-            if (waitErrors.length > 0) {
-              throw operationalError(
-                waitErrors.map((entry) => entry.error).join("; ")
-              );
-            }
+            // Deliberately does NOT throw on `waitErrors` here. Throwing from
+            // inside the platform command skips the receipt below, and the
+            // receipt is the only place the launched run ids are printed: a
+            // `--wait --format json > out.json` that timed out would leave
+            // `out.json` EMPTY, with the ids surviving only as prose inside a
+            // stderr message. The caller cannot find, resume, or cancel the
+            // runs it just paid for. The shared exit path below raises the
+            // same failure after the receipt is on stdout.
             return {
               runs,
               waitErrors,
@@ -2441,15 +2450,31 @@ export function registerEvalCommands(program: Command): void {
         writeRunGroupSummary(globalOptions.format, webOrigin, result);
       }
 
+      // Everything above has already been written — report file, reporter
+      // stdout, or the launch receipt. Only now may this fail.
       const reportingErrors = completion.reportInputs.filter(
         (input) => !input.iterationsComplete || input.iterationError
       );
       if (reportingErrors.length > 0 || completion.waitErrors.length > 0) {
+        const affectedRunIds = [
+          ...reportingErrors.map((input) => input.run.id),
+          ...completion.waitErrors.map((entry) => entry.runId),
+        ];
         throw operationalError(
-          `Completed eval run report is incomplete for: ${[
-            ...reportingErrors.map((input) => input.run.id),
-            ...completion.waitErrors.map((entry) => entry.runId),
-          ].join(", ")}.`
+          needsReport
+            ? `Completed eval run report is incomplete for: ${affectedRunIds.join(
+                ", "
+              )}.`
+            : `Did not observe completion for: ${affectedRunIds.join(", ")}.`,
+          {
+            // Machine-readable, because the message is not: a pipeline that
+            // needs to resume or cancel these runs should not have to parse
+            // English out of stderr.
+            runIds: affectedRunIds,
+            ...(completion.waitErrors.length > 0
+              ? { waitErrors: completion.waitErrors }
+              : {}),
+          }
         );
       }
 

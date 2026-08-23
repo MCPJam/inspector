@@ -416,8 +416,14 @@ This line is only emitted in human format — `--format json` output is unchange
 
 Use `--wait-timeout <ms>` to replace the 10-minute default. `--out` defaults to the structured JSON format; add `--reporter junit-xml` to write JUnit XML instead. When `--reporter` is present, the same report is also written to stdout.
 
+<Warning>
+**`eval run --wait` exits 0 even when the evals failed.** Waiting for a run is not the same as judging it: `--wait` keeps `eval run`'s existing exit codes, where `1` means a run never launched, not that a run came back red. The report it writes records the verdict faithfully (`passed: false`, and a JUnit `failures` count above zero), but the process still exits 0.
+
+So the `eval gate` step above is what fails the job — do not drop it and rely on the first step's exit code. If you only want the artifact and not the gate, assert on the verdict yourself: `[ "$(jq -r '.passed' eval-report.json)" = "true" ]`.
+</Warning>
+
 <Note>
-`eval run` keeps its existing exit codes: a completed failing run still writes its report without introducing verdict-based exit codes. Use `eval gate` when the job must fail on a policy; its report is written before the gate exit code is set. `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
+`eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
 </Note>
 
 #### Decision summary in human format

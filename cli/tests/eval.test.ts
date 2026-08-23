@@ -198,6 +198,8 @@ interface EvalFixtureOptions {
   /** Target ids the grouped-launch endpoint should report as failures. */
   groupFailures?: Record<string, { code: string; message: string }>;
   runCaseResult?: "passed" | "failed";
+  /** Non-terminal keeps `--wait` polling until its deadline. */
+  runCaseStatus?: "running" | "completed";
   runCaseIterationFetchError?: boolean;
   runOneResult?: "passed" | "failed";
 }
@@ -555,7 +557,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           id: "run-case",
           suiteId: "suite-1",
           runNumber: 4,
-          status: "completed",
+          status: options.runCaseStatus ?? "completed",
           result,
           summary:
             result === "passed"
@@ -1958,6 +1960,100 @@ test("eval run writes completed cases and launch failures before a partial exit"
         { category: "launch", passed: false, error: "host unavailable" },
       ],
     );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --wait still prints the launch receipt when the wait times out", async () => {
+  // The run ids are the only handle a caller has on runs it has already PAID
+  // for. Raising the timeout before the receipt is written left
+  // `--wait --format json > out.json` holding an empty file.
+  const fixture = await startEvalFixture({ runCaseStatus: "running" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--wait-timeout",
+          "1",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 1);
+    const receipt = JSON.parse(run.stdout.trim());
+    assert.equal(receipt.launch.targets[0].runId, "run-case");
+    assert.deepEqual(receipt.runs, []);
+    // The failure itself is still reported, and names the runs machine-readably
+    // so a pipeline never has to parse English out of stderr.
+    // stderr also carries the cloud-context announce line; the error document
+    // is the last thing written to it.
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "OPERATIONAL_ERROR");
+    assert.deepEqual(failure.error.details.runIds, ["run-case"]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run keeps a lowercase launch failure code out of the redactor", async () => {
+  // `billing_limit_reached` and friends are the v1 API's real vocabulary. Under
+  // the key name `code` the telemetry redactor read them as OAuth authorization
+  // codes and replaced every one with "[REDACTED]" — the out-of-credits case
+  // included. SCREAMING_SNAKE codes survived either way, which is why the
+  // sibling test above never caught it.
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      hosts: [
+        { id: "host-claude", name: "Claude Code" },
+        { id: "host-chatgpt", name: "ChatGPT" },
+      ],
+    },
+    groupFailures: {
+      "host-chatgpt": {
+        code: "billing_limit_reached",
+        message: "out of credits",
+      },
+    },
+  });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  try {
+    await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--all-targets",
+          "--wait",
+          "--out",
+          jsonPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const report = JSON.parse(await readFile(jsonPath, "utf8"));
+    const launchCase = report.cases.find(
+      (entry: { category: string }) => entry.category === "launch",
+    );
+
+    assert.equal(launchCase.error, "out of credits");
+    assert.equal(launchCase.details.errorCode, "billing_limit_reached");
   } finally {
     await fixture.close();
   }
