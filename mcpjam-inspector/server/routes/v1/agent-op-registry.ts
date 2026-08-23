@@ -572,6 +572,28 @@ async function freezeComposeRunTarget(
   return { ...input, compose: nextCompose };
 }
 
+/**
+ * Drop describe-only compose fields before hashing a proposal identity.
+ *
+ * `hostLabel` is a display name captured at freeze time. A host rename
+ * between Slack redeliveries would otherwise change the normalized input,
+ * mint a second action id, and leave two approval controls for the same
+ * paid run. The stored row still keeps the label so the card can render it.
+ */
+export function proposalInputForIdempotency(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const compose = input.compose;
+  if (!compose || typeof compose !== "object" || Array.isArray(compose)) {
+    return input;
+  }
+  const { hostLabel: _dropped, ...restCompose } = compose as Record<
+    string,
+    unknown
+  >;
+  return { ...input, compose: restCompose };
+}
+
 /** Read a string array off validated input, dropping non-strings. */
 function readStringList(input: Record<string, unknown>, key: string): string[] {
   const value = input[key];
@@ -2020,6 +2042,11 @@ export function proposalMetaFor(operationName: string): {
     input: Record<string, unknown>,
     context: { projectId: string; client: PlatformApiClient },
   ) => Promise<Record<string, unknown>>;
+  /**
+   * Canonicalize frozen input for the proposal action-id hash.
+   * Display-only fields (compose.hostLabel) must not remint a spend control.
+   */
+  hashInput: (input: Record<string, unknown>) => Record<string, unknown>;
   /** Keys the frozen input must carry, or the proposal is refused. */
   requiredFrozenKeys: readonly string[];
 } {
@@ -2032,6 +2059,7 @@ export function proposalMetaFor(operationName: string): {
       severityFor: () => undefined,
       targetFor: () => undefined,
       normalizeArgs: async (input) => input,
+      hashInput: proposalInputForIdempotency,
       requiredFrozenKeys: [],
     };
   }
@@ -2072,6 +2100,7 @@ export function proposalMetaFor(operationName: string): {
         return input;
       }
     },
+    hashInput: proposalInputForIdempotency,
     requiredFrozenKeys: entry.proposal.requiredFrozenKeys ?? [],
   };
 }

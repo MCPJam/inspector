@@ -21,6 +21,7 @@ import {
   AGENT_OP_REGISTRY,
   EXCLUDED_FROM_AGENT,
   conformanceRunResource,
+  proposalInputForIdempotency,
   proposalMetaFor,
   WRITE_OPERATION_NAMES,
   gatedEntryFor,
@@ -611,6 +612,27 @@ describe("agent op registry", () => {
       suite: "smoke",
       compose: { host: "missing-host" },
     });
+  });
+
+  it("excludes hostLabel from the proposal identity hash", () => {
+    // persistProposal hashes the frozen input. A host rename changes
+    // hostLabel but not host; that must not mint a second spend control.
+    const renamed = proposalInputForIdempotency({
+      suite: "smoke",
+      compose: { host: "host_a", hostLabel: "Claude" },
+    });
+    const original = proposalInputForIdempotency({
+      suite: "smoke",
+      compose: { host: "host_a", hostLabel: "Claude Code" },
+    });
+    expect(renamed).toEqual({ suite: "smoke", compose: { host: "host_a" } });
+    expect(renamed).toEqual(original);
+    expect(
+      proposalMetaFor(runEvalSuiteOperation.name).hashInput({
+        suite: "smoke",
+        compose: { host: "host_a", hostLabel: "Claude Code" },
+      })
+    ).toEqual(original);
   });
 
   it("leaves a compose host alone when listHosts cannot answer", async () => {

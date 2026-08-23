@@ -295,7 +295,7 @@ async function persistProposal(opts: {
     ? deriveOperationIdempotencyKey(
         opts.turnIdempotencyKey,
         `proposal:${operation.name}`,
-        input
+        meta.hashInput(input)
       )
     : randomUUID();
   if (!isValidAgentActionId(actionId)) {
