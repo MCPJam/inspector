@@ -11,7 +11,7 @@ environment is.
 
 **Hosted evals** (suites, cases, runs, schedules — `testSuite` rows in Convex,
 driven by the web UI, the `/v1/eval-*` routes, `@mcpjam/sdk/platform`, and the
-CLI's `mcpjam eval …`) are now environment-aware end to end. A suite carries
+CLI's `mcpjam cloud eval …`) are now environment-aware end to end. A suite carries
 `environmentIds`; a run resolves exactly one of them into a closed execution
 context — host config, server set, pinned plugin versions, sandbox image pin —
 and persists that resolution as an immutable `configSnapshot.environmentRef`

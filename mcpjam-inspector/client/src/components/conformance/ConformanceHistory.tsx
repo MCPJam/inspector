@@ -280,9 +280,14 @@ export function ConformanceHistory({
               <button
                 type="button"
                 className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-muted/40"
-                onClick={() =>
-                  navigate(buildConformanceRunPath(run._id, projectId))
-                }
+                data-testid="conformance-history-row"
+                onClick={(event) => {
+                  // The live runner sits on the same page. Don't let this
+                  // click bubble into that surface or be treated as a submit.
+                  event.preventDefault();
+                  event.stopPropagation();
+                  navigate(buildConformanceRunPath(run._id, projectId));
+                }}
               >
                 <OutcomeIcon outcome={run.outcome} status={run.status} />
                 <div className="min-w-0 flex-1">

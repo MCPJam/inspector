@@ -73,7 +73,7 @@ import {
   markPendingDirectScopeStepUpReplayReady,
 } from "@/lib/scope-step-up-replay";
 import { HOSTED_MODE } from "@/lib/config";
-import { isPrivateNetworkUrl } from "@/lib/oauth/private-address";
+import { isPrivateNetworkUrl } from "@/shared/private-address";
 import { resolveXaaIdentitySaveFields } from "@/lib/xaa/identity";
 import { validateServerFormData } from "@/lib/server-form-validation";
 import {
