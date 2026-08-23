@@ -961,6 +961,9 @@ export function registerToolsCommands(program: Command): void {
     } catch (error) {
       commandError = error;
     }
+    // Stop the clock at tool-call completion so `_durationMs` / reporter
+    // `durationMs` do not include validation, Inspector render, or debug I/O.
+    const durationMs = Math.max(0, Date.now() - startedAt);
 
     if (commandError) {
       await writeCommandDebugArtifact({
@@ -1007,8 +1010,9 @@ export function registerToolsCommands(program: Command): void {
       validationResult && !validationResult.passed,
     );
     const toolResultError = isCallToolResultError(result);
+    const resultWithDuration = attachCliDurationMs(result, durationMs);
 
-    let outputPayload = result;
+    let outputPayload = resultWithDuration;
     let debugOutputPayload: unknown = outputPayload;
     let inspectorRenderError:
       | { code: string; message: string; details?: unknown }
@@ -1098,7 +1102,7 @@ export function registerToolsCommands(program: Command): void {
         target,
         toolName,
         parameterKeys: Object.keys(params),
-        result,
+        result: resultWithDuration,
         inspectorRender: compactInspectorRender,
         ...(inspectorRenderError
           ? inspectorRenderSkipped && !requireRender
@@ -1177,7 +1181,7 @@ export function registerToolsCommands(program: Command): void {
       writeReporterResult(
         reporter,
         buildToolCallValidationReport(validationResult!, {
-          durationMs: Date.now() - startedAt,
+          durationMs,
           rawResult: result,
           metadata: {
             toolName,
@@ -1187,7 +1191,7 @@ export function registerToolsCommands(program: Command): void {
     } else {
       writeResult(
         withRpcLogsIfRequested(
-          attachCliDurationMs(outputPayload, Date.now() - startedAt),
+          outputPayload,
           primaryCollector,
           globalOptions,
         ),

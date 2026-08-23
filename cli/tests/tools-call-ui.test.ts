@@ -91,6 +91,18 @@ function lastJsonLine(stdout: string): string {
   return "";
 }
 
+function assertToolResultWithDuration(
+  actual: unknown,
+  expected: Record<string, unknown>,
+): void {
+  assert.equal(typeof actual, "object");
+  assert.ok(actual && !Array.isArray(actual));
+  const { _durationMs, ...raw } = actual as Record<string, unknown>;
+  assert.deepEqual(raw, expected);
+  assert.equal(typeof _durationMs, "number");
+  assert.ok(Number.isFinite(_durationMs) && (_durationMs as number) >= 0);
+}
+
 async function readJsonBody(
   request: http.IncomingMessage,
 ): Promise<Record<string, unknown>> {
@@ -379,7 +391,8 @@ test("tools call --ui executes once and sends the raw result to Inspector", asyn
       payload.inspectorBrowserUrl,
       `http://127.0.0.1:${server.port}/#playground`,
     );
-    assert.deepEqual(payload.result, toolResult);
+    assert.equal("_durationMs" in payload, false);
+    assertToolResultWithDuration(payload.result, toolResult);
     assert.deepEqual(payload.parameterKeys, ["shape"]);
     assert.equal(payload.params, undefined);
     assert.ok(payload.inspectorRender);
@@ -1095,7 +1108,8 @@ test("tools call --ui keeps the tool result when Inspector render fails", async 
     assert.equal(result.exitCode, 1, result.stderr);
     const payload = JSON.parse(result.stdout) as Record<string, any>;
     assert.equal(payload.success, false);
-    assert.deepEqual(payload.result, toolResult);
+    assert.equal("_durationMs" in payload, false);
+    assertToolResultWithDuration(payload.result, toolResult);
     assert.equal(payload.error.code, "render_failed");
     assert.equal(
       payload.inspectorRender.commands.renderToolResult.error.code,
@@ -1511,7 +1525,8 @@ test("tools call --ui applies expect-success to the raw tool result", async () =
     assert.equal(result.exitCode, 1, result.stderr);
     const payload = JSON.parse(result.stdout) as Record<string, any>;
     assert.equal(payload.success, false);
-    assert.deepEqual(payload.result, errorToolResult);
+    assert.equal("_durationMs" in payload, false);
+    assertToolResultWithDuration(payload.result, errorToolResult);
     assert.ok(payload.inspectorRender);
   } finally {
     await server.stop();
