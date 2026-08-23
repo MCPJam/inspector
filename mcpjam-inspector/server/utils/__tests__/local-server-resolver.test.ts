@@ -34,11 +34,12 @@ describe("authorizeBatchLocal actor metadata parsing", () => {
   ])("parses isAnonymous=%j as %j", async (raw, expected) => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ isAnonymous: raw, results: {} }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        })
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ isAnonymous: raw, results: {} }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
       )
     );
 
@@ -177,6 +178,10 @@ describe("toMCPServerConfig — onUnauthorized wiring", () => {
       expect(JSON.parse(init?.body)).toEqual({
         projectId: "project-1",
         serverId: "server-1",
+        // The local resolver runs on the user's own machine, so it declares
+        // that — which is what lets the backend hand back the material to
+        // refresh an authorization server it cannot reach itself.
+        localRuntime: true,
       });
       return new Response(JSON.stringify({ accessToken: "new-token" }), {
         status: 200,
@@ -378,6 +383,89 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
     expect(config.onUnauthorized).toEqual(expect.any(Function));
     // Two outbound calls: authorize-batch-local, then force-refresh.
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("refreshes a private authorization server itself when the backend says it cannot", async () => {
+    // End to end for the localhost case: the backend structurally cannot reach
+    // the authorization server, so it hands back the material and THIS process
+    // — which can reach it — does the grant and stores the result.
+    const seen: string[] = [];
+    const fetchMock = vi.fn(async (input: any, init?: any) => {
+      const url = String(input instanceof Request ? input.url : input);
+      seen.push(url);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return authorizeBatchLocalResponse({
+          serverId: "srv-local",
+          serverConfig: {
+            transportType: "http",
+            url: "http://localhost:8001/mcp",
+            useOAuth: true,
+          },
+          oauthAccessToken: null,
+        });
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        return new Response(
+          JSON.stringify({
+            success: false,
+            code: "private_authorization_server",
+            message: "Authorization server is on a private address.",
+            refresh: {
+              authorizationServerUrl: "http://localhost:8001",
+              serverUrl: "http://localhost:8001/mcp",
+              oauthResourceUrl: "http://localhost:8001",
+              clientId: "client-1",
+              refreshToken: "stored-refresh-token",
+            },
+          }),
+          { status: 409, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.includes("/.well-known/")) {
+        return new Response(
+          JSON.stringify({
+            issuer: "http://localhost:8001",
+            authorization_endpoint: "http://localhost:8001/authorize",
+            token_endpoint: "http://localhost:8001/token",
+            response_types_supported: ["code"],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url === "http://localhost:8001/token") {
+        expect(new URLSearchParams(String(init?.body)).get("grant_type")).toBe(
+          "refresh_token"
+        );
+        return new Response(
+          JSON.stringify({
+            access_token: "locally-refreshed-token",
+            token_type: "Bearer",
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/web/oauth/import-tokens")) {
+        return new Response(JSON.stringify({ success: true }), { status: 200 });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer-xyz",
+      "proj-1",
+      "srv-local",
+      { serverDisplayName: "Local server" }
+    );
+
+    expect(config.requestInit.headers).toMatchObject({
+      Authorization: "Bearer locally-refreshed-token",
+    });
+    // The refreshed pair went back to the backend, so the next connect from
+    // anywhere finds it.
+    expect(seen.some((u) => u.endsWith("/web/oauth/import-tokens"))).toBe(true);
+    expect(seen.some((u) => u === "http://localhost:8001/token")).toBe(true);
   });
 
   it("does NOT call force-refresh when authorize-batch-local already returned a token", async () => {
@@ -776,13 +864,11 @@ describe("executeLocalServerConnect — live 401 handling", () => {
     const headers: Record<string, string> = {};
     const manager = {
       disconnectServer: vi.fn().mockResolvedValue(undefined),
-      connectToServer: vi
-        .fn()
-        .mockRejectedValue(
-          Object.assign(new Error("HTTP 401 Unauthorized"), {
-            statusCode: 401,
-          })
-        ),
+      connectToServer: vi.fn().mockRejectedValue(
+        Object.assign(new Error("HTTP 401 Unauthorized"), {
+          statusCode: 401,
+        })
+      ),
       removeServer: vi.fn().mockResolvedValue(undefined),
       ...managerOverrides,
     };
@@ -957,9 +1043,15 @@ describe("resolveLocalServerForConnect — backend-resolved XAA identity error",
     vi.stubGlobal("fetch", fetchMock);
 
     await expect(
-      resolveLocalServerForConnect(fakeContext, "bearer-xyz", "proj-1", "srv-xaa", {
-        serverDisplayName: "Legacy XAA server",
-      })
+      resolveLocalServerForConnect(
+        fakeContext,
+        "bearer-xyz",
+        "proj-1",
+        "srv-xaa",
+        {
+          serverDisplayName: "Legacy XAA server",
+        }
+      )
     ).rejects.toMatchObject({
       status: 400,
       code: "VALIDATION_ERROR",
@@ -1001,9 +1093,9 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
 
   describe("parseConnectionDefaults", () => {
     it("accepts a well-formed policy and omits an absent one", () => {
-      expect(
-        parseConnectionDefaults({ xaaPolicy: { idp: "mcpjam" } })
-      ).toEqual({ xaaPolicy: { idp: "mcpjam" } });
+      expect(parseConnectionDefaults({ xaaPolicy: { idp: "mcpjam" } })).toEqual(
+        { xaaPolicy: { idp: "mcpjam" } }
+      );
       expect(parseConnectionDefaults({ timeoutMs: 5 })?.xaaPolicy).toBe(
         undefined
       );
@@ -1094,10 +1186,16 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
 
       let thrown: any;
       try {
-        await resolveLocalServerForConnect(fakeContext, "b", "proj-1", "srv-1", {
-          serverDisplayName: "Plain",
-          defaults: { xaaPolicy: POLICY },
-        });
+        await resolveLocalServerForConnect(
+          fakeContext,
+          "b",
+          "proj-1",
+          "srv-1",
+          {
+            serverDisplayName: "Plain",
+            defaults: { xaaPolicy: POLICY },
+          }
+        );
       } catch (error) {
         thrown = error;
       }
@@ -1349,7 +1447,7 @@ describe("resolveLocalStdioServerConfig — web-route stdio divert", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [calledUrl, calledInit] = fetchMock.mock.calls[0] as [
       string,
-      RequestInit,
+      RequestInit
     ];
     expect(String(calledUrl)).toContain("/web/authorize-batch-local");
     expect((calledInit.headers as Record<string, string>).Authorization).toBe(
