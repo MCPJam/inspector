@@ -19,6 +19,7 @@ import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerTasksCommands } from "./commands/tasks.js";
 import { registerToolsCommands } from "./commands/tools.js";
 import { registerInspectorCommands } from "./commands/inspector.js";
+import { registerRegistryCommands } from "./commands/registry.js";
 import {
   detectOutputFormatFromArgv,
   normalizeCliError,
@@ -96,6 +97,7 @@ export async function main(
 
   program.commandsGroup("MCPJam Cloud:");
   registerCloudCommands(program);
+  registerRegistryCommands(program);
 
   program.commandsGroup("CLI:");
   registerInspectorCommands(program);
