@@ -1072,7 +1072,11 @@ are checked. Authored
 `defaults.toolPolicy` and non-empty `defaults.validity` gates are refused —
 the hosted runner cannot enforce them. File `defaults.repetitions` is
 inherited per case and is not uploaded as a suite `minIterations` floor.
-`target.environment` is attached to the suite before launch.
+Authored `defaults.systemPrompt` and `defaults.temperature` are uploaded as
+execution defaults; omitted fields stay omitted so the platform applies its
+own defaults. `target.hosts` and `target.environment` are attached before
+launch. A file environment takes precedence over file hosts for that launch,
+while an explicit CLI target takes precedence over both.
 
 Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
 declared suite id, project, target, and every run-affecting knob
@@ -1252,21 +1256,19 @@ not a partial one, not one with a warning comment. Every finding names the field
 it is about, so the command's output is the authoritative list; the constructs
 that refuse today include:
 
-- host attachments, and attached project environments (a suite file names an
-  environment, and resolving an id to a name would need a second fetch this
-  command does not make);
-- a pinned sandbox image, an execution system prompt, or an execution
-  temperature — each changes what runs and has no field in the file;
-- LLM-as-judge grading, non-default match options, and an iterations floor that
-  raises a case above its own count;
+- several attached project environments, or legacy servers combined with an
+  attached environment (the suite file can name one environment);
+- a pinned sandbox image;
+- automatic LLM-as-judge grading, non-default match options, and an iterations
+  floor that raises a case above its own count;
 - a compare-across-models case, a scenario-bound case, and cases that name
   **different model providers** (a suite file carries one suite-level provider);
 - `replace`/`extend` check overrides, a case that inherits the suite's checks
   while also carrying its own, and any suite check the predicate contract does
   not recognise;
-- a suite with no execution model, no minimum accuracy, no name, no selected
-  servers, or no cases; a case with no steps; and a suite or case id that is not
-  an opaque id;
+- a suite with no execution model, no minimum accuracy, no name, no runnable
+  server or environment target, or no cases; a case with no steps; and a suite
+  or case id that is not an opaque id;
 - a suite that serializes past the 1 MiB suite-file limit — the size is a
   property of the suite, and this never truncates.
 
