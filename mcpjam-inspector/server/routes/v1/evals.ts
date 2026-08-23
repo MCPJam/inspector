@@ -22,6 +22,7 @@ import {
   toRunScoreIntegrity,
   toScoreProjection,
 } from "./eval-score-projection.js";
+import { toStageProjection } from "./eval-stage-projection.js";
 import {
   toRunCompareDto,
   type RunCompareBaseline,
@@ -1344,6 +1345,7 @@ function toIterationDto(iteration: IterationDoc) {
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
     error: iteration.error ?? null,
     ...toScoreProjection(iteration.metadata),
+    ...toStageProjection(iteration.metadata),
   };
 }
 

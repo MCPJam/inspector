@@ -954,9 +954,9 @@ List the eval suites saved in a project.
 
 ### `cloud eval run`
 
-Start an eval run of an existing suite, or upload a versioned suite file and run it (asynchronous). Provide **either** `--suite` **or** `--file`, not both.
+Start an eval run of an existing suite, or upload a versioned suite file and run it. Provide **either** `--suite` **or** `--file`, not both.
 
-There is **no `--wait`**. The command prints a launch receipt and exits 0 when the run started. Poll `eval status` for a verdict. Exit 1 is reserved for a real verdict (and for a partial fan-out). An invalid suite file on this command exits **2** — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
+By default the command prints a launch receipt and returns immediately. `--wait` polls every launched run to a terminal state. This does not introduce verdict-based exit codes: a completed failing run still uses the existing exit behavior, while a partial fan-out remains exit 1. An invalid suite file on this command exits **2** — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
 
 | Flag | Required | Description |
 |------|----------|-------------|
@@ -975,6 +975,10 @@ There is **no `--wait`**. The command prints a launch receipt and exits 0 when t
 | `--min-pass-rate <n>` | No | Pass threshold for this run (0-100), overriding the suite's own |
 | `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
+| `--wait` | No | Wait for every launched run to reach a terminal status |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 600000); requires `--wait` |
+| `--reporter <json-summary\|junit-xml>` | No | Write the completed structured report to stdout; requires `--wait` |
+| `--out <path>` | No | Atomically write the completed report to a file; defaults to `json-summary`, or uses `--reporter` when present; requires `--wait` |
 | `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Appends** the composed environment to the suite. |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
 | `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
@@ -1036,6 +1040,11 @@ receipt, with nothing appended — so CI can parse it directly. In human format
 the CLI prints a `View:` link per started run, a `Started N/M runs (group …)`
 summary when several launched, and a `Failed: <target> — <code>: <message>`
 line per failure.
+
+With `--wait`, the default output contains the launch receipt and completed
+runs. `--reporter` replaces that output with the canonical structured report.
+`--out` writes the same report atomically, including on failed-run and
+post-completion reporting-error paths, before the command sets its exit code.
 
 A partial or wholly failed fan-out **exits 1**. A per-target failure does not
 abort its siblings, so exiting 0 would let a pipeline read "1 of 3 runs never
@@ -1147,6 +1156,27 @@ List per-iteration results for an eval run (pass/fail, tool calls, tokens, laten
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--cursor <cursor>` | No | Pagination cursor from a previous response |
 | `--limit <n>` | No | Max iterations per page (1–200) |
+
+### `cloud eval gate`
+
+Apply a pass/fail policy to an eval run. Add `--wait` to poll an in-progress
+run before evaluating it.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--min-pass-rate-percent <0-100>` | No | Minimum share of iterations that must pass |
+| `--no-gating-score-errors` | No | Fail if any gating scorer errored |
+| `--min-scorer-pass-rate <scorerId=percent>` | No | Minimum pass rate for one scorer; repeatable |
+| `--min-mean-score <scorerId=0..1>` | No | Minimum mean score for one scorer; repeatable |
+| `--wait` | No | Poll until the run reaches a terminal status |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 600000) |
+| `--reporter <json-summary\|junit-xml>` | No | Write the structured eval and gate report to stdout |
+| `--out <path>` | No | Atomically write the report to a file; defaults to `json-summary`, or uses `--reporter` when present |
+
+Report files are flushed before gate exit codes are set, including failed and
+incomplete gate outcomes.
 
 ### `cloud eval trace`
 
