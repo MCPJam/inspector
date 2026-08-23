@@ -1057,12 +1057,18 @@ conversion refuses rather than approximates. File `repetitions` above **10**
 are refused by name (`REPETITIONS_CAP`) and are not clamped.
 
 Cases are synced in batches of at most 100 (`create_eval_cases`). Disabled
-file cases are skipped. A later run updates existing cases by declared id and
-creates new ones.
+or removed file cases are deleted from the hosted suite before launch, and
+the run is scoped to the remaining enabled cases. A later run updates
+existing cases by declared id and creates new ones. A case that overrides
+`passThreshold` is refused: hosted grading is suite-wide.
 
 Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
-declared suite id, project, and target, so repeating the same file against
-the same project and target returns the run it already started.
+declared suite id, project, target, and every run-affecting knob
+(`--iterations`, `--case`, `--min-pass-rate`, `--exclude-skills`,
+`--match-options`, `--environment` / `--host` / `--server` / `--all-targets`,
+`--refresh-snapshot`, and compose flags). Repeating the same file with the
+same knobs returns the run it already started; changing a knob starts a new
+one. `--notes` is not part of the key.
 
 `--file` pointing at create-API JSON (no `schemaVersion`) is a usage error
 that names `eval create --file`. The converse is also true: `eval create --file`

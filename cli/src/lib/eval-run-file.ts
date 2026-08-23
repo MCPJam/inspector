@@ -247,23 +247,32 @@ export async function syncFileOwnedCases(
   ) {
     const chunk = toCreate.slice(offset, offset + MAX_BATCH_CREATE_CASES);
     batches += 1;
-    const result = await client.createEvalCases(
-      {
-        projectId: params.projectId,
-        suiteId: params.suiteId,
-        body: { cases: chunk.map(fileCaseToCreateBody) },
-      },
-      { signal: params.signal },
-    );
-    for (const entry of result.created ?? []) {
-      createdIds.push(entry.id);
-    }
-    for (const entry of result.failed ?? []) {
+    try {
+      const result = await client.createEvalCases(
+        {
+          projectId: params.projectId,
+          suiteId: params.suiteId,
+          body: { cases: chunk.map(fileCaseToCreateBody) },
+        },
+        { signal: params.signal },
+      );
+      for (const entry of result.created ?? []) {
+        createdIds.push(entry.id);
+      }
+      for (const entry of result.failed ?? []) {
+        failed.push({
+          index: offset + entry.index,
+          ...(entry.declaredId ? { declaredId: entry.declaredId } : {}),
+          code: entry.code,
+          message: entry.message,
+        });
+      }
+    } catch (error) {
       failed.push({
-        index: offset + entry.index,
-        ...(entry.declaredId ? { declaredId: entry.declaredId } : {}),
-        code: entry.code,
-        message: entry.message,
+        index: offset,
+        ...(chunk[0] ? { declaredId: chunk[0].id } : {}),
+        code: "CREATE_FAILED",
+        message: error instanceof Error ? error.message : String(error),
       });
     }
   }

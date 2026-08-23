@@ -1740,6 +1740,12 @@ describe("eval run --file", () => {
           (fixture.runBodies[0] as { idempotencyKey: string }).idempotencyKey,
           "file-key-1"
         );
+        assert.equal(fixture.updateBodies.length, 1);
+        const updated = fixture.updateBodies[0] as Record<string, unknown>;
+        assert.equal(updated.id, undefined);
+        assert.equal(updated.title, "Refunds a duplicate charge");
+        assert.equal(updated.isNegative, false);
+        assert.equal(updated.checks, null);
       });
     } finally {
       await fixture.close();
