@@ -1285,20 +1285,29 @@ async function persistRunSetupFailure(args: {
   const setupSpans = args.observer.buildSyntheticSpans(args.runStartedAt);
   const setupAudit = args.observer.buildAuditMetadata();
 
-  const listPending = async () => {
-    const details = (await args.convexClient.query(
-      "testSuites:getTestSuiteRunDetails" as any,
-      { runId: args.runId }
-    )) as { iterations?: Array<Record<string, unknown>> } | null;
-    return (details?.iterations ?? []).filter(
-      (row) => row.status === "pending"
-    );
+  const listPending = async (): Promise<Array<Record<string, unknown>> | null> => {
+    try {
+      const details = (await args.convexClient.query(
+        "testSuites:getTestSuiteRunDetails" as any,
+        { runId: args.runId }
+      )) as { iterations?: Array<Record<string, unknown>> } | null;
+      return (details?.iterations ?? []).filter(
+        (row) => row.status === "pending"
+      );
+    } catch (readError) {
+      logger.warn("[evals] Failed to read pending setup iterations", {
+        runId: args.runId,
+        error:
+          readError instanceof Error ? readError.message : String(readError),
+      });
+      return null;
+    }
   };
 
   const persistPending = async (
     pending: Array<Record<string, unknown>>
   ) => {
-    await Promise.all(
+    await Promise.allSettled(
       pending.map(async (row) => {
         const iterationId =
           typeof row._id === "string"
@@ -1347,13 +1356,16 @@ async function persistRunSetupFailure(args: {
     );
   };
 
-  await persistPending(await listPending());
+  const first = await listPending();
+  if (first) {
+    await persistPending(first);
+  }
   const afterFirst = await listPending();
-  if (afterFirst.length > 0) {
+  if (afterFirst && afterFirst.length > 0) {
     await persistPending(afterFirst);
   }
   const residual = await listPending();
-  if (residual.length > 0) {
+  if (residual === null || residual.length > 0) {
     try {
       await args.convexClient.mutation(
         "testSuites:markSetupPendingIterationsFailed" as any,
@@ -2595,15 +2607,25 @@ export const runEvalSuiteWithAiSdk = async ({
     // `blockTerminal` cannot strand the run, and so the sweep cannot strip
     // stage metadata from a row whose write failed.
     if (runId !== null) {
-      await persistRunSetupFailure({
-        runId,
-        convexClient,
-        recorder,
-        observer: setupObserver,
-        errorMessage,
-        tests,
-        runStartedAt: runSetupStartedAt,
-      });
+      try {
+        await persistRunSetupFailure({
+          runId,
+          convexClient,
+          recorder,
+          observer: setupObserver,
+          errorMessage,
+          tests,
+          runStartedAt: runSetupStartedAt,
+        });
+      } catch (setupPersistError) {
+        logger.warn("[evals] Failed to persist run-setup failure evidence", {
+          runId,
+          error:
+            setupPersistError instanceof Error
+              ? setupPersistError.message
+              : String(setupPersistError),
+        });
+      }
     }
 
     // Only finalize if we have a recorder (suite runs, not quick runs)

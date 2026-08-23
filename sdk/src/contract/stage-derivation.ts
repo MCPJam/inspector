@@ -484,11 +484,13 @@ function deriveDiscovery(e: StageEvidence): StageResultRow {
   }
   if (signal?.outcome === "failed") {
     const refs = signalEvidence(signal);
-    // Failed + initialize completed + not our fault ⇒ measured discovery miss.
+    // Failed + initialize completed + theirs ⇒ measured discovery miss.
     // A completed initialize is the egress evidence; no canary needed.
+    // Unknown (unobserved tools/list) stays notMeasured — incomplete
+    // observation is not a server failure.
     if (
       connectionPositivelyReached(e) &&
-      signal.attribution !== "ours"
+      signal.attribution === "theirs"
     ) {
       return row("discovery", "failed", "toolsListFailed", refs);
     }

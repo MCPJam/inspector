@@ -258,4 +258,66 @@ describe("run-level connect failure — D6 non-vacuity", () => {
       reason: "egressUnverified",
     });
   });
+
+  it("finalizes even when pending-row reads throw", async () => {
+    mcpClientManager.getConnectionStatus.mockReturnValue("disconnected");
+    const refused = new Error("connect ECONNREFUSED 203.0.113.10:443");
+    (refused as Error & { code: string }).code = "ECONNREFUSED";
+    mcpClientManager.listTools.mockRejectedValue(refused);
+
+    convexClient.query.mockImplementation(async (ref: string) => {
+      if (ref === "testSuites:getTestSuiteRunDetails") {
+        throw new Error("convex unavailable");
+      }
+      return { status: "running" };
+    });
+
+    const recorder = {
+      runId: "run-1",
+      suiteId: "suite-1",
+      startIteration: vi.fn(),
+      finishIteration: vi.fn(),
+      finalize: vi.fn(),
+    };
+
+    await expect(
+      runEvalSuiteWithAiSdk({
+        suiteId: "suite-1",
+        runId: "run-1",
+        recorder,
+        config: {
+          tests: [
+            {
+              title: "Case",
+              query: "Hello",
+              runs: 1,
+              model: "gpt-4-turbo",
+              provider: "openai",
+              expectedToolCalls: [],
+              promptTurns: [
+                { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
+              ],
+              testCaseId: "case-1",
+            },
+          ],
+          environment: { servers: ["srv-1"] },
+        },
+        modelApiKeys: { openai: "sk-test" },
+        convexClient: convexClient as any,
+        convexHttpUrl: "https://example.convex.site",
+        convexAuthToken: "token",
+        mcpClientManager: mcpClientManager as any,
+        testCaseId: "case-1",
+      } as any)
+    ).rejects.toThrow("is not connected");
+
+    expect(recorder.finalize).toHaveBeenCalledWith({
+      status: "failed",
+      summary: undefined,
+    });
+    expect(convexClient.mutation).toHaveBeenCalledWith(
+      "testSuites:markSetupPendingIterationsFailed",
+      expect.objectContaining({ runId: "run-1" })
+    );
+  });
 });

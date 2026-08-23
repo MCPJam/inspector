@@ -359,6 +359,30 @@ describe("eval-trace-capture", () => {
     expect(spans.map((s) => s.id)).toEqual(["run-connect-s1", "tool-1"]);
   });
 
+  it("leaves captured spans unchanged when setupSpans is empty", () => {
+    const spans: EvalTraceSpan[] = [
+      {
+        id: "tool-1",
+        name: "tool.search",
+        category: "tool",
+        startMs: 5,
+        endMs: 9,
+        status: "ok",
+      },
+    ];
+    pushRunSetupSpans(spans, []);
+    expect(spans).toEqual([
+      {
+        id: "tool-1",
+        name: "tool.search",
+        category: "tool",
+        startMs: 5,
+        endMs: 9,
+        status: "ok",
+      },
+    ]);
+  });
+
   it("backend wrapped tools emit per-call spans with tool metadata", async () => {
     let wall = runAt;
     vi.spyOn(Date, "now").mockImplementation(() => wall);

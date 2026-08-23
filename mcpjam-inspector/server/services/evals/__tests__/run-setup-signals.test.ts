@@ -4,6 +4,7 @@ import {
   EgressResolutionError,
 } from "../../../utils/hosted-egress-guard.js";
 import {
+  capSetupAuditMetadata,
   classifySetupAttribution,
   connectSpanId,
   createRunSetupObserver,
@@ -258,5 +259,47 @@ describe("createRunSetupObserver canary + spans", () => {
     });
     expect(audit?.egressCanary).toEqual({ ran: true, ok: true, at: 99 });
     expect(JSON.stringify(audit).length).toBeLessThanOrEqual(2048);
+  });
+
+  it("shares one canary promise instead of polling", async () => {
+    let resolveCanary!: (ok: boolean) => void;
+    const canary = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveCanary = resolve;
+        })
+    );
+    const observer = createRunSetupObserver({
+      expectedServerIds: ["srv"],
+      canary,
+    });
+    const first = observer.ensureEgressCanary();
+    const second = observer.ensureEgressCanary();
+    expect(canary).toHaveBeenCalledTimes(1);
+    resolveCanary(true);
+    expect(await first).toBe(true);
+    expect(await second).toBe(true);
+    expect(await observer.ensureEgressCanary()).toBe(true);
+    expect(canary).toHaveBeenCalledTimes(1);
+  });
+
+  it("sheds span ids when the audit blob exceeds the cap", () => {
+    const raw = {
+      stageSetupSignals: {
+        connection: {
+          outcome: "failed" as const,
+          attribution: "theirs" as const,
+          spanIds: ["run-connect-aaaaaaaaaaaaaaaa"],
+        },
+      },
+      egressCanary: { ran: true, ok: true, at: 1 },
+    };
+    const capped = capSetupAuditMetadata(raw, 10);
+    expect(capped.truncated).toBe(true);
+    expect(
+      (capped.stageSetupSignals as { connection?: { spanIds?: string[] } })
+        .connection?.spanIds
+    ).toBeUndefined();
+    expect(JSON.stringify(capped).length).toBeLessThan(JSON.stringify(raw).length);
   });
 });

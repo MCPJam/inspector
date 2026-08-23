@@ -394,7 +394,7 @@ describe("connection & discovery", () => {
     });
   });
 
-  test("discovery failed + reached + not ours ⇒ failed/toolsListFailed", () => {
+  test("discovery failed + reached + theirs ⇒ failed/toolsListFailed", () => {
     const { stageResults, firstFailedStage, failureCategory } =
       deriveStageResults({
         authored: modelDrivenCase,
@@ -417,6 +417,24 @@ describe("connection & discovery", () => {
     });
     expect(firstFailedStage).toBe("discovery");
     expect(failureCategory).toBe("setup");
+  });
+
+  test("discovery failed + reached + unknown ⇒ notMeasured", () => {
+    const { stageResults, firstFailedStage } = deriveStageResults({
+      authored: modelDrivenCase,
+      evidence: {
+        setupSignals: {
+          connection: { outcome: "ok" },
+          discovery: { outcome: "failed", attribution: "unknown" },
+        },
+      },
+      iteration: { status: "failed" },
+    });
+    expect(stateOf(stageResults, "discovery")).toMatchObject({
+      state: "notMeasured",
+      reason: "egressUnverified",
+    });
+    expect(firstFailedStage).toBeUndefined();
   });
 
   test("discovery failed + ours ⇒ notMeasured/setupAborted", () => {

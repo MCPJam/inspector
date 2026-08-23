@@ -60,6 +60,47 @@ const MAX_CULPRIT_SPAN_IDS = 5;
 const CANARY_TIMEOUT_MS = 5_000;
 const SETUP_SIGNALS_METADATA_CAP_BYTES = 2_048;
 
+function slimPhaseSignal(
+  signal: StageSetupPhaseSignal | undefined
+): StageSetupPhaseSignal | undefined {
+  if (!signal) return undefined;
+  return {
+    outcome: signal.outcome,
+    ...(signal.attribution ? { attribution: signal.attribution } : {}),
+    ...(signal.egressVerified !== undefined
+      ? { egressVerified: signal.egressVerified }
+      : {}),
+  };
+}
+
+/**
+ * Hard-cap the producer-owned audit blob. Over the cap, drop span ids so
+ * the serialized payload shrinks; `truncated: true` marks the shed.
+ */
+export function capSetupAuditMetadata(
+  raw: {
+    stageSetupSignals: StageSetupSignals;
+    egressCanary: unknown;
+  },
+  capBytes: number = SETUP_SIGNALS_METADATA_CAP_BYTES
+): Record<string, unknown> {
+  const serialized = JSON.stringify(raw);
+  if (serialized.length <= capBytes) return raw;
+  const signals = raw.stageSetupSignals;
+  return {
+    stageSetupSignals: {
+      ...(signals.connection
+        ? { connection: slimPhaseSignal(signals.connection) }
+        : {}),
+      ...(signals.discovery
+        ? { discovery: slimPhaseSignal(signals.discovery) }
+        : {}),
+    },
+    egressCanary: raw.egressCanary,
+    truncated: true,
+  };
+}
+
 export function connectSpanId(serverId: string): string {
   return `run-connect-${serverId}`;
 }
@@ -287,7 +328,7 @@ export function createRunSetupObserver(
   const connects = new Map<string, SetupTargetObservation>();
   const lists = new Map<string, SetupTargetObservation>();
   let canaryResult: boolean | undefined;
-  let canaryStarted = false;
+  let canaryPromise: Promise<boolean> | undefined;
 
   const record = (
     into: Map<string, SetupTargetObservation>,
@@ -315,25 +356,16 @@ export function createRunSetupObserver(
 
   const ensureEgressCanary = async (): Promise<boolean> => {
     if (canaryResult !== undefined) return canaryResult;
-    if (canaryStarted) {
-      // In-flight: wait by polling the settled slot. The canary is one GET.
-      while (canaryResult === undefined) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
+    canaryPromise ??= (async () => {
+      try {
+        if (options.canary) return await options.canary();
+        if (options.convexHttpUrl) return await defaultCanary(options.convexHttpUrl);
+        return false;
+      } catch {
+        return false;
       }
-      return canaryResult;
-    }
-    canaryStarted = true;
-    try {
-      if (options.canary) {
-        canaryResult = await options.canary();
-      } else if (options.convexHttpUrl) {
-        canaryResult = await defaultCanary(options.convexHttpUrl);
-      } else {
-        canaryResult = false;
-      }
-    } catch {
-      canaryResult = false;
-    }
+    })();
+    canaryResult = await canaryPromise;
     return canaryResult;
   };
 
@@ -378,24 +410,20 @@ export function createRunSetupObserver(
     buildAuditMetadata: () => {
       const signals = buildSignals();
       if (!signals) return undefined;
-      const raw = {
-        stageSetupSignals: signals,
-        egressCanary:
-          canaryResult === undefined
-            ? { ran: false }
-            : {
-                ran: true,
-                ok: canaryResult,
-                at: (options.now ?? Date.now)(),
-              },
-      };
-      const serialized = JSON.stringify(raw);
-      if (serialized.length <= SETUP_SIGNALS_METADATA_CAP_BYTES) return raw;
-      return {
-        stageSetupSignals: signals,
-        egressCanary: raw.egressCanary,
-        truncated: true,
-      };
+      return capSetupAuditMetadata(
+        {
+          stageSetupSignals: signals,
+          egressCanary:
+            canaryResult === undefined
+              ? { ran: false }
+              : {
+                  ran: true,
+                  ok: canaryResult,
+                  at: (options.now ?? Date.now)(),
+                },
+        },
+        SETUP_SIGNALS_METADATA_CAP_BYTES
+      );
     },
   };
 }
