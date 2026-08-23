@@ -7,22 +7,39 @@
  *  - `environmentIds` — SAVED project environments the user picked from the
  *    Environments list. Curated, named, reusable.
  *  - `stack` — the loose slots a saved environment is made of (clients, server
- *    group, pinned skills, sandbox image), editable in place so "same setup,
- *    different client" costs one click instead of a trip to /environments.
+ *    group, pinned skills, sandbox image, and — on evals — the model axis),
+ *    editable in place so "same setup, different client" costs one click
+ *    instead of a trip to /environments.
  *
  * Selecting a saved environment SEEDS the stack from it; editing any slot flips
  * `customized`. That flag is what tells a surface it can no longer just hand
  * `environmentIds` to the backend and must resolve the stack into real
  * environment rows first.
  *
- * Model is a designed next axis (it lives on the client) but out of v1 wiring —
- * no surface passes a modelId today. Keep the field as an extension point only.
+ * Model is a second fan-out axis (D1/D2): it desugars to ad-hoc environments,
+ * one cell per (host × model-choice). Surfaces that do not opt the models
+ * slot in keep today's one-axis compose.
  */
 import type {
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
 import { isNamedEnvironment } from "@/lib/environment-label";
+
+/**
+ * Structured model axis (D2). Never auto-seed a host's default modelId as
+ * an explicit pick — the fingerprint treats explicit-equals-default as a
+ * distinct row.
+ */
+export type ModelSelection = {
+  includeClientDefaults: boolean;
+  explicitModelIds: string[];
+};
+
+export const DEFAULT_MODEL_SELECTION: ModelSelection = {
+  includeClientDefaults: true,
+  explicitModelIds: [],
+};
 
 export type EnvironmentStack = {
   /** Primary fan-out axis. Required for the compose (resolve) path. */
@@ -32,10 +49,10 @@ export type EnvironmentStack = {
   skillSelection: ProjectEnvironmentSkillSelection | null;
   computerEnvironmentId: string | null;
   /**
-   * Reserved for a future model axis. Do not wire a picker in v1.
-   * Callers must leave this unset.
+   * Model-choice axis. Default is "one inherit cell per client" — exactly
+   * today's behavior. Explicit ids mint override cells.
    */
-  modelId?: undefined;
+  modelSelection: ModelSelection;
 };
 
 export type EnvironmentComposerState = {
@@ -50,12 +67,17 @@ export type EnvironmentComposerState = {
   customized: boolean;
 };
 
+export function emptyModelSelection(): ModelSelection {
+  return { includeClientDefaults: true, explicitModelIds: [] };
+}
+
 export function emptyEnvironmentStack(): EnvironmentStack {
   return {
     hostIds: [],
     serverAttachmentId: null,
     skillSelection: null,
     computerEnvironmentId: null,
+    modelSelection: emptyModelSelection(),
   };
 }
 
@@ -65,6 +87,51 @@ export function emptyComposerState(): EnvironmentComposerState {
     stack: emptyEnvironmentStack(),
     customized: false,
   };
+}
+
+/**
+ * Selection readers accept `undefined` and read it as the empty selection.
+ *
+ * A stack can genuinely arrive without one: state persisted before this slot
+ * existed (a saved swarm draft) rehydrates into the current shape. Guarding
+ * here rather than at each call site means a missed guard degrades to "client
+ * defaults" instead of throwing while rendering the strip.
+ */
+export function modelChoiceCount(
+  selection: ModelSelection | undefined
+): number {
+  const resolved = selection ?? emptyModelSelection();
+  return (
+    (resolved.includeClientDefaults ? 1 : 0) + resolved.explicitModelIds.length
+  );
+}
+
+/** Inherit first, then explicit ids in list order. Host-major mint uses this. */
+export function expandModelChoices(
+  selection: ModelSelection | undefined
+): Array<{
+  modelId: string | undefined;
+}> {
+  const resolved = selection ?? emptyModelSelection();
+  const choices: Array<{ modelId: string | undefined }> = [];
+  if (resolved.includeClientDefaults) {
+    choices.push({ modelId: undefined });
+  }
+  for (const modelId of resolved.explicitModelIds) {
+    choices.push({ modelId });
+  }
+  return choices;
+}
+
+export function sameModelSelection(
+  a: ModelSelection,
+  b: ModelSelection
+): boolean {
+  if (a.includeClientDefaults !== b.includeClientDefaults) return false;
+  if (a.explicitModelIds.length !== b.explicitModelIds.length) return false;
+  const left = [...a.explicitModelIds].sort();
+  const right = [...b.explicitModelIds].sort();
+  return left.every((id, i) => id === right[i]);
 }
 
 /**
@@ -121,6 +188,10 @@ export function stackFromEnvironment(
     serverAttachmentId: env.serverAttachmentId ?? null,
     skillSelection: env.skillSelection ?? null,
     computerEnvironmentId: env.computerEnvironmentId ?? null,
+    modelSelection: {
+      includeClientDefaults: !env.modelId,
+      explicitModelIds: env.modelId ? [env.modelId] : [],
+    },
   };
 }
 
@@ -130,10 +201,14 @@ export function stackFromEnvironment(
  * environments differing only there produce the SAME run and must compare equal
  * here too — otherwise the guard blocks edits over a difference that costs
  * nothing.
+ *
+ * `modelsEnabled` is true only when the surface opted the models slot in AND
+ * the backend capability settled true.
  */
 export type EnabledStackSlots = {
   skillsEnabled: boolean;
   computersEnabled: boolean;
+  modelsEnabled?: boolean;
 };
 
 /** Slot-by-slot equality over the slots the project has enabled. */
@@ -145,7 +220,8 @@ function enabledSlotsEqual(
   return (
     (a.serverAttachmentId ?? null) === (b.serverAttachmentId ?? null) &&
     (!enabled.computersEnabled ||
-      (a.computerEnvironmentId ?? null) === (b.computerEnvironmentId ?? null)) &&
+      (a.computerEnvironmentId ?? null) ===
+        (b.computerEnvironmentId ?? null)) &&
     (!enabled.skillsEnabled ||
       sameSkillSelection(a.skillSelection, b.skillSelection))
   );
@@ -168,6 +244,58 @@ export function environmentsCarryPluginPins(
 }
 
 /**
+ * True when any selected environment carries a stored model override.
+ *
+ * Surfaces that do not enable the models slot must block stack edits while
+ * this holds — otherwise the first edit would mint inherit cells and silently
+ * shed the override (D2).
+ */
+export function environmentsCarryModels(
+  environments: readonly ProjectEnvironmentView[]
+): boolean {
+  return environments.some((env) => Boolean(env.modelId));
+}
+
+function modelChoiceKey(env: ProjectEnvironmentView): string {
+  return env.modelId ?? "__inherit__";
+}
+
+function modelChoiceSetsAgree(
+  environments: readonly ProjectEnvironmentView[]
+): boolean {
+  const byHost = new Map<string, Set<string>>();
+  for (const env of environments) {
+    if (!env.hostId) return false;
+    const set = byHost.get(env.hostId) ?? new Set();
+    set.add(modelChoiceKey(env));
+    byHost.set(env.hostId, set);
+  }
+  if (byHost.size === 0) return true;
+  const first = [...byHost.values()][0]!;
+  const firstKey = [...first].sort().join("\0");
+  return [...byHost.values()].every(
+    (set) => [...set].sort().join("\0") === firstKey
+  );
+}
+
+function reconstructModelSelection(
+  environments: readonly ProjectEnvironmentView[],
+  slots?: EnabledStackSlots
+): ModelSelection {
+  if (slots?.modelsEnabled !== true) {
+    return emptyModelSelection();
+  }
+  const keys = new Set<string>();
+  for (const env of environments) {
+    keys.add(modelChoiceKey(env));
+  }
+  return {
+    includeClientDefaults: keys.has("__inherit__") || keys.size === 0,
+    explicitModelIds: [...keys].filter((k) => k !== "__inherit__").sort(),
+  };
+}
+
+/**
  * True when a selection CANNOT be round-tripped through a stack without changing
  * what runs. Two ways that happens, and both cost a real thing:
  *
@@ -181,17 +309,37 @@ export function environmentsCarryPluginPins(
  *    Only slots the project has ENABLED count — a disabled slot is dropped at
  *    resolution, so disagreeing there changes nothing.
  *
+ * With `modelsEnabled`, two same-host environments that differ only by model
+ * choice are representable (inherit ∪ explicit). Per-host asymmetry — one
+ * client carrying a different choice set — still collapses. Duplicate
+ * (host, model) cells still collapse.
+ *
  * Neither is the deliberate homogenizing the compose model is allowed to do (the
  * user picking a shared value and applying it) — both are silent losses. Callers
  * block stack edits while this holds; changing the SELECTION is the way out.
  * (Plugin pins are the third way a selection can't round-trip — see
- * {@link environmentsCarryPluginPins}.)
+ * {@link environmentsCarryPluginPins}. Model-bearing rows on a models-disabled
+ * surface are the fourth — see {@link environmentsCarryModels}.)
  */
 export function environmentsExceedOneStack(
   environments: ProjectEnvironmentView[],
   enabled: EnabledStackSlots
 ): boolean {
   if (environments.length < 2) return false;
+
+  if (enabled.modelsEnabled === true) {
+    if (
+      environments.some((env) => !enabledSlotsEqual(env, environments[0], enabled))
+    ) {
+      return true;
+    }
+    const cells = environments.map(
+      (env) => `${env.hostId}::${modelChoiceKey(env)}`
+    );
+    if (new Set(cells).size !== cells.length) return true;
+    return !modelChoiceSetsAgree(environments);
+  }
+
   const hosts = new Set(environments.map((e) => e.hostId));
   if (hosts.size !== environments.length) return true;
   return environments.some(
@@ -215,9 +363,14 @@ export function environmentsExceedOneStack(
  * offerable in the saved-environment picker, so presenting them there would
  * render a row of identical, undetachable "Automatic environment" chips. Their
  * stack is the honest description of them.
+ *
+ * Pass `slots` with `modelsEnabled: true` to reconstruct `modelSelection`
+ * from the attached cells. Without it the axis stays at the inherit default
+ * so a models-disabled surface never claims an override it cannot send.
  */
 export function composerStateFromEnvironments(
-  environments: ProjectEnvironmentView[]
+  environments: ProjectEnvironmentView[],
+  slots?: EnabledStackSlots
 ): EnvironmentComposerState {
   const hostIds: string[] = [];
   for (const env of environments) {
@@ -232,7 +385,8 @@ export function composerStateFromEnvironments(
       ? pick(first)
       : null;
 
-  const allNamed = environments.length > 0 && environments.every(isNamedEnvironment);
+  const allNamed =
+    environments.length > 0 && environments.every(isNamedEnvironment);
   return {
     environmentIds: allNamed ? environments.map((e) => e.environmentId) : [],
     stack: {
@@ -249,6 +403,7 @@ export function composerStateFromEnvironments(
         (env) => env.computerEnvironmentId ?? null,
         (a, b) => a === b
       ),
+      modelSelection: reconstructModelSelection(environments, slots),
     },
     customized: !allNamed,
   };
@@ -264,21 +419,28 @@ export function isComposeMode(state: EnvironmentComposerState): boolean {
  * Whether this state names anywhere to run — asked of the ACTIVE mode, which is
  * the only way to get it right.
  *
- * A composition resolves through its CLIENTS, so an environment that was picked
- * and then edited has a selection and still no target. Asking "is anything
- * selected?" instead would let a surface enable Save on a state that can only
- * fail to resolve, and would make "I cleared the clients" indistinguishable from
- * "I picked something".
+ * A composition resolves through its CLIENTS × model choices, so an environment
+ * that was picked and then edited has a selection and still no target. Asking
+ * "is anything selected?" instead would let a surface enable Save on a state
+ * that can only fail to resolve, and would make "I cleared the clients" (or
+ * unchecked every model choice) indistinguishable from "I picked something".
  */
 export function composerHasTarget(state: EnvironmentComposerState): boolean {
-  return isComposeMode(state)
-    ? state.stack.hostIds.length > 0
-    : state.environmentIds.length > 0;
+  if (!isComposeMode(state)) return state.environmentIds.length > 0;
+  return (
+    state.stack.hostIds.length > 0 &&
+    modelChoiceCount(state.stack.modelSelection ?? emptyModelSelection()) > 0
+  );
 }
 
 /** Count used for intensity / session estimates before resolution. */
 export function composerTargetCount(state: EnvironmentComposerState): number {
-  if (isComposeMode(state)) return state.stack.hostIds.length;
+  if (isComposeMode(state)) {
+    return (
+      state.stack.hostIds.length *
+      modelChoiceCount(state.stack.modelSelection ?? emptyModelSelection())
+    );
+  }
   return state.environmentIds.length;
 }
 
@@ -309,3 +471,37 @@ export function stackFieldsEqual(
     sameSkillSelection(a.skillSelection, b.skillSelection)
   );
 }
+
+/**
+ * Model equality for environment REUSE, where absent means "inherit the
+ * client's model" and is a real, distinct choice — never a wildcard.
+ *
+ * Deliberately not folded into `stackFieldsEqual`: that predicate also backs
+ * the round-trip checks, which treat the model slot separately. So every site
+ * that reuses an existing row has to pair the two — and this lives here, beside
+ * its partner, because when it existed privately in one resolver the second
+ * matcher simply did not compare models at all.
+ */
+export function sameOptionalModel(
+  left: string | undefined,
+  right: string | undefined
+): boolean {
+  return (left ?? null) === (right ?? null);
+}
+
+/** Shared product-cap copy for both pills (D6). */
+export function targetProductCapReason(
+  hostCount: number,
+  choiceCount: number,
+  max: number
+): string {
+  const clients = `${hostCount} client${hostCount === 1 ? "" : "s"}`;
+  const models = `${choiceCount} model choice${choiceCount === 1 ? "" : "s"}`;
+  return `${clients} × ${models} = ${hostCount * choiceCount} targets; limit ${max}`;
+}
+
+export type TargetBudgetContext = {
+  hostCount: number;
+  choiceCount: number;
+  maxTargets: number;
+};
