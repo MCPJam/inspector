@@ -40,6 +40,15 @@ const BLOB_FETCH_TIMEOUT_MS = 10_000;
  * a capacity fact about us, not a reason to take the process down.
  */
 const BLOB_MAX_BYTES = 8 * 1024 * 1024;
+/**
+ * Ceiling on ALL span blobs one trace request will buffer.
+ *
+ * The per-blob cap alone would admit `TRACE_MAX_PAGE_SIZE × 8 MiB` at
+ * once. A handful of concurrent callers at that size is enough to
+ * exhaust the heap, which is the failure the cap exists to avoid.
+ */
+const TRACE_REQUEST_MAX_BYTES = 32 * 1024 * 1024;
+const TRACE_FETCH_CONCURRENCY = 4;
 
 function translatePreflightReadError(
   error: unknown,
@@ -225,7 +234,10 @@ function projectResumePins(raw: unknown): Record<string, unknown> | null {
 async function loadAuthorizedSession(
   c: Context,
   sessionId: string
-): Promise<SessionDoc> {
+): Promise<{
+  session: SessionDoc;
+  client: ReturnType<typeof createConvexClient>;
+}> {
   const client = createConvexClient(await getConvexBearerForRequest(c));
   let session: SessionDoc | null;
   try {
@@ -252,20 +264,57 @@ async function loadAuthorizedSession(
   ) {
     throw notFound();
   }
-  return session;
+  return { session, client };
 }
 
+type ByteBudget = { remaining: number };
+
+function reserveBytes(budget: ByteBudget | undefined, want: number): number {
+  if (!budget) return want;
+  const n = Math.min(want, Math.max(0, budget.remaining));
+  budget.remaining -= n;
+  return n;
+}
+
+function refundBytes(budget: ByteBudget | undefined, unused: number): void {
+  if (!budget || unused <= 0) return;
+  budget.remaining += unused;
+}
+
+/**
+ * Fetch a Convex storage blob as JSON.
+ *
+ * URLs come from `ctx.storage.getUrl` after `getSession` /
+ * `getSessionTurnTraces` authorized the caller — the same source
+ * `user-testing.ts` fetches, and there is no caller-facing write that
+ * can plant one. There is also no configured storage-origin allowlist
+ * in this repo, so we do not invent one. What we do harden: do not
+ * follow redirects, and cancel a body we have already decided not to
+ * parse.
+ */
 async function fetchJsonBlob(
-  url: string
-): Promise<{ ok: true; value: unknown } | { ok: false }> {
+  url: string,
+  maxBytes: number = BLOB_MAX_BYTES
+): Promise<{ ok: true; value: unknown; bytes: number } | { ok: false }> {
+  if (maxBytes <= 0) return { ok: false };
   try {
     const response = await fetch(url, {
       signal: AbortSignal.timeout(BLOB_FETCH_TIMEOUT_MS),
+      redirect: "manual",
     });
-    if (!response.ok) return { ok: false };
-    const text = await readCapped(response, BLOB_MAX_BYTES);
+    if (!response.ok) {
+      // A 3xx under `redirect: "manual"` lands here too. Stop the
+      // transfer rather than draining a body we will not parse.
+      await response.body?.cancel();
+      return { ok: false };
+    }
+    const text = await readCapped(response, maxBytes);
     if (text === null) return { ok: false };
-    return { ok: true, value: JSON.parse(text) };
+    return {
+      ok: true,
+      value: JSON.parse(text),
+      bytes: Buffer.byteLength(text, "utf8"),
+    };
   } catch {
     return { ok: false };
   }
@@ -337,7 +386,7 @@ chatSessions.get("/chat-sessions/:sessionId", async (c) => {
     TRANSCRIPT_MAX_PAGE_SIZE
   );
   const offset = parseNonNegativeIntQuery(c.req.query("cursor"), "cursor") ?? 0;
-  const session = await loadAuthorizedSession(c, sessionId);
+  const { session } = await loadAuthorizedSession(c, sessionId);
   const { messages, transcriptUnavailable } = await loadMessages(session);
   const page = messages.slice(offset, offset + limit);
   return v1Resource(c, {
@@ -360,21 +409,11 @@ function asPromptIndex(value: unknown): number | null {
   return typeof value === "number" && Number.isInteger(value) ? value : null;
 }
 
-async function hydrateTurn(
-  trace: TurnTraceDoc
-): Promise<Record<string, unknown>> {
-  let spans: unknown[] = [];
-  let spansUnavailable = false;
-  if (typeof trace.spansBlobUrl === "string") {
-    const fetched = await fetchJsonBlob(trace.spansBlobUrl);
-    if (!fetched.ok || !Array.isArray(fetched.value)) {
-      spansUnavailable = true;
-    } else {
-      spans = fetched.value;
-    }
-  } else {
-    spansUnavailable = true;
-  }
+function turnMeta(
+  trace: TurnTraceDoc,
+  spans: unknown[],
+  spansUnavailable: boolean
+): Record<string, unknown> {
   const usage =
     trace.usage &&
     typeof trace.usage === "object" &&
@@ -399,6 +438,48 @@ async function hydrateTurn(
     spans,
     ...(spansUnavailable ? { spansUnavailable: true } : {}),
   };
+}
+
+async function hydrateTurn(
+  trace: TurnTraceDoc,
+  budget: ByteBudget
+): Promise<Record<string, unknown>> {
+  if (typeof trace.spansBlobUrl !== "string") {
+    return turnMeta(trace, [], true);
+  }
+  const reserved = reserveBytes(budget, BLOB_MAX_BYTES);
+  if (reserved <= 0) {
+    return turnMeta(trace, [], true);
+  }
+  const fetched = await fetchJsonBlob(trace.spansBlobUrl, reserved);
+  if (!fetched.ok) {
+    refundBytes(budget, reserved);
+    return turnMeta(trace, [], true);
+  }
+  refundBytes(budget, reserved - fetched.bytes);
+  if (!Array.isArray(fetched.value)) {
+    return turnMeta(trace, [], true);
+  }
+  return turnMeta(trace, fetched.value, false);
+}
+
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const run = async () => {
+    for (;;) {
+      const index = next++;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index] as T);
+    }
+  };
+  const width = Math.min(Math.max(1, concurrency), Math.max(items.length, 1));
+  await Promise.all(Array.from({ length: width }, () => run()));
+  return results;
 }
 
 // GET /v1/chat-sessions/:sessionId/trace
@@ -426,8 +507,7 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
   // a caller also left a stale `afterPromptIndex` on the URL.
   const afterPromptIndex = cursorAfter ?? explicitAfter ?? -1;
 
-  const session = await loadAuthorizedSession(c, sessionId);
-  const client = createConvexClient(await getConvexBearerForRequest(c));
+  const { session, client } = await loadAuthorizedSession(c, sessionId);
   let traces: TurnTraceDoc[];
   try {
     traces = (await client.query(
@@ -449,7 +529,10 @@ chatSessions.get("/chat-sessions/:sessionId/trace", async (c) => {
     return index !== null && index > afterPromptIndex;
   });
   const page = unseen.slice(0, limit);
-  const turns = await Promise.all(page.map(hydrateTurn));
+  const budget: ByteBudget = { remaining: TRACE_REQUEST_MAX_BYTES };
+  const turns = await mapPool(page, TRACE_FETCH_CONCURRENCY, (trace) =>
+    hydrateTurn(trace, budget)
+  );
   const last = page[page.length - 1];
   const lastIndex = last ? asPromptIndex(last.promptIndex) : null;
 

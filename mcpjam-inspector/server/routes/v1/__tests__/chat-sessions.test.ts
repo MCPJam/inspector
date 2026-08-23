@@ -218,6 +218,44 @@ describe("session detail", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("400s a zero or unparseable limit", async () => {
+    for (const limit of ["0", "oops"]) {
+      const res = await call("GET", `${BASE}?limit=${limit}`);
+      expect(res.status).toBe(400);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("clamps an oversized limit to the documented ceiling", async () => {
+    fetchMock.mockResolvedValue(
+      new Response(
+        JSON.stringify(
+          Array.from({ length: 250 }, (_, index) => ({
+            role: "user",
+            content: `m${index}`,
+          }))
+        ),
+        { status: 200 }
+      )
+    );
+    const res = await call("GET", `${BASE}?limit=999`);
+    const body = (await res.json()) as {
+      messages: unknown[];
+      nextCursor?: string;
+    };
+    expect(body.messages).toHaveLength(200);
+    expect(body.nextCursor).toBe("200");
+  });
+
+  it("does not follow redirects and treats them as unreadable", async () => {
+    fetchMock.mockResolvedValue(new Response(null, { status: 302 }));
+    const res = await call("GET", BASE);
+    const body = (await res.json()) as { transcriptUnavailable?: boolean };
+    expect(body.transcriptUnavailable).toBe(true);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.redirect).toBe("manual");
+  });
+
   it("reports a null messageCount when the transcript is unreadable", async () => {
     fetchMock.mockRejectedValue(new Error("network down"));
     const res = await call("GET", BASE);
@@ -345,5 +383,34 @@ describe("incremental trace", () => {
     };
     expect(body.turns[0]?.spansUnavailable).toBe(true);
     expect(body.turns[0]?.spans).toEqual([]);
+  });
+
+  it("400s a zero or unparseable trace limit", async () => {
+    for (const limit of ["0", "oops"]) {
+      const res = await call("GET", `${BASE}/trace?limit=${limit}`);
+      expect(res.status).toBe(400);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("clamps an oversized trace limit to the documented ceiling", async () => {
+    answerQueries({
+      getSession: sessionRow(),
+      getSessionTurnTraces: Array.from({ length: 60 }, (_, index) =>
+        turn(index)
+      ),
+    });
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify([]), { status: 200 })
+    );
+    const res = await call("GET", `${BASE}/trace?limit=999`);
+    const body = (await res.json()) as {
+      turns: unknown[];
+      turnCount: number;
+      nextCursor?: string;
+    };
+    expect(body.turns).toHaveLength(50);
+    expect(body.turnCount).toBe(60);
+    expect(body.nextCursor).toBe("49");
   });
 });
