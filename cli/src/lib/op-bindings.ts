@@ -168,10 +168,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_eval_cases: { command: "cloud eval cases list" },
   get_eval_case: { command: "cloud eval cases get" },
   create_eval_case: { command: "cloud eval cases create" },
-  create_eval_cases: {
-    excluded:
-      'Authoring several cases from a shell means passing a FILE, and that file\'s format is now settled: the versioned eval suite file (`schemaVersion: "1"`, YAML canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`), which `eval validate` reads offline and `eval export` writes. What is still missing is the UPLOAD half — a suite file has cases with declared ids and the batch surface takes cases inline, and deciding which of the two owns identity on the way up is the same decision as `eval run --file`\'s ownership rules. So this binds when that command lands, not before; a batch command today would ship a second spelling of "send these cases" ahead of it. The bulk writers meanwhile are the agent surfaces (MCP `create_eval_cases`, `POST …/cases/batch`), which take the cases inline.',
-  },
+  create_eval_cases: { command: "cloud eval run --file" },
   update_eval_case: { command: "cloud eval cases update" },
   delete_eval_case: { command: "cloud eval cases delete" },
   generate_eval_cases: { command: "cloud eval cases generate" },
@@ -289,6 +286,22 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_readiness_runs: { command: "readiness list" },
   cancel_readiness_run: { command: "readiness cancel" },
   get_readiness_report: { command: "readiness report" },
+  start_conformance_run: {
+    excluded:
+      "Hosted conformance runs dial the platform's view of a saved server and persist results for the app; the local `mcpjam conformance` commands grade what this machine reaches without a project row. Different surfaces, and only the hosted run leaves a durable record agents can poll.",
+  },
+  get_conformance_run: {
+    excluded:
+      "No `conformance runs` poll command yet — run history and status live in the hosted app and agent surfaces until a CLI subcommand mirrors list/status against saved servers.",
+  },
+  list_conformance_runs: {
+    excluded:
+      "Listing persisted conformance runs is an app/agent concern today; the CLI's conformance commands are one-shot local runs, not a hosted run ledger.",
+  },
+  get_conformance_report: {
+    excluded:
+      "Report projection for agents is sized for model context on the platform API; the CLI already emits full suite output locally via `mcpjam conformance` and does not need a second report fetch path.",
+  },
 
   // ── Covered by the surrounding session, not a command ────────────────────
   get_me: {
@@ -299,36 +312,14 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "Model choice belongs to whatever runs an eval; the CLI never picks one on the user's behalf.",
   },
-  search_registry_directory: {
-    excluded:
-      "CLI `mcpjam registry search` is wired in follow-up PR I3 so the Commander tree and this catalog land together.",
-  },
-  get_registry_directory_server: {
-    excluded:
-      "CLI `mcpjam registry show` is wired in follow-up PR I3; adding the op without the command would fail the bindings tree test.",
-  },
-  list_registry_directory_sources: {
-    excluded:
-      "CLI `mcpjam registry sources` is wired in follow-up PR I3 with the rest of the registry group.",
-  },
-  list_registry_servers: {
-    excluded:
-      "CLI `mcpjam registry servers` is wired in follow-up PR I3; card listing stays out of the tree until then.",
-  },
-  list_registry_connections: {
-    excluded:
-      "CLI `mcpjam registry connections` is wired in follow-up PR I3 with the rest of the registry group.",
-  },
-  install_registry_directory_server: {
-    excluded:
-      "CLI `mcpjam registry install` (directory default) is wired in follow-up PR I3, including the flag-qualified dual-op binding.",
-  },
-  install_registry_server: {
-    excluded:
-      "CLI `mcpjam registry install --card` is wired in follow-up PR I3; one Commander path binds two ops.",
-  },
-  uninstall_registry_server: {
-    excluded:
-      "CLI `mcpjam registry uninstall` is wired in follow-up PR I3; card-only, no directory uninstall verb.",
-  },
+  search_registry_directory: { command: "registry search" },
+  get_registry_directory_server: { command: "registry show" },
+  list_registry_directory_sources: { command: "registry sources" },
+  list_registry_servers: { command: "registry servers" },
+  list_registry_connections: { command: "registry connections" },
+  // One Commander path, two ops. `--card` is the shelf disambiguator;
+  // the op-bindings test accepts a flag-qualified command string.
+  install_registry_directory_server: { command: "registry install" },
+  install_registry_server: { command: "registry install --card" },
+  uninstall_registry_server: { command: "registry uninstall" },
 };

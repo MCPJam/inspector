@@ -18,6 +18,7 @@ import {
   getRegistryDirectoryServerOperation,
   getServerPromptOperation,
   installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
   searchRegistryDirectoryOperation,
   listScenariosOperation,
   listChatSessionsOperation,
@@ -1860,6 +1861,10 @@ describe("operation catalog consistency", () => {
     list_readiness_runs: {},
     cancel_readiness_run: { run: "r" },
     get_readiness_report: { run: "r" },
+    start_conformance_run: { server: "s" },
+    get_conformance_run: { run: "r" },
+    list_conformance_runs: {},
+    get_conformance_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
     run_eval_suite: { suite: "s" },
@@ -1979,6 +1984,13 @@ describe("operation catalog consistency", () => {
       maxConcurrentComputers: 0,
     },
     rotate_user_testing_link: { scenario: "cb" },
+    get_share_settings: { resourceType: "scenario", resourceId: "cb" },
+    set_share_mode: {
+      resourceType: "scenario",
+      resourceId: "cb",
+      mode: "project_members",
+    },
+    rotate_share_link: { resourceType: "scenario", resourceId: "cb" },
     upsert_user_testing_member: { scenario: "cb", email: "a@example.com" },
     remove_user_testing_member: { scenario: "cb", member: "a@example.com" },
     rebind_user_testing_scenario: { scenario: "cb", environmentId: "env_1" },
@@ -2060,12 +2072,40 @@ describe("operation catalog consistency", () => {
     ).toBe(false);
   });
 
+  it("declares the frozen card-install shape, so a strict re-validation keeps it", () => {
+    // The inspector's proposal freeze injects a display-only `endpointUrl`
+    // (resolved from the card) next to the `expectedUpdatedAt` pin. Both must
+    // be schema-declared: a future strict re-validation at the execute seam
+    // would otherwise reject every approved card install.
+    expect(
+      installRegistryServerOperation.inputSchema.safeParse({
+        registryServerId: "rs",
+        endpointUrl: "https://mcp.example.com/mcp",
+        expectedUpdatedAt: 1_700_000_000_000,
+      }).success
+    ).toBe(true);
+    expect(
+      installRegistryServerOperation.inputSchema.safeParse({
+        registryServerId: "rs",
+        endpointUrl: "file:///etc/passwd",
+        expectedUpdatedAt: 1_700_000_000_000,
+      }).success
+    ).toBe(false);
+    expect(
+      installRegistryDirectoryServerOperation.inputSchema.safeParse({
+        catalogServerId: "cs",
+        endpointUrl: "javascript:alert(1)",
+      }).success
+    ).toBe(false);
+  });
+
   it("marks every operation read-only except the run/call/tunnel writes", () => {
     const writes = new Set([
       // Creates a durable run that dials a third party's server, and — with
       // the opt-in — spends the organization's credits.
       "start_claude_readiness_run",
       "start_openai_readiness_run",
+      "start_conformance_run",
       // Stops one. A write because it changes the row, spending nothing.
       "cancel_readiness_run",
       "run_eval_suite",
@@ -2155,6 +2195,8 @@ describe("operation catalog consistency", () => {
       "undismiss_user_testing_finding",
       "set_user_testing_guest_execution",
       "rotate_user_testing_link",
+      "set_share_mode",
+      "rotate_share_link",
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",

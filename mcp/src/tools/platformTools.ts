@@ -16,6 +16,10 @@ import {
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   connectProjectServerOperation,
   createEvalCaseOperation,
   createEvalCasesOperation,
@@ -42,6 +46,7 @@ import {
   getEvalRunStepsOperation,
   getEvalSuiteOperation,
   getEnvironmentOperation,
+  ensureAdhocEnvironmentOperation,
   getPluginVersionOperation,
   getProjectServerConnectionStatusOperation,
   getProjectServerOperation,
@@ -126,9 +131,6 @@ import {
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
-  getShareSettingsOperation,
-  setShareModeOperation,
-  rotateShareLinkOperation,
   searchRegistryDirectoryOperation,
   getRegistryDirectoryServerOperation,
   listRegistryDirectorySourcesOperation,
@@ -195,6 +197,10 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listReadinessRunsOperation,
   cancelReadinessRunOperation,
   getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalCaseOperation,
@@ -224,6 +230,11 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   listEnvironmentsOperation,
   getEnvironmentOperation,
   resolveEnvironmentOperation,
+  // Compose-to-run. Already tier-"direct" in-app; the catalog withheld it
+  // because `run_eval_suite`'s `compose` mints the same row. Exposing it
+  // lets a caller pin a cell (then `name_environment`, or hand the id to
+  // `set_eval_suite_environments`) without launching.
+  ensureAdhocEnvironmentOperation,
   // Sandbox image READS. They are the picker behind `update_eval_suite`'s
   // `environment.computerEnvironment`: without them an agent can set a
   // suite's computer image but never enumerate the choices.
@@ -308,9 +319,6 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
-  getShareSettingsOperation,
-  setShareModeOperation,
-  rotateShareLinkOperation,
   searchRegistryDirectoryOperation,
   getRegistryDirectoryServerOperation,
   listRegistryDirectorySourcesOperation,
@@ -370,8 +378,6 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "A deployment-compatibility probe, not an action: it answers whether this platform accepts an environment model override, which the write paths already ask on the caller's behalf.",
   create_project_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface.",
-  ensure_adhoc_environment:
-    "Project infrastructure writes are not offered on the unattended catalog surface. Composing a stack to RUN it needs no separate tool here: run_eval_suite takes a `compose` object and ensures the environment itself, so excluding this costs the surface no capability.",
   name_environment:
     "Project infrastructure writes are not offered on the unattended catalog surface. Promotion turns a throwaway into a permanent entry in the project's environment list, which is exactly the kind of durable edit an unattended caller should not make on its own.",
   update_project_environment:
@@ -394,6 +400,17 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Computer lifecycle writes are not offered on the unattended catalog surface.",
   delete_sandbox_image:
     "Sandbox image lifecycle writes are not offered on the unattended catalog surface.",
+  // Unified share (scenarios, conformance runs, eval runs). Scenario-specific
+  // rotate is already `rotate_user_testing_link`. The I5 operations span three
+  // resource types and belong with the Share dialog / agent-op registry until
+  // this catalog grows a dedicated share group — same decision as CLI
+  // `op-bindings.ts`.
+  get_share_settings:
+    "Scenario share already appears on get_user_testing_scenario. The unified read also covers conformance and eval runs; bind all three resource types together when this catalog grows a share group.",
+  set_share_mode:
+    "Scenario exposure is already update_user_testing_scenario. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
+  rotate_share_link:
+    "Scenario rotation is already rotate_user_testing_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
 };
 
 const catalogOperationNames = new Set(
@@ -475,7 +492,6 @@ const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   archiveSwarmOperation.name,
   removeUserTestingMemberOperation.name,
   rotateUserTestingLinkOperation.name,
-  rotateShareLinkOperation.name,
 ]);
 
 /**

@@ -34,6 +34,22 @@ const PROJECTS = [
   },
 ];
 
+function evalRunStub(status = "completed"): Record<string, unknown> {
+  return {
+    id: "run-1",
+    suiteId: "suite-1",
+    runNumber: 1,
+    status,
+    result: status === "completed" ? "passed" : null,
+    summary: null,
+    source: "api",
+    notes: null,
+    createdAt: 1,
+    completedAt: status === "completed" ? 2 : null,
+    judges: {},
+  };
+}
+
 async function startFixture(): Promise<{
   baseUrl: string;
   requestUrls: string[];
@@ -52,25 +68,62 @@ async function startFixture(): Promise<{
       res.end(JSON.stringify({ items: [] }));
       return;
     }
-    if (url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1") {
-      res.end(
-        JSON.stringify({
-          id: "run-1",
-          suiteId: "suite-1",
-          status: "completed",
-          result: "passed",
-          judges: [],
-        })
-      );
-      return;
+
+    const evalRun = url.pathname.match(
+      /^\/api\/v1\/projects\/([^/]+)\/eval-runs\/run-1(?:\/(.*))?$/
+    );
+    if (evalRun) {
+      const rest = evalRun[2] ?? "";
+      if (rest === "" && (req.method ?? "GET") === "GET") {
+        res.end(JSON.stringify(evalRunStub("running")));
+        return;
+      }
+      if (rest === "iterations") {
+        res.end(JSON.stringify({ items: [] }));
+        return;
+      }
+      if (rest === "cancel" && req.method === "POST") {
+        res.end(JSON.stringify(evalRunStub("cancelled")));
+        return;
+      }
+      if (rest === "judge" && req.method === "POST") {
+        res.statusCode = 202;
+        res.end(
+          JSON.stringify({
+            runId: "run-1",
+            projectId: evalRun[1],
+            status: "pending",
+          })
+        );
+        return;
+      }
+      if (rest === "compare") {
+        res.end(
+          JSON.stringify({
+            runId: "run-1",
+            baseRunId: "run-0",
+            cases: [],
+          })
+        );
+        return;
+      }
+      if (rest === "iterations/iter-1/trace") {
+        res.end(
+          JSON.stringify({
+            traceVersion: 1,
+            messages: [],
+            widgetRenderObservations: [],
+            browserInteractionSteps: [],
+          })
+        );
+        return;
+      }
+      if (rest === "iterations/iter-1/steps") {
+        res.end(JSON.stringify({ items: [] }));
+        return;
+      }
     }
-    if (
-      url.pathname ===
-      "/api/v1/projects/proj-alpha/eval-runs/run-1/iterations"
-    ) {
-      res.end(JSON.stringify({ items: [] }));
-      return;
-    }
+
     res.statusCode = 404;
     res.end(JSON.stringify({ code: "NOT_FOUND", message: url.pathname }));
   });
@@ -156,71 +209,132 @@ function cloudArgv(baseUrl: string, ...args: string[]): string[] {
   ];
 }
 
+function writeLink(
+  directory: string,
+  body: Record<string, unknown>
+): string {
+  const filePath = projectLinkPathForDir(directory);
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, `${JSON.stringify(body, null, 2)}\n`);
+  return filePath;
+}
+
+const INSPECTION_COMMANDS: ReadonlyArray<{
+  name: string;
+  args: string[];
+  pathIncludes: string;
+}> = [
+  { name: "status", args: ["status", "--run", "run-1"], pathIncludes: "/eval-runs/run-1" },
+  { name: "cancel", args: ["cancel", "--run", "run-1"], pathIncludes: "/eval-runs/run-1/cancel" },
+  { name: "judge", args: ["judge", "--run", "run-1"], pathIncludes: "/eval-runs/run-1/judge" },
+  {
+    name: "iterations",
+    args: ["iterations", "--run", "run-1"],
+    pathIncludes: "/eval-runs/run-1/iterations",
+  },
+  { name: "gate", args: ["gate", "--run", "run-1"], pathIncludes: "/eval-runs/run-1" },
+  { name: "compare", args: ["compare", "--run", "run-1"], pathIncludes: "/eval-runs/run-1/compare" },
+  {
+    name: "trace",
+    args: ["trace", "--run", "run-1", "--iteration", "iter-1"],
+    pathIncludes: "/eval-runs/run-1/iterations/iter-1/trace",
+  },
+  {
+    name: "steps",
+    args: ["steps", "--run", "run-1", "--iteration", "iter-1"],
+    pathIncludes: "/eval-runs/run-1/iterations/iter-1/steps",
+  },
+  {
+    name: "screenshot",
+    args: ["screenshot", "--run", "run-1", "--iteration", "iter-1"],
+    pathIncludes: "/eval-runs/run-1/iterations/iter-1/trace",
+  },
+  {
+    name: "video",
+    args: ["video", "--run", "run-1", "--iteration", "iter-1"],
+    pathIncludes: "/eval-runs/run-1/iterations/iter-1/trace",
+  },
+];
+
 test("eval run-inspection commands treat --project as optional", async () => {
-  for (const sub of [
-    "status",
-    "cancel",
-    "judge",
-    "iterations",
-    "gate",
-    "compare",
-    "trace",
-    "steps",
-    "screenshot",
-    "video",
-  ]) {
-    const run = await runCli(["cloud", "eval", sub, "--help"]);
+  for (const { name } of INSPECTION_COMMANDS) {
+    const run = await runCli(["cloud", "eval", name, "--help"]);
     assert.equal(run.exitCode, 0, run.stderr);
     assert.match(run.stdout, /--project <id-or-name>/);
     assert.doesNotMatch(run.stdout, /required option '--project/);
   }
 });
 
-test("eval iterations without --project uses automatic project selection", async () => {
-  const fixture = await startFixture();
-  const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-eval-iterations-"));
-  try {
-    const run = await withEnv(isolatedEnv(), () =>
-      withCwd(cwd, () =>
-        runCli(
-          cloudArgv(fixture.baseUrl, "eval", "iterations", "--run", "run-1")
-        )
-      )
-    );
-    assert.equal(run.exitCode, 0, run.stderr);
-    assert.ok(
-      fixture.requestUrls.some((url) =>
-        url.includes("/projects/proj-alpha/eval-runs/run-1/iterations")
-      ),
-      `expected automatic proj-alpha iterations fetch, saw: ${fixture.requestUrls.join(", ")}`
-    );
-  } finally {
-    await fixture.close();
-  }
-});
+test("eval inspection commands select automatic, linked, env, and explicit projects", async () => {
+  const cases: ReadonlyArray<{
+    title: string;
+    env?: Record<string, string | undefined>;
+    linkProject?: { id: string; name: string };
+    extraArgs?: string[];
+    projectId: string;
+  }> = [
+    { title: "automatic", projectId: "proj-alpha" },
+    {
+      title: "linked",
+      linkProject: { id: "proj-beta", name: "Beta" },
+      projectId: "proj-beta",
+    },
+    {
+      title: "environment",
+      env: { MCPJAM_PROJECT: "Alpha" },
+      linkProject: { id: "proj-beta", name: "Beta" },
+      projectId: "proj-alpha",
+    },
+    {
+      title: "explicit",
+      env: { MCPJAM_PROJECT: "Alpha" },
+      linkProject: { id: "proj-alpha", name: "Alpha" },
+      extraArgs: ["--project", "Beta"],
+      projectId: "proj-beta",
+    },
+  ];
 
-test("eval status without --project uses automatic project selection", async () => {
-  const fixture = await startFixture();
-  const cwd = mkdtempSync(path.join(tmpdir(), "mcpjam-eval-project-"));
-  try {
-    const run = await withEnv(isolatedEnv(), () =>
-      withCwd(cwd, () =>
-        runCli(cloudArgv(fixture.baseUrl, "eval", "status", "--run", "run-1"))
-      )
-    );
-    assert.equal(run.exitCode, 0, run.stderr);
-    assert.ok(
-      fixture.requestUrls.some((url) =>
-        url.includes("/projects/proj-alpha/eval-runs/run-1")
-      ),
-      `expected automatic proj-alpha run fetch, saw: ${fixture.requestUrls.join(", ")}`
-    );
-    assert.match(
-      run.stderr,
-      /project: automatic \(most recently updated\)/
-    );
-  } finally {
-    await fixture.close();
+  for (const selection of cases) {
+    for (const command of INSPECTION_COMMANDS) {
+      const fixture = await startFixture();
+      const cwd = mkdtempSync(
+        path.join(tmpdir(), `mcpjam-eval-${command.name}-${selection.title}-`)
+      );
+      if (selection.linkProject) {
+        writeLink(cwd, {
+          version: 1,
+          project: selection.linkProject,
+          apiUrl: fixture.baseUrl,
+        });
+      }
+      try {
+        const run = await withEnv(isolatedEnv(selection.env), () =>
+          withCwd(cwd, () =>
+            runCli(
+              cloudArgv(
+                fixture.baseUrl,
+                "eval",
+                ...command.args,
+                ...(selection.extraArgs ?? [])
+              )
+            )
+          )
+        );
+        assert.notEqual(
+          run.exitCode,
+          2,
+          `${command.name} ${selection.title} failed at usage parsing: ${run.stderr}`
+        );
+        assert.doesNotMatch(run.stderr, /required option '--project/i);
+        const needle = `/projects/${selection.projectId}${command.pathIncludes}`;
+        assert.ok(
+          fixture.requestUrls.some((url) => url.includes(needle)),
+          `${command.name} ${selection.title} expected ${needle}, saw: ${fixture.requestUrls.join(", ")}\nstderr: ${run.stderr}`
+        );
+      } finally {
+        await fixture.close();
+      }
+    }
   }
 });
 

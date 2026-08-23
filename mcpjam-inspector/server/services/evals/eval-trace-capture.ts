@@ -741,6 +741,22 @@ export function pushAiSdkTrailingErrorSpan(
   });
 }
 
+/**
+ * Append synthetic run-level connect / tools-list spans.
+ *
+ * Position is clamped to offset 0 (they happen above the iteration
+ * boundary); duration is whatever the observer already preserved.
+ * These spans are persistence/timeline-only — they never enter stage
+ * derivation evidence.
+ */
+export function pushRunSetupSpans(
+  spans: EvalTraceSpan[],
+  setupSpans: readonly EvalTraceSpan[],
+): void {
+  if (setupSpans.length === 0) return;
+  spans.unshift(...setupSpans);
+}
+
 export function wrapBackendToolsForTrace<T extends Record<string, unknown>>(
   tools: T,
   params: {
