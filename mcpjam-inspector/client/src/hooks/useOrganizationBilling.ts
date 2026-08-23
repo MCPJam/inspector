@@ -127,7 +127,19 @@ export interface OrganizationSeatPaymentIntent {
   email: string;
   role: "guest" | "member";
   source: string;
-  status: "pending" | "requires_action";
+  status:
+    | "pending"
+    | "requires_action"
+    | "cleanup_pending"
+    | "failed"
+    | "canceled";
+  /**
+   * The charge ended terminally and the invitee is still waiting. Only ever
+   * true for charges raised automatically at signup — when an owner starts one
+   * themselves they see the failure inline and just try again. Unattended,
+   * nothing would surface it, so the notice renders a retry variant instead.
+   */
+  needsRetry?: boolean;
   targetSeatQuantity: number | null;
   stripeInvoiceId: string | null;
   createdAt: number;
@@ -138,6 +150,11 @@ export type SeatPaymentResult =
   | { status: "paid"; seatQuantity: number; stripeInvoiceId?: string }
   | { status: "failed"; stripeInvoiceId?: string; reason?: string }
   | { status: "noop"; reason: string };
+
+export type SeatPaymentCancelResult = {
+  voided: boolean;
+  outcome: "canceled" | "deferred" | "paid" | "not_active";
+};
 
 export interface PlanCatalogEntry {
   plan: OrganizationPlan;
@@ -296,6 +313,9 @@ export function useOrganizationBilling(
     "billing:completeSeatPayment" as any
   );
   const cancelSeatPaymentAction = useAction("billing:cancelSeatPayment" as any);
+  const retrySeatPaymentMutation = useMutation(
+    "billing:retrySeatPayment" as any,
+  );
 
   const [isStartingPlanChange, setIsStartingPlanChange] = useState(false);
   const [pendingPlanChangeTarget, setPendingPlanChangeTarget] = useState<
@@ -497,6 +517,7 @@ export function useOrganizationBilling(
                 organizationId,
                 seatPaymentIntentId: activeSeatPaymentIntentId,
                 stripeInvoiceId: startResult.stripeInvoiceId,
+                terminalStatus: "failed",
               } as any);
             } catch (cancelError) {
               console.warn(
@@ -559,28 +580,74 @@ export function useOrganizationBilling(
     ]
   );
 
+  /**
+   * Retry a seat charge that died with nobody watching.
+   *
+   * Two steps on purpose. `startSeatPayment` refuses terminal charges — it is
+   * also reached by a stale browser tab, and that must never resurrect a
+   * charge the owner cancelled — so retrying first reopens the charge as a new
+   * attempt, then runs the ordinary finish flow. Going through that flow is
+   * also what makes a 3DS challenge possible, since it needs the owner here.
+   */
+  const retrySeatPayment = useCallback(async () => {
+    if (!organizationId) return;
+    setError(null);
+    setIsFinishingSeatPayment(true);
+    // Captured BEFORE the mutation, not inside finishSeatPayment: reopening
+    // the charge and starting payment are two round trips, and the owner can
+    // hit "Remove invite" in between. finishSeatPayment's own guard reads the
+    // version at its own start, which is already after such a cancel, so it
+    // would happily reopen a charge the owner just cancelled.
+    const cancelVersionAtStart = seatPaymentCancelVersionRef.current;
+    try {
+      const result = (await retrySeatPaymentMutation({
+        organizationId,
+      } as any)) as {
+        restarted: boolean;
+        seatPaymentIntentId: string | null;
+      };
+      if (!result?.restarted || !result.seatPaymentIntentId) {
+        throw new Error(
+          "This seat payment can no longer be retried. Try adding the member again.",
+        );
+      }
+      if (seatPaymentCancelVersionRef.current !== cancelVersionAtStart) {
+        // Cancelled while we were reopening it. Leave it cancelled.
+        return;
+      }
+      return await finishSeatPayment(result.seatPaymentIntentId);
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : "Failed to retry seat payment";
+      setError(message);
+      throw err;
+    } finally {
+      setIsFinishingSeatPayment(false);
+    }
+  }, [finishSeatPayment, organizationId, retrySeatPaymentMutation]);
+
   const cancelSeatPayment = useCallback(
-    async (seatPaymentIntentId?: string): Promise<void> => {
+    async (seatPaymentIntentId?: string): Promise<SeatPaymentCancelResult> => {
       if (!organizationId) throw new Error("Organization is required");
       const activeSeatPaymentIntentId =
         seatPaymentIntentId ?? activeSeatPaymentIntent?._id;
       if (!activeSeatPaymentIntentId) {
-        return;
+        return { voided: false, outcome: "not_active" };
       }
       if (seatPaymentCompletionInFlightRef.current) {
-        return;
+        return { voided: false, outcome: "not_active" };
       }
 
       setIsCancelingSeatPayment(true);
       seatPaymentCancelVersionRef.current += 1;
       setError(null);
       try {
-        await cancelSeatPaymentAction({
+        return (await cancelSeatPaymentAction({
           organizationId,
           seatPaymentIntentId: activeSeatPaymentIntentId,
           stripeInvoiceId:
             activeSeatPaymentIntent?.stripeInvoiceId ?? undefined,
-        } as any);
+        } as any)) as SeatPaymentCancelResult;
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to cancel seat payment";
@@ -648,6 +715,7 @@ export function useOrganizationBilling(
     cancelScheduledBillingChange,
     selectFreeAfterTrial,
     finishSeatPayment,
+    retrySeatPayment,
     cancelSeatPayment,
   };
 }

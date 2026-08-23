@@ -324,6 +324,39 @@ export type {
   PublicCheckOverride,
   PublicMatchOptions,
 } from "./corpus.js";
+
+// Suite files: read one, resolve its documented defaults in memory, write an
+// authored one back. Pure and browser-safe — the file I/O half lives in
+// @mcpjam/cli (`eval validate`, `eval export`).
+//
+// Deliberately NOT re-exported from `@mcpjam/sdk/contract`. That subpath is
+// dependency-light (zod only) and browser-bundled on purpose; routing the
+// loader through it would pull `yaml` into every client bundle that imports
+// the contract for its types.
+export {
+  MAX_SUITE_FILE_BYTES,
+  SUITE_FILE_DEFAULT_CAPTURE_LEVEL,
+  SUITE_FILE_FINDING_CODES,
+  SUITE_FILE_VALIDITY_DEFAULTS,
+  formatSuiteFileFindings,
+  loadEvalSuiteFile,
+  resolveEvalSuiteFile,
+  serializeEvalSuiteFile,
+  suiteFilePointer,
+} from "./suite-file-loader.js";
+export type {
+  LoadEvalSuiteFileOptions,
+  ResolvedEvalSuiteFile,
+  ResolvedEvalSuiteFileCase,
+  ResolvedEvalSuiteFileValidity,
+  SuiteFileFailureStage,
+  SuiteFileFinding,
+  SuiteFileFindingCode,
+  SuiteFileLoadFailure,
+  SuiteFileLoadResult,
+  SuiteFileLoadSuccess,
+  SuiteFileLocation,
+} from "./suite-file-loader.js";
 export type { LatencyStats } from "./percentiles.js";
 export {
   validateToolCallEnvelope,
@@ -399,12 +432,140 @@ export {
 } from "./conformance-reporting.js";
 export type {
   ConformanceReport,
+  ConformanceReportAdvisory,
   ConformanceReportCase,
   ConformanceReportCaseStatus,
   ConformanceReportGroup,
   ConformanceReportKind,
   SupportedConformanceResult,
 } from "./conformance-reporting.js";
+
+// The publisher-neutral readiness algebra. Named rather than `export *`
+// because both publisher barrels below already re-export parts of it under
+// their own names, and a wildcard would collide with them.
+export {
+  DIRECTORY_OBSERVATION_CONFIDENCE,
+  DIRECTORY_OBSERVATION_FINDING_CLASSES,
+  DIRECTORY_OBSERVATION_LIMITS,
+  DIRECTORY_OBSERVATION_REASONS,
+  DIRECTORY_OBSERVATION_STATUSES,
+  NOT_REQUESTED_OBSERVATIONS,
+  mapObservationsToFindings,
+  observationFailure,
+  parseDirectoryObservationEnvelope,
+} from "./directory-readiness/observations.js";
+export type {
+  DirectoryObservation,
+  DirectoryObservationCatalog,
+  DirectoryObservationConfidence,
+  DirectoryObservationEnvelope,
+  DirectoryObservationFindingClass,
+  DirectoryObservationMapping,
+  DirectoryObservationParseFailure,
+  DirectoryObservationParseResult,
+  DirectoryObservationReason,
+  DirectoryObservationSchema,
+  DirectoryObservationState,
+  DirectoryObservationStatus,
+} from "./directory-readiness/observations.js";
+
+export {
+  EVIDENCE_REUSE_REFUSALS,
+  checkEvidenceReuse,
+  sameReadinessTarget,
+} from "./directory-readiness/evidence-reuse.js";
+export type {
+  AttributableEvidenceSource,
+  EvidenceReuse,
+  EvidenceReuseExpectation,
+  EvidenceReuseRefusal,
+} from "./directory-readiness/evidence-reuse.js";
+
+// The shared MCP dial. NODE ENTRY ONLY — it opens sockets, so it is absent
+// from `browser.ts` and from the two publisher barrels, exactly like the
+// discovery modules below.
+export {
+  DIRECTORY_DIAL_CLIENT_INFO,
+  DIRECTORY_DIAL_DEFAULTS,
+  DIRECTORY_DIAL_PROTOCOL_VERSION,
+  dialAppResources,
+  dialInitialize,
+  dialMcpServer,
+  dialResourceListing,
+  dialToolListing,
+} from "./directory-readiness/mcp-dial.js";
+export type {
+  DirectoryAppResourceEvidence,
+  DirectoryDialEvidence,
+  DirectoryDialOptions,
+  DirectoryDialRequest,
+  DirectoryInitializeEvidence,
+  DirectoryListingEvidence,
+  DirectoryResourceEvidence,
+  DirectoryToolEvidence,
+} from "./directory-readiness/mcp-dial.js";
+
+// Claude directory readiness. Pure data and data reasoning only — the runner
+// and the dialing checks are deliberately not re-exported here, so importing
+// the result model never pulls a transport in with it.
+export * from "./claude-readiness/index.js";
+// The one readiness module that touches the network, exported only from the
+// Node entry. It is deliberately absent from `claude-readiness/index.ts` so
+// that importing the result model can never pull a transport in with it.
+export {
+  discoverClaudeAuthEvidence,
+  traceConnectorRedirects,
+} from "./claude-readiness/discovery.js";
+export type { ClaudeDiscoveryOptions } from "./claude-readiness/discovery.js";
+// The Claude gather half, Node-only for the same reason as the discovery
+// module above: it dials, and importing a result model must never pull a
+// transport in with it.
+export { gatherClaudeReadinessEvidence } from "./claude-readiness/gather.js";
+export type { GatherClaudeReadinessEvidenceOptions } from "./claude-readiness/gather.js";
+// The side-effecting intrusive probes, likewise Node-only. The gate that arms
+// them and the grading that reads them are pure and come from the barrel above.
+export {
+  probeDynamicRegistration,
+  probeRefreshRotation,
+} from "./claude-readiness/intrusive-probes.js";
+
+// OpenAI plugin-directory readiness. Same rule as the Claude barrel above:
+// pure data and data reasoning only, so importing the result model or the
+// package reader never pulls a transport in with it.
+export * from "./openai-readiness/index.js";
+// The Node plugin-bundle file sources: a directory on disk and a ZIP in
+// memory. NODE ENTRY ONLY — they are the only `plugin-bundle` modules that
+// touch `node:fs` or an archive library, and `plugin-bundle/index.ts` stays
+// free of both so a browser can still validate a dropped package in the page.
+export {
+  DIRECTORY_ARCHIVE_OBSERVATIONS,
+  collectZipArchiveObservations,
+  createDirectoryPluginFileSource,
+  createZipPluginFileSource,
+} from "./plugin-bundle/node-file-sources.js";
+
+// The Node XML parser for SVG dimension reads, exported ONLY here. A browser
+// has `DOMParser` natively and `readImageDimensions` finds it; `@xmldom/xmldom`
+// is banned from the browser entry's import graph, so the Node fallback lives
+// behind this entry and is passed in as `parseXml`.
+export { xmldomParseXml } from "./openai-readiness/package/svg-xml-node.js";
+
+// The OpenAI readiness modules that touch the network, exported only from the
+// Node entry. They are deliberately absent from `openai-readiness/index.ts` so
+// that importing the result model can never pull a transport in with it.
+export {
+  discoverOpenAIAuthEvidence,
+  discoverOpenAIImportedSkills,
+  fetchOpenAIDomainVerification,
+  traceOpenAIEndpoint,
+} from "./openai-readiness/discovery.js";
+export type {
+  OpenAIAuthEvidence,
+  OpenAIAuthorizationServerEvidence,
+  OpenAIDiscoveryOptions,
+  OpenAIDomainVerificationEvidence,
+  OpenAIEndpointEvidence,
+} from "./openai-readiness/discovery.js";
 export {
   buildOutcomeSummary,
   decideConformanceOutcome,
@@ -430,6 +591,63 @@ export type {
   ConformanceScore,
   ScoredAdvisory,
 } from "./conformance-score.js";
+// The frozen scored-check manifest a score is computed over, plus the identity
+// stamp that says which questions a given number came from.
+export {
+  buildConformanceProfileStamp,
+  conformanceProfile,
+  conformanceProfileDigest,
+  partitionByProfile,
+  partitionByStamp,
+  unscoredCheckIds,
+  CONFORMANCE_CHECKER_VERSION,
+  CONFORMANCE_PROFILE_IDS,
+} from "./conformance-profile.js";
+export type {
+  ConformanceProfile,
+  ConformanceProfileId,
+  ConformanceProfileStamp,
+  ProfileCheckLike,
+} from "./conformance-profile.js";
+
+export {
+  buildConformanceRunReport,
+  CONFORMANCE_RUN_SCHEMA_VERSION,
+  CONFORMANCE_SUITE_KINDS,
+  DEFAULT_CONFORMANCE_SUITES,
+  normalizeConformanceSuites,
+} from "./conformance-run-types.js";
+export type {
+  ConformanceRunReportV1,
+  ConformanceSuiteKind,
+} from "./conformance-run-types.js";
+export { runConformance } from "./conformance-run.js";
+export type {
+  ConformanceRunProgress,
+  RunConformanceConfig,
+} from "./conformance-run.js";
+export {
+  detectConformanceCiMetadata,
+  githubActionExternalRunId,
+} from "./conformance-ci.js";
+export type { ConformanceCiMetadata } from "./conformance-ci.js";
+export {
+  finalizeConformanceRun,
+  heartbeatConformanceRun,
+  isConformanceReportingConfigured,
+  reportConformanceRun,
+  reportConformanceRunSafely,
+  startConformanceRun,
+  uploadConformanceSuiteReport,
+} from "./report-conformance-run.js";
+export type {
+  ConformanceRunSource,
+  ConformanceTargetInput,
+  ReportConformanceRunOptions,
+  ReportConformanceRunOutput,
+} from "./report-conformance-run.js";
+export { createConformanceRunReporter } from "./conformance-run-reporter.js";
+export type { ConformanceRunReporter } from "./conformance-run-reporter.js";
 // Redaction for reports that leave the machine that produced them (a stored,
 // shareable run). Structural drop of raw HTTP evidence plus a credential-shaped
 // key sweep — see the module header for why both layers exist.
@@ -446,7 +664,7 @@ export type {
   OAuthLoginResult,
 } from "./oauth-login.js";
 // Loopback authorization-code capture + PKCE primitives, reused by the CLI's
-// platform login (`mcpjam login`) in addition to OAuth conformance runs.
+// platform login (`mcpjam cloud login`) in addition to OAuth conformance runs.
 export {
   createInteractiveAuthorizationSession,
   openUrlInBrowser,
@@ -808,6 +1026,25 @@ export {
 export type {
   ConformanceSuiteId,
   ConformanceSupport,
+  MCPConformanceFixtures,
+} from "./mcp-conformance/index.js";
+// Wire-schema validation: the run-wide message record and the validator that
+// grades it against the revision's published JSON Schema. Node-only (Ajv),
+// which is why it is absent from `@mcpjam/sdk/browser`.
+export {
+  WireObservationRecorder,
+  WireSchemaValidator,
+  CORE_WIRE_SCHEMAS,
+  EXTENSION_SCHEMA_REVISIONS,
+  EXTENSION_WIRE_SCHEMAS,
+  TASKS_EXTENSION_ID,
+} from "./mcp-conformance/index.js";
+export type {
+  ObservedRequestId,
+  ObservedWireMessage,
+  WireSchemaDocument,
+  WireSchemaValidationReport,
+  WireSchemaViolation,
 } from "./mcp-conformance/index.js";
 
 // MCP Apps conformance
@@ -996,7 +1233,7 @@ export type {
 } from "./scorers/index.js";
 
 // The gate engine. ONE evaluator behind `assertGate` (code-first) and
-// `mcpjam eval gate` (hosted), so a CI gate cannot be green on one path and
+// `mcpjam cloud eval gate` (hosted), so a CI gate cannot be green on one path and
 // red on the other.
 export {
   GateError,

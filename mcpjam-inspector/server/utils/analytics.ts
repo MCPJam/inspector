@@ -79,17 +79,57 @@ export function captureServerEvent(
   event: ServerAnalyticsEventName,
   properties: Record<string, unknown> = {},
 ): void {
+  const ctx = c.var.requestLogContext as RequestLogContext | undefined;
+  const distinctId =
+    ctx?.userExternalId ?? ctx?.guestExternalId ?? c.get("guestId") ?? null;
+  if (!distinctId) return;
+
+  captureServerEventForActor(
+    {
+      distinctId,
+      organizationId: ctx?.orgId ?? undefined,
+      projectId: ctx?.projectId ?? undefined,
+    },
+    event,
+    properties,
+  );
+}
+
+/** The actor a detached event is attributed to. */
+export interface ServerAnalyticsActor {
+  /**
+   * MUST be the same actorKey the client uses — the WorkOS user id, or the
+   * guest id. The Convex-internal `userId` does NOT match and would pollute
+   * person profiles.
+   */
+  distinctId: string;
+  organizationId?: string;
+  projectId?: string;
+}
+
+/**
+ * Capture for work that OUTLIVES the request that started it.
+ *
+ * Detached execution — a readiness run, anything else handed off after a
+ * `202` — has no `Context` to read an actor from by the time it finishes, and
+ * the interesting event is precisely the one at the end. So the identity is
+ * resolved while the request still exists and carried into the work, rather
+ * than the work being left uninstrumented or attributed anonymously.
+ *
+ * Never throws; drops silently when analytics is disabled.
+ */
+export function captureServerEventForActor(
+  actor: ServerAnalyticsActor,
+  event: ServerAnalyticsEventName,
+  properties: Record<string, unknown> = {},
+): void {
   try {
     const posthog = getClient();
     if (!posthog) return;
-
-    const ctx = c.var.requestLogContext as RequestLogContext | undefined;
-    const distinctId =
-      ctx?.userExternalId ?? ctx?.guestExternalId ?? c.get("guestId") ?? null;
-    if (!distinctId) return;
+    if (!actor.distinctId) return;
 
     posthog.capture({
-      distinctId,
+      distinctId: actor.distinctId,
       event,
       properties: {
         // Caller props spread FIRST so the generated dedupe key, source
@@ -106,8 +146,10 @@ export function captureServerEvent(
         // (npm installs, the Electron-embedded local server, Docker), not
         // just the hosted Railway deployment.
         deployment: HOSTED_MODE ? "hosted" : "self_hosted",
-        ...(ctx?.orgId ? { organization_id: ctx.orgId } : {}),
-        ...(ctx?.projectId ? { project_id: ctx.projectId } : {}),
+        ...(actor.organizationId
+          ? { organization_id: actor.organizationId }
+          : {}),
+        ...(actor.projectId ? { project_id: actor.projectId } : {}),
       },
     });
   } catch {

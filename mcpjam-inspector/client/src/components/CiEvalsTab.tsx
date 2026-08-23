@@ -115,9 +115,10 @@ export function CiEvalsTab({
       : null;
 
   const {
+    organizationId,
     connectedServerNames,
     userMap,
-    canDeleteSuite,
+    canDeleteArtifact,
     canDeleteRuns,
     availableModels,
   } = useEvalTabContext({
@@ -319,6 +320,9 @@ export function CiEvalsTab({
     selectedSuiteEntry,
     selectedSuiteId,
     selectedTestId,
+    // Without this the Runs lens can't open the upgrade wall on a server-side
+    // cap rejection and falls back to the dead-end toast.
+    organizationId,
     connectedServerNames,
     ensureServersReady,
     latestRunBySuiteId,
@@ -816,7 +820,7 @@ export function CiEvalsTab({
                     onDeleteRun={handleDeleteRun}
                     onDirectDeleteRun={handlers.directDeleteRun}
                     connectedServerNames={connectedServerNames}
-                    canDeleteSuite={canDeleteSuite}
+                    canDeleteSuite={canDeleteArtifact(selectedSuite?.createdBy)}
                     rerunningSuiteId={handlers.rerunningSuiteId}
                     replayingRunId={handlers.replayingRunId}
                     cancellingRunId={handlers.cancellingRunId}
@@ -827,6 +831,7 @@ export function CiEvalsTab({
                     userMap={userMap}
                     navigation={ciNavigation}
                     canDeleteRuns={canDeleteRuns}
+                    canDeleteRun={(run) => canDeleteArtifact(run.createdBy)}
                     readOnlyConfig
                     omitSuiteHeader
                     onRunTestCase={

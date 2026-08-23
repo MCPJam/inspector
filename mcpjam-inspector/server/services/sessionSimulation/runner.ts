@@ -41,10 +41,44 @@ import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
 import { shouldEnableCloudSkillTools } from "../../utils/computers/cloud-skill-tools.js";
 import {
   persistChatSessionToConvex,
+  type PersistChatOutcome,
   type PersistedTurnTrace,
   type ChatOrigin,
 } from "../../utils/chat-ingestion.js";
 import { exportConnectedServerToolSnapshotForEvalAuthoring } from "../../utils/export-helpers.js";
+
+/**
+ * Headless runs have no stream to carry a `data-persist-receipt`, but the
+ * outcome still matters: a synthetic run whose transcripts never landed used to
+ * be indistinguishable from one that saved cleanly. `not-attempted` is silent —
+ * it means persistence was not configured for this run, which is expected.
+ */
+function warnIfSimulationPersistNotSaved(
+  outcome: PersistChatOutcome | undefined,
+  stage: "empty-session" | "turn",
+  chatSessionId: string
+): void {
+  // This is observability, not control flow — it must never be the thing that
+  // takes a synthetic run down, so an absent outcome is simply nothing to say.
+  if (
+    !outcome ||
+    outcome.outcome === "saved" ||
+    outcome.outcome === "duplicate" ||
+    outcome.outcome === "not-attempted"
+  ) {
+    return;
+  }
+  logger.warn("[sessionSimulation] chat persist did not save", {
+    stage,
+    // Concurrent synthetic sessions interleave in the log, so the warning has
+    // to name the session it is about to be actionable at all.
+    chatSessionId,
+    outcome: outcome.outcome,
+    ...(outcome.outcome === "failed"
+      ? { failureKind: outcome.failureKind }
+      : {}),
+  });
+}
 import { captureMcpAppWidgetSnapshots } from "../../utils/mcp-app-widget-capture.js";
 import {
   createBrowserSessionContext,
@@ -442,9 +476,10 @@ export async function runSyntheticHostSession(
    *
    * The flag records "the write was ATTEMPTED", not "the row exists":
    * `persistChatSessionToConvex` is fail-soft — an HTTP error, a timeout, or a
-   * missing `CONVEX_HTTP_URL`/auth header is logged and it returns normally. So a
-   * silently-failed write is not re-attempted from the terminal path. It only
-   * re-attempts a write that THREW. The outbox absorbs the rest:
+   * missing `CONVEX_HTTP_URL`/auth header returns a non-`saved` outcome rather
+   * than throwing (it is logged, and now also reported through the returned
+   * outcome). So a failed write is not re-attempted from the terminal path. It
+   * only re-attempts a write that THREW. The outbox absorbs the rest:
    * `recordBrowserArtifacts` returns `null` while the row is missing, and the
    * batch stays held.
    *
@@ -473,7 +508,10 @@ export async function runSyntheticHostSession(
     } catch {
       emptySessionModelSource = "byok";
     }
-    await persistChatSessionToConvex({
+    // Headless: no stream to carry a receipt, but the outcome is still worth
+    // seeing — a synthetic run whose transcripts never landed used to look
+    // identical to one that saved cleanly.
+    const emptySessionPersist = await persistChatSessionToConvex({
       chatSessionId,
       modelId: String(modelDefinition.id),
       modelSource: emptySessionModelSource,
@@ -495,6 +533,11 @@ export async function runSyntheticHostSession(
       ...(persist.targetId ? { targetId: persist.targetId } : {}),
       resumeConfig,
     });
+    warnIfSimulationPersistNotSaved(
+      emptySessionPersist,
+      "empty-session",
+      chatSessionId
+    );
     sessionRowEnsured = true;
   };
 
@@ -590,18 +633,19 @@ export async function runSyntheticHostSession(
     // always member-initiated (the route authenticates the generator), so the
     // guest gate never trips here. Skills are delivered the same two ways chat
     // does — natively via the harness `skills` param when the turn runs the
-    // real Claude Code runtime, or as the emulated `listSkills`/`loadSkill`
-    // tools otherwise. `shouldEnableCloudSkillTools` returns false on the
+    // real Claude Code runtime, or as the emulated prompt-inlined catalog +
+    // `loadSkill` otherwise. `shouldEnableCloudSkillTools` returns false on the
     // harness path (it delivers skills itself), so this only wires the emulated
-    // tools, mirroring `web/chat-v2.ts`.
+    // path, mirroring `web/chat-v2.ts`. Zero skills → no tools/stanza.
     //
     // BUT skip skills entirely when the scenario requires tool approval. A
     // synthetic visitor is headless and can't grant approval: the local-runtime
     // BYOK path fail-closes on ANY non-empty tool set when approval is on (see
     // `drainAssistantTurn` below), and the cloud/MCPJam paths auto-deny every
-    // call — so advertising the `listSkills`/`loadSkill` meta-tools (always 2
-    // tools, even for a project with no skills) would turn an otherwise-toolless
-    // approval simulation into one that fails every session for no benefit.
+    // call — so advertising `loadSkill` on a project that has skills would turn
+    // an otherwise-toolless approval simulation into one that fails every
+    // session for no benefit. The skip stays correct even though empty
+    // projects no longer advertise phantom tools.
     const pinnedSkills = runtime.pinnedSkills;
     const cloudSkillsEnabled =
       pinnedSkills === undefined &&
@@ -664,6 +708,22 @@ export async function runSyntheticHostSession(
       ...(skillsSource ? { skillsSource } : {}),
       ...(cloudSkillsEnabled ? { cloudSkills: { authHeader, projectId } } : {}),
     });
+
+    if (prepared.skillsFetchFailed) {
+      logger.warn("[sessionSimulation.runner] skills catalog fetch failed", {
+        runId,
+        chatSessionId,
+        errorClass: prepared.skillsFetchFailed.errorClass,
+        status: prepared.skillsFetchFailed.status,
+        latencyMs: prepared.skillsFetchFailed.latencyMs,
+      });
+      emit?.({
+        type: "session_notice",
+        kind: "tool_suppressed",
+        toolId: "skills",
+        message: prepared.skillsFetchFailed.message,
+      });
+    }
 
     // One browser context per session: renders MCP App tool results in the
     // headless harness (render observations for every model) and, for assistant
@@ -936,7 +996,7 @@ export async function runSyntheticHostSession(
         toolSnapshot = undefined;
       }
 
-      await persistChatSessionToConvex({
+      const turnPersist = await persistChatSessionToConvex({
         chatSessionId,
         modelId: String(modelDefinition.id),
         modelSource: sessionModelSource ?? "mcpjam",
@@ -970,6 +1030,7 @@ export async function runSyntheticHostSession(
         // attribution above. Undefined for the emulated engine.
         ...(harnessSessionCommit ? { harnessSessionCommit } : {}),
       });
+      warnIfSimulationPersistNotSaved(turnPersist, "turn", chatSessionId);
       anyTurnPersisted = true;
 
       // MCP App widget snapshots so the Sessions viewer renders the actual

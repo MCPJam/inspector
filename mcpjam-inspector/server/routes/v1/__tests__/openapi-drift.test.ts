@@ -43,6 +43,11 @@ const BODYLESS_WRITES = new Set([
   "post /projects/{projectId}/eval-runs/{runId}/cancel",
   // Same shape on the swarm side, for the same reason.
   "post /projects/{projectId}/journey-runs/{runId}/cancel",
+  // And the same on readiness. There is nothing to say about a cancellation
+  // beyond which run — the executing node learns about it on its next
+  // heartbeat, and a body could only be a place to pass options a cancellation
+  // does not have.
+  "post /projects/{projectId}/readiness-runs/{runId}/cancel",
   // Dismissal is addressed entirely by the path findingId — there is nothing
   // to say about it beyond which finding.
   "post /projects/{projectId}/journey-findings/{findingId}/dismiss",
@@ -86,6 +91,12 @@ const KNOWN_UNDOCUMENTED = new Set([
   // contract — documenting it would invite external callers to depend on the
   // shape of an internal list that changes with every tool we add.
   "get /agent-ops",
+  // Unified share control plane — REST ships in I2; OpenAPI + SDK in I5.
+  "get /projects/{projectId}/shares/{resourceType}/{resourceId}",
+  "patch /projects/{projectId}/shares/{resourceType}/{resourceId}",
+  "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link",
+  "put /projects/{projectId}/shares/{resourceType}/{resourceId}/members",
+  "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}",
 ]);
 
 /**
@@ -110,6 +121,9 @@ const KNOWN_UNDOCUMENTED = new Set([
  * catalog default, share-link previews — work at all.
  */
 const PUBLIC_OPERATIONS = new Set(["get /host-catalog", "get /models"]);
+// Registry directory reads are guest-allowed (minted guest bearer) but stay
+// OUT of this set: they declare bearerAuth. Anonymous MCP callers arrive
+// with a guest token, not with no token. Do not add them here.
 
 /** Hono `:param` + the `/api/v1` mount prefix -> OpenAPI `{param}`, unprefixed. */
 function normalizePath(path: string): string {

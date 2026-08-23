@@ -178,6 +178,10 @@ import {
   type HarnessResetReason,
 } from "@/shared/harness-session";
 import {
+  isPersistReceiptDataPart,
+  type PersistReceiptData,
+} from "@/shared/persist-receipt";
+import {
   isSandboxNoticeDataPart,
   type SandboxNoticeReason,
 } from "@/shared/sandbox-notice";
@@ -380,6 +384,15 @@ export type ChatSessionResetReason =
   | "servers-changed"
   | "reset";
 
+/**
+ * Shown when `detachToLocalFork` could not confirm its fork went live. The
+ * thread is still attached to a session the surface has decided it must not
+ * write to, so the copy must NOT promise a new thread the way a successful
+ * detach does. Shared so both chat surfaces say the same thing.
+ */
+export const DETACH_FORK_FAILED_MESSAGE =
+  "Couldn't move this conversation to a new thread. Reload the page before sending again.";
+
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -561,6 +574,22 @@ export interface UseChatSessionReturn {
       toolRenderOverrides?: Record<string, ToolRenderOverride>;
     }
   ) => Promise<string>;
+  /**
+   * Fork the given transcript onto a fresh `chatSessionId` and confirm the fork
+   * is the session that actually went live, so post-detach sends cannot land
+   * back on the thread the caller just detached from.
+   *
+   * Resolves to the minted id, or `null` when a concurrent session change
+   * superseded the fork — in which case the caller is still pointed at a thread
+   * it must not write to and must say so rather than claiming a new thread.
+   * Never clears `resumedVersion` itself; see the implementation's contract.
+   */
+  detachToLocalFork: (
+    messages: UIMessage[],
+    options?: {
+      toolRenderOverrides?: Record<string, ToolRenderOverride>;
+    }
+  ) => Promise<{ chatSessionId: string } | null>;
   loadChatSession: (
     session: {
       chatSessionId: string;
@@ -605,6 +634,20 @@ export interface UseChatSessionReturn {
     }
   ) => Promise<void>;
   syncResumedVersion: (version: number | null) => void;
+  /**
+   * Take the turn's `data-persist-receipt` — the server's own statement of what
+   * happened to the chat-history save — or null when none arrived (a client
+   * abort, or a server that predates the part). Consuming: each receipt
+   * describes exactly one turn.
+   */
+  consumePersistReceipt: () => PersistReceiptData | null;
+  /**
+   * Take whether the turn that just ended was ABORTED (Stop, or any other abort
+   * of the active response). The AI SDK reports an abort as `status: "ready"`
+   * with no receipt, so without this a stopped turn looks exactly like a turn
+   * whose save silently vanished. Consuming: each answer describes one turn.
+   */
+  consumeTurnAborted: () => boolean;
 
   // Resumed thread version (for optimistic concurrency)
   resumedVersion: number | null;
@@ -1667,6 +1710,35 @@ export function useChatSession(
   const [chatSessionId, setChatSessionId] = useState(generateId());
   const chatSessionIdRef = useRef(chatSessionId);
   chatSessionIdRef.current = chatSessionId;
+  /**
+   * This turn's persist receipt, held until a post-stream consumer takes it.
+   * Refs rather than state: nothing renders from these, and a re-render between
+   * the receipt landing and the post-stream effect reading it would be pure
+   * noise.
+   */
+  const persistReceiptRef = useRef<PersistReceiptData | null>(null);
+  /** Session + turn the in-flight turn belongs to; set at `turn_start`. */
+  const receiptTurnIdentityRef = useRef<{
+    chatSessionId: string;
+    turnId: string;
+  } | null>(null);
+  /**
+   * Whether the turn that just ended was ABORTED rather than allowed to finish.
+   *
+   * The AI SDK has no distinct "aborted" status — on abort it sets
+   * `status: "ready"` and returns (ai/dist/index.mjs, in `makeRequest`'s catch:
+   * `if (isAbort || err.name === "AbortError") { this.setStatus({ status:
+   * "ready" }); return null; }`). So a stopped turn is indistinguishable from a
+   * completed one by status alone, and post-stream consumers that expect a
+   * persist receipt would wait out their whole reconciliation window for a
+   * receipt the server never sends: it persists only `runSucceeded && !aborted`.
+   *
+   * Sourced from the SDK's own `onFinish({ isAbort })` rather than from the Stop
+   * button, so an abort from ANY source counts — Stop, an unmounting instance
+   * aborting its controller, a navigation. Set on every turn end (true or
+   * false), so a finished turn always overwrites a stopped predecessor.
+   */
+  const turnAbortedRef = useRef(false);
   const [, setHydrationTick] = useState(0);
   const [resumedVersion, setResumedVersion] = useState<number | null>(null);
   const [restoredToolRenderOverrides, setRestoredToolRenderOverrides] =
@@ -2077,6 +2149,27 @@ export function useChatSession(
           // frames). The `data-rpc-log` part for the same call is what clears
           // the counter; this part exists purely to fill the Tracing view.
           ingestHostedHttpLogs([part.data]);
+        } else if (isPersistReceiptDataPart(part)) {
+          // What actually happened to this turn's chat-history save. Validated
+          // before it is stored, because a receipt is only meaningful for the
+          // conversation it describes: it arrives at the very end of a turn, by
+          // which point a reset, fork, or thread switch may already have moved
+          // this surface somewhere else. Applying a stale receipt would sync a
+          // version baseline onto a thread it does not belong to.
+          const receipt = part.data;
+          const expectedTurn = receiptTurnIdentityRef.current;
+          const sameSession =
+            receipt.chatSessionId === chatSessionIdRef.current;
+          // The turn check is against the identity captured at `turn_start`,
+          // NOT `activeTurnId` — that is cleared by `turn_finish`, which always
+          // arrives BEFORE the receipt.
+          const sameTurn =
+            !receipt.turnId ||
+            !expectedTurn?.turnId ||
+            receipt.turnId === expectedTurn.turnId;
+          if (sameSession && sameTurn) {
+            persistReceiptRef.current = receipt;
+          }
         } else if (isHarnessSessionDataPart(part)) {
           // Cache the harness workdir so the Playground Shell can open a
           // terminal there. Keyed by project + host — and on an ENVIRONMENT
@@ -2143,6 +2236,23 @@ export function useChatSession(
         return;
       }
 
+      if (part.data.type === "turn_start") {
+        // A dedicated identity for receipt matching, captured while the turn is
+        // starting rather than read off trace state later: `activeTurnId` is
+        // cleared by `turn_finish`, which lands before the receipt does. A new
+        // turn also invalidates the previous turn's receipt.
+        receiptTurnIdentityRef.current = {
+          chatSessionId: chatSessionIdRef.current,
+          turnId: part.data.turnId,
+        };
+        persistReceiptRef.current = null;
+        // Same lifetime as the receipt: a new turn invalidates the previous
+        // turn's abort just as it invalidates the previous turn's receipt.
+        // `onFinish` already clears it at every turn end, so this only matters
+        // when nothing consumed the flag (no history rail on this surface).
+        turnAbortedRef.current = false;
+      }
+
       setLiveTraceState((current) => applyLiveTraceEvent(current, part.data));
     },
     [
@@ -2153,6 +2263,50 @@ export function useChatSession(
       handleMrtrInputRequired,
     ]
   );
+
+  /**
+   * Take this turn's persist receipt, if one arrived and passed validation.
+   *
+   * Consuming rather than reading: the receipt describes exactly one turn, and
+   * leaving it in place would let a later reconciliation pass mistake it for a
+   * fresh answer about a different turn.
+   *
+   * Ordering is safe. The AI SDK processes stream chunks in order and only
+   * flips `status` to `ready` once the reader completes, so a receipt on the
+   * wire is always observed before any post-stream effect runs. A client abort
+   * or disconnect means no receipt at all — callers fall back to reconciling
+   * against the session subscription.
+   */
+  const consumePersistReceipt = useCallback((): PersistReceiptData | null => {
+    const receipt = persistReceiptRef.current;
+    persistReceiptRef.current = null;
+    // Re-checked at CONSUME time, not just on arrival: the session can change
+    // in the window between the receipt landing and a post-stream effect
+    // reading it, and handing a receipt for the old thread to the new one would
+    // sync its version baseline — or detach it — on the wrong conversation.
+    if (receipt && receipt.chatSessionId !== chatSessionIdRef.current) {
+      return null;
+    }
+    return receipt;
+  }, []);
+
+  /**
+   * Take whether the turn that just ended was aborted.
+   *
+   * Consuming, like {@link consumePersistReceipt}: the answer describes exactly
+   * one turn, and a leftover `true` would tell the next turn's post-stream
+   * reconciliation to stand down when it should be watching.
+   *
+   * Deliberately NOT session-scoped the way the receipt is. The receipt carries
+   * data (a version) that would be actively wrong if applied to another thread;
+   * this is a bare "nothing was written", which is true of the aborted turn no
+   * matter which thread the surface is on when it reads it.
+   */
+  const consumeTurnAborted = useCallback((): boolean => {
+    const aborted = turnAbortedRef.current;
+    turnAbortedRef.current = false;
+    return aborted;
+  }, []);
 
   const syncResumedVersion = useCallback((version: number | null) => {
     resumedVersionRef.current = version;
@@ -2424,8 +2578,9 @@ export function useChatSession(
               body: patchBodyAccessVersion(init.body, recovery.accessVersion),
             });
             if (!response.ok) {
-              const replayError =
-                await classifyScenarioAccessResponse(response);
+              const replayError = await classifyScenarioAccessResponse(
+                response
+              );
               if (replayError?.kind === "denied") {
                 hostedOnAccessRevoked?.(replayError);
               }
@@ -2886,6 +3041,14 @@ export function useChatSession(
     transport: proxyTransport,
     onData: handleStreamDataPart,
     onError: handleChatError,
+    // Records whether the turn was aborted, for `consumeTurnAborted`. Runs in
+    // the SDK's `finally` — after `setStatus({ status: "ready" })` but before
+    // React renders that status — so a post-stream effect reading it on the
+    // ready transition always sees THIS turn's answer. Same ordering guarantee
+    // the persist receipt already relies on.
+    onFinish: ({ isAbort }) => {
+      turnAbortedRef.current = isAbort;
+    },
     // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
     // `onToolCall`. Tool results must be supplied imperatively via
     // `addToolOutput(...)`. Server-tool calls bypass this handler (they
@@ -3904,6 +4067,69 @@ export function useChatSession(
     [startChatWithMessages]
   );
 
+  /**
+   * Detach from a resumed history thread by forking the current transcript onto
+   * a freshly minted `chatSessionId`, and CONFIRM the fork actually went live.
+   *
+   * Surfaces detach when a thread they resumed can no longer be safely written
+   * to (it was deleted, or another writer moved it on). The whole point is that
+   * subsequent sends must land on a NEW row — but the callers used to
+   * fire-and-forget `startChatWithMessages` and never check, which is the same
+   * superseded-hydration trap `rewindToMessage` documents at length: awaiting
+   * that promise proves the hydration settled, not that OUR id is the one that
+   * committed. `clearPendingSessionHydration` resolves a superseded hydration
+   * identically, leaving the live id as either the ORIGINAL (nothing else
+   * committed) or a THIRD id (an interloping session change won the race).
+   *
+   * In production the first case is what actually happened: post-detach turns
+   * kept writing to the OLD `chatSessionId`, which is how they reached the
+   * ingest replay heuristic on the old row and got dropped. So the exact-match
+   * check here is the load-bearing part — "the id changed" is not good enough.
+   *
+   * Deliberately does NOT retry a superseded fork. Re-minting looks like cheap
+   * insurance, but `queueSessionHydration` clears whatever hydration is pending
+   * — so a second attempt cancels the very session change that superseded the
+   * first. In practice that is a `loadChatSession` still resolving its
+   * transcript blob: the user clicked a thread, and the retry would yank them
+   * back out of it. Failing closed is both safer and honest, and the caller's
+   * next send is still protected — `resumedVersion` is untouched below, so a
+   * send on the old row carries its `expectedVersion` and conflicts rather than
+   * clobbering.
+   *
+   * `resumedVersion` is deliberately NOT cleared by this function. On success
+   * the fork's own hydration nulls it (that is what makes the branch's first
+   * ingest carry no `expectedVersion`); on failure the superseding session's
+   * value must stay untouched, because the live thread is now someone else's
+   * and tearing down ITS optimistic-concurrency guard would let the next send
+   * clobber whatever another tab wrote — precisely the hazard
+   * `rewindToMessage`'s `onBeforeBranch` contract exists to prevent.
+   *
+   * Returns the minted id on success, or `null` when the fork could not be
+   * confirmed. `null` means the caller is still pointed at a thread it must not
+   * write to, so callers must report failure rather than the reassuring
+   * "continuing in a new thread" copy.
+   */
+  const detachToLocalFork = useCallback(
+    async (
+      messages: UIMessage[],
+      options?: {
+        toolRenderOverrides?: Record<string, ToolRenderOverride>;
+      }
+    ): Promise<{ chatSessionId: string } | null> => {
+      const forkSessionId = await startChatWithMessages(messages, {
+        resetReason: "fork",
+        toolRenderOverrides: options?.toolRenderOverrides,
+      });
+      // Exact match, not "it changed": the live id after a superseded hydration
+      // can be the ORIGINAL (nothing else committed) or a THIRD id (an
+      // interloper's session won). Only our own id proves the fork went live.
+      return chatSessionIdRef.current === forkSessionId
+        ? { chatSessionId: forkSessionId }
+        : null;
+    },
+    [startChatWithMessages]
+  );
+
   const loadChatSession = useCallback(
     async (
       session: {
@@ -4517,8 +4743,11 @@ export function useChatSession(
     // Actions
     resetChat,
     startChatWithMessages,
+    detachToLocalFork,
     loadChatSession,
     syncResumedVersion,
+    consumePersistReceipt,
+    consumeTurnAborted,
 
     // Resumed thread version
     resumedVersion,

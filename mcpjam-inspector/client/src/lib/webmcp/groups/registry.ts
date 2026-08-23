@@ -1,6 +1,6 @@
 /**
- * Registry-screen tools: install/connect, disconnect, and star servers from
- * the public registry catalog.
+ * Registry-screen tools: search the mirrored connector directories, and
+ * install/connect servers from those directories into the current project.
  *
  * The first mount-scoped group (the Connect-screen tools are "global"-kind
  * and self-navigate; these do not): `RegistryTab` owns the command handlers
@@ -20,7 +20,7 @@ import { asOptionalString, errorResult, fromActionResult } from "./shared";
 const SERVER_NAME_PROPERTY = {
   type: "string",
   description:
-    "Registry server as shown on its card: display name (e.g. 'Asana') or registry name (e.g. 'com.asana.mcp').",
+    "Server as shown on its card: display name (e.g. 'Asana') or a directory entry's catalog name.",
 } as const;
 
 const VARIANT_PROPERTY = {
@@ -31,7 +31,7 @@ const VARIANT_PROPERTY = {
 } as const;
 
 function readVariant(
-  value: unknown,
+  value: unknown
 ): { ok: true; variant?: "text" | "app" } | { ok: false } {
   if (value === undefined) return { ok: true };
   if (value === "text" || value === "app") return { ok: true, variant: value };
@@ -43,7 +43,7 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
     {
       name: "ui_connect_registry_server",
       description:
-        "Install a server from the public MCP registry's catalog into the current project and start connecting it. Registry catalog entries only — to connect a server ALREADY added to the project, use ui_connect_server instead. Connection finishes in the background; observe progress with ui_snapshot_app. If the server requires OAuth, this reports 'authorization_required' without starting the flow — relay that and let the user click Connect on the card to authorize on screen.",
+        "Install a server from a connector directory on this screen into the current project and start connecting it. Catalog entries only: for a server ALREADY in the project use ui_connect_server. It finishes in the background; watch ui_snapshot_app. Some entries are reported, not started: 'authorization_required' (it would redirect the browser) and 'endpoint_choice_required' (the URL is the user's to pick). Relay those; the user clicks Connect on the card.",
       inputSchema: {
         type: "object",
         properties: {
@@ -70,7 +70,9 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
         }
         const variant = readVariant(args.variant);
         if (!variant.ok) {
-          return errorResult(`'variant' must be "text" or "app" when provided.`);
+          return errorResult(
+            `'variant' must be "text" or "app" when provided.`
+          );
         }
         const response = await dispatchInspectorCommand({
           type: "connectRegistryServer",
@@ -111,7 +113,9 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
         }
         const variant = readVariant(args.variant);
         if (!variant.ok) {
-          return errorResult(`'variant' must be "text" or "app" when provided.`);
+          return errorResult(
+            `'variant' must be "text" or "app" when provided.`
+          );
         }
         const response = await dispatchInspectorCommand({
           type: "disconnectRegistryServer",
@@ -158,6 +162,68 @@ export function buildRegistryUiTools(): UiToolDefinition[] {
         const response = await dispatchInspectorCommand({
           type: "toggleRegistryStar",
           payload: { serverName, starred: args.starred },
+        });
+        return fromActionResult(commandResponseToActionResult(response));
+      },
+    },
+    {
+      name: "ui_search_registry_directory",
+      description:
+        "Search a mirrored connector directory — thousands of entries, far more than the page lists. Matches names, descriptions and tool/skill names, so 'invoice' and 'create_issue' work as well as 'Linear'. Omit 'query' to browse. Two directories, one at a time; 'source' switches, omit to keep the user's view. Drives the screen's own controls, so results are what the user sees — read them from ui_snapshot_app's `directory` block, then install with ui_connect_registry_server.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "What to search for. Omit or leave empty to browse the directory.",
+          },
+          source: {
+            type: "string",
+            enum: ["anthropic-directory", "chatgpt-directory"],
+            description:
+              "Which directory to browse. Omit to keep the one on screen.",
+          },
+          tier: {
+            type: "string",
+            enum: ["all", "anthropic", "partner", "community"],
+            description:
+              "Verification tier. Claude directory only; 'all' clears it.",
+          },
+        },
+        required: [],
+        additionalProperties: false,
+      },
+      readOnly: true,
+      // Drives a search box and nothing else: no install, no connection, no
+      // write of any kind, and running it twice leaves the same state.
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false,
+      },
+      execute: async (args) => {
+        const query = asOptionalString(args.query);
+        const tier = asOptionalString(args.tier);
+        const source = asOptionalString(args.source);
+        if (args.tier !== undefined && !tier) {
+          return errorResult(
+            "'tier' must be a non-empty string when provided."
+          );
+        }
+        if (args.source !== undefined && !source) {
+          return errorResult(
+            "'source' must be a non-empty string when provided."
+          );
+        }
+        const response = await dispatchInspectorCommand({
+          type: "searchRegistryDirectory",
+          payload: {
+            ...(query ? { query } : {}),
+            ...(source ? { source } : {}),
+            ...(tier ? { tier } : {}),
+          },
         });
         return fromActionResult(commandResponseToActionResult(response));
       },

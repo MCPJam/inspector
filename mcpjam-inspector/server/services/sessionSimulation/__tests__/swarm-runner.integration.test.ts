@@ -198,7 +198,9 @@ beforeEach(() => {
     };
   });
   releaseSandboxMock.mockReset().mockResolvedValue(undefined);
-  persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
+  persistChatSessionToConvexMock
+    .mockReset()
+    .mockResolvedValue({ outcome: "saved", version: 1 });
   resolveSyntheticModelSourceMock.mockReset().mockResolvedValue({
     source: "mcpjam",
   });

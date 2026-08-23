@@ -34,6 +34,9 @@ const {
 vi.mock("convex/react", () => ({
   useMutation: () => setSuiteEnvironmentsMock,
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvex: () => ({
+    query: vi.fn(async () => ({ modelMatrix: false })),
+  }),
 }));
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
@@ -49,6 +52,7 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: (projectId: string | null) =>
     projectId ? environmentsRef.current : undefined,
   useEnsureAdhocEnvironments: () => ensureAdhocMock,
+  useModelMatrixCapability: () => false,
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({

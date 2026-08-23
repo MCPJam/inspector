@@ -2,16 +2,20 @@ import type { Command } from "commander";
 import {
   getScenarioOperation,
   listScenariosOperation,
-  PlatformApiError,
   publishScenarioOperation,
   unpublishScenarioOperation,
 } from "@mcpjam/sdk/platform";
 import { writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import {
+  platformOptionsOf,
+  runPlatformOperation as runPlatformCommand,
+  type PlatformOptions,
+} from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
- * `mcpjam scenarios` — user testing.
+ * `mcpjam cloud scenarios` — user testing.
  *
  * A scenario is a project environment published for people outside the project
  * to talk to through a share link.
@@ -26,57 +30,8 @@ import { getGlobalOptions } from "../lib/server-config.js";
  * a live scenario down has to keep working for an org that just lost the flag.
  */
 
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
-};
 
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
 
-async function runPlatformCommand<TOutput>(
-  options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
-  } catch (error) {
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
-    }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-  }
-}
 
 export function registerScenariosCommands(program: Command): void {
   const scenarios = program
@@ -91,25 +46,21 @@ export function registerScenariosCommands(program: Command): void {
     "anyone_with_link",
   ] as const;
 
-  addPlatformOptions(
-    scenarios
+      scenarios
       .command("list")
       .description("List the scenarios published from a project")
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
-      )
-  ).action(async (options: PlatformOptions & { project?: string }, command) => {
+      ).action(async (options: PlatformOptions & { project?: string }, command) => {
     const globalOptions = getGlobalOptions(command);
     const result = await runPlatformCommand(
-      options,
+      platformOptionsOf(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         listScenariosOperation.execute(
           {
-            ...(options.project === undefined
-              ? {}
-              : { project: options.project }),
+            project: resolveCloudProjectArgs(options).project,
           },
           { client, signal }
         )
@@ -117,8 +68,7 @@ export function registerScenariosCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    scenarios
+      scenarios
       .command("get")
       .description(
         "Show one scenario: access mode, attached servers, share link"
@@ -127,23 +77,20 @@ export function registerScenariosCommands(program: Command): void {
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & { scenario: string; project?: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getScenarioOperation.execute(
             {
               scenario: options.scenario,
-              ...(options.project === undefined
-                ? {}
-                : { project: options.project }),
+              project: resolveCloudProjectArgs(options).project,
             },
             { client, signal }
           )
@@ -152,11 +99,10 @@ export function registerScenariosCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    scenarios
+      scenarios
       .command("publish")
       .description(
-        "Publish an environment as a scenario and print its share link. Idempotent — re-publishing returns the existing scenario, with created: false. --name, --description and --mode apply at CREATE TIME, in the same call; on a re-publish they are ignored and the result says overridesIgnored: true (use `mcpjam user-testing update` to change an existing scenario)."
+        "Publish an environment as a scenario and print its share link. Idempotent — re-publishing returns the existing scenario, with created: false. --name, --description and --mode apply at CREATE TIME, in the same call; on a re-publish they are ignored and the result says overridesIgnored: true (use `mcpjam cloud user-testing update` to change an existing scenario)."
       )
       .requiredOption("--environment <id>", "Project environment ID")
       .option(
@@ -168,8 +114,7 @@ export function registerScenariosCommands(program: Command): void {
       .option(
         "--mode <mode>",
         "Who may open the share link (create time only): project_members | invited_only | anyone_with_link"
-      )
-  ).action(
+      ).action(
     async (
       options: PlatformOptions & {
         project?: string;
@@ -192,12 +137,12 @@ export function registerScenariosCommands(program: Command): void {
         );
       }
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           publishScenarioOperation.execute(
             {
-              project: options.project,
+              project: resolveCloudProjectArgs(options).project,
               environment: options.environment,
               ...(options.name !== undefined ? { name: options.name } : {}),
               ...(options.description !== undefined
@@ -212,26 +157,24 @@ export function registerScenariosCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    scenarios
+      scenarios
       .command("unpublish")
       .description(
         "Take an environment's scenario down, invalidating its share link and any live guest sessions. Idempotent."
       )
       .requiredOption("--environment <id>", "Project environment ID")
-      .option("--project <id-or-name>", "Project name or ID")
-  ).action(
+      .option("--project <id-or-name>", "Project name or ID").action(
     async (
       options: PlatformOptions & { project?: string; environment: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
       const result = await runPlatformCommand(
-        options,
+        platformOptionsOf(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           unpublishScenarioOperation.execute(
-            { project: options.project, environment: options.environment },
+            { project: resolveCloudProjectArgs(options).project, environment: options.environment },
             { client, signal }
           )
       );

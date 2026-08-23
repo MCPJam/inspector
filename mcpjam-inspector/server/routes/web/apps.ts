@@ -1,14 +1,16 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type {
-  McpUiResourceCsp,
-  McpUiResourcePermissions,
-} from "@modelcontextprotocol/ext-apps";
 import { CORS_ORIGINS } from "../../config.js";
 import { MCP_APPS_SANDBOX_PROXY_HTML } from "../apps/SandboxProxyHtml.bundled.js";
 import { RECORDER_SHIM_JS } from "../apps/mcp-apps/recorder-shim.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
+import { logger } from "../../utils/logger.js";
+import {
+  canSkipListingLookup,
+  findListingMetaForUri,
+  resolveUiResourceMeta,
+} from "../../utils/ui-resource-meta.js";
 import {
   projectServerSchema,
   withEphemeralConnection,
@@ -25,34 +27,6 @@ const SANDBOX_PROXY_HTML_WITH_RECORDER = MCP_APPS_SANDBOX_PROXY_HTML.replace(
   '"__MCPJAM_RECORDER_SHIM__"',
   () => JSON.stringify(RECORDER_SHIM_JS),
 );
-
-/**
- * Hosted-mode mirror of `extractLegacyOpenAICsp` in
- * routes/apps/mcp-apps/index.ts. Reads the legacy Apps SDK CSP shape
- * (`_meta["openai/widgetCSP"]` with snake_case fields) and returns the
- * camelCase `McpUiResourceCsp` the proxy expects, or undefined when no
- * legacy CSP is present.
- */
-function extractLegacyOpenAICspHosted(
-  resourceMeta: Record<string, unknown> | undefined,
-): McpUiResourceCsp | undefined {
-  if (!resourceMeta) return undefined;
-  const legacy = resourceMeta["openai/widgetCSP"];
-  if (!legacy || typeof legacy !== "object") return undefined;
-  const src = legacy as Record<string, unknown>;
-  const readArr = (v: unknown): string[] | undefined =>
-    Array.isArray(v)
-      ? v.filter((x): x is string => typeof x === "string" && x.length > 0)
-      : undefined;
-  const out: McpUiResourceCsp = {};
-  const connect = readArr(src.connect_domains);
-  const resource = readArr(src.resource_domains);
-  const frame = readArr(src.frame_domains);
-  if (connect && connect.length > 0) out.connectDomains = connect;
-  if (resource && resource.length > 0) out.resourceDomains = resource;
-  if (frame && frame.length > 0) out.frameDomains = frame;
-  return Object.keys(out).length > 0 ? out : undefined;
-}
 
 // Mimetypes accepted by the hosted-mode widget-content route. Mirrors
 // the local route in routes/apps/mcp-apps/index.ts — see the long-form
@@ -190,28 +164,45 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         );
       }
 
+      // SEP-1865 effective UI metadata resolution. Shared with the local
+      // route via utils/ui-resource-meta.ts: per-field precedence of
+      // content `_meta.ui` → listing `_meta.ui` → legacy `openai/widget*`.
+      // The spec requires hosts to check BOTH the `resources/read` content
+      // item and the `resources/list` entry — a server that declares
+      // `_meta.ui` only at listing level used to render blank here while
+      // working fine locally.
       const resourceMeta = content._meta as
         | Record<string, unknown>
         | undefined;
-      const uiMeta = (resourceMeta as { ui?: any } | undefined)?.ui as
-        | {
-            csp?: McpUiResourceCsp;
-            permissions?: McpUiResourcePermissions;
-            prefersBorder?: boolean;
-          }
-        | undefined;
-      // Apps SDK widgets declare CSP under _meta["openai/widgetCSP"]
-      // (snake_case) and border preference under
-      // _meta["openai/widgetPrefersBorder"]. Fall back to those so the
-      // consolidated path renders legacy widgets with their declared
-      // origins and border preference. Mirrors routes/apps/mcp-apps/index.ts.
-      const cspFromMeta: McpUiResourceCsp | undefined =
-        uiMeta?.csp ?? extractLegacyOpenAICspHosted(resourceMeta);
-      const prefersBorderFromMeta: boolean | undefined =
-        uiMeta?.prefersBorder ??
-        (typeof resourceMeta?.["openai/widgetPrefersBorder"] === "boolean"
-          ? (resourceMeta["openai/widgetPrefersBorder"] as boolean)
-          : undefined);
+
+      // Best-effort listing lookup: servers without `resources/list` (or
+      // that don't return this URI) simply fall through to the content
+      // item, exactly as before this lookup existed.
+      // A content item that already declares every field can't be improved
+      // by a lower-precedence source, so skip the round-trip entirely.
+      const listingMeta = canSkipListingLookup(resourceMeta)
+        ? undefined
+        : await findListingMetaForUri(
+            manager,
+            body.serverId,
+            resolvedResourceUri,
+            (reason) =>
+              logger.debug("[MCP Apps] resources/list fallback skipped", {
+                resourceUri: resolvedResourceUri,
+                reason,
+              }),
+          );
+
+      const {
+        csp: cspFromMeta,
+        permissions: permissionsFromMeta,
+        prefersBorder: prefersBorderFromMeta,
+        metadataSource,
+        metadataSources,
+      } = resolveUiResourceMeta({
+        contentMeta: resourceMeta,
+        listingMeta,
+      });
 
       // Mirror the local CLI route's behavior: only inject the
       // OpenAI Apps SDK shim when the caller has opted in. Hosted
@@ -238,8 +229,12 @@ apps.post("/mcp-apps/widget-content", async (c) =>
 
       return {
         html,
-        csp: effectiveCspMode === "permissive" ? undefined : cspFromMeta,
-        permissions: uiMeta?.permissions,
+        // Always report what the resource declared — see the matching
+        // comment in routes/apps/mcp-apps/index.ts. `cspMode` decides
+        // whether a CSP is injected (`permissive` below), not what the
+        // resource declared.
+        csp: cspFromMeta,
+        permissions: permissionsFromMeta,
         permissive: effectiveCspMode === "permissive",
         cspMode: effectiveCspMode,
         prefersBorder: prefersBorderFromMeta,
@@ -252,6 +247,11 @@ apps.post("/mcp-apps/widget-content", async (c) =>
         mimeType: contentMimeType,
         mimeTypeValid,
         mimeTypeWarning,
+        // SEP-1865 metadata precedence, mirroring the local route.
+        // `metadataSource` is a summary ("mixed" when per-field fallbacks
+        // used different sources); `metadataSources` reports per field.
+        metadataSource,
+        metadataSources,
       };
     },
   ),

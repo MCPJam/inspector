@@ -35,18 +35,24 @@ import swarmInsights from "./swarm-insights.js";
 import swarmGenerateV1 from "./swarm-generate.js";
 import scenarios from "./scenarios.js";
 import userTesting from "./user-testing.js";
+import shares from "./shares.js";
 import sandboxImages from "./images.js";
 import evalIngest from "./eval-ingest.js";
+import conformanceIngest from "./conformance-ingest.js";
 import agent from "./agent.js";
 import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
+import registry from "./registry.js";
 import organizations from "./organizations.js";
+import evalChecks from "./eval-checks.js";
 import projects from "./projects.js";
 import capabilities from "./capabilities.js";
 import publicModels from "./public-models.js";
 import hostCatalog from "./host-catalog.js";
 import tunnels from "./tunnels.js";
+import readiness from "./readiness.js";
+import conformanceRuns from "./conformance-runs.js";
 import { v1Error, v1OnError } from "./envelope.js";
 
 const v1 = new Hono();
@@ -104,6 +110,8 @@ v1.route("/", prompts);
 v1.route("/", resources);
 v1.route("/", exporter);
 v1.route("/", evals);
+v1.route("/", readiness);
+v1.route("/", conformanceRuns);
 v1.route("/", hosts);
 v1.route("/", harness);
 // Project Environments (named execution bundles for suites and journeys) stay
@@ -147,11 +155,15 @@ v1.route("/", scenarios);
 // publishing (keyed by environment, because the scenario does not exist yet);
 // this is keyed by the scenario. Guest-DENIED by default, same as publishing.
 v1.route("/", userTesting);
+// Unified share control plane. Guest-DENIED (no GUEST_ALLOWED_V1_RULES
+// entry). Existing user-testing share endpoints stay as wrappers.
+v1.route("/", shares);
 // Computer sandbox images stay OFF the guest allowlist (no
 // GUEST_ALLOWED_V1_RULES entry) — every operation requires an authenticated,
 // project-scoped caller.
 v1.route("/", sandboxImages);
 v1.route("/", evalIngest);
+v1.route("/", conformanceIngest);
 // Headless agent turn (Slack bot terminal). Guest-DENIED by default (no
 // GUEST_ALLOWED_V1_RULES entry) — every turn spends hosted-model credits.
 v1.route("/", agent);
@@ -160,11 +172,18 @@ v1.route("/", agent);
 v1.route("/", proposedActionsRoutes);
 v1.route("/", oauth);
 v1.route("/", catalog);
+// Registry — directory search/detail/sources (guest-allowed reads) plus
+// project-scoped card/connection reads and install/uninstall writes. Mounted
+// after auth middleware. Directory reads stay OUT of PUBLIC_OPERATIONS:
+// bearer is always required; anonymous MCP callers arrive with minted guest
+// tokens.
+v1.route("/", registry);
 // Organizations — READ ONLY, and the only organization route there is. It
 // exists so a caller can discover the `organizationId` that `/v1/projects`
 // filters by; org/member/role/billing writes stay off every machine surface.
 // Guest-DENIED by default (no GUEST_ALLOWED_V1_RULES entry), like `/me`.
 v1.route("/", organizations);
+v1.route("/", evalChecks);
 v1.route("/", projects);
 // What the caller may do here, asked before they try. A planning read for
 // agents on the static surfaces (MCP catalog, CLI tree, agent registry), which

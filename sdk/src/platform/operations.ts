@@ -6,8 +6,16 @@
  * product catalog unchanged.
  */
 import { z } from "zod";
+import { opaqueIdSchema } from "../contract/identity.js";
+import { MAX_BATCH_CREATE_CASES } from "../contract/suite-file.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
+import {
+  computeRunTargets,
+  type RunTarget,
+  type RunTargetHost,
+  type RunTargetPlan,
+} from "./suite-run-plans.js";
 import {
   evaluateMarketHosts,
   scanWidgetUsage,
@@ -30,18 +38,33 @@ import type {
   PlatformScenarioDetail,
   PlatformChatSession,
   PlatformDoctorReport,
+  PlatformReadinessLaneCoverage,
+  PlatformReadinessObservationState,
+  PlatformReadinessRun,
+  PlatformReadinessRunReceipt,
+  PlatformConformanceReport,
+  PlatformConformanceRun,
+  PlatformConformanceRunReceipt,
+  PlatformReadinessStageResult,
   PlatformEvalCase,
+  PlatformEvalCaseBatchResult,
   PlatformEvalCaseDeleted,
   PlatformEvalCasesGenerated,
   PlatformEvalIteration,
   PlatformEvalStepResult,
   PlatformEvalRun,
+  PlatformEvalRunJudgeRequested,
+  PlatformEvalCheckRepos,
+  PlatformEvalCheckRepoConnected,
   PlatformRunCompare,
   PlatformEvalRunCreated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalRunGroupCreated,
+  PlatformAdhocEnvironment,
+  PlatformAdhocEnvironmentBody,
   PlatformComputerAttached,
   PlatformComputerReset,
   PlatformEnvironment,
@@ -93,6 +116,11 @@ import type {
   PlatformProjectServer,
   PlatformServerConnection,
   PlatformTunnelGrant,
+  PlatformCatalogServer,
+  PlatformCatalogSourceStatus,
+  PlatformRegistryServer,
+  PlatformRegistryConnection,
+  PlatformRegistryInstallResult,
 } from "./types.js";
 
 export interface PlatformOperationContext {
@@ -1043,7 +1071,656 @@ export const checkHostCompatibilityOperation: PlatformOperation<
   },
 };
 
+// ── Directory readiness operations ───────────────────────────────────
+
+/**
+ * Grading a server against a publisher's app directory, as an operation.
+ *
+ * ## Why a start returns a receipt rather than a grade
+ *
+ * A readiness run dials somebody else's server, follows its redirects, walks
+ * its listings and sometimes asks a model to read the result. That does not
+ * fit in a request, so the platform runs it durably: the start answers `202`
+ * with a run id and the caller polls. Every surface that offers these
+ * operations has to say so — a model told "start a run" and handed a receipt
+ * will otherwise report the receipt as the answer.
+ *
+ * ## Why the starts declare `risk: "spend"` when the default is free
+ *
+ * `includeLlmObservations` is the only field that costs anything and it
+ * defaults off, so most runs are free. But `risk` is a static declaration read
+ * by five surfaces to decide how much ceremony a call needs, and a field that
+ * described the cheap case would be describing the case that does not need
+ * describing. The worst case is what a spend guard has to be told; the
+ * agent's `confirmSeverity` is a function precisely so the approval copy can
+ * still say "this one is free" when the flag is off.
+ */
+
+const readinessRunScopedInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  run: z.string().trim().min(1).describe("The readiness run's id."),
+});
+
+export type ReadinessRunScopedInput = z.infer<typeof readinessRunScopedInput>;
+
+const startReadinessInput = serverScopedInput.extend({
+  includeLlmObservations: z
+    .boolean()
+    .optional()
+    .describe(
+      "Ask a model for optional experience observations. COSTS the organization's MCPJam credits. Defaults false; the deterministic grade is complete without it.",
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Replay guard. A retry carrying the same key returns the run it already started rather than dialling the target twice.",
+    ),
+});
+
+const startOpenAIReadinessInput = startReadinessInput.extend({
+  submissionMode: z
+    .enum(["mcp-only", "mcp-imported-skills"])
+    .describe(
+      "REQUIRED, and never inferred: which submission shape is being graded. The two package shapes need an upload this API cannot receive — grade those with `mcpjam readiness check` locally.",
+    ),
+});
+
+export type StartClaudeReadinessInput = z.infer<typeof startReadinessInput>;
+export type StartOpenAIReadinessInput = z.infer<
+  typeof startOpenAIReadinessInput
+>;
+
+export type StartReadinessResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  run: PlatformReadinessRunReceipt;
+};
+
+export const startClaudeReadinessRunOperation: PlatformOperation<
+  StartClaudeReadinessInput,
+  StartReadinessResult
+> = {
+  name: "start_claude_readiness_run",
+  title: "Start a Claude directory readiness run",
+  description:
+    "Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id — poll `get_readiness_run` for the verdict, which is NOT in this response. Deterministic grading is free; `includeLlmObservations` adds an optional model pass that consumes MCPJam credits.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: startReadinessInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    // Rejects stdio and URL-less servers with a named reason, which is the
+    // same refusal the route makes — better here, before a row exists.
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal,
+    );
+    const run = await client.startClaudeReadinessRun(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        ...(input.includeLlmObservations !== undefined
+          ? { includeLlmObservations: input.includeLlmObservations }
+          : {}),
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      run,
+    };
+  },
+};
+
+export const startOpenAIReadinessRunOperation: PlatformOperation<
+  StartOpenAIReadinessInput,
+  StartReadinessResult
+> = {
+  name: "start_openai_readiness_run",
+  title: "Start an OpenAI directory readiness run",
+  description:
+    "Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit `submissionMode` — it is never inferred, because guessing turns a missing input into a clean bill of health. Starts a durable run and returns its id; poll `get_readiness_run` for the verdict. Deterministic grading is free; `includeLlmObservations` consumes MCPJam credits.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: startOpenAIReadinessInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal,
+    );
+    const run = await client.startOpenAIReadinessRun(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        submissionMode: input.submissionMode,
+        ...(input.includeLlmObservations !== undefined
+          ? { includeLlmObservations: input.includeLlmObservations }
+          : {}),
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      run,
+    };
+  },
+};
+
+export type GetReadinessRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformReadinessRun;
+};
+
+export const getReadinessRunOperation: PlatformOperation<
+  ReadinessRunScopedInput,
+  GetReadinessRunResult
+> = {
+  name: "get_readiness_run",
+  title: "Get a directory readiness run",
+  description:
+    "Read one readiness run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `overallStatus` is the grade (a completed run can be `not-ready`), and `llmObservations` says whether the optional model pass ran — a `billing-blocked` observation leaves the grade complete and valid. `lanes` carries per-lane coverage and the inputs that would close each gap.",
+  readOnly: true,
+  inputSchema: readinessRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const run = await client.getReadinessRun(
+      { projectId: project.id, runId: input.run },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const listReadinessRunsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  readinessKind: z
+    .enum(["claude", "openai"])
+    .optional()
+    .describe("Narrow to one publisher. Omitted lists both, newest first."),
+  server: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Narrow to one saved server."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Rows to return, 1-100. Defaults to the API's own page size."),
+});
+
+export type ListReadinessRunsInput = z.infer<typeof listReadinessRunsInput>;
+
+export type ListReadinessRunsResult = {
+  project: SelectedProjectInfo;
+  runs: PlatformReadinessRun[];
+};
+
+export const listReadinessRunsOperation: PlatformOperation<
+  ListReadinessRunsInput,
+  ListReadinessRunsResult
+> = {
+  name: "list_readiness_runs",
+  title: "List directory readiness runs",
+  description:
+    "List a project's readiness runs, newest first, optionally narrowed to one publisher or one server. Use it to find a run id when you have a server but not a run.",
+  readOnly: true,
+  inputSchema: listReadinessRunsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const serverId = input.server
+      ? (await resolveLiveServer(client, project, input.server, signal)).id
+      : undefined;
+    const page = await client.listReadinessRuns(
+      {
+        projectId: project.id,
+        ...(input.readinessKind ? { readinessKind: input.readinessKind } : {}),
+        ...(serverId ? { serverId } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), runs: page.items };
+  },
+};
+
+export const cancelReadinessRunOperation: PlatformOperation<
+  ReadinessRunScopedInput,
+  { project: SelectedProjectInfo; runId: string; status: string }
+> = {
+  name: "cancel_readiness_run",
+  title: "Cancel a directory readiness run",
+  description:
+    "Stop a readiness run that is still going. The executing node learns within about half a minute, so the run's real terminal state arrives on a later `get_readiness_run` — this response reports the request, not the outcome.",
+  // A write, and it declares its risk as every write must — but cancelling
+  // STOPS work rather than starting it: it spends nothing, destroys no record,
+  // and the run it interrupts is one somebody is paying to keep running.
+  readOnly: false,
+  risk: "none",
+  inputSchema: readinessRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const result = await client.cancelReadinessRun(
+      { projectId: project.id, runId: input.run },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: result.runId,
+      status: result.status,
+    };
+  },
+};
+
+/**
+ * The findings, PROJECTED rather than handed over whole.
+ *
+ * The stored report is the full graded document and can be megabytes; a model
+ * surface would truncate it mid-structure, which is worse than not having it —
+ * a JSON object cut in half reads as an object, just a wrong one. So this
+ * operation returns a bounded projection and SAYS what it left out.
+ *
+ * `details` is dropped entirely. It is the raw observation behind a verdict,
+ * which is what a human debugging their server wants and what a model
+ * summarizing a grade has no use for.
+ */
+const READINESS_REPORT_FINDING_CAP = 50;
+
+/** Most consequential first, so a truncated list keeps what matters. */
+const READINESS_FINDING_CLASS_ORDER = [
+  "runtime-blocker",
+  "required",
+  "recommended",
+  "manual-review",
+  "heuristic",
+] as const;
+
+export type ReadinessReportFinding = {
+  id: string;
+  title: string;
+  lane: string;
+  class: string;
+  status: string;
+  provenance?: string;
+  remediation?: string;
+  notEvaluatedReason?: string;
+};
+
+export type GetReadinessReportResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  status: string;
+  summary?: string;
+  lanes: PlatformReadinessLaneCoverage[];
+  stages: PlatformReadinessStageResult[];
+  observations: PlatformReadinessObservationState;
+  findings: ReadinessReportFinding[];
+  /** How many findings the run produced, before this projection capped them. */
+  totalFindings: number;
+  returnedFindings: number;
+  /** True when `findings` is a subset. Never left for a reader to infer. */
+  truncated: boolean;
+};
+
+export const getReadinessReportOperation: PlatformOperation<
+  ReadinessRunScopedInput,
+  GetReadinessReportResult
+> = {
+  name: "get_readiness_report",
+  title: "Get a directory readiness report",
+  description:
+    "Read a finished readiness run's findings: what each one requires, whether it was satisfied, violated or never evaluated, and how to fix it. Findings are capped and ordered most-consequential-first; `truncated` and `totalFindings` say when you are seeing a subset. Raw per-finding evidence is not included — read it in the app.",
+  readOnly: true,
+  inputSchema: readinessRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const scope = { projectId: project.id, runId: input.run };
+    const [run, report] = await Promise.all([
+      client.getReadinessRun(scope, { signal }),
+      client.getReadinessReport(scope, { signal }),
+    ]);
+
+    const raw = (report ?? {}) as {
+      status?: string;
+      summary?: string;
+      findings?: Array<Record<string, unknown>>;
+    };
+    const all = Array.isArray(raw.findings) ? raw.findings : [];
+    const ranked = [...all].sort((left, right) => {
+      const leftRank = READINESS_FINDING_CLASS_ORDER.indexOf(
+        String(left.class) as (typeof READINESS_FINDING_CLASS_ORDER)[number],
+      );
+      const rightRank = READINESS_FINDING_CLASS_ORDER.indexOf(
+        String(right.class) as (typeof READINESS_FINDING_CLASS_ORDER)[number],
+      );
+      // An unknown class sorts last rather than first: a class this build does
+      // not know is the one thing that must not displace a known blocker.
+      return (
+        (leftRank === -1 ? Number.MAX_SAFE_INTEGER : leftRank) -
+        (rightRank === -1 ? Number.MAX_SAFE_INTEGER : rightRank)
+      );
+    });
+    const findings: ReadinessReportFinding[] = ranked
+      .slice(0, READINESS_REPORT_FINDING_CAP)
+      .map((finding) => ({
+        id: String(finding.id ?? ""),
+        title: String(finding.title ?? ""),
+        lane: String(finding.lane ?? ""),
+        class: String(finding.class ?? ""),
+        status: String(finding.status ?? ""),
+        ...(typeof finding.provenance === "string"
+          ? { provenance: finding.provenance }
+          : {}),
+        ...(typeof finding.remediation === "string"
+          ? { remediation: finding.remediation }
+          : {}),
+        ...(typeof finding.notEvaluatedReason === "string"
+          ? { notEvaluatedReason: finding.notEvaluatedReason }
+          : {}),
+      }));
+
+    return {
+      project: toSelectedProjectInfo(project),
+      runId: input.run,
+      status: raw.status ?? run.overallStatus ?? "unknown",
+      ...(raw.summary ? { summary: raw.summary } : {}),
+      lanes: run.lanes,
+      stages: run.stages,
+      observations: run.llmObservations,
+      findings,
+      totalFindings: all.length,
+      returnedFindings: findings.length,
+      truncated: all.length > findings.length,
+    };
+  },
+};
+
+// ── Conformance run operations ───────────────────────────────────────
+
+const conformanceRunScopedInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  run: z.string().trim().min(1).describe("The conformance run's id."),
+});
+
+export type ConformanceRunScopedInput = z.infer<
+  typeof conformanceRunScopedInput
+>;
+
+const startConformanceRunInput = serverScopedInput.extend({
+  suites: z
+    .array(z.enum(["protocol", "apps", "tasks"]))
+    .min(1)
+    .optional()
+    .describe(
+      "Suites to run. Defaults to protocol, apps, and tasks. OAuth is not available on this surface.",
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .optional()
+    .describe(
+      "Replay guard. A retry carrying the same key returns the run it already started rather than dialling the target twice.",
+    ),
+  protocolVersion: z.string().trim().min(1).optional(),
+  engineVersion: z.string().trim().min(1).optional(),
+});
+
+export type StartConformanceRunInput = z.infer<typeof startConformanceRunInput>;
+
+export type StartConformanceRunResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  run: PlatformConformanceRunReceipt;
+};
+
+export const startConformanceRunOperation: PlatformOperation<
+  StartConformanceRunInput,
+  StartConformanceRunResult
+> = {
+  name: "start_conformance_run",
+  title: "Start a conformance run",
+  description:
+    "Run the protocol, apps, and tasks conformance suites against a saved MCP server. Starts a durable run and returns its id — poll `get_conformance_run` for the verdict, which is NOT in this response. OAuth is not available here. Status, outcome, and score are three different answers.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: startConformanceRunInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const server = await resolveLiveServer(
+      client,
+      project,
+      input.server,
+      signal,
+    );
+    const run = await client.startConformanceRun(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        ...(input.suites ? { suites: input.suites } : {}),
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+        ...(input.protocolVersion
+          ? { protocolVersion: input.protocolVersion }
+          : {}),
+        ...(input.engineVersion ? { engineVersion: input.engineVersion } : {}),
+      },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      server: toServerInfo(server),
+      run,
+    };
+  },
+};
+
+export type GetConformanceRunResult = {
+  project: SelectedProjectInfo;
+  run: PlatformConformanceRun;
+};
+
+export const getConformanceRunOperation: PlatformOperation<
+  ConformanceRunScopedInput,
+  GetConformanceRunResult
+> = {
+  name: "get_conformance_run",
+  title: "Get a conformance run",
+  description:
+    "Read one persisted conformance run. THREE SEPARATE ANSWERS: `status` says whether the run finished, `outcome` is the grade (a completed run can be `failed`), and `score` is the number. `pending` counts checks this profile reported but did not score.",
+  readOnly: true,
+  inputSchema: conformanceRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const run = await client.getConformanceRun(
+      { projectId: project.id, runId: input.run },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), run };
+  },
+};
+
+const listConformanceRunsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  server: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(SERVER_SELECTOR_DESCRIPTION),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Rows to return, 1-100. Defaults to the API's own page size."),
+});
+
+export type ListConformanceRunsInput = z.infer<typeof listConformanceRunsInput>;
+
+export type ListConformanceRunsResult = {
+  project: SelectedProjectInfo;
+  runs: PlatformConformanceRun[];
+};
+
+export const listConformanceRunsOperation: PlatformOperation<
+  ListConformanceRunsInput,
+  ListConformanceRunsResult
+> = {
+  name: "list_conformance_runs",
+  title: "List conformance runs",
+  description:
+    "List a project's persisted conformance runs, newest first, optionally narrowed to one saved server. Use it to find a run id when you have a server but not a run.",
+  readOnly: true,
+  inputSchema: listConformanceRunsInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const serverId = input.server
+      ? (await resolveLiveServer(client, project, input.server, signal)).id
+      : undefined;
+    const page = await client.listConformanceRuns(
+      {
+        projectId: project.id,
+        ...(serverId ? { serverId } : {}),
+        ...(input.limit !== undefined ? { limit: input.limit } : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), runs: page.items };
+  },
+};
+
+export type GetConformanceReportResult = {
+  project: SelectedProjectInfo;
+} & PlatformConformanceReport;
+
+export const getConformanceReportOperation: PlatformOperation<
+  ConformanceRunScopedInput,
+  GetConformanceReportResult
+> = {
+  name: "get_conformance_report",
+  title: "Get a conformance report",
+  description:
+    "A bounded projection of a conformance run's failing checks. Failed checks come before could-not-run skips; the list is capped so a model surface is not handed a megabyte-sized report. `pending` on a check means this profile reported it but did not score it.",
+  readOnly: true,
+  inputSchema: conformanceRunScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const report = await client.getConformanceReport(
+      { projectId: project.id, runId: input.run },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), ...report };
+  },
+};
+
 // ── Eval operations ──────────────────────────────────────────────────
+
+// Declared HERE, above the run operations that reference it, rather than beside
+// the eval-EDIT operations further down where its siblings live: every input
+// schema in this file is built at module-init time, so a later `const` would be
+// in its temporal dead zone and importing this module would throw.
+const publicMatchOptionsSchema = z
+  .object({
+    toolCallOrder: z
+      .enum(["any", "in-order", "exact"])
+      .optional()
+      .describe(
+        "any = order ignored; in-order = expected calls appear in order (extras allowed); exact = exact sequence.",
+      ),
+    extraToolCalls: z
+      .union([z.literal("unlimited"), z.number().int().min(0)])
+      .optional()
+      .describe('"unlimited" or a max count of unexpected extra tool calls.'),
+    arguments: z
+      .enum(["ignore", "partial", "exact"])
+      .optional()
+      .describe("Argument comparison strictness."),
+  })
+  .describe("Tool-call match options.");
 
 const SUITE_SELECTOR_DESCRIPTION = "Eval suite name or ID.";
 // Declared here rather than beside the environment operations further down
@@ -1088,6 +1765,578 @@ function assertNoServerOverrideWithEnvironment(input: {
     throw operationInputError(
       "Pass either environment or servers, not both — a project environment supplies its own closed server set, which servers cannot override.",
     );
+  }
+}
+
+/**
+ * Reject every ambiguous COMBINATION of target selectors before anything
+ * resolves.
+ *
+ * All of these are refusals rather than a precedence rule, and deliberately so:
+ * each pair describes two different launches, and silently picking one would
+ * spend on a run the caller did not ask for. `servers` × a target axis is the
+ * same rejection the platform makes (an environment or host supplies its own
+ * closed server set), raised here so it costs no round trip.
+ */
+function assertRunTargetSelectorsCoherent(input: {
+  servers?: string[];
+  environment?: string;
+  environments?: string[];
+  host?: string;
+  hosts?: string[];
+  allAttached?: boolean;
+  compose?: unknown;
+}): void {
+  const hasEnvironmentAxis =
+    Boolean(input.environment) || (input.environments?.length ?? 0) > 0;
+  const hasHostAxis = Boolean(input.host) || (input.hosts?.length ?? 0) > 0;
+
+  // `compose` DESCRIBES a target rather than selecting one, so it cannot be
+  // combined with any selector. Rejected loudly because the alternative is
+  // worse than usual here: composing has a persistent side effect (a new
+  // environment, attached to the suite), so silently ignoring it would edit
+  // the suite for a run that did not use the result.
+  if (
+    input.compose &&
+    (hasEnvironmentAxis ||
+      hasHostAxis ||
+      (input.servers?.length ?? 0) > 0 ||
+      input.allAttached)
+  ) {
+    throw operationInputError(
+      "Pass compose OR a target selector, not both — compose builds the execution stack the run uses, so naming an environment, host, server override or allAttached alongside it describes two different runs.",
+    );
+  }
+
+  if (input.environment && (input.environments?.length ?? 0) > 0) {
+    throw operationInputError(
+      "Pass either environment (one) or environments (several), not both.",
+    );
+  }
+  if (input.host && (input.hosts?.length ?? 0) > 0) {
+    throw operationInputError(
+      "Pass either host (one) or hosts (several), not both.",
+    );
+  }
+  if (hasEnvironmentAxis && hasHostAxis) {
+    throw operationInputError(
+      "Pass environments or hosts, not both — a run targets ONE axis, and an environment already resolves a host, so combining them would describe a configuration the suite never had.",
+    );
+  }
+  if (hasEnvironmentAxis && (input.servers?.length ?? 0) > 0) {
+    // The singular case is also caught by
+    // `assertNoServerOverrideWithEnvironment` (which the ops without a plural
+    // selector still use); this covers the PLURAL axis with the identical
+    // message, so a caller sees one rule however they spelled the selector.
+    // Without it, `environments` + `servers` cleared every guard and the
+    // server override then suppressed the suite-detail read — so the caller
+    // was told the suite "has no environments at all" about a suite that has
+    // the named one attached.
+    throw operationInputError(
+      "Pass either environment or servers, not both — a project environment supplies its own closed server set, which servers cannot override.",
+    );
+  }
+  if (hasHostAxis && (input.servers?.length ?? 0) > 0) {
+    throw operationInputError(
+      "Pass either a host or servers, not both — running an attached host uses that host's own configured server set, which servers cannot override.",
+    );
+  }
+  if (input.allAttached && (hasEnvironmentAxis || hasHostAxis)) {
+    throw operationInputError(
+      "Pass allAttached or name targets explicitly, not both — 'every attached target' and 'these ones' cannot both be meant, and guessing would either skip a run you asked for or start one you did not.",
+    );
+  }
+  if (input.allAttached && (input.servers?.length ?? 0) > 0) {
+    throw operationInputError(
+      "Pass allAttached or servers, not both — a server override replaces the suite's selection for one run and has no fan-out.",
+    );
+  }
+}
+
+/**
+ * The TARGET_REQUIRED refusal, enumerating what is actually pickable.
+ *
+ * Named after the machine-readable code so a surface can match on it, and
+ * written so the caller never has to go look the choices up: the whole failure
+ * mode this replaces was an agent guessing a target because the error did not
+ * say which ones existed.
+ */
+function targetRequiredMessage(plan: {
+  attachedEnvironments: RunTarget[];
+  attachedHosts: RunTarget[];
+}): string {
+  const parts: string[] = [];
+  if (plan.attachedEnvironments.length > 0) {
+    parts.push(
+      `environments: ${plan.attachedEnvironments
+        .map((target) =>
+          target.name ? `"${target.name}" (${target.id})` : target.id,
+        )
+        .join(", ")}`,
+    );
+  }
+  if (plan.attachedHosts.length > 0) {
+    parts.push(
+      `hosts: ${plan.attachedHosts
+        .map((target) => `"${target.name}" (${target.id})`)
+        .join(", ")}`,
+    );
+  }
+  return (
+    "TARGET_REQUIRED — this suite has several attached targets, so which one to run is ambiguous and running all of them would spend more than you may have meant. " +
+    `Attached ${parts.join("; ")}. ` +
+    "Name one with environment or host, several with environments or hosts, or run every attached target with allAttached (one PAID RUN per target)."
+  );
+}
+
+/**
+ * Resolve environment selectors to ids AND check attachment CLIENT-SIDE.
+ *
+ * The attachment check is not redundant with the platform's: a fan-out issues
+ * one request per target, so an unattached fourth target would otherwise be
+ * discovered only after the first three had started spending. Failing here
+ * costs nothing and leaves nothing running.
+ */
+async function resolveSuiteEnvironmentTargets(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  suite: PlatformEvalSuite,
+  detail: PlatformEvalSuiteDetail | undefined,
+  selectors: string[],
+  signal: AbortSignal | undefined,
+): Promise<Array<{ id: string; name?: string }>> {
+  if (selectors.length === 0) return [];
+  const attached = detail?.environmentIds ?? [];
+  const resolved: Array<{ id: string; name?: string }> = [];
+  for (const selector of selectors) {
+    const environment = await resolveEnvironmentSelector(
+      client,
+      project,
+      selector,
+      signal,
+    );
+    if (!attached.includes(environment.id)) {
+      throw operationInputError(
+        attached.length === 0
+          ? `Environment "${selector}" is not attached to suite "${
+              suite.name ?? suite.id
+            }", which has no environments at all. Attach it with set_eval_suite_environments first.`
+          : `Environment "${selector}" is not attached to suite "${
+              suite.name ?? suite.id
+            }". Attached environment IDs: ${attached.join(", ")}.`,
+      );
+    }
+    resolved.push({
+      id: environment.id,
+      ...(environment.name ? { name: environment.name } : {}),
+    });
+  }
+  return resolved;
+}
+
+/**
+ * Display names for a suite's attached environment ids.
+ *
+ * BEST EFFORT on purpose: these names are read by people, never matched on, so
+ * a listing that fails or omits a row costs a nicer message and nothing else.
+ * Failing the launch over it would trade a real run for a cosmetic lookup.
+ */
+async function environmentNamesFor(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  environmentIds: string[],
+  signal: AbortSignal | undefined,
+): Promise<Map<string, string>> {
+  if (environmentIds.length === 0) return new Map();
+  try {
+    const page = await client.listEnvironments(
+      { projectId: project.id },
+      { signal },
+    );
+    const wanted = new Set(environmentIds);
+    return new Map(
+      page.items
+        .filter((environment) => wanted.has(environment.id) && environment.name)
+        .map((environment) => [environment.id, environment.name]),
+    );
+  } catch {
+    return new Map();
+  }
+}
+
+/** Host selectors → attached hosts, by id or unique name. Same rationale as
+ *  the environment resolver above: validated here so a fan-out cannot spend on
+ *  its first targets and then discover a bad one. */
+function resolveSuiteHostTargets(
+  suite: PlatformEvalSuite,
+  detail: PlatformEvalSuiteDetail | undefined,
+  selectors: string[],
+): RunTargetHost[] {
+  if (selectors.length === 0) return [];
+  const hosts = detail?.hosts ?? [];
+  if (hosts.length === 0) {
+    throw operationInputError(
+      `Suite "${
+        suite.name ?? suite.id
+      }" has no attached hosts, so there is no host to run. Attach one to the suite first, or omit the host selector.`,
+    );
+  }
+  return selectors.map((selector) =>
+    resolveByIdOrName(
+      hosts,
+      selector,
+      "Suite host",
+      `suite "${suite.name ?? suite.id}"`,
+    ),
+  );
+}
+
+/** The knobs both launch shapes forward, in the wire's own vocabulary. */
+function runKnobBody(
+  input: {
+    iterations?: number;
+    notes?: string;
+    minPassRate?: number;
+    matchOptions?: z.infer<typeof publicMatchOptionsSchema>;
+    excludeSkills?: boolean;
+    idempotencyKey?: string;
+  },
+  caseIds: string[] | undefined,
+): Record<string, unknown> {
+  return {
+    ...(input.iterations !== undefined
+      ? { iterationOverride: input.iterations }
+      : {}),
+    ...(caseIds ? { caseIds } : {}),
+    ...(input.matchOptions ? { matchOptionsOverride: input.matchOptions } : {}),
+    ...(input.excludeSkills ? { skillsOverride: "exclude" as const } : {}),
+    ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    ...(input.minPassRate !== undefined
+      ? { passCriteria: { minimumPassRate: input.minPassRate } }
+      : {}),
+    ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+  };
+}
+
+/** What a `compose` produced, plus the report the result carries. */
+interface ComposedCell {
+  id: string;
+  modelId?: string;
+  created: boolean;
+}
+
+interface ComposedRunEnvironment {
+  environment: { id: string };
+  environments: Array<{ id: string; modelId?: string }>;
+  report: {
+    environment: {
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    };
+    environments: Array<{
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    }>;
+    attachment: { attached: boolean };
+  };
+}
+
+export function expandComposeModelChoices(stack: {
+  model?: string;
+  models?: string[];
+  includeClientDefault?: boolean;
+}): Array<{ modelId: string | undefined }> {
+  const explicit = [
+    ...new Set([...(stack.models ?? []), ...(stack.model ? [stack.model] : [])]),
+  ];
+  const includeDefault =
+    explicit.length === 0 ? true : stack.includeClientDefault === true;
+  const choices: Array<{ modelId: string | undefined }> = [];
+  if (includeDefault) choices.push({ modelId: undefined });
+  for (const modelId of explicit) choices.push({ modelId });
+  return choices;
+}
+
+/**
+ * Turn a composed stack into runnable target cells: ensure one ad-hoc
+ * environment per model choice (host-major inherit-then-explicit).
+ *
+ * DEFAULT IS EPHEMERAL — mint and launch without mutating the suite. Attach
+ * is opt-in (`saveTargets` / `--save-targets`) because permanently appending
+ * on every compose experiment accumulates toward the 10-cap. When attach is
+ * requested, the union `|existing ∪ newCells|` is pre-flighted so a product
+ * that fits still cannot grow the suite past the cap mid-way.
+ */
+async function composeRunEnvironment(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  suite: PlatformEvalSuite,
+  stack: {
+    host: string;
+    serverGroup?: string;
+    model?: string;
+    models?: string[];
+    includeClientDefault?: boolean;
+    saveTargets?: boolean;
+    computer?: string;
+    skills?: { mode: "explicit"; skillIds: string[] };
+    pluginVersionIds?: string[];
+  },
+  signal: AbortSignal | undefined,
+  options: { attach: boolean } = { attach: true },
+): Promise<ComposedRunEnvironment> {
+  const choices = expandComposeModelChoices(stack);
+  const cells: ComposedCell[] = [];
+  for (const choice of choices) {
+    const body = await resolveComposeStack(
+      client,
+      project,
+      { ...stack, model: choice.modelId },
+      signal,
+    );
+    const ensured = await client.ensureAdhocEnvironment(
+      { projectId: project.id, body },
+      { signal },
+    );
+    cells.push({
+      id: ensured.environment.id,
+      ...(choice.modelId ? { modelId: choice.modelId } : {}),
+      created: ensured.created === true,
+    });
+  }
+
+  let attached = false;
+  if (options.attach) {
+    const detail = await client.getEvalSuite(
+      { projectId: project.id, suiteId: suite.id },
+      { signal },
+    );
+    const existing = new Set(detail.environmentIds ?? []);
+    const union = new Set([...existing, ...cells.map((cell) => cell.id)]);
+    if (union.size > 10) {
+      throw operationInputError(
+        `Attaching these composed cells would grow the suite to ${union.size} environments (limit 10). Detach some first, or omit --save-targets / saveTargets to launch ephemerally.`,
+      );
+    }
+    for (const cell of cells) {
+      const attachment = await client.attachEvalSuiteEnvironment(
+        {
+          projectId: project.id,
+          suiteId: suite.id,
+          environmentId: cell.id,
+        },
+        { signal },
+      );
+      attached = attached || attachment.attached === true;
+    }
+  }
+
+  const reports = cells.map((cell) => ({
+    id: cell.id,
+    name: null as null,
+    adhoc: true as const,
+    created: cell.created,
+    ...(cell.modelId ? { modelId: cell.modelId } : {}),
+  }));
+  return {
+    environment: { id: cells[0]!.id },
+    environments: cells.map((cell) => ({
+      id: cell.id,
+      ...(cell.modelId ? { modelId: cell.modelId } : {}),
+    })),
+    report: {
+      environment: reports[0]!,
+      environments: reports,
+      attachment: { attached },
+    },
+  };
+}
+
+/**
+ * Probe whether this deployment accepts `ephemeralEnvironment` on launch.
+ *
+ * A missing capabilities route (older inspector) or a capabilities payload
+ * that omits the flag both mean "do not send the arg" — an unknown field is
+ * a hard 400 on a strict schema, not a silently ignored one.
+ */
+async function probeEphemeralEnvironmentLaunch(
+  client: PlatformApiClient,
+  projectId: string,
+  signal: AbortSignal | undefined,
+): Promise<boolean> {
+  try {
+    const capabilities = await client.getEnvironmentCapabilities(
+      { projectId },
+      { signal },
+    );
+    return capabilities.ephemeralEnvironmentLaunch === true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Decide whether a compose writes suite attachments and whether the launch
+ * may send `ephemeralEnvironment: true`.
+ *
+ * Multi-cell compose against a backend that cannot launch unattached envs
+ * is refused here — before any mint — rather than sending an unknown arg.
+ * A single cell on that same backend falls back to attach, which is what
+ * today's compose already did.
+ */
+function composeLaunchPolicy(input: {
+  choiceCount: number;
+  saveTargets: boolean;
+  ephemeralOk: boolean;
+  refreshSnapshot?: boolean;
+}): { attach: boolean; ephemeralLaunch: boolean } {
+  if (input.choiceCount > 1 && input.refreshSnapshot) {
+    throw operationInputError(
+      "refreshSnapshot cannot be used with a multi-target launch — it PERSISTS one host-config snapshot on the suite, and several runs racing to write it would leave the suite pinned to whichever finished last. Run one target at a time to refresh it.",
+    );
+  }
+  if (input.choiceCount > 1 && !input.ephemeralOk && !input.saveTargets) {
+    throw operationInputError(
+      "This MCPJam server cannot launch a multi-model compose without attaching the environments. Upgrade the backend (ephemeralEnvironmentLaunch) or pass --save-targets / saveTargets to attach them instead.",
+    );
+  }
+  if (input.choiceCount > 10) {
+    throw operationInputError(
+      `1 client × ${input.choiceCount} model choices = ${input.choiceCount} targets; limit 10.`,
+    );
+  }
+  const attach =
+    input.saveTargets || (!input.ephemeralOk && input.choiceCount === 1);
+  return {
+    attach,
+    ephemeralLaunch: !attach && input.ephemeralOk,
+  };
+}
+
+/**
+ * Id-shaped: a Convex document id — lowercase base32-ish, no separators.
+ *
+ * Deliberately narrow. A looser shape (anything 16+ of `[A-Za-z0-9_-]`) also
+ * matches ordinary display names like `staging-environment`, which then reach
+ * `v.id()` on the server and fail validation BEFORE the handler — an error
+ * class the route reports as a 500, not a 404. The list path is the correct
+ * home for names, so keep them off this branch. Anything that slips through
+ * still falls back (see {@link resolveEnvironmentSelector}).
+ */
+function looksLikeEnvironmentId(selector: string): boolean {
+  return /^[a-z0-9]{25,40}$/.test(selector);
+}
+
+/** A caller-requested cancellation, however the transport spelled it. */
+function isAbortError(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const { name, code } = error as { name?: unknown; code?: unknown };
+  return name === "AbortError" || code === "ABORT_ERR";
+}
+
+/**
+ * Launch, and on failure make sure the caller still learns what compose
+ * PERSISTED.
+ *
+ * A compose-and-run writes before it spends: it ensures an environment and
+ * edits the suite's attachment list. If the launch then throws, an unannotated
+ * error leaves the caller believing nothing happened — when in fact their suite
+ * changed. So the persisted outcomes ride on the thrown error's details, where
+ * every surface already renders them.
+ */
+async function createEvalRunOrReportCompose<T>(
+  composed: ComposedRunEnvironment | undefined,
+  launch: () => Promise<T>,
+): Promise<T> {
+  if (!composed) return launch();
+  try {
+    return await launch();
+  } catch (error) {
+    const cells = composed.report.environments ?? [composed.report.environment];
+    const cellNote = cells
+      .map(
+        (cell) =>
+          `${cell.id}${cell.created ? " (created)" : " (reused)"}${
+            cell.modelId ? ` · ${cell.modelId}` : ""
+          }`,
+      )
+      .join(", ");
+    const note = `(The composed environment${cells.length === 1 ? "" : "s"} ${
+      cellNote
+    } ${
+      composed.report.attachment.attached
+        ? "were attached to the suite"
+        : "were minted without attaching"
+    }; retrying is safe — it will reuse them.)`;
+    if (error instanceof PlatformApiError) {
+      throw new PlatformApiError(`${error.message} ${note}`, error.code, {
+        status: error.status,
+        // STRUCTURED as well as prose: a human reads the sentence, and an
+        // agent surface deciding whether to warn about a suite edit needs a
+        // field. `retryAfter`/`endpoint` ride along because dropping them
+        // would turn a rate-limit into an un-retryable one on this path only.
+        details: { ...(error.details ?? {}), composed: composed.report },
+        ...(error.retryAfter !== undefined
+          ? { retryAfter: error.retryAfter }
+          : {}),
+        ...(error.endpoint !== undefined ? { endpoint: error.endpoint } : {}),
+      });
+    }
+    // A non-API failure (the connection dropped, the request was aborted)
+    // persisted the SAME two writes, so it owes the caller the same report.
+    // Annotated IN PLACE rather than rewrapped: an abort must stay an abort —
+    // callers match on `name`/`instanceof` to tell "I cancelled this" from "it
+    // broke", and a wrapper would make every such check miss.
+    if (error instanceof Error) {
+      error.message = `${error.message} ${note}`;
+      Object.assign(error, { composed: composed.report });
+    }
+    throw error;
+  }
+}
+
+/**
+ * Call the grouped-launch endpoint, translating "this server does not have it"
+ * into an instruction rather than a raw NOT_FOUND.
+ *
+ * The SDK publishes independently of the hosted API, so a client can legitimately
+ * be newer than the server it is pointed at. A bare 404 there reads as "your
+ * suite does not exist", which sends the caller looking in the wrong place.
+ */
+async function createEvalRunGroupOrExplain(
+  client: PlatformApiClient,
+  projectId: string,
+  body: Record<string, unknown>,
+  signal: AbortSignal | undefined,
+): Promise<PlatformEvalRunGroupCreated> {
+  try {
+    return await client.createEvalRunGroup({ projectId, body }, { signal });
+  } catch (error) {
+    // A ROUTE MISS specifically, not every 404. The route itself 404s for real
+    // reasons — the suite was deleted between resolving it and launching, or
+    // project access was revoked — and telling that caller to wait for a server
+    // upgrade that already happened sends them to fix the wrong thing. Only a
+    // missing route answers without the v1 error envelope, which is exactly
+    // what the generic fallback message below means.
+    if (
+      error instanceof PlatformApiError &&
+      error.status === 404 &&
+      error.details === undefined &&
+      /^Request to .* failed \(404\)$/.test(error.message)
+    ) {
+      throw new PlatformApiError(
+        "This MCPJam server is too old for grouped eval-run launches. Run the targets one at a time (name a single environment or host per call) until it is upgraded.",
+        "NOT_FOUND",
+        { status: 404 },
+      );
+    }
+    throw error;
   }
 }
 
@@ -1179,6 +2428,138 @@ export const listEvalSuiteRunsOperation: PlatformOperation<
   },
 };
 
+/**
+ * Knobs that apply to a run whatever it targets. Declared once and spread into
+ * both run inputs: a knob that exists on the suite op and not the case op is a
+ * knob callers have to remember two rules for, and the divergence is invisible
+ * until someone hits it.
+ */
+/**
+ * A COMPOSED run target: assemble a stack instead of naming a saved
+ * environment. Declared here, above the run inputs, for the same
+ * temporal-dead-zone reason `publicMatchOptionsSchema` is.
+ *
+ * The stack resolves to ad-hoc (unnamed, content-addressed) environments and
+ * then launches through the ORDINARY environment path — same resolution, same
+ * immutable snapshot. Model fan-out is N of those cells (one per explicit
+ * model, plus an inherit cell when `includeClientDefault` is set), not a
+ * second run-level override channel.
+ */
+const composeRunTargetInput = z
+  .object({
+    host: z
+      .string()
+      .trim()
+      .min(1)
+      .describe(
+        "Host (name or ID) the composed stack runs as — the client whose configuration the run is stamped with.",
+      ),
+    serverGroup: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Standalone server group to pin (by ID). Omit to use the host's own servers.",
+      ),
+    model: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Singular alias for `models`. Prefer `models` for a matrix.",
+      ),
+    models: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(
+        "Explicit model overrides. Each id mints one override cell. Combined with `includeClientDefault` this is the model axis. Replaces the client default unless `includeClientDefault` is true.",
+      ),
+    includeClientDefault: z
+      .boolean()
+      .optional()
+      .describe(
+        "Also mint an inherit cell that uses the host's pinned model. Default false when `models` is set; implied true when no models are named.",
+      ),
+    saveTargets: z
+      .boolean()
+      .optional()
+      .describe(
+        "Attach the minted cells to the suite (append, capped at 10). Default is ephemeral: mint and launch without mutating suite attachments.",
+      ),
+    computer: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Sandbox image (name or ID) to pin, so the run boots a fresh computer from it. Must be project-shared.",
+      ),
+    skills: z
+      .object({
+        mode: z.literal("explicit"),
+        skillIds: z.array(z.string().trim().min(1)).min(1),
+      })
+      .optional()
+      .describe("Explicit pinned skill selection for the composed stack."),
+    pluginVersionIds: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe("Plugin VERSION IDs to pin for the composed stack."),
+  })
+  .describe(
+    "Compose an execution stack to run instead of naming a saved environment. Default is EPHEMERAL: cells are minted and launched without attaching them to the suite (`saveTargets: true` opts into append). Deduplicated by content, so composing the same stack twice reuses one environment. Mutually exclusive with environment/environments/host/hosts/servers/allAttached.",
+  );
+
+const RUN_KNOB_FIELDS = {
+  iterations: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe(
+      "Run each case this many times, overriding its saved iteration count FOR THIS RUN ONLY (the suite is untouched). Multiplies what the run costs.",
+    ),
+  notes: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Free-text note stored on the run, for your own attribution."),
+  minPassRate: z
+    .number()
+    .min(0)
+    .max(100)
+    .optional()
+    .describe(
+      "Pass threshold for this run as a percentage (0-100), overriding the suite's own criterion.",
+    ),
+  matchOptions: publicMatchOptionsSchema
+    .optional()
+    .describe(
+      "Tool-call match options for this run only, layered over suite defaults and per-case overrides. Does NOT edit the suite or its cases.",
+    ),
+  excludeSkills: z
+    .boolean()
+    .optional()
+    .describe(
+      "Run the 'without skills' arm of an A/B comparison: NO skills are pinned from any channel and the run is labelled as excluded, rather than merely being skill-free. Scoped to skill delivery — a pinned plugin's MCP servers stay connected, because which servers an arm connects is the one variable a skills A/B has to hold fixed.",
+    ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Retry-safety key. Repeating a call with the same key returns the run it already started instead of starting (and billing) a second one. On a multi-target launch the key covers the whole group: a retry returns the same group and the same runs.",
+    ),
+} as const;
+
 const runEvalSuiteInput = z.object({
   project: z
     .string()
@@ -1200,23 +2581,131 @@ const runEvalSuiteInput = z.object({
     .min(1)
     .optional()
     .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+  environments: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Several attached environments to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error.",
+    ),
+  host: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "One host ATTACHED to the suite (name or ID) to run against. The run is stamped with that host's configuration; without it a suite with several attached hosts cannot be run at all, and one with exactly one runs against it automatically. Mutually exclusive with the environment selectors and with `servers`.",
+    ),
+  hosts: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Several attached hosts to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `host` for exactly one; passing both is an error.",
+    ),
+  allAttached: z
+    .boolean()
+    .optional()
+    .describe(
+      "Run EVERY attached environment (or, when the suite has none, every attached host), one run per target, grouped under a single launch. THIS LAUNCHES MULTIPLE PAID RUNS — one per target, each consuming credits. Cannot be combined with naming targets explicitly: 'all of them' and 'these ones' cannot both be meant.",
+    ),
+  cases: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Run only these cases (titles or IDs) instead of the whole suite. The suite itself is untouched.",
+    ),
+  refreshSnapshot: z
+    .boolean()
+    .optional()
+    .describe(
+      "PERSISTS A NEW HOST-CONFIG SNAPSHOT ON THE SUITE, changing what every future run of it uses — not just this one. Without it a rerun leaves the snapshot frozen, which is what stops newly connected servers from silently contaminating an existing suite. Single-target runs only; rejected with any multi-target launch, where last-writer-wins on a frozen snapshot is never what was meant.",
+    ),
+  compose: composeRunTargetInput.optional(),
+  ...RUN_KNOB_FIELDS,
 });
 
 export type RunEvalSuiteInput = z.infer<typeof runEvalSuiteInput>;
 
+/** One target's outcome, discriminated on `status`. See `targets` below. */
+export type RunEvalTargetResult =
+  | {
+      status: "started";
+      environment?: PlatformEvalRunCreated["environment"];
+      host?: { id: string; name: string };
+      runId: string;
+      runStatus: string;
+      servers?: Array<{ id: string; name?: string }>;
+      caseUpsert?: PlatformEvalRunCreated["caseUpsert"];
+    }
+  | {
+      status: "failed";
+      environment?: PlatformEvalRunCreated["environment"];
+      host?: { id: string; name: string };
+      error: { code: string; message: string };
+    };
+
 export type RunEvalSuiteResult = {
   project: SelectedProjectInfo;
   suite: { id: string; name: string | null };
-  /** The servers the run connects to; names are included when known. */
-  servers: Array<{ id: string; name?: string }>;
   /**
-   * The environment the run is pinned to. Non-null even when `environment` was
-   * omitted, if the suite has exactly one attached — the platform selects it.
+   * `"started"` — every target launched; `"partial"` — some did and some did
+   * not; `"failed"` — none did.
+   *
+   * A SINGLE-target run is always `"started"`, because its failures throw:
+   * there is one thing the caller asked for, and reporting "it failed" in a
+   * resolved value would make every caller check a field to find out whether
+   * their one action happened. A multi-target launch cannot do that — aborting
+   * on the first failure would strand its already-started siblings unreported —
+   * so it resolves with the receipt and the caller reads `outcome`.
    */
-  environment: PlatformEvalRunCreated["environment"];
-  runId: string;
-  status: string;
-  caseUpsert: PlatformEvalRunCreated["caseUpsert"];
+  outcome: "started" | "partial" | "failed";
+  startedCount: number;
+  failedCount: number;
+  /** Set only on a grouped launch. Sibling runs share it. */
+  runGroupId?: string;
+  /**
+   * What `compose` PERSISTED, reported even when the launch itself failed.
+   *
+   * A compose-and-run has side effects before it spends: it ensures an ad-hoc
+   * environment and attaches it to the suite. A caller whose launch then fails
+   * still needs to know the suite's attachment list changed — and that a retry
+   * will hit the dedupe and no-op paths rather than composing again.
+   */
+  composed?: {
+    environment: {
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    };
+    environments?: Array<{
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    }>;
+    attachment: { attached: boolean };
+  };
+  /** One entry per target, in launch order. */
+  targets: RunEvalTargetResult[];
+  /**
+   * @deprecated Mirrors of the FIRST started run, kept so callers written
+   * against the single-run shape keep working. Read `targets` instead — on a
+   * grouped launch these describe one run out of several.
+   */
+  runId?: string;
+  /** @deprecated See `runId`. */
+  status?: string;
+  /** @deprecated See `runId`. */
+  servers?: Array<{ id: string; name?: string }>;
+  /** @deprecated See `runId`. */
+  environment?: PlatformEvalRunCreated["environment"];
+  /** @deprecated See `runId`. */
+  caseUpsert?: PlatformEvalRunCreated["caseUpsert"];
 };
 
 export const runEvalSuiteOperation: PlatformOperation<
@@ -1226,64 +2715,315 @@ export const runEvalSuiteOperation: PlatformOperation<
   name: "run_eval_suite",
   title: "Run MCPJam eval suite",
   description:
-    "Start an asynchronous rerun of an existing eval suite. By default the run connects the suite's saved server selection, resolved by the platform; pass servers only to override it. For a suite with attached project environments, pass environment to choose which one runs (required when several are attached; a lone one is used automatically) — attach them first with set_eval_suite_environments. Returns a runId immediately; poll get_eval_run with the returned project and runId until status is completed, failed, or cancelled. Eval runs execute LLM iterations and consume the organization's credits or configured provider keys.",
+    "Start an asynchronous rerun of an existing eval suite. Returns immediately; poll get_eval_run with the returned project and runId until status is completed, failed, or cancelled. Eval runs execute LLM iterations and CONSUME the organization's credits or configured provider keys.\n\nWHICH TARGET RUNS is explicit, never guessed. A suite with nothing attached runs its saved server selection. A suite with exactly ONE attached environment or host runs against that one automatically. A suite with SEVERAL fails with TARGET_REQUIRED, listing them — name one with environment or host, several with environments or hosts, or every one with allAttached. Each named target is a separate paid run.\n\nA multi-target launch returns a group receipt: outcome (started | partial | failed), startedCount, failedCount, and one entry per target that either started (with its runId) or failed (with its reason). A failed target does not abort its siblings, so read outcome rather than assuming everything started.",
   readOnly: false,
+  risk: "spend",
   inputSchema: runEvalSuiteInput,
   async execute(input, { client, signal }) {
+    // ── Guards first: reject every ambiguous combination BEFORE resolving
+    // anything, so a caller who meant two different things is told so without
+    // spending a round trip — let alone a run.
     assertNoServerOverrideWithEnvironment(input);
+    assertRunTargetSelectorsCoherent(input);
+
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
       signal,
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
+
     // No client-side server default: the platform derives the suite's saved
     // selection when serverIds is omitted — the exact set the run snapshot
     // references, which a project-wide guess here could miss.
     const overrideServers = input.servers
       ? await resolveRunServers(client, project, input.servers, signal)
       : undefined;
-    // Name-or-ID → id. Whether the environment is ATTACHED to the suite is the
-    // platform's call, not ours: only it can decide that without racing a
-    // concurrent attachment edit.
-    const environment = input.environment
-      ? await resolveEnvironmentSelector(
-          client,
-          project,
-          input.environment,
-          signal,
+
+    // Case selectors resolve BEFORE compose, because compose WRITES. Every
+    // read that can reject the request has to happen while rejecting is still
+    // free: a mistyped case name after an ad-hoc environment had been created
+    // and attached would leave the suite edited for a run that never started,
+    // and the error would say nothing about it.
+    const caseIds = input.cases
+      ? (await resolveCases(client, project, suite, input.cases, signal)).map(
+          (testCase) => testCase.id,
         )
       : undefined;
-    const created = await client.createEvalRun(
-      {
-        projectId: project.id,
-        body: {
-          suiteId: suite.id,
+
+    // COMPOSE produces the targets. Every refusal that can fire without a
+    // write (wrong cases already resolved above; refreshSnapshot × N cells;
+    // multi-model on a backend that cannot launch unattached) happens first
+    // so a mistyped request does not mint rows or edit the suite.
+    const composeChoices = input.compose
+      ? expandComposeModelChoices(input.compose)
+      : [];
+    let composeAttach = false;
+    let ephemeralLaunch = false;
+    if (input.compose) {
+      const policy = composeLaunchPolicy({
+        choiceCount: composeChoices.length,
+        saveTargets: input.compose.saveTargets === true,
+        ephemeralOk: await probeEphemeralEnvironmentLaunch(
+          client,
+          project.id,
+          signal,
+        ),
+        ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
+      });
+      composeAttach = policy.attach;
+      ephemeralLaunch = policy.ephemeralLaunch;
+    }
+    const composed = input.compose
+      ? await composeRunEnvironment(
+          client,
+          project,
+          suite,
+          input.compose,
+          signal,
+          { attach: composeAttach },
+        )
+      : undefined;
+
+    // The suite DETAIL carries both attachment axes in attach order, so the
+    // targets compute from one read. Skipped on the two paths that have no
+    // axis to read: an explicit server override is a single legacy run by
+    // construction, and a composed stack has already PRODUCED its target — for
+    // either of them the attachments are simply not consulted, so fetching
+    // them would be a round trip spent on an answer nobody reads.
+    const detail =
+      overrideServers || composed
+        ? undefined
+        : await client.getEvalSuite(
+            { projectId: project.id, suiteId: suite.id },
+            { signal },
+          );
+
+    const selectedEnvironments = await resolveSuiteEnvironmentTargets(
+      client,
+      project,
+      suite,
+      detail,
+      input.environment ? [input.environment] : input.environments ?? [],
+      signal,
+    );
+    const selectedHosts = resolveSuiteHostTargets(
+      suite,
+      detail,
+      input.host ? [input.host] : input.hosts ?? [],
+    );
+
+    // Attached environments arrive as bare IDS — the suite detail carries no
+    // names — and every place they surface is one a person reads: the
+    // TARGET_REQUIRED refusal listing what is pickable, and a fan-out receipt
+    // naming which target failed. One listing buys names for both; an id that
+    // no longer resolves degrades to itself rather than failing the run.
+    const attachedEnvironmentNames = await environmentNamesFor(
+      client,
+      project,
+      detail?.environmentIds ?? [],
+      signal,
+    );
+
+    // A composed stack IS the target set: one cell → a single launch, N
+    // cells → one grouped launch under a single runGroupId. The attachment
+    // axes are not consulted; the stack produced the environments.
+    const plan: RunTargetPlan = composed
+      ? composed.environments.length > 1
+        ? {
+            kind: "group",
+            targets: composed.environments.map((environment) => ({
+              kind: "environment" as const,
+              id: environment.id,
+            })),
+          }
+        : {
+            kind: "single",
+            target: { kind: "environment", id: composed.environment.id },
+          }
+      : computeRunTargets({
+          attachedEnvironments: (detail?.environmentIds ?? []).map((id) => ({
+            id,
+            ...(attachedEnvironmentNames.get(id)
+              ? { name: attachedEnvironmentNames.get(id)! }
+              : {}),
+          })),
+          attachedHosts: (detail?.hosts ?? []).map((host) => ({
+            id: host.id,
+            name: host.name,
+          })),
+          selectedEnvironments,
+          selectedHosts,
+          ...(input.allAttached !== undefined
+            ? { allAttached: input.allAttached }
+            : {}),
           ...(overrideServers
             ? { serverIds: overrideServers.map((server) => server.id) }
             : {}),
-          ...(environment ? { environmentId: environment.id } : {}),
+        });
+
+    if (plan.kind === "target-required") {
+      throw operationInputError(targetRequiredMessage(plan));
+    }
+    if (plan.kind === "group" && input.refreshSnapshot) {
+      throw operationInputError(
+        "refreshSnapshot cannot be used with a multi-target launch — it PERSISTS one host-config snapshot on the suite, and several runs racing to write it would leave the suite pinned to whichever finished last. Run one target at a time to refresh it.",
+      );
+    }
+
+    const knobs = runKnobBody(input, caseIds);
+    const projectInfo = toSelectedProjectInfo(project);
+    const suiteInfo = { id: suite.id, name: suite.name };
+
+    if (plan.kind === "single") {
+      const created = await createEvalRunOrReportCompose(composed, () =>
+        client.createEvalRun(
+          {
+            projectId: project.id,
+            body: {
+              suiteId: suite.id,
+              ...(plan.serverIds ? { serverIds: plan.serverIds } : {}),
+              ...(plan.target?.kind === "environment"
+                ? { environmentId: plan.target.id }
+                : {}),
+              ...(plan.target?.kind === "host"
+                ? { namedHostId: plan.target.id }
+                : {}),
+              ...(input.refreshSnapshot ? { refreshSnapshot: true } : {}),
+              ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
+              ...knobs,
+            },
+          },
+          { signal },
+        ),
+      );
+      const servers =
+        overrideServers?.map((server) => ({
+          id: server.id,
+          name: server.name,
+        })) ??
+        (created.servers ?? []).map((server) => ({
+          id: server.id,
+          ...(server.name ? { name: server.name } : {}),
+        }));
+      const host =
+        plan.target?.kind === "host"
+          ? { id: plan.target.id, name: plan.target.name }
+          : undefined;
+      return {
+        project: projectInfo,
+        suite: suiteInfo,
+        outcome: "started",
+        startedCount: 1,
+        failedCount: 0,
+        ...(composed ? { composed: composed.report } : {}),
+        targets: [
+          {
+            status: "started",
+            environment: created.environment ?? null,
+            ...(host ? { host } : {}),
+            runId: created.runId,
+            runStatus: created.status,
+            servers,
+            caseUpsert: created.caseUpsert,
+          },
+        ],
+        runId: created.runId,
+        status: created.status,
+        servers,
+        environment: created.environment ?? null,
+        caseUpsert: created.caseUpsert,
+      };
+    }
+
+    const group = await createEvalRunOrReportCompose(composed, () =>
+      createEvalRunGroupOrExplain(
+        client,
+        project.id,
+        {
+          suiteId: suite.id,
+          targets: plan.targets.map((target) =>
+            target.kind === "environment"
+              ? { environmentId: target.id }
+              : { namedHostId: target.id },
+          ),
+          ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
+          ...knobs,
         },
-      },
-      { signal },
+        signal,
+      ),
     );
-    const servers =
-      overrideServers?.map((server) => ({
-        id: server.id,
-        name: server.name,
-      })) ??
-      (created.servers ?? []).map((server) => ({
-        id: server.id,
-        ...(server.name ? { name: server.name } : {}),
-      }));
+
+    const nameById = new Map(
+      plan.targets.map((target) => [target.id, target.name]),
+    );
+    const targets: RunEvalTargetResult[] = group.targets.map((entry) => {
+      const id = entry.target.namedHostId ?? entry.target.environmentId ?? "";
+      const host = entry.target.namedHostId
+        ? {
+            id: entry.target.namedHostId,
+            name: entry.target.name ?? nameById.get(id) ?? "",
+          }
+        : undefined;
+      if (entry.status === "failed") {
+        return {
+          status: "failed",
+          ...(host ? { host } : {}),
+          // A failed target still has to say WHICH target it was. A started
+          // entry carries the pinned environment the platform echoes back;
+          // a failed one never launched, so there is no pinned revision to
+          // report — but the id and the name the caller selected by are both
+          // in hand, and without them the receipt reads "something failed".
+          ...(entry.target.environmentId
+            ? {
+                environment: {
+                  id: entry.target.environmentId,
+                  name: entry.target.name ?? nameById.get(id) ?? null,
+                  revision: null,
+                },
+              }
+            : {}),
+          error: entry.error,
+        };
+      }
+      return {
+        status: "started",
+        environment: entry.environment ?? null,
+        ...(host ? { host } : {}),
+        runId: entry.runId,
+        runStatus: entry.runStatus,
+        ...(entry.servers ? { servers: entry.servers } : {}),
+        ...(entry.caseUpsert ? { caseUpsert: entry.caseUpsert } : {}),
+      };
+    });
+    const firstStarted = targets.find(
+      (target): target is Extract<RunEvalTargetResult, { status: "started" }> =>
+        target.status === "started",
+    );
     return {
-      project: toSelectedProjectInfo(project),
-      suite: { id: suite.id, name: suite.name },
-      servers,
-      environment: created.environment ?? null,
-      runId: created.runId,
-      status: created.status,
-      caseUpsert: created.caseUpsert,
+      project: projectInfo,
+      suite: suiteInfo,
+      // NOT thrown, even when every target failed. The receipt carries each
+      // target's own reason, and throwing would discard exactly the detail the
+      // caller needs — including which siblings DID start. The op throws only
+      // when the HTTP call itself fails.
+      outcome: group.outcome,
+      startedCount: group.startedCount,
+      failedCount: group.failedCount,
+      runGroupId: group.runGroupId,
+      ...(composed ? { composed: composed.report } : {}),
+      targets,
+      ...(firstStarted
+        ? {
+            runId: firstStarted.runId,
+            status: firstStarted.runStatus,
+            ...(firstStarted.servers ? { servers: firstStarted.servers } : {}),
+            environment: firstStarted.environment ?? null,
+            ...(firstStarted.caseUpsert
+              ? { caseUpsert: firstStarted.caseUpsert }
+              : {}),
+          }
+        : {}),
     };
   },
 };
@@ -1314,6 +3054,17 @@ const runEvalCaseInput = z.object({
     .min(1)
     .optional()
     .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+  host: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "One host ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that host's configuration. Mutually exclusive with `environment` and `servers`.",
+    ),
+  compose: composeRunTargetInput.optional(),
+  iterations: RUN_KNOB_FIELDS.iterations,
+  idempotencyKey: RUN_KNOB_FIELDS.idempotencyKey,
 });
 
 export type RunEvalCaseInput = z.infer<typeof runEvalCaseInput>;
@@ -1325,6 +3076,26 @@ export type RunEvalCaseResult = {
   servers: Array<{ id: string; name?: string }>;
   /** The environment the run is pinned to; see `RunEvalSuiteResult`. */
   environment: PlatformEvalRunCreated["environment"];
+  /** The attached host the run is stamped with, when one was named. */
+  host?: { id: string; name: string };
+  /** See `RunEvalSuiteResult.composed`. */
+  composed?: {
+    environment: {
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    };
+    environments?: Array<{
+      id: string;
+      name: null;
+      adhoc: true;
+      created: boolean;
+      modelId?: string;
+    }>;
+    attachment: { attached: boolean };
+  };
   runId: string;
   status: string;
 };
@@ -1336,11 +3107,13 @@ export const runEvalCaseOperation: PlatformOperation<
   name: "run_eval_case",
   title: "Run a single MCPJam eval case",
   description:
-    "Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). For a suite with attached project environments, pass environment to choose which one runs. Returns a runId immediately; poll get_eval_run until terminal. Consumes credits like any eval run.",
+    "Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). For a suite with attached project environments, pass environment to choose which one runs; for one with attached hosts, pass host so the run is stamped with that host's configuration. Returns a runId immediately; poll get_eval_run until terminal. CONSUMES credits like any eval run.",
   readOnly: false,
+  risk: "spend",
   inputSchema: runEvalCaseInput,
   async execute(input, { client, signal }) {
     assertNoServerOverrideWithEnvironment(input);
+    assertRunTargetSelectorsCoherent(input);
     const { project } = await resolveProjectOrThrow(
       client,
       input.project,
@@ -1357,6 +3130,39 @@ export const runEvalCaseOperation: PlatformOperation<
     const overrideServers = input.servers
       ? await resolveRunServers(client, project, input.servers, signal)
       : undefined;
+    const composeChoices = input.compose
+      ? expandComposeModelChoices(input.compose)
+      : [];
+    if (composeChoices.length > 1) {
+      throw operationInputError(
+        "`run_eval_case` accepts only one compose model — its receipt is a single run. Use `run_eval_suite` / `eval run` for a client × model matrix.",
+      );
+    }
+    let composeAttach = false;
+    let ephemeralLaunch = false;
+    if (input.compose) {
+      const policy = composeLaunchPolicy({
+        choiceCount: composeChoices.length,
+        saveTargets: input.compose.saveTargets === true,
+        ephemeralOk: await probeEphemeralEnvironmentLaunch(
+          client,
+          project.id,
+          signal,
+        ),
+      });
+      composeAttach = policy.attach;
+      ephemeralLaunch = policy.ephemeralLaunch;
+    }
+    const composed = input.compose
+      ? await composeRunEnvironment(
+          client,
+          project,
+          suite,
+          input.compose,
+          signal,
+          { attach: composeAttach },
+        )
+      : undefined;
     const environment = input.environment
       ? await resolveEnvironmentSelector(
           client,
@@ -1365,19 +3171,47 @@ export const runEvalCaseOperation: PlatformOperation<
           signal,
         )
       : undefined;
-    const created = await client.createEvalRun(
-      {
-        projectId: project.id,
-        body: {
-          suiteId: suite.id,
-          caseIds: [testCase.id],
-          ...(overrideServers
-            ? { serverIds: overrideServers.map((server) => server.id) }
-            : {}),
-          ...(environment ? { environmentId: environment.id } : {}),
+    // The suite detail is read ONLY when a host was named — a case run is
+    // otherwise unchanged, and paying for an extra request on every call to
+    // support an optional selector would be a tax on the common path.
+    const host = input.host
+      ? resolveSuiteHostTargets(
+          suite,
+          await client.getEvalSuite(
+            { projectId: project.id, suiteId: suite.id },
+            { signal },
+          ),
+          [input.host],
+        )[0]!
+      : undefined;
+    const created = await createEvalRunOrReportCompose(composed, () =>
+      client.createEvalRun(
+        {
+          projectId: project.id,
+          body: {
+            suiteId: suite.id,
+            caseIds: [testCase.id],
+            ...(overrideServers
+              ? { serverIds: overrideServers.map((server) => server.id) }
+              : {}),
+            // MUTUALLY EXCLUSIVE, and enforced above by
+            // `assertRunTargetSelectorsCoherent`: `compose` with `environment`
+            // is refused before this point, so the repeated key can never
+            // resolve silently to whichever spread came last.
+            ...(composed ? { environmentId: composed.environment.id } : {}),
+            ...(environment ? { environmentId: environment.id } : {}),
+            ...(host ? { namedHostId: host.id } : {}),
+            ...(ephemeralLaunch ? { ephemeralEnvironment: true } : {}),
+            ...(input.iterations !== undefined
+              ? { iterationOverride: input.iterations }
+              : {}),
+            ...(input.idempotencyKey
+              ? { idempotencyKey: input.idempotencyKey }
+              : {}),
+          },
         },
-      },
-      { signal },
+        { signal },
+      ),
     );
     const servers =
       overrideServers?.map((server) => ({
@@ -1394,6 +3228,8 @@ export const runEvalCaseOperation: PlatformOperation<
       case: { id: testCase.id, title: testCase.title },
       servers,
       environment: created.environment ?? null,
+      ...(host ? { host } : {}),
+      ...(composed ? { composed: composed.report } : {}),
       runId: created.runId,
       status: created.status,
     };
@@ -1522,7 +3358,9 @@ const evalCaseInput = z.object({
     ),
 });
 
-const createEvalSuiteInput = z.object({
+// STRICT: `--json` / MCP args that invent a top-level key must fail
+// validation, not be stripped before the request is built.
+const createEvalSuiteInput = z.strictObject({
   project: z
     .string()
     .trim()
@@ -1635,25 +3473,6 @@ export const createEvalSuiteOperation: PlatformOperation<
 
 const CASE_SELECTOR_DESCRIPTION = "Eval case title or ID.";
 
-const publicMatchOptionsSchema = z
-  .object({
-    toolCallOrder: z
-      .enum(["any", "in-order", "exact"])
-      .optional()
-      .describe(
-        "any = order ignored; in-order = expected calls appear in order (extras allowed); exact = exact sequence.",
-      ),
-    extraToolCalls: z
-      .union([z.literal("unlimited"), z.number().int().min(0)])
-      .optional()
-      .describe('"unlimited" or a max count of unexpected extra tool calls.'),
-    arguments: z
-      .enum(["ignore", "partial", "exact"])
-      .optional()
-      .describe("Argument comparison strictness."),
-  })
-  .describe("Tool-call match options.");
-
 const publicCheckSchema = z
   .object({ type: z.string().trim().min(1) })
   .passthrough()
@@ -1728,6 +3547,29 @@ function buildCaseBody(
   return body;
 }
 
+/**
+ * The case's declared identity, accepted on CREATE only.
+ *
+ * Not part of `caseFieldsShape`, which create and update share: an update may
+ * change what a case tests, never which case it is. Omitting it is supported —
+ * the platform mints one — so an agent that has no id of its own does not have
+ * to invent a scheme.
+ */
+const declaredCaseIdField = opaqueIdSchema
+  .optional()
+  .describe(
+    "Stable declared id for the case (e.g. from a suite file). Minted for you when omitted.",
+  );
+
+/** `buildCaseBody` plus the create-only declared id. */
+function buildCreateCaseBody(
+  input: Record<string, unknown>,
+): Record<string, unknown> {
+  const body = buildCaseBody(input);
+  if (input.id !== undefined) body.id = input.id;
+  return body;
+}
+
 const getEvalSuiteInput = z.object({
   project: z
     .string()
@@ -1746,7 +3588,7 @@ export const getEvalSuiteOperation: PlatformOperation<
   name: "get_eval_suite",
   title: "Get MCPJam eval suite",
   description:
-    "Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge, schedule.",
+    "Fetch one eval suite's full settings: environment (servers, computer image), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule.",
   readOnly: true,
   inputSchema: getEvalSuiteInput,
   async execute(input, { client, signal }) {
@@ -1763,7 +3605,9 @@ export const getEvalSuiteOperation: PlatformOperation<
   },
 };
 
-const updateEvalSuiteInput = z.object({
+// STRICT: the reported silent no-op (`hostIds` / top-level `servers`)
+// was stripped here before the HTTP body was ever built.
+const updateEvalSuiteInput = z.strictObject({
   project: z
     .string()
     .trim()
@@ -1774,9 +3618,24 @@ const updateEvalSuiteInput = z.object({
   name: z.string().trim().min(1).optional(),
   description: z.string().trim().optional(),
   environment: z
-    .object({ servers: z.array(z.string().trim().min(1)) })
+    .object({
+      servers: z
+        .array(z.string().trim().min(1))
+        .optional()
+        .describe(
+          "Server selection by name; replaces the suite's server set. Omit to leave it (and its bindings) alone.",
+        ),
+      computerEnvironment: z
+        .union([z.string().trim().min(1), z.null()])
+        .optional()
+        .describe(
+          "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image.",
+        ),
+    })
     .optional()
-    .describe("Server selection by name; replaces the suite's server set."),
+    .describe(
+      "Suite environment: server selection and the sandbox image runs boot from. Unspecified fields are preserved.",
+    ),
   executionConfig: z
     .object({
       model: z.string().trim().min(1).optional(),
@@ -1797,13 +3656,38 @@ const updateEvalSuiteInput = z.object({
   settings: z
     .object({
       minimumAccuracy: z.number().min(0).max(100).optional(),
+      minimumIterations: z
+        .union([z.number().int().min(1).max(10), z.null()])
+        .optional()
+        .describe(
+          "Floor on per-case iterations, 1–10: every case runs at least this many times. null removes the floor.",
+        ),
       // Nullable to CLEAR suite defaults (vs omit to leave untouched).
       matchOptions: publicMatchOptionsSchema.nullable().optional(),
       checks: z.array(publicCheckSchema).nullable().optional(),
       judge: z
         .object({
-          enabled: z.boolean().optional(),
+          enabled: z
+            .boolean()
+            .optional()
+            .describe(
+              "Make the judge available on this suite. On its own this grades nothing — set autoRun (or request grading on a finished run) to make grading happen.",
+            ),
           model: z.string().trim().min(1).optional(),
+          autoRun: z
+            .boolean()
+            .optional()
+            .describe(
+              "Grade every run automatically as it completes. This is the flag that makes LLM-as-judge grading happen; it SPENDS on each run.",
+            ),
+          threshold: z
+            .number()
+            .min(0)
+            .max(1)
+            .optional()
+            .describe(
+              "Advisory pass threshold, 0–1 (passed = score >= threshold).",
+            ),
         })
         .optional(),
     })
@@ -1818,7 +3702,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge. Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, and LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available). Only the fields you pass change.",
   readOnly: false,
   inputSchema: updateEvalSuiteInput,
   async execute(input, { client, signal }) {
@@ -2133,6 +4017,7 @@ const createEvalCaseInput = z.object({
   suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
   ...caseFieldsShape,
   title: z.string().trim().min(1).describe("Short case label."),
+  id: declaredCaseIdField,
 });
 export type CreateEvalCaseInput = z.infer<typeof createEvalCaseInput>;
 
@@ -2154,7 +4039,112 @@ export const createEvalCaseOperation: PlatformOperation<
     );
     const suite = await resolveSuite(client, project, input.suite, signal);
     return client.createEvalCase(
-      { projectId: project.id, suiteId: suite.id, body: buildCaseBody(input) },
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        body: buildCreateCaseBody(input),
+      },
+      { signal },
+    );
+  },
+};
+
+const createEvalCasesInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  cases: z
+    .array(
+      z.object({
+        ...caseFieldsShape,
+        title: z.string().trim().min(1).describe("Short case label."),
+        id: declaredCaseIdField,
+      }),
+    )
+    .min(1)
+    .max(MAX_BATCH_CREATE_CASES)
+    .describe(
+      `The cases to author, up to ${MAX_BATCH_CREATE_CASES} per call. Split a larger set into several calls.`,
+    ),
+  duplicatePolicy: z
+    .enum(["block", "warn", "create_anyway"])
+    .optional()
+    .describe(
+      "What to do with a case whose definition already exists in the suite. Defaults to `block`. `warn` and `create_anyway` require `overrideReason`.",
+    ),
+  overrideReason: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Why authoring a duplicate is intended. Recorded on the case's revision.",
+    ),
+});
+export type CreateEvalCasesInput = z.infer<typeof createEvalCasesInput>;
+
+export const createEvalCasesOperation: PlatformOperation<
+  CreateEvalCasesInput,
+  PlatformEvalCaseBatchResult
+> = {
+  name: "create_eval_cases",
+  title: "Create MCPJam eval cases",
+  description:
+    "Add several test cases to an eval suite in one call — the bulk form of `create_eval_case`, and the way to convert a repo's test files or import a suite without a round trip per case. Each case takes the same fields as `create_eval_case`. Cases are validated together and reported individually: `created` and `failed` both carry the `index` of the case they describe, so a partial result lines up against the list you sent.",
+  readOnly: false,
+  // Authoring cases persists, but each one is individually deletable and
+  // nothing is spent until a run is started. (`create_eval_case` predates this
+  // field and is pinned as legacy-unclassified; it means the same thing.)
+  risk: "none",
+  inputSchema: createEvalCasesInput,
+  async execute(input, { client, signal }) {
+    // Checked HERE rather than as a schema `.refine`: an operation's
+    // `inputSchema` is handed to the agent tool surface, which needs a plain
+    // object schema — a refinement wraps it in `ZodEffects` and the toolset
+    // stops building. The platform refuses these two policies without a reason
+    // per case, so without this the caller spends a round trip to get N
+    // identical OVERRIDE_REASON_REQUIRED failures back.
+    if (
+      input.duplicatePolicy !== undefined &&
+      input.duplicatePolicy !== "block" &&
+      !input.overrideReason
+    ) {
+      throw new PlatformApiError(
+        `duplicatePolicy \`${input.duplicatePolicy}\` authors a case that duplicates ` +
+          "an existing one, so it requires an overrideReason — the reason is what " +
+          "gets recorded on the case's revision.",
+        "VALIDATION_ERROR",
+        // Client-synthesized: no request was made, so quoting a server status
+        // would misreport what happened.
+        { status: 0 },
+      );
+    }
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    return client.createEvalCases(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        body: {
+          cases: input.cases.map((testCase) =>
+            buildCreateCaseBody(testCase as Record<string, unknown>),
+          ),
+          ...(input.duplicatePolicy
+            ? { duplicatePolicy: input.duplicatePolicy }
+            : {}),
+          ...(input.overrideReason
+            ? { overrideReason: input.overrideReason }
+            : {}),
+        },
+      },
       { signal },
     );
   },
@@ -2330,6 +4320,15 @@ const generateEvalCasesInput = z.object({
     .describe(
       "Condition generated cases on a realistic range of user styles so the queries read like different users wrote them.",
     ),
+  idempotencyKey: z
+    .string()
+    .trim()
+    .min(1)
+    .max(256)
+    .optional()
+    .describe(
+      "Retry-safety key: pass one, because generating spends model credits and a retry must not pay for a second generation. Repeating a call with the same key replays the first attempt's drafts and returns the cases it already created.",
+    ),
 });
 export type GenerateEvalCasesInput = z.infer<typeof generateEvalCasesInput>;
 
@@ -2338,9 +4337,10 @@ export const generateEvalCasesOperation: PlatformOperation<
   PlatformEvalCasesGenerated
 > = {
   name: "generate_eval_cases",
+  risk: "spend",
   title: "Generate MCPJam eval cases",
   description:
-    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models.",
+    "AI-generate test cases from the suite's server tools and persist them into the suite. Connects the servers to discover tools and spends the organization's credits. For a suite with attached project environments, tools are discovered from the environment's closed server set — pass environment to choose which one. The authoring model is platform-controlled; set caseModels to choose the generated cases' execution models. IDEMPOTENT on idempotencyKey: pass one, because generating spends model credits and a retry must not pay for a second generation.",
   readOnly: false,
   inputSchema: generateEvalCasesInput,
   async execute(input, { client, signal }) {
@@ -2378,9 +4378,23 @@ export const generateEvalCasesOperation: PlatformOperation<
           ...(input.caseModels ? { caseModels: input.caseModels } : {}),
           ...(input.caseMix ? { caseMix: input.caseMix } : {}),
           ...(input.varyUserStyles ? { varyUserStyles: true } : {}),
+          // In the BODY, like run_eval_suite and run_eval_case — the two
+          // closest siblings, which also spend. The route merges a header key
+          // over this one, so the agent surfaces keep their precedence.
+          ...(input.idempotencyKey
+            ? { idempotencyKey: input.idempotencyKey }
+            : {}),
         },
       },
-      { signal },
+      {
+        signal,
+        // Also on the transport header the client already speaks, so a caller
+        // reading the wire sees one key rather than two channels that could
+        // disagree. The route accepts either spelling.
+        ...(input.idempotencyKey
+          ? { idempotencyKey: input.idempotencyKey }
+          : {}),
+      },
     );
   },
 };
@@ -2612,6 +4626,213 @@ export const cancelEvalRunOperation: PlatformOperation<
   },
 };
 
+const requestEvalRunJudgeInput = evalRunScopedInput.extend({
+  force: z
+    .boolean()
+    .optional()
+    .describe("Re-grade a run that already has a judge result."),
+  enable: z
+    .boolean()
+    .optional()
+    .describe(
+      "Grade this run even though the judge was off when it ran. A per-RUN answer, not a suite edit: grading reads the config pinned when the run was created, so turning the judge on for the suite does not reach an already-recorded run.",
+    ),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe("Judge model for this run only; defaults to the suite's."),
+  threshold: z
+    .number()
+    .min(0)
+    .max(1)
+    .optional()
+    .describe("Pass threshold for this run only, 0–1."),
+});
+
+export type RequestEvalRunJudgeInput = z.infer<typeof requestEvalRunJudgeInput>;
+
+export type RequestEvalRunJudgeResult = {
+  project: SelectedProjectInfo;
+  judge: PlatformEvalRunJudgeRequested;
+};
+
+export const requestEvalRunJudgeOperation: PlatformOperation<
+  RequestEvalRunJudgeInput,
+  RequestEvalRunJudgeResult
+> = {
+  name: "request_eval_run_judge",
+  title: "Request MCPJam eval run grading",
+  description:
+    "Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget. Returns immediately with a pending receipt — read the results from get_eval_run's `judges.goalCompletion`, do not re-request. Pass `enable: true` to grade a run recorded while the judge was off; a run's grading config is pinned when it starts, so enabling the judge on the suite does not reach it.",
+  readOnly: false,
+  risk: "spend",
+  inputSchema: requestEvalRunJudgeInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const judge = await client.requestEvalRunJudge(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        ...(input.force !== undefined ? { force: input.force } : {}),
+        ...(input.enable !== undefined ? { enable: input.enable } : {}),
+        ...(input.model !== undefined ? { model: input.model } : {}),
+        ...(input.threshold !== undefined
+          ? { threshold: input.threshold }
+          : {}),
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), judge };
+  },
+};
+
+/**
+ * The organization a GitHub Checks connection belongs to.
+ *
+ * `PlatformProject.organizationId` is nullable — a personal project belongs to
+ * no organization — and GitHub Checks is an organization's App installation.
+ * Refused with the reason rather than sent as an empty string, which would
+ * reach the platform as an unparseable id and come back as a flat not-found.
+ */
+function checkRepoOrganizationOrThrow(project: PlatformProject): string {
+  const organizationId = project.organizationId;
+  if (!organizationId) {
+    throw operationInputError(
+      `Project "${project.name}" does not belong to an organization, and GitHub Checks is configured per organization. Move the suite to a project in an organization, or connect the repository from the app.`,
+    );
+  }
+  return organizationId;
+}
+
+// ── GitHub Checks: run a suite on every pull request ──────────────────────
+//
+// Two operations rather than fields on `update_eval_suite`, because the
+// resource is ORG-scoped: a connection binds the organization's GitHub App
+// installation to a repository, and the suite is only which suite that
+// repository answers for.
+//
+// Deliberately NARROW, mirroring the suite-side section in the app: connect,
+// and see what is connected. Pausing, retargeting and disconnecting are
+// repo-level decisions that want every repository visible at once — offering
+// them here would let a caller retarget a repository away from the suite it is
+// standing on.
+
+const listEvalCheckReposInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Project name or ID. Only used to select the ORGANIZATION whose connected repositories are listed.",
+    ),
+});
+export type ListEvalCheckReposInput = z.infer<typeof listEvalCheckReposInput>;
+
+export type ListEvalCheckReposResult = {
+  project: SelectedProjectInfo;
+  checks: PlatformEvalCheckRepos;
+};
+
+export const listEvalCheckReposOperation: PlatformOperation<
+  ListEvalCheckReposInput,
+  ListEvalCheckReposResult
+> = {
+  name: "list_eval_check_repos",
+  title: "List MCPJam GitHub Checks repositories",
+  description:
+    "List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.",
+  readOnly: true,
+  inputSchema: listEvalCheckReposInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const checks = await client.listEvalCheckRepos(
+      { organizationId: checkRepoOrganizationOrThrow(project) },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), checks };
+  },
+};
+
+const connectEvalCheckRepoInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  repo: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Repository as owner/repo. Must be one list_eval_check_repos reports as connectable — the MCPJam GitHub App has to be installed on it.",
+    ),
+  outagePolicy: z
+    .enum(["fail_open", "fail_closed"])
+    .describe(
+      "What the pull-request check reports when MCPJam cannot conclude: fail_open passes it, fail_closed fails it. Required — ask the user which they want rather than choosing for them; fail_closed blocks merges during an MCPJam outage, fail_open lets an unverified change through.",
+    ),
+});
+export type ConnectEvalCheckRepoInput = z.infer<
+  typeof connectEvalCheckRepoInput
+>;
+
+export type ConnectEvalCheckRepoResult = {
+  project: SelectedProjectInfo;
+  check: PlatformEvalCheckRepoConnected;
+};
+
+export const connectEvalCheckRepoOperation: PlatformOperation<
+  ConnectEvalCheckRepoInput,
+  ConnectEvalCheckRepoResult
+> = {
+  name: "connect_eval_check_repo",
+  title: "Run an MCPJam eval suite on a repository's pull requests",
+  description:
+    "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.",
+  readOnly: false,
+  // Not `spend`: it costs an eval run per pull request, but the hazard a
+  // surface needs to warn about here is REACH — it changes what happens in a
+  // shared repository for everyone who opens a PR against it.
+  risk: "exposure",
+  inputSchema: connectEvalCheckRepoInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    // BEFORE the suite lookup: a project with no organization can never
+    // connect, so spending a round trip to resolve a suite first only delays
+    // the same refusal — and makes the failure look like a suite problem.
+    const organizationId = checkRepoOrganizationOrThrow(project);
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const check = await client.connectEvalCheckRepo(
+      {
+        organizationId,
+        projectId: project.id,
+        suiteId: suite.id,
+        repo: input.repo,
+        outagePolicy: input.outagePolicy,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), check };
+  },
+};
+
 const evalRunStepsInput = evalRunScopedInput.extend({
   iterationId: z
     .string()
@@ -2681,9 +4902,44 @@ async function resolveSuite(
 }
 
 /**
- * Resolve a test case within a suite by id or (case-insensitive) title. Cases
- * expose `title`, so map it onto the `name` field `resolveByIdOrName` matches.
+ * Resolve several test cases within a suite by id or (case-insensitive) title,
+ * over ONE listing. Cases expose `title`, so map it onto the `name` field
+ * `resolveByIdOrName` matches.
+ *
+ * Deduplicated by resolved id: naming a case twice is one case, not two — and
+ * on a run selector, two entries for one case would narrow the run to a list
+ * with a duplicate in it.
  */
+async function resolveCases(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  suite: PlatformEvalSuite,
+  selectors: string[],
+  signal: AbortSignal | undefined,
+): Promise<PlatformEvalCase[]> {
+  const page = await client.listEvalCases(
+    { projectId: project.id, suiteId: suite.id },
+    { signal },
+  );
+  const items = page.items.map((testCase) => ({
+    ...testCase,
+    name: testCase.title,
+  }));
+  const resolved = new Map<string, PlatformEvalCase>();
+  for (const selector of selectors) {
+    const testCase = resolveByIdOrName(
+      items,
+      selector,
+      "Eval case",
+      `suite "${suite.name ?? suite.id}"`,
+    );
+    resolved.set(testCase.id, testCase);
+  }
+  return [...resolved.values()];
+}
+
+/** One case, by id or title. Thin wrapper over {@link resolveCases} so the
+ *  single-case callers keep their ergonomics without a second listing path. */
 async function resolveCase(
   client: PlatformApiClient,
   project: PlatformProject,
@@ -2691,16 +4947,14 @@ async function resolveCase(
   selector: string,
   signal: AbortSignal | undefined,
 ): Promise<PlatformEvalCase> {
-  const page = await client.listEvalCases(
-    { projectId: project.id, suiteId: suite.id },
-    { signal },
+  const [testCase] = await resolveCases(
+    client,
+    project,
+    suite,
+    [selector],
+    signal,
   );
-  return resolveByIdOrName(
-    page.items.map((testCase) => ({ ...testCase, name: testCase.title })),
-    selector,
-    "Eval case",
-    `suite "${suite.name ?? suite.id}"`,
-  );
+  return testCase!;
 }
 
 /**
@@ -3012,12 +5266,7 @@ export const listChatSessionsOperation: PlatformOperation<
   },
 };
 
-const SESSION_SOURCE_TYPES = [
-  "direct",
-  "scenario",
-  "eval",
-  "swarm",
-] as const;
+const SESSION_SOURCE_TYPES = ["direct", "scenario", "eval", "swarm"] as const;
 
 const searchSessionsInput = z.object({
   query: z
@@ -3531,11 +5780,38 @@ async function resolveEnvironmentSelector(
   signal: AbortSignal | undefined,
   prefer: "live" | "archived" = "live",
 ): Promise<PlatformEnvironment> {
+  const trimmedSelector = selector.trim();
+  // Ad-hoc rows are list-hidden. GET /environments/:id serves them, so an
+  // id-shaped selector tries that first — otherwise `eval run --environment`,
+  // `environments get`, and schedule pins cannot name a minted cell.
+  if (looksLikeEnvironmentId(trimmedSelector)) {
+    try {
+      const byId = await client.getEnvironment(
+        { projectId: project.id, environmentId: trimmedSelector },
+        { signal },
+      );
+      return {
+        ...byId,
+        name:
+          typeof byId.name === "string" && byId.name.trim().length > 0
+            ? byId.name
+            : byId.id,
+      };
+    } catch (error) {
+      // The fast path is an OPTIMIZATION, so its failure must never be worse
+      // than not having taken it: fall through to the list, which resolves
+      // names, still finds live ids, and produces the enumerated not-found
+      // message. Only a caller-requested abort propagates — retrying that as
+      // a second request would ignore the cancellation.
+      if (signal?.aborted || isAbortError(error)) {
+        throw error;
+      }
+    }
+  }
   const page = await client.listEnvironments(
     { projectId: project.id, includeArchived: true },
     { signal },
   );
-  const trimmedSelector = selector.trim();
   const idMatch = page.items.find((item) => item.id === trimmedSelector);
   if (idMatch) {
     return idMatch;
@@ -3836,6 +6112,214 @@ export const createEnvironmentOperation: PlatformOperation<
             : {}),
           ...(input.sandboxImageId !== undefined
             ? { sandboxImageId: input.sandboxImageId }
+            : {}),
+        },
+      },
+      { signal },
+    );
+  },
+};
+
+// ── Composed (ad-hoc) environments ───────────────────────────────────────────
+//
+// A composed stack is the same thing as a saved environment MINUS the name:
+// one host, an optional server group, an optional model override, an optional
+// computer image, an optional skill selection. It exists so a caller can run a
+// specific combination WITHOUT adding a permanent entry to the project's
+// environment list that someone else then has to reason about — which is
+// exactly what `create_project_environment` would do.
+//
+// Everything downstream still goes through the ENVIRONMENT path: an ad-hoc row
+// is an environment, so it resolves, snapshots and pins identically. There is
+// deliberately no "override the model for this run" field anywhere — that
+// would be a second, weaker execution-context channel with none of the
+// environment's resolution or immutability guarantees.
+
+/** The composed stack, in SELECTOR vocabulary (names or IDs). */
+const composeStackFields = {
+  host: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Host (name or ID) the composed stack runs as — the client whose configuration the run is stamped with.",
+    ),
+  serverGroup: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Standalone server group to pin (by ID). Omit to use the host's own servers.",
+    ),
+  model: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Model to run instead of the host's pinned one. Stored verbatim — pass exactly the id the provider request should carry.",
+    ),
+  computer: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(
+      "Sandbox image (name or ID) to pin, so runs boot a fresh computer from it. Must be project-shared; promote a personal draft first.",
+    ),
+  skills: skillSelectionInput.optional(),
+  pluginVersionIds: pluginVersionIdsInput.optional(),
+} as const;
+
+const ensureAdhocEnvironmentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  ...composeStackFields,
+});
+export type EnsureAdhocEnvironmentInput = z.infer<
+  typeof ensureAdhocEnvironmentInput
+>;
+
+export type EnsureAdhocEnvironmentResult = {
+  project: SelectedProjectInfo;
+  environment: PlatformAdhocEnvironment;
+  /** False when this stack had already been composed — see the op description. */
+  created: boolean;
+};
+
+/**
+ * Resolve a composed stack's selectors to the ids the platform stores.
+ *
+ * Shared by the standalone op and the run ops' `compose` field, so a stack
+ * means the same thing wherever it is written — a second resolver would be a
+ * second set of rules for one vocabulary.
+ */
+async function resolveComposeStack(
+  client: PlatformApiClient,
+  project: PlatformProject,
+  stack: {
+    host: string;
+    serverGroup?: string;
+    model?: string;
+    computer?: string;
+    skills?: { mode: "explicit"; skillIds: string[] };
+    pluginVersionIds?: string[];
+  },
+  signal: AbortSignal | undefined,
+): Promise<PlatformAdhocEnvironmentBody> {
+  const host = await resolveHost(client, project, stack.host, signal);
+  const image = stack.computer
+    ? await resolveImage(client, project, stack.computer, signal)
+    : undefined;
+  return {
+    hostId: host.id,
+    ...(stack.serverGroup ? { serverAttachmentId: stack.serverGroup } : {}),
+    ...(stack.model ? { modelId: stack.model } : {}),
+    ...(image ? { sandboxImageId: image.id } : {}),
+    ...(stack.skills ? { skillSelection: stack.skills } : {}),
+    ...(stack.pluginVersionIds
+      ? { pluginVersionIds: stack.pluginVersionIds }
+      : {}),
+  };
+}
+
+export const ensureAdhocEnvironmentOperation: PlatformOperation<
+  EnsureAdhocEnvironmentInput,
+  EnsureAdhocEnvironmentResult
+> = {
+  name: "ensure_adhoc_environment",
+  title: "Compose an MCPJam environment without naming it",
+  description:
+    "Get or create an UNNAMED environment for a composed stack — a host plus an optional server group, model, computer image and pinned skills. Deduplicated by CONTENT: the same stack always returns the same environment, and `created` is false on every call after the first. Use this instead of create_project_environment when you want to RUN a combination rather than add a permanent entry to the project's environment list. Promote one to a named environment later with name_environment.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: ensureAdhocEnvironmentInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const body = await resolveComposeStack(client, project, input, signal);
+    const ensured = await client.ensureAdhocEnvironment(
+      { projectId: project.id, body },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      environment: ensured.environment,
+      created: ensured.created === true,
+    };
+  },
+};
+
+const nameEnvironmentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  environment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "The ad-hoc environment to promote, by ID (an unnamed environment has no name to select it by).",
+    ),
+  expectedRevision: z
+    .number()
+    .int()
+    .nonnegative()
+    .describe(EXPECTED_REVISION_DESCRIPTION),
+  name: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Display name for the promoted environment. Must be unique among the project's live environments.",
+    ),
+  description: z
+    .string()
+    .optional()
+    .describe("Optional free-text description."),
+});
+export type NameEnvironmentInput = z.infer<typeof nameEnvironmentInput>;
+
+export const nameEnvironmentOperation: PlatformOperation<
+  NameEnvironmentInput,
+  PlatformEnvironment
+> = {
+  name: "name_environment",
+  title: "Promote an ad-hoc MCPJam environment",
+  description:
+    "Give an UNNAMED (ad-hoc) environment a name, promoting it in place — the same environment, now a permanent entry in the project's environment list, with the same id every existing run still points at. This is the ONLY way to promote one: update_project_environment renames an already-named environment and refuses an unnamed one. Promotion also drops the content fingerprint, so a later identical composition gets a fresh ad-hoc row rather than deduplicating onto this one, which is now independently editable.",
+  readOnly: false,
+  risk: "none",
+  inputSchema: nameEnvironmentInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    return client.nameEnvironment(
+      {
+        projectId: project.id,
+        // By ID only: an unnamed row has no name to resolve against, and the
+        // name-or-id resolver would report it as "not found" rather than as
+        // the unnameable thing it is.
+        environmentId: input.environment.trim(),
+        body: {
+          expectedRevision: input.expectedRevision,
+          name: input.name,
+          ...(input.description !== undefined
+            ? { description: input.description }
             : {}),
         },
       },
@@ -7195,6 +9679,531 @@ export const getProjectServerConnectionStatusOperation: PlatformOperation<
   },
 };
 
+const shareResourceSelectorInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  resourceType: z
+    .enum(["scenario", "conformanceRun", "evalRun"])
+    .describe("Shared resource kind."),
+  resourceId: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Id of the scenario, conformance run, or eval run."),
+});
+
+export type GetShareSettingsInput = z.infer<typeof shareResourceSelectorInput>;
+export type GetShareSettingsResult = {
+  project: SelectedProjectInfo;
+  settings: Record<string, unknown>;
+};
+
+export const getShareSettingsOperation: PlatformOperation<
+  GetShareSettingsInput,
+  GetShareSettingsResult
+> = {
+  name: "get_share_settings",
+  title: "Get unified share settings",
+  description:
+    "Read the share envelope for a scenario, conformance run, or eval run: mode, policyVersion, link token, and invited members.",
+  readOnly: true,
+  inputSchema: shareResourceSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const settings = await client.getShareSettings(
+      {
+        projectId: project.id,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), settings };
+  },
+};
+
+const setShareModeInput = shareResourceSelectorInput.extend({
+  mode: z.enum(["project_members", "invited_only", "anyone_with_link"]),
+  allowGuestAccess: z.boolean().optional(),
+});
+
+export type SetShareModeInput = z.infer<typeof setShareModeInput>;
+export type SetShareModeResult = {
+  project: SelectedProjectInfo;
+  settings: Record<string, unknown>;
+};
+
+export const setShareModeOperation: PlatformOperation<
+  SetShareModeInput,
+  SetShareModeResult
+> = {
+  name: "set_share_mode",
+  title: "Set who can open a shared resource",
+  description:
+    "Change the share mode for a scenario, conformance run, or eval run. anyone_with_link means anyone holding the URL, including guests (browser sessions, not verified individuals). invited_only restricts to named emails. project_members is private to the project.",
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: setShareModeInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const settings = await client.setShareMode(
+      {
+        projectId: project.id,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+        mode: input.mode,
+        allowGuestAccess: input.allowGuestAccess,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), settings };
+  },
+};
+
+export type RotateShareLinkInput = z.infer<typeof shareResourceSelectorInput>;
+export type RotateShareLinkResult = {
+  project: SelectedProjectInfo;
+  settings: Record<string, unknown>;
+};
+
+export const rotateShareLinkOperation: PlatformOperation<
+  RotateShareLinkInput,
+  RotateShareLinkResult
+> = {
+  name: "rotate_share_link",
+  title: "Rotate a share link",
+  description:
+    "Mint a new share URL and invalidate the old one. IMMEDIATE: everyone holding the old URL loses the ability to redeem it. Invited people keep their access. Use this when a link has leaked, not as routine hygiene.",
+  readOnly: false,
+  risk: "destructive",
+  inputSchema: shareResourceSelectorInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const settings = await client.rotateShareLink(
+      {
+        projectId: project.id,
+        resourceType: input.resourceType,
+        resourceId: input.resourceId,
+      },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), settings };
+  },
+};
+
+const CONNECTION_STATUS_OP = "get_project_server_connection_status" as const;
+
+const INSTALL_NOT_CONNECT_DESCRIPTION =
+  "Install writes a project `servers` row and provenance and stops — it is NOT a live connection. Follow with get_project_server_connection_status. A first-time OAuth install returns a browser connect-link in nextSteps.connectLinkUrl (or nextSteps.connectLinkError when minting it failed); a reconnected install returns no link — check the connection status and use connect_project_server if it is not connected.";
+
+async function nextStepsForInstall(
+  client: PlatformApiClient,
+  projectId: string,
+  serverId: string,
+  outcome: PlatformRegistryInstallResult["outcome"],
+  signal: AbortSignal | undefined,
+): Promise<PlatformRegistryInstallResult["nextSteps"]> {
+  const nextSteps: PlatformRegistryInstallResult["nextSteps"] = {
+    connectionStatusOp: CONNECTION_STATUS_OP,
+  };
+  // A reconnect means the server row — and possibly a completed OAuth grant —
+  // already existed. Minting a handoff link here would create a real pending
+  // connection request with a single-use token on every repeat install, and
+  // orphan it whenever the existing grant still works. The status op says
+  // whether it does; connect_project_server mints a link deliberately if not.
+  if (outcome === "reconnected") return nextSteps;
+  try {
+    const server = await client.getProjectServer(
+      { projectId, serverId },
+      { signal },
+    );
+    if (!server.useOAuth || !server.url) return nextSteps;
+    const connection = await client.createServerConnection(
+      { body: { url: server.url, projectId, serverId } },
+      { signal },
+    );
+    if (connection.handoffUrl) {
+      nextSteps.connectLinkUrl = connection.handoffUrl;
+    }
+  } catch (error) {
+    // Caller-initiated cancellation fails the whole operation; a success
+    // report after the caller cancelled would be a lie.
+    if (signal?.aborted) {
+      throw error;
+    }
+    // The install itself succeeded, so a link-minting failure stays
+    // non-fatal — but VISIBLY so, or the caller waits for a link that is
+    // not coming instead of starting connect_project_server themselves.
+    nextSteps.connectLinkError =
+      error instanceof Error && error.message.trim()
+        ? error.message
+        : "The browser connect-link could not be created.";
+  }
+  return nextSteps;
+}
+
+export const searchRegistryDirectoryOperation: PlatformOperation<
+  {
+    q?: string;
+    source?: string;
+    rowType?: string;
+    endpointKind?: string;
+    verifiedTier?: string;
+    connectableOnly?: boolean;
+    cursor?: string;
+    limit?: number;
+  },
+  PlatformPage<PlatformCatalogServer>
+> = {
+  name: "search_registry_directory",
+  title: "Search the MCP directory",
+  description:
+    "Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. Discover source ids with list_registry_directory_sources — do not hardcode source names. Prefer a matching organization card from list_registry_servers when one exists: those carry config someone in the org already set up.",
+  readOnly: true,
+  inputSchema: z.object({
+    q: z.string().trim().min(1).optional().describe("Search query."),
+    source: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Directory source id, or `all` (default). Not an enum."),
+    rowType: z.string().trim().min(1).optional(),
+    endpointKind: z.string().trim().min(1).optional(),
+    verifiedTier: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Verification-tier filter; tier values are data, not an enum."),
+    connectableOnly: z.boolean().optional(),
+    cursor: z.string().trim().min(1).optional(),
+    limit: z.number().int().positive().optional(),
+  }),
+  async execute(input, { client, signal }) {
+    return client.searchRegistryDirectory(
+      { ...input, source: input.source ?? "all" },
+      { signal },
+    );
+  },
+};
+
+const getRegistryDirectoryServerInput = z
+  .object({
+    catalogServerId: z.string().trim().min(1).optional(),
+    name: z.string().trim().min(1).optional(),
+    source: z.string().trim().min(1).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!!value.catalogServerId === !!value.name) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Provide exactly one of catalogServerId or name.",
+      });
+    }
+    // Refused rather than ignored: silently dropping `source` would answer a
+    // question the caller did not ask (an id already names its source).
+    if (value.catalogServerId && value.source) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "source only applies to name lookups; a catalogServerId already names its source.",
+      });
+    }
+  });
+
+export const getRegistryDirectoryServerOperation: PlatformOperation<
+  z.infer<typeof getRegistryDirectoryServerInput>,
+  PlatformCatalogServer
+> = {
+  name: "get_registry_directory_server",
+  title: "Get a directory server",
+  description:
+    "Fetch one scraped directory row by catalogServerId, or by name (optionally with source). The latestContentHash is the freshness pin for install_registry_directory_server.",
+  readOnly: true,
+  inputSchema: getRegistryDirectoryServerInput,
+  async execute(input, { client, signal }) {
+    if (input.catalogServerId) {
+      return client.getRegistryDirectoryServer(
+        { catalogServerId: input.catalogServerId },
+        { signal },
+      );
+    }
+    return client.getRegistryDirectoryServer(
+      { name: input.name!, source: input.source },
+      { signal },
+    );
+  },
+};
+
+export const listRegistryDirectorySourcesOperation: PlatformOperation<
+  Record<string, never>,
+  PlatformPage<PlatformCatalogSourceStatus>
+> = {
+  name: "list_registry_directory_sources",
+  title: "List directory sources",
+  description:
+    "Discover directory source ids for search_registry_directory. Sources are data, not an enum.",
+  readOnly: true,
+  inputSchema: z.object({}),
+  async execute(_input, { client, signal }) {
+    return client.listRegistryDirectorySources({ signal });
+  },
+};
+
+export const listRegistryServersOperation: PlatformOperation<
+  { project?: string; scope?: "global" | "organization" | "all" },
+  { project: SelectedProjectInfo; items: PlatformRegistryServer[] }
+> = {
+  name: "list_registry_servers",
+  title: "List registry cards",
+  description:
+    "List the project's organization registry cards (and any global cards; the global shelf is currently empty). Prefer an organization card over a scraped directory row when both match — cards carry config someone in the org already set up.",
+  readOnly: true,
+  inputSchema: z.object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    scope: z.enum(["global", "organization", "all"]).optional(),
+  }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const page = await client.listRegistryServers(
+      { projectId: project.id, scope: input.scope ?? "all" },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export const listRegistryConnectionsOperation: PlatformOperation<
+  { project?: string },
+  { project: SelectedProjectInfo; items: PlatformRegistryConnection[] }
+> = {
+  name: "list_registry_connections",
+  title: "List registry installs",
+  description:
+    "List directory and card installs already in a project (provenance rows whose server still exists).",
+  readOnly: true,
+  inputSchema: projectScopedInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const page = await client.listRegistryConnections(
+      { projectId: project.id },
+      { signal },
+    );
+    return { project: toSelectedProjectInfo(project), items: page.items };
+  },
+};
+
+export const installRegistryDirectoryServerOperation: PlatformOperation<
+  {
+    project?: string;
+    catalogServerId: string;
+    endpointUrl?: string;
+    expectedContentHash?: string;
+  },
+  PlatformRegistryInstallResult
+> = {
+  name: "install_registry_directory_server",
+  title: "Install a directory server",
+  description: INSTALL_NOT_CONNECT_DESCRIPTION,
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: z.object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    catalogServerId: z.string().trim().min(1),
+    endpointUrl: z
+      .string()
+      .trim()
+      .min(1)
+      .refine(
+        (value) => {
+          try {
+            const parsed = new URL(value);
+            return parsed.protocol === "http:" || parsed.protocol === "https:";
+          } catch {
+            return false;
+          }
+        },
+        { message: "Must be an http:// or https:// URL." },
+      )
+      .optional(),
+    expectedContentHash: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe("Freshness pin from get_registry_directory_server."),
+  }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const installed = await client.installRegistryDirectoryServer(
+      {
+        projectId: project.id,
+        catalogServerId: input.catalogServerId,
+        endpointUrl: input.endpointUrl,
+        expectedContentHash: input.expectedContentHash,
+      },
+      { signal },
+    );
+    return {
+      ...installed,
+      nextSteps: await nextStepsForInstall(
+        client,
+        project.id,
+        installed.serverId,
+        installed.outcome,
+        signal,
+      ),
+    };
+  },
+};
+
+export const installRegistryServerOperation: PlatformOperation<
+  {
+    project?: string;
+    registryServerId: string;
+    endpointUrl?: string;
+    expectedUpdatedAt?: number;
+  },
+  PlatformRegistryInstallResult
+> = {
+  name: "install_registry_server",
+  title: "Install a registry card",
+  description: INSTALL_NOT_CONNECT_DESCRIPTION,
+  readOnly: false,
+  risk: "exposure",
+  inputSchema: z.object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    registryServerId: z.string().trim().min(1),
+    endpointUrl: z
+      .string()
+      .trim()
+      .min(1)
+      .refine(
+        (value) => {
+          try {
+            const parsed = new URL(value);
+            return parsed.protocol === "http:" || parsed.protocol === "https:";
+          } catch {
+            return false;
+          }
+        },
+        { message: "Must be an http:// or https:// URL." },
+      )
+      .optional()
+      .describe(
+        "Display-only: the card's endpoint, resolved at proposal time so the " +
+          "approver can see it. The install always uses the card's own " +
+          "transport; this field never chooses the endpoint.",
+      ),
+    expectedUpdatedAt: z
+      .number()
+      .finite()
+      .optional()
+      .describe("Freshness pin from list_registry_servers.updatedAt."),
+  }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const installed = await client.installRegistryServer(
+      {
+        projectId: project.id,
+        registryServerId: input.registryServerId,
+        expectedUpdatedAt: input.expectedUpdatedAt,
+      },
+      { signal },
+    );
+    return {
+      ...installed,
+      nextSteps: await nextStepsForInstall(
+        client,
+        project.id,
+        installed.serverId,
+        installed.outcome,
+        signal,
+      ),
+    };
+  },
+};
+
+export const uninstallRegistryServerOperation: PlatformOperation<
+  { project?: string; registryServerId: string },
+  { deleted?: boolean }
+> = {
+  name: "uninstall_registry_server",
+  title: "Uninstall a registry card",
+  description:
+    "Remove a curated/org registry card install from a project. Directory uninstall is delete_project_server — there is no separate catalog-uninstall route.",
+  readOnly: false,
+  risk: "destructive",
+  inputSchema: z.object({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    registryServerId: z.string().trim().min(1),
+  }),
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    return client.uninstallRegistryServer(
+      { projectId: project.id, registryServerId: input.registryServerId },
+      { signal },
+    );
+  },
+};
+
 export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getMeOperation,
   listModelsOperation,
@@ -7217,6 +10226,16 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getServerPromptOperation,
   readServerResourceOperation,
   checkHostCompatibilityOperation,
+  startClaudeReadinessRunOperation,
+  startOpenAIReadinessRunOperation,
+  getReadinessRunOperation,
+  listReadinessRunsOperation,
+  cancelReadinessRunOperation,
+  getReadinessReportOperation,
+  startConformanceRunOperation,
+  getConformanceRunOperation,
+  listConformanceRunsOperation,
+  getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
   runEvalSuiteOperation,
@@ -7230,6 +10249,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listEvalCasesOperation,
   getEvalCaseOperation,
   createEvalCaseOperation,
+  createEvalCasesOperation,
   updateEvalCaseOperation,
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
@@ -7238,6 +10258,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   cancelEvalRunOperation,
+  requestEvalRunJudgeOperation,
+  listEvalCheckReposOperation,
+  connectEvalCheckRepoOperation,
   getEvalRunStepsOperation,
   createTunnelOperation,
   closeTunnelOperation,
@@ -7265,6 +10288,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEnvironmentOperation,
   resolveEnvironmentOperation,
   createEnvironmentOperation,
+  ensureAdhocEnvironmentOperation,
+  nameEnvironmentOperation,
   updateEnvironmentOperation,
   archiveEnvironmentOperation,
   restoreEnvironmentOperation,
@@ -7331,4 +10356,15 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   upsertUserTestingMemberOperation,
   removeUserTestingMemberOperation,
   rebindUserTestingScenarioOperation,
+  getShareSettingsOperation,
+  setShareModeOperation,
+  rotateShareLinkOperation,
+  searchRegistryDirectoryOperation,
+  getRegistryDirectoryServerOperation,
+  listRegistryDirectorySourcesOperation,
+  listRegistryServersOperation,
+  listRegistryConnectionsOperation,
+  installRegistryDirectoryServerOperation,
+  installRegistryServerOperation,
+  uninstallRegistryServerOperation,
 ];
