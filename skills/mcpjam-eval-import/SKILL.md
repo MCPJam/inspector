@@ -33,8 +33,8 @@ every case carries an `import.status` you can defend.
    `unresolved`.
 4. **Non-exact cases do not gate anything.** Mark every `approximated`,
    `unsupported` and `unresolved` case `disabled: true`. It stays in the file,
-   keeps its history, and is simply left out of runs until a human reviews it.
-   Only `exact` cases run unreviewed.
+   and is not uploaded or run until a human reviews it. Only `exact` cases run
+   unreviewed.
 5. **Never invent a reference.** Tool names, server names and model ids you did
    not read in the source are not yours to guess. Ask, or leave the case
    `unresolved`.
@@ -125,10 +125,10 @@ prompt-test becomes exactly one `prompt` step.
 Case-level `assertions` are transcript predicates from the existing corpus. The
 ones a source assertion realistically lands on:
 
-| Predicate | Shape |
+| Predicate | Shape and scope |
 | --- | --- |
-| `responseContains` | `{ type, needle, caseSensitive? }` |
-| `responseMatches` | `{ type, pattern }` (a regex string) |
+| `responseContains` | `{ type, needle, caseSensitive? }`; searches only the final assistant message |
+| `responseMatches` | `{ type, pattern }`; applies the regex only to the final assistant message |
 | `toolCalledWith` | `{ type, toolName, args: { mode: partial \/ exact \/ ignore, … }, minCount? }` |
 | `toolCalledAtLeastOnce` | `{ type, toolName }` |
 | `toolNeverCalled` | `{ type, toolName }` |
@@ -174,6 +174,11 @@ the source test again — a file-relative locator (`tests[2] <description>`,
   custom provider, retry policy, timeout or grading option was silently dropped.
 - **S-5 Nothing invented.** No tool, server, argument or expected value appears
   in the case that was not in the source.
+- **S-6 Case-content scope.** `exact` certifies the authored case content, not
+  the execution substrate. Model, provider, target server and harness
+  substitutions are recorded and reviewed once at suite level; they never
+  change a per-case status or imply that outcomes are comparable across
+  substrates.
 
 Each recipe adds format-specific rules (`PF-*`, `PY-*`, `JS-*`, `CSV-*`). Cite
 the rule ids you relied on in `note`.
@@ -227,13 +232,17 @@ contract-invalid file exits `2` here (exit `1` is reserved for a verdict);
 `repetitions` above 10 are refused rather than clamped; `defaults.toolPolicy` and
 non-empty `defaults.validity` gates are refused; a case the file no longer
 declares is deleted from the hosted suite, while a `disabled` case is kept with
-its history; a file with no enabled cases is refused, so an import in which
-nothing reached `exact` cannot launch — review something first.
+its history only if it had already been uploaded while enabled. An initially
+disabled case never receives a hosted row. A file with no enabled cases is
+refused, so an import in which nothing reached `exact` cannot launch — review
+something first.
 
-Upload goes through the suite **file** on purpose. The batch case-create path
-(`create_eval_cases`) carries no per-case `import` block and no suite
-provenance, so pushing cases through it would discard exactly the mapping record
-this skill exists to produce.
+`eval run --file` still batch-creates the enabled cases, and that API body drops
+each case's `import` block. The per-case mapping record therefore lives in the
+local suite file and mapping report, not on the platform. The file path is still
+preferred because it carries suite-level provenance and the declared disabled
+set. Persisting per-case mapping status at the API boundary is a later import
+step, not part of this skill.
 
 ## Worked example
 

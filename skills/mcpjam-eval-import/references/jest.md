@@ -33,7 +33,7 @@ test.each([
 
 ```yaml
 - id: c_refunds_0
-  title: refunds: Refund invoice 4471.
+  title: "refunds: Refund invoice 4471."
   steps:
     - id: step-1
       kind: prompt
@@ -44,7 +44,7 @@ test.each([
       caseSensitive: true
   import:
     status: exact
-    sourceCaseKey: tests/billing.test.ts::refunds: %s[0]
+    sourceCaseKey: "tests/billing.test.ts::refunds: %s[0]"
     note: JS-1/JS-2/JS-3/JS-5 — one literal each row; prompt and containment copied; no hook, fixture, custom matcher or snapshot changes the verdict.
 ```
 
