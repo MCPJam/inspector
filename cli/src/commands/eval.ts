@@ -175,23 +175,34 @@ function selectorField(
 function composeField(options: {
   composeHost?: string;
   composeComputer?: string;
-  composeModel?: string;
+  composeModel?: string | string[];
   composeServerGroup?: string;
   composeSkill?: string[];
+  withClientDefault?: boolean;
+  saveTargets?: boolean;
 }): {
   compose?: {
     host: string;
     serverGroup?: string;
-    model?: string;
+    models?: string[];
+    includeClientDefault?: boolean;
+    saveTargets?: boolean;
     computer?: string;
     skills?: { mode: "explicit"; skillIds: string[] };
   };
 } {
+  const models = Array.isArray(options.composeModel)
+    ? options.composeModel
+    : options.composeModel
+      ? [options.composeModel]
+      : undefined;
   const refinements =
     options.composeComputer !== undefined ||
-    options.composeModel !== undefined ||
+    models !== undefined ||
     options.composeServerGroup !== undefined ||
-    (options.composeSkill?.length ?? 0) > 0;
+    (options.composeSkill?.length ?? 0) > 0 ||
+    options.withClientDefault === true ||
+    options.saveTargets === true;
   if (!options.composeHost) {
     if (refinements) {
       throw usageError(
@@ -206,9 +217,11 @@ function composeField(options: {
       ...(options.composeServerGroup !== undefined
         ? { serverGroup: options.composeServerGroup }
         : {}),
-      ...(options.composeModel !== undefined
-        ? { model: options.composeModel }
+      ...(models !== undefined ? { models } : {}),
+      ...(options.withClientDefault === true
+        ? { includeClientDefault: true }
         : {}),
+      ...(options.saveTargets === true ? { saveTargets: true } : {}),
       ...(options.composeComputer !== undefined
         ? { computer: options.composeComputer }
         : {}),
@@ -222,6 +235,12 @@ function composeField(options: {
         : {}),
     },
   };
+}
+
+function composeModelTail(modelId: string | undefined): string {
+  if (!modelId) return "default";
+  const slash = modelId.lastIndexOf("/");
+  return slash >= 0 ? modelId.slice(slash + 1) : modelId;
 }
 
 /**
@@ -294,6 +313,10 @@ function writeRunGroupSummary(
     startedCount: number;
     failedCount: number;
     runGroupId?: string;
+    composed?: {
+      environments?: Array<{ id: string; modelId?: string }>;
+      environment?: { id: string; modelId?: string };
+    };
     targets: Array<
       | {
           status: "started";
@@ -329,12 +352,20 @@ function writeRunGroupSummary(
   }
   for (const target of result.targets) {
     if (target.status !== "failed") continue;
-    const label =
+    const cell = (
+      result.composed?.environments ??
+      (result.composed?.environment ? [result.composed.environment] : [])
+    ).find((entry) => entry.id === target.environment?.id);
+    const base =
       target.host?.name ??
       target.host?.id ??
       target.environment?.name ??
       target.environment?.id ??
       "target";
+    const label =
+      cell || result.composed
+        ? `${base} · ${composeModelTail(cell?.modelId)}`
+        : base;
     process.stderr.write(
       `Failed: ${label} — ${target.error.code}: ${target.error.message}\n`
     );
@@ -580,11 +611,16 @@ async function executeOp<TInput, TOutput>(
       ? (input as { project: string }).project
       : undefined;
   const resolved = resolveCloudProjectArgs(options, { inputProject });
-  const filled = { ...input, project: resolved.project } as TInput;
+  const filled = { ...(input as TInput & { project?: string }) };
+  delete filled.project;
+  if (resolved.project !== undefined) {
+    filled.project = resolved.project;
+  }
   const result = await runPlatformCommand(
     platformOptionsOf(command),
     globalOptions.timeout,
-    ({ client, signal }) => op.execute(filled, { client, signal }),
+    ({ client, signal }) =>
+      op.execute(filled as TInput, { client, signal }),
     {
       projectScope: resolved.projectScope,
       quiet: globalOptions.quiet,
@@ -956,7 +992,7 @@ async function runEvalGate(
 }
 
 /**
- * `mcpjam eval compare` — this run against a baseline.
+ * `mcpjam cloud eval compare` — this run against a baseline.
  *
  * Deliberately has NO `--wait`. A comparison against a run that has not
  * finished compares against a partial population, and the honest answer is
@@ -1146,7 +1182,7 @@ async function runEvalCompare(
 }
 
 /**
- * `mcpjam eval pull` — materialize a hosted suite into a local corpus lock.
+ * `mcpjam cloud eval pull` — materialize a hosted suite into a local corpus lock.
  *
  * Two modes, one code path. The default fetches and WRITES the lock; `--frozen`
  * fetches and only COMPARES, never writing. Sharing the fetch and
@@ -1853,15 +1889,23 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--compose-host <id-or-name>",
-        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+        "Compose a stack to run instead of naming a saved environment: the host it runs as. Default is EPHEMERAL (does not attach to the suite)."
       )
       .option(
         "--compose-computer <id-or-name>",
         "Sandbox image to pin on the composed stack"
       )
       .option(
-        "--compose-model <id>",
-        "Model to run on the composed stack, instead of the host's"
+        "--compose-model <id...>",
+        "Model(s) to run on the composed stack. Replaces the client default unless --with-client-default is set."
+      )
+      .option(
+        "--with-client-default",
+        "Also launch an inherit cell that uses each client's pinned model, alongside --compose-model"
+      )
+      .option(
+        "--save-targets",
+        "Attach the composed environments to the suite (append, capped at 10). Default is ephemeral."
       )
       .option(
         "--compose-server-group <id>",
@@ -1875,7 +1919,9 @@ export function registerEvalCommands(program: Command): void {
       options: PlatformOptions & {
         composeHost?: string;
         composeComputer?: string;
-        composeModel?: string;
+        composeModel?: string[];
+        withClientDefault?: boolean;
+        saveTargets?: boolean;
         composeServerGroup?: string;
         composeSkill?: string[];
         project?: string;
@@ -2908,7 +2954,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--compose-host <id-or-name>",
-        "Compose a stack to run instead of naming a saved environment: the host it runs as. APPENDS the composed environment to the suite."
+        "Compose a stack to run this case instead of naming a saved environment. Default is EPHEMERAL."
       )
       .option(
         "--compose-computer <id-or-name>",
@@ -2916,7 +2962,7 @@ export function registerEvalCommands(program: Command): void {
       )
       .option(
         "--compose-model <id>",
-        "Model to run on the composed stack, instead of the host's"
+        "One model to run this case on. A matrix of models is suite-level (`eval run`) only."
       )
       .option(
         "--compose-server-group <id>",

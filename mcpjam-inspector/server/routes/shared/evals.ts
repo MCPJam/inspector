@@ -367,6 +367,13 @@ export const RunEvalsRequestSchema = z.object({
    */
   environmentId: z.string().optional(),
   /**
+   * Compose-and-run opt-in: accept a project-scoped, non-archived environment
+   * that is NOT a suite member. Never mutates the suite. Absent / false keeps
+   * today's membership check. Older backends reject the unknown arg; clients
+   * probe `ephemeralEnvironmentLaunch` before sending it.
+   */
+  ephemeralEnvironment: z.boolean().optional(),
+  /**
    * The "without skills" arm of an A/B compare (INS-5). `'exclude'` runs this
    * suite with skills DELIBERATELY off: the backend pins nothing from ANY of
    * the three channels — host `skillSelection`, the environment's standalone
@@ -1870,6 +1877,7 @@ export async function prepareEvalRun(
     source,
     idempotencyKey,
     skillsOverride,
+    ephemeralEnvironment,
   } = request;
 
   if (!suiteId && (!suiteName || suiteName.trim().length === 0)) {
@@ -2063,6 +2071,7 @@ export async function prepareEvalRun(
     source,
     idempotencyKey,
     skillsOverride,
+    ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
   });
   const suiteHostConfig =
     runHostConfigSnapshot ??

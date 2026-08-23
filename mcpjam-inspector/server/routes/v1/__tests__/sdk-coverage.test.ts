@@ -54,6 +54,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /organizations": "listOrganizations",
   "get /chat-sessions": "listChatSessions",
 
+  // Registry (directory + curated cards)
+  "get /registry/directory-servers": "searchRegistryDirectory",
+  "get /registry/directory-servers/{idOrName}": "getRegistryDirectoryServer",
+  "get /registry/directory-sources": "listRegistryDirectorySources",
+  "get /projects/{projectId}/registry/servers": "listRegistryServers",
+  "get /projects/{projectId}/registry/connections": "listRegistryConnections",
+  "post /projects/{projectId}/registry/directory-installs":
+    "installRegistryDirectoryServer",
+  "post /projects/{projectId}/registry/installs": "installRegistryServer",
+  "delete /projects/{projectId}/registry/installs/{registryServerId}":
+    "uninstallRegistryServer",
+
   // Server connections
   "post /server-connections": "createServerConnection",
   "get /server-connections/{requestId}": "getServerConnection",
@@ -99,6 +111,14 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "getReadinessReport",
   "post /projects/{projectId}/readiness-runs/{runId}/cancel":
     "cancelReadinessRun",
+
+  // Persisted conformance runs
+  "post /projects/{projectId}/servers/{serverId}/conformance-runs":
+    "startConformanceRun",
+  "get /projects/{projectId}/conformance-runs": "listConformanceRuns",
+  "get /projects/{projectId}/conformance-runs/{runId}": "getConformanceRun",
+  "get /projects/{projectId}/conformance-runs/{runId}/report":
+    "getConformanceReport",
 
   // Hosts
   "get /projects/{projectId}/hosts": "listHosts",

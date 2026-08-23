@@ -11,12 +11,14 @@ import { useAuth } from "@workos-inc/authkit-react";
 import { track } from "@/lib/analytics";
 import { ArrowLeft, Plus } from "lucide-react";
 import { useAppNavigate } from "@/lib/app-navigation";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { Button } from "@mcpjam/design-system/button";
 import { Skeleton } from "@mcpjam/design-system/skeleton";
 import { OrgStatsStrip } from "./home/OrgStatsStrip";
 import { RecommendedServers } from "./home/RecommendedServers";
 import { RecommendedHosts } from "./home/RecommendedHosts";
 import { ProductUpdatesRow } from "./home/ProductUpdatesRow";
+import { SharedSlackChannelCard } from "./home/SharedSlackChannelCard";
 import { McpjamAgentHero } from "./mcpjam-agent/McpjamAgentHero";
 import { McpjamAgentThread } from "./mcpjam-agent/McpjamAgentThread";
 import {
@@ -373,6 +375,10 @@ export function HomeTab({
         />
 
         <ProductUpdatesRow />
+
+        <ErrorBoundary name="home-shared-slack-channel" fallback={null}>
+          <SharedSlackChannelCard organizationId={organizationId} />
+        </ErrorBoundary>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <RecommendedServers
