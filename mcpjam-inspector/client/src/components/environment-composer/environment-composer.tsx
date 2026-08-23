@@ -31,6 +31,7 @@ import {
   composerStateFromEnvironments,
   composerTargetCount,
   emptyEnvironmentStack,
+  emptyModelSelection,
   environmentsCarryModels,
   environmentsCarryPluginPins,
   environmentsExceedOneStack,
@@ -327,7 +328,13 @@ export function EnvironmentComposer({
         {modelsEnabled ? (
           <ModelsPill
             projectId={projectId}
-            value={value.stack.modelSelection}
+            // The stack's own contract says a state can genuinely arrive
+            // without a selection (a draft persisted before the field existed),
+            // and that a missed guard should read as "client defaults" rather
+            // than throw mid-render. Every other reader here goes through
+            // `modelChoiceCount`, which absorbs it; this was the one that
+            // dereferenced the value directly.
+            value={value.stack.modelSelection ?? emptyModelSelection()}
             onChange={(modelSelection) => patchStack({ modelSelection })}
             mode="multiple"
             disabled={slotsDisabled}

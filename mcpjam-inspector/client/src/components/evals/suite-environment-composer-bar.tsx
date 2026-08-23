@@ -31,6 +31,7 @@ import { SandboxImagePill } from "@/components/environment-composer/sandbox-imag
 import {
   composerHasTarget,
   composerStateFromEnvironments,
+  environmentsCarryModels,
   environmentsCarryPluginPins,
   environmentsExceedOneStack,
   type EnvironmentComposerState,
@@ -250,7 +251,22 @@ function EnvironmentModeBar({
       computersEnabled,
       modelsEnabled,
     }) ||
-    (seeded.customized && environmentsCarryPluginPins(attachedEnvironments));
+    (seeded.customized && environmentsCarryPluginPins(attachedEnvironments)) ||
+    // A model override with no slot to show it in. `environmentsExceedOneStack`
+    // only catches a DISAGREEMENT between attachments, so a suite whose
+    // attachments all pin the SAME model slips past it — and seeding then reads
+    // the slot as "client defaults", so the first pill edit resolves rows
+    // without the override and silently moves the suite to another model.
+    (!modelsEnabled && environmentsCarryModels(attachedEnvironments));
+  /**
+   * The capability probe has not answered yet. Distinct from `collapsesByHost`:
+   * nothing is wrong with the attachments, we just cannot yet tell whether the
+   * models slot exists — and until we can, `modelsEnabled` reads false, which
+   * is the same input that makes a model-bearing attachment look uneditable.
+   * Disabling (rather than declaring a collapse) keeps the hint from flashing
+   * on every load, matching how the environment list is handled above.
+   */
+  const modelCapabilityPending = Boolean(projectId) && modelMatrix === undefined;
 
   const [state, setState] = useState<EnvironmentComposerState>(seeded);
   const [saving, setSaving] = useState(false);
@@ -329,6 +345,7 @@ function EnvironmentModeBar({
             disabled ||
             saving ||
             environmentsLoading ||
+            modelCapabilityPending ||
             unresolvedCount > 0 ||
             collapsesByHost
           }
@@ -351,9 +368,9 @@ function EnvironmentModeBar({
           data-testid="suite-env-attachments-collapse-hint"
         >
           This suite&apos;s environments don&apos;t fit one editable setup —
-          they differ by client, server group, skills or image, or pin plugin
-          versions — so this strip can&apos;t change them without changing what
-          some of them run. Adjust them in suite settings.
+          they differ by client, server group, skills, model or image, or pin
+          plugin versions — so this strip can&apos;t change them without changing
+          what some of them run. Adjust them in suite settings.
         </p>
       ) : null}
     </div>
