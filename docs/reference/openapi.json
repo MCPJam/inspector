@@ -1629,7 +1629,7 @@
           "Execution"
         ],
         "summary": "Call a tool",
-        "description": "Executes a tool on the server and returns the MCP `CallToolResult` directly. Tool-level failures (`isError: true` in the result) are **successful calls** — the server answered; only transport/auth errors use the error envelope.",
+        "description": "Executes a tool on the server and returns the MCP `CallToolResult` plus an additive `durationMs` (wall-clock time of `executeTool`). Tool-level failures (`isError: true` in the result) are **successful calls** — the server answered; only transport/auth errors use the error envelope.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -1670,7 +1670,7 @@
         },
         "responses": {
           "200": {
-            "description": "The MCP `CallToolResult`. Check `isError` for tool-level failures.",
+            "description": "The MCP `CallToolResult` plus additive `durationMs`. Check `isError` for tool-level failures.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1682,7 +1682,8 @@
                       "type": "text",
                       "text": "Issue created: #42"
                     }
-                  ]
+                  ],
+                  "durationMs": 42
                 }
               }
             }
@@ -11529,7 +11530,7 @@
       },
       "CallToolResult": {
         "type": "object",
-        "description": "MCP tool execution result, returned verbatim from the server.",
+        "description": "MCP tool execution result, returned verbatim from the server, plus additive `durationMs` measured at the public API boundary.",
         "required": [
           "content"
         ],
@@ -11550,6 +11551,11 @@
           "isError": {
             "type": "boolean",
             "description": "`true` when the **tool** reported a failure. The HTTP call still succeeds — the server answered."
+          },
+          "durationMs": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Wall-clock milliseconds spent in `executeTool` on this request. Additive MCPJam field; not part of the MCP `CallToolResult` spec."
           }
         },
         "additionalProperties": true
