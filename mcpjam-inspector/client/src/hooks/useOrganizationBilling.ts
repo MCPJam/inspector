@@ -1,6 +1,7 @@
 import { useAction, useMutation, useQuery } from "convex/react";
 import { useCallback, useRef, useState } from "react";
 import { confirmSeatPaymentWithStripe } from "@/lib/seat-payment-stripe";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 export type OrganizationPlan = "free" | "team" | "enterprise";
 export type BillingInterval = "monthly" | "annual";
@@ -238,7 +239,8 @@ export function useOrganizationBillingStatus(
   organizationId: string | null,
   options?: UseOrganizationBillingStatusOptions
 ): OrganizationBillingStatus | undefined {
-  const enabled = options?.enabled ?? true;
+  const isUserReady = useDbUserReady();
+  const enabled = (options?.enabled ?? true) && isUserReady;
 
   return useQuery(
     "billing:getOrganizationBillingStatus" as any,
@@ -251,7 +253,9 @@ export function useOrganizationBilling(
   options?: UseOrganizationBillingOptions
 ) {
   const projectId = options?.projectId ?? null;
-  const enabled = options?.enabled ?? true;
+  const isUserReady = useDbUserReady();
+  const callerEnabled = options?.enabled ?? true;
+  const enabled = callerEnabled && isUserReady;
   const shouldQueryOrganization = enabled && !!organizationId;
   const shouldQueryProject = shouldQueryOrganization && !!projectId;
   const shouldQuerySeatPaymentIntent =
@@ -661,10 +665,18 @@ export function useOrganizationBilling(
     ]
   );
 
+  // The caller asked for billing and we're only waiting on the `users` row.
+  // These flags feed `useProjectBillingGate`, and a gate that reads as settled
+  // resolves to "not denied, free plan" — i.e. it fails OPEN and lets a
+  // limited action through. An unfinished answer must read as loading.
+  const isAwaitingUserRow = callerEnabled && !isUserReady && !!organizationId;
+
   const isLoadingOrganizationPremiumness =
-    shouldQueryOrganization && organizationPremiumness === undefined;
+    isAwaitingUserRow ||
+    (shouldQueryOrganization && organizationPremiumness === undefined);
   const isLoadingProjectPremiumness =
-    shouldQueryProject && projectPremiumness === undefined;
+    (isAwaitingUserRow && !!projectId) ||
+    (shouldQueryProject && projectPremiumness === undefined);
 
   return {
     billingStatus,
@@ -673,12 +685,16 @@ export function useOrganizationBilling(
     entitlements,
     activeSeatPaymentIntent,
     planCatalog,
-    isLoadingBilling: shouldQueryOrganization && billingStatus === undefined,
+    isLoadingBilling:
+      isAwaitingUserRow ||
+      (shouldQueryOrganization && billingStatus === undefined),
     isLoadingEntitlements:
-      shouldQueryOrganization && entitlements === undefined,
+      isAwaitingUserRow ||
+      (shouldQueryOrganization && entitlements === undefined),
     isLoadingOrganizationPremiumness,
     isLoadingProjectPremiumness,
-    isLoadingPlanCatalog: shouldQueryOrganization && planCatalog === undefined,
+    isLoadingPlanCatalog:
+      isAwaitingUserRow || (shouldQueryOrganization && planCatalog === undefined),
     isStartingPlanChange,
     pendingPlanChangeTarget,
     isOpeningPortal,
