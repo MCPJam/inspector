@@ -337,6 +337,7 @@ export function MultiModelPlaygroundCard({
     hasLiveTimelineContent,
     traceViewsSupported,
     isStreaming,
+    isSessionBootstrapComplete,
     addToolApprovalResponse,
     startChatWithMessages,
   } = useChatSession({
@@ -528,6 +529,10 @@ export function MultiModelPlaygroundCard({
   }, [modelContextQueue]);
 
   useEffect(() => {
+    if (!isSessionBootstrapComplete) {
+      return;
+    }
+
     if (!broadcastRequest) {
       return;
     }
@@ -558,6 +563,7 @@ export function MultiModelPlaygroundCard({
   }, [
     broadcastRequest,
     drainModelContextQueue,
+    isSessionBootstrapComplete,
     sendMessage,
     setMessages,
     outgoingSenderMetadata,
