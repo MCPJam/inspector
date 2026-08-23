@@ -23,11 +23,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation } from "convex/react";
 import { Globe, Server } from "lucide-react";
 import { ClientsPill } from "@/components/environment-composer/clients-pill";
-import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import {
+  EnvironmentComposer,
+  EVALS_COMPOSER_SLOTS,
+} from "@/components/environment-composer/environment-composer";
 import { SandboxImagePill } from "@/components/environment-composer/sandbox-image-pill";
 import {
   composerHasTarget,
   composerStateFromEnvironments,
+  environmentsCarryModels,
   environmentsCarryPluginPins,
   environmentsExceedOneStack,
   type EnvironmentComposerState,
@@ -36,7 +40,10 @@ import { useComposerResolver } from "@/components/environment-composer/use-compo
 import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
-import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import {
+  useModelMatrixCapability,
+  useProjectEnvironments,
+} from "@/hooks/useProjectEnvironments";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { convexErrMessage } from "@/lib/convex-error";
@@ -188,9 +195,17 @@ function EnvironmentModeBar({
   const unresolvedCount = environmentsLoading
     ? 0
     : attachedIds.length - attachedEnvironments.length;
+  const skillsEnabled = useSkillsEnabled();
+  const computersEnabled = useComputersEnabled();
+  const modelMatrix = useModelMatrixCapability(projectId);
+  const modelsEnabled = modelMatrix === true;
   const seeded = useMemo<EnvironmentComposerState>(() => {
     if (attachedIds.length > 0) {
-      return composerStateFromEnvironments(attachedEnvironments);
+      return composerStateFromEnvironments(attachedEnvironments, {
+        skillsEnabled,
+        computersEnabled,
+        modelsEnabled,
+      });
     }
     // Not an environment suite yet: show what it runs today, so converting
     // preserves it rather than starting from blank.
@@ -202,19 +217,20 @@ function EnvironmentModeBar({
         skillSelection: null,
         computerEnvironmentId:
           suite.environment?.computerEnvironmentId ?? null,
+        modelSelection: { includeClientDefaults: true, explicitModelIds: [] },
       },
       customized: false,
     };
   }, [
     attachedEnvironments,
     attachedIds.length,
+    computersEnabled,
+    modelsEnabled,
+    skillsEnabled,
     suite.environment?.computerEnvironmentId,
     suite.hostAttachments,
     suite.serverAttachmentId,
   ]);
-
-  const skillsEnabled = useSkillsEnabled();
-  const computersEnabled = useComputersEnabled();
   /**
    * The ATTACHMENTS cannot be represented as one stack — two on a single client,
    * disagreeing on an enabled shared slot, or (for a seed the composer treats as
@@ -233,8 +249,24 @@ function EnvironmentModeBar({
     environmentsExceedOneStack(attachedEnvironments, {
       skillsEnabled,
       computersEnabled,
+      modelsEnabled,
     }) ||
-    (seeded.customized && environmentsCarryPluginPins(attachedEnvironments));
+    (seeded.customized && environmentsCarryPluginPins(attachedEnvironments)) ||
+    // A model override with no slot to show it in. `environmentsExceedOneStack`
+    // only catches a DISAGREEMENT between attachments, so a suite whose
+    // attachments all pin the SAME model slips past it — and seeding then reads
+    // the slot as "client defaults", so the first pill edit resolves rows
+    // without the override and silently moves the suite to another model.
+    (!modelsEnabled && environmentsCarryModels(attachedEnvironments));
+  /**
+   * The capability probe has not answered yet. Distinct from `collapsesByHost`:
+   * nothing is wrong with the attachments, we just cannot yet tell whether the
+   * models slot exists — and until we can, `modelsEnabled` reads false, which
+   * is the same input that makes a model-bearing attachment look uneditable.
+   * Disabling (rather than declaring a collapse) keeps the hint from flashing
+   * on every load, matching how the environment list is handled above.
+   */
+  const modelCapabilityPending = Boolean(projectId) && modelMatrix === undefined;
 
   const [state, setState] = useState<EnvironmentComposerState>(seeded);
   const [saving, setSaving] = useState(false);
@@ -305,6 +337,7 @@ function EnvironmentModeBar({
           value={state}
           onChange={(next) => void commit(next)}
           maxTargets={MAX_SUITE_ENVIRONMENTS}
+          slots={EVALS_COMPOSER_SLOTS}
           // Also disabled while the environment list is still loading: resolving
           // against an empty live list would miss a matching NAMED environment
           // and mint an unnamed twin of it.
@@ -312,6 +345,7 @@ function EnvironmentModeBar({
             disabled ||
             saving ||
             environmentsLoading ||
+            modelCapabilityPending ||
             unresolvedCount > 0 ||
             collapsesByHost
           }
@@ -334,9 +368,9 @@ function EnvironmentModeBar({
           data-testid="suite-env-attachments-collapse-hint"
         >
           This suite&apos;s environments don&apos;t fit one editable setup —
-          they differ by client, server group, skills or image, or pin plugin
-          versions — so this strip can&apos;t change them without changing what
-          some of them run. Adjust them in suite settings.
+          they differ by client, server group, skills, model or image, or pin
+          plugin versions — so this strip can&apos;t change them without changing
+          what some of them run. Adjust them in suite settings.
         </p>
       ) : null}
     </div>

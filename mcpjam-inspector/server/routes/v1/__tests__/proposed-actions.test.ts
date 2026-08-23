@@ -80,6 +80,7 @@ import { gatedEntryFor } from "../agent-op-registry.js";
 import { resetSlackRateLimitForTests } from "../../../middleware/slack-service-auth.js";
 import { IDEMPOTENCY_KEY_HEADER } from "../../../utils/idempotency.js";
 import {
+  installRegistryDirectoryServerOperation,
   runEvalSuiteOperation,
   type PlatformApiClient,
 } from "@mcpjam/sdk/platform";
@@ -310,6 +311,92 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
       { suite: "smoke", project: "p1" },
       expect.anything()
     );
+  });
+
+  it("carries an install proposal's PINS through to the operation's execute", async () => {
+    // The mutation-side rejection lives in the backend; what this route owes
+    // the freeze is that the persisted pins reach `operation.execute` intact,
+    // so the backend has something to check.
+    const pinnedInput = {
+      catalogServerId: "cs_1",
+      endpointUrl: "https://mcp.linear.app/mcp",
+      expectedContentHash: "hash_at_propose",
+    };
+    getProposedActionMock.mockResolvedValue(
+      storedProposal({
+        operation: installRegistryDirectoryServerOperation.name,
+        input: { ...pinnedInput, project: "p1" },
+      })
+    );
+    beginProposedActionMock.mockResolvedValue({
+      ok: true,
+      operation: installRegistryDirectoryServerOperation.name,
+      input: pinnedInput,
+      organizationId: "org_1",
+      projectId: "p1",
+      teamId: "T1",
+    });
+    const executeSpy = vi
+      .spyOn(installRegistryDirectoryServerOperation, "execute")
+      .mockResolvedValue({
+        serverId: "srv_1",
+        serverName: "linear",
+        outcome: "created",
+      } as never);
+
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(200);
+    expect(executeSpy).toHaveBeenCalledWith(
+      {
+        catalogServerId: "cs_1",
+        endpointUrl: "https://mcp.linear.app/mcp",
+        expectedContentHash: "hash_at_propose",
+        project: "p1",
+      },
+      expect.anything()
+    );
+  });
+
+  it("refuses an install whose stored input is missing its pins", async () => {
+    // Defense in depth behind the mint-time refusal: a row minted before the
+    // `requiredFrozenKeys` contract — or a tampered one — must not execute,
+    // because the click would install whatever the registry resolves to NOW
+    // rather than what the approver saw. Retired as failed, never released:
+    // the row is permanently invalid and a release would hand the same broken
+    // button to the next click.
+    getProposedActionMock.mockResolvedValue(
+      storedProposal({
+        operation: installRegistryDirectoryServerOperation.name,
+        input: { catalogServerId: "cs_1", project: "p1" },
+      })
+    );
+    beginProposedActionMock.mockResolvedValue({
+      ok: true,
+      operation: installRegistryDirectoryServerOperation.name,
+      input: { catalogServerId: "cs_1" },
+      organizationId: "org_1",
+      projectId: "p1",
+      teamId: "T1",
+    });
+    const executeSpy = vi.spyOn(
+      installRegistryDirectoryServerOperation,
+      "execute"
+    );
+
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(executeSpy).not.toHaveBeenCalled();
+    expect(completeProposedActionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionId: "act_1",
+        status: "failed",
+        failureReason: expect.stringContaining("pins"),
+      })
+    );
+    expect(releaseProposedActionMock).not.toHaveBeenCalled();
   });
 
   it("stamps `proposal:<actionId>:<operation>` as the inner idempotency key", async () => {

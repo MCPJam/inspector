@@ -4,7 +4,7 @@
  *
  * PURE and browser-safe: text in, text out. No `node:fs`, no `node:path`, no
  * `process`. It lives in the SDK rather than in the CLI because three
- * consumers need it — `mcpjam eval validate`, the importer/mapping work, and a
+ * consumers need it — `mcpjam cloud eval validate`, the importer/mapping work, and a
  * future `validate_eval_suite` agent tool — and a loader that only the CLI can
  * reach forces the other two to re-author it.
  *

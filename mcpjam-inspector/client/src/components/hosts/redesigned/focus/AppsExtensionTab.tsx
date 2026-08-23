@@ -36,6 +36,7 @@ import {
 } from "@/lib/apps-capability-dimensions";
 import { hostSupportsWidgetRendering, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
+import { HostStyleTokens } from "./HostStyleTokens";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
 interface AppsExtensionTabProps {
@@ -1775,6 +1776,9 @@ export function AppsExtensionTab({
             subtitle on each section makes this explicit so users don't
             confuse them. */}
         <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
+        {/* Read-only companion to the two matrices: the capability rows say
+            what the host CAN do, this says what it LOOKS like to a view. */}
+        <HostStyleTokens draft={draft} />
         {/* `min-h-[320px]` guarantees the editor keeps a usable, scrollable
             height even when both matrices above are expanded — its own
             CodeMirror scroll then works instead of the editor collapsing. */}
