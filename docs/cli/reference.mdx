@@ -1056,11 +1056,13 @@ File `passThreshold` is a fraction; the hosted suite grades on a percent. The
 conversion refuses rather than approximates. File `repetitions` above **10**
 are refused by name (`REPETITIONS_CAP`) and are not clamped.
 
-Cases are synced in batches of at most 100 (`create_eval_cases`). A case the
-file **no longer declares** is deleted from the hosted suite before launch. A
-case the file still declares but marks `disabled: true` is **kept, with its
-history** — it is simply left out of the launch, so parking a flaky test does
-not destroy its past results and re-enabling it later resumes the same case.
+Cases are synced in batches of at most 100 (`create_eval_cases`). Every
+declared case is created or updated, including `disabled: true` rows. A case
+the file **no longer declares** is deleted from the hosted suite before
+launch. A case the file still declares but marks `disabled: true` is **kept,
+with its history** — it is simply left out of the launch, so parking a flaky
+test does not destroy its past results and re-enabling it later resumes the
+same case.
 The run is scoped to the enabled cases either way. A file with no enabled
 cases is refused (`NO_ENABLED_CASES`) rather than launching the whole
 persisted suite. `--case` may only name an enabled case. A later run updates

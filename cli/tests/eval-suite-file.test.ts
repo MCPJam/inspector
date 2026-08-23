@@ -2131,9 +2131,50 @@ describe("eval run --file", () => {
           )
         );
         assert.equal(run.result.exitCode, 0, run.stderr);
-        // Kept — not deleted.
+        // Kept — not deleted. The parked row is updated so the hosted
+        // definition matches the file; it is still left out of the launch.
         assert.deepEqual(fixture.deletedCaseIds, []);
-        // And not run: the launch names only the enabled case.
+        assert.equal(fixture.updateBodies.length, 2);
+        const parkedUpdate = fixture.updateBodies.find(
+          (body) => (body as { title?: string }).title === "Parked"
+        ) as { title: string; steps: Array<{ prompt: string }> };
+        assert.equal(parkedUpdate.steps[0]?.prompt, "Parked for now.");
+        const launched = fixture.runBodies[0] as { caseIds: string[] };
+        assert.deepEqual(launched.caseIds, ["row_c_refund"]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("a newly declared disabled case is created but not launched", async () => {
+    const fixture = await startFileRunFixture({
+      existingCases: [
+        { id: "row_c_refund", declaredId: "c_refund", title: "Refunds" },
+      ],
+    });
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          `${VALID_SUITE_FILE}  - id: c_parked\n    title: Parked\n    disabled: true\n    steps:\n      - id: step-1\n        kind: prompt\n        prompt: Parked for now.\n`,
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(
+            runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"),
+            { telemetry: telemetryDisabled }
+          )
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.batchBodies.length, 1);
+        const created = (fixture.batchBodies[0] as { cases: Array<{ id: string }> })
+          .cases;
+        assert.deepEqual(
+          created.map((entry) => entry.id),
+          ["c_parked"]
+        );
         const launched = fixture.runBodies[0] as { caseIds: string[] };
         assert.deepEqual(launched.caseIds, ["row_c_refund"]);
       });
