@@ -11,7 +11,7 @@
  * task demands a new one — not speculatively.
  *
  * Hosted in `@mcpjam/sdk` (browser-safe; reuses the `../matchers` argument
- * engine) so the inspector GUI runner and the `mcpjam eval` CLI share one
+ * engine) so the inspector GUI runner and the `mcpjam cloud eval` CLI share one
  * implementation.
  */
 
@@ -159,7 +159,7 @@ export function requiresRenderObservations(kind: string): boolean {
 // ─── Zod schemas ──────────────────────────────────────────────────────────
 //
 // The predicate union is the wire shape both the inspector forms and the
-// `mcpjam eval` CLI persist into Convex. Convex has its own hand-mirrored
+// `mcpjam cloud eval` CLI persist into Convex. Convex has its own hand-mirrored
 // `v.union` (Hard Constraint 1: no `@mcpjam/sdk` imports in `convex/`).
 // Parity between the two is proven via the JSON fixtures in
 // `sdk/tests/fixtures/predicates-parity-fixtures.json` (and its sibling in
