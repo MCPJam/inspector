@@ -92,6 +92,10 @@ import {
   type EvalStepReplay,
 } from "@/shared/eval-step-replay";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
+import {
+  measureTraceBytes,
+  recordEvalIterationRead,
+} from "../../services/eval-trace-access-audit.js";
 import { logger } from "../../utils/logger.js";
 import { v1Error, v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError as translateConvexError } from "./convex-errors.js";
@@ -3577,7 +3581,10 @@ evals.get(
     const projectId = c.req.param("projectId");
     const runId = c.req.param("runId");
     const iterationId = c.req.param("iterationId");
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    // Held rather than inlined: the same bearer authorizes the read AND names
+    // the human in the audit row below (see services/eval-trace-access-audit).
+    const convexAuthToken = await getConvexBearerForRequest(c);
+    const convex = createConvexReadClient(convexAuthToken);
 
     let trace: unknown;
     try {
@@ -3617,6 +3624,20 @@ evals.get(
         { reason: "TRACE_NOT_AVAILABLE" },
       );
     }
+    // AFTER the read resolves and after the 404s, so a row means a transcript
+    // actually left the product.
+    //
+    // DETACHED, not awaited: bookkeeping must not sit on the critical path of
+    // a read that already succeeded, or a stalled audit backend shows up as a
+    // slow `/trace`. Safe to float because `recordEvalIterationRead` swallows
+    // its own failures — there is no rejection to go unhandled — and it bounds
+    // its own request.
+    void recordEvalIterationRead({
+      convexAuthToken,
+      iterationId,
+      mode: "trace",
+      traceBytes: measureTraceBytes(trace),
+    });
     return v1Resource(c, trace);
   },
 );
@@ -3633,7 +3654,8 @@ evals.get(
     const projectId = c.req.param("projectId");
     const runId = c.req.param("runId");
     const iterationId = c.req.param("iterationId");
-    const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+    const convexAuthToken = await getConvexBearerForRequest(c);
+    const convex = createConvexReadClient(convexAuthToken);
 
     let iteration: IterationDoc | null;
     try {
@@ -3689,6 +3711,17 @@ evals.get(
         | undefined,
       envelope as Parameters<typeof assembleStepResults>[2],
     );
+    // Unlike `/trace`, a missing envelope is not a 404 here — verdicts still
+    // return — so `traceBytes` is present only when evidence was actually
+    // resolved, and its absence is how the row says "verdicts only".
+    // Detached for the same reason as the `/trace` site above.
+    void recordEvalIterationRead({
+      convexAuthToken,
+      iterationId,
+      mode: "steps",
+      stepCount: assembled.length,
+      traceBytes: measureTraceBytes(envelope),
+    });
     return v1PageJson(c, assembled.map(toStepResultDto));
   },
 );
