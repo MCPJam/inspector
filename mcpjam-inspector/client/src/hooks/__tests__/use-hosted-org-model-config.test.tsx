@@ -4,6 +4,7 @@ import { useHostedOrgModelConfig } from "../use-hosted-org-model-config";
 
 const mockState = vi.hoisted(() => ({
   isAuthenticated: true,
+  isUserReady: true,
   queryResults: new Map<string, unknown>(),
   queryCalls: [] as Array<{ name: string; args: unknown }>,
 }));
@@ -24,9 +25,14 @@ vi.mock("convex/react", () => ({
   },
 }));
 
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => mockState.isUserReady,
+}));
+
 describe("useHostedOrgModelConfig", () => {
   beforeEach(() => {
     mockState.isAuthenticated = true;
+    mockState.isUserReady = true;
     mockState.queryResults.clear();
     mockState.queryCalls = [];
   });
@@ -78,6 +84,27 @@ describe("useHostedOrgModelConfig", () => {
 
   it("skips hosted config queries while unauthenticated", () => {
     mockState.isAuthenticated = false;
+
+    const { result } = renderHook(() =>
+      useHostedOrgModelConfig({
+        projectId: "project-1",
+        organizationId: "org-1",
+      })
+    );
+
+    expect(result.current).toBeUndefined();
+    expect(mockState.queryCalls).toContainEqual({
+      name: "organizationModelProviders:getVisibleConfigForProject",
+      args: "skip",
+    });
+    expect(mockState.queryCalls).toContainEqual({
+      name: "organizationModelProviders:getVisibleConfig",
+      args: "skip",
+    });
+  });
+
+  it("skips hosted config queries while the user row is still bootstrapping", () => {
+    mockState.isUserReady = false;
 
     const { result } = renderHook(() =>
       useHostedOrgModelConfig({

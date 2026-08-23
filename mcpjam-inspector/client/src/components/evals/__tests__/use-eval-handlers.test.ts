@@ -127,8 +127,16 @@ const mockIsHostedMode = {
 };
 
 // Mock isMCPJamProvidedModel
-vi.mock("@/shared/types", () => ({
-  isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
+vi.mock("@/shared/types", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/shared/types")>();
+  return {
+    ...actual,
+    isMCPJamProvidedModel: vi.fn().mockReturnValue(false),
+  };
+});
+
+vi.mock("@/hooks/use-available-models", () => ({
+  useAvailableModels: () => ({ availableModels: [] }),
 }));
 
 describe("useEvalHandlers", () => {

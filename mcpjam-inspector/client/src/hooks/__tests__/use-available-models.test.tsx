@@ -45,6 +45,10 @@ vi.mock("convex/react", () => ({
   },
 }));
 
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
+}));
+
 const sharedAppState = {
   activeProjectId: "p1",
   projects: {
