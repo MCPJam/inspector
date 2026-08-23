@@ -11,11 +11,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  */
 
 const importAction = vi.fn();
+const mocks = vi.hoisted(() => ({
+  isUserReady: true,
+  useQuery: vi.fn(() => []),
+}));
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
-  useQuery: () => [],
+  useQuery: (...args: unknown[]) => mocks.useQuery(...args),
   useAction: () => importAction,
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => mocks.isUserReady,
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -99,6 +107,8 @@ function renderCore(
 
 afterEach(() => {
   vi.clearAllMocks();
+  mocks.isUserReady = true;
+  mocks.useQuery.mockReturnValue([]);
 });
 
 describe("ConvertSessionDialogCore", () => {
@@ -244,5 +254,16 @@ describe("ConvertSessionDialogCore", () => {
     expect(
       screen.getByTestId("client-attachments-editor").getAttribute("data-hosts")
     ).toBe("host-swarm");
+  });
+
+  it("skips the suite subscription while the database user is not ready", () => {
+    mocks.isUserReady = false;
+
+    renderCore();
+
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "testSuites:getTestSuitesOverview",
+      "skip"
+    );
   });
 });
