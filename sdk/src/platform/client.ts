@@ -22,6 +22,7 @@ import type {
   PlatformEvalCasesGenerated,
   PlatformEvalSuite,
   PlatformEvalSuiteCreated,
+  PlatformFileOwnedEvalSuiteSynced,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
   PlatformEvalStepResult,
@@ -1282,6 +1283,24 @@ export class PlatformApiClient {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-suites`,
+      { body: params.body },
+      options,
+    );
+  }
+
+  /**
+   * `POST /projects/{p}/eval-suites/from-file` — resolve or create a
+   * file-owned suite by declared id. Lookup is by declared id within the
+   * project, never by name. A UI-authored suite has no declared id and
+   * cannot be claimed.
+   */
+  syncFileOwnedEvalSuite(
+    params: { projectId: string; body: Record<string, unknown> },
+    options?: RequestOptions,
+  ): Promise<PlatformFileOwnedEvalSuiteSynced> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(params.projectId)}/eval-suites/from-file`,
       { body: params.body },
       options,
     );

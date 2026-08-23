@@ -205,6 +205,34 @@ describe("RunEvalsRequestSchema runs cap", () => {
   });
 });
 
+describe("RunEvalsRequestSchema sourceHash", () => {
+  it("accepts a lowercase 64-char SHA-256 hex digest", () => {
+    const result = RunEvalsRequestSchema.safeParse({
+      ...buildSuiteRequest(),
+      sourceHash: "a".repeat(64),
+    });
+    expect(result.success).toBe(true);
+    expect(result.success ? result.data.sourceHash : undefined).toBe(
+      "a".repeat(64)
+    );
+  });
+
+  it("refuses uppercase or the wrong length", () => {
+    expect(
+      RunEvalsRequestSchema.safeParse({
+        ...buildSuiteRequest(),
+        sourceHash: "A".repeat(64),
+      }).success
+    ).toBe(false);
+    expect(
+      RunEvalsRequestSchema.safeParse({
+        ...buildSuiteRequest(),
+        sourceHash: "a".repeat(63),
+      }).success
+    ).toBe(false);
+  });
+});
+
 describe("RunEvalsRequestSchema widget_probe invariant", () => {
   const baseTest = {
     title: "t",

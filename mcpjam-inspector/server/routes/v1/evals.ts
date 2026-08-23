@@ -482,6 +482,68 @@ const createEvalSuiteSchema = z.strictObject({
 
 type CreateEvalSuiteBody = z.infer<typeof createEvalSuiteSchema>;
 
+const SOURCE_HASH_PATTERN = /^[a-f0-9]{64}$/;
+
+const evalSuiteFileProvenanceWireSchema = z
+  .object({
+    sourceHash: z.string().min(1),
+    sourceFormat: z.string().min(1),
+    sourceFormatVersion: z.string().min(1).optional(),
+    converter: z.string().min(1).optional(),
+    converterVersion: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    discoverySnapshotHash: z.string().min(1).optional(),
+    reportHash: z.string().min(1),
+    importedAt: z.string().optional(),
+  })
+  .strict();
+
+/**
+ * Body for `POST /eval-suites/from-file`: resolve or create a file-owned
+ * suite by declared id. The inspector parses the suite file; this is the
+ * declared identity + provenance + hosted settings, not the raw file.
+ */
+const syncFileOwnedSuiteSchema = z
+  .object({
+    declaredSuiteId: opaqueIdSchema,
+    name: z.string().trim().min(1).max(200),
+    description: z.string().optional(),
+    sourceHash: z
+      .string()
+      .regex(
+        SOURCE_HASH_PATTERN,
+        "sourceHash must be a 64-character lowercase SHA-256 hex digest",
+      ),
+    provenance: evalSuiteFileProvenanceWireSchema.optional(),
+    environment: z
+      .object({
+        servers: z.array(z.string()).optional(),
+        serverBindings: z
+          .array(
+            z.object({
+              serverName: z.string(),
+              projectServerId: z.string().optional(),
+            }),
+          )
+          .optional(),
+      })
+      .optional(),
+    defaultConfig: z
+      .object({
+        modelId: z.string(),
+        systemPrompt: z.string(),
+        temperature: z.number(),
+      })
+      .optional(),
+    minIterations: z.number().int().min(1).max(10).optional(),
+    defaultPassCriteria: z
+      .object({
+        minimumPassRate: z.number(),
+      })
+      .optional(),
+  })
+  .strict();
+
 /**
  * Expand the ergonomic authoring tests into the full
  * `RunEvalsRequestSchema.shape.tests` element shape: fill `runs`, resolve
@@ -1488,6 +1550,9 @@ function toSuiteDetailDto(
   const goal = suite.judgeConfig?.goalCompletion;
   return {
     id: String(suite._id),
+    ...(typeof suite.declaredSuiteId === "string"
+      ? { declaredId: suite.declaredSuiteId }
+      : {}),
     name: suite.name ?? null,
     description: suite.description ?? null,
     projectId: suite.projectId ? String(suite.projectId) : null,
@@ -3226,6 +3291,65 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
   } finally {
     await manager.disconnectAllServers().catch(() => {});
   }
+});
+
+// POST /v1/projects/:projectId/eval-suites/from-file
+//
+// Resolve or create a FILE-OWNED suite by declared id. Lookup is by
+// `(projectId, declaredSuiteId)` and never by name. A UI-authored suite has
+// no declared id, so this cannot claim it. Must be registered before
+// `/:suiteId` so "from-file" is not captured as a suite id.
+evals.post("/projects/:projectId/eval-suites/from-file", async (c) => {
+  const projectId = c.req.param("projectId");
+  const body = parseWithSchema(
+    syncFileOwnedSuiteSchema,
+    await readJsonObjectBody(c),
+  );
+  const token = await getConvexBearerForRequest(c);
+  const { convexClient } = createConvexClients(token);
+  let result: { created: boolean; suite: SuiteDoc | null };
+  try {
+    result = (await convexClient.mutation(
+      "testSuites:resolveOrCreateFileOwnedSuite" as any,
+      {
+        projectId,
+        declaredSuiteId: body.declaredSuiteId,
+        name: body.name,
+        ...(body.description !== undefined
+          ? { description: body.description }
+          : {}),
+        sourceHash: body.sourceHash,
+        ...(body.provenance ? { provenance: body.provenance } : {}),
+        ...(body.environment ? { environment: body.environment } : {}),
+        ...(body.defaultConfig ? { defaultConfig: body.defaultConfig } : {}),
+        ...(body.minIterations !== undefined
+          ? { minIterations: body.minIterations }
+          : {}),
+        ...(body.defaultPassCriteria
+          ? { defaultPassCriteria: body.defaultPassCriteria }
+          : {}),
+      },
+    )) as { created: boolean; suite: SuiteDoc | null };
+  } catch (error) {
+    throw translateConvexWriteError(error);
+  }
+  if (!result.suite) {
+    throw new WebRouteError(
+      500,
+      ErrorCode.INTERNAL_ERROR,
+      "File-owned suite resolve returned no suite",
+    );
+  }
+  const detail = await readSuiteDetail(
+    token,
+    projectId,
+    String(result.suite._id),
+  );
+  return v1Resource(
+    c,
+    { created: result.created, suite: detail },
+    result.created ? 201 : 200,
+  );
 });
 
 // GET /v1/projects/:projectId/eval-runs/:runId

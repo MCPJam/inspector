@@ -36,9 +36,15 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadEvalSuiteFile } from "@mcpjam/sdk";
 import {
+  fractionToPercent,
   modalRepetitions,
   percentToFraction,
 } from "../src/lib/eval-suite-export.js";
+import {
+  looksLikeCreateEvalApiJson,
+  looksLikeVersionedSuiteFile,
+  sha256HexOfBuffer,
+} from "../src/lib/eval-run-file.js";
 import { main } from "../src/index.js";
 
 const telemetryDisabled = {
@@ -369,6 +375,69 @@ describe("percentToFraction", () => {
     ]) {
       assert.equal(percentToFraction(percent), null, String(percent));
     }
+  });
+});
+
+describe("fractionToPercent", () => {
+  test("is the inverse of percentToFraction on the hosted values", () => {
+    const percents = [
+      0, 1, 7, 20, 80, 85, 99, 100, 0.5, 5.5, 12.345, 33.333333, 0.0001,
+      0.00001, 1e-7,
+    ];
+    for (const percent of percents) {
+      const fraction = percentToFraction(percent);
+      assert.notEqual(fraction, null, `${percent}%`);
+      assert.equal(fractionToPercent(fraction!), percent, `${percent}%`);
+    }
+  });
+
+  test("refuses anything it cannot represent without losing a digit", () => {
+    for (const fraction of [
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      0.1 + 0.2,
+    ]) {
+      assert.equal(fractionToPercent(fraction), null, String(fraction));
+    }
+  });
+});
+
+describe("directed --file overload", () => {
+  test("sniffs a versioned suite file in YAML and JSON", () => {
+    assert.equal(looksLikeVersionedSuiteFile(VALID_SUITE_FILE), true);
+    assert.equal(
+      looksLikeVersionedSuiteFile(
+        JSON.stringify({
+          schemaVersion: "1",
+          mode: "agentWorkflow",
+          suite: { id: "s_billing", name: "Billing" },
+        })
+      ),
+      true
+    );
+    assert.equal(looksLikeVersionedSuiteFile('{"name":"smoke","cases":[]}'), false);
+  });
+
+  test("detects create-API JSON and ignores suite files", () => {
+    assert.equal(
+      looksLikeCreateEvalApiJson(
+        JSON.stringify({
+          name: "Authored smoke",
+          cases: [{ title: "echo", steps: [] }],
+        })
+      ),
+      true
+    );
+    assert.equal(
+      looksLikeCreateEvalApiJson(
+        JSON.stringify({
+          name: "Authored smoke",
+          tests: [{ title: "echo", steps: [] }],
+        })
+      ),
+      true
+    );
+    assert.equal(looksLikeCreateEvalApiJson(VALID_SUITE_FILE), false);
   });
 });
 
@@ -710,6 +779,23 @@ describe("eval validate", () => {
 // ── eval export ──────────────────────────────────────────────────────────────
 
 describe("eval export", () => {
+  test("writes declaredId as suite.id for a file-owned suite", async () => {
+    await withTempDir(async () => {
+      const run = await runExport(
+        { detail: { declaredId: "s_billing_file" } },
+        "--suite",
+        "Billing smoke"
+      );
+      assert.equal(run.exitCode, 0, run.stderr);
+      const loaded = loadEvalSuiteFile(
+        await readFile(JSON.parse(run.stdout).path, "utf8")
+      );
+      assert.equal(loaded.ok, true);
+      if (!loaded.ok) return;
+      assert.equal(loaded.authored.suite.id, "s_billing_file");
+    });
+  });
+
   test("writes a file that reads back as the same suite", async () => {
     await withTempDir(async (dir) => {
       const run = await runExport({}, "--suite", "Billing smoke");
@@ -1245,5 +1331,495 @@ describe("eval export", () => {
       );
       assert.deepEqual(leftovers, []);
     });
+  });
+});
+
+// ── eval run --file ──────────────────────────────────────────────────────────
+
+function runFileArgv(baseUrl: string, ...args: string[]): string[] {
+  return [
+    "node",
+    "mcpjam",
+    "cloud",
+    "eval",
+    "run",
+    ...args,
+    "--api-key",
+    "sk_test",
+    "--api-url",
+    baseUrl,
+    "--format",
+    "json",
+  ];
+}
+
+function suiteFileWithCases(count: number): string {
+  const cases = Array.from({ length: count }, (_, i) =>
+    [
+      `  - id: c_case_${i}`,
+      `    title: Case ${i}`,
+      `    steps:`,
+      `      - id: step-${i}`,
+      `        kind: prompt`,
+      `        prompt: Do thing ${i}.`,
+    ].join("\n")
+  ).join("\n");
+  return `schemaVersion: "1"
+mode: agentWorkflow
+reportingMode: standard
+suite:
+  id: s_bulk
+  name: Bulk
+target:
+  servers:
+    - name: billing
+defaults:
+  model: anthropic/claude-sonnet-4-6
+  repetitions: 1
+  passThreshold: 0.8
+  validity: {}
+cases:
+${cases}
+`;
+}
+
+async function startFileRunFixture(): Promise<{
+  baseUrl: string;
+  authHeaders: string[];
+  fromFileBodies: unknown[];
+  batchBodies: unknown[];
+  updateBodies: unknown[];
+  runBodies: unknown[];
+  close: () => Promise<void>;
+}> {
+  const authHeaders: string[] = [];
+  const fromFileBodies: unknown[] = [];
+  const batchBodies: unknown[] = [];
+  const updateBodies: unknown[] = [];
+  const runBodies: unknown[] = [];
+  const casesByDeclaredId = new Map<
+    string,
+    { id: string; declaredId: string; title: string }
+  >();
+  const runsByKey = new Map<string, string>();
+  let runCounter = 0;
+
+  const server: Server = createServer(async (req, res) => {
+    let raw = "";
+    for await (const chunk of req) {
+      raw += chunk;
+    }
+    authHeaders.push(req.headers.authorization ?? "");
+    const url = new URL(req.url ?? "/", "http://fixture");
+    res.setHeader("content-type", "application/json");
+    const method = req.method ?? "GET";
+
+    if (url.pathname === "/api/v1/projects") {
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "proj-alpha",
+              name: "Alpha",
+              description: null,
+              icon: null,
+              organizationId: "org-1",
+              visibility: null,
+              createdAt: 1,
+              updatedAt: 200,
+            },
+          ],
+        })
+      );
+      return;
+    }
+
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-suites/from-file" &&
+      method === "POST"
+    ) {
+      const body = raw ? JSON.parse(raw) : {};
+      fromFileBodies.push(body);
+      res.statusCode = fromFileBodies.length === 1 ? 201 : 200;
+      res.end(
+        JSON.stringify({
+          created: fromFileBodies.length === 1,
+          suite: {
+            id: "suite-file-1",
+            declaredId: body.declaredSuiteId,
+            name: body.name ?? "Billing smoke",
+            description: null,
+            projectId: "proj-alpha",
+            environment: { servers: ["billing"], computerEnvironment: null },
+            executionConfig: { model: body.defaultConfig?.modelId ?? "m" },
+            hosts: [],
+            environmentIds: [],
+            settings: {},
+            schedule: {},
+            createdAt: 1,
+            updatedAt: 2,
+          },
+        })
+      );
+      return;
+    }
+
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-suites/suite-file-1/cases" &&
+      method === "GET"
+    ) {
+      res.end(JSON.stringify({ items: [...casesByDeclaredId.values()] }));
+      return;
+    }
+
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-suites/suite-file-1/cases/batch" &&
+      method === "POST"
+    ) {
+      const body = raw ? JSON.parse(raw) : {};
+      batchBodies.push(body);
+      const created = (body.cases as Array<{ id?: string; title: string }>).map(
+        (testCase, index) => {
+          const declaredId = testCase.id ?? `minted_${index}`;
+          const id = `row_${declaredId}`;
+          casesByDeclaredId.set(declaredId, {
+            id,
+            declaredId,
+            title: testCase.title,
+          });
+          return {
+            index,
+            id,
+            declaredId,
+            title: testCase.title,
+            replayed: false,
+          };
+        }
+      );
+      res.statusCode = 201;
+      res.end(JSON.stringify({ created, failed: [], duplicatePolicy: "block" }));
+      return;
+    }
+
+    if (
+      url.pathname.startsWith(
+        "/api/v1/projects/proj-alpha/eval-suites/suite-file-1/cases/"
+      ) &&
+      method === "PATCH"
+    ) {
+      updateBodies.push(raw ? JSON.parse(raw) : {});
+      res.end(JSON.stringify({ id: "row_c_refund", title: "updated" }));
+      return;
+    }
+
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-suites" &&
+      method === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "suite-file-1",
+              name: "Billing smoke",
+              projectId: "proj-alpha",
+              createdAt: 1,
+              updatedAt: 2,
+              latestRun: null,
+              totals: { passed: 0, failed: 0, runs: 0 },
+              passRateTrend: [],
+            },
+          ],
+        })
+      );
+      return;
+    }
+
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-suites/suite-file-1" &&
+      method === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          id: "suite-file-1",
+          declaredId: "s_billing",
+          name: "Billing smoke",
+          description: null,
+          projectId: "proj-alpha",
+          environment: { servers: ["billing"] },
+          executionConfig: { model: "anthropic/claude-sonnet-4-6" },
+          hosts: [],
+          environmentIds: [],
+          settings: {},
+          schedule: {},
+          createdAt: 1,
+          updatedAt: 2,
+        })
+      );
+      return;
+    }
+
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs" &&
+      method === "POST"
+    ) {
+      const body = raw ? JSON.parse(raw) : {};
+      runBodies.push(body);
+      const key =
+        typeof body.idempotencyKey === "string" ? body.idempotencyKey : "";
+      let runId = runsByKey.get(key);
+      if (!runId) {
+        runCounter += 1;
+        runId = `run-file-${runCounter}`;
+        if (key) runsByKey.set(key, runId);
+      }
+      res.statusCode = 202;
+      res.end(
+        JSON.stringify({
+          runId,
+          suiteId: "suite-file-1",
+          status: "running",
+          caseUpsert: { committed: [], failed: [] },
+          servers: [{ id: "srv-billing", name: "billing" }],
+          environment: null,
+        })
+      );
+      return;
+    }
+
+    res.statusCode = 404;
+    res.end(JSON.stringify({ error: { message: `no route ${url.pathname}` } }));
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (typeof address === "string" || address === null) {
+    throw new Error("fixture server did not bind a port");
+  }
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}/api/v1`,
+    authHeaders,
+    fromFileBodies,
+    batchBodies,
+    updateBodies,
+    runBodies,
+    close: () =>
+      new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      ),
+  };
+}
+
+describe("eval run --file", () => {
+  test("invalid file exits 2 after auth and creates no run", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          VALID_SUITE_FILE.replace("id: c_refund", 'id: "not a valid id"'),
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.ok(fixture.authHeaders.length > 0, "auth request must arrive first");
+        assert.equal(fixture.fromFileBodies.length, 0);
+        assert.equal(fixture.runBodies.length, 0);
+        assert.match(run.stderr, /SUITE_FILE_INVALID/);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("valid file creates one run with the declared ids", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const expectedHash = sha256HexOfBuffer(Buffer.from(VALID_SUITE_FILE));
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.fromFileBodies.length, 1);
+        const synced = fixture.fromFileBodies[0] as Record<string, unknown>;
+        assert.equal(synced.declaredSuiteId, "s_billing");
+        assert.equal(synced.sourceHash, expectedHash);
+        assert.equal(fixture.batchBodies.length, 1);
+        const batch = fixture.batchBodies[0] as { cases: Array<{ id: string }> };
+        assert.equal(batch.cases[0].id, "c_refund");
+        assert.equal(fixture.runBodies.length, 1);
+        const launched = fixture.runBodies[0] as Record<string, unknown>;
+        assert.equal(launched.suiteId, "suite-file-1");
+        assert.equal(launched.sourceHash, expectedHash);
+        assert.equal(typeof launched.idempotencyKey, "string");
+        const payload = JSON.parse(run.stdout);
+        assert.equal(payload.outcome, "started");
+        assert.equal(payload.runId, "run-file-1");
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("same file twice with one idempotency key starts exactly one run", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const argv = runFileArgv(
+          fixture.baseUrl,
+          "--file",
+          file,
+          "--project",
+          "Alpha",
+          "--idempotency-key",
+          "file-key-1"
+        );
+        const first = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        const second = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        assert.equal(first.result.exitCode, 0, first.stderr);
+        assert.equal(second.result.exitCode, 0, second.stderr);
+        assert.equal(fixture.runBodies.length, 2);
+        const ids = [first, second].map(
+          (entry) => JSON.parse(entry.stdout).runId
+        );
+        assert.deepEqual(ids, ["run-file-1", "run-file-1"]);
+        assert.equal(
+          (fixture.runBodies[0] as { idempotencyKey: string }).idempotencyKey,
+          "file-key-1"
+        );
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("repetitions: 50 is refused naming the hosted cap of 10", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(
+          file,
+          VALID_SUITE_FILE.replace("repetitions: 5", "repetitions: 50"),
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.match(run.stderr, /REPETITIONS_CAP/);
+        assert.match(run.stderr, /10/);
+        assert.equal(fixture.fromFileBodies.length, 0);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("250-case file uploads in three batches", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, suiteFileWithCases(250), "utf8");
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 0, run.stderr);
+        assert.equal(fixture.batchBodies.length, 3);
+        const sizes = fixture.batchBodies.map(
+          (body) => (body as { cases: unknown[] }).cases.length
+        );
+        assert.deepEqual(sizes, [100, 100, 50]);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("--format json is byte-identical across two runs of the same file", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "suite.yaml");
+        await writeFile(file, VALID_SUITE_FILE, "utf8");
+        const argv = runFileArgv(
+          fixture.baseUrl,
+          "--file",
+          file,
+          "--project",
+          "Alpha",
+          "--idempotency-key",
+          "stable-json"
+        );
+        const first = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        const second = await captureProcessOutput(() =>
+          main(argv, { telemetry: telemetryDisabled })
+        );
+        assert.equal(first.result.exitCode, 0, first.stderr);
+        assert.equal(second.result.exitCode, 0, second.stderr);
+        assert.equal(first.stdout, second.stdout);
+      });
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test("create-API JSON on eval run --file points at eval create --file", async () => {
+    const fixture = await startFileRunFixture();
+    try {
+      await withTempDir(async (dir) => {
+        const file = path.join(dir, "create.json");
+        await writeFile(
+          file,
+          JSON.stringify({
+            name: "Authored smoke",
+            cases: [
+              {
+                title: "echo",
+                steps: [{ id: "s1", kind: "prompt", prompt: "hi" }],
+              },
+            ],
+          }),
+          "utf8"
+        );
+        const run = await captureProcessOutput(() =>
+          main(runFileArgv(fixture.baseUrl, "--file", file, "--project", "Alpha"), {
+            telemetry: telemetryDisabled,
+          })
+        );
+        assert.equal(run.result.exitCode, 2, run.stderr);
+        assert.match(run.stderr, /eval create --file/);
+        assert.equal(fixture.fromFileBodies.length, 0);
+        assert.equal(fixture.runBodies.length, 0);
+      });
+    } finally {
+      await fixture.close();
+    }
   });
 });

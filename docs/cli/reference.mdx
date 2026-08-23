@@ -936,7 +936,7 @@ Create a runnable eval suite from authored test cases (does not run it).
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
-| `--file <path>` | No | Path to a suite definition JSON file (or `-` for stdin) |
+| `--file <path>` | No | Path to a **create-API JSON** body (or `-` for stdin). A versioned suite file (`schemaVersion: "1"`) belongs on `eval run --file` |
 | `--json <json>` | No | Inline suite definition JSON (or `@file`, or `-` for stdin) |
 | `--name <name>` | No | Suite name (overrides the file) |
 | `--model <model>` | No | Suite-level default model (overrides the file) |
@@ -953,11 +953,14 @@ List the eval suites saved in a project.
 
 ### `cloud eval run`
 
-Start an eval run of an existing suite (asynchronous).
+Start an eval run of an existing suite, or upload a versioned suite file and run it (asynchronous). Provide **either** `--suite` **or** `--file`, not both.
+
+There is **no `--wait`**. The command prints a launch receipt and exits 0 when the run started. Poll `eval status` for a verdict. Exit 1 is reserved for a real verdict (and for a partial fan-out). An invalid suite file on this command exits **2** — `eval validate` still exits 1 for the same contract failure, because it is a verdict on the file and this command is not.
 
 | Flag | Required | Description |
 |------|----------|-------------|
-| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--suite <id-or-name>` | Yes, unless `--file` | Eval suite name or ID |
+| `--file <path>` | Yes, unless `--suite` | Versioned suite file to upload and run (`.yaml` or `.json`, or `-` for stdin) |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only) |
 | `--environment <id-or-name...>` | No | Attached project environment(s) to run. Several values start one **paid run each**. |
@@ -1036,6 +1039,38 @@ line per failure.
 A partial or wholly failed fan-out **exits 1**. A per-target failure does not
 abort its siblings, so exiting 0 would let a pipeline read "1 of 3 runs never
 started" as a clean launch.
+
+#### `--file`: upload and run a suite file
+
+`eval run --file` reads the versioned suite file (`schemaVersion: "1"`),
+authenticates, then validates. A contract-invalid file exits **2** after the
+auth request — it does not start a run. `eval validate` on the same bytes
+still exits 1: that command is a verdict on the file; this one is not.
+
+The file's `suite.id` is the declared suite identity. The first run creates a
+file-owned suite stamped with that id; later runs of the same id in the same
+project update that suite rather than creating a second one. A UI-authored
+suite has no declared id, so no file can claim it. Resolve is never by name.
+
+File `passThreshold` is a fraction; the hosted suite grades on a percent. The
+conversion refuses rather than approximates. File `repetitions` above **10**
+are refused by name (`REPETITIONS_CAP`) and are not clamped.
+
+Cases are synced in batches of at most 100 (`create_eval_cases`). Disabled
+file cases are skipped. A later run updates existing cases by declared id and
+creates new ones.
+
+Without `--idempotency-key`, the CLI derives one from the file's SHA-256,
+declared suite id, project, and target, so repeating the same file against
+the same project and target returns the run it already started.
+
+`--file` pointing at create-API JSON (no `schemaVersion`) is a usage error
+that names `eval create --file`. The converse is also true: `eval create --file`
+on a versioned suite file names `eval run --file`.
+
+Export of a file-owned suite writes `declaredId` as `suite.id`. Export of a
+UI suite still writes the Convex id; running that file back is the ownership
+refusal.
 
 When the run targets an **attached project environment** (`eval environments
 set`), it executes against that environment's resolved host config, closed
@@ -1128,7 +1163,7 @@ no API key. It never touches the network.
 | Exit code | Meaning |
 |-----------|---------|
 | `0` | Valid |
-| `1` | Parsed, but invalid against the suite-file contract. Every finding is reported, not just the first |
+| `1` | Parsed, but invalid against the suite-file contract. Every finding is reported, not just the first. `eval run --file` on the same bytes exits **2** — 1 is reserved there for a real verdict |
 | `2` | Nothing was validated: unreadable path, input over the 1 MiB limit, or malformed YAML |
 
 Input is capped at **1,048,576 bytes (1 MiB) of UTF-8** and is never truncated —

@@ -168,10 +168,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   list_eval_cases: { command: "cloud eval cases list" },
   get_eval_case: { command: "cloud eval cases get" },
   create_eval_case: { command: "cloud eval cases create" },
-  create_eval_cases: {
-    excluded:
-      'Authoring several cases from a shell means passing a FILE, and that file\'s format is now settled: the versioned eval suite file (`schemaVersion: "1"`, YAML canonical, JSON accepted, conventionally `.mcpjam/evals/*.yaml`), which `eval validate` reads offline and `eval export` writes. What is still missing is the UPLOAD half — a suite file has cases with declared ids and the batch surface takes cases inline, and deciding which of the two owns identity on the way up is the same decision as `eval run --file`\'s ownership rules. So this binds when that command lands, not before; a batch command today would ship a second spelling of "send these cases" ahead of it. The bulk writers meanwhile are the agent surfaces (MCP `create_eval_cases`, `POST …/cases/batch`), which take the cases inline.',
-  },
+  create_eval_cases: { command: "cloud eval run --file" },
   update_eval_case: { command: "cloud eval cases update" },
   delete_eval_case: { command: "cloud eval cases delete" },
   generate_eval_cases: { command: "cloud eval cases generate" },

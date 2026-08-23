@@ -3162,6 +3162,77 @@
         }
       }
     },
+    "/projects/{projectId}/eval-suites/from-file": {
+      "post": {
+        "operationId": "syncFileOwnedEvalSuite",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Resolve or create a file-owned eval suite",
+        "description": "Resolve a file-owned suite by declared id within the project, or create one. Lookup is by `(projectId, declaredSuiteId)` and never by name. A UI-authored suite has no declared id and cannot be claimed. The inspector parses the suite file; this body is the declared identity, source hash, optional provenance, and hosted settings — not the raw file.\n\n`201` on first create; `200` on a later update of the same declared id.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvalSuiteFromFileRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The existing file-owned suite was updated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSuiteFromFileSynced"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "A new file-owned suite was created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSuiteFromFileSynced"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}": {
       "get": {
         "operationId": "getEvalSuite",
@@ -11881,6 +11952,147 @@
           }
         }
       },
+      "EvalSuiteFromFileRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "declaredSuiteId",
+          "name",
+          "sourceHash"
+        ],
+        "description": "Declared identity and hosted settings for a file-owned suite. The inspector parses the suite file; this is not the raw file.",
+        "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The file's `suite.id`. Lookup is by this id within the project, never by name."
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "sourceHash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 hex of the suite-file bytes. Lowercase, 64 characters."
+          },
+          "provenance": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "sourceHash",
+              "sourceFormat",
+              "reportHash"
+            ],
+            "properties": {
+              "sourceHash": {
+                "type": "string"
+              },
+              "sourceFormat": {
+                "type": "string"
+              },
+              "sourceFormatVersion": {
+                "type": "string"
+              },
+              "converter": {
+                "type": "string"
+              },
+              "converterVersion": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "discoverySnapshotHash": {
+                "type": "string"
+              },
+              "reportHash": {
+                "type": "string"
+              },
+              "importedAt": {
+                "type": "string"
+              }
+            }
+          },
+          "environment": {
+            "type": "object",
+            "properties": {
+              "servers": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "serverBindings": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "serverName"
+                  ],
+                  "properties": {
+                    "serverName": {
+                      "type": "string"
+                    },
+                    "projectServerId": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "defaultConfig": {
+            "type": "object",
+            "required": [
+              "modelId",
+              "systemPrompt",
+              "temperature"
+            ],
+            "properties": {
+              "modelId": {
+                "type": "string"
+              },
+              "systemPrompt": {
+                "type": "string"
+              },
+              "temperature": {
+                "type": "number"
+              }
+            }
+          },
+          "minIterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10
+          },
+          "defaultPassCriteria": {
+            "type": "object",
+            "properties": {
+              "minimumPassRate": {
+                "type": "number"
+              }
+            }
+          }
+        }
+      },
+      "EvalSuiteFromFileSynced": {
+        "type": "object",
+        "required": [
+          "created",
+          "suite"
+        ],
+        "properties": {
+          "created": {
+            "type": "boolean",
+            "description": "True on the first upload of this declared id in the project; false on a later update of the same suite."
+          },
+          "suite": {
+            "$ref": "#/components/schemas/EvalSuiteDetail"
+          }
+        }
+      },
       "EvalSuiteDetail": {
         "type": "object",
         "required": [
@@ -11894,6 +12106,10 @@
         "properties": {
           "id": {
             "type": "string"
+          },
+          "declaredId": {
+            "type": "string",
+            "description": "The suite's declared file identity (`suite.id` in a suite file). Present on file-owned suites; absent on UI-authored suites, which have no declared id and cannot be claimed by `eval run --file`."
           },
           "name": {
             "type": [
@@ -12241,6 +12457,11 @@
             "type": "string",
             "maxLength": 256,
             "description": "Write-idempotency key. A repeat call with the same key (same actor and suite) returns the EXISTING run instead of creating and billing a second one. The `Idempotency-Key` header carries the same value and WINS over this field — it is the transport-level channel unattended clients control, whereas a body key could be shaped by model output."
+          },
+          "sourceHash": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "SHA-256 hex of the suite-file bytes that launched this run. Lowercase, 64 characters. Set by `eval run --file`; a UI or API launch that did not come from a file omits it."
           }
         },
         "additionalProperties": false

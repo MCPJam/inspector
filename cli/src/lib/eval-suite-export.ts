@@ -146,6 +146,40 @@ export function percentToFraction(percent: number): number | null {
 }
 
 /**
+ * Shift a decimal number two places left of the point, in DECIMAL.
+ *
+ * The inverse of {@link percentToFraction}: a suite file stores
+ * `passThreshold` as a fraction, and the hosted suite grades on a percent.
+ * The same discipline applies — refuse rather than approximate — so a
+ * threshold that cannot be written as a percent without losing a digit is
+ * not uploaded as a nearby value the dashboard would grade differently.
+ */
+export function fractionToPercent(fraction: number): number | null {
+  if (!Number.isFinite(fraction)) return null;
+  const text = plainDecimal(fraction);
+  const match = /^(-?)(\d+)(?:\.(\d+))?$/.exec(text);
+  if (!match) return null;
+
+  const [, sign, whole, decimals = ""] = match;
+  const digits = `${whole}${decimals}`;
+  const newPoint = whole.length + 2;
+  const padded = digits.padEnd(newPoint, "0");
+  const shifted =
+    newPoint >= padded.length
+      ? padded
+      : `${padded.slice(0, newPoint)}.${padded.slice(newPoint)}`;
+  const normalized = `${sign}${shifted}`
+    .replace(/^(-?)0+(?=\d)/, "$1")
+    .replace(/\.?0+$/, "");
+  const value = Number(
+    normalized === "" || normalized === "-" ? "0" : normalized
+  );
+
+  if (!Number.isFinite(value)) return null;
+  return plainDecimal(value) === normalized ? value : null;
+}
+
+/**
  * A number's shortest round-tripping decimal, never in exponential notation.
  *
  * `toString` switches to `1e-7` below 1e-6, and the comparison above is against
@@ -730,7 +764,10 @@ export function buildSuiteFileFromPlatform(
     mode: "agentWorkflow",
     reportingMode: "standard",
     suite: {
-      id: detail.id,
+      // File-owned suites keep the declared id the file authored. A UI suite
+      // has none, so export still writes the Convex document id — running that
+      // file back is the ownership refusal, not an attach.
+      id: detail.declaredId ?? detail.id,
       name: (detail.name ?? "").trim(),
       ...(detail.description === null || detail.description === undefined
         ? {}
