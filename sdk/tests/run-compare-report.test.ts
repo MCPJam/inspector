@@ -1,5 +1,5 @@
 /**
- * `buildRunCompareReport` — the adapter that gives `mcpjam eval compare` its
+ * `buildRunCompareReport` — the adapter that gives `mcpjam cloud eval compare` its
  * JSON and JUnit output.
  *
  * The two decisions worth pinning are both about what "failed" means:

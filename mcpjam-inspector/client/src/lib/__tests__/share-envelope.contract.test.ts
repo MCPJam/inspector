@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 import fixture from "../fixtures/share-envelope.json";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const hookSource = readFileSync(join(here, "../../hooks/useShares.ts"), "utf8");
+const hookSource = [
+  readFileSync(join(here, "../../hooks/useShares.ts"), "utf8"),
+  readFileSync(join(here, "../../hooks/useOrgSharePolicy.ts"), "utf8"),
+].join("\n");
 
 describe("share envelope contract fixture", () => {
   it("pins the Convex refs and envelope keys", () => {
@@ -16,6 +19,9 @@ describe("share envelope contract fixture", () => {
       "shares:upsertShareMember",
       "shares:removeShareMember",
       "shares:revokeAllShares",
+      "orgSharePolicy:getOrgSharePolicy",
+      "orgSharePolicy:setOrgSharePolicy",
+      "orgSharePolicy:getEffectiveSharePolicyForProject",
     ]);
     expect(fixture.shareSettingsEnvelope).toMatchObject({
       resourceType: "conformanceRun",
@@ -28,9 +34,9 @@ describe("share envelope contract fixture", () => {
   // bound to something real. Comparing the imported JSON to a re-read of the
   // same file can never fail; these two assertions can.
   it("matches every ref the client actually calls", () => {
-    const called = [...hookSource.matchAll(/"(shares:[A-Za-z]+)"/g)].map(
-      (match) => match[1],
-    );
+    const called = [
+      ...hookSource.matchAll(/"((?:shares|orgSharePolicy):[A-Za-z]+)"/g),
+    ].map((match) => match[1]);
     expect(called.length).toBeGreaterThan(0);
 
     const pinned = new Set(Object.keys(fixture.convexRefs));
