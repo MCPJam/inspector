@@ -728,6 +728,40 @@ describe("v1 write routes", () => {
         expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
       });
 
+      it("launches an unattached project env when ephemeralEnvironment is true", async () => {
+        mockHappyCreate();
+        mockConvexQueries({
+          "testSuites:getTestSuite": () => ({
+            ...SUITE_DOC,
+            environmentIds: [],
+          }),
+          "projectEnvironments:getEnvironment": () => ({
+            environmentId: "env_other",
+            projectId: "p1",
+            name: "Adhoc",
+          }),
+          "projectEnvironments:resolveEnvironmentForLaunch": () =>
+            RESOLVED_ENVIRONMENT,
+        });
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          {
+            suiteId: "suite_1",
+            environmentId: "env_other",
+            ephemeralEnvironment: true,
+          }
+        );
+
+        expect(res.status).toBe(202);
+        expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+          environmentId: "env_other",
+          ephemeralEnvironment: true,
+        });
+      });
+
       it("auto-selects the sole attached environment when none is named", async () => {
         mockHappyCreate();
         mockEnvSuite();
@@ -1564,6 +1598,52 @@ describe("v1 write routes", () => {
         expect(disconnectAllServers).toHaveBeenCalledTimes(expected)
       );
     }
+
+    it("launches unattached environments when ephemeralEnvironment is true", async () => {
+      mockConvexQueries({
+        "testSuites:getTestSuite": () => ({
+          ...SUITE_DOC,
+          environmentIds: [],
+        }),
+        "projectEnvironments:getEnvironment": () => ({
+          environmentId: "env_adhoc",
+          projectId: "p1",
+          name: "Adhoc",
+        }),
+        "projectEnvironments:resolveEnvironmentForLaunch": () => ({
+          environmentRef: {
+            environmentId: "env_adhoc",
+            name: "Adhoc",
+            revision: 1,
+          },
+          hostId: "host_claude",
+          hostConfigId: "hc_1",
+          selectedServerIds: ["s_env"],
+          effectiveServerIds: ["s_env"],
+          servers: [{ serverId: "s_env", name: "env" }],
+        }),
+        "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
+      });
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          ephemeralEnvironment: true,
+          targets: [{ environmentId: "env_adhoc" }],
+        }
+      );
+
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+        environmentId: "env_adhoc",
+        ephemeralEnvironment: true,
+      });
+      await drain(releaseGates, disconnectAllServers, 1);
+    });
 
     it("launches one run per target under a single minted group id", async () => {
       hostSuiteQueries();
