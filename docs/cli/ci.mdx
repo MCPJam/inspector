@@ -422,6 +422,29 @@ Poll `eval status` until `run.status` is terminal (`completed`, `failed`, or `ca
 The eval verdict does not control the exit code — `eval run` and `eval status` exit non-zero on API, transport, and usage errors instead. The pass/fail verdict lives in the JSON payload (`run.result`), so the final assertion above is what fails the job. `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
 </Note>
 
+#### Decision summary in human format
+
+When `eval status` runs in `--format human` and the run has finished with a failed result, it prints a decision summary block to stdout after the status payload. The block lists the overall pass rate and, for each failed case, the first stage that failed, the failure category, any recorded evidence (span IDs, prompt indexes, predicate reasons), and a suggested next action:
+
+```text
+Decision summary: failed — 0/3 cases passed (0%)
+  Fetch order (iteration-1, iteration 1)
+    first failed stage call
+    failure category arguments
+    expected tool calls: fetch_order
+    observed failure: server rejected arguments
+    evidence: span ids span-abc; reasons wrong argument type
+    next action: review the authored arguments against the tool input schema
+  Setup failure (iteration-2, iteration 2)
+    no first failed stage — did not reach the server's stages
+    failure category setup
+    next action: check the server connection and environment configuration
+```
+
+The block is only emitted in `--format human` — `--format json` output is byte-identical to before. If the iteration data cannot be fetched (for example, a network error), the block is silently omitted rather than failing the status read.
+
+`eval gate` and `eval compare` also emit a decision summary in `--format human`, written to stderr alongside their existing gate report.
+
 Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval checks list/connect` (GitHub Checks integration), and more.
 
 ### Upload SDK eval results
