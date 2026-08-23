@@ -76,7 +76,25 @@ npx skills update
 
 ### Progressive Disclosure
 
-When you have skills available, MCPJam injects a lightweight list of all skill names and descriptions into the LLM's system prompt. The LLM decides which skills are relevant to your prompt and calls `loadSkill` to load only the instructions it needs. Once a skill is loaded, the LLM can also browse and read its supporting files using `listSkillFiles` and `readSkillFile`.
+When you have skills available, MCPJam inlines the skill catalog — each skill's name and a one-line description — directly into the LLM's system prompt. The LLM decides which skills are relevant to your prompt and calls `loadSkill` to load only the full instructions it needs. Once a skill is loaded, the LLM can also browse and read its supporting files using `listSkillFiles` and `readSkillFile`.
+
+The catalog is not a tool call. There is no general `listSkills` tool — a turn with no skills gets no skill tools and no catalog section at all, so an empty project never spends a discovery turn on tools that would return nothing.
+
+#### Catalog Size Limit
+
+The catalog is capped at **2% of the model's context window** (MCPJam follows OpenAI's plugin guidance here, measured in characters at roughly 4 characters per token). When a model definition carries no context length, the cap falls back to **8,000 characters**.
+
+If your skills do not fit, MCPJam shortens descriptions first, and only omits whole skills as a last resort. An omission is always reported in the catalog itself:
+
+```
+(3 more skills could not be listed within this model's skill-metadata budget.)
+```
+
+An omitted skill is invisible to the model and cannot be loaded, so keep skill descriptions to a single line if you have many skills installed.
+
+#### Catalog Fetch Failures (Hosted)
+
+In the hosted app, the catalog is fetched from your project when the prompt is built, with a **3 second timeout**. If that fetch fails or times out, the turn proceeds with no skills rather than failing — the LLM sees no catalog and no skill tools. MCPJam records the failure separately from a genuinely empty project, so a run that silently lost its skills is distinguishable after the fact.
 
 ### Deterministic Injection
 
@@ -96,12 +114,22 @@ The `/` picker works in both local and hosted modes. In the hosted app, it lists
 
 ## LLM Tool Integration
 
-When skills are available, the LLM has access to three tools:
+When at least one skill is available, the LLM is given `loadSkill`, and — on surfaces that can serve supporting files — the two file tools as well:
 
-| Tool | Description |
-|------|-------------|
-| `loadSkill(name)` | Load the full skill instructions by name |
-| `listSkillFiles(name)` | List all files in the skill directory |
-| `readSkillFile(name, path)` | Read the content of a specific supporting file |
+| Tool | Description | When advertised |
+|------|-------------|-----------------|
+| `loadSkill(name)` | Load the full skill instructions by name | Whenever the turn has at least one skill |
+| `listSkillFiles(name)` | List all files in the skill directory | Only when the turn's skills can carry supporting files |
+| `readSkillFile(name, path)` | Read the content of a specific supporting file | Only when the turn's skills can carry supporting files |
 
-These tools allow the LLM to progressively discover and load skill content as needed during a conversation, rather than injecting all skill content upfront.
+The file tools are not advertised everywhere, because promising them for skills that have no files invites the model to go looking:
+
+- **Local and hosted Playground chat** — all three tools.
+- **Eval runs with pinned skills** — `loadSkill` only. Pinned eval skills are `SKILL.md`-only, so there are no files to browse.
+- **Environment-resolved turns** — all three, but only when the resolved set actually contains a file-bearing skill.
+
+Together with the inlined catalog, these tools let the LLM progressively load skill content as needed during a conversation, rather than injecting every skill's content upfront.
+
+<Note>
+`listSkills` is not a general discovery tool. It appears only when a connected MCP server provides skills through the [Skills over MCP](https://aaif.io/blog/skills-over-mcp) extension (SEP-2640), and it lists those server-provided skills only — their catalog is fetched from the server on demand rather than inlined in the prompt.
+</Note>

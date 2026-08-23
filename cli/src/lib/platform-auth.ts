@@ -37,6 +37,22 @@ const DEFAULT_LOGIN_TIMEOUT_MS = 5 * 60_000;
 export const LEGACY_KEY_REMEDY =
   "Legacy mcpjam_ API keys are not supported by platform commands. Create an sk_ key at https://app.mcpjam.com/settings/api-keys or run `mcpjam cloud login`.";
 
+export type ExplicitApiKeyInspection =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/**
+ * Classify an explicit `--api-key` without throwing. A `mcpjam_…` value is
+ * invalid for Cloud commands. `cloud status` reports this in-band; other
+ * commands still reject via {@link resolvePlatformCredential}.
+ */
+export function inspectExplicitApiKey(value: string): ExplicitApiKeyInspection {
+  if (value.startsWith(LEGACY_API_KEY_PREFIX)) {
+    return { ok: false, error: LEGACY_KEY_REMEDY };
+  }
+  return { ok: true };
+}
+
 export const MISSING_CLOUD_CREDENTIAL_MESSAGE =
   "Not logged in. Run `mcpjam cloud login`, or pass an sk_ API key via --api-key / MCPJAM_API_KEY.";
 
@@ -63,8 +79,9 @@ export function resolvePlatformCredential(
 
   const flagKey = options.apiKey?.trim();
   if (flagKey) {
-    if (flagKey.startsWith(LEGACY_API_KEY_PREFIX)) {
-      throw usageError(LEGACY_KEY_REMEDY);
+    const inspected = inspectExplicitApiKey(flagKey);
+    if (!inspected.ok) {
+      throw usageError(inspected.error);
     }
     return { kind: "api-key", getAuth: async () => flagKey };
   }
