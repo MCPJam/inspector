@@ -237,12 +237,20 @@ export function HostConfigCompareView({
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  // The flags gate the New Host template picker, not this matrix — so they
+  // apply only to the signed-in surface, where a preset column sits next to
+  // hosts you can actually create. In public (caniuse) mode the matrix is
+  // reference data about third-party hosts and shows every catalog row;
+  // gating it there hid Claude Code and Codex from every anonymous visitor,
+  // since the hooks read an unresolved flag as off and the flags are scoped
+  // to @mcpjam.com users.
   const excludedPresetTemplateIds = useMemo(() => {
     const excluded = new Set<string>();
+    if (presetOnly) return excluded;
     if (!claudeCodeEnabled) excluded.add("claude-code");
     if (!codexEnabled) excluded.add("codex");
     return excluded;
-  }, [claudeCodeEnabled, codexEnabled]);
+  }, [claudeCodeEnabled, codexEnabled, presetOnly]);
   const presets = useMemo(() => {
     if (!compareCatalog) {
       return { hosts: [], subjects: {} as Record<string, HostComparisonSubject> };
