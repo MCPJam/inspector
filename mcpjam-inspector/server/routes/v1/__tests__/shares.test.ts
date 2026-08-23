@@ -83,10 +83,24 @@ describe("v1 shares", () => {
       resourceId: RUN,
       projectId: PROJECT,
       mode: "anyone_with_link",
+      maxShareMode: null,
       policyVersion: 2,
       link: { token: "tok" },
       members: [],
     });
+    expect(body).not.toHaveProperty("inviteEpoch");
+  });
+
+  it("whitelists maxShareMode from the envelope", async () => {
+    queryMock.mockResolvedValue({
+      ...envelope,
+      maxShareMode: "invited_only",
+      inviteEpoch: 9,
+    });
+    const res = await call("GET", BASE);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.maxShareMode).toBe("invited_only");
     expect(body).not.toHaveProperty("inviteEpoch");
   });
 

@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mcpClientManagerMock, disconnectAllServersMock } = vi.hoisted(() => ({
-  mcpClientManagerMock: vi.fn(),
-  disconnectAllServersMock: vi.fn(),
+const { mcpClientManagerMock, disconnectAllServersMock, localRefreshMock } =
+  vi.hoisted(() => ({
+    mcpClientManagerMock: vi.fn(),
+    disconnectAllServersMock: vi.fn(),
+    localRefreshMock: vi.fn(),
+  }));
+
+// The authorization-server round trip belongs to local-oauth-refresh's own
+// tests; here it is mocked so these are about the connect path.
+vi.mock("../../../utils/local-oauth-refresh.js", () => ({
+  refreshTokensAgainstPrivateAuthorizationServer: localRefreshMock,
 }));
 
 vi.mock("@mcpjam/sdk", async () => {
@@ -20,6 +28,7 @@ vi.mock("@mcpjam/sdk", async () => {
 import type { Context } from "hono";
 import { createAuthorizedManager, callerContextFromHono } from "../auth.js";
 import { WebRouteError } from "../errors.js";
+import { __resetPrivateAuthorizationServerMaterialCacheForTests } from "../../../utils/hosted-oauth-refresh.js";
 
 // Faithful Hono Context stub: `get`, `var`, and `set` all read/write the same
 // store (in real Hono `c.get(k)` === `c.var[k]`). The delegated-auth header
@@ -44,6 +53,7 @@ describe("web auth manager batching", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+    __resetPrivateAuthorizationServerMaterialCacheForTests();
   });
 
   afterEach(() => {
@@ -379,6 +389,13 @@ describe("web auth manager batching", () => {
       expect(JSON.parse(init?.body as string)).toEqual({
         projectId: "project-1",
         serverId: "server-1",
+        // This builder is shared with the hosted /web routes, but in LOCAL
+        // mode this process is the one that can reach a private authorization
+        // server — so it declares that, exactly as the /api/mcp resolver does.
+        // Without it, every surface routed through createAuthorizedManager
+        // (chat-v2, evals, environments, swarm runs, harness-mcp) still died
+        // at the first token expiry against a localhost OAuth server.
+        localRuntime: true,
       });
       return new Response(
         JSON.stringify({
@@ -420,6 +437,87 @@ describe("web auth manager batching", () => {
       })
     ).resolves.toEqual({ accessToken: "new-hosted-token" });
     expect(global.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("recovers a private-authorization-server credential BEFORE connecting", async () => {
+    // The batch cannot return a token — the backend structurally cannot refresh
+    // an authorization server on the user's machine — so it reports why. Without
+    // this pre-connect pass the fallback only ever covered a mid-session 401,
+    // and the FIRST connect after expiry failed with "requires OAuth
+    // authentication. Please complete the OAuth flow first", to a user who had.
+    global.fetch = vi.fn(async (input, init) => {
+      const url = fetchUrl(input);
+      if (url.endsWith("/web/authorize-batch")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              "server-1": {
+                ok: true,
+                role: "member",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                // No token, and the reason it is missing.
+                oauthUnavailableReason: "private_authorization_server",
+                serverConfig: {
+                  transportType: "http",
+                  url: "http://localhost:8000/mcp",
+                  headers: {},
+                  useOAuth: true,
+                },
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/web/oauth/force-refresh")) {
+        expect(JSON.parse(init?.body as string).localRuntime).toBe(true);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            code: "private_authorization_server",
+            message: "Authorization server is on a private address.",
+            refresh: {
+              authorizationServerUrl: "http://localhost:9000",
+              serverUrl: "http://localhost:8000/mcp",
+              oauthResourceUrl: "http://localhost:8000",
+              clientId: "client-1",
+              refreshToken: "stored-refresh-token",
+            },
+          }),
+          { status: 409, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      if (url.endsWith("/web/oauth/import-tokens")) {
+        return new Response("{}", { status: 200 });
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    }) as typeof fetch;
+
+    localRefreshMock.mockResolvedValue({
+      access_token: "locally-refreshed",
+      token_type: "Bearer",
+    });
+
+    await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000
+    );
+
+    // The connect carries the locally-minted token, and the live-401 handler is
+    // attached even though the batch returned none.
+    const config = mcpClientManagerMock.mock.calls[0]?.[0]?.["server-1"];
+    expect(config).toEqual(
+      expect.objectContaining({
+        requestInit: {
+          headers: { Authorization: "Bearer locally-refreshed" },
+        },
+        onUnauthorized: expect.any(Function),
+      })
+    );
   });
 
   it("maps invalid hosted refresh tokens to reconnect details", async () => {

@@ -76,6 +76,7 @@ import {
   getBillingUpsellTeaser,
 } from "@/lib/billing-upsell";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
+import { OrganizationSharingPolicyCard } from "./organization/OrganizationSharingPolicyCard";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
@@ -1632,6 +1633,11 @@ function OrganizationPage({
               ) : null}
             </CardContent>
           </Card>
+
+          <OrganizationSharingPolicyCard
+            organizationId={organization._id}
+            isAdmin={canEdit}
+          />
 
           <Card className="border-border/60">
             <CardHeader className="pb-2">
