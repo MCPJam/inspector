@@ -1560,6 +1560,7 @@ test("eval status renders an actionable decision summary for failed runs", async
     assert.match(run.stdout, /first failed stage call/);
     assert.match(run.stdout, /next action: review the authored arguments/);
     assert.match(run.stdout, /View: /);
+    assert.equal(run.stderr.includes("Decision summary:"), false);
   } finally {
     await fixture.close();
   }

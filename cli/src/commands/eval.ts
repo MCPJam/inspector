@@ -1015,7 +1015,11 @@ async function runEvalGate(
   writeResult({ gate: report, exitCode }, globalOptions.format);
   if (globalOptions.format === "human") {
     process.stderr.write(`${formatGateReport(report)}\n`);
-    writeEvalDecisionSummary(globalOptions.format, decisionSummary);
+    writeEvalDecisionSummary(
+      globalOptions.format,
+      decisionSummary,
+      process.stderr
+    );
   }
   if (exitCode !== 0) {
     setProcessExitCode(exitCode);
@@ -2171,7 +2175,11 @@ export function registerEvalCommands(program: Command): void {
         suiteId: result.run.suiteId,
         runId: result.run.id,
       });
-      writeEvalDecisionSummary(globalOptions.format, decisionSummary);
+      writeEvalDecisionSummary(
+        globalOptions.format,
+        decisionSummary,
+        process.stdout
+      );
     }
   );
 

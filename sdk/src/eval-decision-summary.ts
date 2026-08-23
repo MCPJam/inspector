@@ -1,5 +1,4 @@
 import {
-  MAX_EVIDENCE_REASONS,
   stageDerivationSchema,
   STAGE_ANALYZER_VERSION,
   type FailureCategory,
@@ -150,15 +149,9 @@ function collectEvidence(rows: StageResultRow[]): EvalDecisionSummaryCase["evide
   }
 
   const evidence = {
-    ...(spanIds.length > 0
-      ? { spanIds: spanIds.slice(0, MAX_EVIDENCE_REASONS) }
-      : {}),
-    ...(promptIndexes.length > 0
-      ? { promptIndexes: promptIndexes.slice(0, MAX_EVIDENCE_REASONS) }
-      : {}),
-    ...(predicateReasons.length > 0
-      ? { predicateReasons: predicateReasons.slice(0, MAX_EVIDENCE_REASONS) }
-      : {}),
+    ...(spanIds.length > 0 ? { spanIds } : {}),
+    ...(promptIndexes.length > 0 ? { promptIndexes } : {}),
+    ...(predicateReasons.length > 0 ? { predicateReasons } : {}),
   };
   return Object.keys(evidence).length > 0 ? evidence : undefined;
 }
@@ -305,14 +298,20 @@ export function formatEvalDecisionSummary(
   ];
 
   for (const item of summary.cases) {
-    lines.push(`  ${item.title} (${item.id}, iteration ${item.iterationNumber})`);
     lines.push(
-      `    ${
-        item.firstFailedStage
+      item.title === item.id
+        ? `  ${item.title} (iteration ${item.iterationNumber})`
+        : `  ${item.title} (${item.id}, iteration ${item.iterationNumber})`
+    );
+    const firstFailedStageLine =
+      item.stageChainStatus === "verified"
+        ? item.firstFailedStage
           ? `first failed stage ${item.firstFailedStage}`
           : "no first failed stage — did not reach the server's stages"
-      }`
-    );
+        : item.stageChainStatus === "unverified"
+          ? "first failed stage not established because the stage chain was unverified"
+          : "no stage metadata was recorded for this run, so no first failed stage is known";
+    lines.push(`    ${firstFailedStageLine}`);
     lines.push(
       `    ${
         item.failureCategory
@@ -349,8 +348,6 @@ export function formatEvalDecisionSummary(
     }
     if (item.stageChainStatus === "unverified") {
       lines.push("    stage chain unverified — chain omitted");
-    } else if (item.stageChainStatus === "absent") {
-      lines.push("    no stage metadata recorded for this run");
     }
     if (item.stageAnalyzerVersionAhead) {
       lines.push(

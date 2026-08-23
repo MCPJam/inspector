@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildEvalDecisionSummary,
+  buildEvalDecisionSummaryFromIterations,
   formatEvalDecisionSummary,
 } from "../src/eval-decision-summary.js";
 import { STAGE_ANALYZER_VERSION } from "../src/contract/index.js";
@@ -86,6 +87,29 @@ describe("eval decision summary", () => {
     expect(text).toContain("prompt indexes 0");
     expect(text).toContain("reasons wrong argument");
     expect(text).not.toContain("root cause");
+
+    const evidenceSummary = buildEvalDecisionSummary({
+      total: 1,
+      passed: 0,
+      failed: 1,
+      iterationWalkComplete: true,
+      cases: [
+        inputCase({
+          stageResults: stages.map((row, index) => ({
+            ...row,
+            evidence: { spanIds: [`span-${index}`] },
+          })),
+        }),
+      ],
+    });
+    expect(evidenceSummary.cases[0]?.evidence?.spanIds).toEqual([
+      "span-0",
+      "span-1",
+      "span-2",
+      "span-3",
+      "span-4",
+      "span-5",
+    ]);
   });
 
   it("keeps setup abort honest and preserves all non-verdict states", () => {
@@ -136,12 +160,15 @@ describe("eval decision summary", () => {
   });
 
   it("omits a quarantined chain and reports pre-D1 metadata distinctly", () => {
-    expect(
-      render({
-        stageResults: [{ stage: "connection", state: "failed" }],
-        stageResultsUnverified: true,
-      })
-    ).toContain("stage chain unverified — chain omitted");
+    const unverified = render({
+      stageResults: [{ stage: "connection", state: "failed" }],
+      stageResultsUnverified: true,
+    });
+    expect(unverified).toContain("stage chain unverified — chain omitted");
+    expect(unverified).toContain(
+      "first failed stage not established because the stage chain was unverified"
+    );
+    expect(unverified).not.toContain("did not reach the server's stages");
 
     const preD1 = formatEvalDecisionSummary(
       buildEvalDecisionSummary({
@@ -159,10 +186,34 @@ describe("eval decision summary", () => {
         ],
       })
     );
-    expect(preD1).toContain("no stage metadata recorded for this run");
+    expect(preD1).toContain(
+      "no stage metadata was recorded for this run, so no first failed stage is known"
+    );
+    expect(preD1).not.toContain("did not reach the server's stages");
+    expect(preD1).toContain("no stage metadata was recorded for this run");
     expect(preD1).toContain(
       "next action: inspect the case trace; no failure category was recorded"
     );
+  });
+
+  it("omits a redundant id parenthetical when the iteration has no title", () => {
+    const summary = buildEvalDecisionSummaryFromIterations(
+      [
+        {
+          id: "iteration-1",
+          title: null,
+          iterationNumber: 1,
+          result: "failed",
+          expectedToolCalls: [],
+          actualToolCalls: [],
+          stageResults: undefined,
+        },
+      ],
+      { iterationWalkComplete: true }
+    );
+    const text = formatEvalDecisionSummary(summary);
+    expect(text).toContain("  iteration-1 (iteration 1)");
+    expect(text).not.toContain("iteration-1 (iteration-1, iteration 1)");
   });
 
   it("flags a version-ahead chain without filtering the reported derivation", () => {

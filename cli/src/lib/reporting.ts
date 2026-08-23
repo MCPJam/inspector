@@ -43,9 +43,10 @@ export function writeReporterResult(
 export function writeEvalDecisionSummary(
   format: string,
   summary: Parameters<typeof formatEvalDecisionSummary>[0] | undefined,
+  destination: Pick<NodeJS.WriteStream, "write"> = process.stdout,
 ): void {
   if (format !== "human" || !summary) return;
-  process.stdout.write(`${formatEvalDecisionSummary(summary)}\n`);
+  destination.write(`${formatEvalDecisionSummary(summary)}\n`);
 }
 
 /**
