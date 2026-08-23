@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
+import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
 import { Github } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -83,12 +84,25 @@ export function GithubInstallCallbackRoute() {
   // (`useGithubChecksSettings`'s `canQuery`); this one has to gate a one-shot
   // effect rather than a resubscribing query, which is exactly why it was easy
   // to miss: a `useQuery` simply re-runs once auth lands, an action does not.
-  const { isLoading: isAuthLoading, isAuthenticated } = useConvexAuth();
+  // THE WORKOS USER IS THE ONE THAT DECIDES, and `useConvexAuth` alone will not
+  // do. Guests are authenticated to Convex on purpose: `unified-convex-auth`
+  // hands the provider a guest token and a `GUEST_USER_PLACEHOLDER` so guests
+  // travel the same provider chain as members, and `useEnsureDbUser` marks them
+  // ready too. So `isAuthenticated && isUserReady` is TRUE for a guest, who
+  // would then call a `signedInAction` and get the generic binding failure —
+  // while the signed-out branch below never fired at all.
+  //
+  // GitHub Checks is member-only, and the sibling surface already reads it this
+  // way (`useGithubChecksSettings`: `isAuthenticated && user && isUserReady`).
+  // This is the same rule, not a guest special case.
+  const { user: workosUser, isLoading: isWorkosLoading } = useAuth();
+  const { isLoading: isConvexAuthLoading, isAuthenticated } = useConvexAuth();
   const isUserReady = useDbUserReady();
-  // `isUserReady` matters as well as `isAuthenticated`: the actions resolve the
-  // WorkOS identity to a Convex user row, which does not exist until the
-  // bootstrap that provisions it has finished.
-  const canCall = isAuthenticated && isUserReady;
+  const isAuthSettling = isWorkosLoading || isConvexAuthLoading;
+  // `isUserReady` matters as well: the actions resolve the WorkOS identity to a
+  // Convex user row, which does not exist until the bootstrap that provisions
+  // it has finished.
+  const canCall = Boolean(isAuthenticated && workosUser && isUserReady);
 
   // GitHub's redirect is a full page load, but React 18 StrictMode runs effects
   // twice in development — and both legs CONSUME a one-time state, so a second
@@ -118,10 +132,11 @@ export function GithubInstallCallbackRoute() {
     // Wait, rather than fail, while auth is still settling. `startedRef` is
     // deliberately NOT set on this path: the effect must be free to run again
     // when the token lands, which is the whole point of waiting.
-    if (isAuthLoading || !canCall) {
-      // Signed out for real — auth finished resolving and said no. Say so
-      // instead of spinning forever on "Finishing up with GitHub…".
-      if (!isAuthLoading && !isAuthenticated) {
+    if (isAuthSettling || !canCall) {
+      // No WorkOS user once auth has settled — signed out, or a guest, which
+      // for a member-only surface is the same answer and the same instruction.
+      // Say it instead of spinning forever on "Finishing up with GitHub…".
+      if (!isAuthSettling && !workosUser) {
         setPhase({ kind: "failed", message: GITHUB_SIGNED_OUT_MESSAGE });
       }
       return;
@@ -189,9 +204,9 @@ export function GithubInstallCallbackRoute() {
     completeUserAuthorization,
     fail,
     installationId,
-    isAuthLoading,
-    isAuthenticated,
+    isAuthSettling,
     state,
+    workosUser,
   ]);
 
   const handleClaim = async (
