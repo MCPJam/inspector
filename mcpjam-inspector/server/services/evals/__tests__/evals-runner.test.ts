@@ -117,6 +117,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
   };
   const mcpClientManager = {
     getToolsForAiSdk: vi.fn(),
+    listTools: vi.fn(),
+    getConnectionStatus: vi.fn(),
     listServers: vi.fn(),
     // PR 3 of the engine consolidation: the engine that
     // `runIterationViaBackend` now drives calls
@@ -141,6 +143,8 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     convexClient.query.mockResolvedValue({ status: "running" });
     convexClient.action.mockResolvedValue(undefined);
     mcpClientManager.getToolsForAiSdk.mockResolvedValue({});
+    mcpClientManager.listTools.mockResolvedValue({ tools: [] });
+    mcpClientManager.getConnectionStatus.mockReturnValue("connected");
     mcpClientManager.listServers.mockReturnValue(["srv-1"]);
     mcpClientManager.executeTool.mockResolvedValue({
       content: [{ type: "text", text: "Pinned result" }],
