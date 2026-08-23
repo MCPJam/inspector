@@ -67,6 +67,8 @@ When your server exposes [MCP Apps](https://modelcontextprotocol.io/docs/extensi
 
 The Apps Extension tab contains two independent capability matrices that never cross-gate — toggling a row in one has no effect on the other.
 
+**Style tokens** — A read-only collapsible block below the two matrices listing every style variable the host sends to a view on `ui/initialize`. Variables are grouped by family (background, text, border, ring, type, shape, shadow) and show their light and dark values side by side. Color tokens include a split light/dark swatch over a checkerboard so transparent tokens (such as `…-ghost` variants) are distinguishable from opaque ones. Radius, shadow, and type tokens show a small preview of the property they drive. Click any row to copy `var(--token)` — the form you paste into a widget's own stylesheet to stay themed by the host. The block header shows the total token count; expand it to browse or search the full list. If the host sends no style variables, the block says so explicitly.
+
 **`window.openai` matrix (ChatGPT compat shim)** — Controls the `window.openai.*` surface advertised to apps using the ChatGPT compatibility shim. A master **Inject window.openai** toggle enables or disables injection entirely; a collapsed per-method disclosure lets you activate individual methods to build an exact subset from scratch. Switching on any single method turns injection on with only that method enabled; turning the last method off disables injection again.
 
 **`app.*` matrix (SEP-1865 spec bridge)** — Controls the `app.*` surface advertised to apps using the primary MCP Apps protocol. A master **MCP App support** switch advertises the MCP UI client extension (`io.modelcontextprotocol/ui`). The matrix rows include:
