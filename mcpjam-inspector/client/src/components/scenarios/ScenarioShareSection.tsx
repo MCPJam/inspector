@@ -9,6 +9,7 @@ import {
 } from "@/hooks/useScenarios";
 import { buildScenarioLink } from "@/lib/scenario-session";
 import {
+  applyShareCeilingToScenarioOptions,
   scenarioAccessPresetFromSettings,
   settingsFromScenarioAccessPreset,
   type ScenarioAccessPreset,
@@ -79,26 +80,31 @@ export function ScenarioShareSection({
   );
 
   const presets = useMemo(
-    () => [
-      {
-        value: "invited_only",
-        label: "Invited users only",
-        description: "Only people you invite by email can open this scenario.",
-      },
-      {
-        value: "link_guests",
-        label: "Anyone with the link (guests included)",
-        description:
-          "Anyone with the link can open the scenario, including guests without an account.",
-      },
-      {
-        value: "project",
-        label: projectLabel,
-        description:
-          "Signed-in members of this project can open the scenario with the link. Guests cannot.",
-      },
-    ],
-    [projectLabel],
+    () =>
+      applyShareCeilingToScenarioOptions(
+        [
+          {
+            value: "invited_only",
+            label: "Invited users only",
+            description:
+              "Only people you invite by email can open this scenario.",
+          },
+          {
+            value: "link_guests",
+            label: "Anyone with the link (guests included)",
+            description:
+              "Anyone with the link can open the scenario, including guests without an account.",
+          },
+          {
+            value: "project",
+            label: projectLabel,
+            description:
+              "Signed-in members of this project can open the scenario with the link. Guests cannot.",
+          },
+        ],
+        settings.maxShareMode,
+      ),
+    [projectLabel, settings.maxShareMode],
   );
 
   const updateSettings = (next: ScenarioSettings) => {
