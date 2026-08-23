@@ -168,6 +168,7 @@ const CASE_STATUSES = new Set([
 function runSide(value: unknown): Rec {
   const run = isRecord(value) ? value : {};
   const summary = isRecord(run.summary) ? run.summary : null;
+  const environment = isRecord(run.environment) ? run.environment : null;
   return {
     id: str(run.id),
     runNumber: countOf(run.runNumber),
@@ -182,11 +183,25 @@ function runSide(value: unknown): Rec {
           passRate: countOf(summary.passRate),
         }
       : null,
+    ...(environment
+      ? {
+          environment: {
+            id: str(environment.id ?? environment.environmentId),
+            name: strOrNull(environment.name),
+          },
+        }
+      : {}),
+    ...(typeof run.effectiveModelId === "string"
+      ? { effectiveModelId: run.effectiveModelId }
+      : {}),
+    ...(run.modelSource === "client_default" || run.modelSource === "override"
+      ? { modelSource: run.modelSource }
+      : {}),
   };
 }
 
 export type RunCompareBaseline = {
-  policy: "previous_completed" | "run";
+  policy: "previous_completed" | "previous_completed_same_environment" | "run";
   baseRunId: string;
 };
 

@@ -43,6 +43,8 @@ type CloudStatusReport = {
   credential: {
     source: string;
     kind: string;
+    valid: boolean | null;
+    error?: string;
     redactedKey?: string;
     envShadowsOauth: boolean;
     storedOauthPresent: boolean;
@@ -50,6 +52,8 @@ type CloudStatusReport = {
   deployment: {
     apiUrl: string;
     source: string;
+    valid: boolean;
+    error?: string;
   };
   project: {
     selector: string | null;
@@ -106,7 +110,7 @@ export function registerCloudLinkCommands(cloud: Command): void {
       }
 
       const inspection = inspectProjectLink();
-      let ok = true;
+      let ok = credential.valid !== false && deployment.valid;
       let projectSelectorFailed = false;
       let projectScopeDescription = describeProjectScope({
         kind: "project",
@@ -165,6 +169,8 @@ export function registerCloudLinkCommands(cloud: Command): void {
         credential: {
           source: credential.source,
           kind: credential.kind,
+          valid: credential.valid,
+          ...(credential.error ? { error: credential.error } : {}),
           ...(credential.redactedKey
             ? { redactedKey: credential.redactedKey }
             : {}),
@@ -174,6 +180,8 @@ export function registerCloudLinkCommands(cloud: Command): void {
         deployment: {
           apiUrl: deployment.apiUrl,
           source: deployment.source,
+          valid: deployment.valid,
+          ...(deployment.error ? { error: deployment.error } : {}),
         },
         project: {
           selector: projectSelector,
