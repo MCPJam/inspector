@@ -63,6 +63,7 @@ import {
 } from "./helpers";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
+import type { CrossHostEnvironment } from "./cross-host/use-cross-host-data";
 import { GroupCrossHostDashboard } from "./group-cross-host-dashboard";
 import {
   CASE_ROW_SORT_STORAGE_KEY,
@@ -85,6 +86,12 @@ export interface SuiteResultsSplitProps {
    * the resolved host of an environment-backed run, which has no attachment.
    */
   hostNamesById: Map<string, string | null>;
+  /**
+   * The suite's project environments, owned by the parent like `hostNamesById`.
+   * Without them the matrix can only place a run by its resolved host, so two
+   * model cells on one client share a column.
+   */
+  environments?: readonly CrossHostEnvironment[];
   /**
    * The full "All runs" surface (TestCasesOverview), built by the parent so we
    * don't re-thread its ~20 props. Shown when the "All runs" rail item is
@@ -492,6 +499,7 @@ export function SuiteResultsSplit({
   runs,
   allIterations,
   hostNamesById,
+  environments,
   allRunsPane,
   onTestCaseClick,
   onOpenCaseIteration,
@@ -920,6 +928,7 @@ export function SuiteResultsSplit({
                   onCellOpen={handleCellOpen}
                   onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                   hostNamesById={hostNamesById}
+                  environments={environments}
                 />
               </div>
             ) : (
@@ -950,6 +959,7 @@ export function SuiteResultsSplit({
                 onCellOpen={handleCellOpen}
                 onDeleteTestCasesBatch={onDeleteTestCasesBatch}
                 hostNamesById={hostNamesById}
+                environments={environments}
               />
             </div>
           ) : (

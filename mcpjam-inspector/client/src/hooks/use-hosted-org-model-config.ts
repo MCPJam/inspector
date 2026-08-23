@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useConvexAuth, useQuery } from "convex/react";
 import type { OrgModelProvider } from "@/hooks/use-org-model-config";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 
 export type HostedOrgModelConfig = {
   providers: OrgModelProvider[];
@@ -27,7 +28,8 @@ export function useHostedOrgModelConfig({
   disabled?: boolean;
 }): HostedOrgModelConfig | undefined {
   const { isAuthenticated } = useConvexAuth();
-  const shouldQuery = isAuthenticated && !disabled;
+  const isUserReady = useDbUserReady();
+  const shouldQuery = isAuthenticated && isUserReady && !disabled;
 
   const projectConfig = useQuery(
     "organizationModelProviders:getVisibleConfigForProject" as any,
