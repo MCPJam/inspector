@@ -209,6 +209,30 @@ describe("ScenarioShareSection", () => {
     expect(screen.getByText("pending@example.com")).toBeInTheDocument();
   });
 
+  it("disables the guest-link preset when the org ceiling is invited_only", async () => {
+    const user = userEvent.setup();
+    render(
+      <ScenarioShareSection
+        scenario={createScenario({ maxShareMode: "invited_only" })}
+        projectName="Acme"
+      />,
+    );
+
+    expect(
+      screen.getByText("Your organization limits sharing to invited users only."),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Invited users only/i }));
+    expect(
+      screen.getByRole("menuitemradio", {
+        name: /Anyone with the link/i,
+      }),
+    ).toHaveAttribute("data-disabled");
+    expect(
+      screen.getByRole("menuitemradio", { name: /Acme/i }),
+    ).not.toHaveAttribute("data-disabled");
+  });
+
   it("exposes a rotate-link kebab next to copy", () => {
     render(<ScenarioShareSection scenario={createScenario()} />);
     expect(screen.getByTestId("scenario-share-link-menu")).toBeInTheDocument();

@@ -121,6 +121,10 @@ const PLAIN_TOOLS = [
   "list_readiness_runs",
   "cancel_readiness_run",
   "get_readiness_report",
+  "start_conformance_run",
+  "get_conformance_run",
+  "list_conformance_runs",
+  "get_conformance_report",
   "run_eval_case",
   "run_eval_suite",
   "create_eval_suite",
@@ -141,6 +145,7 @@ const PLAIN_TOOLS = [
   "list_project_environments",
   "get_project_environment",
   "resolve_project_environment",
+  "ensure_adhoc_environment",
   // Sandbox image reads: the picker behind a suite's computer image.
   "list_sandbox_images",
   "get_sandbox_image",
@@ -210,6 +215,14 @@ const PLAIN_TOOLS = [
   "upsert_user_testing_member",
   "remove_user_testing_member",
   "rebind_user_testing_scenario",
+  "search_registry_directory",
+  "get_registry_directory_server",
+  "list_registry_directory_sources",
+  "list_registry_servers",
+  "list_registry_connections",
+  "install_registry_directory_server",
+  "install_registry_server",
+  "uninstall_registry_server",
 ];
 
 function stubPlatformFetch(routes: Record<string, unknown>) {
@@ -340,6 +353,10 @@ describe("platform tool registration", () => {
       "list_readiness_runs",
       "cancel_readiness_run",
       "get_readiness_report",
+      "start_conformance_run",
+      "get_conformance_run",
+      "list_conformance_runs",
+      "get_conformance_report",
       "list_eval_suites",
       "list_eval_suite_runs",
       "run_eval_case",
@@ -369,6 +386,7 @@ describe("platform tool registration", () => {
       "list_project_environments",
       "get_project_environment",
       "resolve_project_environment",
+      "ensure_adhoc_environment",
       "list_sandbox_images",
       "get_sandbox_image",
       "list_project_plugins",
@@ -428,6 +446,14 @@ describe("platform tool registration", () => {
       "upsert_user_testing_member",
       "remove_user_testing_member",
       "rebind_user_testing_scenario",
+      "search_registry_directory",
+      "get_registry_directory_server",
+      "list_registry_directory_sources",
+      "list_registry_servers",
+      "list_registry_connections",
+      "install_registry_directory_server",
+      "install_registry_server",
+      "uninstall_registry_server",
     ]);
     expect(registrations).toHaveLength(PLATFORM_CATALOG_OPERATIONS.length);
     for (const registration of registrations) {
@@ -474,6 +500,7 @@ describe("platform tool registration", () => {
       // one. Neither destroys a record, so both annotate as plain writes.
       "start_claude_readiness_run",
       "start_openai_readiness_run",
+      "start_conformance_run",
       "cancel_readiness_run",
       "run_eval_case",
       "run_eval_suite",
@@ -492,6 +519,9 @@ describe("platform tool registration", () => {
       // shared repository, everyone's pull requests), not destruction — the
       // annotation says write, and the gated tier is what warns.
       "connect_eval_check_repo",
+      // Content-addressed mint: repeating the same stack reuses one row.
+      // Nothing is destroyed and nothing is named.
+      "ensure_adhoc_environment",
       "create_project_server",
       "update_project_server",
       // Project create/update: both are cheap, both are metadata-only (the
@@ -503,6 +533,10 @@ describe("platform tool registration", () => {
       // Nothing is destroyed and nothing is enabled without a person
       // completing the flow, so it is a write rather than a destructive one.
       "connect_project_server",
+      // Install writes a servers row + provenance. Not a live connection and
+      // not a removal — exposure is the risk, announced as a plain write.
+      "install_registry_directory_server",
+      "install_registry_server",
       // Swarms authoring. Persists and is editable; nothing here removes
       // anything, and creating a journey starts nothing.
       "create_persona",
@@ -565,6 +599,7 @@ describe("platform tool registration", () => {
       // Rotating invalidates every copy of the share link that anyone holds.
       "rotate_user_testing_link",
       "remove_user_testing_member",
+      "uninstall_registry_server",
     ]);
 
     for (const registration of registrations) {
