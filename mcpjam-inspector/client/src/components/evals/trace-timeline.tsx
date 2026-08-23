@@ -233,6 +233,19 @@ export type TraceRevealSelection = {
   highlightSourceIndices: number[];
 };
 
+/**
+ * Compile-time exhaustiveness with a runtime fallback.
+ *
+ * Every known category must be handled above, or `never` stops the build.
+ * A category this build has never heard of still renders: the backend's
+ * primary eval-trace writer accepts spans as `v.any()`, so a newer producer
+ * reaches an older client, and dropping the row would hide real evidence.
+ */
+function assertExhaustiveCategory<T>(category: never, fallback: T): T {
+  void category;
+  return fallback;
+}
+
 function categoryRank(category: EvalTraceSpanCategory): number {
   switch (category) {
     case "connection":
@@ -247,6 +260,11 @@ function categoryRank(category: EvalTraceSpanCategory): number {
       return 2;
     case "error":
       return 3;
+    default:
+      // A category this build does not know still has to sort. The backend
+      // primary trace writer takes spans as `v.any()`, so a newer producer
+      // can reach an older client.
+      return assertExhaustiveCategory(category, 9);
   }
 }
 
@@ -585,7 +603,8 @@ function getWaterfallBarClass(
     return "trace-waterfall-bar-error";
   }
   if (row.kind !== "span") return "trace-waterfall-bar-step";
-  switch (row.span.category) {
+  const spanCategory = row.span.category;
+  switch (spanCategory) {
     case "llm":
       return "trace-waterfall-bar-llm";
     case "tool":
@@ -596,6 +615,8 @@ function getWaterfallBarClass(
       return "trace-waterfall-bar-step";
     case "error":
       return "trace-waterfall-bar-error";
+    default:
+      return assertExhaustiveCategory(spanCategory, "trace-waterfall-bar-step");
   }
 }
 
@@ -617,6 +638,8 @@ function getCategoryIconClass(
     case "connection":
     case "discovery":
       return "trace-waterfall-glyph-step";
+    default:
+      return assertExhaustiveCategory(category, "text-muted-foreground");
   }
 }
 
@@ -644,6 +667,8 @@ function getRowBorderAccentClass(
     case "connection":
     case "discovery":
       return "trace-waterfall-row-accent-step";
+    default:
+      return assertExhaustiveCategory(cat, "border-l-muted-foreground");
   }
 }
 
@@ -1111,6 +1136,9 @@ function CategoryGlyph({
     case "connection":
     case "discovery":
     case "step":
+      return <ListTree className={iconClass} aria-hidden />;
+    default:
+      // Unknown category: still draw a row rather than rendering nothing.
       return <ListTree className={iconClass} aria-hidden />;
   }
 }

@@ -8,9 +8,15 @@
  *   - `StageSetupSignals` — the derivation input (never spans)
  *   - synthetic `connection` / `discovery` spans — persistence/timeline only
  *
- * Multi-server observation is race-free: callers must use a two-phase
- * `Promise.allSettled` barrier (all connects, then all tools-lists) so every
- * expected target is observed before `buildSignals`.
+ * Multi-server observation is race-free: the caller must settle EVERY
+ * expected target (`Promise.allSettled`, which unlike `Promise.all` does not
+ * abort in-flight siblings) before calling `buildSignals`. Folding while one
+ * server's connect is still open would let a discovery failure decide the
+ * chain ahead of a connection failure that had not landed yet.
+ *
+ * Connect and tools/list are observed from ONE `getToolsForAiSdk` call per
+ * server — it ensures the session and lists in a single round trip, so
+ * probing them separately would bill the customer's server twice.
  */
 
 import {
@@ -74,21 +80,37 @@ function slimPhaseSignal(
 }
 
 /**
+ * The ONE metadata key this module owns.
+ *
+ * Everything the audit record carries nests under it. Iteration metadata is
+ * a flat open record shared by every producer, so a bare `truncated` (or
+ * `egressCanary`) at top level is a name collision waiting for the next
+ * writer that wants the same generic word.
+ */
+export const SETUP_AUDIT_METADATA_KEY = "stageSetupAudit";
+
+export type SetupAuditRecord = {
+  signals: StageSetupSignals;
+  egressCanary: unknown;
+  truncated?: true;
+};
+
+/**
  * Hard-cap the producer-owned audit blob. Over the cap, drop span ids so
  * the serialized payload shrinks; `truncated: true` marks the shed.
  */
 export function capSetupAuditMetadata(
   raw: {
-    stageSetupSignals: StageSetupSignals;
+    signals: StageSetupSignals;
     egressCanary: unknown;
   },
   capBytes: number = SETUP_SIGNALS_METADATA_CAP_BYTES
-): Record<string, unknown> {
+): SetupAuditRecord {
   const serialized = JSON.stringify(raw);
   if (serialized.length <= capBytes) return raw;
-  const signals = raw.stageSetupSignals;
+  const signals = raw.signals;
   return {
-    stageSetupSignals: {
+    signals: {
       ...(signals.connection
         ? { connection: slimPhaseSignal(signals.connection) }
         : {}),
@@ -127,11 +149,47 @@ function collectMessage(error: unknown): string {
   return "";
 }
 
+const CANCELLATION_ERROR_NAMES = new Set(["AbortError", "CanceledError"]);
+const CANCELLATION_CODES = new Set([
+  "ABORT_ERR",
+  "ERR_CANCELED",
+  "ERR_CANCELLED",
+]);
+
+/**
+ * True when the failure is OUR cancellation — the caller aborted, the run
+ * was stopped, the deadline fired — rather than anything the target did.
+ *
+ * Matched structurally (error `name` / `code`) and, only as a fallback, on
+ * phrases that cannot appear in a transport error. A loose `/abort/i` on
+ * the message would swallow `ECONNABORTED`, which is a real peer-side reset
+ * and belongs to `theirs`; that is why this never tests the bare word.
+ *
+ * Without this arm a cancelled run classifies `unknown`, and an `unknown`
+ * tools/list failure on a server whose initialize completed derives
+ * `discovery: failed` — reporting a user pressing stop as the server's
+ * fault, which is exactly the confidently-wrong funnel top D6 exists to
+ * prevent.
+ */
+function isCancellation(error: unknown, cause: unknown): boolean {
+  for (const candidate of [cause, error]) {
+    const name = stringField(candidate, "name");
+    if (name && CANCELLATION_ERROR_NAMES.has(name)) return true;
+    const code = stringField(candidate, "code");
+    if (code && CANCELLATION_CODES.has(code)) return true;
+  }
+  const message = `${collectMessage(cause)} ${collectMessage(error)}`;
+  return /\boperation was aborted\b|\brequest (?:was )?(?:aborted|cancell?ed)\b|\baborted by (?:the )?(?:user|caller)\b|\bthe user aborted a request\b/i.test(
+    message
+  );
+}
+
 /**
  * Classify a connect / tools-list failure for D6 attribution.
  *
- *   ours   — DNS (`EgressResolutionError` / ENOTFOUND), blocked egress,
- *            401/403 (suite-credential config), MCP −32000/−32001
+ *   ours   — our own cancellation, DNS (`EgressResolutionError` /
+ *            ENOTFOUND), blocked egress, 401/403 (suite-credential
+ *            config), MCP −32000/−32001
  *   theirs — refused / TLS / timeout-to-their-host / 5xx
  *   unknown — everything else
  *
@@ -140,6 +198,10 @@ function collectMessage(error: unknown): string {
  */
 export function classifySetupAttribution(error: unknown): SetupAttribution {
   const cause = unwrapEraNegotiationCause(error);
+
+  // Before every transport heuristic: a cancelled run says nothing about
+  // the target server.
+  if (isCancellation(error, cause)) return "ours";
 
   if (cause instanceof EgressResolutionError) return "ours";
   if (cause instanceof BlockedEgressTargetError) return "ours";
@@ -226,6 +288,13 @@ function foldPhase(
     else observed.push(row);
   }
 
+  // The phase never ran for ANY target — connect failed everywhere, so
+  // tools/list was never attempted. That is an absence of evidence, not a
+  // failed tools/list: emit no signal and let the stage fall through to
+  // `notReached` behind the connection failure. Folding it as `failed`
+  // would put a discovery verdict on a phase that never executed.
+  if (observed.length === 0) return undefined;
+
   const failures = observed.filter((row) => row.outcome === "failed");
   // A target that never settled is an incomplete observation → unknown.
   if (missing.length > 0) {
@@ -286,9 +355,6 @@ export type RunSetupObserver = {
       endedAt: number;
     }
   ) => void;
-  hasConnect: (serverId: string) => boolean;
-  hasToolsList: (serverId: string) => boolean;
-  connectOutcome: (serverId: string) => "ok" | "failed" | undefined;
   /**
    * Lazy, once per run, only on a theirs-shaped failure. Never called for
    * `ours`. Returns whether `GET ${convexHttpUrl}/health` succeeded.
@@ -383,9 +449,13 @@ export function createRunSetupObserver(
     ): StageSetupPhaseSignal | undefined => {
       if (!signal || signal.outcome !== "failed") return signal;
       if (signal.attribution !== "theirs") return signal;
+      // Absent when the canary never ran: "we did not check" and "we
+      // checked and our egress is down" are different states, and only
+      // `true` may ever earn `connection: failed`.
+      if (canaryResult === undefined) return signal;
       return {
         ...signal,
-        egressVerified: canaryResult === true,
+        egressVerified: canaryResult,
       };
     };
 
@@ -398,9 +468,6 @@ export function createRunSetupObserver(
   return {
     recordConnect: (serverId, init) => record(connects, serverId, init),
     recordToolsList: (serverId, init) => record(lists, serverId, init),
-    hasConnect: (serverId) => connects.has(serverId),
-    hasToolsList: (serverId) => lists.has(serverId),
-    connectOutcome: (serverId) => connects.get(serverId)?.outcome,
     ensureEgressCanary,
     buildSignals,
     buildSyntheticSpans: (runStartedAt) =>
@@ -413,20 +480,22 @@ export function createRunSetupObserver(
     buildAuditMetadata: () => {
       const signals = buildSignals();
       if (!signals) return undefined;
-      return capSetupAuditMetadata(
-        {
-          stageSetupSignals: signals,
-          egressCanary:
-            canaryResult === undefined
-              ? { ran: false }
-              : {
-                  ran: true,
-                  ok: canaryResult,
-                  at: (options.now ?? Date.now)(),
-                },
-        },
-        SETUP_SIGNALS_METADATA_CAP_BYTES
-      );
+      return {
+        [SETUP_AUDIT_METADATA_KEY]: capSetupAuditMetadata(
+          {
+            signals,
+            egressCanary:
+              canaryResult === undefined
+                ? { ran: false }
+                : {
+                    ran: true,
+                    ok: canaryResult,
+                    at: (options.now ?? Date.now)(),
+                  },
+          },
+          SETUP_SIGNALS_METADATA_CAP_BYTES
+        ),
+      };
     },
   };
 }

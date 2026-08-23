@@ -92,7 +92,11 @@ describe("run-level connect failure — D6 non-vacuity", () => {
     mcpClientManager.getConnectionStatus.mockReturnValue("disconnected");
     const refused = new Error("connect ECONNREFUSED 203.0.113.10:443");
     (refused as Error & { code: string }).code = "ECONNREFUSED";
-    mcpClientManager.listTools.mockRejectedValue(refused);
+    // Connect and tools/list are ONE round trip now: `getToolsForAiSdk`
+    // ensures the session before listing, so a connect miss surfaces
+    // as a rejection from it while `getConnectionStatus` stays
+    // disconnected — that pairing is what marks the connection phase.
+    mcpClientManager.getToolsForAiSdk.mockRejectedValue(refused);
 
     let detailsCalls = 0;
     convexClient.query.mockImplementation(async (ref: string) => {
@@ -188,7 +192,11 @@ describe("run-level connect failure — D6 non-vacuity", () => {
     mcpClientManager.getConnectionStatus.mockReturnValue("disconnected");
     const refused = new Error("connect ECONNREFUSED 203.0.113.10:443");
     (refused as Error & { code: string }).code = "ECONNREFUSED";
-    mcpClientManager.listTools.mockRejectedValue(refused);
+    // Connect and tools/list are ONE round trip now: `getToolsForAiSdk`
+    // ensures the session before listing, so a connect miss surfaces
+    // as a rejection from it while `getConnectionStatus` stays
+    // disconnected — that pairing is what marks the connection phase.
+    mcpClientManager.getToolsForAiSdk.mockRejectedValue(refused);
     pinnedFetchMock.mockResolvedValue({ ok: false });
 
     convexClient.query.mockImplementation(async (ref: string) => {
@@ -263,7 +271,11 @@ describe("run-level connect failure — D6 non-vacuity", () => {
     mcpClientManager.getConnectionStatus.mockReturnValue("disconnected");
     const refused = new Error("connect ECONNREFUSED 203.0.113.10:443");
     (refused as Error & { code: string }).code = "ECONNREFUSED";
-    mcpClientManager.listTools.mockRejectedValue(refused);
+    // Connect and tools/list are ONE round trip now: `getToolsForAiSdk`
+    // ensures the session before listing, so a connect miss surfaces
+    // as a rejection from it while `getConnectionStatus` stays
+    // disconnected — that pairing is what marks the connection phase.
+    mcpClientManager.getToolsForAiSdk.mockRejectedValue(refused);
 
     convexClient.query.mockImplementation(async (ref: string) => {
       if (ref === "testSuites:getTestSuiteRunDetails") {

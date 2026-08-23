@@ -175,9 +175,6 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -217,12 +214,17 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "state": "notApplicable",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -368,9 +370,6 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 0,
         "mismatchCount": 0,
@@ -418,12 +417,17 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "state": "notApplicable",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -672,9 +676,6 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 2,
         "mismatchCount": 0,
@@ -714,12 +715,17 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
             "state": "notApplicable",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -869,9 +875,6 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -910,12 +913,17 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
             "state": "notApplicable",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -1497,9 +1505,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -1559,12 +1564,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
             "state": "passed",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -1742,9 +1752,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "failureCategory": "userValue",
         "firstFailedStage": "userValue",
@@ -1809,12 +1816,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
             "state": "failed",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -1921,9 +1933,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 0,
         "mismatchCount": 0,
@@ -1971,12 +1980,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
             "state": "notApplicable",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -2124,9 +2138,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 2,
         "mismatchCount": 0,
@@ -2166,12 +2177,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
             "state": "notApplicable",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -2277,9 +2293,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -2323,12 +2336,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
             "state": "notApplicable",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -2428,9 +2446,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -2469,12 +2484,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
             "state": "notApplicable",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -2614,9 +2634,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -2674,12 +2691,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             "state": "passed",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -2801,9 +2823,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -2842,12 +2861,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             "state": "notApplicable",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -2962,9 +2986,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -3003,12 +3024,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             "state": "notApplicable",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -3108,9 +3134,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -3149,12 +3172,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
             "state": "notApplicable",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [
@@ -3264,9 +3292,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
-        "egressCanary": {
-          "ran": false,
-        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -3314,12 +3339,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
             "state": "passed",
           },
         ],
-        "stageSetupSignals": {
-          "connection": {
-            "outcome": "ok",
+        "stageSetupAudit": {
+          "egressCanary": {
+            "ran": false,
           },
-          "discovery": {
-            "outcome": "ok",
+          "signals": {
+            "connection": {
+              "outcome": "ok",
+            },
+            "discovery": {
+              "outcome": "ok",
+            },
           },
         },
         "stepResults": [

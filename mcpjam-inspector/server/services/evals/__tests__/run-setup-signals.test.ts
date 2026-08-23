@@ -8,7 +8,9 @@ import {
   classifySetupAttribution,
   connectSpanId,
   createRunSetupObserver,
+  SETUP_AUDIT_METADATA_KEY,
   toolsListSpanId,
+  type SetupAuditRecord,
 } from "../run-setup-signals.js";
 
 function nodeError(code: string, message = code): Error {
@@ -53,6 +55,34 @@ describe("classifySetupAttribution", () => {
 
   it("classifies everything else as unknown", () => {
     expect(classifySetupAttribution(new Error("something odd"))).toBe("unknown");
+  });
+
+  // A cancelled run says NOTHING about the target server. Without this arm
+  // an abort classifies `unknown`, and an `unknown` tools/list failure on a
+  // server whose initialize completed derives `discovery: failed` — the
+  // user pressing stop, reported as the server's fault.
+  it("classifies our own cancellation as ours, by name and by code", () => {
+    const abort = new Error("The operation was aborted");
+    abort.name = "AbortError";
+    expect(classifySetupAttribution(abort)).toBe("ours");
+    expect(classifySetupAttribution(nodeError("ABORT_ERR"))).toBe("ours");
+    expect(classifySetupAttribution(nodeError("ERR_CANCELED"))).toBe("ours");
+    const canceled = new Error("canceled");
+    canceled.name = "CanceledError";
+    expect(classifySetupAttribution(canceled)).toBe("ours");
+    expect(
+      classifySetupAttribution(new Error("This operation was aborted"))
+    ).toBe("ours");
+  });
+
+  // The guard on the cancellation heuristic: ECONNABORTED contains the word
+  // "aborted" and is a real peer-side reset, so a loose /abort/i would flip
+  // a measurable server failure into a setup abort.
+  it("keeps ECONNABORTED as theirs — the word 'aborted' is not enough", () => {
+    expect(classifySetupAttribution(nodeError("ECONNABORTED"))).toBe("theirs");
+    expect(
+      classifySetupAttribution(new Error("connect ECONNABORTED 10.0.0.1:443"))
+    ).toBe("theirs");
   });
 });
 
@@ -137,6 +167,22 @@ describe("createRunSetupObserver folding", () => {
       outcome: "failed",
       attribution: "unknown",
     });
+  });
+
+  // Absence of evidence, not evidence of failure: when connect fails for
+  // every target, tools/list never runs, so the phase reports nothing and
+  // the stage falls through to `notReached` behind the connection failure.
+  it("emits no signal for a phase that never ran for any target", () => {
+    const observer = createRunSetupObserver({ expectedServerIds: ["a"] });
+    observer.recordConnect("a", {
+      outcome: "failed",
+      error: nodeError("ECONNREFUSED"),
+      startedAt: 0,
+      endedAt: 1,
+    });
+    const signals = observer.buildSignals();
+    expect(signals?.connection).toMatchObject({ outcome: "failed" });
+    expect(signals?.discovery).toBeUndefined();
   });
 
   it("caps culprit span ids at 5", () => {
@@ -250,14 +296,19 @@ describe("createRunSetupObserver canary + spans", () => {
     });
     await observer.ensureEgressCanary();
     const audit = observer.buildAuditMetadata();
-    expect(audit?.stageSetupSignals).toMatchObject({
+    // ONE top-level metadata key. Iteration metadata is a flat open record
+    // shared by every producer, so the audit record nests rather than
+    // scattering generic words like `egressCanary` across it.
+    expect(Object.keys(audit ?? {})).toEqual([SETUP_AUDIT_METADATA_KEY]);
+    const record = audit?.[SETUP_AUDIT_METADATA_KEY] as SetupAuditRecord;
+    expect(record.signals).toMatchObject({
       connection: {
         outcome: "failed",
         attribution: "theirs",
         egressVerified: true,
       },
     });
-    expect(audit?.egressCanary).toEqual({ ran: true, ok: true, at: 99 });
+    expect(record.egressCanary).toEqual({ ran: true, ok: true, at: 99 });
     expect(JSON.stringify(audit).length).toBeLessThanOrEqual(2048);
   });
 
@@ -286,6 +337,29 @@ describe("createRunSetupObserver canary + spans", () => {
     expect(canary).not.toHaveBeenCalled();
   });
 
+  // "we did not check" and "we checked and our egress is down" are
+  // different states. Only an explicit `true` may ever earn
+  // `connection: failed`, so an unrun canary leaves the field absent
+  // rather than stamping a false.
+  it("omits egressVerified entirely when the canary never ran", () => {
+    const observer = createRunSetupObserver({
+      expectedServerIds: ["srv"],
+      canary: async () => true,
+    });
+    observer.recordConnect("srv", {
+      outcome: "failed",
+      error: nodeError("ECONNREFUSED"),
+      startedAt: 0,
+      endedAt: 1,
+    });
+    const connection = observer.buildSignals()?.connection;
+    expect(connection).toMatchObject({
+      outcome: "failed",
+      attribution: "theirs",
+    });
+    expect(connection && "egressVerified" in connection).toBe(false);
+  });
+
   it("shares one canary promise instead of polling", async () => {
     let resolveCanary!: (ok: boolean) => void;
     const canary = vi.fn(
@@ -310,7 +384,7 @@ describe("createRunSetupObserver canary + spans", () => {
 
   it("sheds span ids when the audit blob exceeds the cap", () => {
     const raw = {
-      stageSetupSignals: {
+      signals: {
         connection: {
           outcome: "failed" as const,
           attribution: "theirs" as const,
@@ -321,10 +395,7 @@ describe("createRunSetupObserver canary + spans", () => {
     };
     const capped = capSetupAuditMetadata(raw, 10);
     expect(capped.truncated).toBe(true);
-    expect(
-      (capped.stageSetupSignals as { connection?: { spanIds?: string[] } })
-        .connection?.spanIds
-    ).toBeUndefined();
+    expect(capped.signals.connection?.spanIds).toBeUndefined();
     expect(JSON.stringify(capped).length).toBeLessThan(JSON.stringify(raw).length);
   });
 });

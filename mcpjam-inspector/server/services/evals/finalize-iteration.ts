@@ -221,8 +221,9 @@ export function buildIterationFinishParams(args: {
   toolSignals?: ToolExposureSignals;
   /**
    * Folded run-level connect / tools-list evidence. Threaded into the
-   * analyzer; also persisted under `metadata.stageSetupSignals` so a v2
-   * verdict can be audited or recomputed.
+   * analyzer; the same signals are also persisted under
+   * `metadata.stageSetupAudit.signals` (see `setupAudit`) so a v2 verdict
+   * can be audited or recomputed.
    */
   setupSignals?: StageSetupSignals;
   /**

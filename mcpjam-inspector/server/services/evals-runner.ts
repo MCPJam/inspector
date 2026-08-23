@@ -614,71 +614,24 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   const firstError: { error: unknown; serverId: string; phase: SetupPhase }[] =
     [];
 
-  // Phase 1 — every connect is observed before any tools-list starts.
-  // `Promise.allSettled` does not abort in-flight siblings; we wait for all
-  // of them so folding cannot race.
-  await Promise.allSettled(
+  // ONE round trip per server. `getToolsForAiSdk` already ensures the
+  // session before it lists, so probing connect separately would make every
+  // lazily-connected run hit the customer's server twice for no new
+  // information. `Promise.allSettled` does not abort in-flight siblings, so
+  // this single barrier is what keeps folding race-free: every expected
+  // target has settled before `buildSignals` runs, and a discovery failure
+  // can never be folded while another server's connect is still open.
+  const perServerTools = await Promise.allSettled(
     args.serverIds.map(async (serverId) => {
       const startedAt = now();
-      if (args.mcpClientManager.getConnectionStatus(serverId) === "connected") {
-        observer?.recordConnect(serverId, {
-          outcome: "ok",
-          startedAt,
-          endedAt: now(),
-        });
-        return;
-      }
-      try {
-        // listTools ensureConnected; a throw before status flips is a connect miss.
-        await args.mcpClientManager.listTools(serverId);
-        observer?.recordConnect(serverId, {
-          outcome: "ok",
-          startedAt,
-          endedAt: now(),
-        });
-      } catch (error) {
-        const connected =
-          args.mcpClientManager.getConnectionStatus(serverId) === "connected";
-        const endedAt = now();
-        if (!connected) {
-          observer?.recordConnect(serverId, {
-            outcome: "failed",
-            error,
-            startedAt,
-            endedAt,
-          });
-          firstError.push({ error, serverId, phase: "connection" });
-          return;
-        }
-        observer?.recordConnect(serverId, {
-          outcome: "ok",
-          startedAt,
-          endedAt,
-        });
-        observer?.recordToolsList(serverId, {
-          outcome: "failed",
-          error,
-          startedAt,
-          endedAt,
-        });
-        firstError.push({ error, serverId, phase: "discovery" });
-      }
-    })
-  );
-
-  // Phase 2 — tools/list for every server whose connect settled ok and
-  // whose list has not already been recorded (a connect-ok + list-fail
-  // above already filled that slot).
-  const listTargets = observer
-    ? args.serverIds.filter(
-        (serverId) =>
-          observer.connectOutcome(serverId) === "ok" &&
-          !observer.hasToolsList(serverId)
-      )
-    : args.serverIds;
-  const perServerTools = await Promise.allSettled(
-    listTargets.map(async (serverId) => {
-      const startedAt = now();
+      const alreadyConnected =
+        args.mcpClientManager.getConnectionStatus(serverId) === "connected";
+      // One call cannot time the two phases apart. An already-connected
+      // server spent the whole call listing; a lazily-connected one is
+      // credited to connect, with the list window closing at the same
+      // instant. Neither phase ever claims more than the call took.
+      const splitAt = (endedAt: number) =>
+        alreadyConnected ? startedAt : endedAt;
       try {
         const tools = toolOptions
           ? await args.mcpClientManager.getToolsForAiSdk(
@@ -686,21 +639,48 @@ async function getEvalToolsForAiSdkOrThrow(args: {
               toolOptions
             )
           : await args.mcpClientManager.getToolsForAiSdk([serverId]);
-        observer?.recordToolsList(serverId, {
+        const endedAt = now();
+        observer?.recordConnect(serverId, {
           outcome: "ok",
           startedAt,
-          endedAt: now(),
+          endedAt: splitAt(endedAt),
+        });
+        observer?.recordToolsList(serverId, {
+          outcome: "ok",
+          startedAt: splitAt(endedAt),
+          endedAt,
         });
         return tools;
       } catch (error) {
+        const endedAt = now();
+        const connected =
+          args.mcpClientManager.getConnectionStatus(serverId) === "connected";
+        if (!connected || isMissingRuntimeServerError(error)) {
+          // A connect miss: tools/list never ran for this server, so it
+          // gets NO discovery observation. `foldPhase` reads that absence
+          // as "the phase never executed" rather than as a failed list.
+          observer?.recordConnect(serverId, {
+            outcome: "failed",
+            error,
+            startedAt,
+            endedAt,
+          });
+          firstError.push({ error, serverId, phase: "connection" });
+          return null;
+        }
+        observer?.recordConnect(serverId, {
+          outcome: "ok",
+          startedAt,
+          endedAt: splitAt(endedAt),
+        });
         observer?.recordToolsList(serverId, {
           outcome: "failed",
           error,
-          startedAt,
-          endedAt: now(),
+          startedAt: splitAt(endedAt),
+          endedAt,
         });
         firstError.push({ error, serverId, phase: "discovery" });
-        throw error;
+        return null;
       }
     })
   );
@@ -727,7 +707,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
 
   const flattened: ToolSet = {};
   for (const result of perServerTools) {
-    if (result.status === "fulfilled") {
+    if (result.status === "fulfilled" && result.value) {
       Object.assign(flattened, result.value);
     }
   }
