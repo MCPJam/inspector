@@ -12,7 +12,10 @@ import {
 import { useProjectServerAttachments } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
-import { EnvironmentComposer } from "@/components/environment-composer/environment-composer";
+import {
+  EnvironmentComposer,
+  EVALS_COMPOSER_SLOTS,
+} from "@/components/environment-composer/environment-composer";
 import {
   composerHasTarget,
   emptyComposerState,
@@ -335,6 +338,15 @@ export function CreateSuiteDialog({
                 disabled={isSaving}
                 testIdPrefix="create-suite"
                 inModal
+                slots={EVALS_COMPOSER_SLOTS}
+                clientDefaultLabel={
+                  (() => {
+                    const previewed =
+                      hosts.find((h) => h.hostId === previewedHostId) ??
+                      hosts[0];
+                    return previewed?.modelId ?? null;
+                  })()
+                }
               />
             </div>
           ) : hostsEnabled && projectId ? (

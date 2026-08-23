@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { DEFAULT_PLATFORM_API_BASE_URL } from "@mcpjam/sdk/platform";
 import { describeCloudCredential, redactCloudApiKey } from "../src/lib/credential-describe.js";
-import { CliError } from "../src/lib/output.js";
+import { LEGACY_KEY_REMEDY } from "../src/lib/platform-auth.js";
 
 function authFile(body: Record<string, unknown>): string {
   const directory = mkdtempSync(path.join(tmpdir(), "mcpjam-cred-"));
@@ -38,8 +38,10 @@ test("credential precedence is flag, usable env key, oauth, missing", () => {
     { env: { MCPJAM_API_KEY: "sk_env_zzzz" }, authFilePath }
   );
   assert.equal(flag.credential.source, "flag");
+  assert.equal(flag.credential.valid, true);
   assert.equal(flag.credential.redactedKey, "sk_…YYYY");
   assert.equal(flag.credential.envShadowsOauth, false);
+  assert.equal(flag.deployment.valid, true);
 
   const env = describeCloudCredential(
     {},
@@ -60,32 +62,37 @@ test("credential precedence is flag, usable env key, oauth, missing", () => {
     { env: {}, authFilePath: path.join(tmpdir(), "no-such-auth.json") }
   );
   assert.equal(missing.credential.source, "missing");
+  assert.equal(missing.credential.valid, null);
   assert.equal(missing.deployment.source, "default");
+  assert.equal(missing.deployment.valid, true);
   assert.equal(missing.deployment.apiUrl, DEFAULT_PLATFORM_API_BASE_URL);
 });
 
-test("legacy mcpjam_ flag keys are a usage error", () => {
-  assert.throws(
-    () => describeCloudCredential({ apiKey: "mcpjam_legacy" }, { env: {} }),
-    (error: unknown) =>
-      error instanceof CliError &&
-      error.code === "USAGE_ERROR" &&
-      /Legacy mcpjam_ API keys/.test(error.message)
+test("legacy mcpjam_ flag keys are reported without throwing", () => {
+  const described = describeCloudCredential(
+    { apiKey: "mcpjam_legacy_secret" },
+    { env: {} }
+  );
+  assert.equal(described.credential.valid, false);
+  assert.equal(described.credential.error, LEGACY_KEY_REMEDY);
+  assert.equal(described.credential.source, "flag");
+  assert.equal(described.credential.redactedKey, "mcpjam_…cret");
+  assert.doesNotMatch(
+    JSON.stringify(described),
+    /mcpjam_legacy_secret/
   );
 });
 
-test("invalid explicit API URLs are a usage error", () => {
-  assert.throws(
-    () =>
-      describeCloudCredential(
-        { apiKey: "sk_test", apiUrl: "not-a-url" },
-        { env: {} }
-      ),
-    (error: unknown) =>
-      error instanceof CliError &&
-      error.code === "USAGE_ERROR" &&
-      /Invalid --api-url/.test(error.message)
+test("invalid explicit API URLs are reported without throwing", () => {
+  const described = describeCloudCredential(
+    { apiKey: "sk_test_xxxxYYYY", apiUrl: "not-a-url" },
+    { env: {} }
   );
+  assert.equal(described.credential.valid, true);
+  assert.equal(described.deployment.valid, false);
+  assert.equal(described.deployment.apiUrl, "not-a-url");
+  assert.match(described.deployment.error ?? "", /Invalid --api-url/);
+  assert.equal(described.credential.redactedKey, "sk_…YYYY");
 });
 
 test("legacy mcpjam_ env keys fall through to stored OAuth", () => {
