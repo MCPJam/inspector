@@ -260,6 +260,21 @@ vi.mock("convex/react", () => ({
   useQuery: () => undefined,
 }));
 
+vi.mock("@/hooks/useOrgSharePolicy", () => ({
+  useOrgSharePolicy: () => ({
+    policy: {
+      maxShareMode: "anyone_with_link",
+      inviteAudience: "anyone",
+      updatedAt: null,
+    },
+    isLoading: false,
+    error: null,
+    isSaving: false,
+    setPolicy: vi.fn(),
+  }),
+  useEffectiveSharePolicy: () => ({ policy: undefined, isLoading: false }),
+}));
+
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),

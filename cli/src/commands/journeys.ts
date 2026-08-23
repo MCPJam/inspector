@@ -17,13 +17,13 @@ import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
- * `mcpjam journeys` — the CLI for what the product calls **Swarms**.
+ * `mcpjam cloud journeys` — the CLI for what the product calls **Swarms**.
  *
  * A journey is one persona pursuing a goal against one or more environments;
  * a journey RUN is what executing it produces. Those are the nouns here, not
  * "swarm", because a swarm is a container users author in the UI and the word
  * is badly overloaded in the codebase — `kind:"swarm"` and `swarmId` refer to
- * the *user-testing* product, which is `mcpjam scenarios`.
+ * the *user-testing* product, which is `mcpjam cloud scenarios`.
  *
  * BETA. Swarms is behind a per-organization flag. These reads work for any
  * project member; the writes (`run`, `cancel`) come back with a clear
