@@ -1,5 +1,5 @@
 import { StrictMode } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -223,6 +223,93 @@ describe("waiting for authentication", () => {
     );
     expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
     expect(mockCompleteInstallSetup).not.toHaveBeenCalled();
+  });
+
+  // ── The backstop ────────────────────────────────────────────────────────
+  //
+  // Auth that never becomes USABLE is not the same as auth that resolves to
+  // signed out: the WorkOS user is still there, so the signed-out branch never
+  // fires and the effect just keeps returning. This page has no other content,
+  // so without a backstop it shows "Finishing up with GitHub…" forever, with
+  // no error and nothing to click.
+
+  it("stops waiting when Convex rejects the token but the WorkOS user remains", async () => {
+    vi.useFakeTimers();
+    try {
+      // The terminal shape: both loading flags settled, a WorkOS user present,
+      // and Convex saying no. Convex's auth manager stops retrying here.
+      mockAuth.mockReturnValue({ isLoading: false, isAuthenticated: false });
+      mockWorkosAuth.mockReturnValue({
+        user: { id: "user_workos" },
+        isLoading: false,
+      });
+      renderCallback("?code=gh-code&state=raw-oauth-state");
+      expect(screen.getByRole("status").textContent).toContain("Finishing up");
+
+      act(() => {
+        vi.advanceTimersByTime(13_000);
+      });
+
+      expect(
+        screen.getByText(/could not confirm your MCPJam session/i)
+      ).toBeTruthy();
+      expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
+      // And a way out, not just a message.
+      expect(
+        screen.getByRole("button", { name: /back to github checks/i })
+      ).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops waiting when the Convex user row never provisions", async () => {
+    vi.useFakeTimers();
+    try {
+      // Signed in and authenticated, but `isUserReady` never flips. Same hang,
+      // different cause — which is why the backstop is a timer rather than a
+      // test of one particular signal.
+      mockUserReady.mockReturnValue(false);
+      renderCallback("?code=gh-code&state=raw-oauth-state");
+
+      act(() => {
+        vi.advanceTimersByTime(13_000);
+      });
+
+      expect(
+        screen.getByText(/could not confirm your MCPJam session/i)
+      ).toBeTruthy();
+      expect(mockCompleteUserAuthorization).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not fire the backstop once the leg has started", async () => {
+    vi.useFakeTimers();
+    try {
+      mockCompleteUserAuthorization.mockResolvedValue({
+        status: "pick_required",
+        linkSessionId: "sess",
+        installations: [],
+      });
+      renderCallback("?code=gh-code&state=raw-oauth-state");
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(mockCompleteUserAuthorization).toHaveBeenCalledTimes(1);
+
+      act(() => {
+        vi.advanceTimersByTime(30_000);
+      });
+
+      // A slow backend is not an auth failure, and must not be relabelled one.
+      expect(
+        screen.queryByText(/could not confirm your MCPJam session/i)
+      ).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("says so plainly when auth resolves to signed out", async () => {

@@ -155,3 +155,17 @@ export const GITHUB_CALLBACK_INCOMPLETE_MESSAGE =
  */
 export const GITHUB_SIGNED_OUT_MESSAGE =
   "You are not signed in to MCPJam, so we could not finish connecting that GitHub account. Sign in and start again from Settings.";
+
+/**
+ * The return trip landed with a WorkOS session that never became usable — a
+ * token Convex rejected, a refresh that failed, a user row that never
+ * provisioned.
+ *
+ * Distinct from {@link GITHUB_SIGNED_OUT_MESSAGE} because the instruction is
+ * different: the person looks signed in and telling them to sign in reads as
+ * wrong. It names MCPJam as the side that could not confirm, because it is —
+ * nothing is wrong with their GitHub account, and sending them to re-check
+ * GitHub settings would waste their time.
+ */
+export const GITHUB_AUTH_UNCONFIRMED_MESSAGE =
+  "We could not confirm your MCPJam session, so we did not finish connecting that GitHub account. This is not a problem with your GitHub account — reload and start again from Settings, or sign in again if that does not help.";

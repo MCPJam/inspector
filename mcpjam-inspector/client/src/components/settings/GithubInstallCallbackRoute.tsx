@@ -10,6 +10,7 @@ import { toast } from "@/lib/toast";
 import { redirectToGithub } from "@/lib/github-external-redirect";
 import {
   githubChecksWriteErrorMessage,
+  GITHUB_AUTH_UNCONFIRMED_MESSAGE,
   GITHUB_BINDING_FAILED_MESSAGE,
   GITHUB_CALLBACK_INCOMPLETE_MESSAGE,
   GITHUB_SIGNED_OUT_MESSAGE,
@@ -60,6 +61,28 @@ type Phase =
     };
 
 const SETTINGS_PATH = "/settings/integrations/github";
+
+/**
+ * How long to wait for auth to become usable before saying so.
+ *
+ * A BACKSTOP, not a mechanism. Waiting for auth is right; waiting forever is
+ * not, and this page has no other content to fall back to — an unresolved
+ * session leaves "Finishing up with GitHub…" on screen for good, with no error
+ * and nothing to click.
+ *
+ * A timer rather than a "settled and still not usable" test, because that test
+ * cannot be written safely from these three signals: WorkOS resolving a user
+ * and Convex flipping `isAuthenticated` are separate ticks, so there is a
+ * legitimate instant where a member looks exactly like a permanent failure. A
+ * false refusal there would break the happy path for everyone, which is worse
+ * than a slow one for the few. The timer also covers causes not enumerable
+ * from here — a rejected token, a failed refresh, a user row that never
+ * provisions — which is the point of a backstop.
+ *
+ * Twelve seconds: comfortably past a cold Convex handshake, comfortably short
+ * of a person deciding the page is broken.
+ */
+const AUTH_SETTLE_TIMEOUT_MS = 12_000;
 
 export function GithubInstallCallbackRoute() {
   const [searchParams] = useSearchParams();
@@ -125,6 +148,25 @@ export function GithubInstallCallbackRoute() {
         githubChecksWriteErrorMessage(error) || GITHUB_BINDING_FAILED_MESSAGE,
     });
   }, []);
+
+  // The backstop. Auth that never becomes usable — Convex rejecting the token,
+  // a refresh that fails, a user row that never provisions — leaves a WorkOS
+  // user in place, so the signed-out branch below does not fire and the effect
+  // simply keeps returning. Without this the page spins forever.
+  useEffect(() => {
+    if (canCall || startedRef.current) return;
+    const timer = setTimeout(() => {
+      if (startedRef.current) return;
+      // Only overwrite the neutral working state: a real refusal that arrived
+      // in the meantime is more specific than this one and must win.
+      setPhase((current) =>
+        current.kind === "working"
+          ? { kind: "failed", message: GITHUB_AUTH_UNCONFIRMED_MESSAGE }
+          : current
+      );
+    }, AUTH_SETTLE_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [canCall]);
 
   useEffect(() => {
     if (startedRef.current) return;
