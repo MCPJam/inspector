@@ -49,7 +49,7 @@ tools.post("/projects/:projectId/servers/:serverId/tools/call", async (c) =>
         body.toolName,
         body.parameters
       );
-      const durationMs = Date.now() - startedAt;
+      const durationMs = Math.max(0, Date.now() - startedAt);
       // Additive sibling on the MCP CallToolResult. `v1Resource` returns the
       // object verbatim, so agents can read latency without a second hop.
       if (result && typeof result === "object" && !Array.isArray(result)) {
