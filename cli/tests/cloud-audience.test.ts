@@ -309,12 +309,12 @@ test("announce: false is only used at the allowlisted Cloud call sites", () => {
   assert.deepEqual([...hits].sort(), [...allowlist].sort());
 });
 
-test("bindOperation suppresses the audience line outside mcpjam cloud", () => {
+test("bindOperation suppresses the audience line outside mcpjam cloud unless a group opts in", () => {
   const source = readFileSync(
     path.join(SRC_ROOT, "lib/platform-command.ts"),
     "utf8"
   );
-  assert.match(source, /announce:\s*underCloud/);
+  assert.match(source, /announce:\s*bindExtras\.announce \?\? underCloud/);
 });
 
 test("platform-auth does not import cloud-context", () => {

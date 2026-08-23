@@ -10,6 +10,7 @@ import {
 import { CliError } from "../src/lib/output.js";
 import {
   buildPlatformClient,
+  inspectApiUrl,
   resolvePlatformBaseUrl,
   resolvePlatformOrigin,
 } from "../src/lib/platform-client.js";
@@ -75,6 +76,21 @@ test("resolvePlatformBaseUrl prefers the flag over env over the default", () => 
     resolvePlatformBaseUrl({}, {}),
     "https://app.mcpjam.com/api/v1",
   );
+});
+
+test("inspectApiUrl classifies invalid values without throwing", () => {
+  const malformed = inspectApiUrl("not-a-url", "--api-url");
+  assert.equal(malformed.ok, false);
+  if (!malformed.ok) {
+    assert.match(malformed.error, /Invalid --api-url/);
+  }
+  const ftp = inspectApiUrl("ftp://example.com/api", "MCPJAM_API_URL");
+  assert.equal(ftp.ok, false);
+  const ok = inspectApiUrl("https://app.mcpjam.com/api/v1", "--api-url");
+  assert.equal(ok.ok, true);
+  if (ok.ok) {
+    assert.equal(ok.apiUrl, "https://app.mcpjam.com/api/v1");
+  }
 });
 
 test("an invalid --api-url hard-errors instead of falling back to prod", () => {

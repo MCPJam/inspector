@@ -121,6 +121,9 @@ const KNOWN_UNDOCUMENTED = new Set([
  * catalog default, share-link previews — work at all.
  */
 const PUBLIC_OPERATIONS = new Set(["get /host-catalog", "get /models"]);
+// Registry directory reads are guest-allowed (minted guest bearer) but stay
+// OUT of this set: they declare bearerAuth. Anonymous MCP callers arrive
+// with a guest token, not with no token. Do not add them here.
 
 /** Hono `:param` + the `/api/v1` mount prefix -> OpenAPI `{param}`, unprefixed. */
 function normalizePath(path: string): string {

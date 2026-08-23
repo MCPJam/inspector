@@ -15,7 +15,7 @@ import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 
 /**
- * `mcpjam scenarios` — user testing.
+ * `mcpjam cloud scenarios` — user testing.
  *
  * A scenario is a project environment published for people outside the project
  * to talk to through a share link.

@@ -19,7 +19,7 @@ import {
   LEGACY_KEY_REMEDY,
   MISSING_CLOUD_CREDENTIAL_MESSAGE,
 } from "./platform-auth.js";
-import { operationalError } from "./output.js";
+import { operationalError, usageError } from "./output.js";
 
 export { MISSING_CLOUD_CREDENTIAL_MESSAGE };
 
@@ -96,7 +96,13 @@ export function preflightCloudCredentials(
   options: CloudCredentialOptions,
   deps: DescribeCloudCredentialDependencies = {}
 ): void {
-  const { credential } = describeCloudCredential(options, deps);
+  const { credential, deployment } = describeCloudCredential(options, deps);
+  if (credential.valid === false) {
+    throw usageError(credential.error ?? LEGACY_KEY_REMEDY);
+  }
+  if (!deployment.valid) {
+    throw usageError(deployment.error ?? "Invalid API URL.");
+  }
   if (credential.source === "missing") {
     const envKey = (deps.env ?? process.env).MCPJAM_API_KEY?.trim();
     if (envKey?.startsWith("mcpjam_")) {
