@@ -512,11 +512,48 @@ describe("agent op registry", () => {
       suite: "smoke",
       compose: {
         host: "host_a",
+        hostLabel: "Claude Code",
         models: ["google/gemini-2.5-flash"],
         includeClientDefault: true,
         saveTargets: true,
       },
     });
+  });
+
+  it("keeps the host display name on the approval after freeze", async () => {
+    // persistProposal describes the FROZEN input. Without hostLabel the
+    // card would read `suite smoke (host_a)` after name → id rewrite.
+    const client = {
+      listHosts: async () => ({
+        items: [
+          { id: "host_a", name: "Claude Code" },
+          { id: "host_b", name: "ChatGPT" },
+        ],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    const frozen = await proposalMetaFor(
+      runEvalSuiteOperation.name
+    ).normalizeArgs(
+      {
+        suite: "smoke",
+        compose: {
+          host: "Claude Code",
+          models: ["anthropic/claude-haiku-4.5", "google/gemini-2.5-flash"],
+        },
+      },
+      { projectId: "p1", client }
+    );
+    const description = proposalMetaFor(
+      runEvalSuiteOperation.name
+    ).description(frozen);
+    expect(description).toContain("Claude Code");
+    expect(description).not.toContain("host_a");
+    expect(description).toBe(
+      "Start 2 paid eval runs of suite smoke (Claude Code): 1 client × 2 model choices = 2 runs, without attaching them to the suite"
+    );
   });
 
   it("merges compose.model into compose.models and leaves an id host alone", async () => {
@@ -544,8 +581,35 @@ describe("agent op registry", () => {
       suite: "smoke",
       compose: {
         host: "host_a",
+        hostLabel: "Claude Code",
         models: ["google/gemini-2.5-flash", "anthropic/claude-haiku-4.5"],
       },
+    });
+  });
+
+  it("drops a caller-supplied hostLabel unless listHosts confirms the host", async () => {
+    const client = {
+      listHosts: async () => ({
+        items: [{ id: "host_a", name: "Claude Code" }],
+      }),
+    } as unknown as Parameters<
+      ReturnType<typeof proposalMetaFor>["normalizeArgs"]
+    >[1]["client"];
+
+    expect(
+      await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
+        {
+          suite: "smoke",
+          compose: {
+            host: "missing-host",
+            hostLabel: "Looks Friendly",
+          },
+        },
+        { projectId: "p1", client }
+      )
+    ).toEqual({
+      suite: "smoke",
+      compose: { host: "missing-host" },
     });
   });
 

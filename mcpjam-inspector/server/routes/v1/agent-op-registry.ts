@@ -356,7 +356,10 @@ function describeComposeEvalSuiteRun(
   suite: string,
   compose: Record<string, unknown>,
 ): string {
-  const host = named(compose, "host");
+  // Prefer the freeze-time display name. `host` is rewritten to an id so
+  // approval executes the same client; without `hostLabel` the card would
+  // read `suite smoke (host_a)` after a successful `listHosts`.
+  const host = named(compose, "hostLabel") ?? named(compose, "host");
   const hostNote = host ? ` (${host})` : "";
   const choices = expandComposeModelChoices({
     model: named(compose, "model"),
@@ -522,6 +525,11 @@ async function freezeEvalRunTargets(
  * `includeClientDefault` and `saveTargets` stay as written — they are
  * closed choices, not pointers. Compose itself is kept: dropping it would
  * turn an approved compose into a default-target launch.
+ *
+ * `hostLabel` is describe-only: the approval card needs the human name
+ * after `host` is rewritten to an id. Execute ignores unknown compose
+ * fields (zod strips them). A caller-supplied label is dropped unless
+ * `listHosts` confirms it, so a spoofed label cannot outlive a resolved id.
  */
 async function freezeComposeRunTarget(
   input: Record<string, unknown>,
@@ -529,17 +537,20 @@ async function freezeComposeRunTarget(
   { projectId, client }: { projectId: string; client: PlatformApiClient },
 ): Promise<Record<string, unknown>> {
   const nextCompose: Record<string, unknown> = { ...compose };
+  delete nextCompose.hostLabel;
   const hostSelector = named(compose, "host");
   if (hostSelector) {
     try {
       const page = await client.listHosts({ projectId });
-      const byId = new Set(page.items.map((host) => host.id));
-      if (!byId.has(hostSelector)) {
-        const byName = new Map(
-          page.items.map((host) => [host.name.toLocaleLowerCase(), host.id]),
+      const match =
+        page.items.find((host) => host.id === hostSelector) ??
+        page.items.find(
+          (host) =>
+            host.name.toLocaleLowerCase() === hostSelector.toLocaleLowerCase(),
         );
-        nextCompose.host =
-          byName.get(hostSelector.toLocaleLowerCase()) ?? hostSelector;
+      if (match) {
+        nextCompose.host = match.id;
+        nextCompose.hostLabel = match.name;
       }
     } catch {
       // Same posture as the suite lookup: a platform that cannot answer
