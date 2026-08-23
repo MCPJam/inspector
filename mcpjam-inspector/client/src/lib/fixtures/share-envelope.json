@@ -23,6 +23,18 @@
     "shares:revokeAllShares": {
       "args": ["resourceType", "resourceId"],
       "returns": "ShareSettingsEnvelope"
+    },
+    "orgSharePolicy:getOrgSharePolicy": {
+      "args": ["organizationId"],
+      "returns": "OrgSharePolicyKnobs"
+    },
+    "orgSharePolicy:setOrgSharePolicy": {
+      "args": ["organizationId", "maxShareMode", "inviteAudience"],
+      "returns": "OrgSharePolicyKnobs"
+    },
+    "orgSharePolicy:getEffectiveSharePolicyForProject": {
+      "args": ["projectId"],
+      "returns": "OrgSharePolicyKnobs"
     }
   },
   "shareSettingsEnvelope": {
@@ -32,6 +44,7 @@
     "workspaceId": "jd7…",
     "projectId": "jd7…",
     "mode": "anyone_with_link",
+    "maxShareMode": "anyone_with_link",
     "policyVersion": 1,
     "inviteEpoch": 1,
     "linkGrantEpoch": 1,

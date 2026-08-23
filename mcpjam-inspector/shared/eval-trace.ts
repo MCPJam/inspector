@@ -4,7 +4,13 @@ import type { PromptTurnToolCall } from "./steps";
 import type { PredicateResult } from "@mcpjam/sdk/predicates";
 
 /** Persisted eval trace span categories (Convex: use the same literals in traceSpanValidator). */
-export type EvalTraceSpanCategory = "step" | "llm" | "tool" | "error";
+export type EvalTraceSpanCategory =
+  | "step"
+  | "llm"
+  | "tool"
+  | "error"
+  | "connection"
+  | "discovery";
 export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpan = {
@@ -495,7 +501,14 @@ export const evalTraceSpanZ = z.object({
   id: z.string(),
   parentId: z.string().optional(),
   name: z.string(),
-  category: z.enum(["step", "llm", "tool", "error"]),
+  category: z.enum([
+    "step",
+    "llm",
+    "tool",
+    "error",
+    "connection",
+    "discovery",
+  ]),
   startMs: z.number(),
   endMs: z.number(),
   promptIndex: z.number().optional(),
