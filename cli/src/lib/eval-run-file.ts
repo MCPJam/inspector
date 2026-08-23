@@ -21,6 +21,7 @@ import {
   projectResolutionError,
   resolveProject,
   runEvalSuiteOperation,
+  setEvalSuiteEnvironmentsOperation,
   type PlatformApiClient,
   type PlatformEvalCase,
   type RunEvalSuiteInput,
@@ -129,6 +130,51 @@ export function fileCaseToUpdateBody(
   };
 }
 
+function refuseEmptyEnabledSet(loaded: {
+  resolved: { enabledCases: ResolvedEvalSuiteFileCase[] };
+}): void {
+  if (loaded.resolved.enabledCases.length === 0) {
+    throw cliError(
+      "NO_ENABLED_CASES",
+      "This suite file has no enabled cases. Hosted launch without a case filter runs every persisted case, including rows the file marked disabled. Enable at least one case — the file is refused rather than executed unscoped.",
+      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+    );
+  }
+}
+
+function refuseUnsupportedHostedSemantics(loaded: {
+  authored: {
+    defaults: {
+      toolPolicy?: unknown;
+      validity: {
+        minEligibleTrials?: number;
+        minCompletionRate?: number;
+        maxEvaluatorErrorRate?: number;
+      };
+    };
+  };
+}): void {
+  if (loaded.authored.defaults.toolPolicy !== undefined) {
+    throw cliError(
+      "TOOL_POLICY_UNSUPPORTED",
+      "defaults.toolPolicy is not representable on a hosted run. The platform would execute the unrestricted tool set while stamping this file's hash. Remove toolPolicy, or run the suite locally.",
+      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+    );
+  }
+  const validity = loaded.authored.defaults.validity;
+  if (
+    validity.minEligibleTrials !== undefined ||
+    validity.minCompletionRate !== undefined ||
+    validity.maxEvaluatorErrorRate !== undefined
+  ) {
+    throw cliError(
+      "VALIDITY_UNSUPPORTED",
+      "defaults.validity sets a gate the hosted runner does not enforce (minEligibleTrials, minCompletionRate, or maxEvaluatorErrorRate). A run could be reported as a pass or fail when the file would call it INVALID. Leave validity as {} — or run the suite locally.",
+      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+    );
+  }
+}
+
 function refusePerCasePassThreshold(loaded: {
   resolved: {
     defaults: { passThreshold: number };
@@ -215,6 +261,7 @@ export async function syncFileOwnedCases(
   deleted: number;
   batches: number;
   enabledCaseIds: string[];
+  enabledCases: Array<{ id: string; declaredId: string; title: string }>;
 }> {
   const existing = await client.listEvalCases(
     { projectId: params.projectId, suiteId: params.suiteId },
@@ -252,7 +299,8 @@ export async function syncFileOwnedCases(
     code: string;
     message: string;
   }> = [];
-  const createdIds: string[] = [];
+  const createdCases: Array<{ id: string; declaredId: string; title: string }> =
+    [];
   for (
     let offset = 0;
     offset < toCreate.length;
@@ -270,7 +318,14 @@ export async function syncFileOwnedCases(
         { signal: params.signal },
       );
       for (const entry of result.created ?? []) {
-        createdIds.push(entry.id);
+        const declaredId = entry.declaredId ?? chunk[entry.index]?.id;
+        if (declaredId) {
+          createdCases.push({
+            id: entry.id,
+            declaredId,
+            title: entry.title ?? chunk[entry.index]?.title ?? "",
+          });
+        }
       }
       for (const entry of result.failed ?? []) {
         failed.push({
@@ -361,15 +416,21 @@ export async function syncFileOwnedCases(
     );
   }
 
+  const enabledCases = [
+    ...toUpdate.map(({ row, file }) => ({
+      id: row.id,
+      declaredId: file.id,
+      title: file.title,
+    })),
+    ...createdCases,
+  ];
   return {
     created: toCreate.length,
     updated: toUpdate.length,
     deleted: toDelete.length,
     batches,
-    enabledCaseIds: [
-      ...toUpdate.map(({ row }) => row.id),
-      ...createdIds,
-    ],
+    enabledCaseIds: enabledCases.map((entry) => entry.id),
+    enabledCases,
   };
 }
 
@@ -424,6 +485,52 @@ export function deriveFileRunIdempotencyKey(params: {
   });
 }
 
+function selectEnabledRunCases(
+  enabledCases: Array<{ id: string; declaredId: string; title: string }>,
+  allCases: ResolvedEvalSuiteFileCase[],
+  selectors: string[] | undefined,
+): string[] {
+  if (!selectors?.length) {
+    return enabledCases.map((entry) => entry.id);
+  }
+  const byDeclared = new Map(
+    enabledCases.map((entry) => [entry.declaredId, entry] as const),
+  );
+  const byTitle = new Map(
+    enabledCases.map((entry) => [entry.title, entry] as const),
+  );
+  const byRowId = new Map(enabledCases.map((entry) => [entry.id, entry] as const));
+  const selected: string[] = [];
+  for (const selector of selectors) {
+    const hit =
+      byDeclared.get(selector) ??
+      byRowId.get(selector) ??
+      byTitle.get(selector);
+    if (hit) {
+      selected.push(hit.id);
+      continue;
+    }
+    const disabled = allCases.find(
+      (testCase) =>
+        testCase.disabled &&
+        (testCase.id === selector || testCase.title === selector),
+    );
+    if (disabled) {
+      throw cliError(
+        "CASE_DISABLED",
+        `Case "${selector}" is marked disabled in the suite file and is left out of the launch. Remove --case ${selector}, or enable the case in the file.`,
+        SUITE_FILE_RUN_INVALID_EXIT_CODE,
+      );
+    }
+    throw cliError(
+      "CASE_NOT_IN_FILE",
+      `Case "${selector}" is not an enabled case in this suite file.`,
+      SUITE_FILE_RUN_INVALID_EXIT_CODE,
+    );
+  }
+  return selected;
+}
+
 /**
  * Auth has already happened: the caller invoked this inside
  * `runPlatformCommand` so the first network request is project resolution.
@@ -462,6 +569,8 @@ export async function executeEvalRunFromFile(
 
   refuseRepetitions(loaded);
   refusePerCasePassThreshold(loaded);
+  refuseEmptyEnabledSet(loaded);
+  refuseUnsupportedHostedSemantics(loaded);
 
   const passPercent = fractionToPercent(loaded.resolved.defaults.passThreshold);
   if (passPercent === null) {
@@ -504,7 +613,6 @@ export async function executeEvalRunFromFile(
           systemPrompt: "",
           temperature: 0,
         },
-        minIterations: authored.defaults.repetitions,
         defaultPassCriteria: { minimumPassRate: passPercent },
       },
     },
@@ -533,9 +641,21 @@ export async function executeEvalRunFromFile(
     !hasExplicitTarget && authored.target.environment
       ? authored.target.environment
       : undefined;
-  const runCases = knobs.case?.length
-    ? knobs.case
-    : syncedCases.enabledCaseIds;
+  if (fileEnvironment) {
+    await setEvalSuiteEnvironmentsOperation.execute(
+      {
+        project: project.id,
+        suite: synced.suite.id,
+        environments: [fileEnvironment],
+      },
+      { client: context.client, signal: context.signal },
+    );
+  }
+  const runCases = selectEnabledRunCases(
+    syncedCases.enabledCases,
+    loaded.resolved.cases,
+    knobs.case,
+  );
 
   const idempotencyKey = deriveFileRunIdempotencyKey({
     sourceHash,
@@ -569,7 +689,7 @@ export async function executeEvalRunFromFile(
       ...(knobs.iterations !== undefined
         ? { iterations: knobs.iterations }
         : {}),
-      ...(runCases.length ? { cases: runCases } : {}),
+      cases: runCases,
       ...(knobs.excludeSkills ? { excludeSkills: true } : {}),
       ...(knobs.refreshSnapshot ? { refreshSnapshot: true } : {}),
       ...(knobs.notes !== undefined ? { notes: knobs.notes } : {}),
