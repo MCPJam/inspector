@@ -96,6 +96,24 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
         ],
         "spans": [
           {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
             "category": "step",
             "endMs": "<scrubbed>",
             "finishReason": "stop",
@@ -157,23 +175,26 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -196,6 +217,14 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "state": "notApplicable",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "toolCall",
@@ -304,7 +333,26 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "role": "assistant",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgets": [],
@@ -320,6 +368,9 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 0,
         "mismatchCount": 0,
@@ -334,17 +385,17 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "stepIndex": 1,
           },
         ],
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -367,6 +418,14 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
             "state": "notApplicable",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "toolCall",
@@ -541,6 +600,24 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
         ],
         "spans": [
           {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
             "category": "step",
             "endMs": "<scrubbed>",
             "finishReason": "stop",
@@ -595,23 +672,26 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 2,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -634,6 +714,14 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch m
             "state": "notApplicable",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -709,6 +797,24 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
         ],
         "spans": [
           {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
             "category": "step",
             "endMs": "<scrubbed>",
             "finishReason": "stop",
@@ -763,22 +869,25 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -801,6 +910,14 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch p
             "state": "notApplicable",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -992,15 +1109,15 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "connection",
             "state": "notMeasured",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "discovery",
             "state": "notMeasured",
           },
@@ -1210,15 +1327,15 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-stream 
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "connection",
             "state": "notMeasured",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "discovery",
             "state": "notMeasured",
           },
@@ -1345,7 +1462,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
             "role": "assistant",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgets": [],
@@ -1361,6 +1497,9 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -1387,17 +1526,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
             },
           },
         ],
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -1420,6 +1559,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ca
             "state": "passed",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -1543,7 +1690,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
             "role": "assistant",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgetRenderObservations": [
@@ -1576,6 +1742,9 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "failureCategory": "userValue",
         "firstFailedStage": "userValue",
@@ -1602,17 +1771,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
             },
           },
         ],
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -1640,6 +1809,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch in
             "state": "failed",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -1709,7 +1886,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
             "role": "assistant",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgets": [],
@@ -1725,6 +1921,9 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 0,
         "mismatchCount": 0,
@@ -1739,17 +1938,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
             "reason": "no widget render observations recorded",
           },
         ],
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "notAuthored",
@@ -1772,6 +1971,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
             "state": "notApplicable",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "toolCall",
@@ -1882,7 +2089,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
             "role": "assistant",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgets": [],
@@ -1898,23 +2124,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 2,
         "mismatchCount": 0,
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -1937,6 +2166,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mu
             "state": "notApplicable",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -2005,7 +2242,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
             "role": "assistant",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgets": [],
@@ -2021,22 +2277,25 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -2064,6 +2323,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch ne
             "state": "notApplicable",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -2126,7 +2393,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
             "role": "assistant",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgets": [],
@@ -2142,22 +2428,25 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -2180,6 +2469,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch pr
             "state": "notApplicable",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -2275,7 +2572,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             "role": "assistant",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgets": [],
@@ -2298,6 +2614,9 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -2322,17 +2641,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             },
           },
         ],
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -2355,6 +2674,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             "state": "passed",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -2439,7 +2766,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             "role": "tool",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgets": [],
@@ -2455,22 +2801,25 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -2493,6 +2842,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             "state": "notApplicable",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -2570,7 +2927,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             "role": "tool",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgets": [],
@@ -2586,22 +2962,25 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -2624,6 +3003,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch to
             "state": "notApplicable",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -2686,7 +3073,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
             "role": "assistant",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgets": [],
@@ -2702,22 +3108,25 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -2740,6 +3149,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch un
             "state": "notApplicable",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -2802,7 +3219,26 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
             "role": "assistant",
           },
         ],
-        "spans": [],
+        "spans": [
+          {
+            "category": "connection",
+            "endMs": "<scrubbed>",
+            "id": "run-connect-srv-1",
+            "name": "connect",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+          {
+            "category": "discovery",
+            "endMs": "<scrubbed>",
+            "id": "run-toolslist-srv-1",
+            "name": "tools/list",
+            "serverId": "srv-1",
+            "startMs": "<scrubbed>",
+            "status": "ok",
+          },
+        ],
         "turnEndedAt": "<scrubbed>",
         "turnStartedAt": "<scrubbed>",
         "widgetRenderObservations": [
@@ -2828,6 +3264,9 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
       "iterationId": "iter-1",
       "metadata": {
         "argumentMismatchCount": 0,
+        "egressCanary": {
+          "ran": false,
+        },
         "failedTurnCount": 0,
         "inputTokens": 1,
         "mismatchCount": 0,
@@ -2842,17 +3281,17 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
             "reason": "widget rendered (1/1 observation(s))",
           },
         ],
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "connection",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "observed",
             "stage": "discovery",
-            "state": "notMeasured",
+            "state": "passed",
           },
           {
             "reason": "observed",
@@ -2875,6 +3314,14 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch wi
             "state": "passed",
           },
         ],
+        "stageSetupSignals": {
+          "connection": {
+            "outcome": "ok",
+          },
+          "discovery": {
+            "outcome": "ok",
+          },
+        },
         "stepResults": [
           {
             "kind": "prompt",
@@ -3021,15 +3468,15 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream h
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "connection",
             "state": "notMeasured",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "discovery",
             "state": "notMeasured",
           },
@@ -3245,15 +3692,15 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream m
         "missingCount": 0,
         "multiTurn": true,
         "outputTokens": 4,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "connection",
             "state": "notMeasured",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "discovery",
             "state": "notMeasured",
           },
@@ -3424,15 +3871,15 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 0,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "connection",
             "state": "notMeasured",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "discovery",
             "state": "notMeasured",
           },
@@ -3550,15 +3997,15 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
         "mismatchCount": 0,
         "missingCount": 0,
         "outputTokens": 2,
-        "stageAnalyzerVersion": 1,
+        "stageAnalyzerVersion": 2,
         "stageResults": [
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "connection",
             "state": "notMeasured",
           },
           {
-            "reason": "noSpanChannel",
+            "reason": "noEvidenceCaptured",
             "stage": "discovery",
             "state": "notMeasured",
           },

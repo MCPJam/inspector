@@ -321,6 +321,7 @@ describe("connection & discovery", () => {
     const { stageResults, failureCategory } = deriveStageResults({
       authored: modelDrivenCase,
       evidence: {
+        traceAbsent: true,
         setupSignals: {
           connection: { outcome: "failed", attribution: "ours" },
         },
