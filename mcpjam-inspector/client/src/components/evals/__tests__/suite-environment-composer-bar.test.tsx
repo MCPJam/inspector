@@ -34,6 +34,9 @@ const {
 vi.mock("convex/react", () => ({
   useMutation: () => setSuiteEnvironmentsMock,
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvex: () => ({
+    query: vi.fn(async () => ({ modelMatrix: false })),
+  }),
 }));
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
@@ -49,6 +52,7 @@ vi.mock("@/hooks/useProjectEnvironments", () => ({
   useProjectEnvironments: (projectId: string | null) =>
     projectId ? environmentsRef.current : undefined,
   useEnsureAdhocEnvironments: () => ensureAdhocMock,
+  useModelMatrixCapability: () => false,
 }));
 vi.mock("@/hooks/useClients", () => ({
   useHostList: () => ({
@@ -286,6 +290,52 @@ describe("SuiteEnvironmentComposerBar — environment mode", () => {
 
     expect(screen.getByTestId("suite-env-attachments-collapse-hint")).toBeInTheDocument();
     expect(screen.getByTestId("suite-env-clients-picker")).toBeDisabled();
+  });
+
+  it("blocks editing when a lone attachment pins a model the strip cannot show", () => {
+    // `useModelMatrixCapability` is mocked false here, so there is no models
+    // slot. One attachment means the attachments AGREE, so the collapse check
+    // passes it — and seeding reads the absent slot as "client defaults", so
+    // the first pill edit would resolve a row without the override and move
+    // the suite onto another model without saying so.
+    environmentsRef.current = [
+      {
+        environmentId: "env-a",
+        projectId: "proj-1",
+        name: "A",
+        origin: "named",
+        hostId: "host-1",
+        modelId: "anthropic/claude-haiku-4.5",
+        revision: 1,
+      },
+    ];
+    renderBar({ environmentIds: ["env-a"] } as any);
+
+    expect(
+      screen.getByTestId("suite-env-attachments-collapse-hint"),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("suite-env-clients-picker")).toBeDisabled();
+  });
+
+  it("leaves an inherit-only attachment editable", () => {
+    // The guard must not fire on every environment — only ones carrying an
+    // override the strip has nowhere to put.
+    environmentsRef.current = [
+      {
+        environmentId: "env-a",
+        projectId: "proj-1",
+        name: "A",
+        origin: "named",
+        hostId: "host-1",
+        revision: 1,
+      },
+    ];
+    renderBar({ environmentIds: ["env-a"] } as any);
+
+    expect(
+      screen.queryByTestId("suite-env-attachments-collapse-hint"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("suite-env-clients-picker")).not.toBeDisabled();
   });
 });
 

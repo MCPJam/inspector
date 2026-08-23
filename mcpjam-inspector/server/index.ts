@@ -533,7 +533,7 @@ if (!HOSTED_MODE || process.env.NODE_ENV === "development") {
 // server/app.ts::createHonoApp — both production entries must wire this up.
 registerSelfFetch((request) => app.fetch(request));
 
-// CLI OAuth bridge (mcpjam login). Public front-channel routes — no session
+// CLI OAuth bridge (mcpjam cloud login). Public front-channel routes — no session
 // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
 // disabled (501) unless CLI_AUTH_STATE_SECRET + CLI_AUTH_PUBLIC_ORIGIN are
 // set. Mirror of the mount in server/app.ts::createHonoApp — both
