@@ -77,6 +77,9 @@ function suiteReport(
       failed: 0,
       couldNotRun: 1,
       notApplicable: 0,
+      // A suite that never produced a report has no pending bucket: the one
+      // thing known about it is that an obligation went untested.
+      pending: 0,
       advisories: [],
       advicePointsLost: 0,
     },
@@ -124,6 +127,29 @@ function isSettled(status: string): boolean {
   );
 }
 
+/**
+ * Persist only when the operator actually started suites.
+ *
+ * `runVersion` also increments on mount and server-change resets
+ * (`resetStates` in `use-conformance-run`). Those leave every suite idle.
+ * Treating that bump as a Convex start writes an Incomplete 0s history row
+ * the user never asked for — and remounting the live panel (clicking a
+ * history row, switching servers, StrictMode) repeats it.
+ */
+export function shouldStartPersistedRun({
+  runVersion,
+  startedVersion,
+  isExecuting,
+}: {
+  runVersion: number;
+  startedVersion: number;
+  isExecuting: boolean;
+}): boolean {
+  if (runVersion === 0) return false;
+  if (startedVersion === runVersion) return false;
+  return isExecuting;
+}
+
 export function PersistConformanceRun({
   persist,
   server,
@@ -159,9 +185,23 @@ export function PersistConformanceRun({
   const snapshotRef = useRef(snapshot);
   snapshotRef.current = snapshot;
 
+  // A run parked on the consent screen is ALIVE. `isRunning` is false there —
+  // no suite is executing — so heartbeating on it alone lets the backend sweep
+  // declare the pause abandoned while the user is still authorizing.
+  const awaitingAuthorization =
+    oauth.status === "needs-authorization" || oauth.waitingForAuth === true;
+  const isExecuting = isRunning || awaitingAuthorization;
+
   useEffect(() => {
-    if (runVersion === 0) return;
-    if (startedVersionRef.current === runVersion) return;
+    if (
+      !shouldStartPersistedRun({
+        runVersion,
+        startedVersion: startedVersionRef.current,
+        isExecuting,
+      })
+    ) {
+      return;
+    }
     startedVersionRef.current = runVersion;
     runIdRef.current = null;
     setRunId(null);
@@ -196,7 +236,14 @@ export function PersistConformanceRun({
       .catch(() => {
         // Persistence is best-effort for the live panel; the suites still run.
       });
-  }, [persist.projectId, persist.serverId, runVersion, server, startRun]);
+  }, [
+    isExecuting,
+    persist.projectId,
+    persist.serverId,
+    runVersion,
+    server,
+    startRun,
+  ]);
 
   useEffect(() => {
     if (!runId) return;
@@ -266,19 +313,13 @@ export function PersistConformanceRun({
     maybeUpload("oauth", oauth);
   }, [apps, oauth, protocol, tasks, upsertReport, runId]);
 
-  // A run parked on the consent screen is ALIVE. `isRunning` is false there —
-  // no suite is executing — so heartbeating on it alone lets the backend sweep
-  // declare the pause abandoned while the user is still authorizing.
-  const awaitingAuthorization =
-    oauth.status === "needs-authorization" || oauth.waitingForAuth === true;
-
   useEffect(() => {
-    if (!runId || (!isRunning && !awaitingAuthorization)) return;
+    if (!runId || !isExecuting) return;
     const timer = window.setInterval(() => {
       void heartbeat({ runId });
     }, HEARTBEAT_MS);
     return () => window.clearInterval(timer);
-  }, [awaitingAuthorization, heartbeat, isRunning, runId]);
+  }, [heartbeat, isExecuting, runId]);
 
   useEffect(() => {
     if (!runId || isRunning || runVersion === 0 || finalizedRef.current) return;

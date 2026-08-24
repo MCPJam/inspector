@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAction, useQuery } from "convex/react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import {
   CheckCircle2,
   ChevronDown,
@@ -25,6 +26,11 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { FlaskConical } from "lucide-react";
 import { buildConformanceRunPath, useAppNavigate } from "@/lib/app-navigation";
 import { toast } from "@/lib/toast";
+import { ShareDialog } from "@/components/sharing/ShareDialog";
+import { ResourceSharePanel } from "@/components/sharing/ResourceSharePanel";
+import { SharedArtifactPage } from "@/components/sharing/SharedArtifactPage";
+import { useSharedArtifact } from "@/hooks/useSharedArtifact";
+import { buildConformanceSharePath } from "@/lib/app-navigation";
 
 export type ConformanceRunListItem = {
   _id: string;
@@ -274,9 +280,14 @@ export function ConformanceHistory({
               <button
                 type="button"
                 className="flex w-full items-center gap-3 px-3 py-2 text-left text-sm hover:bg-muted/40"
-                onClick={() =>
-                  navigate(buildConformanceRunPath(run._id, projectId))
-                }
+                data-testid="conformance-history-row"
+                onClick={(event) => {
+                  // The live runner sits on the same page. Don't let this
+                  // click bubble into that surface or be treated as a submit.
+                  event.preventDefault();
+                  event.stopPropagation();
+                  navigate(buildConformanceRunPath(run._id, projectId));
+                }}
               >
                 <OutcomeIcon outcome={run.outcome} status={run.status} />
                 <div className="min-w-0 flex-1">
@@ -366,8 +377,10 @@ export function ConformanceRunDetailPage({
     | undefined
     | null;
   const setSharing = useAction("conformanceRuns:setSharing" as any);
+  const unifiedShare = useFeatureFlagEnabled("unified-share-conformance") === true;
   const [openSuites, setOpenSuites] = useState<Record<string, boolean>>({});
   const [shareBusy, setShareBusy] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   const coverage = useMemo(() => {
     if (!detail) return "";
@@ -467,24 +480,65 @@ export function ConformanceRunDetailPage({
           >
             Run again
           </Button>
-          <Button
-            variant={detail.sharingEnabled ? "secondary" : "outline"}
-            size="sm"
-            disabled={shareBusy || detail.status !== "completed"}
-            onClick={() => void copyShare(!detail.sharingEnabled)}
-          >
-            {detail.sharingEnabled ? (
-              <>
-                <Share2 className="size-3.5" aria-hidden /> Shareable
-              </>
-            ) : (
-              <>
-                <Lock className="size-3.5" aria-hidden /> Private
-              </>
-            )}
-          </Button>
+          {unifiedShare ? (
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={detail.status !== "completed"}
+              onClick={() => setShareOpen(true)}
+              data-testid="conformance-share-open"
+            >
+              <Share2 className="size-3.5" aria-hidden /> Share
+            </Button>
+          ) : (
+            <Button
+              variant={detail.sharingEnabled ? "secondary" : "outline"}
+              size="sm"
+              disabled={shareBusy || detail.status !== "completed"}
+              onClick={() => void copyShare(!detail.sharingEnabled)}
+            >
+              {detail.sharingEnabled ? (
+                <>
+                  <Share2 className="size-3.5" aria-hidden /> Shareable
+                </>
+              ) : (
+                <>
+                  <Lock className="size-3.5" aria-hidden /> Private
+                </>
+              )}
+            </Button>
+          )}
         </div>
       </div>
+      {unifiedShare ? (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          title="Share conformance run"
+          description="A frozen redacted snapshot. Guests who redeem the link are auditable browser sessions, not verified individuals."
+        >
+          <ResourceSharePanel
+            resourceType="conformanceRun"
+            resourceId={detail._id}
+            disabledReason={
+              detail.status === "completed"
+                ? null
+                : "Only a finished run can be shared"
+            }
+            footerSlot={
+              <p className="text-xs text-muted-foreground">
+                Viewers see a frozen snapshot. Revoking access is immediate even
+                though the artifact itself does not change.
+              </p>
+            }
+            linkLabel="Share link"
+            buildShareUrl={(token) =>
+              `${window.location.origin}${buildConformanceSharePath(token)}`
+            }
+            testIdPrefix="conformance-share"
+          />
+        </ShareDialog>
+      ) : null}
 
       {detail.incompleteReason ? (
         <p className="text-sm text-amber-600">{detail.incompleteReason}</p>
@@ -571,87 +625,38 @@ function SuiteReportBody({
 }
 
 export function ConformanceSharedPage({ token }: { token: string }) {
-  const [state, setState] = useState<
-    | { status: "loading" }
-    | { status: "error"; message: string }
-    | { status: "ready"; artifact: Record<string, unknown> }
-  >({ status: "loading" });
+  const { loading, error, artifact } = useSharedArtifact({
+    resourceType: "conformanceRun",
+    token,
+  });
+  const body =
+    artifact && typeof artifact === "object"
+      ? (artifact as Record<string, unknown>)
+      : {};
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/web/conformance-shared/${encodeURIComponent(token)}`)
-      .then(async (response) => {
-        const body = (await response.json().catch(() => null)) as Record<
-          string,
-          unknown
-        > | null;
-        if (cancelled) return;
-        if (!response.ok || !body || body.ok === false) {
-          setState({
-            status: "error",
-            message: "This share link is invalid or has been revoked.",
-          });
-          return;
-        }
-        const artifact = ((body.artifact as
-          | Record<string, unknown>
-          | undefined) ?? body) as Record<string, unknown>;
-        setState({ status: "ready", artifact });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setState({
-            status: "error",
-            message: "This share link is invalid or has been revoked.",
-          });
-        }
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [token]);
-
-  if (state.status === "loading") {
-    return (
-      <p className="p-6 text-sm text-muted-foreground" role="status">
-        Loading shared run…
-      </p>
-    );
-  }
-  if (state.status === "error") {
-    return (
-      <EmptyState
-        icon={Lock}
-        title="Link unavailable"
-        description={state.message}
-      />
-    );
-  }
-
-  const artifact = state.artifact;
   return (
-    <div className="mx-auto max-w-3xl space-y-4 p-6">
-      <meta name="robots" content="noindex, nofollow" />
-      <h1 className="text-lg font-medium">Conformance report</h1>
+    <SharedArtifactPage
+      title="Conformance report"
+      loading={loading}
+      error={error}
+    >
       <p className="text-sm text-muted-foreground">
         Read-only shared result. Credentials, raw HTTP evidence, and rerun
-        controls are not included.
+        controls are not included. Guests who opened this link are auditable
+        browser sessions, not verified individuals.
       </p>
-      {typeof artifact.verification === "string" &&
-      artifact.verification === "client_reported" ? (
+      {body.verification === "client_reported" ? (
         <Badge variant="secondary">Client-reported</Badge>
       ) : (
         <Badge variant="outline">MCPJam-verified</Badge>
       )}
       <p className="text-sm">
-        Outcome {String(artifact.outcome ?? "unknown")}
-        {typeof artifact.score === "number"
-          ? ` · score ${Math.round(artifact.score)}`
-          : ""}
+        Outcome {String(body.outcome ?? "unknown")}
+        {typeof body.score === "number" ? ` · score ${Math.round(body.score)}` : ""}
       </p>
       <pre className="max-h-[70vh] overflow-auto rounded bg-muted/40 p-3 text-xs">
-        {JSON.stringify(artifact, null, 2)}
+        {JSON.stringify(body, null, 2)}
       </pre>
-    </div>
+    </SharedArtifactPage>
   );
 }

@@ -53,7 +53,7 @@ const MINIMAL = payload(findFixture(data.accept, "minimal")) as EvalSuiteFile;
 
 describe("the parity corpus, through the loader", () => {
   it("accepts every accept row", () => {
-    expect(data.accept).toHaveLength(3);
+    expect(data.accept).toHaveLength(4);
     for (const row of data.accept) {
       const result = loadEvalSuiteFile(asText(payload(row)));
       expect(result.ok, `${row.__label}: ${JSON.stringify(result)}`).toBe(true);
@@ -61,7 +61,7 @@ describe("the parity corpus, through the loader", () => {
   });
 
   it("rejects every reject row as a CONTRACT failure, not a parse failure", () => {
-    expect(data.reject).toHaveLength(25);
+    expect(data.reject).toHaveLength(29);
     for (const row of data.reject) {
       const result = loadEvalSuiteFile(asText(payload(row)));
       expect(result.ok, row.__label).toBe(false);
@@ -271,6 +271,21 @@ describe("defaults are resolved in memory and never written back", () => {
     expect(text).not.toContain("minCompletionRate");
     expect(text).not.toContain("maxEvaluatorErrorRate");
     expect(text).not.toContain("captureLevel");
+  });
+
+  it("preserves authored execution config without inventing absent fields", () => {
+    const configured = payload(
+      findFixture(data.accept, "environment-only target")
+    ) as EvalSuiteFile;
+    const loaded = loadOrThrow(asText(configured));
+    expect(loaded.resolved.defaults.systemPrompt).toBe(
+      "Use the billing tools and keep the answer concise."
+    );
+    expect(loaded.resolved.defaults.temperature).toBe(0.2);
+
+    const minimal = loadOrThrow(asText(MINIMAL));
+    expect("systemPrompt" in minimal.resolved.defaults).toBe(false);
+    expect("temperature" in minimal.resolved.defaults).toBe(false);
   });
 
   it("resolves without re-reading text", () => {

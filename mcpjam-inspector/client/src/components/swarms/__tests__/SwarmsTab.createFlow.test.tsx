@@ -265,7 +265,12 @@ vi.mock("@/lib/app-navigation", async (importOriginal) => {
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
 vi.mock("@/lib/toast", () => ({
-  toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() },
+  toast: {
+    success: vi.fn(),
+    warning: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+  },
 }));
 
 vi.mock("@/components/swarms/journey-rubric-editor", () => ({
@@ -2292,6 +2297,22 @@ describe("SwarmsTab — Confirm personas (Production Redesign)", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not announce the card itself as a button around two more", async () => {
+    // A widget containing widgets is the one nesting assistive tech cannot
+    // describe: the row used to announce itself as a single button whose
+    // contents were Edit and Remove. Pointer users keep the whole-card click.
+    await reachConfirm();
+
+    const card = screen.getAllByTestId("new-swarm-persona-compact")[0];
+    expect(card).not.toHaveAttribute("role", "button");
+    expect(card).not.toHaveAttribute("tabindex");
+
+    fireEvent.click(card);
+    expect(
+      await screen.findByTestId("new-swarm-persona-detail")
+    ).toBeInTheDocument();
+  });
+
   it("edits every field of a proposed persona in place, then closes on Save", async () => {
     await reachConfirm();
     fireEvent.click(screen.getAllByTestId("new-swarm-persona-compact")[0]);
@@ -2506,5 +2527,55 @@ describe("SwarmsTab — a reused persona whose save fails", () => {
     expect(
       within(detail).getByDisplayValue("Reconcile payouts weekly")
     ).toBeInTheDocument();
+  });
+
+  /**
+   * Escape is a CANCEL for a reused persona, not just a collapse.
+   *
+   * Keeping the draft instead would leave an edit that the collapsed card
+   * doesn't show and the launch doesn't use: the swarm runs with the stored
+   * values and the user only learns their typing did nothing afterwards.
+   */
+  it("discards a reused persona's unsaved edits on Escape, and says so", async () => {
+    const detail = await openReusedPersona();
+
+    fireEvent.change(within(detail).getByLabelText("Persona role"), {
+      target: { value: "Finance ops" },
+    });
+    fireEvent.keyDown(within(detail).getByLabelText("Persona role"), {
+      key: "Escape",
+    });
+
+    await vi.waitFor(() => {
+      expect(
+        screen.queryByTestId("new-swarm-persona-detail")
+      ).not.toBeInTheDocument();
+    });
+    // Nothing reached the shared row.
+    expect(updatePersonaMock).not.toHaveBeenCalled();
+    // Silently dropping typed text is the other half of the same problem.
+    expect(toast.info).toHaveBeenCalledWith(
+      expect.stringContaining("Discarded unsaved changes to Ana")
+    );
+
+    // Reopening shows the stored persona, not the abandoned draft.
+    fireEvent.click(screen.getByTestId("new-swarm-persona-compact"));
+    const reopened = await screen.findByTestId("new-swarm-persona-detail");
+    expect(within(reopened).getByLabelText("Persona role")).toHaveValue("Ops");
+  });
+
+  it("says nothing when Escape closes a panel nobody edited", async () => {
+    const detail = await openReusedPersona();
+
+    fireEvent.keyDown(detail, { key: "Escape" });
+
+    await vi.waitFor(() => {
+      expect(
+        screen.queryByTestId("new-swarm-persona-detail")
+      ).not.toBeInTheDocument();
+    });
+    // A discard notice for a discard that didn't happen is just noise.
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(updatePersonaMock).not.toHaveBeenCalled();
   });
 });

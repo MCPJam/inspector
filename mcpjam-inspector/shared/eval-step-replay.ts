@@ -45,7 +45,14 @@ export type EvalStepResultRecord = {
 /** Public-safe evidence for one step, lifted from the resolved trace envelope. */
 export type EvalStepEvidence = {
   /** Widget→host tool calls a click/interact triggered (name + sanitized args). */
-  toolCalls?: Array<{ name: string; args: unknown; ok: boolean; error?: string }>;
+  toolCalls?: Array<{
+    name: string;
+    args: unknown;
+    ok: boolean;
+    error?: string;
+    /** Wall-clock ms for this widget→host call, when the harness recorded it. */
+    elapsedMs?: number;
+  }>;
   /** Resolved screenshot URL (render observation or interaction step). */
   screenshotUrl?: string;
   /** Resolved iteration replay `.webm` URL (iteration-level; same on every row). */
@@ -142,12 +149,16 @@ function toEvidence(
   if (locatorLabel) ev.locatorLabel = locatorLabel;
   const widgetToolCalls = interaction?.widgetToolCalls;
   if (Array.isArray(widgetToolCalls) && widgetToolCalls.length > 0) {
-    ev.toolCalls = widgetToolCalls.map((c: Record<string, unknown>) => ({
-      name: str(c.name) ?? "",
-      args: c.args,
-      ok: c.ok === true,
-      ...(str(c.error) ? { error: str(c.error) } : {}),
-    }));
+    ev.toolCalls = widgetToolCalls.map((c: Record<string, unknown>) => {
+      const elapsedMs = num(c.elapsedMs);
+      return {
+        name: str(c.name) ?? "",
+        args: c.args,
+        ok: c.ok === true,
+        ...(str(c.error) ? { error: str(c.error) } : {}),
+        ...(elapsedMs !== undefined ? { elapsedMs } : {}),
+      };
+    });
   }
   return Object.keys(ev).length > 0 ? ev : undefined;
 }

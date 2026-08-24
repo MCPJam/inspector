@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { main } from "../src/index.js";
 
@@ -133,6 +136,53 @@ const TRACE = {
   browserInteractionSteps: [],
 };
 
+const FAILED_ITERATION = {
+  id: "iter-failed",
+  testCaseId: "case-1",
+  title: "Fetch order",
+  iterationNumber: 1,
+  status: "completed",
+  result: "failed",
+  model: null,
+  provider: null,
+  startedAt: 1,
+  durationMs: 10,
+  tokensUsed: null,
+  usage: null,
+  actualToolCalls: [{ toolName: "fetch_order" }],
+  expectedToolCalls: [{ toolName: "fetch_order" }],
+  error: "server rejected arguments",
+  stageResults: [
+    { stage: "connection", state: "passed", reason: "observed" },
+    { stage: "discovery", state: "passed", reason: "observed" },
+    { stage: "selection", state: "passed", reason: "observed" },
+    { stage: "call", state: "failed", reason: "argumentMismatch" },
+    { stage: "response", state: "notReached", reason: "earlierStageFailed" },
+    { stage: "userValue", state: "notReached", reason: "earlierStageFailed" },
+  ],
+  firstFailedStage: "call",
+  failureCategory: "arguments",
+  stageAnalyzerVersion: 2,
+};
+
+const SETUP_ABORT_ITERATION = {
+  ...FAILED_ITERATION,
+  id: "iter-setup",
+  title: "Setup abort",
+  error: "could not connect",
+  actualToolCalls: [],
+  stageResults: [
+    { stage: "connection", state: "notMeasured", reason: "setupAborted" },
+    { stage: "discovery", state: "notMeasured", reason: "setupAborted" },
+    { stage: "selection", state: "notMeasured", reason: "setupAborted" },
+    { stage: "call", state: "notMeasured", reason: "setupAborted" },
+    { stage: "response", state: "notMeasured", reason: "setupAborted" },
+    { stage: "userValue", state: "notMeasured", reason: "setupAborted" },
+  ],
+  firstFailedStage: undefined,
+  failureCategory: "setup",
+};
+
 /**
  * How the fixture's suite presents itself to the run ops, which read the suite
  * DETAIL to decide what a run targets.
@@ -147,6 +197,11 @@ interface EvalFixtureOptions {
   };
   /** Target ids the grouped-launch endpoint should report as failures. */
   groupFailures?: Record<string, { code: string; message: string }>;
+  runCaseResult?: "passed" | "failed";
+  /** Non-terminal keeps `--wait` polling until its deadline. */
+  runCaseStatus?: "running" | "completed";
+  runCaseIterationFetchError?: boolean;
+  runOneResult?: "passed" | "failed";
 }
 
 async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
@@ -226,6 +281,19 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       res.end(JSON.stringify({ items: SERVERS }));
       return;
     }
+    if (
+      url.pathname ===
+      "/api/v1/projects/proj-alpha/environments/capabilities"
+    ) {
+      res.end(
+        JSON.stringify({
+          modelOverrides: true,
+          modelMatrix: true,
+          ephemeralEnvironmentLaunch: true,
+        }),
+      );
+      return;
+    }
     if (url.pathname === "/api/v1/projects/proj-alpha/environments") {
       res.end(JSON.stringify({ items: ENVIRONMENTS }));
       return;
@@ -249,15 +317,22 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
         "/api/v1/projects/proj-alpha/environments/ensure-adhoc" &&
       req.method === "POST"
     ) {
-      composeBodies.push(raw ? JSON.parse(raw) : {});
+      const body = raw ? JSON.parse(raw) : {};
+      composeBodies.push(body);
+      const modelId =
+        typeof body.modelId === "string" ? body.modelId : undefined;
+      const id = modelId
+        ? `env-adhoc-${modelId.replace(/[^a-z0-9]+/gi, "-")}`
+        : "env-adhoc";
       res.end(
         JSON.stringify({
           environment: {
-            id: "env-adhoc",
+            id,
             projectId: "proj-alpha",
             name: null,
             adhoc: true,
             hostId: "host-claude",
+            ...(modelId ? { modelId } : {}),
             revision: 1,
             archived: false,
             createdAt: 1,
@@ -331,6 +406,22 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       (req.method ?? "GET") === "GET"
     ) {
       res.end(JSON.stringify(TRACE));
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-failed/iterations" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(JSON.stringify({ items: [FAILED_ITERATION] }));
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-setup/iterations" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(JSON.stringify({ items: [SETUP_ABORT_ITERATION] }));
       return;
     }
     if (
@@ -457,17 +548,140 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       return;
     }
     if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-case" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      const result = options.runCaseResult ?? "passed";
+      res.end(
+        JSON.stringify({
+          id: "run-case",
+          suiteId: "suite-1",
+          runNumber: 4,
+          status: options.runCaseStatus ?? "completed",
+          result,
+          summary:
+            result === "passed"
+              ? { total: 1, passed: 1, failed: 0, passRate: 1 }
+              : { total: 1, passed: 0, failed: 1, passRate: 0 },
+          source: "api",
+          notes: null,
+          createdAt: 10,
+          completedAt: 20,
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-case/iterations" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      if (options.runCaseIterationFetchError) {
+        res.statusCode = 500;
+        res.end(
+          JSON.stringify({
+            code: "ITERATIONS_FETCH_FAILED",
+            message: "iteration results unavailable",
+          }),
+        );
+        return;
+      }
+      const result = options.runCaseResult ?? "passed";
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "iter-case",
+              testCaseId: "case-1",
+              title: "echo works",
+              iterationNumber: 1,
+              status: "completed",
+              result,
+              model: null,
+              provider: null,
+              startedAt: 10,
+              durationMs: 10,
+              tokensUsed: null,
+              usage: null,
+              actualToolCalls: [],
+              expectedToolCalls: [],
+              error:
+                result === "failed"
+                  ? "Authorization: Bearer top-secret"
+                  : null,
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-group-1" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          id: "run-group-1",
+          suiteId: "suite-1",
+          runNumber: 5,
+          status: "completed",
+          result: "passed",
+          summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
+          source: "api",
+          notes: null,
+          createdAt: 10,
+          completedAt: 20,
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-group-1/iterations" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "iter-group-1",
+              testCaseId: "case-1",
+              title: "echo works",
+              iterationNumber: 1,
+              status: "completed",
+              result: "passed",
+              model: null,
+              provider: null,
+              startedAt: 10,
+              durationMs: 10,
+              tokensUsed: null,
+              usage: null,
+              actualToolCalls: [],
+              expectedToolCalls: [],
+              error: null,
+            },
+          ],
+        }),
+      );
+      return;
+    }
+    if (
       url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1" &&
       (req.method ?? "GET") === "GET"
     ) {
+      const result = options.runOneResult ?? "passed";
       res.end(
         JSON.stringify({
           id: "run-1",
           suiteId: "suite-1",
           runNumber: 3,
           status: "completed",
-          result: "passed",
-          summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
+          result,
+          summary:
+            result === "passed"
+              ? { total: 2, passed: 2, failed: 0, passRate: 1 }
+              : { total: 2, passed: 1, failed: 1, passRate: 0.5 },
           source: "api",
           notes: null,
           createdAt: 1,
@@ -508,6 +722,62 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               cases: [],
             },
           },
+        }),
+      );
+      return;
+    }
+    if (
+      (url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-failed" ||
+        url.pathname ===
+          "/api/v1/projects/proj-alpha/eval-runs/run-setup") &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      const setup = url.pathname.endsWith("run-setup");
+      res.end(
+        JSON.stringify({
+          id: setup ? "run-setup" : "run-failed",
+          suiteId: "suite-1",
+          runNumber: 4,
+          status: "failed",
+          result: "failed",
+          summary: { total: 1, passed: 0, failed: 1, passRate: 0 },
+          source: "api",
+          notes: null,
+          createdAt: 1,
+          completedAt: 2,
+          judges: {},
+        }),
+      );
+      return;
+    }
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-1/iterations" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      const result = options.runOneResult ?? "passed";
+      res.end(
+        JSON.stringify({
+          items: [
+            {
+              id: "iter-1",
+              testCaseId: "case-1",
+              title: "echo works",
+              iterationNumber: 1,
+              status: "completed",
+              result,
+              model: null,
+              provider: null,
+              startedAt: 1,
+              durationMs: 1,
+              tokensUsed: null,
+              usage: null,
+              actualToolCalls: [],
+              expectedToolCalls: [],
+              error: result === "failed" ? "goal completion failed" : null,
+            },
+          ],
         }),
       );
       return;
@@ -579,6 +849,7 @@ function evalArgv(fixtureUrl: string, ...args: string[]): string[] {
   return [
     "node",
     "mcpjam",
+    "cloud",
     "eval",
     ...args,
     "--api-key",
@@ -751,6 +1022,33 @@ test("eval create rejects stdio servers before any write", async () => {
   }
 });
 
+test("eval create --json with schemaVersion points at eval run --file", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "create",
+          "--json",
+          JSON.stringify({
+            schemaVersion: "1",
+            mode: "agentWorkflow",
+            suite: { id: "s_billing", name: "Billing" },
+          }),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.match(run.stderr, /eval run --file/);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval create rejects an invalid suite definition as a usage error", async () => {
   const fixture = await startEvalFixture();
   try {
@@ -769,6 +1067,39 @@ test("eval create rejects an invalid suite definition as a usage error", async (
     assert.equal(run.result.exitCode, 2);
     assert.equal(fixture.createBodies.length, 0);
     assert.match(run.stderr, /USAGE_ERROR/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval create rejects an unknown --json key as a usage error", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "create",
+          "--json",
+          JSON.stringify({
+            project: "proj-alpha",
+            name: "Authored smoke",
+            servers: ["Ready Server"],
+            model: "anthropic/claude-haiku-4.5",
+            cases: [
+              { title: "t", steps: [{ id: "s1", kind: "prompt", prompt: "q" }] },
+            ],
+            hostz: [],
+          }),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.match(run.stderr, /USAGE_ERROR/);
+    assert.match(run.stderr, /hostz/);
   } finally {
     await fixture.close();
   }
@@ -1013,6 +1344,32 @@ test("eval run rejects --environment together with --server before any request",
     // The CLI calls the operation directly, so this guard has to live in the
     // execute body — a schema-only refine would never fire here.
     assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval update rejects an unknown --json key as a usage error", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "update",
+          "--suite",
+          "suite-1",
+          "--json",
+          JSON.stringify({ hostz: [] }),
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.match(run.stderr, /USAGE_ERROR/);
+    assert.match(run.stderr, /hostz/);
   } finally {
     await fixture.close();
   }
@@ -1339,6 +1696,67 @@ test("eval status appends a View link in human format", async () => {
   }
 });
 
+test("eval status renders an actionable decision summary for failed runs", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "status",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-failed",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(run.stdout, /Decision summary: failed — 0\/1 cases passed/);
+    assert.match(run.stdout, /first failed stage call/);
+    assert.match(run.stdout, /next action: review the authored arguments/);
+    assert.match(run.stdout, /View: /);
+    assert.equal(run.stderr.includes("Decision summary:"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval status does not invent a stage for a setup abort", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "status",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-setup",
+          ),
+          "--format",
+          "human",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.match(run.stdout, /no first failed stage — did not reach the server's stages/);
+    assert.doesNotMatch(run.stdout, /first failed stage (connection|discovery|selection|call|response|userValue)/);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("--format json output stays byte-identical — no View line", async () => {
   const fixture = await startEvalFixture();
   try {
@@ -1358,6 +1776,320 @@ test("--format json output stays byte-identical — no View line", async () => {
       assert.doesNotThrow(() => JSON.parse(run.stdout));
       assert.ok(!run.stdout.includes("View:"));
     }
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --wait writes failed JSON and JUnit reports before returning", async () => {
+  const fixture = await startEvalFixture({ runCaseResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  const junitPath = path.join(directory, "report.xml");
+  try {
+    const jsonRun = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--reporter",
+          "json-summary",
+          "--out",
+          jsonPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const jsonRaw = await readFile(jsonPath, "utf8");
+    const json = JSON.parse(jsonRaw);
+
+    assert.equal(jsonRun.result.exitCode, 0);
+    assert.deepEqual(
+      {
+        schemaVersion: json.schemaVersion,
+        kind: json.kind,
+        passed: json.passed,
+        summary: json.summary,
+        caseCount: json.cases.length,
+      },
+      {
+        schemaVersion: 1,
+        kind: "eval-run",
+        passed: false,
+        summary: {
+          total: 1,
+          passed: 0,
+          failed: 1,
+          byCategory: {
+            eval: { total: 1, passed: 0, failed: 1 },
+          },
+        },
+        caseCount: 1,
+      },
+    );
+    assert.equal(json.cases[0].error, "Authorization: [REDACTED]");
+    assert.equal(jsonRaw.includes("top-secret"), false);
+
+    const junitRun = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--reporter",
+          "junit-xml",
+          "--out",
+          junitPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const junit = await readFile(junitPath, "utf8");
+
+    assert.equal(junitRun.result.exitCode, 0);
+    assert.match(junit, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+    assert.equal(junit.match(/<testcase /g)?.length, 1);
+    assert.match(junit, /tests="1"/);
+    assert.match(junit, /failures="1"/);
+    assert.match(junit, /<failure message="Authorization: \[REDACTED\]"/);
+    assert.equal(junit.includes("top-secret"), false);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run writes an error report after a completed-run reporting failure", async () => {
+  const fixture = await startEvalFixture({
+    runCaseIterationFetchError: true,
+  });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--out",
+          jsonPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const report = JSON.parse(await readFile(jsonPath, "utf8"));
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.equal(report.passed, false);
+    assert.equal(report.cases.length, 1);
+    assert.partialDeepStrictEqual(report.cases[0], {
+      id: "run-case:iterations",
+      category: "reporting",
+      passed: false,
+    });
+    assert.match(report.cases[0].error, /iteration results unavailable/);
+    assert.equal(report.metadata.runs[0].status, "completed");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run writes completed cases and launch failures before a partial exit", async () => {
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      hosts: [
+        { id: "host-claude", name: "Claude Code" },
+        { id: "host-chatgpt", name: "ChatGPT" },
+      ],
+    },
+    groupFailures: {
+      "host-chatgpt": { code: "HOST_OFFLINE", message: "host unavailable" },
+    },
+  });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--all-targets",
+          "--wait",
+          "--out",
+          jsonPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const report = JSON.parse(await readFile(jsonPath, "utf8"));
+
+    assert.equal(run.result.exitCode, 1);
+    assert.equal(report.passed, false);
+    assert.deepEqual(
+      report.cases
+        .map(
+          (entry: { category: string; passed: boolean; error?: string }) => ({
+            category: entry.category,
+            passed: entry.passed,
+            ...(entry.error ? { error: entry.error } : {}),
+          }),
+        )
+        .sort((left: { category: string }, right: { category: string }) =>
+          left.category.localeCompare(right.category),
+        ),
+      [
+        { category: "eval", passed: true },
+        { category: "launch", passed: false, error: "host unavailable" },
+      ],
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --wait still prints the launch receipt when the wait times out", async () => {
+  // The run ids are the only handle a caller has on runs it has already PAID
+  // for. Raising the timeout before the receipt is written left
+  // `--wait --format json > out.json` holding an empty file.
+  const fixture = await startEvalFixture({ runCaseStatus: "running" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--wait-timeout",
+          "1",
+          "--format",
+          "json",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 1);
+    const receipt = JSON.parse(run.stdout.trim());
+    assert.equal(receipt.launch.targets[0].runId, "run-case");
+    assert.deepEqual(receipt.runs, []);
+    // The failure itself is still reported, and names the runs machine-readably
+    // so a pipeline never has to parse English out of stderr.
+    // stderr also carries the cloud-context announce line; the error document
+    // is the last thing written to it.
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "OPERATIONAL_ERROR");
+    assert.deepEqual(failure.error.details.runIds, ["run-case"]);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run keeps a lowercase launch failure code out of the redactor", async () => {
+  // `billing_limit_reached` and friends are the v1 API's real vocabulary. Under
+  // the key name `code` the telemetry redactor read them as OAuth authorization
+  // codes and replaced every one with "[REDACTED]" — the out-of-credits case
+  // included. SCREAMING_SNAKE codes survived either way, which is why the
+  // sibling test above never caught it.
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      hosts: [
+        { id: "host-claude", name: "Claude Code" },
+        { id: "host-chatgpt", name: "ChatGPT" },
+      ],
+    },
+    groupFailures: {
+      "host-chatgpt": {
+        code: "billing_limit_reached",
+        message: "out of credits",
+      },
+    },
+  });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-run-"));
+  const jsonPath = path.join(directory, "report.json");
+  try {
+    await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--all-targets",
+          "--wait",
+          "--out",
+          jsonPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const report = JSON.parse(await readFile(jsonPath, "utf8"));
+    const launchCase = report.cases.find(
+      (entry: { category: string }) => entry.category === "launch",
+    );
+
+    assert.equal(launchCase.error, "out of credits");
+    assert.equal(launchCase.details.errorCode, "billing_limit_reached");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval gate writes its JUnit report before a gate-failure exit", async () => {
+  const fixture = await startEvalFixture({ runOneResult: "failed" });
+  const directory = await mkdtemp(path.join(os.tmpdir(), "mcpjam-eval-gate-"));
+  const junitPath = path.join(directory, "report.xml");
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--min-pass-rate-percent",
+          "100",
+          "--reporter",
+          "junit-xml",
+          "--out",
+          junitPath,
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    const junit = await readFile(junitPath, "utf8");
+
+    assert.equal(run.result.exitCode, 1);
+    assert.match(junit, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+    assert.match(junit, /<failure message="1\/2 iterations passed"/);
+    assert.match(junit, /goal completion failed/);
   } finally {
     await fixture.close();
   }
@@ -1488,6 +2220,61 @@ test("eval judge rejects a blank --judge-threshold before any request", async ()
       );
     }
     assert.equal(fixture.createBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval judge rejects a blank --judge-model before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "judge",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--judge-model",
+          "   ",
+        ),
+        { telemetry: telemetryDisabled },
+      ),
+    );
+    assert.equal(run.result.exitCode, 2, run.stderr);
+    assert.match(run.stderr, /Invalid input:.*model/);
+    assert.equal(fixture.createBodies.length, 0);
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval iterations rejects a bad --limit before any request", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    for (const value of ["abc", "0", "201", "-1"]) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "iterations",
+            "--project",
+            "proj-alpha",
+            "--run",
+            "run-1",
+            "--limit",
+            value,
+          ),
+          { telemetry: telemetryDisabled },
+        ),
+      );
+      assert.equal(run.result.exitCode, 2, `accepted --limit ${JSON.stringify(value)}: ${run.stderr}`);
+      assert.match(run.stderr, /Invalid input:.*limit/);
+    }
+    assert.equal(fixture.authHeaders.length, 0);
   } finally {
     await fixture.close();
   }
@@ -2163,7 +2950,7 @@ test("eval cases run forwards --host, --iterations and --idempotency-key", async
   }
 });
 
-test("eval run --compose-* ensures a stack, attaches it, and pins the run", async () => {
+test("eval run --compose-* mints ephemerally and does not attach", async () => {
   const fixture = await startEvalFixture();
   try {
     const run = await captureProcessOutput(() =>
@@ -2191,27 +2978,107 @@ test("eval run --compose-* ensures a stack, attaches it, and pins the run", asyn
     );
 
     assert.equal(run.result.exitCode, 0);
-    // Selectors resolve to ids before the platform sees them.
     assert.deepEqual(fixture.composeBodies.at(-1), {
       hostId: "host-claude",
       sandboxImageId: "img-default",
       modelId: "anthropic/claude-haiku-4.5",
     });
-    // The composed environment is APPENDED to the suite — the deliberate,
-    // documented side effect that makes the run reproducible from the app.
-    assert.deepEqual(fixture.attachBodies.at(-1), {
-      environmentId: "env-adhoc",
-    });
-    // …and the launch takes the ordinary environment path.
+    assert.equal(fixture.attachBodies.length, 0);
     assert.deepEqual(fixture.runBodies.at(-1), {
       suiteId: "suite-1",
-      environmentId: "env-adhoc",
+      environmentId: "env-adhoc-anthropic-claude-haiku-4-5",
+      ephemeralEnvironment: true,
     });
     const payload = JSON.parse(run.stdout) as {
       composed: { environment: { created: boolean }; attachment: unknown };
     };
     assert.equal(payload.composed.environment.created, true);
-    assert.deepEqual(payload.composed.attachment, { attached: true });
+    assert.deepEqual(payload.composed.attachment, { attached: false });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-model variadic launches one group without attaching", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-model",
+            "anthropic/claude-haiku-4.5",
+            "google/gemini-2.5-flash",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(fixture.composeBodies.length, 2);
+    assert.equal(fixture.attachBodies.length, 0);
+    assert.deepEqual(fixture.groupBodies.at(-1), {
+      suiteId: "suite-1",
+      ephemeralEnvironment: true,
+      targets: [
+        { environmentId: "env-adhoc-anthropic-claude-haiku-4-5" },
+        { environmentId: "env-adhoc-google-gemini-2-5-flash" },
+      ],
+    });
+    const payload = JSON.parse(run.stdout) as {
+      runGroupId?: string;
+      startedCount: number;
+    };
+    assert.equal(payload.runGroupId, "grp-1");
+    assert.equal(payload.startedCount, 2);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --save-targets attaches the composed cell", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--save-targets",
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled },
+      ),
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.attachBodies.at(-1), {
+      environmentId: "env-adhoc",
+    });
+    assert.deepEqual(fixture.runBodies.at(-1), {
+      suiteId: "suite-1",
+      environmentId: "env-adhoc",
+    });
   } finally {
     await fixture.close();
   }

@@ -14,6 +14,7 @@
  * last step, not a fifth circle that can never be current.
  */
 
+import { Fragment } from "react";
 import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -94,24 +95,32 @@ export function ProgressStepper({
         const isLast = index === steps.length - 1;
 
         return (
-          <li
-            key={step.id}
-            // `contents` keeps the connector a sibling of the pills in the
-            // parent flex row: nested in the <li>, `grow` would measure against
-            // the item instead of the whole rail and the lines would not
-            // divide the leftover width evenly.
-            className="contents"
-            aria-current={state === "current" ? "step" : undefined}
-          >
-            <StepMarker
-              step={step}
-              index={index}
-              state={state}
-              canSelect={canSelect}
-              onSelect={onStepSelect}
-            />
+          // The connector is its own <li> rather than a child of the step's.
+          // It has to be a sibling of the pills in the flex row — nested, its
+          // `grow` would measure against the item instead of the whole rail and
+          // the lines would not divide the leftover width evenly — and
+          // `display: contents` bought that by dropping the <li> from the
+          // layout, which in older Safari also drops it from the accessibility
+          // tree, taking `listitem` and this component's whole `aria-current`
+          // contract with it.
+          <Fragment key={step.id}>
+            <li
+              // The marker used to be the flex item itself; the <li> inherits
+              // its sizing so the pills still keep their width and only the
+              // connectors take up the slack.
+              className="flex shrink-0"
+              aria-current={state === "current" ? "step" : undefined}
+            >
+              <StepMarker
+                step={step}
+                index={index}
+                state={state}
+                canSelect={canSelect}
+                onSelect={onStepSelect}
+              />
+            </li>
             {isLast ? null : (
-              <span
+              <li
                 aria-hidden
                 className={cn(
                   "h-0.5 min-w-4 grow rounded-full",
@@ -119,7 +128,7 @@ export function ProgressStepper({
                 )}
               />
             )}
-          </li>
+          </Fragment>
         );
       })}
     </ol>

@@ -12,6 +12,11 @@ import type {
   EvaluationConfigSnapshot,
   ScoreResult,
 } from "../contract/types.js";
+import type {
+  FailureCategory,
+  StageResultRow,
+  UserValueStage,
+} from "../contract/index.js";
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {
@@ -71,6 +76,116 @@ export interface PlatformProject {
   role?: string;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+export interface PlatformCatalogOauthProbe {
+  probedAt?: number;
+  endpointUrl?: string;
+  outcome?: string;
+  supportsDcr?: boolean;
+  supportsCimd?: boolean;
+  authorizationServerUrl?: string;
+}
+
+/**
+ * Scraped directory row — allowlisted; unknown upstream fields are dropped.
+ *
+ * The nullable fields match the wire: the backend DTO
+ * (`mcpjam-backend/convex/publicApi/dtos.ts::toCatalogServerDto`) emits
+ * `null` for an absent value on these, never omits them.
+ */
+export interface PlatformCatalogServer {
+  id: string;
+  source: string;
+  serverName: string;
+  displayName?: string;
+  description?: string | null;
+  rowType?: string;
+  verifiedTier?: string | null;
+  authPosture?: string | null;
+  unavailableReason?: string | null;
+  endpointKind?: string;
+  remoteUrl?: string;
+  remoteUrlOptions?: string[];
+  remoteUrlRegex?: string;
+  remoteUrlHint?: string;
+  latestContentHash?: string | null;
+  oauthProbe?: PlatformCatalogOauthProbe;
+}
+
+/**
+ * The directory search page, plus the server's echo of which mode actually
+ * ran: `"search"` when a non-blank `q` selected text search, `"browse"` for
+ * the plain listing. Optional so a tolerant reader survives a backend that
+ * predates the marker.
+ */
+export type PlatformDirectorySearchPage =
+  PlatformPage<PlatformCatalogServer> & {
+    mode?: "search" | "browse";
+  };
+
+export interface PlatformCatalogSourceStatus {
+  source: string;
+  lastSyncedAt?: number | null;
+  liveCount?: number | null;
+  upstreamFetchedAt?: number | null;
+}
+
+export interface PlatformRegistryServerTransport {
+  transportType?: string;
+  url?: string | null;
+  useOAuth?: boolean;
+  hasOAuthConfig?: boolean;
+  oauthScopes?: string[];
+}
+
+export interface PlatformRegistryServer {
+  id: string;
+  scope: "global" | "organization";
+  name: string;
+  displayName?: string;
+  description?: string | null;
+  category?: string | null;
+  tags?: string[];
+  publisher?: string | null;
+  status?: string;
+  updatedAt?: number | null;
+  transport?: PlatformRegistryServerTransport;
+}
+
+export interface PlatformRegistryConnection {
+  id: string;
+  kind: "registry" | "catalog";
+  scope?: "global" | "organization";
+  projectId: string | null;
+  serverId: string;
+  serverName?: string | null;
+  registryServerId?: string;
+  catalogServerId?: string;
+  endpointUrl?: string;
+  endpointKind?: string;
+  connectedAt?: number | null;
+}
+
+export interface PlatformRegistryInstall {
+  serverId: string;
+  serverName: string;
+  outcome: "created" | "reconnected";
+}
+
+export interface PlatformRegistryInstallNextSteps {
+  connectionStatusOp: "get_project_server_connection_status";
+  connectLinkUrl?: string;
+  /**
+   * Present when an OAuth install could not mint its browser connect-link.
+   * The install itself succeeded; the caller starts connect_project_server
+   * themselves instead of waiting for a link that is not coming.
+   */
+  connectLinkError?: string;
+}
+
+export interface PlatformRegistryInstallResult extends PlatformRegistryInstall {
+  nextSteps: PlatformRegistryInstallNextSteps;
 }
 
 export interface PlatformProjectServer {
@@ -234,6 +349,12 @@ export interface PlatformEvalRun {
    * absent on API deployments that predate run environment attribution.
    */
   environment?: PlatformEvalRunEnvironment | null;
+  /** Shared by every per-target run from the same fan-out launch. */
+  runGroupId?: string;
+  /** Model the run actually executed with. Absent on pre-attribution rows. */
+  effectiveModelId?: string;
+  /** `"client_default"` inherited the host model; `"override"` used env.modelId. */
+  modelSource?: "client_default" | "override";
   /**
    * Which engine executed the run: `"emulated"` (the platform's own turn loop)
    * or `"harness:<id>"` (a real agent runtime such as Claude Code).
@@ -597,6 +718,12 @@ export interface PlatformEvalSuiteSchedule {
  */
 export interface PlatformEvalSuiteDetail {
   id: string;
+  /**
+   * The suite's declared file identity (`suite.id` in a suite file). Present
+   * on file-owned suites; absent on UI-authored suites, which have no
+   * declared id and cannot be claimed by `eval run --file`.
+   */
+  declaredId?: string;
   name: string | null;
   description: string | null;
   projectId: string | null;
@@ -630,6 +757,16 @@ export interface PlatformEvalSuiteDetail {
   schedule: PlatformEvalSuiteSchedule;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/**
+ * `POST /eval-suites/from-file` — resolve or create a file-owned suite by
+ * declared id. `created` is true on the first upload of that id in the
+ * project; later uploads update the same suite.
+ */
+export interface PlatformFileOwnedEvalSuiteSynced {
+  created: boolean;
+  suite: PlatformEvalSuiteDetail;
 }
 
 export interface PlatformEvalCaseModel {
@@ -839,6 +976,9 @@ export interface PlatformRunCompareSide {
     failed: number;
     passRate: number;
   } | null;
+  environment?: { id: string; name: string | null };
+  effectiveModelId?: string;
+  modelSource?: "client_default" | "override";
 }
 
 /**
@@ -853,7 +993,10 @@ export interface PlatformRunCompareSide {
 export interface PlatformRunCompare {
   suite: { id: string; name: string };
   baseline: {
-    policy: "previous_completed" | "run";
+    policy:
+      | "previous_completed"
+      | "previous_completed_same_environment"
+      | "run";
     baseRunId: string;
   };
   baseRun: PlatformRunCompareSide;
@@ -1105,6 +1248,11 @@ export interface PlatformEnvironmentCapabilities {
   modelOverrides: boolean;
   /** Environment cells may vary by model on one host (the compare grid). */
   modelMatrix: boolean;
+  /**
+   * `startTestSuiteRun` accepts `ephemeralEnvironment` — a project-scoped
+   * env may launch without suite membership. Absent/false on older backends.
+   */
+  ephemeralEnvironmentLaunch?: boolean;
 }
 
 /** Body for the archive/restore sub-actions — the precondition only. */
@@ -1343,6 +1491,16 @@ export interface PlatformEvalIteration {
   evaluationConfig?: EvaluationConfigSnapshot | null;
   /** Set when the backend downgraded this iteration's verdict at ingest. */
   scoreIntegrity?: "score_integrity_invalid" | null;
+  /** Verified D1 user-value chain rows, in chain order. */
+  stageResults?: StageResultRow[];
+  /** The first failed stage, when the verified derivation has one. */
+  firstFailedStage?: UserValueStage;
+  /** Coarse failure bucket; it may exist without a failed stage row. */
+  failureCategory?: FailureCategory;
+  /** Analyzer version that produced the stage rows. */
+  stageAnalyzerVersion?: number;
+  /** The server returned stage rows that failed D1 validation. */
+  stageResultsUnverified?: true;
 }
 
 /** Public-safe evidence for one eval step (resolved URLs, no blob ids). */
@@ -1353,6 +1511,8 @@ export interface PlatformEvalStepEvidence {
     args: unknown;
     ok: boolean;
     error?: string;
+    /** Wall-clock ms for this widget→host call, when the harness recorded it. */
+    elapsedMs?: number;
   }>;
   /** Resolved screenshot URL for the step's render/interaction. */
   screenshotUrl?: string;
@@ -2589,4 +2749,96 @@ export interface PlatformOpenAIReadinessStartBody
    * health.
    */
   submissionMode: PlatformReadinessSubmissionMode;
+}
+
+/** Suites the hosted agent/API surface can start. OAuth is refused. */
+export type PlatformConformanceSuiteKind = "protocol" | "apps" | "tasks";
+
+/** The `202` receipt. Poll the run detail; do not re-POST. */
+export interface PlatformConformanceRunReceipt {
+  runId: string;
+  projectId: string;
+  serverId: string;
+  /**
+   * The run's status at the moment the start returned.
+   *
+   * `queued` for a fresh start. For a DEDUPED start it is whatever the
+   * existing run is already at — which may be `completed`.
+   */
+  status: string;
+  /** True when an idempotency key replayed an existing run. */
+  deduped: boolean;
+  requestedSuites: PlatformConformanceSuiteKind[];
+}
+
+export interface PlatformConformanceRunReportSummary {
+  suiteKind: string;
+  status: string;
+  outcome: string | null;
+  score: number | null;
+  pending: number;
+  profileId: string | null;
+  profileVersion: string | null;
+  hasReport: boolean;
+}
+
+export interface PlatformConformanceRun {
+  id: string;
+  projectId: string;
+  serverId: string | null;
+  source: string | null;
+  verification: string | null;
+  status: string;
+  outcome: string | null;
+  incompleteReason: string | null;
+  score: number | null;
+  applicable: number;
+  passed: number;
+  failed: number;
+  couldNotRun: number;
+  notApplicable: number;
+  pending: number;
+  advisoryCount: number;
+  requestedSuites: string[];
+  protocolVersion: string | null;
+  engineVersion: string | null;
+  createdAt: number;
+  completedAt: number | null;
+  durationMs: number | null;
+  reports: PlatformConformanceRunReportSummary[];
+  /** Relative v1 report URL when a stored report exists (or the run is terminal). */
+  reportUrl: string | null;
+}
+
+export interface PlatformConformanceReportCheck {
+  suiteKind: string;
+  id: string;
+  title: string;
+  groupId: string;
+  status: string;
+  pending: boolean;
+  skipReason?: string;
+  error?: string;
+}
+
+export interface PlatformConformanceReportProfile {
+  suiteKind: string;
+  profileId: string | null;
+  profileVersion: string | null;
+  pendingCheckIds: string[];
+}
+
+/** Bounded failing-check projection. The stored report can be megabytes. */
+export interface PlatformConformanceReport {
+  runId: string;
+  status: string;
+  outcome: string | null;
+  score: number | null;
+  pending: number;
+  checks: PlatformConformanceReportCheck[];
+  totalCases: number;
+  /** Failed + could-not-run count, the denominator behind `truncated`. */
+  totalFailingCases: number;
+  truncated: boolean;
+  profiles: PlatformConformanceReportProfile[];
 }

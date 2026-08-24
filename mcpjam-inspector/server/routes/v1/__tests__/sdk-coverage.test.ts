@@ -54,6 +54,18 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /organizations": "listOrganizations",
   "get /chat-sessions": "listChatSessions",
 
+  // Registry (directory + curated cards)
+  "get /registry/directory-servers": "searchRegistryDirectory",
+  "get /registry/directory-servers/{idOrName}": "getRegistryDirectoryServer",
+  "get /registry/directory-sources": "listRegistryDirectorySources",
+  "get /projects/{projectId}/registry/servers": "listRegistryServers",
+  "get /projects/{projectId}/registry/connections": "listRegistryConnections",
+  "post /projects/{projectId}/registry/directory-installs":
+    "installRegistryDirectoryServer",
+  "post /projects/{projectId}/registry/installs": "installRegistryServer",
+  "delete /projects/{projectId}/registry/installs/{registryServerId}":
+    "uninstallRegistryServer",
+
   // Server connections
   "post /server-connections": "createServerConnection",
   "get /server-connections/{requestId}": "getServerConnection",
@@ -99,6 +111,14 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "getReadinessReport",
   "post /projects/{projectId}/readiness-runs/{runId}/cancel":
     "cancelReadinessRun",
+
+  // Persisted conformance runs
+  "post /projects/{projectId}/servers/{serverId}/conformance-runs":
+    "startConformanceRun",
+  "get /projects/{projectId}/conformance-runs": "listConformanceRuns",
+  "get /projects/{projectId}/conformance-runs/{runId}": "getConformanceRun",
+  "get /projects/{projectId}/conformance-runs/{runId}/report":
+    "getConformanceReport",
 
   // Hosts
   "get /projects/{projectId}/hosts": "listHosts",
@@ -149,6 +169,7 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "get /projects/{projectId}/sessions": "listSessions",
   "get /projects/{projectId}/eval-suites": "listEvalSuites",
   "post /projects/{projectId}/eval-suites": "createEvalSuite",
+  "post /projects/{projectId}/eval-suites/from-file": "syncFileOwnedEvalSuite",
   "get /projects/{projectId}/eval-suites/{suiteId}": "getEvalSuite",
   "patch /projects/{projectId}/eval-suites/{suiteId}": "updateEvalSuite",
   "delete /projects/{projectId}/eval-suites/{suiteId}": "deleteEvalSuite",
@@ -263,6 +284,12 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "setUserTestingGuestExecution",
   "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/rotate-link":
     "rotateUserTestingLink",
+  "get /projects/{projectId}/shares/{resourceType}/{resourceId}":
+    "getShareSettings",
+  "patch /projects/{projectId}/shares/{resourceType}/{resourceId}":
+    "setShareMode",
+  "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link":
+    "rotateShareLink",
   "put /projects/{projectId}/user-testing/scenarios/{scenarioId}/members":
     "upsertUserTestingMember",
   "delete /projects/{projectId}/user-testing/scenarios/{scenarioId}/members/{memberIdOrEmail}":
@@ -279,18 +306,6 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Tunnels
   "post /projects/{projectId}/tunnels": "createTunnel",
   "post /projects/{projectId}/tunnels/{serverId}/close": "closeTunnel",
-
-  // Directory readiness
-  "post /projects/{projectId}/servers/{serverId}/readiness-runs/claude":
-    "startClaudeReadinessRun",
-  "post /projects/{projectId}/servers/{serverId}/readiness-runs/openai":
-    "startOpenAIReadinessRun",
-  "get /projects/{projectId}/readiness-runs": "listReadinessRuns",
-  "get /projects/{projectId}/readiness-runs/{runId}": "getReadinessRun",
-  "get /projects/{projectId}/readiness-runs/{runId}/report":
-    "getReadinessReport",
-  "post /projects/{projectId}/readiness-runs/{runId}/cancel":
-    "cancelReadinessRun",
 };
 
 /**
@@ -337,6 +352,10 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "Keeps a long-running uploaded conformance run from looking stale.",
   "post /projects/{projectId}/conformance-ingest/runs/finalize":
     "Closes the incremental conformance ingest the reporter opened.",
+  "put /projects/{projectId}/shares/{resourceType}/{resourceId}/members":
+    "Share member upsert stays REST-only for now.",
+  "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}":
+    "Share member removal stays REST-only for now.",
 };
 
 describe("/api/v1 -> SDK coverage", () => {

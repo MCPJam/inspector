@@ -215,6 +215,7 @@ export {
   isInsufficientScopeError,
   extractInsufficientScopeChallenge,
   unwrapEraNegotiationCause,
+  classifyNegotiationFailureClass,
   MCPTasksWireError,
   isMCPTasksWireError,
 } from "./mcp-client-manager/index.js";
@@ -414,11 +415,28 @@ export type {
   AuthMethod,
 } from "./registration.js";
 export {
+  buildEvalRunReport,
   summarizeStructuredCases,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
 } from "./structured-reporting.js";
+export {
+  buildEvalDecisionSummary,
+  buildEvalDecisionSummaryFromIterations,
+  DECISION_SUMMARY_FALLBACK_NEXT_ACTION,
+  formatEvalDecisionSummary,
+  NEXT_ACTION_BY_FAILURE_CATEGORY,
+} from "./eval-decision-summary.js";
 export type {
+  EvalDecisionSummary,
+  EvalDecisionSummaryCase,
+  EvalDecisionSummaryInput,
+  EvalDecisionVerdict,
+  NormalizedEvalDecisionCase,
+  StageChainStatus,
+} from "./eval-decision-summary.js";
+export type {
+  StructuredEvalRunInput,
   StructuredCaseClassification,
   StructuredCaseResult,
   StructuredSummaryBucket,
@@ -591,6 +609,25 @@ export type {
   ConformanceScore,
   ScoredAdvisory,
 } from "./conformance-score.js";
+// The frozen scored-check manifest a score is computed over, plus the identity
+// stamp that says which questions a given number came from.
+export {
+  buildConformanceProfileStamp,
+  conformanceProfile,
+  conformanceProfileDigest,
+  partitionByProfile,
+  partitionByStamp,
+  unscoredCheckIds,
+  CONFORMANCE_CHECKER_VERSION,
+  CONFORMANCE_PROFILE_IDS,
+} from "./conformance-profile.js";
+export type {
+  ConformanceProfile,
+  ConformanceProfileId,
+  ConformanceProfileStamp,
+  ProfileCheckLike,
+} from "./conformance-profile.js";
+
 export {
   buildConformanceRunReport,
   CONFORMANCE_RUN_SCHEMA_VERSION,
@@ -645,7 +682,7 @@ export type {
   OAuthLoginResult,
 } from "./oauth-login.js";
 // Loopback authorization-code capture + PKCE primitives, reused by the CLI's
-// platform login (`mcpjam login`) in addition to OAuth conformance runs.
+// platform login (`mcpjam cloud login`) in addition to OAuth conformance runs.
 export {
   createInteractiveAuthorizationSession,
   openUrlInBrowser,
@@ -1007,6 +1044,25 @@ export {
 export type {
   ConformanceSuiteId,
   ConformanceSupport,
+  MCPConformanceFixtures,
+} from "./mcp-conformance/index.js";
+// Wire-schema validation: the run-wide message record and the validator that
+// grades it against the revision's published JSON Schema. Node-only (Ajv),
+// which is why it is absent from `@mcpjam/sdk/browser`.
+export {
+  WireObservationRecorder,
+  WireSchemaValidator,
+  CORE_WIRE_SCHEMAS,
+  EXTENSION_SCHEMA_REVISIONS,
+  EXTENSION_WIRE_SCHEMAS,
+  TASKS_EXTENSION_ID,
+} from "./mcp-conformance/index.js";
+export type {
+  ObservedRequestId,
+  ObservedWireMessage,
+  WireSchemaDocument,
+  WireSchemaValidationReport,
+  WireSchemaViolation,
 } from "./mcp-conformance/index.js";
 
 // MCP Apps conformance
@@ -1195,7 +1251,7 @@ export type {
 } from "./scorers/index.js";
 
 // The gate engine. ONE evaluator behind `assertGate` (code-first) and
-// `mcpjam eval gate` (hosted), so a CI gate cannot be green on one path and
+// `mcpjam cloud eval gate` (hosted), so a CI gate cannot be green on one path and
 // red on the other.
 export {
   GateError,

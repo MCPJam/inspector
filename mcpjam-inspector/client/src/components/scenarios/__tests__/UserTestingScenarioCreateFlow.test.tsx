@@ -13,6 +13,7 @@
  *    editor with the typed name seeded.
  */
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 
@@ -66,6 +67,23 @@ vi.mock("@/components/hosts/ServerGroupPicker", () => ({
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
+}));
+
+const sharePolicyState = vi.hoisted(() => ({
+  policy: undefined as
+    | {
+        maxShareMode: "project_members" | "invited_only" | "anyone_with_link";
+        inviteAudience: "anyone" | "org_members";
+        updatedAt: number | null;
+      }
+    | undefined,
+}));
+
+vi.mock("@/hooks/useOrgSharePolicy", () => ({
+  useEffectiveSharePolicy: () => ({
+    policy: sharePolicyState.policy,
+    isLoading: false,
+  }),
 }));
 vi.mock("@/lib/app-navigation", () => ({
   navigateApp: vi.fn(),
@@ -138,6 +156,7 @@ function renderFlow(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  sharePolicyState.policy = undefined;
   flagState.environments = true;
   ensureAdhocMock.mockImplementation(
     async (args: { stacks: Array<{ hostId: string }> }) =>
@@ -159,6 +178,10 @@ beforeEach(() => {
 });
 
 describe("UserTestingScenarioCreateFlow", () => {
+  beforeEach(() => {
+    sharePolicyState.policy = undefined;
+  });
+
   it("writes nothing until Save, then publishes in ONE call", async () => {
     const { onCreateScenario } = renderFlow();
 
@@ -666,9 +689,10 @@ describe("UserTestingScenarioCreateFlow — create study (Production Redesign)",
     expect(toastError).toHaveBeenCalledWith(
       expect.stringMatching(/study created, but the per-turn ratings setting/i)
     );
-    expect(toastSuccess).toHaveBeenCalledWith(
-      expect.stringMatching(/study created/i)
-    );
+    // And it is not ALSO reported as a plain success: that error already opens
+    // with "Study created", so a success toast beside it would make the screen
+    // say two things about one outcome.
+    expect(toastSuccess).not.toHaveBeenCalled();
   });
 });
 
@@ -688,6 +712,46 @@ describe("UserTestingScenarioCreateFlow — ratings turned off", () => {
       expect(onSetPerTurnFeedback).toHaveBeenCalledWith("cb-1", {
         enabled: false,
         style: "stars",
+      });
+    });
+  });
+});
+
+describe("UserTestingScenarioCreateFlow — org share ceiling", () => {
+  it("snaps the access preset down to the org ceiling and greys over-ceiling options", async () => {
+    const user = userEvent.setup();
+    sharePolicyState.policy = {
+      maxShareMode: "project_members",
+      inviteAudience: "anyone",
+      updatedAt: 1,
+    };
+    const { onCreateScenario } = renderFlow();
+
+    expect(
+      screen.getByText("Your organization limits sharing to project members."),
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("user-testing-create-access")).toHaveTextContent(
+      "Project members",
+    );
+
+    await user.click(screen.getByTestId("user-testing-create-access"));
+    expect(
+      await screen.findByRole("menuitemradio", { name: "Anyone with the link" }),
+    ).toHaveAttribute("data-disabled");
+    expect(
+      screen.getByRole("menuitemradio", { name: "Invited users only" }),
+    ).toHaveAttribute("data-disabled");
+
+    fireEvent.change(screen.getByTestId("user-testing-create-environment"), {
+      target: { value: "env-1" },
+    });
+    fireEvent.click(screen.getByTestId("user-testing-create-save"));
+
+    await waitFor(() => {
+      expect(onCreateScenario).toHaveBeenCalledWith({
+        environmentId: "env-1",
+        name: "Checkout flow",
+        mode: "project_members",
       });
     });
   });

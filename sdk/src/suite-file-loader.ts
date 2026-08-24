@@ -4,7 +4,7 @@
  *
  * PURE and browser-safe: text in, text out. No `node:fs`, no `node:path`, no
  * `process`. It lives in the SDK rather than in the CLI because three
- * consumers need it — `mcpjam eval validate`, the importer/mapping work, and a
+ * consumers need it — `mcpjam cloud eval validate`, the importer/mapping work, and a
  * future `validate_eval_suite` agent tool — and a loader that only the CLI can
  * reach forces the other two to re-author it.
  *
@@ -180,6 +180,8 @@ export type ResolvedEvalSuiteFile = {
   defaults: {
     model: string;
     provider?: string;
+    systemPrompt?: string;
+    temperature?: number;
     repetitions: number;
     passThreshold: number;
     captureLevel: typeof SUITE_FILE_DEFAULT_CAPTURE_LEVEL;
@@ -436,6 +438,12 @@ export function resolveEvalSuiteFile(
       ...(defaults.provider === undefined
         ? {}
         : { provider: defaults.provider }),
+      ...(defaults.systemPrompt === undefined
+        ? {}
+        : { systemPrompt: defaults.systemPrompt }),
+      ...(defaults.temperature === undefined
+        ? {}
+        : { temperature: defaults.temperature }),
       repetitions: defaults.repetitions,
       passThreshold: defaults.passThreshold,
       captureLevel: defaults.captureLevel ?? SUITE_FILE_DEFAULT_CAPTURE_LEVEL,

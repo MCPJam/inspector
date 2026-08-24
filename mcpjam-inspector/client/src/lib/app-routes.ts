@@ -78,7 +78,7 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
   {
     path: "conformance/shared/:token",
     kind: "special",
-    note: "Read-only shared conformance run. Public by HMAC token — no session required to read it.",
+    note: "Read-only shared conformance run. Redeem-based (guest session or WorkOS). Legacy HMAC tokens read as invalid on this page; /api/web/conformance-shared still serves them until I6.",
   },
   { path: "compatibility", kind: "screen", surfaceId: "compatibility" },
   { path: "oauth-flow", kind: "screen", surfaceId: "oauth-flow" },
@@ -185,6 +185,11 @@ export const APP_ROUTES: readonly AppRouteEntry[] = [
     path: "organizations/:orgId/discord",
     kind: "screen",
     surfaceId: "organizations",
+  },
+  {
+    path: "evals/shared/:token",
+    kind: "special",
+    note: "Read-only shared eval run. Redeem-based (guest session or WorkOS). Chrome-less.",
   },
   { path: "evals", kind: "screen", surfaceId: "evals" },
   { path: "evals/create", kind: "screen", surfaceId: "evals" },

@@ -50,6 +50,9 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvex: () => ({
+    query: vi.fn(async () => ({ modelMatrix: false })),
+  }),
 }));
 vi.mock("@/components/hosts/ServerGroupPicker", () => ({
   ServerGroupPicker: () => <div data-testid="server-group-picker" />,

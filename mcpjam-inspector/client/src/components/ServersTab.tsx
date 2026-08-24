@@ -86,6 +86,7 @@ import {
   HoverCardTrigger,
 } from "@mcpjam/design-system/hover-card";
 import { BILLING_GATES, useProjectBillingGate } from "@/lib/billing-gates";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import {
   ResizablePanelGroup,
   ResizablePanel,
@@ -736,9 +737,10 @@ export function ServersTab({
     isAuthenticated,
     projectId: sharedProjectIdForHostScope,
   });
+  const isUserReady = useDbUserReady();
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as any,
-    sharedProjectIdForHostScope && isAuthenticated
+    sharedProjectIdForHostScope && isAuthenticated && isUserReady
       ? ({ projectId: sharedProjectIdForHostScope } as any)
       : "skip"
   ) as ProjectServerConfigDto | null | undefined;
@@ -876,7 +878,9 @@ export function ServersTab({
     isLoading: isRegistryCatalogLoading,
     connect: connectRegistryServer,
   } = useRegistryServers({
-    enabled: isRegistryEnabled,
+    // The hand-curated catalog is retired. Keep the hook mounted so
+    // connection helpers stay imported, but do not fetch those cards.
+    enabled: false,
     projectId: registryProjectId,
     isAuthenticated,
     liveServers: projectServers,
@@ -2036,7 +2040,7 @@ export function ServersTab({
                       onMoveToProject={handleMoveServerToProject}
                       isMovingToProject={movingServerName === name}
                       onShareToOrgRegistry={
-                        orgRegistry.canAdd
+                        isRegistryEnabled && orgRegistry.canAdd
                           ? handleShareToOrgRegistry
                           : undefined
                       }

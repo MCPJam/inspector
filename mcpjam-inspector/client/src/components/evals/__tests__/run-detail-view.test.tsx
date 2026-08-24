@@ -213,6 +213,27 @@ describe("RunDetailView", () => {
     expect(onExportTraces).toHaveBeenCalledTimes(1);
   });
 
+  it("renders Share on a plugin-free run when onShare is provided", async () => {
+    const onShare = vi.fn();
+    render(
+      <RunDetailView
+        selectedRunDetails={makeRun()}
+        caseGroupsForSelectedRun={[makeIteration()]}
+        source="ui"
+        runDetailSortBy="test"
+        onSortChange={() => {}}
+        selectedIterationId={null}
+        onSelectIteration={() => {}}
+        hideAccuracyHero
+        onShare={onShare}
+      />
+    );
+    const shareButton = screen.getByTestId("run-detail-share");
+    expect(shareButton).toBeInTheDocument();
+    await userEvent.click(shareButton);
+    expect(onShare).toHaveBeenCalledTimes(1);
+  });
+
   it("omits the Export action when no handler is provided", () => {
     render(
       <RunDetailView
