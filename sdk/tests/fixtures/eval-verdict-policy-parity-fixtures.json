@@ -5508,7 +5508,7 @@
     },
     {
       "__label": "zero eligible \u2014 threshold 0 does not rescue it",
-      "__why": "Both rates over eligibility are notMeasured, so the verdict is inconclusive and the reason is caseHasNoEligibleTrials. A threshold of 0 is a bar for MEASURED cases. The cancelled trial also leaves the attempted denominator, so completion is 0/1.",
+      "__why": "Both rates over eligibility are notMeasured, so the verdict is inconclusive and the reason is caseHasNoEligibleTrials. A threshold of 0 is a bar for MEASURED cases. The cancelled trial is withdrawn from EVERY denominator, so the 0/1 completion is the setup_failed trial alone: it was attempted and never completed.",
       "input": {
         "caseId": "c_none",
         "configuredTrials": 2,
@@ -5566,7 +5566,7 @@
     },
     {
       "__label": "cancelled and skipped exclusions on one case",
-      "__why": "Skipped leaves both denominators (never attempted) and so does cancelled (attempted, then WITHDRAWN): completion is 3/3 = 1 over the trials that were allowed to finish, while passRate is 2/3. Cancelling a run must not be able to report the server as incomplete.",
+      "__why": "Skipped leaves both denominators (never run) and so does cancelled (execution began, then WITHDRAWN from every denominator): completion is 3/3 = 1 over the trials that were allowed to finish, while passRate is 2/3. Cancelling a run must not be able to report the server as incomplete.",
       "input": {
         "caseId": "c_excluded",
         "configuredTrials": 5,
