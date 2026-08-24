@@ -3539,6 +3539,7 @@ const runLocalIteration = async ({
       ...(toolPolicyGate?.warnings.length
         ? { policyWarnings: toolPolicyGate.warnings }
         : {}),
+      ...(toolPolicyGate ? { toolPolicy: toolPolicyGate.policy } : {}),
       ...(stepSkippedSteps.length ? { skippedSteps: stepSkippedSteps } : {}),
       ...(stepResults.length ? { stepResults } : {}),
       stageCase: buildStageAuthoredCase({
@@ -3723,6 +3724,7 @@ const runLocalIteration = async ({
       ...(toolPolicyGate?.warnings.length
         ? { policyWarnings: toolPolicyGate.warnings }
         : {}),
+      ...(toolPolicyGate ? { toolPolicy: toolPolicyGate.policy } : {}),
       ...(errorMessage ? { error: errorMessage } : {}),
       ...(errorDetails ? { errorDetails } : {}),
       stageCase: buildStageAuthoredCase({
@@ -4498,6 +4500,7 @@ const runHostedIterationWithBrowser = async (
     ...(toolPolicyGate?.warnings.length
       ? { policyWarnings: toolPolicyGate.warnings }
       : {}),
+    ...(toolPolicyGate ? { toolPolicy: toolPolicyGate.policy } : {}),
     ...(hostedStepSkippedSteps.length
       ? { skippedSteps: hostedStepSkippedSteps }
       : {}),
