@@ -225,6 +225,43 @@ describe("SessionsPanel — rows and detail", () => {
     expect(quick.getByText("Quick Run")).toBeInTheDocument();
   });
 
+  test("renders an API origin chip and falls back for unknown origins", () => {
+    setRows([
+      makeRow({
+        chatSessionId: "cs_api",
+        sourceType: "direct",
+        origin: "api",
+        title: "Agent turn",
+      }),
+      makeRow({
+        chatSessionId: "cs_future",
+        sourceType: "direct",
+        origin: "future_surface",
+        title: "Unknown origin",
+      }),
+      makeRow({
+        chatSessionId: "cs_proto",
+        sourceType: "direct",
+        origin: "constructor",
+        title: "Inherited key",
+      }),
+    ]);
+    render(<SessionsPanel projectId="p1" />);
+
+    const apiRow = within(screen.getByTestId("session-row-cs_api"));
+    expect(apiRow.getByTestId("session-origin-chip")).toHaveTextContent("API");
+
+    const future = within(screen.getByTestId("session-row-cs_future"));
+    expect(future.getByTestId("session-origin-chip")).toHaveTextContent(
+      "future_surface"
+    );
+
+    const proto = within(screen.getByTestId("session-row-cs_proto"));
+    expect(proto.getByTestId("session-origin-chip")).toHaveTextContent(
+      "constructor"
+    );
+  });
+
   test("clicking a row opens the detail pane with the row's `id`, not its chatSessionId", () => {
     setRows([
       makeRow({ id: "doc_abc", chatSessionId: "cs_abc", title: "Pick me" }),
