@@ -26,6 +26,29 @@ import {
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
 import {
+  deriveStageResults,
+  stageDerivationToMetadata,
+  type EvalSuiteFileToolPolicy,
+  type StageAuthoredCase,
+  type StageEvidence,
+  type StageResultRow,
+  type StageSetupSignals,
+} from "@mcpjam/sdk/contract";
+import {
+  resolveGradingEngineMode,
+  type GradingEngineMode,
+} from "./grading-mode.js";
+import {
+  buildHostedScoreContract,
+  shadowVerdictFromScores,
+  type HostedEvaluationLike,
+  type HostedPredicateResultLike,
+} from "./score-rows.js";
+import {
+  buildShadowMismatch,
+  emitShadowMismatch,
+} from "./shadow-mismatch.js";
+import {
   lockEvalSessionAfterUpdate,
   persistEvalTraceFanout,
 } from "./persist-eval-trace.js";
@@ -33,6 +56,274 @@ import {
 type IterationStatus = "completed" | "failed" | "cancelled";
 
 type ToolCallRecord = { toolName: string; arguments: Record<string, any> };
+type PolicyBlockRecord = { reason?: unknown };
+
+/**
+ * Stage derivation uses the first recorded block as the stable iteration
+ * summary reason when multiple policy blocks occur.
+ */
+function getIterationPolicyReason(
+  policyBlocks: ReadonlyArray<PolicyBlockRecord>
+): string | undefined {
+  const reason = policyBlocks[0]?.reason;
+  return typeof reason === "string" ? reason : undefined;
+}
+
+/**
+ * Adapt what the runner captured into the analyzer's evidence shape.
+ *
+ * The only subtle part is the two "we have no spans" flags, which are NOT
+ * interchangeable and which the analyzer reports differently:
+ *
+ *   - `traceAbsent` — nothing was captured at all. The row exists (a setup
+ *     failure, a lifecycle stop) and carries no transcript.
+ *   - `traceLacksSpanChannel` — a transcript exists (messages and/or per-turn
+ *     summaries) but no spans. That is the caller-supplied `HostExecutor`
+ *     signature: the run DID happen and this executor simply never reports
+ *     what happened. Collapsing it into "nothing happened" is precisely how a
+ *     run with every tool call failing passes vacuously.
+ */
+function buildStageEvidence(args: {
+  spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
+  messages?: ModelMessage[];
+  predicateResults?: unknown[];
+  widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  /**
+   * Pinned (model-free) tool-call failures. These never enter the trace — the
+   * same blind spot `buildEvalIterationVerdict` compensates for when it applies
+   * `failOnToolError` to them explicitly — so without them a pinned tool
+   * failure would leave `call`/`response` looking unmeasured.
+   */
+  toolErrors?: unknown[];
+  toolSignals?: ToolExposureSignals;
+  setupSignals?: StageSetupSignals;
+  /** Advisory judge evidence. Absent on the first pass; see {@link buildStageMetadata}. */
+  judgeEvidence?: StageEvidence["judgeEvidence"];
+}) {
+  const hasSpans = (args.spans?.length ?? 0) > 0;
+  const hasPrompts = (args.prompts?.length ?? 0) > 0;
+  const hasMessages = (args.messages?.length ?? 0) > 0;
+  return {
+    ...(hasSpans ? { spans: args.spans } : {}),
+    ...(hasPrompts ? { prompts: args.prompts } : {}),
+    ...(args.predicateResults?.length
+      ? {
+          predicateResults: args.predicateResults as ReadonlyArray<{
+            passed?: boolean;
+            reason?: string;
+          }>,
+        }
+      : {}),
+    ...(args.widgetRenderObservations?.length
+      ? { renderObservations: args.widgetRenderObservations }
+      : {}),
+    ...(args.toolErrors?.length
+      ? {
+          toolErrors: args.toolErrors as ReadonlyArray<{
+            kind?: string;
+            toolName?: string;
+          }>,
+        }
+      : {}),
+    ...(args.toolSignals ? { toolSignals: args.toolSignals } : {}),
+    ...(args.setupSignals ? { setupSignals: args.setupSignals } : {}),
+    ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
+    traceAbsent: !hasSpans && !hasPrompts && !hasMessages,
+    traceLacksSpanChannel: !hasSpans && (hasPrompts || hasMessages),
+  };
+}
+
+/**
+ * Derive one iteration's user-value chain metadata, or `{}` when the caller
+ * cannot say what the case authored.
+ *
+ * Exported because a SETUP ABORT never reaches `buildIterationFinishParams`:
+ * `persistSetupFailedIteration` writes its own minimal row for an iteration
+ * that threw before the prompt loop started. That is exactly the shape the
+ * chain has a dedicated verdict for — every applicable stage `notMeasured` for
+ * `setupAborted`, `failureCategory: "setup"` — so leaving that path out would
+ * file a case that demonstrably died in setup as having no chain at all, which
+ * reads identically to an old SDK that reports no chain. Both callers derive
+ * through here so the two cannot drift.
+ *
+ * THIS PRODUCER'S OUTPUT IS NOT FINAL. The LLM judge finishes after the run
+ * does, so a SECOND derivation pass (`judge-second-pass.ts`, reached via the
+ * `judge-completed` doorbell) re-derives these same rows with `judgeEvidence`
+ * present and REWRITES the stage keys. A reader of `metadata.stageResults` is
+ * reading whichever pass wrote last; only `passed` — never derived here — is
+ * authoritative in every pass and every mode.
+ */
+export function buildStageMetadata(args: {
+  stageCase?: StageAuthoredCase;
+  spans?: EvalTraceSpan[];
+  prompts?: PromptTraceSummary[];
+  messages?: ModelMessage[];
+  predicateResults?: unknown[];
+  widgetRenderObservations?: RunnerWidgetRenderObservation[];
+  stageToolErrors?: unknown[];
+  toolSignals?: ToolExposureSignals;
+  setupSignals?: StageSetupSignals;
+  /**
+   * ABSENT on the first pass (the judge has not run yet), PRESENT on the
+   * second. Tier 2: it can only decide `userValue` where the deterministic
+   * evidence said nothing.
+   */
+  judgeEvidence?: StageEvidence["judgeEvidence"];
+  policy?: { blocked: boolean; reason?: string };
+  status: "completed" | "failed";
+  error?: string;
+}): Record<string, unknown> {
+  const { stageCase, status, error } = args;
+  if (!stageCase) return {};
+  return stageDerivationToMetadata(
+    deriveStageResults({
+      authored: stageCase,
+      evidence: buildStageEvidence({
+        spans: args.spans,
+        prompts: args.prompts,
+        messages: args.messages,
+        predicateResults: args.predicateResults,
+        widgetRenderObservations: args.widgetRenderObservations,
+        toolErrors: args.stageToolErrors,
+        toolSignals: args.toolSignals,
+        setupSignals: args.setupSignals,
+        ...(args.judgeEvidence ? { judgeEvidence: args.judgeEvidence } : {}),
+      }),
+      iteration: { status, ...(error ? { error } : {}) },
+      policy: args.policy,
+    }),
+  );
+}
+
+/** A predicate row the score projection can key a criterion off. */
+function isHostedPredicateResult(
+  value: unknown
+): value is HostedPredicateResultLike {
+  if (typeof value !== "object" || value === null) return false;
+  const row = value as { predicate?: unknown; passed?: unknown };
+  return (
+    typeof row.passed === "boolean" &&
+    typeof row.predicate === "object" &&
+    row.predicate !== null
+  );
+}
+
+/** Read only the matcher fields the projection needs, typed rather than cast. */
+function narrowEvaluation(
+  evaluation: Record<string, unknown>
+): HostedEvaluationLike {
+  const list = (key: string): readonly unknown[] | undefined => {
+    const value = evaluation[key];
+    return Array.isArray(value) ? value : undefined;
+  };
+  return {
+    ...(typeof evaluation.passed === "boolean"
+      ? { passed: evaluation.passed }
+      : {}),
+    ...(list("expectedToolCalls")
+      ? { expectedToolCalls: list("expectedToolCalls") }
+      : {}),
+    ...(list("missing") ? { missing: list("missing") } : {}),
+    ...(list("unexpected") ? { unexpected: list("unexpected") } : {}),
+    ...(list("argumentMismatches")
+      ? { argumentMismatches: list("argumentMismatches") }
+      : {}),
+  };
+}
+
+/**
+ * The score-contract keys this mode contributes to iteration metadata.
+ *
+ * `off` returns `{}` — not empty arrays, not `undefined` values — so the
+ * persisted payload is byte-identical to today's. `shadow` writes ONLY the
+ * shadow keys and `dual_write` ONLY the real ones: no mode writes both, which
+ * is what makes a shadow row impossible to mistake for a decided one.
+ */
+function buildScoreMetadata(args: {
+  mode: GradingEngineMode;
+  predicateResults?: unknown[];
+  evaluation: Record<string, unknown>;
+  matchOptions?: Record<string, unknown>;
+  isNegativeTest?: boolean;
+  /** Identity for the shadow comparison. Absent ⇒ no comparison is emitted. */
+  runId?: string;
+  iterationId?: string;
+  /** The authoritative verdict, compared against but never derived from. */
+  passed: boolean;
+  stageMetadata: Record<string, unknown>;
+}): Record<string, unknown> {
+  if (args.mode === "off") return {};
+  const predicateResults = (args.predicateResults ?? []).filter(
+    isHostedPredicateResult
+  );
+  const { scores, evaluationConfig } = buildHostedScoreContract({
+    ...(predicateResults.length ? { predicateResults } : {}),
+    evaluation: narrowEvaluation(args.evaluation),
+    ...(args.matchOptions ? { matchOptions: args.matchOptions } : {}),
+    ...(args.isNegativeTest ? { isNegativeTest: true } : {}),
+    // The judge has not run yet on this pass; its row arrives in the second.
+  });
+  if (scores.length === 0) return {};
+  // Agreement emits NOTHING — the parity harnesses assert exactly that — so
+  // this is a comparison, not a report.
+  if (args.runId && args.iterationId) {
+    const shadow = shadowVerdictFromScores(scores, evaluationConfig);
+    // BOTH sides carry the SAME row on this pass. The score projection does not
+    // re-derive the chain — the judge has not spoken yet — so a row difference
+    // here would be an artifact of leaving one side blank, not a finding, and
+    // it would report `userValueRowChanged` on every iteration that has a row.
+    const userValueRow = readUserValueRow(args.stageMetadata);
+    const mismatch = buildShadowMismatch(
+      {
+        runId: args.runId,
+        iterationId: args.iterationId,
+        passed: args.passed,
+        ...(userValueRow ? { userValue: userValueRow } : {}),
+      },
+      {
+        passed: shadow.passed,
+        mode: args.mode,
+        ...(userValueRow ? { userValue: userValueRow } : {}),
+        ...(shadow.disagreeingScorerIds.length
+          ? { disagreeingScorerIds: shadow.disagreeingScorerIds }
+          : {}),
+        evaluationConfigHash: evaluationConfig.hash,
+        ...(typeof args.stageMetadata.stageAnalyzerVersion === "number"
+          ? { stageAnalyzerVersion: args.stageMetadata.stageAnalyzerVersion }
+          : {}),
+      }
+    );
+    // The emitter is only REACHED on disagreement, so a spy on it counts
+    // mismatches rather than comparisons — that is what makes
+    // `toHaveBeenCalledTimes(0)` a parity result.
+    if (mismatch) emitShadowMismatch(mismatch);
+  }
+  return args.mode === "dual_write"
+    ? { scores, evaluationConfig }
+    : { scoresShadow: scores, evaluationConfigShadow: evaluationConfig };
+}
+
+/**
+ * The derived `userValue` row, for the shadow comparison's row-moved check.
+ * On this pass both sides read the SAME row (the judge has not spoken), so the
+ * comparison can only ever fire on the verdict — which is the point: a
+ * first-pass mismatch means the score projection disagrees with `passed`.
+ */
+function readUserValueRow(
+  stageMetadata: Record<string, unknown>
+): { state: StageResultRow["state"]; reason: StageResultRow["reason"] } | undefined {
+  const rows = stageMetadata.stageResults;
+  if (!Array.isArray(rows)) return undefined;
+  for (const row of rows) {
+    if (typeof row !== "object" || row === null) continue;
+    const candidate = row as Partial<StageResultRow>;
+    if (candidate.stage === "userValue" && candidate.state && candidate.reason) {
+      return { state: candidate.state, reason: candidate.reason };
+    }
+  }
+  return undefined;
+}
 
 /**
  * Builds the `finishParams` object every runner passes to
@@ -78,10 +369,84 @@ export function buildIterationFinishParams(args: {
    * `predicates` rows lack `stepId` and interact failures aren't otherwise saved.
    */
   stepResults?: unknown[];
+  /**
+   * The authored case's stage-applicability inputs, from
+   * `buildStageAuthoredCase`.
+   *
+   * PRESENT ⇒ this iteration gets a derived user-value chain under
+   * `metadata.stageResults` (+ `firstFailedStage` / `failureCategory` /
+   * `stageAnalyzerVersion`). ABSENT ⇒ no stage keys are written at all, which
+   * is the honest default for a caller that cannot say what the case authored:
+   * without the authored case there is no way to tell `notApplicable` from
+   * `notMeasured`, and guessing would report a stage the case never exercised
+   * as an evidence gap.
+   *
+   * Threaded as its own argument rather than folded into
+   * `iterationMetadataBase` because `buildIterationMetadata` is typed
+   * scalar-only (`Record<string, string | number | boolean>`) and
+   * `stageResults` is an array of rows.
+   */
+  stageCase?: StageAuthoredCase;
+  /**
+   * Pinned tool-call failures, for the stage derivation only (the verdict
+   * gates on them separately). Never enter the trace, so the chain is blind to
+   * them unless they are threaded here.
+   */
+  stageToolErrors?: unknown[];
+  /** Execution-layer policy blocks; persisted as metadata, never a failure. */
+  policyBlocks?: PolicyBlockRecord[];
+  /** Non-fatal policy configuration warnings, persisted for run consumers. */
+  policyWarnings?: string[];
+  /**
+   * The effective tool policy this iteration executed under, snapshotted the
+   * same way `hostPolicy` evidence is: the run row has no field to carry it
+   * (a backend `toolPolicy` column is Lane B), so without this snapshot a
+   * REPLAY of a policied run cannot reconstruct the policy — and a replay
+   * re-dials the ORIGINAL servers with the original credentials
+   * (`MCPServerReplayConfig`), so an unreconstructed policy means the calls we
+   * blocked run for real the second time.
+   */
+  toolPolicy?: EvalSuiteFileToolPolicy;
   iterationMetadataBase: Record<string, string | number | boolean>;
   hostPolicy?: HostExecutionPolicy;
   toolSignals?: ToolExposureSignals;
+  /**
+   * Folded run-level connect / tools-list evidence. Threaded into the
+   * analyzer; the same signals are also persisted under
+   * `metadata.stageSetupAudit.signals` (see `setupAudit`) so a v2 verdict
+   * can be audited or recomputed.
+   */
+  setupSignals?: StageSetupSignals;
+  /**
+   * Synthetic connection/discovery spans. Persisted on the trace (timeline)
+   * but never enter stage-derivation evidence.
+   */
+  setupSpans?: EvalTraceSpan[];
+  /** Bounded canary/audit extras from the run-setup observer. */
+  setupAudit?: Record<string, unknown>;
   injectOpenAiCompat?: boolean;
+  /**
+   * The run's resolved grading-engine mode. ABSENT ⇒ resolve from the env kill
+   * switch alone, which is `off` unless an operator set it, so a caller that
+   * knows nothing about the score engine keeps today's payload byte for byte.
+   *
+   *   `off`        → no score keys at all.
+   *   `shadow`     → `scoresShadow` / `evaluationConfigShadow` ONLY.
+   *   `dual_write` → `scores` / `evaluationConfig` ONLY.
+   *
+   * Synchronous in every mode: the projection is pure and adds no awaits, so
+   * the runner's finalization path gains no latency.
+   */
+  gradingMode?: GradingEngineMode;
+  /** Match options + polarity, hashed into the `toolCalls:match` definition. */
+  scoreMatchOptions?: Record<string, unknown>;
+  isNegativeTest?: boolean;
+  /**
+   * The run this iteration belongs to. Used ONLY to key shadow-mismatch
+   * telemetry (dedupe + the per-run cap); absent ⇒ no comparison is emitted,
+   * which is why a quick run with no run row stays silent.
+   */
+  runId?: string;
 }): Omit<FinalizeEvalIterationParams, "convexClient" | "videoBytes"> {
   const {
     iterationId,
@@ -103,11 +468,60 @@ export function buildIterationFinishParams(args: {
     predicateResults,
     skippedSteps,
     stepResults,
+    stageCase,
+    stageToolErrors,
+    policyBlocks,
+    policyWarnings,
+    toolPolicy,
     iterationMetadataBase,
     hostPolicy,
     toolSignals,
+    setupSignals,
+    setupSpans,
+    setupAudit,
     injectOpenAiCompat,
+    scoreMatchOptions,
+    isNegativeTest,
   } = args;
+  const gradingMode = args.gradingMode ?? resolveGradingEngineMode();
+  const persistedSpans = [
+    ...(setupSpans ?? []),
+    ...(spans ?? []),
+  ];
+  const stageMetadata = buildStageMetadata({
+    ...(stageCase ? { stageCase } : {}),
+    spans,
+    prompts,
+    messages,
+    predicateResults,
+    widgetRenderObservations,
+    stageToolErrors,
+    toolSignals,
+    setupSignals,
+    policy:
+      policyBlocks &&
+      policyBlocks.length > 0 &&
+      !error &&
+      !(stageToolErrors && stageToolErrors.length > 0)
+        ? {
+            blocked: true,
+            reason: getIterationPolicyReason(policyBlocks),
+          }
+        : undefined,
+    status,
+    ...(error ? { error } : {}),
+  });
+  const scoreMetadata = buildScoreMetadata({
+    mode: gradingMode,
+    predicateResults,
+    evaluation,
+    passed,
+    stageMetadata,
+    ...(args.runId ? { runId: args.runId } : {}),
+    ...(iterationId ? { iterationId } : {}),
+    ...(scoreMatchOptions ? { matchOptions: scoreMatchOptions } : {}),
+    ...(isNegativeTest ? { isNegativeTest } : {}),
+  });
   return {
     iterationId,
     passed,
@@ -116,7 +530,7 @@ export function buildIterationFinishParams(args: {
     messages,
     ...(modelId ? { modelId } : {}),
     ...(systemPrompt ? { systemPrompt } : {}),
-    ...(spans?.length ? { spans } : {}),
+    ...(persistedSpans.length ? { spans: persistedSpans } : {}),
     ...(prompts?.length ? { prompts } : {}),
     ...(widgetSnapshots?.length ? { widgetSnapshots } : {}),
     ...(widgetRenderObservations?.length ? { widgetRenderObservations } : {}),
@@ -132,6 +546,17 @@ export function buildIterationFinishParams(args: {
       ...(predicateResults?.length ? { predicates: predicateResults } : {}),
       ...(skippedSteps?.length ? { skippedSteps } : {}),
       ...(stepResults?.length ? { stepResults } : {}),
+      ...(policyBlocks?.length
+        ? {
+            policyBlocks,
+            policyBlockCount: policyBlocks.length,
+          }
+        : {}),
+      ...(policyWarnings?.length ? { policyWarnings } : {}),
+      ...(toolPolicy ? { toolPolicy } : {}),
+      ...stageMetadata,
+      ...scoreMetadata,
+      ...(setupAudit ?? {}),
       ...(hostPolicy && toolSignals
         ? buildHostIterationMetadata(
             hostPolicy,

@@ -26,6 +26,7 @@ Running 30+ iterations gives you confidence in real-world performance:
 import { EvalTest } from "@mcpjam/sdk";
 
 const test = new EvalTest({
+  id: "c_addition_accuracy",
   name: "addition-accuracy",
   test: async (agent) => {
     const result = await agent.run("Add 2 and 3");
@@ -106,6 +107,7 @@ import { EvalSuite, EvalTest } from "@mcpjam/sdk";
 const suite = new EvalSuite({ name: "Math Operations" });
 
 suite.add(new EvalTest({
+  id: "c_addition",
   name: "addition",
   test: async (agent) => {
     const r = await agent.run("Add 5 and 3");
@@ -114,6 +116,7 @@ suite.add(new EvalTest({
 }));
 
 suite.add(new EvalTest({
+  id: "c_multiplication",
   name: "multiplication",
   test: async (agent) => {
     const r = await agent.run("Multiply 4 by 6");
@@ -122,6 +125,7 @@ suite.add(new EvalTest({
 }));
 
 suite.add(new EvalTest({
+  id: "c_division",
   name: "division",
   test: async (agent) => {
     const r = await agent.run("Divide 20 by 4");
@@ -248,6 +252,7 @@ Don't just test the happy path:
 
 ```typescript
 suite.add(new EvalTest({
+  id: "c_handles_empty_input",
   name: "handles-empty-input",
   test: async (agent) => {
     const r = await agent.run("Add numbers"); // No numbers given
@@ -256,6 +261,7 @@ suite.add(new EvalTest({
 }));
 
 suite.add(new EvalTest({
+  id: "c_handles_large_numbers",
   name: "handles-large-numbers",
   test: async (agent) => {
     const r = await agent.run("Add 999999999 and 1");
@@ -302,6 +308,7 @@ const runtime = host.withManager(manager, {
 });
 
 const test = new EvalTest({
+  id: "c_add",
   name: "add",
   test: async (runner) => (await runner.run("Add 2+3")).hasToolCall("add"),
 });

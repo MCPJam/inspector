@@ -36,6 +36,7 @@ import {
 } from "@/lib/apps-capability-dimensions";
 import { hostSupportsWidgetRendering, isRecord } from "@/lib/host-capabilities";
 import type { HostAttentionIssue, SandboxConfigSubKey } from "../types";
+import { HostStyleTokens } from "./HostStyleTokens";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
 interface AppsExtensionTabProps {
@@ -518,6 +519,31 @@ export function applyJsonToDraft(
       const value = incoming[key];
       if (typeof value === "boolean") {
         (out as Record<string, unknown>)[key] = value;
+      }
+    }
+    // cspConnectDomains / cspResourceDomains are the only object-valued
+    // override keys. They are NOT in `booleanKeys`, so without this pass an
+    // apply would silently drop them — and seeded ChatGPT / Claude / Cursor
+    // rows carry them, so the user would lose their subtype policy by
+    // touching anything else in the editor. Soft-validate per leaf the same
+    // way the boolean rows do: keep known keys with boolean values, drop the
+    // rest, and only emit the object when at least one leaf survived.
+    for (const [key, leafKeys] of [
+      ["cspConnectDomains", ["fetch", "xhr", "websocket"]],
+      [
+        "cspResourceDomains",
+        ["script", "stylesheet", "image", "font", "media"],
+      ],
+    ] as const) {
+      const incomingMap = incoming[key];
+      if (!isPlainObject(incomingMap)) continue;
+      const leaves: Record<string, boolean> = {};
+      for (const leaf of leafKeys) {
+        const value = incomingMap[leaf];
+        if (typeof value === "boolean") leaves[leaf] = value;
+      }
+      if (Object.keys(leaves).length > 0) {
+        (out as Record<string, unknown>)[key] = leaves;
       }
     }
     const modes = incoming.availableDisplayModes;
@@ -1750,6 +1776,9 @@ export function AppsExtensionTab({
             subtitle on each section makes this explicit so users don't
             confuse them. */}
         <McpAppsCapabilityMatrix draft={draft} onDraftChange={onDraftChange} />
+        {/* Read-only companion to the two matrices: the capability rows say
+            what the host CAN do, this says what it LOOKS like to a view. */}
+        <HostStyleTokens draft={draft} />
         {/* `min-h-[320px]` guarantees the editor keeps a usable, scrollable
             height even when both matrices above are expanded — its own
             CodeMirror scroll then works instead of the editor collapsing. */}

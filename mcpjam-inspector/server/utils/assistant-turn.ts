@@ -197,6 +197,15 @@ export interface RunAssistantTurnOptions {
   harnessMcpProxy?: MCPJamHandlerOptions["harnessMcpProxy"];
 
   /**
+   * Resolved per-server `toolPolicy` decisions and the sink for the calls the
+   * MCP proxy refuses. Eval drives the harness through this facade, so both
+   * must be pass-throughs; every other caller omits them and keeps today's
+   * unpoliced path.
+   */
+  harnessToolPolicy?: MCPJamHandlerOptions["harnessToolPolicy"];
+  onHarnessPolicyBlocks?: MCPJamHandlerOptions["onHarnessPolicyBlocks"];
+
+  /**
    * Swarm (journey-execution) continuity identity. Forwarded to the harness
    * turn so a swarm harness session claims/commits the `swarm-chat` owner lane
    * (keyed on `journeyRunId` + `hostId` + `chatSessionId`) instead of misfiling
@@ -383,12 +392,19 @@ function buildHandlerOptions(
         opts.persistMode === "handler" &&
         typeof opts.onConversationComplete === "function"
       ) {
-        await opts.onConversationComplete(
+        // RETURNED, not just awaited. The engine reads this to decide whether
+        // the turn was actually saved — it emits the persist receipt from it,
+        // and the harness releases its session lease when it is not a success.
+        // Swallowing it here would make `undefined` mean both "this caller
+        // reports nothing" and "the outcome was dropped in transit", and the
+        // engine reads the first meaning: a failed ingest would look saved.
+        return await opts.onConversationComplete(
           fullHistory,
           turnTrace,
           harnessSessionCommit
         );
       }
+      return undefined;
     };
 
   const handlerOptions: MCPJamHandlerOptions = {
@@ -422,6 +438,12 @@ function buildHandlerOptions(
     // (runHarnessTurn REQUIRES harnessMcpProxy when servers are selected) and
     // (b) claim the correct owner lane (`swarm-chat` for swarm).
     ...(opts.harnessMcpProxy ? { harnessMcpProxy: opts.harnessMcpProxy } : {}),
+    ...(opts.harnessToolPolicy
+      ? { harnessToolPolicy: opts.harnessToolPolicy }
+      : {}),
+    ...(opts.onHarnessPolicyBlocks
+      ? { onHarnessPolicyBlocks: opts.onHarnessPolicyBlocks }
+      : {}),
     ...(opts.journeyRunId ? { journeyRunId: opts.journeyRunId } : {}),
     ...(opts.hostId ? { hostId: opts.hostId } : {}),
     // Pinned harness skills: presence (even an EMPTY array) is semantic — an
@@ -564,7 +586,7 @@ export async function runAssistantTurn(
   // fall back to emulated.
   const canonicalHarnessModelId = getCanonicalModelId(
     harnessModelId,
-    opts.modelDefinition.provider,
+    opts.modelDefinition.provider
   );
   const modelEligible =
     isHostedCatalogModel(harnessModelId, opts.modelDefinition.provider) &&
@@ -582,7 +604,7 @@ export async function runAssistantTurn(
         modelId: harnessModelId,
         provider: opts.modelDefinition.provider,
         sourceType: opts.sourceType,
-      },
+      }
     );
   }
   const engineResult = useHarness

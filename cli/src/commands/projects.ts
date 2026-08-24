@@ -4,13 +4,13 @@ import {
   getProjectServerConnectionStatusOperation,
   createProjectOperation,
   deleteProjectOperation,
+  getCapabilitiesOperation,
   listProjectsOperation,
   listProjectServersOperation,
   createProjectServerOperation,
   getProjectServerOperation,
   updateProjectServerOperation,
   deleteProjectServerOperation,
-  PlatformApiError,
   showServersOperation,
   updateProjectOperation,
 } from "@mcpjam/sdk/platform";
@@ -20,67 +20,23 @@ import {
   formatShowServersHuman,
 } from "../lib/projects-render.js";
 import { writeResult } from "../lib/output.js";
-import { buildPlatformClient, toCliError } from "../lib/platform-client.js";
+import { DEFAULT_PLATFORM_ORIGIN } from "../lib/platform-auth.js";
+import {
+  addOrgOption,
+  addProjectOption,
+  bindOperation,
+  buildCloudClientContext,
+  platformOptionsOf,
+  runPlatformCommand,
+  type PlatformOptions as SharedPlatformOptions,
+} from "../lib/platform-command.js";
+import { resolveCloudProjectArgs } from "../lib/cloud-scope.js";
 import { getGlobalOptions } from "../lib/server-config.js";
 import { openUrlInBrowser } from "@mcpjam/sdk";
 
-type PlatformOptions = {
-  apiKey?: string;
-  apiUrl?: string;
+type PlatformOptions = SharedPlatformOptions & {
   project?: string;
 };
-
-function addPlatformOptions(command: Command): Command {
-  return command
-    .option("--api-key <key>", "MCPJam sk_ API key (overrides MCPJAM_API_KEY)")
-    .option(
-      "--api-url <url>",
-      "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
-    );
-}
-
-/**
- * The one place `--api-key`, `--api-url` and `--project` are resolved.
- *
- * READ THIS BEFORE USING `options.x` FOR ANY OF THE THREE. Each is declared on
- * the `servers` group AND on its subcommands, and Commander does not give the
- * subcommand a copy: whichever command declares a flag NEAREST THE TOP consumes
- * it, wherever it appears on the line. `projects server connect --project alpha`
- * stores `alpha` on `servers`, and `connect`'s own `options.project` is
- * `undefined` — so reading it there silently ignores what the caller typed and
- * falls back to the default project. That is not a hypothetical; it is what the
- * connect command did.
- *
- * The same mechanism makes a `requiredOption` on such a subcommand impossible
- * to satisfy — the group eats the value, then the subcommand fails the parse
- * for not having received it — which is why the duplicate declarations here are
- * plain `option()` and required-ness is checked in the action instead.
- *
- * Ancestors are merged first and the action command last, so the nearest
- * declaration wins. Commander's own `optsWithGlobals()` reduces the other way
- * — its source comments the loop "globals overwrite locals" — which is the
- * wrong precedence for a flag the caller repeated closer to the command they
- * were running. Undefined values are skipped so a future Commander that
- * materializes an unset flag as `undefined` cannot erase a real value.
- */
-function platformOptionsOf(command: Command): PlatformOptions {
-  const nearestFirst: Command[] = [];
-  for (
-    let current: Command | null = command;
-    current !== null;
-    current = current.parent
-  ) {
-    nearestFirst.push(current);
-  }
-
-  const merged: Record<string, unknown> = {};
-  for (const cmd of nearestFirst.reverse()) {
-    for (const [key, value] of Object.entries(cmd.opts())) {
-      if (value !== undefined) merged[key] = value;
-    }
-  }
-  return merged as PlatformOptions;
-}
 
 /**
  * `--project`, for the commands that cannot run without one.
@@ -91,67 +47,66 @@ function platformOptionsOf(command: Command): PlatformOptions {
  * --project alpha --server srv-1` could not be typed at all. Enforcing it here
  * keeps the same outcome for the same mistake (`command.error` raises the
  * `CommanderError` the CLI already maps to a usage error) while letting the
- * value arrive from wherever Commander actually put it.
+ * value arrive from wherever Commander actually put it. See
+ * {@link platformOptionsOf} for why flags on the group and the leaf must be
+ * merged nearest-first.
  */
 function requireProject(command: Command, options: PlatformOptions): string {
-  const project = options.project?.trim();
-  if (!project) {
+  const resolved = resolveCloudProjectArgs({ project: options.project });
+  if (resolved.projectScope.source === "automatic" || !resolved.project) {
     command.error("error: required option '--project <id-or-name>' not specified");
   }
-  return project;
+  return resolved.project;
 }
 
-async function runPlatformCommand<TOutput>(
+/**
+ * Who a handoff link will belong to, and which deployment it lives on.
+ *
+ * WHY THIS EXISTS. A handoff link is bound to the account that created it, and
+ * the browser that opens it is refused unless it is signed in to that same
+ * account. Nothing in the old output said which account that was, so the two
+ * ends could disagree with no warning and no way to diagnose it — most sharply
+ * when an agent runs this command and relays the link to a person, because the
+ * agent cannot see either side of the mismatch.
+ *
+ * The deployment goes on the line too. This CLI can be pointed at prod,
+ * staging, or a local server, and a link only works on the one that minted it.
+ *
+ * BEST EFFORT, ALWAYS. The connection request already succeeded by the time
+ * this runs; failing the command because a decorative lookup failed would
+ * trade a working result for none. An unresolved account simply drops that
+ * half of the sentence.
+ */
+async function resolveHandoffAudience(
   options: PlatformOptions,
-  timeoutMs: number,
-  execute: (context: {
-    client: ReturnType<typeof buildPlatformClient>["client"];
-    signal: AbortSignal;
-  }) => Promise<TOutput>,
-  /**
-   * Cancels the request from outside its own deadline — today that is Ctrl-C
-   * during a poll. Without it the only way out of an in-flight request is the
-   * timeout, so a user who interrupted a watch still waits the better part of
-   * `timeoutMs` for the terminal to come back.
-   */
-  externalSignal?: AbortSignal
-): Promise<TOutput> {
-  const controller = new AbortController();
-  const timeoutHandle = setTimeout(() => {
-    controller.abort(
-      new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
-        "TIMEOUT",
-        {
-          status: 0,
-        }
-      )
-    );
-  }, timeoutMs);
-  timeoutHandle.unref?.();
-
-  const onExternalAbort = () => controller.abort(externalSignal?.reason);
-  if (externalSignal?.aborted) onExternalAbort();
-  else externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
-
+  timeoutMs: number
+): Promise<{ email: string | null; origin: string }> {
   try {
-    const { client } = buildPlatformClient({ ...options, timeoutMs });
-    return await execute({ client, signal: controller.signal });
-  } catch (error) {
-    // When OUR deadline fired, surface the armed TIMEOUT error: depending
-    // on the fetch implementation, the rejection may be a bare AbortError
-    // that would otherwise map to INTERNAL_ERROR.
-    if (
-      controller.signal.aborted &&
-      controller.signal.reason instanceof PlatformApiError
-    ) {
-      throw toCliError(controller.signal.reason);
+    const { client, webOrigin } = buildCloudClientContext(options, timeoutMs);
+    try {
+      const me = await client.getMe();
+      return { email: me.email ?? null, origin: webOrigin };
+    } catch {
+      return { email: null, origin: webOrigin };
     }
-    throw toCliError(error);
-  } finally {
-    clearTimeout(timeoutHandle);
-    externalSignal?.removeEventListener("abort", onExternalAbort);
+  } catch {
+    // `buildCloudClientContext` throws when there is no usable credential at all.
+    // The request that produced the link plainly had one, so this is close to
+    // unreachable — but it must not be the thing that breaks the output.
+    return { email: null, origin: DEFAULT_PLATFORM_ORIGIN };
   }
+}
+
+/** The audience line, as printed. Pure, so its wording is testable without a
+ * network call. */
+function describeHandoffAudience(audience: {
+  email: string | null;
+  origin: string;
+}): string {
+  const host = new URL(audience.origin).host;
+  return audience.email
+    ? `This link belongs to ${audience.email} on ${host}. Open it in a browser signed in to that account.\n`
+    : `This link belongs to the account this CLI is logged into, on ${host}. Open it in a browser signed in to that account — \`mcpjam cloud whoami\` names it.\n`;
 }
 
 export function registerProjectsCommands(program: Command): void {
@@ -161,42 +116,42 @@ export function registerProjectsCommands(program: Command): void {
       "Operate the MCP servers saved in your hosted MCPJam projects"
     );
 
-  addPlatformOptions(
-    projects
+      addOrgOption(
+      projects
       .command("list")
       .description("List the projects you can access")
       // The operation has always taken this filter; the CLI had no way to pass
       // it, and no way to learn an id to pass either. `organizations list`
       // supplies the id, so the flag is finally usable end to end.
       //
-      // Named `--organization-id`, matching `projects create`, because both
-      // take an ID and only an ID. (`--project` elsewhere is a name-OR-id
-      // selector, which is why that one has no `-id` suffix.)
-      .option(
-        "--organization-id <id>",
-        "Restrict the listing to one organization (see `mcpjam organizations list`)"
-      )
-  ).action(async (_options: PlatformOptions, command) => {
+      // Named `--org`, matching `projects create`. Both take an ID and only
+      // an ID. (`--project` elsewhere is a name-OR-id selector.)
+      ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const rawOrganization = (command.opts() as { organizationId?: string })
-      .organizationId;
+    const rawOrganization = (command.opts() as { org?: string }).org;
     // A supplied-but-blank value is a typo, not "no filter". Silently widening
     // it to every accessible project is the wrong answer to a request that
     // asked to narrow — same reasoning as `requireProject` above.
     if (rawOrganization !== undefined && rawOrganization.trim() === "") {
       command.error(
-        "error: option '--organization-id <id>' cannot be empty"
+        "error: option '--org <id>' cannot be empty"
       );
     }
     const organizationId = rawOrganization?.trim();
     const result = await runPlatformCommand(
-      platformOptionsOf(command),
+      platformOptionsOf<PlatformOptions>(command),
       globalOptions.timeout,
       ({ client, signal }) =>
         listProjectsOperation.execute(
           organizationId ? { organizationId } : {},
           { client, signal }
-        )
+        ),
+      {
+        quiet: globalOptions.quiet,
+        cloudScope: organizationId
+          ? { kind: "organization", organization: organizationId }
+          : { kind: "all-projects" },
+      }
     );
 
     if (globalOptions.format === "human") {
@@ -208,20 +163,19 @@ export function registerProjectsCommands(program: Command): void {
     }
   });
 
-  addPlatformOptions(
-    projects
+      addOrgOption(
+      projects
       .command("create")
       .description("Create a hosted MCPJam project")
       .requiredOption("--name <name>", "Project name")
       .option("--description <text>", "Project description")
-      .option("--organization-id <id>", "Organization ID")
-      .option("--visibility <visibility>", "public or private")
-  ).action(
+      )
+      .option("--visibility <visibility>", "public or private").action(
     async (
       options: PlatformOptions & {
         name: string;
         description?: string;
-        organizationId?: string;
+        org?: string;
         visibility?: string;
       },
       command
@@ -232,32 +186,31 @@ export function registerProjectsCommands(program: Command): void {
         ...(options.description === undefined
           ? {}
           : { description: options.description }),
-        ...(options.organizationId === undefined
+        ...(options.org === undefined
           ? {}
-          : { organizationId: options.organizationId }),
+          : { organizationId: options.org }),
         ...(options.visibility === undefined
           ? {}
           : { visibility: options.visibility }),
       });
       const result = await runPlatformCommand(
-        platformOptionsOf(command),
+        platformOptionsOf<PlatformOptions>(command),
         globalOptions.timeout,
         ({ client, signal }) =>
-          createProjectOperation.execute(input, { client, signal })
+          createProjectOperation.execute(input, { client, signal }),
+        { cloudScope: { kind: "account" }, quiet: globalOptions.quiet }
       );
       writeResult(result, globalOptions.format);
     }
   );
 
-  addPlatformOptions(
-    projects
+      projects
       .command("update")
       .description("Update project metadata")
       .requiredOption("--project <id-or-name>", "Project name or ID")
       .option("--name <name>", "New project name")
       .option("--description <text>", "New project description")
-      .option("--visibility <visibility>", "public or private")
-  ).action(
+      .option("--visibility <visibility>", "public or private").action(
     async (
       options: PlatformOptions & {
         name?: string;
@@ -267,7 +220,7 @@ export function registerProjectsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const platformOptions = platformOptionsOf(command);
+      const platformOptions = platformOptionsOf<PlatformOptions>(command);
       const input = updateProjectOperation.inputSchema.parse({
         project: requireProject(command, platformOptions),
         ...(options.name === undefined ? {} : { name: options.name }),
@@ -288,14 +241,12 @@ export function registerProjectsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    projects
+      projects
       .command("delete")
       .description("Delete a project and its project-owned resources")
-      .requiredOption("--project <id-or-name>", "Project name or ID")
-  ).action(async (_options: PlatformOptions, command) => {
+      .requiredOption("--project <id-or-name>", "Project name or ID").action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const input = deleteProjectOperation.inputSchema.parse({
       project: requireProject(command, platformOptions),
     });
@@ -308,24 +259,33 @@ export function registerProjectsCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  const servers = addPlatformOptions(
-    projects
+  bindOperation(
+    addProjectOption(
+      projects
+        .command("capabilities")
+        .description(
+          "Show what you may do in a project: your role, which betas the organization has, your plan's limits, and a can-block of booleans. Ask this before scripting anything that authors, launches or publishes."
+        )
+    ),
+    getCapabilitiesOperation,
+    (options: PlatformOptions) => ({ project: options.project })
+  );
+
+  const servers =     projects
       .command("servers")
-      .alias("server")
-      .description("List and manage the servers saved in a project")
-  ).option(
+      .description("List and manage the servers saved in a project").option(
     "--project <id-or-name>",
     "Project name or ID (defaults to the most recently updated project)"
   );
   servers.action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const result = await runPlatformCommand(
       platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         listProjectServersOperation.execute(
-          { project: platformOptions.project },
+          { project: resolveCloudProjectArgs(platformOptions).project },
           { client, signal }
         )
     );
@@ -345,16 +305,14 @@ export function registerProjectsCommands(program: Command): void {
     return parsed as Record<string, unknown>;
   };
 
-  addPlatformOptions(
-    servers
+      servers
       .command("create")
       .alias("add")
       .description("Create a saved MCP server")
       .option("--project <id-or-name>", "Project name or ID")
-      .requiredOption("--body <json>", "Server JSON body")
-  ).action(async (options: PlatformOptions & { body: string }, command) => {
+      .requiredOption("--body <json>", "Server JSON body").action(async (options: PlatformOptions & { body: string }, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
       platformOptions,
@@ -368,15 +326,13 @@ export function registerProjectsCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    servers
+      servers
       .command("get")
       .description("Get one saved MCP server")
       .option("--project <id-or-name>", "Project name or ID")
-      .requiredOption("--server <id>", "Server ID")
-  ).action(async (options: PlatformOptions & { server: string }, command) => {
+      .requiredOption("--server <id>", "Server ID").action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
       platformOptions,
@@ -390,20 +346,18 @@ export function registerProjectsCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    servers
+      servers
       .command("update")
       .description("Update one saved MCP server")
       .option("--project <id-or-name>", "Project name or ID")
       .requiredOption("--server <id>", "Server ID")
-      .requiredOption("--body <json>", "Patch JSON body")
-  ).action(
+      .requiredOption("--body <json>", "Patch JSON body").action(
     async (
       options: PlatformOptions & { server: string; body: string },
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const platformOptions = platformOptionsOf(command);
+      const platformOptions = platformOptionsOf<PlatformOptions>(command);
       const project = requireProject(command, platformOptions);
       const result = await runPlatformCommand(
         platformOptions,
@@ -422,16 +376,14 @@ export function registerProjectsCommands(program: Command): void {
     }
   );
 
-  addPlatformOptions(
-    servers
+      servers
       .command("delete")
       .alias("remove")
       .description("Delete one saved MCP server")
       .option("--project <id-or-name>", "Project name or ID")
-      .requiredOption("--server <id>", "Server ID")
-  ).action(async (options: PlatformOptions & { server: string }, command) => {
+      .requiredOption("--server <id>", "Server ID").action(async (options: PlatformOptions & { server: string }, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const project = requireProject(command, platformOptions);
     const result = await runPlatformCommand(
       platformOptions,
@@ -445,8 +397,7 @@ export function registerProjectsCommands(program: Command): void {
     writeResult(result, globalOptions.format);
   });
 
-  addPlatformOptions(
-    servers
+      servers
       .command("connect")
       .description(
         "Connect an MCP server URL to a project, authorizing in a browser if needed"
@@ -460,8 +411,7 @@ export function registerProjectsCommands(program: Command): void {
       .option("--name <name>", "Name for the server, if one is created")
       .option("--reauthorize", "Force a fresh authorization")
       .option("--no-browser", "Print the authorization link instead of opening it")
-      .option("--no-wait", "Return as soon as the request is created")
-  ).action(
+      .option("--no-wait", "Return as soon as the request is created").action(
     async (
       options: PlatformOptions & {
         url: string;
@@ -474,7 +424,7 @@ export function registerProjectsCommands(program: Command): void {
       command
     ) => {
       const globalOptions = getGlobalOptions(command);
-      const platformOptions = platformOptionsOf(command);
+      const platformOptions = platformOptionsOf<PlatformOptions>(command);
 
       // Parsed at the keyboard, like every sibling command here. Commander
       // hands back whatever was typed, so without this `--url " "` and
@@ -486,7 +436,7 @@ export function registerProjectsCommands(program: Command): void {
         // and therefore consumes it, so the subcommand's own copy is always
         // undefined and this command quietly connected to the default project
         // instead of the one that was named.
-        project: platformOptions.project,
+        project: resolveCloudProjectArgs(platformOptions).project,
         serverId: options.server,
         name: options.name,
         reauthorize: options.reauthorize,
@@ -506,6 +456,11 @@ export function registerProjectsCommands(program: Command): void {
         process.stderr.write(
           `Open this link to finish connecting:\n  ${created.handoffUrl}\n`
         );
+        process.stderr.write(
+          describeHandoffAudience(
+            await resolveHandoffAudience(platformOptions, globalOptions.timeout)
+          )
+        );
         if (options.browser !== false) {
           await openUrlInBrowser(created.handoffUrl).catch(() => {
             process.stderr.write(
@@ -518,7 +473,7 @@ export function registerProjectsCommands(program: Command): void {
       if (options.wait === false || isTerminalConnectionStatus(created.status)) {
         if (options.wait === false && !isTerminalConnectionStatus(created.status)) {
           process.stderr.write(
-            `Not waiting. Follow it with:\n  mcpjam projects server connect-status --request ${created.connectionRequestId}\n`
+            `Not waiting. Follow it with:\n  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n`
           );
         }
         writeResult(created, globalOptions.format);
@@ -540,39 +495,37 @@ export function registerProjectsCommands(program: Command): void {
         // watching". Returning the last poll silently made those identical.
         process.stderr.write(
           `Stopped waiting; the request is still ${latest.status} and continues in the cloud.\n` +
-            `  mcpjam projects server connect-status --request ${created.connectionRequestId}\n`
+            `  mcpjam cloud projects servers connect-status --request ${created.connectionRequestId}\n`
         );
         process.exitCode = 1;
       }
     }
   );
 
-  addPlatformOptions(
-    servers
+      servers
       .command("connect-status")
       .description("Check a connection request started by `server connect`")
-      .requiredOption("--request <id>", "Connection request id (scr_…)")
-  ).action(
+      .requiredOption("--request <id>", "Connection request id (scr_…)").action(
     async (options: PlatformOptions & { request: string }, command) => {
       const globalOptions = getGlobalOptions(command);
       const input = getProjectServerConnectionStatusOperation.inputSchema.parse({
         connectionRequestId: options.request,
       });
       const payload = await runPlatformCommand(
-        platformOptionsOf(command),
+        platformOptionsOf<PlatformOptions>(command),
         globalOptions.timeout,
         ({ client, signal }) =>
           getProjectServerConnectionStatusOperation.execute(input, {
             client,
             signal,
-          })
+          }),
+        { cloudScope: { kind: "account" }, quiet: globalOptions.quiet }
       );
       writeResult(payload, globalOptions.format);
     }
   );
 
-  addPlatformOptions(
-    projects
+      projects
       .command("status")
       .description(
         "Health-check every server in a project (hosted doctor per server)"
@@ -580,16 +533,15 @@ export function registerProjectsCommands(program: Command): void {
       .option(
         "--project <id-or-name>",
         "Project name or ID (defaults to the most recently updated project)"
-      )
-  ).action(async (_options: PlatformOptions, command) => {
+      ).action(async (_options: PlatformOptions, command) => {
     const globalOptions = getGlobalOptions(command);
-    const platformOptions = platformOptionsOf(command);
+    const platformOptions = platformOptionsOf<PlatformOptions>(command);
     const payload = await runPlatformCommand(
       platformOptions,
       globalOptions.timeout,
       ({ client, signal }) =>
         showServersOperation.execute(
-          { project: platformOptions.project },
+          { project: resolveCloudProjectArgs(platformOptions).project },
           { client, signal }
         )
     );
@@ -712,7 +664,7 @@ async function pollConnection(
               { connectionRequestId },
               { client, signal }
             ),
-          interruptController.signal
+          { externalSignal: interruptController.signal, announce: false }
         );
       } catch (error) {
         // OUR abort, not a failure: the user asked to stop and we cancelled the

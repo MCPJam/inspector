@@ -627,7 +627,8 @@ chatV2.post("/", async (c) => {
         progressiveToolDiscovery: body.progressiveToolDiscovery,
         modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
-        hostStyle: body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
+        hostStyle:
+          body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
         builtInToolIds: body.builtInToolIds,
       },
       // Scenario: the published host wins (a share-link client can't override).
@@ -784,8 +785,8 @@ chatV2.post("/", async (c) => {
       typeof rawComputerWorkdir === "string" ? rawComputerWorkdir : undefined;
 
     // Cloud skills are a Convex-backed PROJECT resource (no computer needed), so
-    // the emulated chat path wires the listSkills/loadSkill tools for any
-    // signed-in member with a project. Gate only on:
+    // the emulated chat path inlines the catalog and wires `loadSkill` (+ file
+    // tools) for any signed-in member with a project that has skills. Gate only on:
     //   - not a guest (a share-link/scenario guest gets no skill tools), and
     //   - the turn will NOT run a real harness runtime — Claude Code delivers
     //     skills via the adapter `skills` param instead (Codex delivers none),
@@ -1221,7 +1222,11 @@ chatV2.post("/", async (c) => {
       );
       if (sandboxPlan.notice) sandboxNotices = [sandboxPlan.notice];
     }
-    if (sandboxPlan.action === "provision" && scenarioId && body.chatSessionId) {
+    if (
+      sandboxPlan.action === "provision" &&
+      scenarioId &&
+      body.chatSessionId
+    ) {
       const provisioned = await provisionScenarioSandbox({
         bearer: bearerToken,
         scenarioId,
@@ -1528,6 +1533,11 @@ chatV2.post("/", async (c) => {
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
+          // Hosted sessions finally honor the CAS the client already sends.
+          // Read from the SCHEMA-VALIDATED body, not the raw cast one.
+          ...(hostedBody.expectedVersion !== undefined
+            ? { expectedVersion: hostedBody.expectedVersion }
+            : {}),
           // Closure receives `resolvedTemperature` from inside the helper,
           // preserving the legacy behavior where chat-v2 fed the post-
           // prepare resolved temperature into `buildDirectHostConfig`.

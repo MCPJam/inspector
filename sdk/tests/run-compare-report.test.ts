@@ -1,5 +1,5 @@
 /**
- * `buildRunCompareReport` — the adapter that gives `mcpjam eval compare` its
+ * `buildRunCompareReport` — the adapter that gives `mcpjam cloud eval compare` its
  * JSON and JUnit output.
  *
  * The two decisions worth pinning are both about what "failed" means:
@@ -305,5 +305,22 @@ describe("buildRunCompareReport", () => {
     // the gate row alone is enough.
     expect(xml).toContain('tests="1"');
     expect(xml).toContain("gate: passed");
+  });
+
+  it("carries a supplied decision summary and omits it when absent", () => {
+    const decisionSummary = {
+      verdict: "failed" as const,
+      passRate: { total: 1, passed: 0, failed: 1, percent: 0 },
+      iterationWalkComplete: true,
+      cases: [],
+    };
+    expect(
+      buildRunCompareReport(compareWire([]), PASSED_GATE, {
+        decisionSummary,
+      }).decisionSummary
+    ).toBe(decisionSummary);
+    expect(
+      buildRunCompareReport(compareWire([]), PASSED_GATE)
+    ).not.toHaveProperty("decisionSummary");
   });
 });

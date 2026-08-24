@@ -45,6 +45,8 @@ import type { PinnedSkillArtifact } from "../../shared/skill-types.js";
 import type { RuntimeSkill } from "./harness/runtime-skills.js";
 import type { EffectiveCapabilitySet } from "../services/environments/effective-capabilities.js";
 import type { HarnessMcpProxyStrategy } from "./harness/harness-proxy-strategy.js";
+import type { HarnessPolicyBlockRecord } from "./harness/harness-proxy-policy-enforcement.js";
+import type { ToolPolicySnapshot } from "@mcpjam/sdk/contract";
 import type { InsufficientScopeInfo } from "../routes/web/hosted-elicitation.js";
 import type { ScopeStepUpRequiredEvent } from "@/shared/scope-step-up";
 import {
@@ -209,7 +211,11 @@ import {
   mergeLiveChatTraceUsage,
   type LiveChatTraceUsage,
 } from "@/shared/live-chat-trace";
-import type { PersistedTurnTrace } from "./chat-ingestion";
+import {
+  writePersistReceipt,
+  type PersistChatOutcome,
+  type PersistedTurnTrace,
+} from "./chat-ingestion";
 import { StreamTurnDriver } from "./stream-turn-driver.js";
 import {
   pushAiSdkTrailingErrorSpan,
@@ -460,10 +466,10 @@ export interface MCPJamEngineErrorEvent {
 export function describeBackendStreamFailure(
   status: number | undefined,
   rawText: string,
-  code?: string,
+  code?: string
 ): NormalizedError {
   const detail = new Error(
-    status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
+    status !== undefined ? `HTTP ${status}: ${rawText}` : rawText
   );
 
   // Before the status branches: a body that names MCPJam settles ownership no
@@ -501,10 +507,10 @@ export function describeBackendStreamFailure(
 export function describeStreamErrorChunkFailure(
   status: number | undefined,
   rawText: string,
-  code?: string,
+  code?: string
 ): NormalizedError {
   const detail = new Error(
-    status !== undefined ? `HTTP ${status}: ${rawText}` : rawText,
+    status !== undefined ? `HTTP ${status}: ${rawText}` : rawText
   );
 
   if (isMcpjamOwnedFailureCode(code)) {
@@ -517,7 +523,7 @@ export function describeStreamErrorChunkFailure(
 /** Status → slug, carrying the catalog's own origin. Shared by both paths. */
 function backendFailureSlug(
   status: number | undefined,
-  detail: Error,
+  detail: Error
 ): NormalizedError {
   if (status === 401 || status === 403) {
     return describeAsSlug("provider/auth_error", detail);
@@ -642,6 +648,21 @@ export interface MCPJamHandlerOptions {
    *  global env. Absent ⇒ harness runs without proxied MCP. See
    *  `harness-proxy-strategy.ts`. */
   harnessMcpProxy?: HarnessMcpProxyStrategy;
+  /**
+   * Resolved `toolPolicy` decisions per selected server id, computed at launch
+   * from the annotation cache. Present ⇒ each policied server's `.mcp.json`
+   * entry carries a SEALED proxy token, and the hosted harness-MCP route
+   * enforces the snapshot on `tools/call` (the in-sandbox calls never pass
+   * through an in-process tool map, so the proxy is the only chokepoint).
+   * Absent ⇒ today's unpoliced bare-token path, byte-identical.
+   */
+  harnessToolPolicy?: Record<string, ToolPolicySnapshot>;
+  /**
+   * Sink for the calls the proxy refused, reported on THIS replica off the
+   * results the harness streams back. The eval driver hands them to
+   * `finalize-iteration` as the same policy blocks the in-process gate yields.
+   */
+  onHarnessPolicyBlocks?: (blocks: HarnessPolicyBlockRecord[]) => void;
   requireToolApproval?: boolean;
   /**
    * Per-tool approval policy for the `ui_*` tools this turn advertised,
@@ -689,13 +710,19 @@ export interface MCPJamHandlerOptions {
     toolName: string;
     toolInput: unknown;
   }) => ScopeStepUpRequiredEvent | Promise<ScopeStepUpRequiredEvent>;
+  /**
+   * Persist tap. May return the ingest's outcome so the engine can stream a
+   * `data-persist-receipt` before the stream closes — the client then KNOWS
+   * whether its turn was saved instead of inferring it from a version poll.
+   * Callers that persist headlessly (or not at all) keep returning void.
+   */
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace,
     // §3: present only for chat-backed harness turns — the resume-state commit
     // to apply atomically with the transcript via /ingest-chat.
     harnessSessionCommit?: HarnessSessionCommitPayload
-  ) => Promise<void> | void;
+  ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
@@ -1764,7 +1791,7 @@ async function processStream(
           // wire still carries exactly one.
           const errorText =
             typeof (chunk as { errorText?: unknown }).errorText === "string"
-              ? ((chunk as { errorText: string }).errorText)
+              ? (chunk as { errorText: string }).errorText
               : String((chunk as { errorText?: unknown }).errorText ?? "");
           const parsed = parseStreamErrorChunkText(errorText);
           // Classified HERE, where the structured body still exists. By the
@@ -1776,7 +1803,7 @@ async function processStream(
           const normalized = describeStreamErrorChunkFailure(
             parsed.statusCode,
             errorText,
-            parsed.code,
+            parsed.code
           );
           throw Object.assign(new Error(parsed.message), {
             normalized,
@@ -2565,7 +2592,7 @@ async function processOneStep(
       stepIndex,
       errorText,
     });
-      emitError(writer, errorText);
+    emitError(writer, errorText);
     // PR 5b-followup-2: surface the structured guardrail body to
     // `streamSink: "none"` consumers (eval backend stream runner). The
     // writer-side `error` chunk above is fire-and-forget here; the
@@ -2584,7 +2611,7 @@ async function processOneStep(
     const normalized = describeBackendStreamFailure(
       res.status,
       errorText,
-      parsed.code,
+      parsed.code
     );
     // `isJsonDenial` proves only that the body was JSON — NOT that it was the
     // documented `{ok:false, code:"..."}` refusal, and "has any code at all"
@@ -3101,7 +3128,7 @@ async function processOneStep(
         stepIndex,
         errorText,
       });
-    emitError(writer, errorText);
+      emitError(writer, errorText);
       // Site (2) holds a real error. An earlier comment deferred capture to
       // "the chat route's stream onError" — but runChatEngineLoop's
       // createUIMessageStream passes only `execute`, so no such onError
@@ -3281,7 +3308,7 @@ export async function runChatEngineLoop(
   // that have no request context. Later failures in the same turn still get
   // classified (capture-deduped) and keep their free-form rows.
   const failureReporter = oncePerTurn(
-    failureReporterOption ?? createSystemStreamFailureReporter("chat-engine"),
+    failureReporterOption ?? createSystemStreamFailureReporter("chat-engine")
   );
   const resolvedEndpointPath = endpointPath ?? "/stream";
   const resolvedMaxSteps =
@@ -3717,7 +3744,8 @@ export async function runChatEngineLoop(
         // a sentence, and re-describing it would throw away the guardrail
         // code that settles ownership.
         const loopFailureCode = attachedFailureCode(error);
-        const loopNormalized = attachedNormalized(error) ?? describeError(error);
+        const loopNormalized =
+          attachedNormalized(error) ?? describeError(error);
         // Reporter, not a bare logger.error: the old call captured to Sentry
         // unconditionally — paging on user-fault failures — and left no typed
         // record a monitor could read (the response is a 200 stream). The
@@ -3781,7 +3809,13 @@ export async function runChatEngineLoop(
   // `turnTrace` (if produced) so the engine result can surface it to
   // synthetic-runner callers via {@link ChatEngineLoopResult.turnTrace}.
   let capturedTurnTrace: PersistedTurnTrace | undefined;
-  const onFinishEngine = async () => {
+  // `receiptWriter` is the RAW stream writer, never `safeWriter`: the finally
+  // block above has already flipped `streamClosed`, so every safeWriter write
+  // from here on is silently dropped. The underlying stream is still open —
+  // `createUIMessageStream` does not close it until `execute` resolves.
+  const onFinishEngine = async (receiptWriter?: {
+    write: (chunk: UIMessageChunk) => void;
+  }) => {
     try {
       // Persist only successful, non-aborted turns. An aborted turn is
       // partial by definition — recording it as a completed conversation
@@ -3790,12 +3824,38 @@ export async function runChatEngineLoop(
         const trace: PersistedTurnTrace = driver.buildPersistedTrace();
         capturedTurnTrace = trace;
         try {
-          await onConversationComplete?.([...messageHistory], trace);
+          const persistOutcome = await onConversationComplete?.(
+            [...messageHistory],
+            trace
+          );
+          // Costs no latency: `onConversationComplete` already awaited the
+          // ingest, which is what gates this stream's close in the first place.
+          if (persistOutcome && chatSessionId) {
+            writePersistReceipt(receiptWriter, persistOutcome, {
+              chatSessionId,
+              turnId: trace.turnId,
+            });
+          }
         } catch (persistenceError) {
           logger.error(
             "[mcpjam-stream-handler] Error while persisting conversation",
             persistenceError
           );
+          // A thrown persist is still an answer the client deserves. Without
+          // this the stream closes silent and the client waits out its whole
+          // no-receipt reconciliation window before saying anything.
+          if (chatSessionId) {
+            writePersistReceipt(
+              receiptWriter,
+              { outcome: "failed", failureKind: "exception" },
+              {
+                chatSessionId,
+                ...(capturedTurnTrace
+                  ? { turnId: capturedTurnTrace.turnId }
+                  : {}),
+              }
+            );
+          }
         }
       }
     } finally {
@@ -3828,7 +3888,7 @@ export async function runChatEngineLoop(
         try {
           await executeEngine(context);
         } finally {
-          await onFinishEngine();
+          await onFinishEngine(context.writer);
         }
       },
     });

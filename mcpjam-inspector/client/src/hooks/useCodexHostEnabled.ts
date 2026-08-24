@@ -14,6 +14,11 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
  */
 export const CODEX_HOST_FEATURE_FLAG = "codex-host-enabled";
 
+/** Tri-state flag value for route guards that must wait for PostHog. */
+export function useCodexHostEnabledState(): boolean | undefined {
+  return useFeatureFlagEnabled(CODEX_HOST_FEATURE_FLAG);
+}
+
 export function useCodexHostEnabled(): boolean {
-  return useFeatureFlagEnabled(CODEX_HOST_FEATURE_FLAG) === true;
+  return useCodexHostEnabledState() === true;
 }

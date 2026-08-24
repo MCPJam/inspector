@@ -23,6 +23,7 @@ import {
   resolveConformanceOutputFormatForCli,
   type ConformanceOutputFormat,
 } from "../lib/conformance-output.js";
+import { maybeUploadSingleSuite } from "../lib/conformance-upload.js";
 import { parseReporterFormat, type ReporterFormat } from "../lib/reporting.js";
 import { createCliRpcLogCollector } from "../lib/rpc-logs.js";
 import { withRpcLogsIfRequested } from "../lib/rpc-helpers.js";
@@ -51,6 +52,10 @@ import {
   runWidgetSessionAction,
   runWidgetSessionClose,
   runWidgetSessionStart,
+  runWidgetSessionSnapshot,
+  runWidgetSessionScriptedStep,
+  parseScriptedStepInput,
+  parsePriorWidgetToolCalls,
 } from "../lib/widget-session.js";
 
 const APPS_CHECK_IDS_BY_CATEGORY: Record<
@@ -188,6 +193,11 @@ export function registerAppsCommands(program: Command): void {
       .option(
         "--protocol-version <version>",
         "Pin the MCP protocol version for the conformance connection (e.g. 2026-07-28). HTTP targets only.",
+      )
+      .option("--upload", "Upload this suite's result into MCPJam run history")
+      .option(
+        "--require-upload",
+        "Fail if reporting is configured but the UI record cannot be written",
       ),
   ).action(async (options, command) => {
     const reporter = parseReporterFormat(options.reporter as string | undefined);
@@ -220,6 +230,15 @@ export function registerAppsCommands(program: Command): void {
     // never ran.
     reportScore(scoreFromAppsResult(result), command);
     reportIncomplete(result, command);
+    await maybeUploadSingleSuite({
+      suiteKind: "apps",
+      result,
+      serverUrl:
+        "url" in config && typeof config.url === "string" ? config.url : undefined,
+      upload: Boolean((options as { upload?: boolean }).upload),
+      requireUpload: Boolean((options as { requireUpload?: boolean }).requireUpload),
+      command,
+    });
     const exitCode = conformanceExitCode(result);
     if (exitCode !== 0) {
       setProcessExitCode(exitCode);
@@ -340,7 +359,7 @@ export function registerAppsCommands(program: Command): void {
   const session = apps
     .command("session")
     .description(
-      "Interactive headless widget sessions (start, action, close) via the local Inspector",
+      "Interactive headless widget sessions via the local Inspector. `action` drives by pixel coordinate; `snapshot` + `step` drive by role/name/testId, which is what a caller that cannot see the screenshot needs.",
     );
 
   addSharedServerOptions(
@@ -498,6 +517,104 @@ export function registerAppsCommands(program: Command): void {
         globalOptions.format,
       );
     });
+
+  session
+    .command("snapshot")
+    .description(
+      "Read the mounted widget as an accessibility tree plus addressable controls. A read: it refreshes the session TTL but does not spend the widget's interaction budget.",
+    )
+    .requiredOption("--session <id>", "Session id from `apps session start`")
+    .option("--inspector-url <url>", "Local Inspector base URL")
+    .action(
+      async (
+        options: { session?: string; inspectorUrl?: string },
+        command,
+      ) => {
+        const globalOptions = getGlobalOptions(command);
+        const sessionId = options.session?.trim();
+        if (!sessionId) {
+          throw usageError("--session is required.");
+        }
+        const response = await runWidgetSessionSnapshot({
+          baseUrl: options.inspectorUrl,
+          sessionId,
+          timeoutMs: globalOptions.timeout,
+        });
+        writeResult(response, globalOptions.format);
+      },
+    );
+
+  session
+    .command("step")
+    .description(
+      'Drive one semantic step, addressed by role/name/testId rather than by coordinate. Pass the step as JSON, e.g. --step \'{"kind":"click","target":{"role":{"role":"button","name":"Submit"}}}\'. Use `apps session snapshot` to find the targets.',
+    )
+    .requiredOption("--session <id>", "Session id from `apps session start`")
+    .requiredOption("--step <json>", "The step, as a JSON object")
+    .option(
+      "--prior-tool-calls <json>",
+      "The `widgetToolCalls` earlier steps returned, as a JSON array. Required for a `widgetToolCalled` assertion: the server drains its buffer after every step, so history is the caller's to carry.",
+    )
+    .option(
+      "--screenshot-out <path>",
+      "Write the post-step screenshot to a file",
+    )
+    .option(
+      "--screenshot-base64",
+      "Include the screenshot inline as base64 in the JSON output",
+    )
+    .option("--inspector-url <url>", "Local Inspector base URL")
+    .action(
+      async (
+        options: {
+          session?: string;
+          step?: string;
+          priorToolCalls?: string;
+          screenshotOut?: string;
+          screenshotBase64?: boolean;
+          inspectorUrl?: string;
+        },
+        command,
+      ) => {
+        const globalOptions = getGlobalOptions(command);
+        const sessionId = options.session?.trim();
+        if (!sessionId) {
+          throw usageError("--session is required.");
+        }
+        const step = parseScriptedStepInput(options.step);
+        const priorWidgetToolCalls = parsePriorWidgetToolCalls(
+          options.priorToolCalls,
+        );
+
+        const response = await runWidgetSessionScriptedStep({
+          baseUrl: options.inspectorUrl,
+          sessionId,
+          step,
+          ...(priorWidgetToolCalls ? { priorWidgetToolCalls } : {}),
+          timeoutMs: globalOptions.timeout,
+        });
+
+        const screenshotPath = await writeScreenshotIfRequested(
+          response.screenshotBase64,
+          options.screenshotOut,
+        );
+
+        const { screenshotBase64, ...rest } = response;
+        writeResult(
+          {
+            ...rest,
+            ...(screenshotPath ? { screenshotPath } : {}),
+            // Base64 only on request: a frame per step is the largest thing
+            // this command emits, and the caller driving by role does not
+            // need it.
+            ...(options.screenshotBase64 === true && screenshotBase64
+              ? { screenshotBase64 }
+              : {}),
+          },
+          globalOptions.format,
+        );
+      },
+    );
 
   session
     .command("close")

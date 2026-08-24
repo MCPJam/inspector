@@ -314,6 +314,28 @@ export const createSuiteRunRecorder = ({
   };
 };
 
+/**
+ * What THIS runner build can actually execute — declared to the backend at run
+ * creation (the mixed-version-rollout handshake).
+ *
+ * The backend pins a run's host config at run start and stamps the run's
+ * `executionEngine` from it. If it pinned `harness` unconditionally, a run
+ * created by an OLDER runner — a desktop or local inspector that predates the
+ * harness execution wiring but talks to the same hosted Convex — would be
+ * stamped `harness:claude-code` while that runner went on quietly emulating.
+ * That is worse than the bug this program is fixing: today's silent emulation
+ * at least isn't labelled, and a false stamp would make it unfalsifiable.
+ *
+ * So the backend copies `harness` into the run snapshot only when the creating
+ * runner says it can honour it. A runner that declares nothing keeps today's
+ * behavior — stripped selector, `emulated` stamp — which is honest about what
+ * it will do.
+ *
+ * TEMPORARY. Retire the arg (and this constant) once every runner version in
+ * the wild declares it; the backend can then pin `harness` unconditionally.
+ */
+const RUNNER_CAPABILITIES = ["harness-execution"] as const;
+
 export const startSuiteRunWithRecorder = async ({
   convexClient,
   suiteId,
@@ -336,7 +358,9 @@ export const startSuiteRunWithRecorder = async ({
   expectedEnvironmentServerIds,
   source,
   idempotencyKey,
+  sourceHash,
   skillsOverride,
+  ephemeralEnvironment,
 }: {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -436,12 +460,23 @@ export const startSuiteRunWithRecorder = async ({
    */
   idempotencyKey?: string;
   /**
+   * SHA-256 hex of the suite-file bytes that launched this run. Forwarded to
+   * Convex `startTestSuiteRun.sourceHash` so a file-owned run records the
+   * exact bytes it ran.
+   */
+  sourceHash?: string;
+  /**
    * The A/B "without skills" arm. `'exclude'` tells `startTestSuiteRun` to pin
    * NO skills from any channel and to mark the run `skillsExcluded`, so the
    * comparison arm is labelled rather than merely empty. See the wire schema
    * for the deliberate plugin-servers asymmetry.
    */
   skillsOverride?: "exclude";
+  /**
+   * Compose-and-run: accept a project-scoped, non-archived environment that
+   * is not a suite member. Forwarded to `startTestSuiteRun`.
+   */
+  ephemeralEnvironment?: boolean;
 }) => {
   let response: any;
   try {
@@ -473,7 +508,10 @@ export const startSuiteRunWithRecorder = async ({
           : {}),
         ...(source ? { source } : {}),
         ...(idempotencyKey ? { idempotencyKey } : {}),
+        ...(sourceHash ? { sourceHash } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
+        ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+        runnerCapabilities: RUNNER_CAPABILITIES,
       }
     );
   } catch (error) {
@@ -704,6 +742,20 @@ export const startSuiteRunWithRecorder = async ({
     suiteId,
     config,
     recorder,
+    /**
+     * This start was a REPLAY of an existing run (idempotency key hit, or the
+     * keyless fingerprint window), not a launch.
+     *
+     * Absent from a backend that predates the field, which callers must read
+     * as "unknown", NOT as "fresh": treating an old backend's silence as a
+     * launch is exactly the assumption that had retries re-running a finished
+     * suite. Skew therefore keeps the old behaviour rather than gaining the
+     * new refusal.
+     */
+    deduped: response?.deduped as boolean | undefined,
+    /** The run's status as the platform holds it — `completed` on a replay of
+     *  a finished run, not the `running` a launch would report. */
+    status: response?.status as string | undefined,
     hostConfig: response?.hostConfig as
       | Record<string, unknown>
       | null

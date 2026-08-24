@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
+import { useQuery } from "convex/react";
 import { useSharedAppState } from "@/state/app-state-context";
 import { findProjectByAnyId } from "@/state/app-types";
 import { useProjectMembers } from "@/hooks/useProjects";
@@ -44,10 +45,46 @@ export function useEvalTabContext({
     [appState.servers]
   );
 
-  // Suite visibility already implies suite access; let the backend mutation
-  // remain the source of truth for whether deletion is allowed.
-  const canDeleteSuite = true;
-  const canDeleteRuns = !projectId || canManageMembers;
+  /**
+   * Deleting an eval artifact SOMEONE ELSE created takes the project manage
+   * tier — the same `canManageProjectMembers` bar the backend applies to
+   * `suite.delete` and `run.delete`. Outside a project (local/playground work)
+   * there is no membership to rank, so there is nothing to withhold.
+   */
+  const canManageEvalArtifacts = !projectId || canManageMembers;
+  /**
+   * …and the creator of a suite or run may always delete it, whatever their
+   * role. That escape hatch is the backend's, not a UI courtesy: it is what
+   * lets an interrupted CLI import roll back the suite it just wrote. Gating
+   * the affordance on the manage tier ALONE would hide delete from the person
+   * who made the thing, on a mutation that would have accepted them.
+   *
+   * Which is why these are per-row predicates rather than one boolean. A
+   * project-wide answer cannot express "yours, not theirs", and the version of
+   * this that rounded it off — `canDeleteSuite = true` for everyone — pushed
+   * the whole question onto a mutation the user only reaches by clicking
+   * delete and watching it fail.
+   */
+  const convexUser = useQuery("users:getCurrentUser" as any) as
+    | { _id?: unknown }
+    | null
+    | undefined;
+  const currentUserId =
+    typeof convexUser?._id === "string" ? convexUser._id : null;
+
+  const canDeleteArtifact = useCallback(
+    (createdBy?: string | null) =>
+      canManageEvalArtifacts ||
+      (currentUserId !== null && createdBy === currentUserId),
+    [canManageEvalArtifacts, currentUserId]
+  );
+  /**
+   * Whether the run selection + batch-delete surface is worth showing at all.
+   * True when the caller could delete SOME run; which runs specifically is
+   * `canDeleteArtifact`'s job, and the batch action stays disabled while the
+   * selection holds one they cannot.
+   */
+  const canDeleteRuns = canManageEvalArtifacts || currentUserId !== null;
 
   const userMap = useMemo(() => {
     if (!members) return undefined;
@@ -67,7 +104,10 @@ export function useEvalTabContext({
     organizationId,
     connectedServerNames,
     userMap,
-    canDeleteSuite,
+    /** The manage tier on its own — for surfaces that act on no single row. */
+    canManageEvalArtifacts,
+    /** Per-row: pass the suite's or run's `createdBy`. */
+    canDeleteArtifact,
     canDeleteRuns,
     availableModels,
   };

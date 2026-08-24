@@ -58,7 +58,10 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
-import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
+import {
+  buildHostedOAuthUnauthorizedHandler,
+  refreshHostedOAuthAccessTokenWithLocalFallback,
+} from "../../utils/hosted-oauth-refresh.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -210,10 +213,7 @@ export const taskGetSchema = projectServerSchema.extend({
 });
 
 export const taskGetBatchSchema = projectServerSchema.extend({
-  taskIds: z
-    .array(z.string().min(1))
-    .min(1)
-    .max(HOSTED_TASK_BATCH_MAX_SHARED),
+  taskIds: z.array(z.string().min(1)).min(1).max(HOSTED_TASK_BATCH_MAX_SHARED),
 });
 
 export const taskListSchema = projectServerSchema.extend({
@@ -313,6 +313,13 @@ export const hostedChatSchema = z
     // See projectServerSchema — scenario identity is `scenarioId` + `accessVersion`.
     scenarioId: z.string().min(1).optional(),
     accessVersion: z.number().int().nonnegative().optional(),
+    /**
+     * Optimistic-concurrency baseline for a resumed history thread: the session
+     * version the client believes it is continuing from. Validated here rather
+     * than forwarded raw, so a malformed value is a 400 at this boundary
+     * instead of an arg-validation failure deep inside the ingest action.
+     */
+    expectedVersion: z.number().int().nonnegative().optional(),
   })
   .passthrough();
 
@@ -416,6 +423,13 @@ export type ConvexBatchAuthorizeSuccess = {
   role: "owner" | "admin" | "member";
   accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
+  /**
+   * Why there is no `oauthAccessToken`, when the reason is actionable rather
+   * than "nothing stored". Mirrored by hand from the backend
+   * (`BatchAuthorizeSuccess.oauthUnavailableReason` in convex/http.ts); absent
+   * on older backends, which is why every read treats absence as "no idea".
+   */
+  oauthUnavailableReason?: "private_authorization_server";
   permissions: {
     chatOnly: boolean;
   };
@@ -1142,7 +1156,7 @@ export async function createAuthorizedManager(
      * `server/utils/mrtr-hosted-collector.ts`).
      */
     mrtrInputCollectorForServer?: (
-      serverId: string,
+      serverId: string
     ) => MrtrInputCollector | undefined;
     /**
      * The turn's execution scope, forwarded to the computer reservation that
@@ -1198,6 +1212,14 @@ export async function createAuthorizedManager(
   // on each server's flow (a re-resolution could drift if the predicate ever
   // gains an input one pass forgets to thread).
   const effectiveAuthByServerId = new Map<string, EffectiveAuthMethod>();
+  // Servers whose authorization server only this machine can reach. Collected
+  // in PASS 1, refreshed in PASS 1b, consumed by PASS 2.
+  const privateAuthorizationServerRecoveries: Array<{
+    serverId: string;
+    displayServerName: string;
+    required: boolean;
+  }> = [];
+  const recoveredOAuthTokens: Record<string, string> = {};
   let confidentialCimdProviderForOrg: ReturnType<
     typeof getConfidentialCimdProviderForOrg
   > = undefined;
@@ -1314,6 +1336,27 @@ export async function createAuthorizedManager(
       }
     }
 
+    // A credential EXISTS but the backend cannot refresh it: its authorization
+    // server is on an address only this machine can reach. Not a verdict at
+    // all — in local mode it is recoverable, so it is deferred to the recovery
+    // pass below rather than decided here. Hosted, it is a real refusal, but
+    // "complete the OAuth flow first" is the wrong thing to say to someone who
+    // already did; the recovery pass raises the actionable message instead.
+    const privateAuthorizationServer =
+      auth.oauthUnavailableReason === "private_authorization_server" &&
+      !(auth.oauthAccessToken ?? oauthTokens?.[serverId]);
+    if (
+      privateAuthorizationServer &&
+      (effectiveAuth === "oauth" || effectiveAuth === "discover")
+    ) {
+      privateAuthorizationServerRecoveries.push({
+        serverId,
+        displayServerName,
+        required: effectiveAuth === "oauth",
+      });
+      continue;
+    }
+
     // Explicit-OAuth server with no stored token: also a synchronous verdict,
     // so it belongs here — leaving it in the concurrent pass let a configured
     // XAA sibling start minting a real token while this one rejected.
@@ -1332,6 +1375,50 @@ export async function createAuthorizedManager(
           serverUrl: auth.serverConfig.url,
         }
       );
+    }
+  }
+
+  // PASS 1b — recover the credentials PASS 1 deferred, still before PASS 2
+  // does anything side-effecting, so "the batch fails before any server mints"
+  // continues to hold.
+  //
+  // This is the same pre-connect refresh `resolveLocalServerForConnect`
+  // performs for /api/mcp. Without it the local fallback only ever covered a
+  // mid-session 401, and the FIRST connect after expiry still failed on every
+  // surface routed through this builder.
+  //
+  // Sequential on purpose: the servers here share one force-refresh budget per
+  // subject, and each recovery is a network round trip to the user's own
+  // machine. There is rarely more than one.
+  for (const recovery of privateAuthorizationServerRecoveries) {
+    try {
+      recoveredOAuthTokens[recovery.serverId] =
+        await refreshHostedOAuthAccessTokenWithLocalFallback(
+          bearerToken,
+          projectId,
+          recovery.serverId,
+          {
+            accessScope: options?.accessScope,
+            scenarioId: options?.scenarioId,
+            accessVersion: options?.accessVersion,
+            serverName: recovery.displayServerName,
+          }
+        );
+    } catch (error) {
+      // A "discover" server was only ever going to try its luck: connecting
+      // unauthenticated is the documented fallback, and a live 401 escalates
+      // client-side from there. Only an explicit-OAuth server has to fail.
+      if (!recovery.required) {
+        logger.debug(
+          "[connect] private authorization server refresh unavailable; connecting unauthenticated",
+          {
+            serverId: recovery.serverId,
+            error: parseErrorMessage(error),
+          }
+        );
+        continue;
+      }
+      throw error;
     }
   }
 
@@ -1359,7 +1446,12 @@ export async function createAuthorizedManager(
         { ok: true }
       >;
 
-      const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
+      // `recoveredOAuthTokens` first: it is the freshest, minted moments ago
+      // by PASS 1b for a credential the backend could not refresh itself.
+      const oauthToken =
+        recoveredOAuthTokens[serverId] ??
+        auth.oauthAccessToken ??
+        oauthTokens?.[serverId];
       const displayServerName = serverNamesById?.[serverId] ?? serverId;
       // Resolved in PASS 1 (canonical authMethod wins; "auto" selects XAA
       // when configured or when the host policy forces it, "discover"
@@ -1484,7 +1576,8 @@ export async function createAuthorizedManager(
       const usesStoredTokenFlow =
         usesOAuthFlow || (effectiveAuth === "discover" && !!oauthToken);
       const onUnauthorized =
-        usesStoredTokenFlow && auth.oauthAccessToken
+        usesStoredTokenFlow &&
+        (auth.oauthAccessToken || recoveredOAuthTokens[serverId])
           ? buildHostedOAuthUnauthorizedHandler({
               bearerToken,
               projectId,
@@ -1494,6 +1587,14 @@ export async function createAuthorizedManager(
               shareToken: (options as { shareToken?: string })?.shareToken,
               scenarioId: options?.scenarioId,
               accessVersion: options?.accessVersion,
+              // Same reasoning as the local resolver's own handler: in local
+              // mode THIS process is the one that can reach a private
+              // authorization server. Without it every surface routed through
+              // here — chat-v2, evals, environments, swarm runs, harness-mcp —
+              // still dies at the first mid-session token expiry against a
+              // localhost OAuth server, while the Servers tab (which goes
+              // through /api/mcp) succeeds against the same server.
+              allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
             })
           : undefined;
 
@@ -1884,9 +1985,7 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
             : {}),
           ...(truncatePagination ? { firstPageOnly: true } : {}),
           ...(disableMrtr ? { supportsMrtr: false } : {}),
-          ...(suppressParamMirroring
-            ? { mirrorToolParamHeaders: false }
-            : {}),
+          ...(suppressParamMirroring ? { mirrorToolParamHeaders: false } : {}),
         }
       : undefined;
 
@@ -2008,7 +2107,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
      * connection on today's non-MRTR path.
      */
     mrtrInputCollectorForServer?: (
-      serverId: string,
+      serverId: string
     ) => MrtrInputCollector | undefined;
   }
 ): Promise<{
@@ -2156,7 +2255,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
  */
 function forwardLogMessagesInto(
   manager: InstanceType<typeof MCPClientManager>,
-  rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined,
+  rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined
 ) {
   return (serverId: string) => {
     if (!rpcCollector) return;

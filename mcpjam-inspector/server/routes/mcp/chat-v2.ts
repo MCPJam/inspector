@@ -40,6 +40,8 @@ import {
   persistChatSessionToConvex,
   pickEnrichmentHeaders,
   stampSenderUserIdsOnSessionMessages,
+  writePersistReceipt,
+  type PersistChatOutcome,
   type PersistedTurnTrace,
 } from "../../utils/chat-ingestion.js";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
@@ -478,7 +480,9 @@ function streamDirectChatWithLiveTrace(options: {
     usage?: LiveChatTraceUsage;
     finishReason?: string;
     turnTrace: PersistedTurnTrace;
-  }) => Promise<void> | void;
+  }) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
+  /** Session this stream persists to; required to attribute a persist receipt. */
+  chatSessionId?: string;
   scopeStepUpResume?: MrtrEngineResume;
   shouldPauseAfterStep?: () => boolean;
   suspendedToolCallId?: () => string | undefined;
@@ -488,11 +492,19 @@ function streamDirectChatWithLiveTrace(options: {
     abortSignal,
     onStreamWriterReady,
     onPersist,
+    chatSessionId: receiptChatSessionId,
     scopeStepUpResume,
     shouldPauseAfterStep,
     suspendedToolCallId,
     ...turnOptions
   } = options;
+  // `runDirectChatTurn` awaits `onPersist` but discards its return value, so
+  // the outcome reaches this scope through a closure rather than the callback
+  // chain — cheaper than widening the engine's signature for every headless
+  // caller that will never emit a receipt.
+  let persistReceipt:
+    | { outcome: PersistChatOutcome; turnId: string }
+    | undefined;
   // Declared before `createUIMessageStream` so the top-level `onError`
   // (which can fire before `execute` runs) can read it; assigned inside
   // `execute` once the helper is configured.
@@ -542,7 +554,14 @@ function streamDirectChatWithLiveTrace(options: {
         // back in so llm/step spans carry it.
         provider,
         abortSignal,
-        onPersist,
+        onPersist: onPersist
+          ? async (event) => {
+              const outcome = await onPersist(event);
+              if (outcome) {
+                persistReceipt = { outcome, turnId: event.turnTrace.turnId };
+              }
+            }
+          : undefined,
         shouldPauseAfterStep,
         suspendedToolCallId,
         onPersistError: (error) => {
@@ -597,6 +616,16 @@ function streamDirectChatWithLiveTrace(options: {
         throw error;
       } finally {
         handle.cleanup();
+      }
+
+      // The persist has settled by here: it runs inside `streamText`'s
+      // `onFinish`, which gates the UI-message stream this loop just drained.
+      // The outer stream stays open until `execute` returns.
+      if (persistReceipt && receiptChatSessionId) {
+        writePersistReceipt(writer, persistReceipt.outcome, {
+          chatSessionId: receiptChatSessionId,
+          turnId: persistReceipt.turnId,
+        });
       }
     },
   });
@@ -821,7 +850,8 @@ chatV2.post("/", async (c) => {
         progressiveToolDiscovery: body.progressiveToolDiscovery,
         modelVisibleMcpToolResults: body.modelVisibleMcpToolResults,
         mcpToolResultImageRendering: body.mcpToolResultImageRendering,
-        hostStyle: body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
+        hostStyle:
+          body.hostStyle ?? (!isScenarioSession ? "claude" : undefined),
         builtInToolIds: body.builtInToolIds,
       },
       // Scenario: published host wins. Host preview: owner's body tweaks win,
@@ -1111,8 +1141,8 @@ chatV2.post("/", async (c) => {
       ...(localPrefEligible
         ? { preference: "local" as const }
         : enginePref === "cloud"
-          ? { preference: "cloud" as const }
-          : {}),
+        ? { preference: "cloud" as const }
+        : {}),
       localConsentValid,
     });
 
@@ -1161,8 +1191,7 @@ chatV2.post("/", async (c) => {
       // The environment context describes the pinned E2B image — the WRONG
       // machine when this turn's bash runs on the user's own computer.
       hasBashTool:
-        computerEngine !== "local" &&
-        Boolean(builtInTools?.[BASH_TOOL_NAME]),
+        computerEngine !== "local" && Boolean(builtInTools?.[BASH_TOOL_NAME]),
       bearer: builtInAuthHeader,
       projectId:
         typeof body.projectId === "string" ? body.projectId : undefined,
@@ -1463,7 +1492,8 @@ chatV2.post("/", async (c) => {
         abortSignal: inboundAbortSignalMcp,
         onConversationComplete: chatSessionId
           ? async (fullHistory, turnTrace, harnessSessionCommit) => {
-              await persistChatSessionToConvex({
+              // Returned so the engine can stream the turn's persist receipt.
+              return await persistChatSessionToConvex({
                 chatSessionId,
                 modelId: String(modelDefinition.id),
                 modelSource: "mcpjam",
@@ -1566,7 +1596,8 @@ chatV2.post("/", async (c) => {
             fullHistory: ModelMessage[],
             turnTrace: PersistedTurnTrace
           ) => {
-            await persistChatSessionToConvex({
+            // Returned so the rail can stream the turn's persist receipt.
+            return await persistChatSessionToConvex({
               chatSessionId,
               modelId,
               modelSource:
@@ -1740,6 +1771,7 @@ chatV2.post("/", async (c) => {
     return streamDirectChatWithLiveTrace({
       llmModel,
       modelId: String(modelDefinition.id),
+      ...(chatSessionId ? { chatSessionId } : {}),
       // Server-side model definitions always carry a concrete provider (the
       // widened `string` branch on ModelDefinition.provider is a client
       // catalog concern), so narrowing back to ModelProvider here is safe.
@@ -1773,7 +1805,8 @@ chatV2.post("/", async (c) => {
             turnTrace,
           }) => {
             const persistedUsage = toPersistedUsage(usage);
-            await persistChatSessionToConvex({
+            // Returned so the rail can stream the turn's persist receipt.
+            return await persistChatSessionToConvex({
               chatSessionId,
               modelId: String(modelDefinition.id),
               modelSource: "byok",
@@ -1833,7 +1866,7 @@ chatV2.post("/", async (c) => {
     const { origin } = reportRouteFailureForResponse(
       "[mcp/chat-v2] failed to process chat request",
       error,
-      { source: "mcp.chat-v2.request", hop: "mcpjam_internal" },
+      { source: "mcp.chat-v2.request", hop: "mcpjam_internal" }
     );
     // Also a HEADER, not just the body. By the time the failure reaches the
     // client's reporter the Response is gone — the AI SDK throws
@@ -1842,11 +1875,9 @@ chatV2.post("/", async (c) => {
     // alongside the status in `ChatResponseMeta`, which is what stops the
     // client's "our route answered 5xx, so it's ours" fallback from
     // overwriting a failure we just attributed to the user's server.
-    return c.json(
-      { error: "Unexpected error", origin },
-      500,
-      { "x-mcpjam-error-origin": origin },
-    );
+    return c.json({ error: "Unexpected error", origin }, 500, {
+      "x-mcpjam-error-origin": origin,
+    });
   }
 });
 

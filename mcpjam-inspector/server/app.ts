@@ -15,6 +15,8 @@ import mcpRoutes from "./routes/mcp/index.js";
 import appsRoutes from "./routes/apps/index.js";
 import webRoutes from "./routes/web/index.js";
 import internalServerConnections from "./routes/internal/server-connections.js";
+import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completions.js";
+import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
 import slackLinkRoutes from "./routes/slack-link/index.js";
@@ -92,6 +94,10 @@ export async function createHonoApp() {
   // Load environment variables early so route handlers can read CONVEX_HTTP_URL
   const loadedEnv = loadInspectorEnv(__dirname);
   warnOnConvexDevMisconfiguration(loadedEnv);
+  // One line, after the env is loaded: which grading-engine mode this process
+  // could reach. An operator debugging "why are there no score rows" should
+  // find the answer in the log, not in a flag dashboard.
+  logGradingEngineModeOnce();
 
   // Ensure PATH includes user shell paths so child processes (e.g., npx) can be found
   // This is crucial when launched from GUI apps (Electron) where PATH is minimal
@@ -281,6 +287,11 @@ export async function createHonoApp() {
   // /api/web so it never inherits that family's bearer middleware.
   // Mirror of the mount in server/index.ts.
   app.route("/api/internal/server-connections", internalServerConnections);
+  // Backend → inspector doorbell for a finished judge. Same shape and the same
+  // service-token gate; the route resolves the grading-engine mode itself and
+  // no-ops at `off`/`shadow`, because the backend rings this on every judge
+  // save without consulting the flag. Mirror of the mount in server/index.ts.
+  app.route("/api/internal/evals", internalEvalJudgeCompletions);
   app.route("/api/web", webRoutes);
   // Computer terminal WebSocket + file upload (Project Computers). Registered
   // directly on the root app because the WS upgrade handler comes from
@@ -338,7 +349,7 @@ export async function createHonoApp() {
     app.route("/user_management", workosAuthkitRoutes);
   }
 
-  // CLI OAuth bridge (mcpjam login). Public front-channel routes — no session
+  // CLI OAuth bridge (mcpjam cloud login). Public front-channel routes — no session
   // auth (see session-auth.ts UNPROTECTED_PREFIXES) and no tokens returned;
   // disabled (501) unless CLI_AUTH_STATE_SECRET + CLI_AUTH_PUBLIC_ORIGIN are
   // set. Mirror of the mount in server/index.ts — both production entries
