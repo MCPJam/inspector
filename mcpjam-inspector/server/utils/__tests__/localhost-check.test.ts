@@ -265,7 +265,6 @@ describe("mayServeSessionToken", () => {
       mayServeSessionToken({
         host: "localhost:6274",
         allowedHosts: [],
-        hostedMode: false,
       })
     ).toBe(true);
   });
@@ -275,14 +274,12 @@ describe("mayServeSessionToken", () => {
       mayServeSessionToken({
         host: "abc123.ngrok.app",
         allowedHosts: [],
-        hostedMode: false,
       })
     ).toBe(false);
     expect(
       mayServeSessionToken({
         host: "abc123.tunnels.mcpjam.com",
         allowedHosts: [],
-        hostedMode: false,
       })
     ).toBe(false);
   });
@@ -295,7 +292,6 @@ describe("mayServeSessionToken", () => {
         host: "localhost:6274",
         forwardedHost: "abc123.ngrok.app",
         allowedHosts: [],
-        hostedMode: false,
       })
     ).toBe(false);
     expect(
@@ -303,7 +299,6 @@ describe("mayServeSessionToken", () => {
         host: "localhost:6274",
         forwardedHost: "abc123.tunnels.mcpjam.com",
         allowedHosts: [],
-        hostedMode: false,
       })
     ).toBe(false);
   });
@@ -315,14 +310,12 @@ describe("mayServeSessionToken", () => {
       mayServeSessionToken({
         host: "abc123.ngrok.app",
         allowedHosts: ["abc123.ngrok.app", "*.ngrok.app"],
-        hostedMode: true,
       })
     ).toBe(false);
     expect(
       mayServeSessionToken({
         host: "abc123.tunnels.mcpjam.com",
         allowedHosts: ["abc123.tunnels.mcpjam.com", "*.tunnels.mcpjam.com"],
-        hostedMode: true,
       })
     ).toBe(false);
   });
@@ -332,7 +325,6 @@ describe("mayServeSessionToken", () => {
       mayServeSessionToken({
         host: "tunnel.example.com",
         allowedHosts: ["tunnel.example.com"],
-        hostedMode: true,
         activeTunnelDomains: ["tunnel.example.com"],
       })
     ).toBe(false);
@@ -343,7 +335,6 @@ describe("mayServeSessionToken", () => {
       mayServeSessionToken({
         host: "myapp.railway.app",
         allowedHosts: ["*.railway.app"],
-        hostedMode: true,
       })
     ).toBe(true);
   });
@@ -358,7 +349,6 @@ describe("mayServeSessionToken", () => {
         mayServeSessionToken({
           host: "192.168.1.50:6274",
           allowedHosts: ["192.168.1.50"],
-          hostedMode: false,
         })
       ).toBe(true);
     });
@@ -368,7 +358,6 @@ describe("mayServeSessionToken", () => {
         mayServeSessionToken({
           host: "192.168.1.50:6274",
           allowedHosts: ["192.168.1.99"],
-          hostedMode: false,
         })
       ).toBe(false);
       // Empty allowlist = localhost-only, the pre-BB-118 default.
@@ -376,7 +365,6 @@ describe("mayServeSessionToken", () => {
         mayServeSessionToken({
           host: "192.168.1.50:6274",
           allowedHosts: [],
-          hostedMode: false,
         })
       ).toBe(false);
     });
@@ -386,7 +374,6 @@ describe("mayServeSessionToken", () => {
         mayServeSessionToken({
           host: "abc123.tunnels.mcpjam.com",
           allowedHosts: ["*.tunnels.mcpjam.com"],
-          hostedMode: false,
         })
       ).toBe(false);
     });
@@ -395,43 +382,41 @@ describe("mayServeSessionToken", () => {
 
 describe("isAllowedHost", () => {
   it("always allows localhost regardless of mode or allowlist", () => {
-    expect(isAllowedHost("localhost:6274", [], false)).toBe(true);
-    expect(isAllowedHost("127.0.0.1", [], false)).toBe(true);
-    expect(isAllowedHost("[::1]:6274", [], true)).toBe(true);
+    expect(isAllowedHost("localhost:6274", [])).toBe(true);
+    expect(isAllowedHost("127.0.0.1", [])).toBe(true);
+    expect(isAllowedHost("[::1]:6274", [])).toBe(true);
   });
 
   it("honors the allowlist in self-hosted mode (hostedMode: false)", () => {
-    expect(isAllowedHost("192.168.1.50:6274", ["192.168.1.50"], false)).toBe(
-      true
-    );
-    expect(isAllowedHost("inspector.lan", ["inspector.lan"], false)).toBe(true);
+    expect(isAllowedHost("192.168.1.50:6274", ["192.168.1.50"])).toBe(true);
+    expect(isAllowedHost("inspector.lan", ["inspector.lan"])).toBe(true);
   });
 
   it("honors the allowlist in hosted mode (hostedMode: true)", () => {
-    expect(isAllowedHost("myapp.railway.app", ["*.railway.app"], true)).toBe(
-      true
-    );
+    expect(isAllowedHost("myapp.railway.app", ["*.railway.app"])).toBe(true);
   });
 
   it("matches on hostname, ignoring the port", () => {
     // The operator sets the bare hostname; requests carry host:port.
-    expect(isAllowedHost("192.168.1.50:8080", ["192.168.1.50"], false)).toBe(
-      true
-    );
+    expect(isAllowedHost("192.168.1.50:8080", ["192.168.1.50"])).toBe(true);
+  });
+
+  it("matches an IPv6 host, keeping the brackets (not split on the first colon)", () => {
+    expect(isAllowedHost("[fd00::50]:6274", ["[fd00::50]"])).toBe(true);
+    // A different IPv6 address is still denied.
+    expect(isAllowedHost("[fd00::99]:6274", ["[fd00::50]"])).toBe(false);
   });
 
   it("does not weaken DNS-rebinding protection: a non-allowlisted host is denied", () => {
     // attacker.com resolving to the box's IP still sends Host: attacker.com,
     // which is not in the allowlist.
-    expect(isAllowedHost("attacker.com", ["192.168.1.50"], false)).toBe(false);
-    expect(isAllowedHost("192.168.1.51:6274", ["192.168.1.50"], false)).toBe(
-      false
-    );
+    expect(isAllowedHost("attacker.com", ["192.168.1.50"])).toBe(false);
+    expect(isAllowedHost("192.168.1.51:6274", ["192.168.1.50"])).toBe(false);
   });
 
   it("denies any non-localhost host when the allowlist is empty", () => {
-    expect(isAllowedHost("192.168.1.50:6274", [], false)).toBe(false);
-    expect(isAllowedHost("example.com", [], true)).toBe(false);
-    expect(isAllowedHost(undefined, [], false)).toBe(false);
+    expect(isAllowedHost("192.168.1.50:6274", [])).toBe(false);
+    expect(isAllowedHost("example.com", [])).toBe(false);
+    expect(isAllowedHost(undefined, [])).toBe(false);
   });
 });

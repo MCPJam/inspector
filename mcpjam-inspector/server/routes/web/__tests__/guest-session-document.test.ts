@@ -62,7 +62,6 @@ async function buildDocumentApp() {
         host,
         forwardedHost,
         allowedHosts: ALLOWED_HOSTS,
-        hostedMode: true,
       })
     ) {
       try {
@@ -117,9 +116,11 @@ describe("guest-session document bootstrap", () => {
 
   afterEach(() => {
     process.env.NODE_ENV = originalNodeEnv;
-    if (originalLockdown === undefined) delete process.env.MCPJAM_NONPROD_LOCKDOWN;
+    if (originalLockdown === undefined)
+      delete process.env.MCPJAM_NONPROD_LOCKDOWN;
     else process.env.MCPJAM_NONPROD_LOCKDOWN = originalLockdown;
-    if (originalHosted === undefined) delete process.env.VITE_MCPJAM_HOSTED_MODE;
+    if (originalHosted === undefined)
+      delete process.env.VITE_MCPJAM_HOSTED_MODE;
     else process.env.VITE_MCPJAM_HOSTED_MODE = originalHosted;
   });
 
@@ -240,9 +241,7 @@ describe("guest-session document bootstrap", () => {
   it("bounds the whole mint against the 1500ms deadline (provisioning hang)", async () => {
     // Simulate a hung mint that never resolves — the whole-helper race must
     // abandon it and serve blob-less within the deadline.
-    mockFetchConvexGuestSession.mockImplementation(
-      () => new Promise(() => {})
-    );
+    mockFetchConvexGuestSession.mockImplementation(() => new Promise(() => {}));
 
     vi.useFakeTimers();
     try {

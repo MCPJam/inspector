@@ -68,7 +68,7 @@ export function isPubliclyReachableUrl(raw: string): boolean {
         const hi = parseInt(hex[1], 16);
         const lo = parseInt(hex[2], 16);
         return isRoutableIpv4(
-          `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`,
+          `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`
         );
       }
       return false;
@@ -195,7 +195,6 @@ export function mayServeSessionToken(options: {
   host: string | undefined;
   forwardedHost?: string | undefined;
   allowedHosts: string[];
-  hostedMode: boolean;
   activeTunnelDomains?: string[];
 }): boolean {
   const tunnelDomains = options.activeTunnelDomains ?? [];
@@ -205,7 +204,7 @@ export function mayServeSessionToken(options: {
   ) {
     return false;
   }
-  return isAllowedHost(options.host, options.allowedHosts, options.hostedMode);
+  return isAllowedHost(options.host, options.allowedHosts);
 }
 
 /**
@@ -227,7 +226,6 @@ export function mayServeGuestBootstrap(options: {
   host: string | undefined;
   forwardedHost?: string | undefined;
   allowedHosts: string[];
-  hostedMode: boolean;
   activeTunnelDomains?: string[];
 }): boolean {
   const tunnelDomains = options.activeTunnelDomains ?? [];
@@ -237,7 +235,7 @@ export function mayServeGuestBootstrap(options: {
   ) {
     return false;
   }
-  return isAllowedHost(options.host, options.allowedHosts, options.hostedMode);
+  return isAllowedHost(options.host, options.allowedHosts);
 }
 
 /**
@@ -263,21 +261,14 @@ export function mayServeGuestBootstrap(options: {
  * The tunnel veto in `mayServeSessionToken`/`mayServeGuestBootstrap` runs
  * BEFORE this, so a tunnel host can never be allowlisted into a token leak.
  *
- * `hostedMode` is retained in the signature for its callers but no longer gates
- * the allowlist.
- *
  * @param hostHeader - The Host header value from the request
  * @param allowedHosts - List of additional allowed hosts (from config)
- * @param hostedMode - Whether hosted mode is enabled (no longer gates the allowlist)
  * @returns true if the request is from an allowed host, false otherwise
  */
 export function isAllowedHost(
   hostHeader: string | undefined,
-  allowedHosts: string[],
-  hostedMode: boolean
+  allowedHosts: string[]
 ): boolean {
-  void hostedMode; // retained for callers; no longer gates the allowlist (see above)
-
   // Always allow localhost
   if (isLocalhostRequest(hostHeader)) {
     return true;
@@ -286,12 +277,24 @@ export function isAllowedHost(
   // Explicit admin opt-in via MCPJAM_ALLOWED_HOSTS (both hosted + self-hosted).
   if (hostHeader && allowedHosts.length > 0) {
     const host = hostHeader.toLowerCase();
-    // Extract hostname without port for comparison
-    const hostWithoutPort = host.split(":")[0];
-    return hostnameMatchesAllowlist(hostWithoutPort, allowedHosts);
+    return hostnameMatchesAllowlist(stripPort(host), allowedHosts);
   }
 
   return false;
+}
+
+/**
+ * Strip the port from a Host/authority value while keeping an IPv6 literal's
+ * brackets intact: `192.168.1.50:6274` → `192.168.1.50`, and
+ * `[fd00::50]:6274` → `[fd00::50]`. A naive `split(":")[0]` would turn the
+ * IPv6 form into `[fd00`, so an allowlisted IPv6 host could never match.
+ */
+function stripPort(host: string): string {
+  if (host.startsWith("[")) {
+    const close = host.indexOf("]");
+    return close === -1 ? host : host.slice(0, close + 1);
+  }
+  return host.split(":")[0];
 }
 
 /**

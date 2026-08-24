@@ -17,22 +17,47 @@ import { useState } from "react";
 export function NetworkAccessError() {
   // `host` includes the port (what the user typed); the allowlist compares on
   // hostname only (port is stripped server-side), so that's the value to set.
-  const host =
-    typeof window !== "undefined" ? window.location.host : "your-host";
-  const hostname =
-    typeof window !== "undefined" ? window.location.hostname : "your-host";
+  // This screen only ever mounts in the browser (from main.tsx), so read
+  // `window.location` directly — same as the `location.reload()` below.
+  const host = window.location.host;
+  const hostname = window.location.hostname;
   const envValue = `MCPJAM_ALLOWED_HOSTS=${hostname}`;
 
   const [copied, setCopied] = useState(false);
-  const copyEnvValue = () => {
+  const flashCopied = () => {
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  const copyEnvValue = async () => {
+    // `navigator.clipboard` is secure-context only — and this screen's whole
+    // target case is a plain-HTTP LAN IP (e.g. http://192.168.1.50:6274),
+    // which is NOT a secure context, so it's usually undefined here. Await the
+    // write (its rejection is async — a bare try/catch never sees it, and an
+    // unhandled rejection would report to Sentry, which this path is meant to
+    // avoid), then fall back to a select+execCommand copy, and finally to the
+    // value already on screen for a manual copy.
     try {
-      void navigator.clipboard?.writeText(envValue).then(() => {
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-      });
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(envValue);
+        flashCopied();
+        return;
+      }
     } catch {
-      // Clipboard can be unavailable (insecure context / permissions). The
-      // value is on screen to copy by hand — no need to surface a failure.
+      // fall through to the execCommand fallback
+    }
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = envValue;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      if (ok) flashCopied();
+    } catch {
+      // Give up silently; the value is visible above for a manual copy.
     }
   };
 
@@ -99,7 +124,7 @@ export function NetworkAccessError() {
         >
           <code style={{ ...codeBoxStyle, flex: 1 }}>{envValue}</code>
           <button
-            onClick={copyEnvValue}
+            onClick={() => void copyEnvValue()}
             style={{
               padding: "0 0.875rem",
               cursor: "pointer",

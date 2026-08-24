@@ -29,7 +29,9 @@ function getAllowedOrigins(): string[] {
       const wildcards = origins.filter((o) => o.includes("*"));
       if (wildcards.length > 0) {
         appLogger.warn(
-          `[Security] Wildcard ALLOWED_ORIGINS rejected outside non-prod lockdown: ${wildcards.join(", ")}`,
+          `[Security] Wildcard ALLOWED_ORIGINS rejected outside non-prod lockdown: ${wildcards.join(
+            ", "
+          )}`
         );
         return origins.filter((o) => !o.includes("*"));
       }
@@ -60,7 +62,7 @@ function getAllowedOrigins(): string[] {
 function getConfiguredAllowedHosts(): string[] {
   return process.env.MCPJAM_ALLOWED_HOSTS
     ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) =>
-        h.trim().toLowerCase(),
+        h.trim().toLowerCase()
       )
     : [];
 }
@@ -103,7 +105,7 @@ function originHostIsAllowlisted(origin: string): boolean {
  */
 function matchesAllowedOrigin(
   origin: string,
-  allowedOrigins: string[],
+  allowedOrigins: string[]
 ): boolean {
   for (const allowed of allowedOrigins) {
     if (allowed.includes("*")) {
@@ -154,7 +156,7 @@ export function isAllowedRequestOrigin(origin: string | undefined): boolean {
  */
 export async function originValidationMiddleware(
   c: Context,
-  next: Next,
+  next: Next
 ): Promise<Response | void> {
   // Allow CORS preflight requests through
   if (c.req.method === "OPTIONS") {
@@ -190,7 +192,7 @@ export async function originValidationMiddleware(
         error: "Forbidden",
         message: "Request origin not allowed.",
       },
-      403,
+      403
     );
   }
 

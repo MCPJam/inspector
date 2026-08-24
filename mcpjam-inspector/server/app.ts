@@ -444,7 +444,6 @@ export async function createHonoApp() {
         host,
         forwardedHost,
         allowedHosts: ALLOWED_HOSTS,
-        hostedMode: HOSTED_MODE,
         activeTunnelDomains: getActiveTunnelDomains(),
       })
     ) {
@@ -507,7 +506,6 @@ export async function createHonoApp() {
             host,
             forwardedHost,
             allowedHosts: ALLOWED_HOSTS,
-            hostedMode: HOSTED_MODE,
             activeTunnelDomains: getActiveTunnelDomains(),
           })
         ) {
@@ -542,7 +540,6 @@ export async function createHonoApp() {
             host,
             forwardedHost,
             allowedHosts: ALLOWED_HOSTS,
-            hostedMode: HOSTED_MODE,
             activeTunnelDomains: getActiveTunnelDomains(),
           })
         ) {

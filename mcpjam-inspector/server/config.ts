@@ -185,8 +185,11 @@ export const MCPJAM_HOSTED_ORIGIN =
   process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") ||
   "https://app.mcpjam.com";
 
-// Allowed hosts for token delivery in hosted mode (comma-separated)
-// These hosts will be allowed to receive session tokens in addition to localhost
+// Admin-controlled host allowlist (comma-separated), honored in BOTH hosted
+// and self-hosted modes. In addition to localhost, these hosts may receive the
+// session token / guest bootstrap and are accepted as request Origins: hosted
+// deployments set their canonical app host(s); self-hosted operators set their
+// own LAN host (e.g. 192.168.x.x) to reach the inspector off-localhost.
 export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
   ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) =>
       h.trim().toLowerCase()
