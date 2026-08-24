@@ -37,6 +37,7 @@ import type {
   PlatformScenarioSummary,
   PlatformScenarioDetail,
   PlatformChatSession,
+  PlatformWidgetRender,
   PlatformChatTurn,
   PlatformChatSessionTrace,
   PlatformChatSessionDetail,
@@ -802,6 +803,113 @@ export type CallServerToolResult = {
   project: SelectedProjectInfo;
   server: ResolvedServerInfo;
   result: Record<string, unknown>;
+};
+
+const renderServerWidgetInput = serverScopedInput.extend({
+  toolName: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "The MCP App tool to render. It must declare a `ui://` UI resource; a tool that does not is refused rather than run.",
+    ),
+  parameters: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe("Tool arguments matching the tool's input schema."),
+  includeSnapshot: z
+    .boolean()
+    .optional()
+    .describe(
+      "Return the widget as an accessibility tree with addressable elements. DEFAULT TRUE — it is the cheap, readable answer.",
+    ),
+  includeScreenshot: z
+    .boolean()
+    .optional()
+    .describe(
+      "Also return a base64 image. DEFAULT FALSE: it is by far the largest field this returns, and a caller that cannot see images pays for it anyway.",
+    ),
+  injectOpenAiCompat: z
+    .boolean()
+    .optional()
+    .describe(
+      "Mount with the OpenAI Apps compatibility shims instead of the spec-default MCP-UI bridge.",
+    ),
+  viewport: z
+    .object({
+      width: z.number().int().min(1).max(8192),
+      height: z.number().int().min(1).max(8192),
+    })
+    .optional(),
+});
+
+export type RenderServerWidgetInput = z.infer<typeof renderServerWidgetInput>;
+
+export type RenderServerWidgetResult = {
+  project: SelectedProjectInfo;
+  server: ResolvedServerInfo;
+  render: PlatformWidgetRender;
+};
+
+export const renderServerWidgetOperation: PlatformOperation<
+  RenderServerWidgetInput,
+  RenderServerWidgetResult
+> = {
+  name: "render_server_widget",
+  title: "Render an MCP App widget",
+  description:
+    "Call an MCP App tool and mount its `ui://` widget in real headless Chromium, then report whether it rendered, what it logged, what it was blocked from fetching, and the widget as an accessibility tree with addressable elements. Returns the tree by default and the screenshot only on request. EXECUTES THE TOOL, so it has whatever side effects that tool has.",
+  readOnly: false,
+  // Same unknowability as `call_server_tool`, because it IS a tool call — the
+  // render is what happens afterwards. Softening the destructive default would
+  // claim a safety this cannot verify.
+  mayBeDestructive: true,
+  // The conservative reading of an unknowable effect. `none` would claim the
+  // call is reversible and free, which is exactly what nobody can promise
+  // about a third party's tool. The agent surface then treats this as
+  // approval-worthy rather than silently callable — see the TIER_EXCEPTIONS
+  // entry, which explains why it is gated rather than excluded outright.
+  risk: "destructive",
+  inputSchema: renderServerWidgetInput,
+  async execute(input, { client, signal }) {
+    const { project } = await resolveProjectOrThrow(
+      client,
+      input.project,
+      signal,
+    );
+    const server = await resolveLiveServer(client, project, input.server, signal);
+    const render = await client.renderServerWidget(
+      {
+        projectId: project.id,
+        serverId: server.id,
+        body: {
+          toolName: input.toolName,
+          ...(input.parameters ? { parameters: input.parameters } : {}),
+          ...(input.includeSnapshot !== undefined
+            ? { includeSnapshot: input.includeSnapshot }
+            : {}),
+          ...(input.includeScreenshot !== undefined
+            ? { includeScreenshot: input.includeScreenshot }
+            : {}),
+          ...(input.injectOpenAiCompat !== undefined
+            ? { injectOpenAiCompat: input.injectOpenAiCompat }
+            : {}),
+          ...(input.viewport ? { viewport: input.viewport } : {}),
+        },
+      },
+      { signal },
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      // NARROWED, like every other live-server operation in this file.
+      // Assigning the raw row would ship a whole `PlatformProjectServer` —
+      // including its config — through a field the type says is `{id, name}`,
+      // so consumers would see fields the contract does not promise and the
+      // published shape would disagree with the declared one.
+      server: toServerInfo(server),
+      render,
+    };
+  },
 };
 
 export const callServerToolOperation: PlatformOperation<
@@ -10637,6 +10745,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   listServerPromptsOperation,
   listServerResourcesOperation,
   callServerToolOperation,
+  renderServerWidgetOperation,
   getServerPromptOperation,
   readServerResourceOperation,
   checkHostCompatibilityOperation,

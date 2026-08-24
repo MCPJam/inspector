@@ -36,6 +36,9 @@ export type {
   PlatformScenarioLink,
   PlatformScenarioServer,
   PlatformChatSession,
+  PlatformSnapshotElement,
+  PlatformWidgetSnapshot,
+  PlatformWidgetRender,
   PlatformChatSessionDetail,
   PlatformChatSessionTrace,
   PlatformChatMessage,
@@ -240,6 +243,7 @@ export {
 export {
   buildImageOperation,
   callServerToolOperation,
+  renderServerWidgetOperation,
   closeTunnelOperation,
   createProjectOperation,
   createProjectServerOperation,

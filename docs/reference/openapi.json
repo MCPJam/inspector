@@ -10608,6 +10608,80 @@
           }
         }
       }
+    },
+    "/projects/{projectId}/servers/{serverId}/widgets/render": {
+      "post": {
+        "operationId": "renderServerWidget",
+        "tags": [
+          "Execution"
+        ],
+        "summary": "Render an MCP App widget headlessly",
+        "description": "Call an MCP App tool and mount its `ui://` widget in real headless Chromium running the production host bridge, then report whether it rendered, what it logged, what it was blocked from fetching, and the widget as an accessibility tree with addressable elements.\n\n**Executes the tool**, so it has whatever side effects that tool has — the render is what happens afterwards.\n\nStateless: connect, call, render, read, dispose, all inside one request. Interactive widget sessions are a local-Inspector capability (`/api/mcp/widget-session`) because they hold a live browser in process, which a no-affinity hosted plane cannot serve.\n\nEach render launches a browser, so the endpoint carries a per-replica concurrency cap and answers 429 when it is full.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/serverId"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenderServerWidgetRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The render verdict and its evidence.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WidgetRenderResult"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "422": {
+            "description": "The tool declares no MCP App UI resource, or headless Chromium is unavailable on this deployment.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          },
+          "504": {
+            "$ref": "#/components/responses/Timeout"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -22565,6 +22639,169 @@
           },
           "latestPromptIndex": {
             "type": "integer"
+          }
+        }
+      },
+      "WidgetSnapshotElement": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "object",
+            "properties": {
+              "role": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "testId": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "ambiguous": {
+            "type": "boolean",
+            "description": "More than one element matched this role and name."
+          }
+        }
+      },
+      "WidgetSnapshot": {
+        "type": "object",
+        "required": [
+          "mode",
+          "tree",
+          "elements",
+          "capturedAt"
+        ],
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "a11y"
+            ]
+          },
+          "tree": {
+            "type": "string",
+            "description": "Playwright ARIA snapshot of the widget frame."
+          },
+          "elements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WidgetSnapshotElement"
+            },
+            "description": "Interactive elements, in the same role/name/testId vocabulary the interaction steps accept."
+          },
+          "truncated": {
+            "type": "boolean",
+            "description": "The tree hit the character ceiling and was clipped."
+          },
+          "capturedAt": {
+            "type": "integer"
+          },
+          "note": {
+            "type": "string",
+            "description": "Why nothing was captured, when nothing was."
+          }
+        }
+      },
+      "WidgetRenderResult": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "The render verdict, e.g. `rendered`."
+          },
+          "resourceUri": {
+            "type": "string"
+          },
+          "bridgeInitialized": {
+            "type": "boolean"
+          },
+          "consoleErrors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "blockedRequests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Requests the render sandbox refused. A widget that renders while every fetch is blocked photographs perfectly and is broken, so this is reported even on a success."
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/WidgetSnapshot"
+          },
+          "screenshot": {
+            "type": "object",
+            "description": "Present only when `includeScreenshot` was explicitly requested.",
+            "properties": {
+              "mimeType": {
+                "type": "string"
+              },
+              "base64": {
+                "type": "string"
+              }
+            }
+          },
+          "timings": {
+            "type": "object",
+            "properties": {
+              "renderMs": {
+                "type": "integer"
+              },
+              "totalMs": {
+                "type": "integer"
+              }
+            }
+          }
+        }
+      },
+      "RenderServerWidgetRequest": {
+        "type": "object",
+        "required": [
+          "toolName"
+        ],
+        "properties": {
+          "toolName": {
+            "type": "string",
+            "description": "The MCP App tool to render. A tool that declares no `ui://` UI resource is refused (422) rather than run."
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "includeSnapshot": {
+            "type": "boolean",
+            "default": true,
+            "description": "Return the widget as an accessibility tree with addressable elements. **Default true** — the reverse of the local Inspector route, because this endpoint's caller is usually a model for which a base64 image is the most expensive way to say nothing."
+          },
+          "includeScreenshot": {
+            "type": "boolean",
+            "default": false,
+            "description": "Also return a base64 image. **Default false**: it is by far the largest field this returns."
+          },
+          "injectOpenAiCompat": {
+            "type": "boolean",
+            "description": "Mount with the OpenAI Apps compatibility shims instead of the spec-default MCP-UI bridge."
+          },
+          "viewport": {
+            "type": "object",
+            "properties": {
+              "width": {
+                "type": "integer"
+              },
+              "height": {
+                "type": "integer"
+              }
+            }
           }
         }
       }

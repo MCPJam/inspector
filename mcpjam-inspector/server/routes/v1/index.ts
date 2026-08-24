@@ -44,6 +44,7 @@ import proposedActionsRoutes from "./proposed-actions.js";
 import oauth from "./oauth.js";
 import catalog from "./catalog.js";
 import chatSessions from "./chat-sessions.js";
+import widgets from "./widgets.js";
 import registry from "./registry.js";
 import organizations from "./organizations.js";
 import evalChecks from "./eval-checks.js";
@@ -182,6 +183,10 @@ v1.route("/", oauth);
 // allowlist entry is the exact-match `/^\/chat-sessions$/`, so no subpath
 // here matches it, and a turn spends hosted-model credits.
 v1.route("/", chatSessions);
+// Headless MCP App widget render. Guest-DENIED by default (no
+// GUEST_ALLOWED_V1_RULES entry) — it launches a browser and executes the
+// caller's tool. Its own per-replica Chromium cap lives in the module.
+v1.route("/", widgets);
 v1.route("/", catalog);
 // Registry — directory search/detail/sources (guest-allowed reads) plus
 // project-scoped card/connection reads and install/uninstall writes. Mounted

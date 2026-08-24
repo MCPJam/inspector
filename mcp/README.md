@@ -40,6 +40,7 @@ so results respect the caller's project access.
 | `diagnose_server` | Diagnose a saved MCP server's connection: probe the URL, connect, initialize, and report capabilities and what failed. | — |
 | `list_server_tools` | List the tools a saved MCP server exposes: names, descriptions, and input schemas. | — |
 | `call_server_tool` | Execute a tool on a saved MCP server and return its result. | — |
+| `render_server_widget` | Call an MCP App tool and mount its `ui://` widget in real headless Chromium, then report whether it rendered, what it logged, what it was blocked from fetching, and the widget as an accessibility tree with addressable elements. Returns the tree by default and the screenshot only on request. Executes the tool. | — |
 | `list_server_prompts` | List the prompts a saved MCP server exposes: names, descriptions, and arguments. | — |
 | `get_server_prompt` | Render a prompt from a saved MCP server with the given arguments and return its messages. | — |
 | `list_server_resources` | List the resources a saved MCP server exposes: uris, names, and mime types. | — |
