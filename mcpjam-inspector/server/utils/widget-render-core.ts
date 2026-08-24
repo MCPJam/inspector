@@ -17,6 +17,7 @@ import {
   McpAppBrowserHarness,
   ChromiumNotInstalledError,
   type WidgetRenderObservation,
+  type WidgetSnapshot,
 } from "./mcp-app-browser-harness";
 import {
   renderMcpAppToolResult,
@@ -40,10 +41,27 @@ export interface RenderWidgetForRequestParams {
   viewport?: { width: number; height: number };
   /** Keep the widget mounted (for an interactive session) vs one-shot. */
   keepMounted: boolean;
+  /**
+   * Also capture a TEXT view of the rendered widget (accessibility tree +
+   * addressable elements).
+   *
+   * Handled HERE rather than by each caller because the timing is the whole
+   * difficulty: a one-shot render unmounts the widget when it is done, so a
+   * caller that tried to snapshot afterwards would find nothing. Requesting it
+   * keeps the widget mounted just long enough to read, then lets the normal
+   * teardown proceed.
+   */
+  captureSnapshot?: boolean;
 }
 
 export interface RenderWidgetForRequestResult {
   observation: WidgetRenderObservation;
+  /**
+   * Present only when `captureSnapshot` was requested AND a widget actually
+   * mounted. Absent rather than empty on a failed render: an empty tree would
+   * claim the widget rendered with no content.
+   */
+  snapshot?: WidgetSnapshot;
   /**
    * The harness, when one was created (the tool was renderable). `null` for the
    * `no_ui_resource` gate (no browser launched). The CALLER owns disposal.
@@ -130,9 +148,27 @@ export async function renderWidgetForRequest(
       mcpClientManager,
       injectOpenAiCompat: params.injectOpenAiCompat,
       harness,
-      keepMounted: params.keepMounted,
+      // A snapshot needs something mounted to read. Requesting one therefore
+      // implies keeping the widget up through the read; the caller's teardown
+      // is unchanged and still runs immediately after.
+      keepMounted: params.keepMounted || params.captureSnapshot === true,
     });
-    return { observation, harness };
+    let snapshot: WidgetSnapshot | undefined;
+    if (params.captureSnapshot && observation.status === "rendered") {
+      // Best-effort: a snapshot is diagnostic, and failing a completed render
+      // because the text view could not be read would be the observability
+      // breaking the thing it observes.
+      snapshot = await harness
+        .captureSnapshot(observation.toolCallId)
+        .catch(() => undefined);
+      // Restore the one-shot contract: the caller asked for a render, not a
+      // live session, and leaving the widget mounted would change teardown
+      // semantics for a diagnostic opt-in.
+      if (!params.keepMounted) {
+        await harness.dismissWidget(observation.toolCallId).catch(() => {});
+      }
+    }
+    return { observation, ...(snapshot ? { snapshot } : {}), harness };
   } catch (error) {
     // The harness maps a missing-Chromium launch to a `browser_unavailable`
     // observation itself (it does NOT throw); this defensive branch covers the
