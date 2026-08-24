@@ -17,6 +17,7 @@ import {
   Moon,
   Share2,
   Sun,
+  X,
 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -76,13 +77,12 @@ import {
 } from "./caniuse-capability-catalog";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
 import { HostCapabilityListView } from "./HostCapabilityListView";
-import {
-  fieldMatchesQuery,
-  type SupportFilterMode,
-} from "./support-level";
+import { fieldMatchesQuery, type SupportFilterMode } from "./support-level";
 import {
   groupHostConfigFields,
   HOST_CONFIG_FIELDS,
+  HOST_CONFIG_SECTIONS,
+  type HostConfigSectionId,
 } from "@/lib/host-config-field-schema";
 import { SearchInput } from "@/components/ui/search-input";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
@@ -91,6 +91,13 @@ import { updateThemeMode } from "@/lib/theme-utils";
 import { cn } from "@/lib/utils";
 
 type CompareViewMode = "table" | "list";
+
+/**
+ * "All" plus one entry per `HOST_CONFIG_SECTIONS` id. Picking a section
+ * narrows the matrix to that section's fields only, so the page reads as
+ * one topic at a time instead of one long scroll.
+ */
+type CompareSectionFilter = "all" | HostConfigSectionId;
 
 const HOSTS_QUERY_PARAM = "hosts";
 const CAPABILITY_QUERY_PARAM = "capability";
@@ -265,10 +272,13 @@ export function HostConfigCompareView({
     : undefined;
   const presets = useMemo(() => {
     if (!compareCatalog) {
-      return { hosts: [], subjects: {} as Record<string, HostComparisonSubject> };
+      return {
+        hosts: [],
+        subjects: {} as Record<string, HostComparisonSubject>,
+      };
     }
     return buildPresetCompareEntries(compareCatalog, {
-        excludedTemplateIds: excludedPresetTemplateIds,
+      excludedTemplateIds: excludedPresetTemplateIds,
     });
   }, [compareCatalog, excludedPresetTemplateIds]);
   // Real created hosts first, then presets — what the selector chips iterate.
@@ -291,6 +301,8 @@ export function HostConfigCompareView({
     getInitialCompareViewMode()
   );
   const [showDescriptions, setShowDescriptions] = useState(false);
+  const [sectionFilter, setSectionFilter] =
+    useState<CompareSectionFilter>("all");
   const viewModeUserSetRef = useRef(false);
   const hasFieldSearchQuery = fieldSearchQuery.trim().length > 0;
   const effectiveSupportFilter = hasFieldSearchQuery ? supportFilter : "all";
@@ -321,6 +333,22 @@ export function HostConfigCompareView({
   const compareFields = useMemo(
     () => (presetOnly ? PUBLIC_CAN_I_USE_FIELDS : HOST_CONFIG_FIELDS),
     [presetOnly]
+  );
+  // Only the sections this surface actually has fields for — a tab that would
+  // render an empty matrix is worse than no tab.
+  const availableSections = useMemo(() => {
+    const present = new Set(compareFields.map((field) => field.section));
+    return HOST_CONFIG_SECTIONS.filter((section) => present.has(section.id));
+  }, [compareFields]);
+  // Narrowed view of `compareFields`. Deliberately NOT fed back into the
+  // search picker, the URL writer, or the share dialog: those describe the
+  // whole comparison, and the section tabs are a view over it.
+  const visibleFields = useMemo(
+    () =>
+      sectionFilter === "all"
+        ? compareFields
+        : compareFields.filter((field) => field.section === sectionFilter),
+    [compareFields, sectionFilter]
   );
   // Base for the per-column "Verify against your server" deep-link. In dev the
   // caniuse surface and the hosted app share an origin, so stay on it (localhost)
@@ -520,6 +548,7 @@ export function HostConfigCompareView({
   const handleResetCompareView = useCallback(() => {
     setFieldSearchQuery("");
     setSupportFilter("all");
+    setSectionFilter("all");
   }, []);
 
   useEffect(() => {
@@ -539,16 +568,17 @@ export function HostConfigCompareView({
       // snapshot names the hosts in the selector throughout loading. Prefer the
       // resolved subject name, else the known-host name, else null (loading).
       const subjectNameById = new Map(
-        orderedSubjects.map((s) => [s.hostId, s.hostName] as const),
+        orderedSubjects.map((s) => [s.hostId, s.hostName] as const)
       );
       const hostNameById = new Map(
-        hosts.map((h) => [h.hostId, h.name] as const),
+        hosts.map((h) => [h.hostId, h.name] as const)
       );
       return buildHostCompareSnapshot({
         totalSelectableHosts: knownHostIds.length,
         selectedHosts: selectedHostIds.map((hostId) => ({
           hostId,
-          hostName: subjectNameById.get(hostId) ?? hostNameById.get(hostId) ?? null,
+          hostName:
+            subjectNameById.get(hostId) ?? hostNameById.get(hostId) ?? null,
         })),
         capabilityFields: compareFields,
         viewMode,
@@ -665,6 +695,13 @@ export function HostConfigCompareView({
               mobileOptimized={presetOnly}
             />
 
+            <CompareSectionTabs
+              sections={availableSections}
+              value={sectionFilter}
+              onChange={setSectionFilter}
+              disabled={listLoading}
+            />
+
             {totalSelectedCount === 0 ? (
               <div className="rounded-xl border border-border bg-card p-10 text-center">
                 <p className="text-sm text-muted-foreground">
@@ -690,7 +727,7 @@ export function HostConfigCompareView({
                   <div className="min-h-0 flex-1">
                     <HostConfigComparisonMatrix
                       subjects={orderedSubjects}
-                      fields={compareFields}
+                      fields={visibleFields}
                       divergingOnly={divergingOnly}
                       supportFilter={effectiveSupportFilter}
                       searchQuery={fieldSearchQuery}
@@ -698,7 +735,9 @@ export function HostConfigCompareView({
                       themeMode={themeMode}
                       mobileOptimized={presetOnly}
                       onRemoveHost={
-                        selectedHostIdSet.size > 1 ? handleToggleHost : undefined
+                        selectedHostIdSet.size > 1
+                          ? handleToggleHost
+                          : undefined
                       }
                       verifyBaseUrl={verifyBaseUrl}
                       disabledVerifyTemplateIds={disabledVerifyTemplateIds}
@@ -707,7 +746,7 @@ export function HostConfigCompareView({
                 ) : (
                   <HostCapabilityListView
                     subjects={orderedSubjects}
-                    fields={compareFields}
+                    fields={visibleFields}
                     divergingOnly={divergingOnly}
                     supportFilter={effectiveSupportFilter}
                     searchQuery={fieldSearchQuery}
@@ -719,6 +758,77 @@ export function HostConfigCompareView({
             )}
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Section tabs above the matrix. "All" keeps today's single-scroll view;
+ * picking a section narrows the matrix to that section's fields, so Agent /
+ * MCP Protocol / Apps can be read one at a time.
+ */
+function CompareSectionTabs({
+  sections,
+  value,
+  onChange,
+  disabled = false,
+}: {
+  sections: ReadonlyArray<{
+    id: HostConfigSectionId;
+    label: string;
+    subtitle: string;
+  }>;
+  value: CompareSectionFilter;
+  onChange: (next: CompareSectionFilter) => void;
+  disabled?: boolean;
+}) {
+  if (sections.length < 2) return null;
+
+  const tabs: ReadonlyArray<{
+    value: CompareSectionFilter;
+    label: string;
+    title: string;
+  }> = [
+    { value: "all", label: "All", title: "Show every section" },
+    ...sections.map((section) => ({
+      value: section.id as CompareSectionFilter,
+      label: section.label,
+      title: section.subtitle,
+    })),
+  ];
+
+  return (
+    <div className="mb-4 flex flex-wrap items-center gap-2">
+      <span className="text-[12px] text-muted-foreground">Sections</span>
+      <div
+        role="tablist"
+        aria-label="Filter by section"
+        className="flex flex-wrap items-center gap-1"
+      >
+        {tabs.map((tab) => {
+          const active = value === tab.value;
+          return (
+            <Button
+              key={tab.value}
+              type="button"
+              role="tab"
+              size="sm"
+              variant={active ? "secondary" : "ghost"}
+              aria-selected={active}
+              disabled={disabled}
+              title={tab.title}
+              data-testid={`section-tab-${tab.value}`}
+              onClick={() => onChange(tab.value)}
+              className={cn(
+                "rounded-full px-3 text-[12px]",
+                !active && "text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {tab.label}
+            </Button>
+          );
+        })}
       </div>
     </div>
   );
@@ -847,11 +957,7 @@ function NotifyButton() {
                 </p>
               ) : null}
             </div>
-            <Button
-              type="submit"
-              size="sm"
-              disabled={status === "submitting"}
-            >
+            <Button type="submit" size="sm" disabled={status === "submitting"}>
               {status === "submitting" ? (
                 <>
                   <Loader2 className="size-4 animate-spin" />
@@ -913,10 +1019,7 @@ function ReportInconsistencyDialog() {
         size="sm"
         aria-label="Report inconsistency"
         title="Report inconsistency"
-        className={cn(
-          "gap-1.5",
-          CANIUSE_ACTION_BUTTON_CLASS
-        )}
+        className={cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
         onClick={() => setOpen(true)}
       >
         <Flag className="size-3.5" />
@@ -1191,15 +1294,15 @@ function CompareSearchBar({
           className={canIUseLabelClass}
           aria-label="Show all clients and capabilities"
           disabled={!canResetSearch}
-          title={canResetSearch ? "Show all clients and capabilities" : undefined}
+          title={
+            canResetSearch ? "Show all clients and capabilities" : undefined
+          }
           onClick={handleResetClick}
         >
           Can I use…
         </button>
       ) : (
-        <span className={canIUseLabelClass}>
-          Can I use…
-        </span>
+        <span className={canIUseLabelClass}>Can I use…</span>
       )}
       <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
         <PopoverAnchor asChild>
@@ -1212,20 +1315,39 @@ function CompareSearchBar({
             )}
           >
             {mobileOptimized ? (
-              <input
-                value={query}
-                onChange={(event) => {
-                  onQueryChange(event.target.value);
-                  setPickerOpen(true);
-                }}
-                onFocus={() => setPickerOpen(true)}
-                placeholder="Search capabilities, fields, descriptions…"
-                aria-label="Search client config fields"
-                type="search"
-                autoComplete="off"
-                spellCheck={false}
-                className="h-10 w-full border-0 border-b border-dotted border-muted-foreground/60 bg-transparent px-0 text-center text-sm text-foreground outline-none placeholder:text-center placeholder:text-muted-foreground/60 focus:border-foreground focus:ring-0 [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden"
-              />
+              // `relative` so the clear button can sit inside the input's own
+              // box. The native search affordance stays hidden (it is
+              // unstyleable and off-center against the dotted underline).
+              <div className="relative">
+                <input
+                  value={query}
+                  onChange={(event) => {
+                    onQueryChange(event.target.value);
+                    setPickerOpen(true);
+                  }}
+                  onFocus={() => setPickerOpen(true)}
+                  placeholder="Search capabilities, fields, descriptions…"
+                  aria-label="Search client config fields"
+                  type="search"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="h-10 w-full border-0 border-b border-dotted border-muted-foreground/60 bg-transparent px-0 pr-7 text-center text-sm text-foreground outline-none placeholder:text-center placeholder:text-muted-foreground/60 focus:border-foreground focus:ring-0 [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden"
+                />
+                {query.length > 0 ? (
+                  <button
+                    type="button"
+                    aria-label="Clear search"
+                    title="Clear search"
+                    onClick={() => {
+                      onQueryChange("");
+                      setPickerOpen(false);
+                    }}
+                    className="absolute right-0 top-1/2 -translate-y-1/2 rounded-full p-1 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                ) : null}
+              </div>
             ) : (
               <SearchInput
                 value={query}
@@ -1425,10 +1547,7 @@ function ShareComparisonDialog({
         aria-label="Share"
         title="Share"
         onClick={() => setOpen(true)}
-        className={cn(
-          "gap-1.5",
-          CANIUSE_ACTION_BUTTON_CLASS
-        )}
+        className={cn("gap-1.5", CANIUSE_ACTION_BUTTON_CLASS)}
       >
         <Share2 className="size-3.5" />
         <span>Share</span>

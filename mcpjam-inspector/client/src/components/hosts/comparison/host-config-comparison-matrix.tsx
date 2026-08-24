@@ -24,7 +24,7 @@ import {
   type StyleVariableByTheme,
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
-import { SupportChip } from "./support-chip";
+import { SpecChip, SupportChip } from "./support-chip";
 import { PRESET_HOST_ID_PREFIX } from "./host-compare-presets";
 import { buildHostVerifySearch } from "../host-verify-deep-link";
 import {
@@ -349,6 +349,17 @@ function VerifiedAtRow({
   );
 }
 
+/**
+ * Fields whose value names an MCP spec era or build rather than a setting:
+ * they render as `SpecChip` pills so a version is visually distinct from the
+ * prose and enum values around it.
+ */
+const SPEC_VALUE_FIELD_IDS = new Set([
+  "clientInfo.version",
+  "mcpProtocolVersion",
+  "supportedProtocolVersions",
+]);
+
 interface SectionRowsProps {
   index: number;
   sectionLabel: string;
@@ -416,10 +427,7 @@ function SectionRows({
             )}
           </motion.div>
         </th>
-        <td
-          colSpan={colSpan - 1}
-          className="border-y border-border bg-muted"
-        />
+        <td colSpan={colSpan - 1} className="border-y border-border bg-muted" />
       </tr>
 
       {subsections.map((sub) => {
@@ -468,10 +476,7 @@ function SubsectionRows({
         <td className="sticky left-0 z-10 border-b border-border bg-card px-3 py-1.5 text-left text-[10px] uppercase tracking-wider text-muted-foreground after:pointer-events-none after:absolute after:inset-y-0 after:right-0 after:w-px after:bg-border after:content-[''] sm:px-5">
           {label}
         </td>
-        <td
-          colSpan={colSpan - 1}
-          className="border-b border-border bg-card"
-        />
+        <td colSpan={colSpan - 1} className="border-b border-border bg-card" />
       </tr>
       {fields.map((field) => (
         <FieldRow
@@ -682,6 +687,9 @@ function FieldCell({
         const level = getSupportLevel(field, subject.config) ?? "neutral";
         return <SupportChip level={level} label={String(value)} />;
       }
+      if (SPEC_VALUE_FIELD_IDS.has(field.id)) {
+        return <SpecChip label={String(value)} />;
+      }
       return (
         <span
           className={cn(
@@ -713,6 +721,9 @@ function FieldCell({
       const s = String(value);
       if (s.length === 0) {
         return <span className="text-[12px] text-muted-foreground/60">""</span>;
+      }
+      if (SPEC_VALUE_FIELD_IDS.has(field.id)) {
+        return <SpecChip label={s} />;
       }
       return <span className="font-mono text-[12px] break-all">{s}</span>;
     }
@@ -748,7 +759,10 @@ function FieldCell({
             // `items-center` centers the theme label over the swatch+value row
             // it names; the row itself keeps its own left edge, so the two
             // themes still line up with each other for reading down the cell.
-            <span key={theme} className="flex w-full flex-col items-center gap-0.5">
+            <span
+              key={theme}
+              className="flex w-full flex-col items-center gap-0.5"
+            >
               <span className="text-[10px] uppercase leading-none tracking-wide text-muted-foreground/60">
                 {theme}
               </span>
@@ -798,6 +812,15 @@ function FieldCell({
       if (value.length === 0) {
         return (
           <span className="text-[12px] text-muted-foreground/60">[] empty</span>
+        );
+      }
+      if (SPEC_VALUE_FIELD_IDS.has(field.id)) {
+        return (
+          <span className="inline-flex flex-wrap items-center justify-center gap-1">
+            {(value as ReadonlyArray<unknown>).map((entry) => (
+              <SpecChip key={String(entry)} label={String(entry)} />
+            ))}
+          </span>
         );
       }
       return (
