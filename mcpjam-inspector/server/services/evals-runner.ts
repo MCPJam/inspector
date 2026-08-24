@@ -3502,6 +3502,8 @@ const runLocalIteration = async ({
     // consumer than the stored transcript).
     const finishParams = buildIterationFinishParams({
       iterationId,
+      // Keys shadow-mismatch telemetry only; never read for the verdict.
+      ...(runId !== null ? { runId: String(runId) } : {}),
       passed,
       evaluation,
       usage: usageFinal,
@@ -3695,6 +3697,7 @@ const runLocalIteration = async ({
     // success path.
     const failParams = buildIterationFinishParams({
       iterationId,
+      ...(runId !== null ? { runId: String(runId) } : {}),
       passed: false,
       evaluation,
       usage: {
@@ -4501,6 +4504,7 @@ const runHostedIterationWithBrowser = async (
   // transcript).
   const finishParams = buildIterationFinishParams({
     iterationId,
+    ...(runId !== null ? { runId: String(runId) } : {}),
     passed,
     evaluation,
     usage: accumulatedUsage,
