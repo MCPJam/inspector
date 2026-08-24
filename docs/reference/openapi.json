@@ -22034,7 +22034,8 @@
           "temperature": {
             "type": "number",
             "minimum": 0,
-            "maximum": 2
+            "maximum": 2,
+            "description": "First turn only — pinned to the session and reused on every continuation."
           },
           "maxSteps": {
             "type": "integer",
@@ -22055,20 +22056,22 @@
             "maxItems": 20,
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Narrow THIS TURN to a subset of the target's servers. An empty array narrows to none and is rejected — omit the field to use the whole target. Per-turn, not pinned."
           },
           "allowedTools": {
             "type": "array",
             "maxItems": 100,
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Advertise only these tool names, for THIS TURN. An empty array advertises no tools at all — the same request as `maxToolCalls: 0`. Per-turn, not pinned."
           },
           "maxToolCalls": {
             "type": "integer",
             "minimum": 0,
             "maximum": 16,
-            "description": "Cap the tool calls this turn may make. `0` answers without tools."
+            "description": "Cap the tool calls this turn may make, enforced at DISPATCH rather than by bounding steps (one step can emit several parallel calls). `0` advertises no tools at all."
           }
         }
       },

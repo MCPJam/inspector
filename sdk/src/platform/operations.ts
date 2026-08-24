@@ -5482,14 +5482,14 @@ const sendChatMessageInput = z.object({
     .max(20)
     .optional()
     .describe(
-      "Narrow THIS TURN to a subset of the target's servers. Per-turn, not pinned: re-send it on every turn you want narrowed. The response reports advertisedToolCount/excludedToolCount so the effective surface is never a guess.",
+      "Narrow THIS TURN to a subset of the target's servers. An EMPTY array narrows to none and is rejected — omit the field to use the whole target. Per-turn, not pinned: re-send it on every turn you want narrowed. The response reports advertisedToolCount/excludedToolCount so the effective surface is never a guess.",
     ),
   allowedTools: z
     .array(z.string().trim().min(1))
     .max(100)
     .optional()
     .describe(
-      "Advertise only these tool names, for THIS TURN. Per-turn, not pinned: re-send it on every turn you want narrowed.",
+      "Advertise only these tool names, for THIS TURN. An EMPTY array advertises no tools at all — the same request as maxToolCalls:0. Per-turn, not pinned: re-send it on every turn you want narrowed.",
     ),
   maxToolCalls: z
     .number()
@@ -5498,7 +5498,7 @@ const sendChatMessageInput = z.object({
     .max(16)
     .optional()
     .describe(
-      "Cap the tool calls this turn may make, enforced at dispatch. 0 advertises no tools at all. Per-turn.",
+      "Cap the tool calls this turn may make, enforced at DISPATCH rather than by bounding steps (one step can emit several parallel calls). 0 advertises no tools at all. Per-turn.",
     ),
 });
 

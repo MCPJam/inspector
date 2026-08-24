@@ -560,6 +560,50 @@ describe("computeExcludedToolNames", () => {
   });
 });
 
+// ── Target narrowing ────────────────────────────────────────────────────────
+
+describe("allowedServerIds narrowing", () => {
+  const { narrowTarget } = __testing;
+
+  it("treats an EMPTY allowlist as none, not as omitted", () => {
+    // Reading `[]` as "no filter" would run the turn against every server in
+    // the target — the opposite of what the field says, and unsafe under
+    // toolMode:"auto" where it enables side effects on servers the caller just
+    // tried to exclude.
+    expect(narrowTarget({ serverIds: ["a", "b"] }, []).selected).toHaveLength(
+      0,
+    );
+    // Omitted is the "no filter" case, and stays that way.
+    expect(
+      narrowTarget({ serverIds: ["a", "b"] }, undefined).selected,
+    ).toHaveLength(2);
+  });
+
+  it("keeps names paired with their own ids", () => {
+    // `createManualHostedConnection` pairs ids and names POSITIONALLY, so
+    // filtering ids while passing the original name array relabels every
+    // server after the first gap: picking only "b" would give it "Server A"'s
+    // name, and a connection failure would then blame the wrong server.
+    const result = narrowTarget(
+      { serverIds: ["a", "b", "c"], serverNames: ["A", "B", "C"] },
+      ["b", "c"],
+    );
+    expect(result.selected.map((entry) => entry.id)).toEqual(["b", "c"]);
+    expect(result.names).toEqual(["B", "C"]);
+  });
+
+  it("drops names entirely rather than half-aligning them", () => {
+    // A partially-populated name array is worse than none: the manager falls
+    // back to showing the id when a name is absent, but a MISALIGNED name is
+    // confidently wrong.
+    const result = narrowTarget(
+      { serverIds: ["a", "b"], serverNames: ["A"] },
+      undefined,
+    );
+    expect(result.names).toBeUndefined();
+  });
+});
+
 // ── Lease release ───────────────────────────────────────────────────────────
 
 describe("shouldReleaseLease", () => {
@@ -621,6 +665,16 @@ describe("maxToolCalls", () => {
   const { capToolCalls, computeExcludedToolNames } = __testing;
   const manager = (tools: unknown[]) =>
     ({ getTools: async () => tools } as never);
+
+  it("treats an empty allowedTools the same as a zero cap", () => {
+    // Two ways of saying "no tools". Letting them diverge would make one of
+    // them the subtly broken one.
+    const { wantsNoTools } = __testing;
+    expect(wantsNoTools({ maxToolCalls: 0 })).toBe(true);
+    expect(wantsNoTools({ allowedTools: [] })).toBe(true);
+    expect(wantsNoTools({ allowedTools: ["search"] })).toBe(false);
+    expect(wantsNoTools({})).toBe(false);
+  });
 
   it("advertises NOTHING when the cap is zero", async () => {
     // Enforcing zero by refusing at dispatch would be worse than useless: the

@@ -433,6 +433,36 @@ async function computeExcludedToolNames(
 }
 
 /**
+ * Narrow a resolved target by `allowedServerIds`, keeping names paired.
+ *
+ * Extracted because BOTH of its rules were got wrong inline, in ways nothing
+ * would have caught: an empty allowlist read as "no filter" (running against
+ * every server the caller had just tried to exclude), and ids filtered while
+ * the original name array rode along, which relabels every server after the
+ * first gap because the connection layer pairs them positionally.
+ */
+function narrowTarget(
+  target: { serverIds: string[]; serverNames?: string[] },
+  allowed: string[] | undefined,
+): { selected: Array<{ id: string; name?: string }>; names?: string[] } {
+  const selected = target.serverIds
+    .map((id, index) => ({ id, name: target.serverNames?.[index] }))
+    .filter((entry) => allowed === undefined || allowed.includes(entry.id));
+  const names = selected.every((entry) => typeof entry.name === "string")
+    ? selected.map((entry) => entry.name as string)
+    : undefined;
+  return { selected, ...(names ? { names } : {}) };
+}
+
+/** The two equivalent ways a caller says "run this turn with no tools". */
+function wantsNoTools(body: {
+  maxToolCalls?: number;
+  allowedTools?: string[];
+}): boolean {
+  return body.maxToolCalls === 0 || body.allowedTools?.length === 0;
+}
+
+/**
  * Should a claimed lease be handed back when this turn ends?
  *
  * The three-way distinction IS the idempotency guarantee, so it is stated
@@ -742,17 +772,35 @@ async function handleTurn(c: Context): Promise<Response> {
       ...(pins.environmentId ? { environmentId: pins.environmentId } : {}),
       ...(pins.serverIds ? { serverIds: pins.serverIds } : {}),
     });
-    const selectedServerIds =
-      body.allowedServerIds && body.allowedServerIds.length > 0
-        ? target.serverIds.filter((id) => body.allowedServerIds!.includes(id))
-        : target.serverIds;
-    if (selectedServerIds.length === 0) {
+    // Narrowed as PAIRS. `createManualHostedConnection` pairs ids and names
+    // POSITIONALLY (`buildServerNamesById`), so filtering the ids while
+    // passing the target's original name array would relabel every server
+    // after the first gap — selecting only the second server would give it the
+    // first one's name, and an OAuth or connection failure would then name the
+    // wrong server to the caller.
+    //
+    // An EMPTY `allowedServerIds` narrows to nothing rather than meaning
+    // "omitted". Treating `[]` as "no filter" would have run the turn against
+    // every server in the target — the opposite of what the field says, and
+    // unsafe under `toolMode: "auto"`, where it would enable side effects on
+    // servers the caller just tried to exclude. `allowedTools: []` already
+    // means "none"; these two must not disagree about what an empty allowlist
+    // is.
+    const allowed = body.allowedServerIds;
+    const { selected, names: selectedServerNames } = narrowTarget(
+      target,
+      allowed,
+    );
+    if (selected.length === 0) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
-        "allowedServerIds excluded every server the target resolves to.",
+        allowed?.length === 0
+          ? "allowedServerIds is empty, so no server would be connected. Omit it to use the whole target."
+          : "allowedServerIds excluded every server the target resolves to.",
       );
     }
+    const selectedServerIds = selected.map((entry) => entry.id);
 
     const modelDefinition = await resolveHostModelDefinition({
       modelId: pins.modelId,
@@ -766,25 +814,31 @@ async function handleTurn(c: Context): Promise<Response> {
       {
         projectId,
         serverIds: selectedServerIds,
-        ...(target.serverNames ? { serverNames: target.serverNames } : {}),
+        ...(selectedServerNames ? { serverNames: selectedServerNames } : {}),
       },
       connectionSchema,
       { timeoutMs: CONNECT_TIMEOUT_MS },
     );
     manager = connection.manager;
 
-    const { excluded, advertised } = await computeExcludedToolNames(
+    // Two ways to say "no tools", answered identically. `allowedTools: []` is
+    // an allowlist that admits nothing, which is the same request as
+    // `maxToolCalls: 0`; letting them diverge would make one of them the
+    // subtly broken one.
+    const noTools = wantsNoTools(body);
+
+    const { excluded } = await computeExcludedToolNames(
       manager,
       selectedServerIds,
       {
         toolMode: pins.toolMode,
         ...(body.allowedTools ? { allowedTools: body.allowedTools } : {}),
-        // `maxToolCalls: 0` means "answer without tools". Enforced by not
-        // ADVERTISING any, not by letting the model call one and refusing at
-        // dispatch: an advertised tool has already cost prompt tokens and
-        // shaped the model's plan, and a turn that answers "I tried to call a
-        // tool and was blocked" is not the turn the caller asked for.
-        ...(body.maxToolCalls === 0 ? { excludeAll: true as const } : {}),
+        // "No tools" is enforced by not ADVERTISING any, not by letting the
+        // model call one and refusing at dispatch: an advertised tool has
+        // already cost prompt tokens and shaped the model's plan, and a turn
+        // that answers "I tried to call a tool and was blocked" is not the
+        // turn the caller asked for.
+        ...(noTools ? { excludeAll: true as const } : {}),
       },
     );
 
@@ -810,10 +864,18 @@ async function handleTurn(c: Context): Promise<Response> {
     // Computed BEFORE `resolveTurnRuntime`, which inspects the advertised set:
     // handing it the uncapped one would let it decide on a tool surface the
     // turn is not going to run with.
-    const tools =
-      body.maxToolCalls !== undefined && body.maxToolCalls > 0
-        ? capToolCalls(prepared.allTools, body.maxToolCalls)
-        : prepared.allTools;
+    //
+    // The ZERO case clears the FINAL set rather than trusting the name
+    // exclusion above. `prepareChatV2` applies `excludeMcpToolNames` and THEN
+    // merges skill/meta tools (`withServerSkills`), so a server advertising
+    // the skills extension would still hand the model executable `listSkills`
+    // / `loadSkill` entries on a turn that asked for no tools at all. Excluding
+    // names bounds what is LOADED; clearing the set is what makes "zero" true.
+    const tools = noTools
+      ? ({} as ToolSet)
+      : body.maxToolCalls !== undefined && body.maxToolCalls > 0
+      ? capToolCalls(prepared.allTools, body.maxToolCalls)
+      : prepared.allTools;
 
     const runtime = await resolveTurnRuntime({
       modelDefinition,
@@ -1027,7 +1089,7 @@ async function handleTurn(c: Context): Promise<Response> {
         provider: providerOf(pins.modelId),
       },
       toolMode: pins.toolMode,
-      advertisedToolCount: advertised,
+      advertisedToolCount: Object.keys(tools).length,
       excludedToolCount: excluded.length,
       persisted: {
         outcome: persisted.outcome,
@@ -1120,7 +1182,9 @@ function captureTurnEvent(
 export const __testing = {
   assertUnambiguousModelId,
   capToolCalls,
+  narrowTarget,
   shouldReleaseLease,
+  wantsNoTools,
   computeExcludedToolNames,
   CONFIG_FIELDS,
   turnSchema,
