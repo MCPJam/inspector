@@ -347,7 +347,7 @@ export interface SearchRegistryDirectoryInspectorCommand {
  */
 
 /**
- * Opens the create-suite page for the USER to finish. Suite creation is
+ * Opens the create-suite dialog for the USER to finish. Suite creation is
  * high-entropy (model, servers/host attachments, tests), so the ONLY prefill
  * an agent may pass is the suite name — everything else is picked by the
  * human in the form, mirroring the `openServerForm` prefill-over-commit
