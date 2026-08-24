@@ -102,6 +102,18 @@ evalDisclosure.get(
     const caseIds = csvQuery(c.req.query("caseIds"));
     const environmentId = c.req.query("environmentId") || undefined;
     const environmentIds = csvQuery(c.req.query("environmentIds"));
+    // Rejected HERE, not left for Convex's validator: forwarding both would
+    // hit `ArgumentValidationError`, which `translateConvexReadError` reads as
+    // "the resource you named cannot exist" and answers 404 — correct for a
+    // bad id, misleading for a caller who sent an ambiguous but well-formed
+    // request.
+    if (environmentId && environmentIds) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "environmentId and environmentIds are mutually exclusive."
+      );
+    }
 
     const client = createConvexClient(await getConvexBearerForRequest(c));
 

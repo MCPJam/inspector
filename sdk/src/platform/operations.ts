@@ -3165,11 +3165,22 @@ export const runEvalSuiteOperation: PlatformOperation<
         },
         { signal: disclosureBound.signal },
       );
-      onDisclosure?.(disclosure);
     } catch {
       disclosure = undefined;
     } finally {
       disclosureBound.dispose();
+    }
+    // OUTSIDE the fetch's try/catch on purpose: `onDisclosure` is caller code
+    // we do not control, and a callback that throws must not be able to erase
+    // a disclosure that was already fetched successfully — only a FETCH
+    // failure may leave `disclosure` unset.
+    if (disclosure) {
+      try {
+        onDisclosure?.(disclosure);
+      } catch {
+        // The callback's own failure is the caller's concern, not a reason to
+        // drop the disclosure from the receipt.
+      }
     }
 
     const knobs = runKnobBody(input, caseIds);
@@ -3976,7 +3987,7 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       { projectId: project.id, suiteId: suite.id },
       { signal },
     );
-    const environments = await resolveSuiteEnvironmentTargets(
+    const selectedEnvironments = await resolveSuiteEnvironmentTargets(
       client,
       project,
       suite,
@@ -3984,15 +3995,58 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       input.environment ? [input.environment] : (input.environments ?? []),
       signal,
     );
+    // SAME plan resolution `run_eval_suite` uses — including its
+    // exactly-one-attached-environment auto-select — so a bare call (no
+    // selector at all) discloses the plan a bare launch would actually run,
+    // not a suite-base derivation that could name different models. A suite
+    // with SEVERAL attached targets and no selector is ambiguous for a launch
+    // too, so it refuses the same way here rather than silently disclosing
+    // one of them.
+    const attachedEnvironmentNames = await environmentNamesFor(
+      client,
+      project,
+      detail.environmentIds ?? [],
+      signal,
+    );
+    const plan = computeRunTargets({
+      attachedEnvironments: (detail.environmentIds ?? []).map((id) => ({
+        id,
+        ...(attachedEnvironmentNames.get(id)
+          ? { name: attachedEnvironmentNames.get(id)! }
+          : {}),
+      })),
+      attachedHosts: (detail.hosts ?? []).map((host) => ({
+        id: host.id,
+        name: host.name,
+      })),
+      selectedEnvironments,
+      selectedHosts: [],
+    });
+    if (plan.kind === "target-required") {
+      throw operationInputError(targetRequiredMessage(plan));
+    }
+    // A HOST target has no disclosure selector at all — the backend contract
+    // (testSuites:getRunDisclosure) takes only caseIds/environmentId(s), so a
+    // host-only suite's disclosure falls back to the same suite-base
+    // derivation a plan with nothing attached uses. That is a backend-side
+    // limit, not something resolvable from here.
+    const disclosureEnvironmentIds =
+      plan.kind === "single"
+        ? plan.target?.kind === "environment"
+          ? [plan.target.id]
+          : []
+        : plan.targets
+            .filter((target) => target.kind === "environment")
+            .map((target) => target.id);
     return client.getEvalRunDisclosure(
       {
         projectId: project.id,
         suiteId: suite.id,
         ...(caseIds && caseIds.length > 0 ? { caseIds } : {}),
-        ...(environments.length === 1
-          ? { environmentId: environments[0]!.id }
-          : environments.length > 1
-            ? { environmentIds: environments.map((environment) => environment.id) }
+        ...(disclosureEnvironmentIds.length === 1
+          ? { environmentId: disclosureEnvironmentIds[0]! }
+          : disclosureEnvironmentIds.length > 1
+            ? { environmentIds: disclosureEnvironmentIds }
             : {}),
       },
       { signal },

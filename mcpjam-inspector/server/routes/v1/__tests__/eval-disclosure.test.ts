@@ -258,6 +258,18 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     );
   });
 
+  it("rejects environmentId and environmentIds together with a clear 400, not a confusing 404", async () => {
+    // Forwarding both to Convex would hit its ArgumentValidationError, which
+    // `translateConvexReadError` reads as a bad-id 404 — correct for a stale
+    // id, misleading for a well-formed-but-ambiguous request. Caught before
+    // the query is ever called.
+    const res = await get("?environmentId=env_1&environmentIds=env_2,env_3");
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as any;
+    expect(body.code).toBe("VALIDATION_ERROR");
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
   it("is on the guest allowlist, GET-only", () => {
     // Guests can already POST /eval-suites/:id/runs, so denying them the
     // disclosure that describes what that run does is the one gap that would

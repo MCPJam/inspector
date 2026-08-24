@@ -443,11 +443,18 @@ function writeRunDisclosure(
   const firingAnalysis = disclosure.analysis.filter(
     (touchpoint) => typeof touchpoint.fires === "string"
   );
-  lines.push(
-    firingAnalysis.length > 0
-      ? `  Analysis: ${firingAnalysis.map((touchpoint) => touchpoint.label).join(", ")} may send evidence to ${firingAnalysis[0]!.destinations[0]}`
-      : "  Analysis: no analyzer/judge touchpoint can fire for this run"
-  );
+  if (firingAnalysis.length > 0) {
+    // One line PER touchpoint — different touchpoints can have different
+    // destinations, and pooling them under the first one's would misattribute
+    // where the others' evidence actually goes.
+    for (const touchpoint of firingAnalysis) {
+      lines.push(
+        `  Analysis: ${touchpoint.label} may send evidence to ${touchpoint.destinations.join(", ")}`
+      );
+    }
+  } else {
+    lines.push("  Analysis: no analyzer/judge touchpoint can fire for this run");
+  }
   lines.push(
     `  Retention: ${disclosure.retention.effectiveToday}` +
       (disclosure.retention.policyDays !== null

@@ -3,6 +3,7 @@ import {
   computeRunTargets,
   PlatformApiClient,
   PlatformApiError,
+  getEvalRunDisclosureOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
 } from "../../src/platform/index.js";
@@ -929,6 +930,57 @@ describe("run_eval_suite pre-run disclosure (G4b)", () => {
         suiteId: "suite-1",
         environmentId: "env-stg",
       }),
+      expect.anything(),
+    );
+  });
+});
+
+describe("get_eval_run_disclosure target resolution parity with run_eval_suite", () => {
+  it("auto-selects the suite's SOLE attached environment with no selector at all", async () => {
+    // Same rule `run_eval_suite` uses via computeRunTargets: a bare call on a
+    // suite with exactly one attached environment discloses THAT
+    // environment, not a suite-base derivation that could name different
+    // models than the auto-selected environment actually would.
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg"] }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    await getEvalRunDisclosureOperation.execute(
+      { suite: "Smoke" },
+      { client },
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteId: "suite-1", environmentId: "env-stg" }),
+      expect.anything(),
+    );
+  });
+
+  it("refuses to guess with no selector when SEVERAL environments are attached", async () => {
+    // A bare launch would refuse here too (TARGET_REQUIRED) rather than pick
+    // one silently — disclosing one of several attached environments as if
+    // it were the only one would misdescribe what an equally bare launch
+    // actually does (refuse).
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg", "env-prod"] }),
+    });
+    const error = await getEvalRunDisclosureOperation
+      .execute({ suite: "Smoke" }, { client })
+      .catch((caught: unknown) => caught as PlatformApiError);
+    expect(error).toBeInstanceOf(PlatformApiError);
+    expect((error as PlatformApiError).message).toMatch(/TARGET_REQUIRED/);
+  });
+
+  it("still discloses when a caller names one of several attached environments", async () => {
+    const { client } = makeClient({
+      detail: suiteDetail({ environmentIds: ["env-stg", "env-prod"] }),
+    });
+    const spy = vi.spyOn(client, "getEvalRunDisclosure");
+    await getEvalRunDisclosureOperation.execute(
+      { suite: "Smoke", environment: "Prod" },
+      { client },
+    );
+    expect(spy).toHaveBeenCalledWith(
+      expect.objectContaining({ suiteId: "suite-1", environmentId: "env-prod" }),
       expect.anything(),
     );
   });

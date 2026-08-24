@@ -533,7 +533,26 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
               },
             ],
           },
-          analysis: [],
+          analysis: [
+            {
+              touchpoint: "goalCompletion",
+              label: "Goal-completion judge",
+              model: "openai/gpt-5.4-mini",
+              rail: { fixed: "openrouter", because: "x" },
+              destinations: ["OpenRouter (openrouter.ai)"],
+              evidenceSent: ["case prompt"],
+              fires: "explicit-request-only",
+            },
+            {
+              touchpoint: "runInsights",
+              label: "Run insights report",
+              model: "openai/gpt-5.4-mini",
+              rail: { fixed: "openrouter", because: "x" },
+              destinations: ["A wholly different destination"],
+              evidenceSent: ["failure signatures"],
+              fires: "auto-on-completion",
+            },
+          ],
           capture: {
             captureLevel: "full",
             reportingMode: "standard",
@@ -1934,6 +1953,22 @@ test("eval run prints the disclosure block in human mode, before the run link", 
     assert.notEqual(viewIndex, -1);
     assert.ok(disclosureIndex < viewIndex);
     assert.match(run.stdout, /Execution: emulated/);
+    // Each firing touchpoint gets its OWN destination line — pooling them
+    // under the first touchpoint's destination would misattribute where the
+    // others' evidence goes.
+    assert.match(
+      run.stdout,
+      /Goal-completion judge.*OpenRouter \(openrouter\.ai\)/,
+    );
+    assert.match(
+      run.stdout,
+      /Run insights report.*A wholly different destination/,
+    );
+    assert.ok(
+      !/Goal-completion judge.*A wholly different destination/.test(
+        run.stdout,
+      ),
+    );
   } finally {
     await fixture.close();
   }

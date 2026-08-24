@@ -1,5 +1,14 @@
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+const { useRunDisclosureMock } = vi.hoisted(() => ({
+  useRunDisclosureMock: vi.fn(),
+}));
+vi.mock("@/hooks/use-run-disclosure", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-run-disclosure")>();
+  return { ...actual, useRunDisclosure: useRunDisclosureMock };
+});
 
 /**
  * CONTRACT: the pre-run disclosure hint is read-only. It must never disable,
@@ -168,6 +177,107 @@ describe("formatRunDisclosureSummary — executionAbsence kinds render distingui
       detail.some((line) => /not derivable/i.test(line)),
     ).toBe(true);
   });
+
+  it("renders where each concrete model routes, and every firing touchpoint's own destinations", () => {
+    // The hint's whole point is disclosure — it must not reduce a ready
+    // disclosure to a bare count and silently drop the destinations it
+    // promises. Two analysis touchpoints firing to DIFFERENT destinations
+    // must never share a line, the same class of bug as pooling them under
+    // one destination.
+    const state = stateOf({
+      disclosure: baseDisclosure({
+        execution: {
+          engine: "emulated",
+          sandbox: { engaged: false, because: "no sandbox" },
+          locus: { known: true, hosted: false },
+          models: [
+            {
+              modelId: "openai/gpt-5.4-mini",
+              provider: "openai",
+              tenantEgress: "mcpjam-hosted",
+              rail: {
+                managed: true,
+                possibleDestinations: ["gateway", "openrouter"],
+                outcomeIfRunNow: {
+                  destination: "gateway",
+                  observedAt: 1,
+                  volatile: true,
+                },
+                inputs: {
+                  mode: "auto",
+                  gatewayEligible: true,
+                  hasOpenRouterFallback: null,
+                },
+                ruleLocation: "x",
+                authoritativePerRequestRecord: "llmUsageRecord",
+              },
+            },
+          ],
+        },
+        analysis: [
+          {
+            touchpoint: "goalCompletion",
+            label: "Goal-completion judge",
+            model: "openai/gpt-5.4-mini",
+            rail: { fixed: "openrouter", because: "x" },
+            destinations: ["OpenRouter (openrouter.ai)"],
+            evidenceSent: ["case prompt"],
+            fires: "explicit-request-only",
+          },
+          {
+            touchpoint: "runInsights",
+            label: "Run insights report",
+            model: "openai/gpt-5.4-mini",
+            rail: { fixed: "openrouter", because: "x" },
+            destinations: ["A different destination entirely"],
+            evidenceSent: ["failure signatures"],
+            fires: "auto-on-completion",
+          },
+        ],
+        subprocessors: [
+          {
+            vendor: "Vercel AI Gateway",
+            role: "Model gateway",
+            dataCategories: [],
+            capturedAt: "2026-08-23",
+            sourceUrl: "https://x",
+            statements: [],
+            engaged: true,
+            because: "run model resolves to the managed rail",
+          },
+        ],
+      }),
+    });
+    const detail = describeRunDisclosureDetail(state);
+    expect(
+      detail.some((line) => line.includes("openai/gpt-5.4-mini")),
+    ).toBe(true);
+    expect(
+      detail.some(
+        (line) =>
+          line.includes("Goal-completion judge") &&
+          line.includes("OpenRouter (openrouter.ai)"),
+      ),
+    ).toBe(true);
+    expect(
+      detail.some(
+        (line) =>
+          line.includes("Run insights report") &&
+          line.includes("A different destination entirely"),
+      ),
+    ).toBe(true);
+    // Never pooled onto one line under the first touchpoint's destination.
+    expect(
+      detail.some(
+        (line) =>
+          line.includes("Goal-completion judge") &&
+          line.includes("Run insights report"),
+      ),
+    ).toBe(false);
+    expect(detail.some((line) => line.includes("Vercel AI Gateway"))).toBe(
+      true,
+    );
+  });
 });
 
 describe("RunDisclosureHint — read-only, never gates the run", () => {
@@ -221,13 +331,60 @@ describe("RunDisclosureHint — read-only, never gates the run", () => {
 });
 
 describe("SuiteRunDisclosureHint — gate-then-mount", () => {
+  afterEach(() => {
+    useRunDisclosureMock.mockReset();
+  });
+
   it("renders nothing with no suiteId", () => {
     render(<SuiteRunDisclosureHint suiteId={null} />);
     expect(screen.queryByTestId("run-disclosure-hint")).toBeNull();
+    expect(useRunDisclosureMock).not.toHaveBeenCalled();
   });
 
   it("renders nothing when suppressed", () => {
     render(<SuiteRunDisclosureHint suiteId="suite-1" suppressed />);
     expect(screen.queryByTestId("run-disclosure-hint")).toBeNull();
+    expect(useRunDisclosureMock).not.toHaveBeenCalled();
+  });
+
+  it("mounts the fetcher and renders the hint for a real suiteId", () => {
+    useRunDisclosureMock.mockReturnValue(
+      stateOf({ status: "loading", disclosure: null }),
+    );
+    render(<SuiteRunDisclosureHint suiteId="suite-1" />);
+    expect(screen.getByTestId("run-disclosure-hint")).toBeInTheDocument();
+    expect(useRunDisclosureMock).toHaveBeenCalledWith(
+      expect.objectContaining({ enabled: true, suiteId: "suite-1" }),
+    );
+  });
+
+  it("passes environmentIds through to the hook", () => {
+    useRunDisclosureMock.mockReturnValue(stateOf());
+    render(
+      <SuiteRunDisclosureHint
+        suiteId="suite-1"
+        environmentIds={["env-stg", "env-prod"]}
+      />,
+    );
+    expect(useRunDisclosureMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        suiteId: "suite-1",
+        environmentIds: ["env-stg", "env-prod"],
+      }),
+    );
+  });
+
+  it("reflects a ready disclosure's summary in the tooltip trigger's label", () => {
+    useRunDisclosureMock.mockReturnValue(
+      stateOf({
+        status: "error",
+        disclosure: null,
+        error: { message: "old backend", contractUnavailable: true },
+      }),
+    );
+    render(<SuiteRunDisclosureHint suiteId="suite-1" />);
+    expect(
+      screen.getByLabelText("What running this suite discloses"),
+    ).toBeInTheDocument();
   });
 });

@@ -123,26 +123,49 @@ export function formatRunDisclosureSummary(
   return "This run will execute — its models aren't resolved yet";
 }
 
-/** The tooltip's detail lines: analysis, retention, region. */
+/**
+ * The tooltip's detail lines: WHICH models are called and where they route,
+ * which analyzers reach where, retention, region, and the subprocessors
+ * actually engaged. Every field the contract discloses gets a line — a hint
+ * whose whole purpose is disclosure must not silently drop the destinations
+ * it promises just to stay short.
+ */
 export function describeRunDisclosureDetail(
   state: Pick<RunDisclosureState, "status" | "disclosure">,
 ): string[] {
   if (state.status !== "ready" || !state.disclosure) return [];
   const { disclosure } = state;
   const lines: string[] = [];
-  if (disclosure.execution?.modelsUnresolved) {
-    lines.push(
-      `Models: not derivable — ${disclosure.execution.modelsUnresolved.reason}`,
-    );
+  if (disclosure.execution) {
+    for (const model of disclosure.execution.models) {
+      const destination =
+        model.byok?.baseUrlHost ??
+        (model.rail.managed
+          ? model.rail.possibleDestinations.join(" or ")
+          : model.tenantEgress);
+      lines.push(`Model: ${model.modelId} — ${destination}`);
+    }
+    if (disclosure.execution.modelsUnresolved) {
+      lines.push(
+        `Models: not derivable — ${disclosure.execution.modelsUnresolved.reason}`,
+      );
+    }
   }
   const firing = disclosure.analysis.filter(
     (touchpoint) => typeof touchpoint.fires === "string",
   );
-  lines.push(
-    firing.length > 0
-      ? `Analysis may reach: ${firing.map((touchpoint) => touchpoint.label).join(", ")}`
-      : "No analyzer or judge can fire for this run",
-  );
+  if (firing.length > 0) {
+    // One line PER touchpoint — different touchpoints can have different
+    // destinations, and pooling them under the first one's would misattribute
+    // where the others' evidence actually goes.
+    for (const touchpoint of firing) {
+      lines.push(
+        `Analysis: ${touchpoint.label} → ${touchpoint.destinations.join(", ")}`,
+      );
+    }
+  } else {
+    lines.push("No analyzer or judge can fire for this run");
+  }
   lines.push(
     disclosure.retention.effectiveToday === "kept-indefinitely"
       ? "Retention: kept indefinitely"
@@ -153,6 +176,14 @@ export function describeRunDisclosureDetail(
       ? `Region: ${disclosure.region.value}`
       : "Region: not stated",
   );
+  const engagedSubprocessors = disclosure.subprocessors.filter(
+    (entry) => entry.engaged,
+  );
+  if (engagedSubprocessors.length > 0) {
+    lines.push(
+      `Subprocessors: ${engagedSubprocessors.map((entry) => entry.vendor).join(", ")}`,
+    );
+  }
   return lines;
 }
 
