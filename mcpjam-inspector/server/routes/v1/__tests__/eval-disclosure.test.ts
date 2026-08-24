@@ -164,6 +164,45 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     expect(body.execution.locus).toEqual({ known: true, hosted: false });
   });
 
+  it("recomputes digest after composing execution.locus, so it no longer describes the un-composed contract", async () => {
+    // `withLocus` overwrites `execution.locus`, a fact the backend's own
+    // digest covers — the backend-computed digest on the raw query result no
+    // longer matches the PROJECTED payload this route actually returns once
+    // locus is composed onto it.
+    queryMock.mockResolvedValue(baseDisclosure());
+    const body = (await (await get()).json()) as any;
+    expect(body.digest).not.toBe("deadbeef");
+    expect(body.digest).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("digest changes with locus, proving the recompute actually covers execution.locus", async () => {
+    queryMock.mockResolvedValue(baseDisclosure());
+    hostedModeMock.value = true;
+    const hostedBody = (await (await get()).json()) as any;
+    hostedModeMock.value = false;
+    const localBody = (await (await get()).json()) as any;
+    expect(hostedBody.digest).not.toBe(localBody.digest);
+  });
+
+  it("digest recompute is deterministic for the same composed contract", async () => {
+    queryMock.mockResolvedValue(baseDisclosure());
+    const first = (await (await get()).json()) as any;
+    const second = (await (await get()).json()) as any;
+    expect(first.digest).toBe(second.digest);
+  });
+
+  it("leaves the backend digest untouched when execution is absent (nothing was composed)", async () => {
+    const disclosure = baseDisclosure();
+    delete (disclosure as Record<string, unknown>).execution;
+    (disclosure as Record<string, unknown>).executionAbsence = {
+      kind: "ingested-run",
+      reason: "the SDK uploaded this run",
+    };
+    queryMock.mockResolvedValue(disclosure);
+    const body = (await (await get()).json()) as any;
+    expect(body.digest).toBe("deadbeef");
+  });
+
   it("passes an unknown top-level section through structurally, unmodified", async () => {
     // A newer backend can add a section this route's hand-written contract
     // does not know about yet. It must reach the wire, not be dropped by a
@@ -222,20 +261,45 @@ describe("GET /projects/:projectId/eval-suites/:suiteId/run-disclosure", () => {
     expect(body.details?.reason).toBe("contract_unavailable");
   });
 
-  it("also answers contract_unavailable when a missing-function failure arrives production-redacted", async () => {
+  it("also answers contract_unavailable when a missing-function failure arrives production-redacted and the caller can see the suite", async () => {
     // Production Convex redacts a plain server-side Error to "Server
     // Error" — including a missing-function failure, which is exactly that
     // shape. `isMissingConvexFunctionError`'s message match cannot see it
-    // once redacted, so this route must not fall through to the generic
-    // upstream/502 incident path: this is exactly the state production is
-    // in right now, before g4a's promote, and every request would otherwise
-    // page Sentry.
-    queryMock.mockRejectedValue(new Error("Server Error"));
+    // once redacted, so this route disambiguates with a preflight against
+    // `testSuites:getTestSuite`: if the caller CAN see the suite, the
+    // redacted `getRunDisclosure` failure cannot have been a visibility
+    // refusal (both queries share the same 'view' permission tier), so it
+    // must be the missing-function case arriving redacted — exactly the
+    // state production is in right now, before g4a's promote.
+    queryMock.mockImplementation((fn: string) => {
+      if (fn === "testSuites:getRunDisclosure") {
+        return Promise.reject(new Error("Server Error"));
+      }
+      return Promise.resolve({ _id: SUITE });
+    });
     const res = await get();
     expect(res.status).toBe(422);
     const body = (await res.json()) as any;
     expect(body.code).toBe("FEATURE_NOT_SUPPORTED");
     expect(body.details?.reason).toBe("contract_unavailable");
+    expect(queryMock).toHaveBeenCalledWith(
+      "testSuites:getTestSuite",
+      expect.objectContaining({ suiteId: SUITE })
+    );
+  });
+
+  it("404s, never 422, when a redacted failure is a genuine visibility refusal", async () => {
+    // Both `getRunDisclosure` and the `getTestSuite` preflight fail the same
+    // redacted way — the caller genuinely cannot see this suite (a plain
+    // membership refusal, redacted to "Server Error" upstream). The
+    // preflight's own redacted failure is translated with
+    // `redactedIsRefusal: true`, restoring 404-never-403 instead of leaking
+    // a 422 that would imply the suite was found.
+    queryMock.mockRejectedValue(new Error("Server Error"));
+    const res = await get();
+    expect(res.status).toBe(404);
+    const body = (await res.json()) as any;
+    expect(body.code).toBe("NOT_FOUND");
   });
 
   it("still answers a genuine outage as an upstream incident, not contract_unavailable", async () => {
