@@ -6,6 +6,8 @@ import {
   hostConfigField,
   HOST_CONFIG_FIELDS,
   HOST_CONFIG_SECTIONS,
+  NOT_SUPPORTED,
+  parseLightDarkPair,
   type HostConfigFieldDef,
 } from "@/lib/host-config-field-schema";
 
@@ -301,5 +303,173 @@ describe("fieldDiverges", () => {
         explicitTrue,
       ])
     ).toBe(false);
+  });
+});
+
+describe("display-mode rows on a host that renders no MCP Apps", () => {
+  const DISPLAY_MODE_FIELDS = [
+    "appsCap.availableDisplayModes",
+    "appsCap.widgetDisplayModeRequests",
+  ] as const;
+
+  it("reads as not supported once the catalog says the host renders nothing", () => {
+    // The shared no-claims preset fills these two with `['inline']` and
+    // `'accept'` because neither has an off-value the way the booleans do,
+    // so without this a CLI client advertised display modes it cannot show.
+    const cfg = makeConfig({
+      hostStyle: "claude-code",
+      rendersMcpApps: false,
+    } as Partial<HostConfigDtoV2>);
+    for (const id of DISPLAY_MODE_FIELDS) {
+      expect(fieldById(id).read(cfg)).toBe(NOT_SUPPORTED);
+    }
+  });
+
+  it("leaves a rendering host's real values alone", () => {
+    const cfg = makeConfig({
+      hostStyle: "claude",
+      rendersMcpApps: true,
+    } as Partial<HostConfigDtoV2>);
+    for (const id of DISPLAY_MODE_FIELDS) {
+      expect(fieldById(id).read(cfg)).not.toBe(NOT_SUPPORTED);
+      expect(fieldById(id).read(cfg)).toBeDefined();
+    }
+  });
+
+  it("shows the effective value when no catalog fact is carried", () => {
+    // A host the user built: the resolver's answer is the only answer there
+    // is, and blanking it would hide a real setting.
+    const cfg = makeConfig({ hostStyle: "claude-code" });
+    for (const id of DISPLAY_MODE_FIELDS) {
+      expect(fieldById(id).read(cfg)).not.toBe(NOT_SUPPORTED);
+    }
+  });
+});
+
+describe("CSP subtype rows", () => {
+  it("reads the preset's answers when the row stores no override", () => {
+    // The sandbox proxy enforces the RESOLVED matrix, so a Goose row with no
+    // stored override is still having every connect subtype blocked. Reading
+    // the raw `mcpAppsOverrides` here reported "unknown" for exactly the
+    // hosts this emulation targets.
+    const cfg = makeConfig({ hostStyle: "goose" });
+    expect(fieldById("appsCap.cspConnectDomains.fetch").read(cfg)).toBe(false);
+    expect(fieldById("appsCap.cspConnectDomains.xhr").read(cfg)).toBe(false);
+    expect(fieldById("appsCap.cspConnectDomains.websocket").read(cfg)).toBe(
+      false
+    );
+    expect(fieldById("appsCap.cspResourceDomains.script").read(cfg)).toBe(
+      false
+    );
+    // Counter-host: ChatGPT honors the whole connect directive.
+    const chatgpt = makeConfig({ hostStyle: "chatgpt" });
+    expect(fieldById("appsCap.cspConnectDomains.fetch").read(chatgpt)).toBe(
+      true
+    );
+  });
+
+  it("lets a stored override win over the preset", () => {
+    const cfg = makeConfig({
+      hostStyle: "goose",
+      mcpProfile: {
+        profileVersion: 1,
+        apps: { mcpAppsOverrides: { cspConnectDomains: { fetch: true } } },
+      },
+    } as Partial<HostConfigDtoV2>);
+    expect(fieldById("appsCap.cspConnectDomains.fetch").read(cfg)).toBe(true);
+    // Untouched leaves keep the preset rather than collapsing to unknown.
+    expect(fieldById("appsCap.cspConnectDomains.xhr").read(cfg)).toBe(false);
+  });
+
+  it("stays unknown on a preset with no subtype evidence", () => {
+    const cfg = makeConfig({ hostStyle: "mcpjam" });
+    expect(
+      fieldById("appsCap.cspConnectDomains.fetch").read(cfg)
+    ).toBeUndefined();
+  });
+});
+
+describe("parseLightDarkPair", () => {
+  it("splits on the top-level comma, not the ones inside rgba()", () => {
+    expect(
+      parseLightDarkPair(
+        "light-dark(rgba(50, 102, 173, 1), rgba(128, 170, 221, 1))"
+      )
+    ).toEqual({
+      light: "rgba(50, 102, 173, 1)",
+      dark: "rgba(128, 170, 221, 1)",
+    });
+  });
+
+  it("returns null for anything that is not a light-dark() call", () => {
+    expect(parseLightDarkPair("#fff")).toBeNull();
+    expect(
+      parseLightDarkPair("color-mix(in oklab,#fff 0%,transparent)")
+    ).toBeNull();
+    // Malformed: one argument, so there is no pair to report.
+    expect(parseLightDarkPair("light-dark(#fff)")).toBeNull();
+    expect(parseLightDarkPair("light-dark(#fff, )")).toBeNull();
+    // Three arguments — splitting on the first comma would invent a dark.
+    expect(parseLightDarkPair("light-dark(#fff, #000, #333)")).toBeNull();
+    // Unbalanced: ends in `)`, but that paren closes `rgb(`, not light-dark(.
+    expect(parseLightDarkPair("light-dark(#fff, rgb(0,0,0)")).toBeNull();
+    // Closes early, so the trailing text was never inside the call.
+    expect(parseLightDarkPair("light-dark(#fff), rgb(0,0,0)")).toBeNull();
+    // Three arguments — splitting on the first comma would invent a dark.
+    expect(parseLightDarkPair("light-dark(#fff, #000, #333)")).toBeNull();
+    // Unbalanced: ends in `)`, but that paren closes `rgb(`, not light-dark(.
+    expect(parseLightDarkPair("light-dark(#fff, rgb(0,0,0)")).toBeNull();
+    // Closes early, so the trailing text was never inside the call.
+    expect(parseLightDarkPair("light-dark(#fff), rgb(0,0,0)")).toBeNull();
+  });
+});
+
+describe("Apps · Styles rows", () => {
+  const field = () => fieldById("styles.--color-text-info");
+
+  it("reads a per-theme probe capture as the pair", () => {
+    const cfg = makeConfig({
+      styleVariablesByTheme: {
+        light: { "--color-text-info": "#3a83f7" },
+        dark: { "--color-text-info": "#539af8" },
+      },
+    } as Partial<HostConfigDtoV2>);
+    expect(field().read(cfg)).toEqual({ light: "#3a83f7", dark: "#539af8" });
+  });
+
+  it("decodes a light-dark() host into the same pair shape, keeping the literal", () => {
+    // The whole point of the normalization: this host and the one above are
+    // stating the same fact, so the matrix must not render them differently.
+    const cfg = makeConfig({
+      hostContext: {
+        styles: {
+          variables: {
+            "--color-text-info":
+              "light-dark(rgba(50, 102, 173, 1), rgba(128, 170, 221, 1))",
+          },
+        },
+      },
+    });
+    expect(field().read(cfg)).toEqual({
+      light: "rgba(50, 102, 173, 1)",
+      dark: "rgba(128, 170, 221, 1)",
+      raw: "light-dark(rgba(50, 102, 173, 1), rgba(128, 170, 221, 1))",
+    });
+  });
+
+  it("keeps a genuinely theme-agnostic value bare", () => {
+    const cfg = makeConfig({
+      hostContext: { styles: { variables: { "--color-text-info": "#fff" } } },
+    });
+    expect(field().read(cfg)).toEqual({ same: "#fff" });
+  });
+
+  it("reports an unsplittable value verbatim rather than guessing", () => {
+    const cfg = makeConfig({
+      hostContext: {
+        styles: { variables: { "--color-text-info": "light-dark(#fff)" } },
+      },
+    });
+    expect(field().read(cfg)).toEqual({ same: "light-dark(#fff)" });
   });
 });

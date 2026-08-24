@@ -1,6 +1,6 @@
 /**
- * `mcpjam personas` / `mcpjam swarms` / the authoring and insight halves of
- * `mcpjam journeys` — the rest of the Swarms product on the command line.
+ * `mcpjam cloud personas` / `mcpjam cloud swarms` / the authoring and insight halves of
+ * `mcpjam cloud journeys` — the rest of the Swarms product on the command line.
  *
  * `commands/journeys.ts` already covers the run loop (list, run, status,
  * sessions, cancel). What it could not do is AUTHOR anything: a journey needs a
@@ -17,7 +17,7 @@
  * BETA. Authoring is behind a per-organization flag. The commands exist
  * regardless and the server says plainly when the flag is off for yours: a
  * command that answers "not currently available for your organization" is a
- * better answer than a command that does not exist. `mcpjam capabilities` asks
+ * better answer than a command that does not exist. `mcpjam cloud projects capabilities` asks
  * the question directly.
  */
 import type { Command } from "commander";
@@ -32,7 +32,6 @@ import {
   dismissSwarmFindingOperation,
   generateJourneysOperation,
   generatePersonasOperation,
-  getCapabilitiesOperation,
   getJourneyOperation,
   getJourneyRunScorecardOperation,
   getPersonaOperation,
@@ -135,23 +134,6 @@ export function registerSwarmAuthoringCommands(
   program: Command,
   journeys: Command
 ): void {
-  // ── capabilities ────────────────────────────────────────────────────────
-  //
-  // A top-level command rather than a subcommand of anything: the answer spans
-  // Swarms, user testing and the plan, and burying it under one of them would
-  // suggest it only describes that one.
-  bindOperation(
-    addProjectOption(
-      program
-        .command("capabilities")
-        .description(
-          "Show what you may do in a project: your role, which betas the organization has, your plan's limits, and a can-block of booleans. Ask this before scripting anything that authors, launches or publishes."
-        )
-    ),
-    getCapabilitiesOperation,
-    (options: ProjectOptions) => ({ project: options.project })
-  );
-
   // ── personas ────────────────────────────────────────────────────────────
   const personas = program
     .command("personas")

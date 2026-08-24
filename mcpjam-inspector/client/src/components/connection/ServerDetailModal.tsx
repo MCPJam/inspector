@@ -33,6 +33,7 @@ import {
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
 import { getConnectionStatusMeta } from "./server-card-utils";
+import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
@@ -92,7 +93,7 @@ interface ServerDetailModalProps {
    * Undefined = no host-level pin = "Legacy · default" attribution on
    * the chip.
    */
-  hostDefaultMcpProtocolVersion?: McpProtocolVersion;
+  hostDefaultMcpProtocolVersion?: McpProtocolVersion | "auto";
   /** Project default XAA test identity — shown as override placeholders. */
   projectXaaDefaultIdentity?: { subject: string; email: string } | null;
 }
@@ -136,7 +137,9 @@ export function ServerDetailModal({
   // `project_` placeholder) makes it reject during render. Same guard every
   // other project-scoped Convex consumer uses; callers in local mode should
   // pass null, but this keeps a stray local id from taking down the page.
-  const canQueryProjectServerConfig = shouldQueryProjectId(projectId);
+  const isUserReady = useDbUserReady();
+  const canQueryProjectServerConfig =
+    isUserReady && shouldQueryProjectId(projectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
     canQueryProjectServerConfig ? ({ projectId } as never) : "skip"
@@ -157,7 +160,7 @@ export function ServerDetailModal({
   // The History tab + drift chip surface persisted snapshot revisions, which
   // only exist for project-scoped (hosted) servers — hidden in local mode.
   // Both surfaces key off `showHistory`, so this is the single gate.
-  const showHistory = Boolean(projectId && serverId);
+  const showHistory = isUserReady && Boolean(projectId && serverId);
   const currentMcpProtocolVersionOverride = useMemo<
     McpProtocolVersion | undefined
   >(
@@ -176,8 +179,12 @@ export function ServerDetailModal({
   // without forcing the Servers tab to also wire up the provider just
   // for the chip's source attribution.
   const activeMcpProfile = useActiveMcpProfile();
-  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+  const storedHostDefaultMcpProtocolVersion =
     hostDefaultMcpProtocolVersion ?? activeMcpProfile?.mcpProtocolVersion;
+  const resolvedHostDefaultMcpProtocolVersion: McpProtocolVersion | undefined =
+    storedHostDefaultMcpProtocolVersion === "auto"
+      ? undefined
+      : storedHostDefaultMcpProtocolVersion;
   const canEditMcpProtocolVersionOverride = Boolean(
     canQueryProjectServerConfig &&
       serverId &&

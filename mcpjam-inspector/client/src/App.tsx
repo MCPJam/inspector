@@ -33,6 +33,7 @@ import { EmptyState } from "./components/ui/empty-state";
 import {
   canManageAsOwnerOrAdmin,
   canViewSwarms,
+  shouldQueryProjectId,
   useProjectQueries,
   useViewerProjectRole,
 } from "./hooks/useProjects";
@@ -41,6 +42,7 @@ import { SessionsPanel } from "./components/sessions/SessionsPanel";
 import { SettingsTab } from "./components/SettingsTab";
 import { ApiKeysRoute } from "./components/settings/ApiKeysRoute";
 import { GithubChecksRoute } from "./components/settings/GithubChecksRoute";
+import { GithubInstallCallbackRoute } from "./components/settings/GithubInstallCallbackRoute";
 import { IntegrationsRoute } from "./components/settings/IntegrationsRoute";
 import { ProjectSettingsTab } from "./components/ProjectSettingsTab";
 import { ProjectClientConfigSync } from "./components/client-config/ProjectClientConfigSync";
@@ -48,6 +50,12 @@ import { ActiveHostServerReconciler } from "./components/ActiveHostServerReconci
 import { TracingTab } from "./components/TracingTab";
 import { OAuthFlowTab } from "./components/OAuthFlowTab";
 import { ConformanceTab } from "./components/conformance/ConformancePanel";
+import {
+  ConformanceHistory,
+  ConformanceRunDetailPage,
+  ConformanceSharedPage,
+} from "./components/conformance/ConformanceHistory";
+import { EvalRunSharedPage } from "./components/evals/EvalRunSharedPage";
 import { HostCompatPage } from "./components/compat/HostCompatPage";
 import { XAAFlowTab } from "./components/xaa/XAAFlowTab";
 import { ErrorBoundary } from "./components/ui/error-boundary";
@@ -78,6 +86,7 @@ import {
   useSidebar,
 } from "./components/ui/sidebar";
 import { AgentSidePanelMount } from "./components/mcpjam-agent/AgentSidePanelMount";
+import { AppChromePanel } from "@/components/app-chrome-panel";
 import {
   Alert,
   AlertDescription,
@@ -184,7 +193,7 @@ import {
   readProjectDeepLinkParam,
   resolveProjectDeepLinkAction,
 } from "./lib/project-deep-link";
-import { isHostedHashTabAllowed } from "./lib/hosted-tab-policy";
+import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
 import {
@@ -257,6 +266,8 @@ import {
   seedFromHostTemplate,
   type HostTemplateId,
 } from "@mcpjam/sdk/host-config/templates";
+import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled";
+import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
 import {
   HOST_VERIFY_TAB_PARAM,
   HOST_VERIFY_TEMPLATE_PARAM,
@@ -947,6 +958,8 @@ function useTemplateVerifyDeepLink({
     projectId,
   });
   const { createHost } = useHostMutations();
+  const claudeCodeEnabled = useClaudeCodeHostEnabledState();
+  const codexEnabled = useCodexHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -965,21 +978,43 @@ function useTemplateVerifyDeepLink({
 
   useEffect(() => {
     if (!requestedTemplateId || !isAuthenticated || handledRef.current) return;
-    // Wait for the host list before deciding create-vs-open. `useHostList`
-    // stays loading while `projectId` is still a placeholder, so this also
-    // guards `createHost` from firing with a not-yet-real project id.
-    if (hostsLoading) return;
+    // Wait for the host list before deciding create-vs-open, and never mint a
+    // host against an id `createHost` would reject. The projectId check is
+    // stated here rather than left to `useHostList`'s loading flag: the two
+    // are separate hooks, and a change to that flag's skip semantics must not
+    // be able to let `createHost` fire with a not-yet-real project id.
+    if (hostsLoading || !shouldQueryProjectId(projectId)) return;
     const template = HOST_TEMPLATES.find((t) => t.id === requestedTemplateId);
     if (!template) return;
-    handledRef.current = true;
 
     const existing = hosts.find((h) => h.name === template.label);
     if (existing) {
+      handledRef.current = true;
       navigate(buildHostVerifyLandingPath(existing.hostId, requestedFocusTab), {
         replace: true,
       });
       return;
     }
+
+    const templateEnabled =
+      requestedTemplateId === "claude-code"
+        ? claudeCodeEnabled
+        : requestedTemplateId === "codex"
+        ? codexEnabled
+        : true;
+    // These templates remain visible on caniuse.dev as reference profiles,
+    // but they are not available for new-host creation until their rollout
+    // flags are enabled. Wait for PostHog before deciding so flagged users do
+    // not get bounced during a cold load.
+    if (templateEnabled === undefined) return;
+    if (!templateEnabled) {
+      handledRef.current = true;
+      navigate(routePaths.hosts, { replace: true });
+      toast.error(`${template.label} is not available yet.`);
+      return;
+    }
+
+    handledRef.current = true;
 
     void (async () => {
       try {
@@ -1010,6 +1045,8 @@ function useTemplateVerifyDeepLink({
     hosts,
     projectId,
     requestedFocusTab,
+    claudeCodeEnabled,
+    codexEnabled,
     themeMode,
     createHost,
     navigate,
@@ -1364,8 +1401,73 @@ export function EvalsRoute({ mode }: { mode?: EvalsMode } = {}) {
 }
 
 export function ConformanceRoute() {
-  const { selectedServerEntry } = useAppRouteContext();
-  return <ConformanceTab server={selectedServerEntry ?? null} />;
+  const { selectedServerEntry, convexProjectId, isAuthenticated } =
+    useAppRouteContext();
+  const { serversByName } = useProjectServers({
+    isAuthenticated,
+    projectId: convexProjectId,
+  });
+  const savedServerId = selectedServerEntry?.name
+    ? (serversByName.get(selectedServerEntry.name) ?? null)
+    : null;
+  return (
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+      {convexProjectId ? (
+        <div className="shrink-0 overflow-auto border-b border-border/40 px-4 pt-4 lg:px-6">
+          <ConformanceHistory
+            projectId={convexProjectId}
+            serverId={savedServerId}
+          />
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1 overflow-hidden">
+        <ConformanceTab
+          server={selectedServerEntry ?? null}
+          persist={
+            convexProjectId
+              ? { projectId: convexProjectId, serverId: savedServerId }
+              : undefined
+          }
+        />
+      </div>
+    </div>
+  );
+}
+
+export function ConformanceRunDetailRoute() {
+  const { convexProjectId } = useAppRouteContext();
+  const params = useParams<{ runId?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.runId ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return (
+    <ConformanceRunDetailPage
+      runId={decodeParam(raw) ?? raw}
+      projectId={convexProjectId}
+    />
+  );
+}
+
+export function ConformanceSharedRoute() {
+  const params = useParams<{ token?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.token ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return <ConformanceSharedPage token={decodeParam(raw) ?? raw} />;
+}
+
+export function EvalRunSharedRoute() {
+  const params = useParams<{ token?: string }>();
+  const pathname = getRouteFallbackPathname();
+  const raw =
+    params.token ??
+    pathname.replace(/\/+$/, "").split("/").pop() ??
+    "";
+  return <EvalRunSharedPage token={decodeParam(raw) ?? raw} />;
 }
 
 export function CompatibilityRoute() {
@@ -2105,6 +2207,37 @@ export function GithubChecksSettingsRoute() {
   );
 }
 
+/**
+ * `/settings/integrations/github/callback` — GitHub's return path, both legs.
+ *
+ * Same `ErrorBoundary` doctrine as the settings page: this page's actions THROW
+ * when the backend cannot answer (not deployed yet, or the caller is not a
+ * member), and without a boundary that unmounts the whole app. It redirects to
+ * `/settings` for the same reason too — a gated surface that cannot confirm it
+ * is available is not available.
+ *
+ * No `activeOrganizationId` is passed, and none is needed: the browser arrives
+ * back from GitHub carrying only query parameters, and which organization the
+ * binding belongs to is recovered server-side from the link session. A page
+ * that read it from app state could disagree with the session and would then be
+ * asserting an organization nobody proved anything about.
+ */
+export function GithubInstallCallbackSettingsRoute() {
+  return (
+    <ErrorBoundary
+      onError={(error) =>
+        console.error(
+          "[settings/integrations/github/callback] unavailable:",
+          error
+        )
+      }
+      fallback={<Navigate to="/settings" replace />}
+    >
+      <GithubInstallCallbackRoute />
+    </ErrorBoundary>
+  );
+}
+
 export function SupportRoute() {
   return <SupportTab />;
 }
@@ -2280,7 +2413,18 @@ export default function App() {
     barePathname === routePaths.embedHostCompare ||
     barePathname === routePaths.embedScore ||
     barePathname.startsWith(`${routePaths.scoreResults}/`) ||
+    barePathname.startsWith(`${routePaths.conformanceShared}/`) ||
+    barePathname.startsWith(`${routePaths.evalsShared}/`) ||
     barePathname.startsWith(`${routePaths.capabilities}/`);
+  // The WorkOS Initiate Login URL, where an IdP-initiated login (the Okta app
+  // tile) is parked for the instant it takes `LoginInitiationRoute` to start a
+  // fresh sign-in. `/login` is not a known tab segment, so it resolves to the
+  // `servers` fallback — which is a first-run-eligible route, and a hosted
+  // guest session is Convex-authenticated. Without this the onboarding redirect
+  // below can fire on the very commit that mounts the route and navigate the
+  // visitor to Playground mid-sign-in, stranding exactly the enterprise entry
+  // point this route exists to fix.
+  const isLoginInitiationRoute = barePathname === routePaths.login;
 
   const defaultHubRoute = useMemo((): "home" | "connect" | "servers" => {
     return "home";
@@ -2317,8 +2461,18 @@ export default function App() {
       ),
     [optimisticallyDeletedOrganizationIds, sortedOrganizations]
   );
+  // Orgs the user may actually open. A `seatPending` org is a paid-seat invite
+  // whose membership hasn't linked yet, so every org-scoped query for it is
+  // denied server-side — making it active crashed the route
+  // (Sentry INSPECTOR-CLIENT-24C). It stays in `effectiveOrganizations` so the
+  // switcher can list it as unavailable, but it must never become the
+  // active org, by route or by fallback.
+  const selectableOrganizations = useMemo(
+    () => effectiveOrganizations.filter((org) => !org.seatPending),
+    [effectiveOrganizations]
+  );
   const hasRouteOrganization = !!routeOrganizationId
-    ? effectiveOrganizations.some((org) => org._id === routeOrganizationId)
+    ? selectableOrganizations.some((org) => org._id === routeOrganizationId)
     : false;
 
   // Handle hosted OAuth callback: claim the callback before any hosted page renders.
@@ -2668,9 +2822,9 @@ export default function App() {
   } = useAppState({
     currentUserId: workOsUser?.id ?? null,
     currentActorKey: actorKey,
-    hasOrganizations: effectiveOrganizations.length > 0,
+    hasOrganizations: selectableOrganizations.length > 0,
     isLoadingOrganizations,
-    validOrganizations: effectiveOrganizations,
+    validOrganizations: selectableOrganizations,
     routeOrganizationId: hasRouteOrganization ? routeOrganizationId : undefined,
     requestSignIn: () => {
       void signIn();
@@ -2888,6 +3042,7 @@ export default function App() {
   const shouldRouteToFirstRunOnboarding =
     !isHostedChatRoute &&
     !isBareCaniuseRoute &&
+    !isLoginInitiationRoute &&
     !hasHostTemplateVerifyParam &&
     !hasProjectSwitchDeepLinkParam &&
     !isWorkOsLoading &&
@@ -3018,10 +3173,15 @@ export default function App() {
     activeProject?.clientConfig
   );
   const convexProjectId = activeProject?.sharedProjectId ?? null;
+  const canQueryProjectServerConfig = isUserReady && Boolean(convexProjectId);
   const projectServerConfigDto = useQuery(
     "projectServerConfig:getConfig" as never,
-    convexProjectId ? ({ projectId: convexProjectId } as never) : "skip"
+    canQueryProjectServerConfig
+      ? ({ projectId: convexProjectId } as never)
+      : "skip"
   ) as ProjectServerConfigDto | null | undefined;
+  // A skipped query reads as `undefined`, so this already covers the window
+  // where `canQueryProjectServerConfig` is false for a project-scoped session.
   const isProjectServerConfigLoading =
     Boolean(convexProjectId) && projectServerConfigDto === undefined;
   // hostsTabSelectedHostId is a Hosts-tab-local cursor; drop it when scope
@@ -3046,7 +3206,7 @@ export default function App() {
   const billingOrganizationId =
     !isLoadingOrganizations &&
     rawBillingOrganizationId &&
-    effectiveOrganizations.some((org) => org._id === rawBillingOrganizationId)
+    selectableOrganizations.some((org) => org._id === rawBillingOrganizationId)
       ? rawBillingOrganizationId
       : null;
   const activeProjectBillingOrganizationId =
@@ -3370,7 +3530,7 @@ export default function App() {
   ]);
 
   useEffect(() => {
-    if (!HOSTED_MODE || isHostedHashTabAllowed(activeTab)) {
+    if (!HOSTED_MODE || !isHostedTabBlocked(activeTab)) {
       return;
     }
     toast.error(`${activeTab} is not available in hosted mode.`);
@@ -3865,7 +4025,7 @@ export default function App() {
 
     const projectOrgId = activeProject?.organizationId;
     const orgId = resolveCheckoutOrganizationId(
-      effectiveOrganizations,
+      selectableOrganizations,
       activeOrganizationId,
       projectOrgId
     );
@@ -3903,7 +4063,7 @@ export default function App() {
     routeOrganizationId,
     routeOrganizationSection,
     signIn,
-    effectiveOrganizations,
+    selectableOrganizations,
     workOsUser?.id,
   ]);
 
@@ -4054,7 +4214,7 @@ export default function App() {
           : [...currentIds, deletedOrganizationId]
       );
 
-      const remainingOrganizations = effectiveOrganizations.filter(
+      const remainingOrganizations = selectableOrganizations.filter(
         (organization) => organization._id !== deletedOrganizationId
       );
       const fallbackOrganizationId = resolveDeletedOrganizationFallbackId(
@@ -4090,7 +4250,7 @@ export default function App() {
       activeProject?.organizationId,
       clearLocalFallbackProjectSelection,
       clearConvexActiveProjectSelection,
-      effectiveOrganizations,
+      selectableOrganizations,
       navigateToServers,
       routeOrganizationId,
       setActiveOrganizationId,
@@ -4440,7 +4600,7 @@ export default function App() {
   const homeOrganizationId =
     !isLoadingOrganizations &&
     rawHomeOrganizationId &&
-    effectiveOrganizations.some((org) => org._id === rawHomeOrganizationId)
+    selectableOrganizations.some((org) => org._id === rawHomeOrganizationId)
       ? rawHomeOrganizationId
       : null;
 
@@ -4526,6 +4686,11 @@ export default function App() {
     oauthServerModalNonce,
   };
 
+  // Shared by the top bar and the middle panel: the panel's 16px top radius +
+  // shadow are only correct when the bar is above them.
+  const appChromeHeaderHidden =
+    playgroundOnboarding || (activeTab === "home" && !!workOsUser);
+
   const appContent = (
     <SidebarProvider defaultOpen={true}>
       <AppChromeSidebar
@@ -4550,19 +4715,20 @@ export default function App() {
         createProjectDisabledReason={createProjectDisabledReason}
         onBeforeSignOut={disconnectRuntimeServersForAuthExit}
       />
-      <SidebarInset className="flex flex-col min-h-0">
+      {/* The inset is the linen shell: the sidebar and top bar read as one
+          continuous outer chrome and the off-white panel below is the working
+          surface. `bg-sidebar` overrides the primitive's `bg-background`. */}
+      <SidebarInset className="bg-sidebar flex flex-col min-h-0">
         <AppChromeHeader
           // "make nux clean" (#2868) hid this on Home for everyone, but that
           // also hid guests' only Sign in / Create account affordance there
           // (PUR-35). Keep Home clean for signed-in users; show the header
           // for guests so they still get sign-in/sign-up.
-          hidden={
-            playgroundOnboarding || (activeTab === "home" && !!workOsUser)
-          }
+          hidden={appChromeHeaderHidden}
           activeServerSelectorProps={activeServerSelectorProps}
           globalHostBarProps={globalHostBarProps}
         />
-        <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <AppChromePanel headerHidden={appChromeHeaderHidden}>
           {showTrialDecisionNotice ? (
             <div className="border-b border-border/60 px-4 py-3">
               <Alert>
@@ -4582,7 +4748,7 @@ export default function App() {
               <NoRouterRouteBody activeTab={activeTab} />
             )}
           </AppRouteReactContext.Provider>
-        </div>
+        </AppChromePanel>
       </SidebarInset>
       <AgentSidePanelMount
         projectId={activeProjectId ?? null}
