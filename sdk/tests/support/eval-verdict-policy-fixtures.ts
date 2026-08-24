@@ -112,18 +112,29 @@ export function findFixture(
 }
 
 /**
- * Statuses a trial never began under.
+ * Statuses whose trials are NOT in an attempted denominator.
  *
- * `skipped` belongs here and `setup_failed` deliberately does not: a skipped
- * trial was never started, so counting it as an incomplete attempt would report
- * a run as unfinished for work nobody asked for, while a setup failure DID
- * consume an attempt and never completed — which is exactly what the completion
+ * Three distinct reasons for the same exclusion, and the differences are the
+ * rule:
+ *
+ *   - `pending` — never started.
+ *   - `skipped` — deliberately not run, so counting it as an incomplete attempt
+ *     would report a run as unfinished for work nobody asked for.
+ *   - `cancelled` — started, then WITHDRAWN. The trial's outcome was taken away
+ *     by a human or a shutdown, so it cannot be evidence either way, and
+ *     leaving it in the completion denominator would let cancelling a run
+ *     manufacture an inconclusive verdict about the server.
+ *
+ * `running` is deliberately NOT here: a running trial has begun, and a mid-run
+ * roll-up that called it "never attempted" would report full completion of a run
+ * that is still going. `setup_failed` and `timed_out` are not here either — both
+ * consumed an attempt and never completed, which is exactly what the completion
  * rate is meant to notice.
  */
-const NEVER_ATTEMPTED: readonly IterationStatus[] = [
+const NOT_ATTEMPTED: readonly IterationStatus[] = [
   "pending",
-  "running",
   "skipped",
+  "cancelled",
 ];
 
 const EXCLUSION_OF_STATUS: Record<string, EvalTrialExclusionReason> = {
@@ -137,7 +148,7 @@ const EXCLUSION_OF_STATUS: Record<string, EvalTrialExclusionReason> = {
 };
 
 function isAttempted(trial: FixtureTrial): boolean {
-  return !NEVER_ATTEMPTED.includes(trial.status);
+  return !NOT_ATTEMPTED.includes(trial.status);
 }
 
 function isEligible(trial: FixtureTrial): boolean {
@@ -164,9 +175,10 @@ export type DerivedCaseCounts = {
  *
  * Two exclusion tallies, not one, because the trials removed from the
  * ELIGIBILITY denominator are not the ones removed from the ATTEMPTED
- * denominator: a cancelled trial leaves eligibility while staying in attempted,
- * and a skipped one leaves both. Collapsing them would make a completion rate
- * that silently forgives work that failed.
+ * denominator: a `running` or `setup_failed` trial leaves eligibility while
+ * staying in attempted, and a `cancelled` or `skipped` one leaves both.
+ * Collapsing them would make a completion rate that silently forgives work that
+ * failed.
  */
 export function deriveCaseCounts(trials: FixtureTrial[]): DerivedCaseCounts {
   const attempted = trials.filter(isAttempted);

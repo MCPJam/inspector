@@ -1,5 +1,5 @@
 {
-  "__readme": "Shared parity fixtures for the versioned eval VERDICT POLICY contract (verdictPolicyVersion 2). Loaded by sdk/tests/contract-verdict-policy.test.ts in mcpjam-inspector (zod: evalVerdictDecisionSchema / evalCaseVerdictAggregationSchema / evalRateMeasurementSchema / resolvedEvalValidityPolicySchema in sdk/src/contract/verdict-policy.ts) and by sdk/tests/eval-verdict-policy-schema-json.test.ts (the GENERATED JSON Schema, through ajv). It is written to be copied VERBATIM into mcpjam-backend as the B4-W2 mirror corpus, exactly as score-contract-parity-fixtures.json already is: the backend cannot import @mcpjam/sdk into convex/ default-runtime code, so a shared fixture file is the only common ground truth. Copy it byte for byte; do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__kind, __label, __why, __structural) and every object in this contract is closed, so a payload still carrying them would be rejected for the wrong reason \u2014 turning an accept row into a false failure and, worse, a reject row into a false success. DISPATCH: '__kind' selects the validator \u2014 'decision', 'case', 'rate' or 'policy'. '__structural' says whether the GENERATED JSON Schema must reject the row too (true) or whether it is a cross-field rule only zod can express (false); the json-schema test asserts BOTH directions, so a mislabelled row fails loudly instead of being excused. NOT EXPRESSIBLE IN JSON: NaN, Infinity and -Infinity are not JSON values, so the non-finite rejections live in the zod test itself rather than here. AGGREGATION COHORT: each row is an INPUT (a case's configured trial count, its effective pass threshold, and one entry per trial carrying a lifecycle status, an optional task verdict and an optional evaluator-error flag) plus the EXPECTED per-case aggregation output. This wave ships no aggregator: the rows pin the arithmetic a future producer must reproduce, and the test derives the counts from the trial list to prove the expected output is self-consistent. DERIVATION RULES, which the mirror must match: a trial is ATTEMPTED unless its status is pending, running or skipped; it is ELIGIBLE when it completed with a task verdict and no evaluator error; passRate is passed over eligible; completionRate is completed over attempted; observedStability is max(passed, failed) over eligible; mixedVerdict is true exactly when both a pass and a fail were graded; a zero denominator is notMeasured with a null value; and validity is decided BEFORE the task verdict, so a run whose validity fails is inconclusive with validity-only reasons. When the contract shape changes, edit the zod source, regenerate the JSON Schema artifacts, AND update this fixture in the same PR.",
+  "__readme": "Shared parity fixtures for the versioned eval VERDICT POLICY contract (verdictPolicyVersion 2). Loaded by sdk/tests/contract-verdict-policy.test.ts in mcpjam-inspector (zod: evalVerdictDecisionSchema / evalCaseVerdictAggregationSchema / evalRateMeasurementSchema / resolvedEvalValidityPolicySchema in sdk/src/contract/verdict-policy.ts) and by sdk/tests/eval-verdict-policy-schema-json.test.ts (the GENERATED JSON Schema, through ajv). It is written to be copied VERBATIM into mcpjam-backend as the B4-W2 mirror corpus, exactly as score-contract-parity-fixtures.json already is: the backend cannot import @mcpjam/sdk into convex/ default-runtime code, so a shared fixture file is the only common ground truth. Copy it byte for byte; do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__kind, __label, __why, __structural) and every object in this contract is closed, so a payload still carrying them would be rejected for the wrong reason \u2014 turning an accept row into a false failure and, worse, a reject row into a false success. DISPATCH: '__kind' selects the validator \u2014 'decision', 'case', 'rate' or 'policy'. '__structural' says whether the GENERATED JSON Schema must reject the row too (true) or whether it is a cross-field rule only zod can express (false); the json-schema test asserts BOTH directions, so a mislabelled row fails loudly instead of being excused. NOT EXPRESSIBLE IN JSON: NaN, Infinity and -Infinity are not JSON values, so the non-finite rejections live in the zod test itself rather than here. AGGREGATION COHORT: each row is an INPUT (a case's configured trial count, its effective pass threshold, and one entry per trial carrying a lifecycle status, an optional task verdict and an optional evaluator-error flag) plus the EXPECTED per-case aggregation output. This wave ships no aggregator: the rows pin the arithmetic a future producer must reproduce, and the test derives the counts from the trial list to prove the expected output is self-consistent. DERIVATION RULES, which the mirror must match: a trial is ATTEMPTED unless its status is pending, skipped or cancelled \u2014 a RUNNING trial has begun and stays in the attempted denominator, while a CANCELLED one is withdrawn from every denominator so that stopping a run cannot report it as incomplete; it is ELIGIBLE when it completed with a task verdict and no evaluator error; passRate is passed over eligible; completionRate is completed over attempted; observedStability is max(passed, failed) over eligible; mixedVerdict is true exactly when both a pass and a fail were graded; a zero denominator is notMeasured with a null value; and validity is decided BEFORE the task verdict, so a run whose validity fails is inconclusive with validity-only reasons. When the contract shape changes, edit the zod source, regenerate the JSON Schema artifacts, AND update this fixture in the same PR. IDENTITY: a case aggregate is keyed by caseId PLUS its optional executionVariant (the provider/model pair a hosted fan-out ran it under), configuredTrials is the PER-VARIANT repetitions count, and one case may not mix variant-keyed and unkeyed aggregates. REASONS: a decision's reasons array must be EXACTLY the checks its own measurements failed \u2014 in the vocabulary's order, nothing missing and nothing invented \u2014 and once validity holds it is exactly the one reason its cases produced.",
   "accept": [
     {
       "__kind": "decision",
@@ -548,7 +548,7 @@
     {
       "__kind": "decision",
       "__label": "one unmeasured case forces the whole run inconclusive \u2014 even at threshold 0",
-      "__why": "c_unmeasured graded nothing, so its own verdict is inconclusive and validity does not hold for the run. Its threshold of 0 is irrelevant: 'nothing was graded' is not 'everything graded passed'. The completion floor is relaxed here so the ONLY thing failing validity is the unmeasured case.",
+      "__why": "c_unmeasured graded nothing, so its own verdict is inconclusive and validity does not hold for the run. Its threshold of 0 is irrelevant: 'nothing was graded' is not 'everything graded passed'. The completion floor is relaxed and both ungraded trials were ATTEMPTED, so the ONLY thing failing validity is the unmeasured case.",
       "verdictPolicyVersion": 2,
       "verdict": "inconclusive",
       "reasons": [
@@ -631,7 +631,7 @@
             "denominator": 0,
             "exclusions": {
               "setupFailed": 1,
-              "cancelled": 1
+              "timedOut": 1
             }
           },
           "completionRate": {
@@ -648,7 +648,7 @@
             "denominator": 0,
             "exclusions": {
               "setupFailed": 1,
-              "cancelled": 1
+              "timedOut": 1
             }
           },
           "mixedVerdict": false,
@@ -659,8 +659,8 @@
     },
     {
       "__kind": "decision",
-      "__label": "explicit minEligibleTrials 4 met with a cancelled trial \u2014 completion exactly 0.8",
-      "__why": "Two boundaries at once. The explicit floor REPLACES the default coverage rule, so an unattempted-to-completion trial is no longer disqualifying by itself; and completion is 4/5 = 0.8, which meets the 0.8 default because the comparison is >=.",
+      "__label": "explicit minEligibleTrials 4 met with a timed-out trial \u2014 completion exactly 0.8",
+      "__why": "Two boundaries at once. The explicit floor REPLACES the default coverage rule, so a trial that was attempted and never graded is no longer disqualifying by itself; and completion is 4/5 = 0.8, which meets the 0.8 default because the comparison is >=.",
       "verdictPolicyVersion": 2,
       "verdict": "passed",
       "reasons": [
@@ -709,7 +709,7 @@
             "numerator": 4,
             "denominator": 4,
             "exclusions": {
-              "cancelled": 1
+              "timedOut": 1
             }
           },
           "completionRate": {
@@ -725,7 +725,7 @@
             "numerator": 4,
             "denominator": 4,
             "exclusions": {
-              "cancelled": 1
+              "timedOut": 1
             }
           },
           "mixedVerdict": false,
@@ -959,8 +959,8 @@
     },
     {
       "__kind": "decision",
-      "__label": "skipped and non-terminal trials leave the attempted denominator, not just the eligible one",
-      "__why": "A skipped trial was never attempted and a pending one is not terminal, so both are excluded from BOTH denominators: attempted is 4, not 6. Completion is 4/4 = 1 \u2014 a run does not become incomplete because work was never started, which is exactly the exclusion the completion rate must not double-count.",
+      "__label": "pending and skipped trials leave the attempted denominator \u2014 a running one does not",
+      "__why": "A skipped trial was never asked for and a pending one never started, so both leave BOTH denominators: attempted is 5, not 7. A RUNNING trial has begun, so it stays in the attempted denominator and drags completion to 4/5 \u2014 the difference between 'not started' and 'not finished', which is the whole reason notTerminal is one exclusion reason and not two.",
       "verdictPolicyVersion": 2,
       "verdict": "passed",
       "reasons": [
@@ -976,14 +976,14 @@
           "maxEvaluatorErrorRate": 0.1
         },
         "holds": true,
-        "configuredTrials": 6,
-        "attemptedTrials": 4,
+        "configuredTrials": 7,
+        "attemptedTrials": 5,
         "eligibleTrials": 4,
         "completionRate": {
           "state": "measured",
-          "value": 1.0,
+          "value": 0.8,
           "numerator": 4,
-          "denominator": 4,
+          "denominator": 5,
           "exclusions": {
             "notTerminal": 1,
             "skipped": 1
@@ -993,7 +993,7 @@
           "state": "measured",
           "value": 0.0,
           "numerator": 0,
-          "denominator": 4,
+          "denominator": 5,
           "exclusions": {
             "notTerminal": 1,
             "skipped": 1
@@ -1003,8 +1003,8 @@
       "cases": [
         {
           "caseId": "c_alpha",
-          "configuredTrials": 6,
-          "attemptedTrials": 4,
+          "configuredTrials": 7,
+          "attemptedTrials": 5,
           "eligibleTrials": 4,
           "passedTrials": 3,
           "failedTrials": 1,
@@ -1015,15 +1015,15 @@
             "numerator": 3,
             "denominator": 4,
             "exclusions": {
-              "notTerminal": 1,
+              "notTerminal": 2,
               "skipped": 1
             }
           },
           "completionRate": {
             "state": "measured",
-            "value": 1.0,
+            "value": 0.8,
             "numerator": 4,
-            "denominator": 4,
+            "denominator": 5,
             "exclusions": {
               "notTerminal": 1,
               "skipped": 1
@@ -1035,7 +1035,7 @@
             "numerator": 3,
             "denominator": 4,
             "exclusions": {
-              "notTerminal": 1,
+              "notTerminal": 2,
               "skipped": 1
             }
           },
@@ -1354,7 +1354,7 @@
     {
       "__kind": "decision",
       "__label": "completion rate 0.6 below the 0.8 floor \u2014 inconclusive even though coverage was met",
-      "__why": "The three checks are INDEPENDENT: the explicit eligibility floor is satisfied (3 >= 3) and the run is still inconclusive because two fifths of the attempted trials never completed.",
+      "__why": "The three checks are INDEPENDENT: the explicit eligibility floor is satisfied (3 >= 3) and the run is still inconclusive because two fifths of the ATTEMPTED trials never completed.",
       "verdictPolicyVersion": 2,
       "verdict": "inconclusive",
       "reasons": [
@@ -1403,7 +1403,7 @@
             "numerator": 2,
             "denominator": 3,
             "exclusions": {
-              "cancelled": 2
+              "timedOut": 2
             }
           },
           "completionRate": {
@@ -1419,7 +1419,7 @@
             "numerator": 2,
             "denominator": 3,
             "exclusions": {
-              "cancelled": 2
+              "timedOut": 2
             }
           },
           "mixedVerdict": true,
@@ -1588,6 +1588,315 @@
           "mixedVerdict": false,
           "verdict": "inconclusive",
           "reason": "caseHasNoEligibleTrials"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "a cancelled trial leaves BOTH denominators \u2014 cancelling cannot make a run look incomplete",
+      "__why": "The completion floor is 0.9 here on purpose: under the rejected reading (cancelled stays attempted) completion would be 4/5 = 0.8 and the run would be INCONCLUSIVE \u2014 a verdict about the server manufactured by a human pressing stop. Withdrawing the trial from every denominator leaves 4/4 = 1 over the trials that were allowed to finish, and the four graded trials still decide the run.",
+      "verdictPolicyVersion": 2,
+      "verdict": "passed",
+      "reasons": [
+        "allMeasuredCasesMetThreshold"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "minEligibleTrials",
+            "minEligibleTrials": 3
+          },
+          "minCompletionRate": 0.9,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": true,
+        "configuredTrials": 5,
+        "attemptedTrials": 4,
+        "eligibleTrials": 4,
+        "completionRate": {
+          "state": "measured",
+          "value": 1.0,
+          "numerator": 4,
+          "denominator": 4,
+          "exclusions": {
+            "cancelled": 1
+          }
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 4,
+          "exclusions": {
+            "cancelled": 1
+          }
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "configuredTrials": 5,
+          "attemptedTrials": 4,
+          "eligibleTrials": 4,
+          "passedTrials": 3,
+          "failedTrials": 1,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "exclusions": {
+              "cancelled": 1
+            }
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 4,
+            "denominator": 4,
+            "exclusions": {
+              "cancelled": 1
+            }
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 0.75,
+            "numerator": 3,
+            "denominator": 4,
+            "exclusions": {
+              "cancelled": 1
+            }
+          },
+          "mixedVerdict": true,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "one case fanned across two provider/model variants \u2014 the weaker variant fails the run",
+      "__why": "A hosted run fans ONE case across provider/model pairs and numbers each pair's iterations from 1, so identity is caseId PLUS executionVariant. Both rows carry the same caseId and the same configuredTrials of 2 (the portable per-variant repetitions), and the run FAILS because every measured aggregate must meet its threshold \u2014 merging the pairs into one row would both hide which model regressed and inflate configuredTrials past the portable range.",
+      "verdictPolicyVersion": 2,
+      "verdict": "failed",
+      "reasons": [
+        "casePassRateBelowThreshold"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "minEligibleTrials",
+            "minEligibleTrials": 4
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": true,
+        "configuredTrials": 4,
+        "attemptedTrials": 4,
+        "eligibleTrials": 4,
+        "completionRate": {
+          "state": "measured",
+          "value": 1.0,
+          "numerator": 4,
+          "denominator": 4,
+          "exclusions": {}
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 4,
+          "exclusions": {}
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "executionVariant": {
+            "model": "gpt-4o-mini",
+            "provider": "openai"
+          },
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 2,
+          "failedTrials": 0,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        },
+        {
+          "caseId": "c_alpha",
+          "executionVariant": {
+            "model": "claude-3-5-haiku",
+            "provider": "anthropic"
+          },
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 0,
+          "failedTrials": 2,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 0.0,
+            "numerator": 0,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "failed",
+          "reason": "casePassRateBelowThreshold"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "an execution variant may name a model with no provider",
+      "__why": "provider is the same optional disambiguating hint the suite file's defaults treat it as, so a run that fans across models within one provider identifies its variants by model alone. Omitting the whole executionVariant means something different again \u2014 'this run did not fan out' \u2014 and never matches a variant-keyed row.",
+      "verdictPolicyVersion": 2,
+      "verdict": "passed",
+      "reasons": [
+        "allMeasuredCasesMetThreshold"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "minEligibleTrials",
+            "minEligibleTrials": 2
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": true,
+        "configuredTrials": 2,
+        "attemptedTrials": 2,
+        "eligibleTrials": 2,
+        "completionRate": {
+          "state": "measured",
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2,
+          "exclusions": {}
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 2,
+          "exclusions": {}
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "executionVariant": {
+            "model": "gpt-4o-mini"
+          },
+          "configuredTrials": 1,
+          "attemptedTrials": 1,
+          "eligibleTrials": 1,
+          "passedTrials": 1,
+          "failedTrials": 0,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 1,
+            "denominator": 1,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 1,
+            "denominator": 1,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 1,
+            "denominator": 1,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        },
+        {
+          "caseId": "c_alpha",
+          "executionVariant": {
+            "model": "gpt-4o"
+          },
+          "configuredTrials": 1,
+          "attemptedTrials": 1,
+          "eligibleTrials": 1,
+          "passedTrials": 1,
+          "failedTrials": 0,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 1,
+            "denominator": 1,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 1,
+            "denominator": 1,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 1,
+            "denominator": 1,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
         }
       ]
     }
@@ -3777,6 +4086,1009 @@
       "mixedVerdict": true,
       "verdict": "passed",
       "reason": "allMeasuredCasesMetThreshold"
+    },
+    {
+      "__kind": "decision",
+      "__label": "decision \u2014 a nested CASE rate whose value is not its own quotient",
+      "__why": "The aggregate schemas embed the structural rate schema, so the quotient refinement only runs if the aggregate validator invokes it. A 0.75 shipped beside 1/1 is the drift that makes a hosted rate and a re-derived one disagree, one level down where nobody looks.",
+      "__structural": false,
+      "verdictPolicyVersion": 2,
+      "verdict": "passed",
+      "reasons": [
+        "allMeasuredCasesMetThreshold"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "allConfiguredTrialsAttempted",
+            "minGradeableTrials": 1
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": true,
+        "configuredTrials": 2,
+        "attemptedTrials": 2,
+        "eligibleTrials": 2,
+        "completionRate": {
+          "state": "measured",
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2,
+          "exclusions": {}
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 2,
+          "exclusions": {}
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 1,
+          "failedTrials": 1,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 0.75,
+            "numerator": 1,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 0.5,
+            "numerator": 1,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": true,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "decision \u2014 a nested VALIDITY rate whose value is not its own quotient",
+      "__why": "Same refinement, the other nesting site: validity's own completion rate must be the quotient of the counts it ships with, or the check that decides whether a run says anything is comparing an invented number against the floor.",
+      "__structural": false,
+      "verdictPolicyVersion": 2,
+      "verdict": "passed",
+      "reasons": [
+        "allMeasuredCasesMetThreshold"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "allConfiguredTrialsAttempted",
+            "minGradeableTrials": 1
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": true,
+        "configuredTrials": 2,
+        "attemptedTrials": 2,
+        "eligibleTrials": 2,
+        "completionRate": {
+          "state": "measured",
+          "value": 0.5,
+          "numerator": 2,
+          "denominator": 2,
+          "exclusions": {}
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 2,
+          "exclusions": {}
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 1,
+          "failedTrials": 1,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 0.5,
+            "numerator": 1,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 0.5,
+            "numerator": 1,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": true,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "decision \u2014 a nested VALIDITY rate with more errors than attempts",
+      "__why": "More evaluator errors than attempted trials is arithmetically impossible, and every field here is independently legal \u2014 the value is a fraction in [0,1] and the counts are non-negative integers \u2014 so only the nested refinement can catch the pair.",
+      "__structural": false,
+      "verdictPolicyVersion": 2,
+      "verdict": "passed",
+      "reasons": [
+        "allMeasuredCasesMetThreshold"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "allConfiguredTrialsAttempted",
+            "minGradeableTrials": 1
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": true,
+        "configuredTrials": 2,
+        "attemptedTrials": 2,
+        "eligibleTrials": 2,
+        "completionRate": {
+          "state": "measured",
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2,
+          "exclusions": {}
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 1.0,
+          "numerator": 3,
+          "denominator": 2,
+          "exclusions": {}
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 1,
+          "failedTrials": 1,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 0.5,
+            "numerator": 1,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 0.5,
+            "numerator": 1,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": true,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "decision \u2014 an inconclusive run omitting checks that actually failed",
+      "__why": "reasons is an audit trail: this run also failed its coverage floor, its evaluator-error measurement and its only case, and a list naming one of the four cannot be reconciled with the measurements it ships beside.",
+      "__structural": false,
+      "verdictPolicyVersion": 2,
+      "verdict": "inconclusive",
+      "reasons": [
+        "completionRateNotMeasured"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "minEligibleTrials",
+            "minEligibleTrials": 1
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": false,
+        "configuredTrials": 2,
+        "attemptedTrials": 0,
+        "eligibleTrials": 0,
+        "completionRate": {
+          "state": "notMeasured",
+          "value": null,
+          "numerator": 0,
+          "denominator": 0,
+          "exclusions": {
+            "notTerminal": 2
+          }
+        },
+        "evaluatorErrorRate": {
+          "state": "notMeasured",
+          "value": null,
+          "numerator": 0,
+          "denominator": 0,
+          "exclusions": {
+            "notTerminal": 2
+          }
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "configuredTrials": 2,
+          "attemptedTrials": 0,
+          "eligibleTrials": 0,
+          "passedTrials": 0,
+          "failedTrials": 0,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "notMeasured",
+            "value": null,
+            "numerator": 0,
+            "denominator": 0,
+            "exclusions": {
+              "notTerminal": 2
+            }
+          },
+          "completionRate": {
+            "state": "notMeasured",
+            "value": null,
+            "numerator": 0,
+            "denominator": 0,
+            "exclusions": {
+              "notTerminal": 2
+            }
+          },
+          "observedStability": {
+            "state": "notMeasured",
+            "value": null,
+            "numerator": 0,
+            "denominator": 0,
+            "exclusions": {
+              "notTerminal": 2
+            }
+          },
+          "mixedVerdict": false,
+          "verdict": "inconclusive",
+          "reason": "caseHasNoEligibleTrials"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "decision \u2014 an inconclusive run citing a validity check that PASSED",
+      "__why": "The eligibility floor was met (3 >= 3). Accusing it anyway makes the reason list unusable for diagnosis, which is the only thing it is for.",
+      "__structural": false,
+      "verdictPolicyVersion": 2,
+      "verdict": "inconclusive",
+      "reasons": [
+        "eligibleTrialsBelowMinimum",
+        "completionRateBelowMinimum"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "minEligibleTrials",
+            "minEligibleTrials": 3
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": false,
+        "configuredTrials": 5,
+        "attemptedTrials": 5,
+        "eligibleTrials": 3,
+        "completionRate": {
+          "state": "measured",
+          "value": 0.6,
+          "numerator": 3,
+          "denominator": 5,
+          "exclusions": {}
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 5,
+          "exclusions": {}
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "configuredTrials": 5,
+          "attemptedTrials": 5,
+          "eligibleTrials": 3,
+          "passedTrials": 2,
+          "failedTrials": 1,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 0.6666666666666666,
+            "numerator": 2,
+            "denominator": 3,
+            "exclusions": {
+              "timedOut": 2
+            }
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 0.6,
+            "numerator": 3,
+            "denominator": 5,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 0.6666666666666666,
+            "numerator": 2,
+            "denominator": 3,
+            "exclusions": {
+              "timedOut": 2
+            }
+          },
+          "mixedVerdict": true,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "decision \u2014 the right reasons in the wrong order",
+      "__why": "Order is part of the contract, not presentation: a hosted decision and an SDK decision are compared BYTE for byte, so the same run must not be able to serialize its reasons two ways.",
+      "__structural": false,
+      "verdictPolicyVersion": 2,
+      "verdict": "inconclusive",
+      "reasons": [
+        "caseHasNoEligibleTrials",
+        "eligibleTrialsBelowMinimum",
+        "completionRateNotMeasured",
+        "evaluatorErrorRateNotMeasured"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "minEligibleTrials",
+            "minEligibleTrials": 1
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": false,
+        "configuredTrials": 2,
+        "attemptedTrials": 0,
+        "eligibleTrials": 0,
+        "completionRate": {
+          "state": "notMeasured",
+          "value": null,
+          "numerator": 0,
+          "denominator": 0,
+          "exclusions": {
+            "notTerminal": 2
+          }
+        },
+        "evaluatorErrorRate": {
+          "state": "notMeasured",
+          "value": null,
+          "numerator": 0,
+          "denominator": 0,
+          "exclusions": {
+            "notTerminal": 2
+          }
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "configuredTrials": 2,
+          "attemptedTrials": 0,
+          "eligibleTrials": 0,
+          "passedTrials": 0,
+          "failedTrials": 0,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "notMeasured",
+            "value": null,
+            "numerator": 0,
+            "denominator": 0,
+            "exclusions": {
+              "notTerminal": 2
+            }
+          },
+          "completionRate": {
+            "state": "notMeasured",
+            "value": null,
+            "numerator": 0,
+            "denominator": 0,
+            "exclusions": {
+              "notTerminal": 2
+            }
+          },
+          "observedStability": {
+            "state": "notMeasured",
+            "value": null,
+            "numerator": 0,
+            "denominator": 0,
+            "exclusions": {
+              "notTerminal": 2
+            }
+          },
+          "mixedVerdict": false,
+          "verdict": "inconclusive",
+          "reason": "caseHasNoEligibleTrials"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "decision \u2014 a passed run adding a per-CASE reason to the suite reason",
+      "__why": "casePassRateMetThreshold is a case's reason for its own verdict. A suite decision records the suite-level reason and nothing else, or consumers cannot tell how many cases the list is talking about.",
+      "__structural": false,
+      "verdictPolicyVersion": 2,
+      "verdict": "passed",
+      "reasons": [
+        "casePassRateMetThreshold",
+        "allMeasuredCasesMetThreshold"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "allConfiguredTrialsAttempted",
+            "minGradeableTrials": 1
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": true,
+        "configuredTrials": 2,
+        "attemptedTrials": 2,
+        "eligibleTrials": 2,
+        "completionRate": {
+          "state": "measured",
+          "value": 1.0,
+          "numerator": 2,
+          "denominator": 2,
+          "exclusions": {}
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 2,
+          "exclusions": {}
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 1,
+          "failedTrials": 1,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 0.5,
+            "numerator": 1,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 0.5,
+            "numerator": 1,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": true,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "decision \u2014 two aggregates for the same case AND the same execution variant",
+      "__why": "Identity is caseId plus executionVariant. Two rows sharing it are two answers to one question, and every consumer that groups by that key would keep whichever it saw last.",
+      "__structural": false,
+      "verdictPolicyVersion": 2,
+      "verdict": "failed",
+      "reasons": [
+        "casePassRateBelowThreshold"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "minEligibleTrials",
+            "minEligibleTrials": 4
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": true,
+        "configuredTrials": 4,
+        "attemptedTrials": 4,
+        "eligibleTrials": 4,
+        "completionRate": {
+          "state": "measured",
+          "value": 1.0,
+          "numerator": 4,
+          "denominator": 4,
+          "exclusions": {}
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 4,
+          "exclusions": {}
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "executionVariant": {
+            "model": "gpt-4o-mini",
+            "provider": "openai"
+          },
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 2,
+          "failedTrials": 0,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        },
+        {
+          "caseId": "c_alpha",
+          "executionVariant": {
+            "model": "gpt-4o-mini",
+            "provider": "openai"
+          },
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 0,
+          "failedTrials": 2,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 0.0,
+            "numerator": 0,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "failed",
+          "reason": "casePassRateBelowThreshold"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "decision \u2014 one case with a variant-keyed aggregate AND an unkeyed one",
+      "__why": "An omitted executionVariant means 'this run did not fan out', not 'any variant'. A case cannot be both fanned out and not.",
+      "__structural": false,
+      "verdictPolicyVersion": 2,
+      "verdict": "failed",
+      "reasons": [
+        "casePassRateBelowThreshold"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "minEligibleTrials",
+            "minEligibleTrials": 4
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": true,
+        "configuredTrials": 4,
+        "attemptedTrials": 4,
+        "eligibleTrials": 4,
+        "completionRate": {
+          "state": "measured",
+          "value": 1.0,
+          "numerator": 4,
+          "denominator": 4,
+          "exclusions": {}
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 4,
+          "exclusions": {}
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "executionVariant": {
+            "model": "gpt-4o-mini",
+            "provider": "openai"
+          },
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 2,
+          "failedTrials": 0,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        },
+        {
+          "caseId": "c_alpha",
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 0,
+          "failedTrials": 2,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 0.0,
+            "numerator": 0,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "failed",
+          "reason": "casePassRateBelowThreshold"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "decision \u2014 an execution variant carrying an unknown field",
+      "__why": "The variant is a closed identity, not a bag of execution settings: a temperature here would make two rows with the same provider/model 'different' and silently un-merge a comparison.",
+      "__structural": true,
+      "verdictPolicyVersion": 2,
+      "verdict": "failed",
+      "reasons": [
+        "casePassRateBelowThreshold"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "minEligibleTrials",
+            "minEligibleTrials": 4
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": true,
+        "configuredTrials": 4,
+        "attemptedTrials": 4,
+        "eligibleTrials": 4,
+        "completionRate": {
+          "state": "measured",
+          "value": 1.0,
+          "numerator": 4,
+          "denominator": 4,
+          "exclusions": {}
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 4,
+          "exclusions": {}
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "executionVariant": {
+            "model": "gpt-4o-mini",
+            "provider": "openai",
+            "temperature": 0.2
+          },
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 2,
+          "failedTrials": 0,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        },
+        {
+          "caseId": "c_alpha",
+          "executionVariant": {
+            "model": "claude-3-5-haiku",
+            "provider": "anthropic"
+          },
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 0,
+          "failedTrials": 2,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 0.0,
+            "numerator": 0,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "failed",
+          "reason": "casePassRateBelowThreshold"
+        }
+      ]
+    },
+    {
+      "__kind": "decision",
+      "__label": "decision \u2014 an execution variant with an empty model",
+      "__why": "An empty model is not an identity. It would collide with every other unnamed variant while claiming to be a fan-out row.",
+      "__structural": true,
+      "verdictPolicyVersion": 2,
+      "verdict": "failed",
+      "reasons": [
+        "casePassRateBelowThreshold"
+      ],
+      "validity": {
+        "policy": {
+          "coverage": {
+            "kind": "minEligibleTrials",
+            "minEligibleTrials": 4
+          },
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "holds": true,
+        "configuredTrials": 4,
+        "attemptedTrials": 4,
+        "eligibleTrials": 4,
+        "completionRate": {
+          "state": "measured",
+          "value": 1.0,
+          "numerator": 4,
+          "denominator": 4,
+          "exclusions": {}
+        },
+        "evaluatorErrorRate": {
+          "state": "measured",
+          "value": 0.0,
+          "numerator": 0,
+          "denominator": 4,
+          "exclusions": {}
+        }
+      },
+      "cases": [
+        {
+          "caseId": "c_alpha",
+          "executionVariant": {
+            "model": ""
+          },
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 2,
+          "failedTrials": 0,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "passed",
+          "reason": "casePassRateMetThreshold"
+        },
+        {
+          "caseId": "c_alpha",
+          "executionVariant": {
+            "model": "claude-3-5-haiku",
+            "provider": "anthropic"
+          },
+          "configuredTrials": 2,
+          "attemptedTrials": 2,
+          "eligibleTrials": 2,
+          "passedTrials": 0,
+          "failedTrials": 2,
+          "effectivePassThreshold": 0.5,
+          "passRate": {
+            "state": "measured",
+            "value": 0.0,
+            "numerator": 0,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "completionRate": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "observedStability": {
+            "state": "measured",
+            "value": 1.0,
+            "numerator": 2,
+            "denominator": 2,
+            "exclusions": {}
+          },
+          "mixedVerdict": false,
+          "verdict": "failed",
+          "reason": "casePassRateBelowThreshold"
+        }
+      ]
     }
   ],
   "roundTrip": [
@@ -3856,7 +5168,7 @@
     {
       "__kind": "decision",
       "__label": "roundTrip \u2014 mixed exclusions, explicit coverage floor",
-      "__why": "The exclusion tallies differ between the eligibility rates and the completion rate on the same case. A round trip must preserve both, and must not merge them into one shared tally.",
+      "__why": "The exclusion tallies differ between the eligibility rates and the completion rate on the same case: the cancelled and skipped trials leave both, so the two tallies agree here while the DENOMINATORS do not (3 eligible over 3 attempted out of 5 configured). A round trip must preserve both tallies and must not merge them into one.",
       "verdictPolicyVersion": 2,
       "verdict": "passed",
       "reasons": [
@@ -3873,24 +5185,26 @@
         },
         "holds": true,
         "configuredTrials": 5,
-        "attemptedTrials": 4,
+        "attemptedTrials": 3,
         "eligibleTrials": 3,
         "completionRate": {
           "state": "measured",
-          "value": 0.75,
+          "value": 1.0,
           "numerator": 3,
-          "denominator": 4,
+          "denominator": 3,
           "exclusions": {
-            "skipped": 1
+            "skipped": 1,
+            "cancelled": 1
           }
         },
         "evaluatorErrorRate": {
           "state": "measured",
           "value": 0.0,
           "numerator": 0,
-          "denominator": 4,
+          "denominator": 3,
           "exclusions": {
-            "skipped": 1
+            "skipped": 1,
+            "cancelled": 1
           }
         }
       },
@@ -3898,7 +5212,7 @@
         {
           "caseId": "c_alpha",
           "configuredTrials": 5,
-          "attemptedTrials": 4,
+          "attemptedTrials": 3,
           "eligibleTrials": 3,
           "passedTrials": 2,
           "failedTrials": 1,
@@ -3915,11 +5229,12 @@
           },
           "completionRate": {
             "state": "measured",
-            "value": 0.75,
+            "value": 1.0,
             "numerator": 3,
-            "denominator": 4,
+            "denominator": 3,
             "exclusions": {
-              "skipped": 1
+              "skipped": 1,
+              "cancelled": 1
             }
           },
           "observedStability": {
@@ -4193,7 +5508,7 @@
     },
     {
       "__label": "zero eligible \u2014 threshold 0 does not rescue it",
-      "__why": "Both rates over eligibility are notMeasured, so the verdict is inconclusive and the reason is caseHasNoEligibleTrials. A threshold of 0 is a bar for MEASURED cases.",
+      "__why": "Both rates over eligibility are notMeasured, so the verdict is inconclusive and the reason is caseHasNoEligibleTrials. A threshold of 0 is a bar for MEASURED cases. The cancelled trial is withdrawn from EVERY denominator, so the 0/1 completion is the setup_failed trial alone: it was attempted and never completed.",
       "input": {
         "caseId": "c_none",
         "configuredTrials": 2,
@@ -4210,7 +5525,7 @@
       "expected": {
         "caseId": "c_none",
         "configuredTrials": 2,
-        "attemptedTrials": 2,
+        "attemptedTrials": 1,
         "eligibleTrials": 0,
         "passedTrials": 0,
         "failedTrials": 0,
@@ -4229,8 +5544,10 @@
           "state": "measured",
           "value": 0.0,
           "numerator": 0,
-          "denominator": 2,
-          "exclusions": {}
+          "denominator": 1,
+          "exclusions": {
+            "cancelled": 1
+          }
         },
         "observedStability": {
           "state": "notMeasured",
@@ -4249,7 +5566,7 @@
     },
     {
       "__label": "cancelled and skipped exclusions on one case",
-      "__why": "Skipped leaves both denominators (never attempted); cancelled leaves eligibility but stays in attempted, so completion is 3/4 = 0.75 while passRate is 2/3.",
+      "__why": "Skipped leaves both denominators (never run) and so does cancelled (execution began, then WITHDRAWN from every denominator): completion is 3/3 = 1 over the trials that were allowed to finish, while passRate is 2/3. Cancelling a run must not be able to report the server as incomplete.",
       "input": {
         "caseId": "c_excluded",
         "configuredTrials": 5,
@@ -4278,7 +5595,7 @@
       "expected": {
         "caseId": "c_excluded",
         "configuredTrials": 5,
-        "attemptedTrials": 4,
+        "attemptedTrials": 3,
         "eligibleTrials": 3,
         "passedTrials": 2,
         "failedTrials": 1,
@@ -4295,11 +5612,12 @@
         },
         "completionRate": {
           "state": "measured",
-          "value": 0.75,
+          "value": 1.0,
           "numerator": 3,
-          "denominator": 4,
+          "denominator": 3,
           "exclusions": {
-            "skipped": 1
+            "skipped": 1,
+            "cancelled": 1
           }
         },
         "observedStability": {
@@ -4452,7 +5770,7 @@
     },
     {
       "__label": "non-terminal trials \u2014 a roll-up taken mid-run",
-      "__why": "notTerminal leaves BOTH denominators: a trial that has not finished is not an incomplete attempt, it is an attempt that has not happened yet.",
+      "__why": "notTerminal splits: a PENDING trial never started, so it leaves both denominators, while a RUNNING one has begun and stays in attempted \u2014 a mid-run roll-up that called it never-attempted would report full completion of a run that is still going. Completion is 2/3, not 2/2.",
       "input": {
         "caseId": "c_partial",
         "configuredTrials": 4,
@@ -4477,7 +5795,7 @@
       "expected": {
         "caseId": "c_partial",
         "configuredTrials": 4,
-        "attemptedTrials": 2,
+        "attemptedTrials": 3,
         "eligibleTrials": 2,
         "passedTrials": 1,
         "failedTrials": 1,
@@ -4493,11 +5811,11 @@
         },
         "completionRate": {
           "state": "measured",
-          "value": 1.0,
+          "value": 0.6666666666666666,
           "numerator": 2,
-          "denominator": 2,
+          "denominator": 3,
           "exclusions": {
-            "notTerminal": 2
+            "notTerminal": 1
           }
         },
         "observedStability": {

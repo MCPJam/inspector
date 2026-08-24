@@ -377,7 +377,7 @@ export const evalVerdictPolicyJsonSchema: Record<string, unknown> = {
     },
     cases: {
       minItems: 1,
-      maxItems: 500,
+      maxItems: 50000,
       type: "array",
       items: {
         type: "object",
@@ -387,6 +387,15 @@ export const evalVerdictPolicyJsonSchema: Record<string, unknown> = {
             minLength: 1,
             maxLength: 128,
             pattern: "^[A-Za-z0-9_-]+$",
+          },
+          executionVariant: {
+            type: "object",
+            properties: {
+              model: { type: "string", minLength: 1, maxLength: 200 },
+              provider: { type: "string", minLength: 1, maxLength: 200 },
+            },
+            required: ["model"],
+            additionalProperties: false,
           },
           configuredTrials: { type: "integer", minimum: 1, maximum: 100 },
           attemptedTrials: {
